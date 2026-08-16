@@ -26,7 +26,8 @@ root, green the native CI.
 | E3 | + DWARF (sourceLevelDebugging) | (to read a backtrace) | CRASH; SN handler prints no stack |
 | E4 | patched module_load.c as project resource | vendoring path A | BUILD FAIL (separate classes-N dir, missing gc headers, dup symbol) -> resource-override unviable |
 | E5 | serialize worker-thread starts (kyo Scheduler) | cause B trigger | CRASH after several clean loops -> **not sufficient alone** |
-| E6 | gdb on a core dump (DWARF binary) | LOCUS of the fault | RUNNING |
+| E6a | gdb on a core dump (DWARF binary) | LOCUS of the fault | NO CORE: scala-native `stackOverflowHandler` (stackOverflowGuards.c:254) `exit(sig)`s on an unhandled fault, so no core; also high crash variance |
+| E6b | gdb-wrapper: run real binary under gdb, `break exit if $x0==11`, loop test | LOCUS of the fault | RUNNING |
 | E7 | #4992 via patched nativelib (in-tree maven repo, 0.5.12-kyo, self-verifying override) | cause A | PREPPED (build.sbt override + .local-sn-repo), not yet run |
 | E8 | #4992 + serialize-startup (both) | combined | PENDING (needs E7 working) |
 
