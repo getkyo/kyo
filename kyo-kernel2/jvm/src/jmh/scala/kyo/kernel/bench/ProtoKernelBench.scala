@@ -121,7 +121,7 @@ class ProtoKernelBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
                     .map(_ => loop(i + 1))
-        val r: Int < Any = ArrowEffect.handle(Tag[Ask], loop(0).asInstanceOf[Int < Ask])([C] => (_, cont) => cont(1), a => a)
+        val r: Int < Any = ArrowEffect.handle(Tag[Ask], loop(0): Int < Ask)([C] => (_, cont) => cont(1), a => a)
         Eval(r)
     end idleHandlerAddsNothing
 
