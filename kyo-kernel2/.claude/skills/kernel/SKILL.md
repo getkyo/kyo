@@ -26,6 +26,12 @@ Working rules that follow from this:
   effectful-clause fix (see `proto-effectful-clauses.md` at the repo root) is the worked example: two designs that
   added evaluator machinery failed review; the landed fix is one `map` over the clause's outcome, rebuilding the
   region as a fresh `Handle` value, with `done` handled by the *absence* of anything to do.
+- **When a wall appears, dissolve it before scaffolding around it.** First ask whether a change already
+  agreed on removes the wall, and whether a sibling in the repo already demonstrates the answer (the old
+  kernel, the kernel2 impl); both were true for the clean-build crash that the outcome dispatcher dissolved.
+  Parallel machinery grown around a problem (package copies, extra modules or scopes, compiler bumps) is the
+  same off-path signal as wanting a new node kind, and infrastructure stacking on infrastructure is the
+  signal to stop and re-read the problem.
 - **Signatures are semantics; read the rows as region geography.** Where a computation's row places it is where it
   runs. `handleCont`'s clause returns `A < (E & S)`: it is region currency, self-re-entrant. `handleLoop`'s clause
   returns `Outcome[O[C] < (E & S), B] < S`: the clause lives *outside* the region it serves; only the answer
@@ -94,6 +100,30 @@ Rules around the ladder:
   exposed only because its other arm failed to compile. Inside such scopes, the casts are the safe spelling.
 - **New casts require sign-off.** Never introduce one without surfacing it; never remove an existing one without
   the compiler/test verification above.
+
+### The single lift and the suspension equilibrium
+
+There is one lift: the macro-backed implicit, the same for user code and kernel files. No internal lift
+variants, and no explicit nest spellings standing in for the lift; the simplicity of the lift surface is a
+design requirement, not a style preference.
+
+The compiler consequence: the CanLift evidence is a splice macro, and a file that summons a same-module
+macro is suspended to a retry run. The module compiles in a fragile equilibrium: leaf-ish files may suspend
+(the old kernel's Kyo.scala and Isolate.scala; the proto's Arrow.scala and Eval.scala carry one summon
+each), but new summons inside a core, inlined-from file deepen the cascade until dotty crashes with a
+StaleSymbolException, and only on the clean batch build: incremental compiles mask it. The map-based clause
+dispatch broke exactly this way, and its silent lift in the done arm was simultaneously the representation
+defect and the compiler crash.
+
+Rules that follow:
+
+- **The evaluator does not lift.** Its positions are typed union-currency positions where no conversion can
+  fire; outcome dispatch is a named Transform (`resume` and `outcome` are the patterns), never `map` over an
+  outcome value. `map` and the implicit lift are user-boundary machinery.
+- **Verify the clean batch build** (`sbt --batch 'kyo-kernel2JVM/clean' 'kyo-kernel2JVM/compile'`) after any
+  change that could summon the lift in kernel files; incremental green is not clean green.
+- **Diagnose with `-Xprint-suspension`**: it names each suspended file and the macro that suspended it.
+- **A compiler bump is not a fix**: the crash reproduces unchanged from 3.8.4 through 3.9.0-RC5.
 
 ## Concessions: measured, justified, protected
 
