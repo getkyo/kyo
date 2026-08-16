@@ -89,14 +89,15 @@ reference the GC concurrently cleared: a GC/mutator race, not a test-logic bug.
   variant: same mark-region heap layout and collector code, plus concurrent marking, so
   it inherits the race rather than avoiding it. Not a fix.
 - **boehm**: the genuinely different collector (decades-hardened, thread-safe
-  conservative GC). Needs `libgc-dev` in the toolchain (added to build.sh's native apt
-  list; the CI setup action needs the same for the real fix). Under test.
+  conservative). Also crashes, with the **identical** primary fault
+  (`Unhandled signal 11, si_addr=(nil)`), just later per unit work.
 
-If boehm is stable, the fix is `nativeConfig ~= (_.withGC(GC.boehm))` in
-`native-settings-base` (every native module, since kyo-browser and others crash the same
-way) plus `libgc-dev` in the CI toolchain. If boehm also crashes, the fault is not GC
-implementation choice but scala-native's multithreaded runtime or a kyo memory-safety
-bug, and the next step is a direct null-deref hunt.
+**GC ruled out.** immix, commix, and boehm all produce the same SIGSEGV null-deref.
+A safe GC does not fix this and is not the answer. The fault is a null reference
+dereferenced under the concurrent scheduler, independent of the collector: it lives in
+scala-native's multithreaded runtime (memory model / atomics, per the WorkerQueue note
+below) or in kyo's unsafe native code. Next step: a DWARF-symbolized backtrace
+(`withSourceLevelDebuggingConfig(_.enableAll)`) to locate the faulting frame.
 
 ## The "not GC" candidate (if boehm also crashes)
 
