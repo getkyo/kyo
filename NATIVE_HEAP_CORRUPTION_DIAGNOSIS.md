@@ -81,6 +81,23 @@ answers, and is legitimate on that axis. The fault is a consistent NULL derefere
 (`si_addr=(nil)`) under the concurrent scheduler, the signature of a mutator reading a
 reference the GC concurrently cleared: a GC/mutator race, not a test-logic bug.
 
+## GC experiments (linux-arm64 podman, kyo-coreNative test looped)
+
+- **immix** (default): crashes on the first looped run. Baseline.
+- **commix**: crashes identically (`Unhandled signal 11, si_addr=(nil)`) on the first
+  run, `multithreadingEnabled=detect` confirmed at link. Commix is immix's *concurrent*
+  variant: same mark-region heap layout and collector code, plus concurrent marking, so
+  it inherits the race rather than avoiding it. Not a fix.
+- **boehm**: the genuinely different collector (decades-hardened, thread-safe
+  conservative GC). Needs `libgc-dev` in the toolchain (added to build.sh's native apt
+  list; the CI setup action needs the same for the real fix). Under test.
+
+If boehm is stable, the fix is `nativeConfig ~= (_.withGC(GC.boehm))` in
+`native-settings-base` (every native module, since kyo-browser and others crash the same
+way) plus `libgc-dev` in the CI toolchain. If boehm also crashes, the fault is not GC
+implementation choice but scala-native's multithreaded runtime or a kyo memory-safety
+bug, and the next step is a direct null-deref hunt.
+
 ## Reproduction plan
 
 Loop `kyo-coreNative/test` in one sbt session (links once, reruns the binary) under

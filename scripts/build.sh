@@ -176,7 +176,7 @@ container_provision() {
         # so the CI setup action never lists them; a bare container needs them explicitly
         # (scala-native drives clang, kyo-ffi-it's bundled lib builds with cc, and the
         # openssl-linked modules need -lssl -lcrypto).
-        Native|all) native_pkgs="clang build-essential libssl-dev libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3" ;;
+        Native|all) native_pkgs="clang build-essential libssl-dev libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3 libgc-dev" ;;
     esac
     # BoringSSL build toolchain (cmake + Go + a C toolchain), only when STAGE_BORINGSSL=1 builds the vendored BoringSSL so kyo-net's
     # TLS tests run against real libssl/libcrypto instead of cancelling. Heavy, so off by default.
