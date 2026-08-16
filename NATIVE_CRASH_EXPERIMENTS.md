@@ -75,9 +75,22 @@ stack, and that `new Exception` runs the buggy concurrent unwinder. `findFDE` re
 for a frame's PC under concurrent unwinds (the other threads unwind the same frame shapes
 fine), so it is a concurrency race in libunwind's shared FDE lookup, not a bad PC.
 
-This retires candidates A and B for the crash we actually hit: GC-swap could not help
-(E1/E2), serialize-startup could not help (E5), module-init vendoring is irrelevant to
-this frame. Candidate A/B may still be real upstream bugs, but they are not this crash.
+**CORRECTION (Fable static analysis of the vendored sources).** The above located the
+faulting FRAME but not the MECHANISM, and the "retires candidate A (#4992)" inference was
+UNSOUND. The bundled libunwind has no internal race: `DwarfFDECache` is guarded by a real
+`pthread_rwlock` and `_LIBUNWIND_HAS_NO_THREADS` is defined nowhere; no coherent libunwind
+path produces `stepWithDwarf(fdeStart=0)` with valid state, so the cursor was corrupted from
+OUTSIDE. scala-native's `StackTrace.scala` stores the unwind cursor/context in a GC-heap
+`ByteArray` whose offsets are fields of the `StackTrace$Context$` MODULE, so the module-init
+publish race (#4992, maintainer-confirmed) can corrupt that module -> the cursor lands in
+memory the walking thread does not own -> a concurrent thread zeroes it mid-walk ->
+`decodeFDE(0)`. The two observed `si_addr` values are #4992's two textbook manifestations:
+0x0 (null propagation) and 0x10 (a field read at offset 16 off a null module instance). E5
+does not serialize module FIRST-TOUCH (it happens at the first concurrent exception storm),
+and all three GCs crash identically: both consistent with #4992, not a GC or libunwind bug.
+So candidate A is the PRIME SUSPECT, E7 was never validated, and FIX-2's `decodeFDE` guard is
+a symptom-fix (drop as the fix; offer upstream as defensive hardening only). "Root-caused to
+libunwind" and "NOT module-init" are downgraded to hypotheses until the verified #4992 run lands.
 
 **Fix direction:** on Scala Native, do not capture the native-stack suffix in `enrich`
 (the `new Exception` unwind). Native suffixes are cryptic mangled frames and the unwinder
