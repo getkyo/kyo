@@ -130,6 +130,16 @@ implementation returning/copying wrong state, the `Context$` offset module, or t
 the `ByteArray` mid-walk. All are scala-native-internal and not patchable from kyo or via a jar
 resource (StackTrace.scala/Throwable.scala are compiled NIR, not resources).
 
+## Mechanism pinpoint (bt5, #4992 VERIFIED in build: unpacked `0.5.12-kyo`)
+
+`bt full` on the crash (NATIVE_CRASH_BACKTRACE_4992.txt): the unwinder parses GARBAGE
+FDE/CIE (`codeAlignFactor=2705589728`, `dataAlignFactor=65527`, `pcEnd` in the heap region,
+`fdeStart=0`; a valid CIE is `codeAlignFactor=1`/`dataAlignFactor=-8`). So the per-thread
+unwind cursor holds a corrupt IP -> `findFDE` returns garbage -> `decodeFDE(0)` -> crash. Only
+ONE thread is in the unwinder at the fault, so it is not two concurrent walks colliding; the
+single thread's own cursor was corrupted by concurrent activity (GC or runtime state), with
+#4992 applied. Conclusive: scala-native runtime, not kyo, not #4992, not the collector.
+
 ## Honest conclusion + options
 
 The crash is a scala-native 0.5.12 runtime bug in concurrent `Throwable.fillInStackTrace`. Complete

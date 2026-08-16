@@ -1,0 +1,141 @@
+=== FATAL FAULT ===
+$1 = {si_signo = 5, si_errno = 0, si_code = 1, _sifields = {_pad = {-136776976, 65535, 0 <repeats 26 times>}, _kill = {si_pid = -136776976, si_uid = 65535}, _timer = {si_tid = -136776976, si_overrun = 65535, si_sigval = {sival_int = 0, sival_ptr = 0x0}}, _rt = {si_pid = -136776976, si_uid = 65535, si_sigval = {sival_int = 0, sival_ptr = 0x0}}, _sigchld = {si_pid = -136776976, si_uid = 65535, si_status = 0, si_utime = 0, si_stime = 0}, _sigfault = {si_addr = 0xfffff7d8f2f0 <__GI_exit>}, _sigpoll = {si_band = 281474839933680, si_fd = 0}, _sigsys = {_call_addr = 0xfffff7d8f2f0 <__GI_exit>, _syscall = 0, _arch = 0}}}
+--- crashing thread bt full ---
+#0  __GI_exit (status=11) at ./stdlib/exit.c:138
+No locals.
+#1  0x0000aaaab084edac in stackOverflowHandler (sig=11, info=0xfff724004c50, context=0xfff724004cd0) at /work/kyo-core/native/target/scala-3.8.4/native-test/dependencies/nativelib_native0.5_3-0.5.12-kyo-1/scala-native/stackOverflowGuards.c:254
+        faultAddr = 0x0
+        previousSignalHandler = 0xaaaab24905c0 <resolvePreviousSignalHandler.previousSignalHandlers>
+        threadInfo = {stackSize = 1056768, maxStackSize = 33599488, stackTop = 0xfff72bd1a000, stackBottom = 0xfff72be1c000, stackGuardPage = 0xfff72bd26000, isMainThread = false, pendingStackOverflowException = false, signalHandlerStack = 0xfff724000eb0, signalHandlerStackSize = 20480}
+        threadInfoInitialized = true
+#2  <signal handler called>
+No symbol table info available.
+#3  0x0000aaaab0854208 in libunwind::LocalAddressSpace::get32 (this=0xaaaab2490741 <libunwind::LocalAddressSpace::sThisAddressSpace>, addr=0) at dependencies/nativelib_native0.5_3-0.5.12-kyo-1/scala-native/platform/posix/libunwind/AddressSpace.hpp:178
+        val = 0
+#4  0x0000aaaab0853d3c in libunwind::CFI_Parser<libunwind::LocalAddressSpace>::decodeFDE (addressSpace=..., fdeStart=0, fdeInfo=0xfff72be188d8, cieInfo=0xfff72be188a0, useCIEInfo=false) at dependencies/nativelib_native0.5_3-0.5.12-kyo-1/scala-native/platform/posix/libunwind/DwarfParser.hpp:183
+        p = 0
+        cfiLength = 0
+        ciePointer = 65527
+        nextCFI = 281439033485224
+        cieStart = 104
+        pcStart = 187650112292673
+        pcRange = 281437058208464
+#5  0x0000aaaab08555e8 in libunwind::DwarfInstructions<libunwind::LocalAddressSpace, libunwind::Registers_arm64>::stepWithDwarf (addressSpace=..., pc=187650082680868, fdeStart=0, registers=..., isSignalFrame=@0xfff7a19dea01: false, stage2=false) at dependencies/nativelib_native0.5_3-0.5.12-kyo-1/scala-native/platform/posix/libunwind/DwarfInstructions.hpp:218
+        fdeInfo = {fdeStart = 187650022540804, fdeLength = 24, fdeInstructions = 187651416129535, pcStart = 187650108642704, pcEnd = 281439027594720, lsda = 281439033485224}
+        cieInfo = {cieStart = 187650022540312, cieLength = 4972260, cieInstructions = 281439106887232, pointerEncoding = 0 '\000', lsdaEncoding = 0 '\000', personalityEncoding = 192 '\300', personalityOffsetInCIE = 114 'r', personality = 187650082744168, codeAlignFactor = 2705589728, dataAlignFactor = 65527, isSignalFrame = 224, fdesHaveAugmentationData = 5, returnAddressRegister = 68 'D', addressesSignedWithBKey = 161, mteTaggedFrame = 247}
+#6  0x0000aaaab0855588 in libunwind::UnwindCursor<libunwind::LocalAddressSpace, libunwind::Registers_arm64>::stepWithDwarfFDE (this=0xfff7a19de798, stage2=false) at dependencies/nativelib_native0.5_3-0.5.12-kyo-1/scala-native/platform/posix/libunwind/UnwindCursor.hpp:1028
+No locals.
+#7  0x0000aaaab08548a4 in libunwind::UnwindCursor<libunwind::LocalAddressSpace, libunwind::Registers_arm64>::step (this=0xfff7a19de798, stage2=false) at dependencies/nativelib_native0.5_3-0.5.12-kyo-1/scala-native/platform/posix/libunwind/UnwindCursor.hpp:3000
+        result = -1583487080
+#8  0x0000aaaab0853510 in __unw_step (cursor=0xfff7a19de798) at /work/kyo-core/native/target/scala-3.8.4/native-test/dependencies/nativelib_native0.5_3-0.5.12-kyo-1/scala-native/platform/posix/libunwind/libunwind.cpp:185
+        co = 0xfff7a19de798
+#9  0x0000aaaab085306c in scalanative_unwind_step (cursor=0xfff7a19de798) at /work/kyo-core/native/target/scala-3.8.4/native-test/dependencies/nativelib_native0.5_3-0.5.12-kyo-1/scala-native/platform/posix/unwind.c:41
+No locals.
+#10 0x0000aaaaacde0540 in __SM37scala.scalanative.runtime.StackTrace$D20currentRawStackTraceLAj_EO (this=0xaaaab2136288 <_SM37scala.scalanative.runtime.StackTrace$G8instance>) at unknown:72
+        buffer = 0xfff7a5fdea00
+        frames = 17
+        thread = 0xfff7a140ac90
+        context = 0xfff7a5fde9a0
+        cursor = 0xfff7a5fde9c0
+        ip = 0xfff7a19df330
+#11 0x0000aaaaacde3c50 in __SM35scala.scalanative.runtime.ThrowableD16fillInStackTraceL35scala.scalanative.runtime.ThrowableEO (this=0xfff7a5fde8f0) at unknown:35
+No locals.
+#12 0x0000aaaaacdaf8f0 in __SM19java.lang.ThrowableD16fillInStackTraceL19java.lang.ThrowableEO (this=0xfff7a5fde8f0) at Throwables.scala:53
+No locals.
+#13 0x0000aaaaacde3eb8 in __SM35scala.scalanative.runtime.ThrowableRzE (this=0xfff7a5fde8f0) at unknown:52
+No locals.
+#14 0x0000aaaaacf22878 in __SM31kyo.kernel.internal.Trace$OwnerD6enrichL19java.lang.ThrowableuEO (this=0xfff7a7d78270, ex=0xfff7a57b8e10) at /work/kyo-core/native/target/scala-3.8.4/native-test/sources/maven2/org/scala-native/javalib_native0.5_3/0.5.12/javalib_native0.5_3-0.5.12/java/lang/Throwables.scala:10
+        ev$4 = <optimized out>
+#15 0x0000aaaaacf20c38 in __SM30kyo.kernel.internal.Safepoint$D6enrichL19java.lang.ThrowableL29kyo.kernel.internal.SafepointuEO (this=0xaaaab2490741 <libunwind::LocalAddressSpace::sThisAddressSpace>, ex=0x0, safepoint=0xaaaab2490741 <libunwind::LocalAddressSpace::sThisAddressSpace>) at Safepoint.scala:232
+No locals.
+#16 0x0000aaaaacec1500 in __SM23kyo.kernel.ArrowEffect$D16inline$enrich$i2L30kyo.kernel.internal.Safepoint$L19java.lang.ThrowableL29kyo.kernel.internal.SafepointuEO (this=0xaaaab2490741 <libunwind::LocalAddressSpace::sThisAddressSpace>, x$0=0xaaaab2490741 <libunwind::LocalAddressSpace::sThisAddressSpace>, ex=0x0, safepoint=0xfff72be188d8) at ArrowEffect.scala:186
+No locals.
+#17 0x0000aaaaaf2c09b8 in __SM17kyo.Abort$$anon$1D5applyL16java.lang.ObjectL30scala.collection.immutable.MapL29kyo.kernel.internal.SafepointL16java.lang.ObjectEO (this=0xfff7a57b8a00, v=0xaaaab2134928 <_SM36scala.scalanative.runtime.BoxedUnit$G8instance>, context=0xfff7c05e9c20, x$3=0xfff7a7d78270) at Abort.scala:249
+No locals.
+#18 0x0000aaaaacf27d00 in __SM34kyo.test.internal.TestBase$$anon$2D5applyL16java.lang.ObjectL30scala.collection.immutable.MapL29kyo.kernel.internal.SafepointL16java.lang.ObjectEO (this=0xfff7a57b8a40, v=0xaaaab2134928 <_SM36scala.scalanative.runtime.BoxedUnit$G8instance>, context=0xfff7c05e9c20, x$3=0xfff7a7d78270) at TestBase.scala:446
+No locals.
+#19 0x0000aaaaaf2c2240 in __SM17kyo.Abort$$anon$2D5applyL16java.lang.ObjectL30scala.collection.immutable.MapL29kyo.kernel.internal.SafepointL16java.lang.ObjectEO (this=0xfff7a57b8a90, v=0xaaaab2134928 <_SM36scala.scalanative.runtime.BoxedUnit$G8instance>, context=0xfff7c05e9c20, x$3=0xfff7a7d78270) at Abort.scala:249
+No locals.
+#20 0x0000aaaaaf2c0884 in __SM17kyo.Abort$$anon$1D5applyL16java.lang.ObjectL30scala.collection.immutable.MapL29kyo.kernel.internal.SafepointL16java.lang.ObjectEO (this=0xfff7a57b8ad0, v=0xaaaab2134928 <_SM36scala.scalanative.runtime.BoxedUnit$G8instance>, context=0xfff7c05e9c20, x$3=0xfff7a7d78270) at Abort.scala:249
+No locals.
+#21 0x0000aaaab01cecac in __SM17kyo.Retry$$anon$1D5applyL16java.lang.ObjectL30scala.collection.immutable.MapL29kyo.kernel.internal.SafepointL16java.lang.ObjectEO (this=0xfff7a57b8b10, v=0xaaaab2134928 <_SM36scala.scalanative.runtime.BoxedUnit$G8instance>, context=0xfff7c05e9c20, x$3=0xfff7a7d78270) at Retry.scala:53
+No locals.
+#22 0x0000aaaaaf2c2240 in __SM17kyo.Abort$$anon$2D5applyL16java.lang.ObjectL30scala.collection.immutable.MapL29kyo.kernel.internal.SafepointL16java.lang.ObjectEO (this=0xfff7a57b8b60, v=0xaaaab2134928 <_SM36scala.scalanative.runtime.BoxedUnit$G8instance>, context=0xfff7c05e9c20, x$3=0xfff7a7d78270) at Abort.scala:249
+No locals.
+#23 0x0000aaaaaf2c0884 in __SM17kyo.Abort$$anon$1D5applyL16java.lang.ObjectL30scala.collection.immutable.MapL29kyo.kernel.internal.SafepointL16java.lang.ObjectEO (this=0xfff7a57b8ba0, v=0xaaaab2134928 <_SM36scala.scalanative.runtime.BoxedUnit$G8instance>, context=0xfff7c05e9c20, x$3=0xfff7a7d78270) at Abort.scala:249
+No locals.
+#24 0x0000aaaaacf27b30 in __SM34kyo.test.internal.TestBase$$anon$1D5applyL16java.lang.ObjectL30scala.collection.immutable.MapL29kyo.kernel.internal.SafepointL16java.lang.ObjectEO (this=0xfff7a57b8d00, v=0xaaaab2134928 <_SM36scala.scalanative.runtime.BoxedUnit$G8instance>, context=0xfff7c05e9c20, x$3=0xfff7a7d78270) at TestBase.scala:441
+No locals.
+#25 0x0000aaaaafa321b8 in __SM50kyo.Fiber$package$Fiber$internal$$anon$64$$anon$66D5applyL16java.lang.ObjectL30scala.collection.immutable.MapL29kyo.kernel.internal.SafepointL16java.lang.ObjectEO (this=0xfff7a57b8d50, v=0xaaaab2134928 <_SM36scala.scalanative.runtime.BoxedUnit$G8instance>, context=0xfff7c05e9c20, x$3=0xfff7a7d78270) at Fiber.scala:762
+No locals.
+#26 0x0000aaaaace84028 in __SM20kyo.scheduler.IOTaskD13partialLoop$1jL27kyo.scheduler.InternalClockL29kyo.kernel.internal.SafepointL16java.lang.ObjectL30scala.collection.immutable.MapL29kyo.kernel.internal.SafepointL16java.lang.ObjectEPT20kyo.scheduler.IOTask (this=0xfff7a5638b50, deadline$1=9223372036854775807, clock$1=0xfff7a1536520, x$4$1=0xfff7a7d78270, v=0xfff7a1482f00, context=0xfff7c05e9c20, safepoint=0xfff7a7d78270) at IOTask.scala:70
+        frame$proxy2 = <optimized out>
+        v$tailLocal1 = 0xfff7a57b8d50
+#27 0x0000aaaaace85534 in __SM20kyo.scheduler.IOTaskD4evaljL27kyo.scheduler.InternalClockjL29kyo.kernel.internal.SafepointL16java.lang.ObjectEPT20kyo.scheduler.IOTask (this=0xfff7a5638b50, startMillis=<optimized out>, clock=0xfff7a1536520, deadline=9223372036854775807, x$4=0xfff7a7d78270) at IOTask.scala:70
+        v$proxy2 = 0xfff7a1482f00
+        context$proxy1 = 0xfff7c05e9c20
+        prevFrames = 0xfff7a7d783d0
+        prevIdx = 0
+        prev = 0x0
+        np = <optimized out>
+        $proxy6 = 0xfff7a1452a40
+        trace$proxy1 = 0xfff7bb4a2f30
+        frame$proxy3 = 0xaaaab1ca1a20
+        next = <optimized out>
+#28 0x0000aaaaace84ba8 in __SM20kyo.scheduler.IOTaskD3runjL27kyo.scheduler.InternalClockjzEO (this=0xfff7a5638b50, startMillis=1786866432518, clock=0xfff7a1536520, deadline=9223372036854775807) at IOTask.scala:130
+        safepoint = 0xfff7a7d78270
+        next = <optimized out>
+#29 0x0000aaaaaceaad20 in __SM20kyo.scheduler.WorkerD7runTaskL18kyo.scheduler.TaskzEPT20kyo.scheduler.Worker (this=0xfff7a2bb1c00, task=0xfff7a5638b50) at Worker.scala:382
+        start = 1786866432518
+#30 0x0000aaaaacea9878 in __SM20kyo.scheduler.WorkerD3runuEO (this=0xfff7a2bb1c00) at Worker.scala:303
+        current = 0x0
+        task = 0x0
+        released = false
+#31 0x0000aaaaacc8ed44 in __SM39java.util.concurrent.ThreadPoolExecutorD9runWorkerL46java.util.concurrent.ThreadPoolExecutor$WorkeruEO (this=0xfff7a1497db0, w=0xfff7a140a5b0) at ThreadPoolExecutor.scala:440
+        task = 0xfff7a2bb1c00
+        completedAbruptly = true
+        wt = 0xfff7a140a9a0
+#32 0x0000aaaaacc8fc74 in __SM46java.util.concurrent.ThreadPoolExecutor$WorkerD3runuEO (this=0xfff7a140a5b0) at ThreadPoolExecutor.scala:179
+No locals.
+#33 0x0000aaaaacda91f0 in __SM16java.lang.ThreadD3runuEO (this=0xfff7a140a9a0) at Thread.scala:276
+        task = 0xfff7a140a5b0
+#34 0x0000aaaaacdde3b8 in __SM39scala.scalanative.runtime.NativeThread$D16threadEntryPointL38scala.scalanative.runtime.NativeThreaduEPT39scala.scalanative.runtime.NativeThread$ (this=0xaaaab2135638 <_SM39scala.scalanative.runtime.NativeThread$G8instance>, nativeThread=0xfff7a140ac90) at unknown:230
+        stackBottom = 0
+#35 0x0000aaaaacddeacc in __SM39scala.scalanative.runtime.NativeThread$D24threadRoutine$$anonfun$1L28scala.scalanative.unsafe.PtrL28scala.scalanative.unsafe.PtrEPT39scala.scalanative.runtime.NativeThread$ (this=<optimized out>, arg=<optimized out>) at unknown:210
+No locals.
+#36 0x0000aaaaacddeb38 in __SM49scala.scalanative.runtime.NativeThread$$$Lambda$1G17$extern$forwarder () at unknown:206
+No locals.
+#37 0x0000aaaab085fed0 in ProxyThreadStartRoutine (args=0xfff73c006010) at /work/kyo-core/native/target/scala-3.8.4/native-test/dependencies/nativelib_native0.5_3-0.5.12-kyo-1/scala-native/gc/immix/ImmixGC.c:145
+        stackBottom = 281437058213968
+        wrapped = 0xfff73c006010
+        originalFn = 0xaaaaacddeb10 <__SM49scala.scalanative.runtime.NativeThread$$$Lambda$1G17$extern$forwarder>
+        originalArgs = 0xfff7a140ac90
+#38 0x0000fffff7dd582c in start_thread (arg=0xfff743e1b860) at ./nptl/pthread_create.c:447
+        ret = <optimized out>
+        pd = 0xfff743e1b860
+        out = <optimized out>
+        unwind_buf = {cancel_jmp_buf = {{jmp_buf = {281437024616448, 33603584, 281437058214232, 281437460871264, 281474840220848, 0, 281437024550912, 281474841444352, 281437460869408, 281437024550912, 281437058214320, 5167866594760000493, 0, 5167866559262883405, 0, 0, 0, 0, 0, 0, 0, 0}, mask_was_saved = 0}}, priv = {pad = {0x0, 0x0, 0x0, 0x0}, data = {prev = 0x0, cleanup = 0x0, canceltype = 0}}}
+        not_first_call = 0
+#39 0x0000fffff7e3ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+No locals.
+--- all threads (short) ---
+
+Thread 30 (Thread 0xfff6efe1b120 (LWP 8624) "kyo-core-test.r"):
+#0  0x0000fffff7dd1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0xfff6efe19430, op=137, expected=0, futex_word=0xfff7a1491960) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0xfff6efe19430, clockid=-1307310920, expected=0, futex_word=0xfff7a1491960) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xfff7a1491960, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0xfff6efe19430, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000fffff7dd4d20 in __pthread_cond_wait_common (abstime=0xfff6efe19430, clockid=1, mutex=0xfff7a1491908, cond=0xfff7a1491938) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=0xfff7a1491938, mutex=0xfff7a1491908, abstime=0xfff6efe19430) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000aaaab06dbbc4 in __SM26java.lang.impl.PosixThreadD4parkjzuEO (this=0xfff7a1491790, time=59999999916) at PosixThread.scala:173
+#6  0x0000aaaaaf2b3fb8 in __SM39java.util.concurrent.locks.LockSupport$D9parkNanosjuEO (this=<optimized out>, nanos=59999999916) at unknown/unknown:56
+#7  0x0000aaaaaf2b3cac in __SM39java.util.concurrent.locks.LockSupport$D9parkNanosL16java.lang.ObjectjuEO (this=0xaaaab219b8e8 <_SM39java.util.concurrent.locks.LockSupport$G8instance>, blocker=0xfff7a1497b10, nanos=59999999916) at LockSupport.scala:40
+#8  0x0000aaaaacc88fcc in __SM51java.util.concurrent.SynchronousQueue$TransferStackD8transferL16java.lang.ObjectzjL16java.lang.ObjectEO (this=0xfff7a1497b10, e=0x0, _nanos=<optimized out>) at SynchronousQueue.scala:228
+#9  0x0000aaaaacc88238 in __SM37java.util.concurrent.SynchronousQueueD4polljL29java.util.concurrent.TimeUnitL16java.lang.ObjectEO (this=0xfff7a1497e60, timeout=60000000000, unit=0xfff7a1435860) at SynchronousQueue.scala:614
+#10 0x0000aaaaacc8d174 in __SM39java.util.concurrent.ThreadPoolExecutorD7getTaskL18java.lang.RunnableEPT39java.util.concurrent.ThreadPoolExecutor (this=0xfff7a1497db0) at ThreadPoolExecutor.scala:407
+#11 0x0000aaaaacc8eb34 in __SM39java.util.concurrent.ThreadPoolExecutorD9runWorkerL46java.util.concurrent.ThreadPoolExecutor$WorkeruEO (this=0xfff7a1497db0, w=0xfff7a1491200) at ThreadPoolExecutor.scala:427
+#12 0x0000aaaaacc8fc74 in __SM46java.util.concurrent.ThreadPoolExecutor$WorkerD3runuEO (this=0xfff7a1491200) at ThreadPoolExecutor.scala:179
+#13 0x0000aaaaacda91f0 in __SM16java.lang.ThreadD3runuEO (this=0xfff7a14914a0) at Thread.scala:276
+#14 0x0000aaaaacdde3b8 in __SM39scala.scalanative.runtime.NativeThread$D16threadEntryPointL38scala.scalanative.runtime.NativeThreaduEPT39scala.scalanative.runtime.NativeThread$ (this=0xaaaab2135638 <_SM39scala.scalanative.runtime.NativeThread$G8instance>, nativeThread=0xfff7a1491790) at unknown:230
+#15 0x0000aaaaacddeacc in __SM39scala.scalanative.runtime.NativeThread$D24threadRoutine$$anonfun$1L28scala.scalanative.unsafe.PtrL28scala.scalanative.unsafe.PtrEPT39scala.scalanative.runtime.NativeThread$ (this=<optimized out>, arg=<optimized out>) at unknown:210
+#16 0x0000aaaaacddeb38 in __SM49scala.scalanative.runtime.NativeThread$$$Lambda$1G17$extern$forwarder () at unknown:206
+=== [bt5] DONE (07:47:16) ===
