@@ -63,16 +63,7 @@ inThisBuild(List(
         )
     ),
     resolvers += Resolver.sonatypeCentralSnapshots,
-    resolvers += Resolver.sonatypeCentralRepo("staging"),
-    // Vendored scala-native#4992 (module-init publish-ordering fix) pending an upstream release:
-    // a repackaged nativelib (0.5.12 plus the module_load.c field-before-CAS reorder) resolved
-    // from the in-tree maven repo. Without it, a concurrent first-touch reader can observe a
-    // module's InitializationContext before its instance field is written, and the resulting null
-    // module instance corrupts scala-native's StackTrace$Context (whose ByteArray holds the unwind
-    // cursor), so a later stack walk crashes the process. Drop this and bump when a scala-native
-    // release carries #4992.
-    resolvers += ("local-sn-patched" at file(".local-sn-repo").getAbsoluteFile.toURI.toString),
-    dependencyOverrides += "org.scala-native" % "nativelib_native0.5_3" % "0.5.12-kyo"
+    resolvers += Resolver.sonatypeCentralRepo("staging")
 ))
 
 ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
