@@ -60,6 +60,14 @@ Flag investigations (same-session A/B, 3 forks per side, dispatcher vs rehandled
 
 Path 1 verdict: complete. Commits 81e73be81d (dispatcher) and d4639377bc (pinning tests + bench row).
 
+Post-closure refinement (your morning review, landed 6cc0dc2ccd): the rebuild lambda inlined into the
+Handle instance, tiers unified through cached empty spans (an Eval pushing zero entries is Bind
+semantics), the captured continuation renamed `body` to dodge the Handle member shadow the lambda had
+been shielding. Same-session A/B: streaming row -6.9% (82.5 vs 88.7 us), fused flat. The empty-span vals
+stay hoisted by your ruling: Span.empty caches primitive tags only and allocates per call for reference
+tags; adding ClassTag[AnyRef] to Span's cachedEmpty upstream is an optional kyo-data follow-up that would
+remove two of the three.
+
 ## Path 2: types to their owners
 
 Verdict: killed by evidence, with one documented optional trade.

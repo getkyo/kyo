@@ -200,6 +200,7 @@ their entries and their reasons.
 | 2026-08-16 | 2 | E10: fork-spread check on E9 | trade confirmed real | no JIT lottery: every probe fork of the fused row above every control fork; every emitting fork below |
 | 2026-08-16 | 3 | E11: full cast/erasure site audit of Eval (30 sites) | path 3 killed | remaining erasure is repr assertions in adapters, storage casts, and hot-ladder patterns |
 | 2026-08-16 | 4 | E12: typed-currency site audit | path 4 killed | ~7 casts or fromArrow calls added, zero removed; bytecode-identical gate unmeetable |
+| 2026-08-16 | 1 | E13: rebuild lambda inlined into the Handle (user-suggested), tiers unified via cached empty spans | landed 6cc0dc2ccd | emitting -6.9% (82.5 vs 88.7), fused flat; suite 112; clean build green |
 
 ### Decisions
 
@@ -226,3 +227,4 @@ their entries and their reasons.
 |---|---|---|---|---|---|
 | baseline (b345a1412d) | 2275 (Eval 236) | 37 | 42 | 14 | 110 |
 | close (8e776a2d56) | 2298 (Eval 259) | 41 | 43 | 12 | 112 |
+| E13 landed (6cc0dc2ccd) | 2300 (Eval 261) | 40 | 43 | 12 | 112 |
