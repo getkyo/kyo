@@ -21,14 +21,18 @@ Direction (user): if the workaround holds, ship it, file a scala-native PR upstr
   `Worker.WorkerThread` and the `Threads` factory (clock/timer/top/selfcheck). Each scheduler thread
   then gets its OWN Scala Native `StackTrace` `Context` (fresh via `initialValue`) instead of an
   inherited/shared one. kyo-schedulerJVM/test PASSES (no JVM regression).
-- VALIDATION IN FLIGHT: stock scala-native (override forced back to 0.5.12, no vendored jar) + the
-  NoInherit change, loop kyo-coreNative/test x30. This is the exact user-facing config; 30 clean loops
-  => the kyo-side change alone protects users.
-- On HOLD: remove the vendoring (build.sbt override lines 74-75 + `.local-sn-repo`), re-confirm the
-  branch links against stock, and prepare the upstream scala-native report (empirical aliasing evidence
-  + NoInherit-fixes-it; note the inheritance SOURCE looks correct - keys stored as `key.reference`,
-  `inheritValues` applies `childValue` - so the true cause is below the visible source and is for the
-  maintainer to pinpoint). Then drive the full matrix to green.
+- VALIDATED: 40 clean kyo-coreNative/test loops on STOCK scala-native + the NoInherit change (30 via
+  the forced-stock override, 10 on the fully clean branch after removing the vendoring). Baseline
+  crashes in 1-3. JVM regression clear: kyo-schedulerJVM/test and kyo-coreJVM/test both green. The
+  `interrupt > repeated` 2m timeout occurred once in 40 loops under 30-run container load and did not
+  recur (one-off; tracked for the matrix, not a NoInherit regression).
+- DONE: vendoring removed (build.sbt override + `.local-sn-repo`, commit cad5bd138e). Shipped config =
+  pure-kyo NoInherit, stock scala-native, no vendoring. Branch fully validated locally.
+- REMAINING toward 3-green: push HEAD (remote is at fd4f563a, ~40 commits behind) for a full-matrix
+  run; push is user-gated. Upstream scala-native report + branch history cleanup are user's "later"
+  items (empirical aliasing evidence + NoInherit-fixes-it; the inheritance SOURCE looks correct -
+  keys stored as `key.reference`, `inheritValues` applies `childValue` - so the true cause is below
+  the visible source and is for the maintainer to pinpoint).
 
 ## MECHANISM = ThreadLocal aliasing, NOT external clobber (instrumentation, 2026-08-16)
 
