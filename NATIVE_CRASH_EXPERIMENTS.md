@@ -28,8 +28,9 @@ root, green the native CI.
 | E5 | serialize worker-thread starts (kyo Scheduler) | cause B trigger | CRASH after several clean loops -> **not sufficient alone** |
 | E6a | gdb on a core dump (DWARF binary) | LOCUS of the fault | NO CORE: scala-native `stackOverflowHandler` (stackOverflowGuards.c:254) `exit(sig)`s on an unhandled fault, so no core; also high crash variance |
 | E6b | gdb-wrapper: run real binary under gdb, `break exit if $x0==11`, loop test | LOCUS of the fault | **CAPTURED loop 1** (see below + NATIVE_CRASH_BACKTRACE.txt) |
-| E7 | #4992 via patched nativelib (in-tree maven repo, 0.5.12-kyo, self-verifying override) | cause A | PREPPED (build.sbt override + .local-sn-repo), not yet run |
-| E8 | #4992 + serialize-startup (both) | combined | PENDING (needs E7 working) |
+| E7 | #4992 via patched nativelib | cause A (module-init) | SUPERSEDED: E6b shows the crash is the libunwind unwinder, not module-init; scaffolding reverted |
+| E8 | #4992 + serialize-startup (both) | combined | SUPERSEDED (same) |
+| FIX | Trace.enrich skips the native runtime-stack suffix (guard `new Exception` unwind with `Platform.isNative`) | the E6b root cause | committed 9927fff853; fix-and-verify repro (30 loops) RUNNING |
 
 ## ROOT CAUSE (E6b backtrace) — NOT module-init, NOT GC
 
