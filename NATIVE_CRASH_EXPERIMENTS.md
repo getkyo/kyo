@@ -6,6 +6,30 @@ si_addr=(nil)` under concurrency. Reliable repro: loop `kyo-coreNative/test` on
 linux-arm64 podman, crashes within a few loops. Goal: locate the true cause(s), fix at
 root, green the native CI.
 
+## RESOLUTION: pure-kyo workaround = scheduler threads with inheritThreadLocals=false (2026-08-16)
+
+Direction (user): if the workaround holds, ship it, file a scala-native PR upstream, NO vendoring.
+
+- v3 instrumentation TALLY over 20 loops: crashes=0, tid-aliasing=20, canary=0. So the crash is
+  ThreadLocal aliasing (a `Context` reaching a different thread), causally confirmed (refusing the
+  aliased cursor -> 0 crashes), and NOT external clobber (candidate B).
+- Aliasing pattern: an earlier thread's `Context` (lower getId) reused by several later threads
+  (`owner=10 -> used 12,13,14,15`) -> children sharing an ancestor's Context = the InheritableThreadLocal
+  inheritance path.
+- FIX (committed dfad6b1abe): kyo-scheduler creates all its threads with `inheritThreadLocals=false`
+  via the public JDK9 `Thread(group,task,name,stackSize,inheritThreadLocals)` ctor -
+  `Worker.WorkerThread` and the `Threads` factory (clock/timer/top/selfcheck). Each scheduler thread
+  then gets its OWN Scala Native `StackTrace` `Context` (fresh via `initialValue`) instead of an
+  inherited/shared one. kyo-schedulerJVM/test PASSES (no JVM regression).
+- VALIDATION IN FLIGHT: stock scala-native (override forced back to 0.5.12, no vendored jar) + the
+  NoInherit change, loop kyo-coreNative/test x30. This is the exact user-facing config; 30 clean loops
+  => the kyo-side change alone protects users.
+- On HOLD: remove the vendoring (build.sbt override lines 74-75 + `.local-sn-repo`), re-confirm the
+  branch links against stock, and prepare the upstream scala-native report (empirical aliasing evidence
+  + NoInherit-fixes-it; note the inheritance SOURCE looks correct - keys stored as `key.reference`,
+  `inheritValues` applies `childValue` - so the true cause is below the visible source and is for the
+  maintainer to pinpoint). Then drive the full matrix to green.
+
 ## MECHANISM = ThreadLocal aliasing, NOT external clobber (instrumentation, 2026-08-16)
 
 Built an instrumented `StackTrace.scala` via the validated NIR-factory (recompile a shadowing
