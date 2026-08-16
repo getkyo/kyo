@@ -106,6 +106,44 @@ crashed, which is uninformative about mechanism). If E6 lands in
 cause A (validate with E7). If in `WorkerQueue`/scheduler or GC mark/sweep -> a different
 locus, re-plan. E6 gates whether E7/E8 are the right next step.
 
+## #4992 REFUTED too — it is a scala-native concurrent-fillInStackTrace bug (upstream)
+
+The #4992 `module_load.c` reorder was vendored via the `0.5.12-kyo` override and HARD-VERIFIED
+in the unpacked build (`UNPACKED reorder present: 1, from-0.5.12-kyo-jar: 1`). It STILL crashed
+on loop 1. So #4992 is not the cause either. Every candidate is now refuted with a verified test:
+
+| candidate | verified applied? | result |
+|-----------|-------------------|--------|
+| GC = commix / boehm | yes | crash |
+| serialize thread startup | yes | crash |
+| libunwind `decodeFDE` null-guard (0.5.12-kyo) | yes | crash (si_addr 0x10) |
+| #4992 module_load.c reorder (0.5.12-kyo) | yes (grep in build) | crash loop 1 |
+| enrich native-suffix skip | yes | crash |
+
+**Source reading (scala-native StackTrace.scala):** the unwind cursor lives in a per-thread
+`Context.data` `ByteArray` (`ThreadLocalContext extends InheritableThreadLocal`, `childValue`
+allocs a FRESH ByteArray per child, `initialValue` per creator) — so it is thread-local, not
+shared by inheritance. Yet the captured crash state (`decodeFDE(fdeStart=0)` from `stepWithDwarf`)
+is a CORRUPT cursor that Fable showed is impossible from a coherent libunwind path. A thread-local
+cursor going corrupt under concurrency points at scala-native's runtime: the `InheritableThreadLocal`
+implementation returning/copying wrong state, the `Context$` offset module, or the GC moving/reusing
+the `ByteArray` mid-walk. All are scala-native-internal and not patchable from kyo or via a jar
+resource (StackTrace.scala/Throwable.scala are compiled NIR, not resources).
+
+## Honest conclusion + options
+
+The crash is a scala-native 0.5.12 runtime bug in concurrent `Throwable.fillInStackTrace`. Complete
+fix is upstream or a scala-native SOURCE build. Options for green CI:
+1. Report upstream (#4992 thread or new) with the E6b backtrace + this refutation matrix; it is a
+   reproducible concurrent-stack-trace SIGSEGV, high value. Bump when a release carries the fix.
+2. scala-native SOURCE-BUILD fix hypotheses to test (heavy but complete + upstreamable): make the
+   Context a plain (non-inheritable) `ThreadLocal`; or serialize `currentRawStackTrace` with a
+   global lock. Vendor the resulting nativelib.
+3. Cheap confirming diagnostic (not a fix): run the repro with `--cpus 1` (scheduler -> 1 carrier ->
+   no concurrent capture); a clean run confirms concurrency-in-capture is the root.
+The vendored #4992 jar is KEPT (it fixes a real, separate maintainer-confirmed bug) but is NOT the
+crash fix. The `decodeFDE` guard was dropped.
+
 ## Attribution methodology (per user)
 
 Establish **both-applied -> green** first (E8), then disable one fix at a time from green
