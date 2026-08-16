@@ -44,11 +44,24 @@ maintainer-known (WojciechMazur) but undescribed and unfixed; fwbrasil is waitin
 2026-08-16). So the fix is ours to craft (and a clean standalone repro would also unblock the maintainer).
 
 **Plan (Fable-ordered):** (1) upstream recon DONE, nothing there. (2) M-gc x M-spawn combined repro
-(v6, IN FLIGHT) to reproduce candidate B standalone -> a fast fix-iteration harness. If it stays clean,
-(3) an instrumented nativelib build (canary words around the cursor+context region + owner-thread-id in
-Context, asserted per capture) to separate mechanisms: canary tripped = external clobber (candidate B);
-owner mismatch = aliasing; neither = libunwind-internal. Then craft + vendor the C fix, validate 30+
-loops (not 20, probabilistic), and file/update the upstream issue.
+(v6): CLEAN 7/15 (cut) -> candidate-B cell does NOT reproduce standalone either; kyo is the repro.
+(3) candidate-B REORDER FIX (move scalanative_GC_yield before Allocator_InitCursors, immix+commix),
+vendored on top of #4992 and HARD-VERIFIED in the unpacked build (`UNPACKED candidate-B fix present:
+1`, `ORDER OK: yield(76) before InitCursors(80)`): **REFUTED - crashed on loop 1, si_addr=0x10**
+(commit 6b267e19e3, validate-cbfix). So the simple reorder does not close the race: either candidate B
+is not the mechanism, or its window is elsewhere (stack registration, the disarmed-yieldpoint-trap
+gap, or a different clobber source). The reorder is KEPT in the vendored jar (it is a real correctness
+improvement even if not the crash fix) pending the instrumentation verdict.
+
+**NEXT = instrumentation (Fable diagnostic #2, now unavoidable).** bt5 already shows heap-looking
+garbage IN the cursor (external clobber), so instrument StackTrace.scala: canary words bracketing the
+cursor+context region of Context.data (checked before init_local and after the step loop) + an
+owner-thread-id on Context asserted per capture. One instrumented nativelib separates: canary tripped
+= external heap clobber (candidate-B family, needs a better/other fix); owner mismatch = ThreadLocal
+aliasing; neither = libunwind-internal. Build path: StackTrace.scala is compiled NIR, so either the
+sbt-project NIR-factory (compile a shadowing StackTrace in a minimal scala-native project, extract the
+NIR, swap ALL StackTrace* entries into the vendored jar) or a full scala-native source build. Validate
+the swap coherence with a STOCK recompile+swap first (kyo links + STILL crashes) before instrumenting.
 
 ## CURRENT STATE (earlier this session, superseded on mechanism by the section above)
 
