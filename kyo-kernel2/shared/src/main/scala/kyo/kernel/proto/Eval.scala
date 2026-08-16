@@ -126,8 +126,9 @@ object Eval:
                             case out: Arrow[Any, Any, Any] @unchecked =>
                                 Chain(out, outcome(whole, h, i))
                             case c: Loop.Continue[?] =>
-                                val st = whole.step
-                                st.head(c._1.asInstanceOf[Any < Any], st.tail)
+                                c._1 match
+                                    case p: Arrow[Any, Any, Any] @unchecked => Chain(p, whole)
+                                    case o                                  => whole(Nested.unnest[Any](o))
                             case done =>
                                 stack.truncate(i)
                                 done
@@ -137,8 +138,9 @@ object Eval:
                                 Chain(out, outcome(whole, h, i))
                             case c: Loop.Continue2[?, ?] =>
                                 stack.setState(i, c._1)
-                                val st = whole.step
-                                st.head(c._2.asInstanceOf[Any < Any], st.tail)
+                                c._2 match
+                                    case p: Arrow[Any, Any, Any] @unchecked => Chain(p, whole)
+                                    case o                                  => whole(Nested.unnest[Any](o))
                             case done =>
                                 stack.truncate(i)
                                 done
@@ -164,6 +166,8 @@ object Eval:
                         cur = b.value
                     case s: Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
                         cur = dispatchInline(s, s.asInstanceOf[Arrow[Any, Any, Any]])
+                    case m: SuspendWith[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any] @unchecked =>
+                        cur = dispatch(m.susp, m.asInstanceOf[Arrow[Any, Any, Any]])
                     case h: Handle[Nothing, Any, Any, Any, Any] @unchecked =>
                         stack.push(h.cont)
                         h.handler match
@@ -177,19 +181,14 @@ object Eval:
                         stack.pushAll(e.entries, e.tags, e.states)
                         cur = e.value
                     case a: Arrow[Any, Any, Any] @unchecked =>
-                        val s0 = a.step
-                        s0.head match
-                            case sus: Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
-                                cur = dispatch(sus, a)
-                            case h =>
-                                val next = s0.tail.chain(dump())
-                                try cur = h((), next)
-                                catch
-                                    case ex: Throwable =>
-                                        EffectTrace.attach(ex, a, next, stack, base)
-                                        throw ex
-                                end try
-                        end match
+                        val s0   = a.step
+                        val next = s0.tail.chain(dump())
+                        try cur = s0.head((), next)
+                        catch
+                            case ex: Throwable =>
+                                EffectTrace.attach(ex, a, next, stack, base)
+                                throw ex
+                        end try
                     case settled =>
                         if stack.size == base then running = false
                         else
@@ -219,6 +218,20 @@ object Eval:
                                     catch
                                         case ex: Throwable =>
                                             EffectTrace.attach(ex, h, stack, base)
+                                            throw ex
+                                    end try
+                                case s: Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
+                                    try cur = s(Nested.unnest[Any](settled))
+                                    catch
+                                        case ex: Throwable =>
+                                            EffectTrace.attach(ex, s, stack, base)
+                                            throw ex
+                                    end try
+                                case m: SuspendWith[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any] @unchecked =>
+                                    try cur = m(Nested.unnest[Any](settled))
+                                    catch
+                                        case ex: Throwable =>
+                                            EffectTrace.attach(ex, m, stack, base)
                                             throw ex
                                     end try
                                 case d: Defer[?, ?, ?] =>

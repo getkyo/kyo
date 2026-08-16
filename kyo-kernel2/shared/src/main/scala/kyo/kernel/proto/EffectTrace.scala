@@ -223,6 +223,9 @@ private[kyo] object EffectTrace:
                         push(c.a)
                     case s: Arrow.Suspend[?, ?, ?, ?, ?, ?] =>
                         frame(s.frame)
+                    case m: Arrow.SuspendWith[?, ?, ?, ?, ?, ?, ?, ?] =>
+                        push(m.tail)
+                        frame(m.susp.frame)
                     case h: Arrow.Handle[?, ?, ?, ?, ?] =>
                         region(h.handler.tag)
                     case b: Arrow.Bind[?, ?, ?] =>
