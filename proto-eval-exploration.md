@@ -178,7 +178,7 @@ their entries and their reasons.
 
 | path | status | notes |
 |---|---|---|
-| 1. named outcome driver | in progress | dispatcher in working tree; fixes the clean batch build; suite run next |
+| 1. named outcome driver | complete | 81e73be81d + d4639377bc; all gates green (suite 112, clean build, bytecode, boards A/B flat) |
 | 2. types to their owners | pending | run after 1; HandleLoop first as the probe |
 | 3. typed helpers | pending | after 2, on what 2 leaves unowned |
 | 4. typed currency | pending | after 3; strictest gate (bytecode identical) |
@@ -191,7 +191,11 @@ their entries and their reasons.
 | 2026-08-16 | (pre-charter) | E1: dispatch in place, region kept | failed as predicted | interior stole clause effect; `completed was true` |
 | 2026-08-16 | (pre-charter) | E2: capture + recompose via map | green, landed 22c675072d | 110/110; settled paths untouched; broke the clean batch build (see decisions) |
 | 2026-08-16 | (infra) | E3: exp package copy, main then Test scope | crashed both scopes, abandoned | StaleSymbolException in every clean batch compile |
-| 2026-08-16 | 1 | E4: `outcome` dispatcher replaces `rehandled` | clean build green | suspension set back to 4-file equilibrium; suite pending |
+| 2026-08-16 | 1 | E4: `outcome` dispatcher replaces `rehandled` | clean build green | suspension set back to 4-file equilibrium; suite 112/112 |
+| 2026-08-16 | 1 | E5: same-tag pipeline + multi-shot dispatch tests | green first run | pinned in ArrowEffectTest (d4639377bc) |
+| 2026-08-16 | 1 | E6: bytecode gate on Eval classfiles | zero nest calls | only unnest delivery sites remain |
+| 2026-08-16 | 1 | E7: board v20 with emittingClausesPayRegionRebuild | flat; new row 85.6us | two flags investigated in E8 |
+| 2026-08-16 | 1 | E8: A/B reruns of the two flagged rows, 3 forks each side | no regression | nestedPayloads pure noise (5.95 both sides); trailingMaps median forks equal (508 vs 507), one bad-JIT fork at HEAD plus ~4% session drift on both sides |
 
 ### Decisions
 
