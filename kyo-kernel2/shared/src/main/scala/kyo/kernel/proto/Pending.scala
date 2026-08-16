@@ -30,10 +30,8 @@ object Nested:
         ).asInstanceOf[A]
 end Nested
 
-object `<`:
-    implicit def lift[A, S](v: Arrow[Any, A, S]): A < S = v
-
-    implicit inline def liftValue[A: CanLift](v: A): A < Any = CanLift.lift[A, Any](v)
+object `<` extends Implicits:
+    implicit def fromArrow[A, S](v: Arrow[Any, A, S]): A < S = v
 
     extension [A, S](self: A < S)
 
@@ -143,8 +141,8 @@ object `<`:
             run(self: A < S, Arrow[Unit])
         end unit
 
-        inline def eval(using ev: S =:= Any): A =
-            Eval(ev.substituteCo[[X] =>> A < X](self))
+        inline def eval(using S =:= Any): A =
+            Eval((self: A < S).asInstanceOf[A < Any])
 
         private[kyo] inline def evalNow: Maybe[A] =
             (self: A < S) match
