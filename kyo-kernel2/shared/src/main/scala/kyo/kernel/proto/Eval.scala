@@ -1,7 +1,6 @@
 package kyo.kernel.proto
 
 import kyo.bug
-import kyo.kernel.proto.`<`.fromAny
 import kyo.kernel.proto.Arrow.*
 
 object Eval:
@@ -37,7 +36,7 @@ object Eval:
                         case p: Arrow[Any, Any, S2] @unchecked =>
                             Chain(p, this.chain(next))
                         case o =>
-                            Identity(fromAny(s(Nested.unnest[Any](o))), next)
+                            Identity(s(Nested.unnest[Any](o)).asInstanceOf[Any < S2], next)
 
         var cur: Any = v
         var running  = true
@@ -119,7 +118,7 @@ object Eval:
                         cur = e.value
                     case a: Arrow[Any, Any, Any] @unchecked =>
                         val s = a.step
-                        cur = s.head(fromAny(()), s.tail.chain(dump()))
+                        cur = s.head((), s.tail.chain(dump()))
                     case settled =>
                         if stack.size == base then running = false
                         else
@@ -149,7 +148,7 @@ object Eval:
                                     cur = d
                                 case a =>
                                     val s = a.step
-                                    cur = s.head(fromAny(settled), s.tail.chain(dump()))
+                                    cur = s.head(settled.asInstanceOf[Any < Any], s.tail.chain(dump()))
                             end match
         finally stack.truncate(base)
         end try

@@ -35,8 +35,6 @@ object `<`:
 
     implicit inline def liftValue[A: CanLift](v: A): A < Any = CanLift.lift[A, Any](v)
 
-    private[proto] inline def fromAny[S](inline v: Any): Any < S = v
-
     extension [A, S](self: A < S)
 
         @nowarn("msg=anonymous")
