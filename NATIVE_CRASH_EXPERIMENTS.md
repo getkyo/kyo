@@ -30,7 +30,14 @@ root, green the native CI.
 | E6b | gdb-wrapper: run real binary under gdb, `break exit if $x0==11`, loop test | LOCUS of the fault | **CAPTURED loop 1** (see below + NATIVE_CRASH_BACKTRACE.txt) |
 | E7 | #4992 via patched nativelib | cause A (module-init) | SUPERSEDED: E6b shows the crash is the libunwind unwinder, not module-init; scaffolding reverted |
 | E8 | #4992 + serialize-startup (both) | combined | SUPERSEDED (same) |
-| FIX | Trace.enrich skips the native runtime-stack suffix (guard `new Exception` unwind with `Platform.isNative`) | the E6b root cause | committed 9927fff853; fix-and-verify repro (30 loops) RUNNING |
+| FIX-1 | Trace.enrich skips the native runtime-stack suffix (guard `new Exception` unwind with `Platform.isNative`) | one unwind source | committed 9927fff853; **INSUFFICIENT** (still crashed loop 1). Kept: it removes a real hot unwind source and is correct, but the unwinder crash has other `fillInStackTrace` triggers |
+| E6c | gdb-wrapper on the fixed HEAD | the REMAINING unwind trigger | RUNNING |
+
+The crash is any concurrent `fillInStackTrace` hitting scala-native's libunwind (thread-local
+cursors, but a shared `LocalAddressSpace`/DWARF FDE lookup). `_LIBUNWIND_HAS_NO_THREADS` is
+not config-defined, so the FDE-cache RWMutex is likely real; the exact libunwind mechanism is
+open pending E6c. A complete fix is probably upstream (scala-native unwinder) or a broad
+kyo-side "no native stack traces under concurrency" change; decide from E6c evidence.
 
 ## ROOT CAUSE (E6b backtrace) — NOT module-init, NOT GC
 
