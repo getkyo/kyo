@@ -1,8 +1,8 @@
 # Eval exploration report
 
-Status: IN PROGRESS (overnight run; this file is filled in as results land and closes with the final
-recommendation). Charter and tracking: `proto-eval-exploration.md`. Branch commits this session are the
-review trail; nothing here is a landing decision, which stays yours.
+Status: CLOSED with a final recommendation (last section). Charter and tracking:
+`proto-eval-exploration.md`. Branch commits this session are the review trail; nothing here is a landing
+decision, which stays yours. Closing state: suite 112/112, clean batch build green, tree clean.
 
 ## The night's arc
 
@@ -115,12 +115,74 @@ streaming gain worth the fused cost; my recommendation is no.
 
 ## Path 3: typed helpers for the unowned logic
 
-PENDING
+Verdict: killed by the E9/E10 evidence plus a full site audit (E11).
+
+The audit classified every remaining cast, `@unchecked`, and erased pattern in Eval (30 sites):
+
+- **Representation assertions** (the `asInstanceOf[Any < S2]` family): all sit inside the two named
+  adapters, `resume` and `outcome`, at currency positions. Load-bearing per the skill (they block the lift
+  from corrupting); not a typing opportunity.
+- **Erasure-forced**: the `stack(i)` storage cast and the `unnest` delivery. The storage boundary is the
+  category's textbook case.
+- **Erased handler-kind patterns**: the two dispatch ladders (the Suspend arm, the settle arm). These are
+  the hot lines: E9/E10 measured that even an eight-line move adjacent to them seesaws the fused row by
+  3%, and the only "typed" replacement is virtual handler dispatch, banned this session for megamorphic
+  dispatch pathology.
+- The cold logic the path targeted is already clean: `dump` is typed and castless, the adapters are named
+  Transforms.
+
+The path's target set is empty where it is safe and hot where it is not.
 
 ## Path 4: typed currency through the loop
 
-PENDING
+Verdict: killed statically by its own kill criterion ("the opaque wall forces more assertions than it
+removes").
+
+Site-by-site (E12): none of Eval's existing casts is a widening that typing `cur` would absorb; they are
+representation assertions and storage casts that remain either way. Conversely, `cur: Any < Any` would
+require a new conversion at every arrow-valued assignment (`cur = c.a`, `cur = Chain(out, outcome(...))`,
+the two `cur = p` continue arms, `cur = done` twice, `cur = h.v`, `cur = d`): roughly seven added casts
+(or `fromArrow` calls, which change bytecode and fail the identical-bytecode gate) to remove zero. The
+implicit lift firing silently at any of these positions is also exactly the defect class and the compiler
+crash the night opened with.
+
+## Path 5: integrated rewrite
+
+Not attempted, by the charter's own terms: it composes the winners of 1 to 4, and the only winner is
+path 1, already landed. This is the charter's anticipated acceptable outcome: "the paths' individual
+landings stand and the full rewrite is declared not worth it."
+
+The one piece of path 5 with standalone value is the conformance net: a shared program corpus run through
+kyo-kernel and the proto asserting identical results across the hostile axes. That is a test asset, not a
+rewrite, and I recommend it as a follow-up on its own merits.
+
+## Size ledger (honest reading)
+
+| checkpoint | proto lines | Eval | casts | @unchecked | erased lambdas | suite |
+|---|---|---|---|---|---|---|
+| baseline (b345a1412d) | 2275 | 236 | 37 | 42 | 14 | 110 |
+| close (8e776a2d56) | 2298 | 259 | 41 | 43 | 12 | 112 |
+
+Path 1 did NOT shrink Eval textually: +23 lines and +4 casts, against the charter's "slightly smaller"
+expectation, which was wrong. The lines are the interior tiering (absent in rehandled, which always paid
+the three-span copy) and the dispatcher's explicit arms; the four casts are representation assertions in
+category, each at a currency position the map version handled with a silent lift. What shrank is the
+mechanism count: the evaluator no longer contains `map`, the implicit lift, or any same-run macro summon,
+and the erased-lambda count dropped. Whether that trade meets your bar is the review question; the
+alternative (the map dispatch) is not on the table, since it does not survive a clean build.
 
 ## Final recommendation
 
-PENDING
+1. **Review and keep the branch as it stands** (commits 81e73be81d, e2d2b6063d, d4639377bc, a2d599ca30,
+   8e776a2d56): the dispatcher is simultaneously the clean-build fix, the removal of the silent lift, and
+   path 1 complete with all gates green (suite 112, clean batch build, zero nest calls in Eval bytecode,
+   boards flat in controlled A/B, rebuild row measured at ~85 ns/element).
+2. **Do not land pushRegion** (patch preserved in the path 2 section): a consistent 3.3% fused-row cost
+   buys a 5.7% streaming gain; my judgement is the fused tower wins, but the trade is documented for
+   yours.
+3. **Declare the exploration closed at path 1**: paths 2 to 4 are killed by evidence recorded in the
+   charter, path 5 has nothing to integrate.
+4. **Follow-ups worth their own sessions**: the kyo-kernel/proto conformance corpus; and if the streaming
+   path becomes hot in practice, revisiting region establishment with the fused tower protected first.
+5. The kernel skill now carries tonight's two durable lessons (single lift and the suspension
+   equilibrium; dissolve before scaffolding), commit e2d2b6063d.

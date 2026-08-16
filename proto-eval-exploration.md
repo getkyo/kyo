@@ -180,9 +180,9 @@ their entries and their reasons.
 |---|---|---|
 | 1. named outcome driver | complete | 81e73be81d + d4639377bc; all gates green (suite 112, clean build, bytecode, boards A/B flat) |
 | 2. types to their owners | killed by evidence | most of its scope dissolved by path 1 (outcome is the named cold tail; hot arms excluded by scope and the banned virtual dispatch); the residual pushRegion probe moved the fused row (E9/E10) |
-| 3. typed helpers | pending | after 2, on what 2 leaves unowned |
-| 4. typed currency | pending | after 3; strictest gate (bytecode identical) |
-| 5. integrated rewrite + net | pending | only after 1 to 4 report |
+| 3. typed helpers | killed by evidence | target set empty where safe, hot where not (E11 audit; E9/E10 seesaw) |
+| 4. typed currency | killed statically | own kill criterion fired: ~7 casts added to remove zero (E12 site audit) |
+| 5. integrated rewrite + net | closed, not attempted | only winner is path 1, already landed; conformance net recommended as standalone follow-up |
 
 ### Experiment log
 
@@ -198,6 +198,8 @@ their entries and their reasons.
 | 2026-08-16 | 1 | E8: A/B reruns of the two flagged rows, 3 forks each side | no regression | nestedPayloads pure noise (5.95 both sides); trailingMaps median forks equal (508 vs 507), one bad-JIT fork at HEAD plus ~4% session drift on both sides |
 | 2026-08-16 | 2 | E9: Stack.pushRegion owns the cont-marker-state pairing | reverted, patch kept | suite 112, clean build green; same-session A/B: emitting -5.7%, stateful -2.0%, answersInPlace flat, fused +3.3% consistent across all forks |
 | 2026-08-16 | 2 | E10: fork-spread check on E9 | trade confirmed real | no JIT lottery: every probe fork of the fused row above every control fork; every emitting fork below |
+| 2026-08-16 | 3 | E11: full cast/erasure site audit of Eval (30 sites) | path 3 killed | remaining erasure is repr assertions in adapters, storage casts, and hot-ladder patterns |
+| 2026-08-16 | 4 | E12: typed-currency site audit | path 4 killed | ~7 casts or fromArrow calls added, zero removed; bytecode-identical gate unmeetable |
 
 ### Decisions
 
@@ -223,3 +225,4 @@ their entries and their reasons.
 | checkpoint | proto lines | casts | @unchecked | erased lambdas | suite |
 |---|---|---|---|---|---|
 | baseline (b345a1412d) | 2275 (Eval 236) | 37 | 42 | 14 | 110 |
+| close (8e776a2d56) | 2298 (Eval 259) | 41 | 43 | 12 | 112 |
