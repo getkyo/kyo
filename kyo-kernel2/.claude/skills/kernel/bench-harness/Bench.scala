@@ -406,6 +406,16 @@ object Bench:
       * Pure and separately testable: the ordering is the part worth checking, and checking it should
       * not cost a half-hour run.
       */
+    /** One arm of a bracket: the sources it measures and the JVM configuration it measures them under.
+      *
+      * Both, because a comparison is not always between two designs. The campaign's central question,
+      * whether forcing one method to inline recovers a regression, is one design under two JVM
+      * configurations, and a bracket that could only flip shas could not express it. Every such
+      * comparison was therefore run as a single unreplicated leg, which is why they all report a floor
+      * rather than a threshold.
+      */
+    case class Arm(sha: String, jvmArgs: Seq[String] = Nil)
+
     def bracketPlan(controlSha: String, variantSha: String, legs: Int = 5): Chunk[(String, String)] =
         Chunk.from(
             (0 until Math.max(2, legs)).map { i =>
@@ -422,8 +432,8 @@ object Bench:
     def bracket(
         session: Session,
         worktree: Path,
-        controlSha: String,
-        variantSha: String,
+        control: Arm,
+        variant: Arm,
         paths: Seq[String],
         markerSpecs: Seq[(String, String, String)],
         rows: Seq[String],
@@ -431,11 +441,16 @@ object Bench:
         evidence: Evidence,
         legs: Int = 5
     )(using Frame): (Chunk[Run], Chunk[Run]) < (Async & Fail) =
-        Kyo.foreach(bracketPlan(controlSha, variantSha, legs)) { (label, sha) =>
-            runLeg(session, worktree, label, sha, paths, markerSpecs, rows, forks, evidence)
-        }.map { legs =>
-            (Chunk.from(legs.filter(_.label.startsWith("control"))), Chunk.from(legs.filter(_.label.startsWith("variant"))))
+        val plan =
+            Chunk.from((0 until Math.max(2, legs)).map { i =>
+                if i % 2 == 0 then (s"control-${i / 2 + 1}", control) else (s"variant-${i / 2 + 1}", variant)
+            })
+        Kyo.foreach(plan) { (label, arm) =>
+            runLeg(session, worktree, label, arm.sha, paths, markerSpecs, rows, forks, evidence, arm.jvmArgs)
+        }.map { ls =>
+            (Chunk.from(ls.filter(_.label.startsWith("control"))), Chunk.from(ls.filter(_.label.startsWith("variant"))))
         }
+    end bracket
 
     /** Compares replicate legs, which is the only shape that can support a threshold.
       *

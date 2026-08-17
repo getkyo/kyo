@@ -212,6 +212,13 @@ object BenchTest:
         check("it starts and ends on the control", plan.head._2 == "aaa" && plan.last._2 == "aaa")
         check("labels are unique", plan.map(_._1).distinct.size == 5, plan.map(_._1).mkString(","))
         check("the controls it yields can run a null", Bench.nullComparison(Chunk(ctlLegs(0), ctlLegs(1), ctlLegs(2))).isDefined)
+        // a bracket must be able to compare one design under two JVM configurations, not only two
+        // designs. The campaign's central question is exactly that shape, and a sha-only bracket
+        // could not express it, so every such comparison ran unreplicated and reported a floor
+        // instead of a threshold.
+        val sameSha = Bench.Arm("aaa", Seq("-XX:CompileCommandFile=/tmp/cc.txt"))
+        check("an arm carries its own JVM args", sameSha.jvmArgs.nonEmpty && sameSha.sha == "aaa")
+        check("a config comparison uses one sha on both arms", Bench.Arm("aaa").sha == sameSha.sha)
         // degrees of freedom the plan buys: (3-1) + (2-1)
         check("and the shape gives three degrees of freedom",
             Stats.Replicated("r", Chunk(1.0, 2.0, 3.0), Chunk(1.0, 2.0)).degreesOfFreedom == 3)

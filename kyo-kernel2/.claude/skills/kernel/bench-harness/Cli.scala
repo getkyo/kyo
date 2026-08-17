@@ -42,8 +42,12 @@ case class BracketOpts(
     worktree: String,
     @HelpMessage("commit whose sources the control legs measure")
     control: String,
-    @HelpMessage("commit whose sources the variant legs measure")
+    @HelpMessage("commit whose sources the variant legs measure; equal to --control for a configuration comparison")
     variant: String,
+    @HelpMessage("extra JVM args for the control legs, repeatable")
+    controlJvm: List[String] = Nil,
+    @HelpMessage("extra JVM args for the variant legs, repeatable; this is how a configuration is compared rather than a design")
+    variantJvm: List[String] = Nil,
     @HelpMessage("benchmark rows; omit to measure the whole class, which is what a suite-wide claim requires")
     row: List[String] = Nil,
     @HelpMessage("JMH forks per leg; 1 is usually right here since the bracket replicates legs instead")
@@ -132,8 +136,8 @@ object BenchBracket extends KyoCaseApp[BracketOpts]:
             legs <- Bench.bracket(
                 session = session,
                 worktree = Path(opts.worktree),
-                controlSha = opts.control,
-                variantSha = opts.variant,
+                control = Bench.Arm(opts.control, opts.controlJvm),
+                variant = Bench.Arm(opts.variant, opts.variantJvm),
                 paths = Cli.protoPaths,
                 markerSpecs = Cli.markerSpecs,
                 rows = opts.row,
