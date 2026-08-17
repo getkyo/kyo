@@ -56,9 +56,27 @@ to boxing.
 
 **Default if you say nothing:** *hold*. This is the only one of the four where the default is not to
 proceed, because a memory-model question is not one I can resolve by measurement, and getting it wrong
-produces a bug that no benchmark row would ever show. What I will do instead is cheap and useful:
-`javap` the compiled unit to confirm or refute the 434-byte figure, since that costs nothing and the
-candidate currently rests on an unverified number.
+produces a bug that no benchmark row would ever show.
+
+**The probe is done, and it re-bases the candidate.** Bytecode sizes, read through the harness:
+
+    Safepoint.home    17B      Safepoint.get     28B
+    Safepoint.enter   50B      Safepoint.exit    19B
+    poll surface (get + enter + exit + home)     145B
+    Eval$::loop                                  1703B   <- the hot unit
+
+The candidate says the poll is **712 B, 41.7%** of a 1708-byte unit. The unit checks out at 1703 B.
+The poll's *declared* surface is **145 B**, so the other ~567 B is C2 expanding the VarHandle chain
+in place, exactly as the 434-byte claim implies. javap reports what a method declares, never what the
+JIT expanded into it, so this **bounds the claim without settling it**, and the instrument that would
+settle it (a compiled-code dump) does not exist in this harness.
+
+Two consequences for the ruling. The byte-count story is **not verifiable with what we have**, and its
+stated falsifier is already dead besides: the compilation log shows every safepoint method inlined at
+23 to 24 sites, so there is no refusal for a smaller poll to flip. What survives is the CPU profile,
+which puts the safepoint machinery at ~8.4% of samples and is the largest kernel-owned block after
+`Nested`. **If IN-3 is revived it should be re-stated on the profile, not on the byte count**, and its
+falsifier changed accordingly.
 
 ---
 
