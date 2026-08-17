@@ -179,6 +179,20 @@ same banner and behind the same exit code as an unsettled leg, naming the rows i
 A session with too few control legs is blocked too, and for a stronger reason: it is not that the
 check failed, it is that the session cannot check itself. That also used to be a printed line.
 
+## Found by reading a real verdict
+
+**26, two fixed decimals made a nanosecond row unreadable.** The C4 bracket regressed
+`evalFixedOverhead` by 26.2%, cleanly separated and not marginal, and the report rendered it as
+`0.01 ± 0.00` against `0.01 ± 0.00`. The numbers behind the verdict were invisible and the error
+column read as though there were no error at all; the real values were 0.005853 ± 0.000317 against
+0.007364 ± 0.000111, which any reader could have judged on sight.
+
+The skill requires that a reader judge a result without asking what was measured or how confident it
+is, and requires the error column specifically because a delta smaller than the combined error is not
+a result. Rounding both to zero defeats both rules at once. **Fixed**: precision scales with
+magnitude, and the same stored runs re-read correctly with no re-run, since a comparison is a pure
+function over records.
+
 ## Found by trying to replicate the sweep
 
 **25, a stored run did not record the JVM arguments that produced it.** A configuration comparison
@@ -227,7 +241,9 @@ two readings, rather than presenting itself as a clean comparison.
 | 25 | a stored run did not record the JVM args that produced it | **fixed**: recorded and reported; the headline pair remains unrecoverable |
 | 26 | two fixed decimals made a nanosecond row unreadable | **fixed**: precision scales with magnitude |
 
-Twenty-two fixed, one bounded, one an observation. Defect 9's mitigation is now wired into every
+Twenty-six entries: **22 fixed**, 1 bounded (23), 1 open (9), 1 an observation (7), 1 superseded (5).
+Counted from the table rather than tallied by hand, because this line had drifted from it once
+already. Defect 9's mitigation is now wired into every
 bracket rather than available on request; what remains irreducible about 9 is that fixtures are
 written by the understanding that wrote the code, which is why the A/A, whose input is not authored,
 is the check that keeps earning its place.
