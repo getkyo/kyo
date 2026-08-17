@@ -23,23 +23,29 @@ settles nothing.
 
 | exp | ingested | tool verdict | 3-way table | disagreements discharged |
 |---|---|---|---|---|
-| exp3 sweep | yes | yes | partial | **no** |
+| exp3 sweep | yes | yes | **yes** | **yes**, 3 of 3 |
 | exp1 budget probes | no | no | no | no |
 | exp4 escape analysis | no | no | no | no |
 | exp5 tier splits | no | no | no | no |
 
-### Open findings from this stream
+### Findings from this stream, all discharged
 
-1. **`Bench.compare` has no floor at the legs' own error.** Classified −9.8% a win on a row whose
-   control leg reports ±15.2%. The floor exists only in `compareReplicated`. *Classification: I was
-   right, tool wrong.* Obliges: the floor on single-pair comparison, plus a test using the real
-   numbers. **Open.**
-2. **No steady-state detection from the iteration series.** The same row's control iterations are
-   `[86.4, 80.8, 81.4, 78.5, 78.6]`: a warmup ramp the harness cannot see, because `stillCompiling`
-   reads `compiler.time.profiled`, which ingested runs do not carry. *Classification: tool cannot
-   express it.* Obliges: detection from `rawData`. **Open.**
-3. **`TOOL-VERDICT.md` claims "the tool is right each time".** False, per finding 1. *Obliges:
-   correction, error left visible.* **Open.**
+1. **`Bench.compare` had no floor at the legs' own error.** Classified -9.8% a win on a row whose
+   control leg reports ±15.2%. *Tool wrong.* **Fixed**: single-pair comparison floors at the legs'
+   own error and states that a floor is not a replicate-estimated threshold.
+2. **No steady-state detection from the iteration series.** *Tool could not express it.* **Fixed**:
+   `unsettledStart` judges by how far the first iteration drags the mean the verdict uses. Two
+   earlier criteria were tried against real data and failed: a fixed percentage cannot work, and an
+   outlier test cannot either, since two real rows trip it at 2.43x and 2.53x with only one a genuine
+   ramp. Both rows are pinned as fixtures.
+3. **`TOOL-VERDICT.md` claimed "the tool is right each time".** *False.* **Corrected**, error left
+   visible.
+
+### And the change that came out of it
+
+An unsettled leg is now a **blocker**, not a warning: banner rendered first, data still printed in
+full, process exits non-zero. A warning line in a thirty-line report is something this operator
+demonstrably skips. On the real sweep it fires once, on the true positive, and exits 1.
 
 ## Done
 
@@ -48,7 +54,7 @@ settles nothing.
   known-answer fixture, the verdict statistic, efficacy gate, budget-proximity ranking, JVM args per
   leg, drift off the session path, the ingest path.
 - All 12 implementation-review findings closed.
-- 153 checks green across five suites.
+- **165 checks green** across five suites.
 - Experiment data force-added to git; `.gitignore` had a global `*.json` hiding all of it.
 
 ## Open, beyond the validation stream
