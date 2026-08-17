@@ -1,50 +1,82 @@
+import Model.*
 import kyo.*
 
-/** Exercises the classification and rendering the report depends on, with synthetic JMH json so it runs without a benchmark. */
+/** Proves the guards fire, using synthetic runs so it needs no benchmark. Each check corresponds to a real failure from the sessions that
+  * produced this tool.
+  */
 object BenchTest:
 
-    def jmh(name: String, score: Double, error: Double): String =
-        s"""{"benchmark":"kyo.kernel.bench.ProtoKernelBench.$name","mode":"avgt",
-           |"primaryMetric":{"score":$score,"scoreError":$error,"scoreUnit":"us/op",
-           |"rawData":[[1.0,2.0,3.0,4.0,5.0]]}}""".stripMargin
+    def jmh(name: String, score: Double, error: Double, alloc: Double): String =
+        s"""{"benchmark":"kyo.kernel.bench.ProtoKernelBench.$name","mode":"avgt","forks":3,
+           |"primaryMetric":{"score":$score,"scoreError":$error,"scoreUnit":"us/op","rawData":[[1,2,3,4,5]]},
+           |"secondaryMetrics":{"gc.alloc.rate.norm":{"score":$alloc},"gc.count":{"score":9}}}""".stripMargin
 
-    def leg(label: String, sha: String, entries: (String, Double, Double)*): Bench.Leg =
-        val raw  = entries.map(jmh.tupled).mkString("[", ",", "]")
-        val rows = Bench.parseJmhJson(raw)
-        Bench.Leg(label, sha, rows.map(r => r.name -> r).toMap, Map("SuspendWith" -> 4))
+    def rows(entries: (String, Double, Double, Double)*)(using Frame): Chunk[Row] =
+        Abort.run(Bench.parseJmh(entries.map(jmh.tupled).mkString("[", ",", "]"))).eval.getOrThrow
+
+    def leg(
+        label: String,
+        entries: Seq[(String, Double, Double, Double)],
+        jit: Chunk[JitEntry] = Chunk.empty,
+        whole: Boolean = true,
+        evidence: Evidence = Evidence.Full
+    )(using Frame): Run =
+        Run(
+            id = s"$label-x", label = label, sha = "0123456789abcdef", forks = 3, evidence = evidence,
+            wholeClass = whole, declaredRows = 15, markers = Chunk(Marker("SuspendWith", 4)),
+            rows = rows(entries*), jit = jit, alloc = Chunk.empty, cpu = Chunk.empty, recordedAt = "now"
+        )
 
     def check(name: String, cond: Boolean): Unit =
         println(if cond then s"  ok   $name" else s"  FAIL $name")
         if !cond then throw new AssertionError(name)
 
     def main(args: Array[String]): Unit =
+        import kyo.Frame.internal
+
+        println("jmh parsing")
+        val parsed = rows(("a", 12.5, 0.4, 640.0))
+        check("score, error and unit survive", parsed.head.score == 12.5 && parsed.head.error == 0.4 && parsed.head.unit == "us/op")
+        check("gc.alloc.rate.norm is picked out of secondary metrics", parsed.head.allocPerOp == Maybe(640.0))
+        check("iteration count comes from rawData", parsed.head.count == 5)
+
         println("classification")
-        val control = leg("control", "aaaaaaa", ("fast", 100.0, 1.0), ("flat", 50.0, 1.0), ("slow", 20.0, 0.5), ("tiny", 0.005, 0.004))
-        val variant = leg("variant", "bbbbbbb", ("fast", 60.0, 1.0), ("flat", 51.0, 1.0), ("slow", 22.0, 0.5), ("tiny", 0.006, 0.004))
-        val deltas  = Bench.compare(control, variant)
-        val byRow   = deltas.map(d => d.row -> d).toMap
+        val base = Seq(("fast", 100.0, 1.0, 640.0), ("flat", 50.0, 1.0, 640.0), ("slow", 20.0, 0.5, 640.0), ("tiny", 0.005, 0.004, 8.0))
+        val ctl  = leg("control", base)
+        val vnt  = leg("variant", Seq(("fast", 60.0, 1.0, 320.0), ("flat", 51.0, 1.0, 640.0), ("slow", 22.0, 0.5, 640.0), ("tiny", 0.006, 0.004, 8.0)))
+        val cmp  = Bench.compare(ctl, vnt)
+        val by   = cmp.deltas.map(d => d.row -> d).toMap
 
-        check("a 40% improvement reads as faster", byRow("fast").verdict == Bench.Verdict.Faster)
-        check("a 2% move stays inside the drift band", byRow("flat").verdict == Bench.Verdict.Flat)
-        check("a 10% loss reads as a regression", byRow("slow").verdict == Bench.Verdict.Regressed)
-        check("a score dominated by its own error is below resolution", byRow("tiny").verdict == Bench.Verdict.BelowResolution)
-        val real = deltas.filter(_.verdict != Bench.Verdict.BelowResolution)
-        check("the worst real movement sorts last among real rows", real.last.row == "slow")
-        check("an artifact never sorts as the headline regression", deltas.last.row == "tiny")
-        check("counts come from rawData", byRow("fast").variant.count == 5)
+        check("a large improvement reads as faster", by("fast").verdict == Verdict.Faster)
+        check("a small move stays inside the drift band", by("flat").verdict == Verdict.Flat)
+        check("a loss beyond the band reads as a regression", by("slow").verdict == Verdict.Regressed)
+        check("a score dominated by its own error is below resolution", by("tiny").verdict == Verdict.BelowResolution)
+        check("an artifact never sorts as the headline", cmp.deltas.last.row == "tiny")
 
-        println("rendering")
-        val out = Bench.render(control, variant, deltas, forks = 3)
-        check("a regressed row is called out as unfinished", out.contains("the work is unfinished"))
-        check("markers are printed for both legs", out.contains("SuspendWith -> 4"))
-        check("the drift band is stated", out.contains("Drift band"))
-        check("every row appears", Seq("fast", "flat", "slow", "tiny").forall(r => out.contains(s"`$r`")))
+        println("mechanism")
+        check("an allocation change is reported as the mechanism", by("fast").mechanism.exists(_.contains("allocation")))
+        check("a movement with no supporting evidence is flagged unexplained", by("slow").unexplained)
+        check("a flat row is never called unexplained", !by("flat").unexplained)
 
-        println("clean board")
-        val quiet = Bench.compare(control, leg("v2", "ccccccc", ("fast", 100.0, 1.0), ("flat", 50.5, 1.0), ("slow", 20.1, 0.5), ("tiny", 0.005, 0.004)))
-        check("no regression line when nothing regressed", Bench.render(control, control, quiet, 1).contains("No row regressed"))
+        println("jit diff")
+        val withJit = Bench.compare(
+            leg("control", base, Chunk(JitEntry("A::apply", 6, true, "inline (hot)"))),
+            leg("variant", base, Chunk(JitEntry("A::apply", 87, false, "failed to inline: callee is too large")))
+        )
+        check("a size and verdict change is surfaced", withJit.jitChanges.exists(s => s.contains("6B inlined") && s.contains("87B refused")))
 
-        println("\nall checks passed")
-        println(out)
+        println("subset guard")
+        val subset = Bench.compare(leg("control", base.take(2), whole = false), leg("variant", base.take(2), whole = false))
+        val subsetOut = Report.render(subset)
+        check("a subset run cannot claim the suite is clean", !subsetOut.contains("across the whole class"))
+        check("a subset run says so explicitly", subsetOut.contains("not a statement about the suite"))
+        check("a whole-class clean run does make the claim", Report.render(Bench.compare(ctl, ctl)).contains("across the whole class"))
+
+        println("evidence guard")
+        val timingOnly = Report.render(Bench.compare(leg("c", base, evidence = Evidence.Timing), leg("v", base, evidence = Evidence.Timing)))
+        check("a timing-only run is not presented as attributed", timingOnly.contains("no movement here is attributed"))
+
+        println("\nall checks passed\n")
+        println(Report.render(cmp))
     end main
 end BenchTest
