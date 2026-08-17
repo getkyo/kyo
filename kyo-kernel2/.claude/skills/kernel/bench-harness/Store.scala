@@ -176,6 +176,26 @@ object Report:
                 "so a sentence of the form 'this moved because of change X' is not supported by anything here, " +
                 "however plausible X is. Declare a chain of shas to isolate one."
 
+    /** A score rendered so its own digits survive.
+      *
+      * Two fixed decimals was the previous format and it hid the numbers behind a verdict. The row
+      * `evalFixedOverhead` measures a few nanoseconds, so a real and cleanly separated regression
+      * printed as `0.01 ± 0.00` against `0.01 ± 0.00` beside a `+26.2%`, with the error column reading
+      * as though there were no error at all. The actual values were 0.005853 and 0.007364, which any
+      * reader could have judged on sight.
+      *
+      * The skill requires that a reader can judge a result without asking what was measured or how
+      * confident it is, and requires the error column specifically because a delta smaller than the
+      * combined error is not a result. A format that rounds both to zero defeats both rules at once.
+      */
+    def score(x: Double): String =
+        val a = Math.abs(x)
+        if a == 0.0 then "0"
+        else if a >= 100 then f"$x%.1f"
+        else if a >= 1 then f"$x%.2f"
+        else if a >= 0.01 then f"$x%.4f"
+        else f"$x%.6f"
+
     def icon(v: Verdict): String =
         v match
             case Verdict.Faster          => "🟢"
@@ -252,7 +272,7 @@ object Report:
                 else if d.unexplained then "**none found**"
                 else "-"
             f"| ${icon(d.verdict)} | `${d.row}` | ${d.control.mode} | ${d.variant.count} | " +
-                f"${d.control.score}%.2f ± ${d.control.error}%.2f | ${d.variant.score}%.2f ± ${d.variant.error}%.2f | $delta | $alloc | $mech |"
+                s"${score(d.control.score)} ± ${score(d.control.error)} | ${score(d.variant.score)} ± ${score(d.variant.error)} | $delta | $alloc | $mech |"
         }.mkString("\n")
 
         val jit =

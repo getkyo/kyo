@@ -412,6 +412,25 @@ object BenchTest:
             check("and told what it would take", tooFew.exists(_.contains("Five legs")), tooFew.mkString)
         }
 
+        println("a score that can be read")
+        // found by running a real bracket: a cleanly separated regression on a nanosecond row printed
+        // as `0.01 ± 0.00` against `0.01 ± 0.00` beside `+26.2%`. The real numbers were 0.005853 and
+        // 0.007364, obvious on sight, and the error column read as though there were none.
+        locally {
+            check("a nanosecond score keeps its digits", Report.score(0.005853) == "0.005853", Report.score(0.005853))
+            check("and so does its error", Report.score(0.000317) == "0.000317", Report.score(0.000317))
+            check("an ordinary score stays readable", Report.score(26.82) == "26.82", Report.score(26.82))
+            check("a large one does not grow a tail", Report.score(314.62) == "314.6", Report.score(314.62))
+            check("a sub-unit score gains precision", Report.score(0.56) == "0.5600", Report.score(0.56))
+            check("zero is zero", Report.score(0.0) == "0", Report.score(0.0))
+            // the real pair from the bracket, rendered into a row, must not collapse to one value
+            val nano = Report.render(Bench.compare(
+                leg("c", Seq(("evalFixedOverhead", 0.005853, 0.000317, 8.0))),
+                leg("v", Seq(("evalFixedOverhead", 0.007364, 0.000111, 8.0)))
+            ))
+            check("the two legs render as different numbers", nano.contains("0.005853") && nano.contains("0.007364"), nano.linesIterator.filter(_.contains("evalFixed")).mkString)
+        }
+
         println("a refusal that can be read")
         // the red-tree gate was exercised for the first time by planting a failing test in the
         // throwaway worktree. It refused, correctly, and buried the one line naming the failing test

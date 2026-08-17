@@ -3,7 +3,51 @@
 Candidate 8, and the only one of the ten whose deliverable is a failing test rather than a number. It
 is in the list deliberately, to test whether the harness can handle such a candidate at all.
 
-**Status: reproduced, fixed, suite green. Performance impact under measurement.**
+**Status: reproduced, fixed, suite green, cost measured. One decision open, below.**
+
+## The cost, measured
+
+Bracket `9685c9b445` against `2fc76b9cc6`, five legs, whole class, A/A null clean across all 15 rows.
+
+| | row | control | variant | delta |
+|---|---|---|---|---|
+| 🔴 | `evalFixedOverhead` | 0.005853 ± 0.000317 | 0.007364 ± 0.000111 | **+26.2%** |
+| ⚪ | every other row | | | flat |
+
+That is the row that measures the fixed overhead of `Eval.apply`, which is the method the fix changes,
+so it is the row that should move and the only one that did. **About 1.5 ns per top-level `eval`**:
+a `Safepoint.get()` thread-local lookup, an array read, an array write, and a `finally`.
+
+The legs are unusually clean for this campaign, three controls at 0.005853 / 0.005827 / 0.005775 and
+two variants at 0.007364 / 0.007319, with no overlap. Nothing about this verdict is marginal.
+
+Two caveats the harness attached and I am not overriding: the session resolves flat rows only to
+±32.91% at worst (df 3), so "every other row flat" is a weak statement; and this is a two-sha
+comparison, so no source-level mechanism is attributable from it, however obvious the mechanism looks.
+
+## The decision this opens
+
+1.5 ns per top-level `eval` buys the elimination of a permanent per-thread budget leak. That is a
+real trade and it is yours, not mine.
+
+There may be a cheaper shape, and it is measurable rather than arguable. The guard currently pays on
+*every* eval, but the defect only exists on the exception path, so a `catch` that restores and
+rethrows would pay nothing on the happy path:
+
+```scala
+try Nested.unnest[A](loop(v, armed = false, neverStop))
+catch case ex: Throwable => Safepoint.reset(Safepoint.get()); throw ex
+```
+
+**Stated as a hypothesis, not a recommendation**, because it is not equivalent: `reset` installs a
+fresh budget rather than the outer drive's exact value, and that differs whenever user code catches a
+throw from a nested `eval` and continues the outer drive. Whether that is reachable, and whether the
+saving is real, are two separate measurements. The honest way to settle it is a chain of three shas
+(pristine, `save`/`finally`, `catch`/`reset`), since a pair would attribute nothing.
+
+**Default if you say nothing:** keep the `save`/`finally` version. It is exactly correct, its cost is
+confined to one row that measures nothing but call overhead, and correctness at 1.5 ns is the trade
+this project's rules would take by default.
 
 The reproduction failed on pristine sources for exactly the right reason, which is the only kind of
 red that counts:

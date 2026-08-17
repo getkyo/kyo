@@ -17,12 +17,13 @@ being caught.
 
 ## OPEN, in the order it should be picked up
 
-1. **C4's cost measurement, IN FLIGHT.** The bug is reproduced, fixed and committed in the throwaway
-   worktree (`2fc76b9cc6`); see the C4 section below. What is open is whether the added boundary
-   `try`/`finally` costs anything: bracket `9685c9b445` against `2fc76b9cc6`, five legs, timing
-   evidence, store `bench-results/c4-store2`. Legs are saved only after all five complete, so an empty
-   store means it is still running. When it lands, read it with `BenchCompare` over the two run ids
-   rather than re-running anything.
+1. **C4 is measured and needs a ruling.** The fix costs **+26.2% on `evalFixedOverhead`**
+   (0.005853 → 0.007364, about 1.5 ns per top-level `eval`), every other row flat, A/A null clean.
+   That is the row that measures `Eval.apply`'s fixed overhead, so it is the row that should move.
+   The trade is 1.5 ns per eval against a permanent per-thread budget leak on exceptions. A cheaper
+   `catch`-based shape exists but is not equivalent and is a hypothesis, not a recommendation; the
+   honest way to settle it is a three-sha chain. **Default: keep the `save`/`finally` version.** See
+   `bench-results/c4/RESULT.md`.
 2. **The remaining candidates are all gated, and each now has a recorded default.** See
    `RULINGS-NEEDED.md`. C1, IN-1, IN-2, DIS-1 and DIS-2 are closed; C3, DIS-3, DIS-4 and IN-3 need a
    ruling. Defaults: **DIS-3 proceed** (it is the only open lead on the campaign's central regression,
