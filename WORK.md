@@ -197,6 +197,26 @@ and when the leaked effect is the handler's **own tag** it is a **livelock**, si
 this very handler inside the region and its clause re-raises again. That hung two test runs; the case
 now bounds the clause with a counter and fails with `"clause answered its own re-raise"`.
 
+**Two fix attempts, both wrong, both reverted, and a held-out Fable designer is IN FLIGHT.** Attempt 1
+routed the synchronous case through `outcome(...)`, misreading it: `region()` delivers the payload
+*into* the rebuilt region, so same scoping plus an extra park, 8 red. Attempt 2 delivered `_1` as a
+value via `whole(...)`, misreading that: `Suspend.apply(v) = cont(v)` is a raw hand-off, so a bare
+`Arrow` reached the body's `map(_ + 1)` as an object, 8 red. Both reasoned from partial reads of the
+drive. Stopped, wrote the full report at `reviews/CLAUSE-SCOPE-LEAK.md` (reproduction, the seven-case
+table, exact drive lines, history, both attempts, what the representation says, **five directions,
+not a prescription**), and launched a held-out Fable for **analysis only** to settle the open question
+(what the pre-regression drive did with a computation-valued payload), adjudicate the `Defer`-only
+claim, and design the path forward under the governing goal: safer lift/nest/unnest, no
+rearchitecture, `handle*` shape unchanged, tests as written.
+
+The owner's two observations that reframed it: **the answer slot is missing a `Nested`** (`Loop.continue`
+stores its payload raw, so a computation-valued answer arrives as a bare `Arrow` and the drive guesses),
+and **`fromArrow` is unsafe** in the sense that it lets any `Defer` enter a `<` slot while asserting it
+is a computation, so downstream code cannot tell "value" from "step." **Only `Defer`s belong in a
+computation position**; the opaque type's `Arrow[Any, A, S]` arm and the `Defer`/`Transform` split on
+`head` both say so, and `fromArrow`'s type respects it, which is why bounding `fromArrow` alone does not
+close *this* leak (`SuspendWith` is a `Defer`) but closes the adjacent `Transform` class.
+
 The structural cause is an asymmetry in `Eval.dispatchInline`. When the clause *suspends* and later
 settles to `Continue(arrow)`, `outcome(whole, h, i)` **captures the region's stack segment above `i`
 into an `Arrow.Eval`, truncates to `i`, and runs the answer with the region gone**, rebuilding it on
