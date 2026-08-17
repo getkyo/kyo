@@ -308,6 +308,45 @@ object LogCompilation:
                 .sortBy(c => (c.monomorphic.contains(true), -c.count))
         )
 
+    /** Methods whose C2 inlining verdict differs between two logs.
+      *
+      * The efficacy gate. When an isolation run changes a JVM flag, this answers the only question that licenses reading its score: did the
+      * flag do anything? A harness whose flags silently fail to take would refute every hypothesis it tested and pass its own acceptance,
+      * which is the most dangerous failure available to it.
+      *
+      * It also names *what* moved, which is how a budget experiment turns into a mechanism: raising `FreqInlineSize` from 325 to 600 moved 57
+      * methods, and the one that mattered was a 379-byte continuation body going from refused-at-every-site to inlined.
+      */
+    def diffVerdicts(before: Parsed, after: Parsed, prefix: String = "kyo."): Chunk[VerdictChange] =
+        val b = inlining(before, prefix).map(v => v.method -> v).toMap
+        val a = inlining(after, prefix).map(v => v.method -> v).toMap
+        Chunk.from(
+            (b.keySet ++ a.keySet).toSeq.sorted.flatMap { m =>
+                val bs = b.getOrElse(m, InlineSites(m, 0, 0, 0, Chunk.empty))
+                val as = a.getOrElse(m, InlineSites(m, 0, 0, 0, Chunk.empty))
+                if bs.inlined == as.inlined && bs.refused == as.refused then None
+                else Some(VerdictChange(m, Math.max(bs.bytes, as.bytes), bs, as))
+            }
+        )
+
+    /** Whether a configuration change had any effect on inlining at all.
+      *
+      * Reported as a count and a size-refusal delta rather than a boolean, because "the flag took" is a matter of degree: one verdict moving
+      * is noise, fifty-seven moving with size refusals falling from 31 to 20 is a flag doing its job.
+      */
+    def efficacy(before: Parsed, after: Parsed, prefix: String = "kyo."): (Int, Int, Int) =
+        val changed = diffVerdicts(before, after, prefix).size
+        // counted per site, not per method: a method that went from ten refusals to six still has
+        // some, so a method-level count reports no change where more than a third of the refusals
+        // actually went away
+        def sizeRefusals(p: Parsed) =
+            inlining(p, prefix).filter(_.reasons.exists(r => r.contains("too big") || r.contains("too large"))).map(_.refused).sum
+        (changed, sizeRefusals(before), sizeRefusals(after))
+
+    /** Methods refused for size while close enough to a budget that shrinking them could flip the verdict, worst first. */
+    def budgetCandidates(p: Parsed, prefix: String = "kyo."): Chunk[InlineSites] =
+        Chunk.from(inlining(p, prefix).filter(_.nearBudget.isDefined).sortBy(-_.refused))
+
     /** Sites the log carries no receiver profile for. Reported as a count, never as a classification. */
     def unprofiledSites(p: Parsed, prefix: String = "kyo."): Int =
         p.tasks.flatMap(_.calls).count(c => !c.profiled && c.callee.startsWith(prefix))

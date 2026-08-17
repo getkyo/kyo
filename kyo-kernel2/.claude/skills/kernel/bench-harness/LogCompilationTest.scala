@@ -12,6 +12,7 @@ import kyo.*
   */
 object LogCompilationTest extends KyoApp:
 
+    val results = Path("/Users/fwbrasil/workspace/kyo/.claude/worktrees/effervescent-painting-backus/bench-results/exp1")
     val artifacts = Path("/Users/fwbrasil/workspace/kyo/.claude/worktrees/effervescent-painting-backus/qa-artifacts")
     val script    = Path("/Users/fwbrasil/workspace/kyo/.claude/worktrees/effervescent-painting-backus/kyo-kernel2/.claude/skills/kernel/bench-harness/oracles.sh")
 
@@ -182,6 +183,27 @@ object LogCompilationTest extends KyoApp:
                 driveLoop.exists(v => v.alwaysRefused && v.reasons.exists(_.contains("hot method too big"))),
                 s"Eval\\$$::loop reports ${driveLoop.map(_.show).getOrElse("nothing")}"
             )
+
+            _ = println("\nthe efficacy gate, against two real configurations")
+            dflt <- (results / "logc-new-default.xml").read.map(LogCompilation.parse)
+            f600 <- (results / "logc-new-freq600.xml").read.map(LogCompilation.parse)
+            changes = LogCompilation.diffVerdicts(dflt, f600, "")
+            (changed, sizeBefore, sizeAfter) = LogCompilation.efficacy(dflt, f600, "")
+            _ = check("raising the budget moved verdicts", changed > 20, s"only $changed methods changed")
+            _ = check("size refusals fall when the budget rises", sizeAfter < sizeBefore, s"$sizeBefore -> $sizeAfter")
+            // the mechanism the manual read found: a 379-byte continuation body refused for size at
+            // the default budget and inlining at 600
+            body = changes.find(c => c.method.contains("run$56"))
+            _ = check("the continuation body's verdict is in the diff", body.isDefined, changes.take(3).map(_.show).mkString("; "))
+            _ = body.foreach(c => println(s"       ${c.show}  (${c.bytes}B)"))
+            _ = check("it was refused for size at the default budget", body.exists(_.before.alwaysRefused), body.map(_.before.show).getOrElse(""))
+            _ = check("and inlines somewhere once the budget allows", body.exists(_.after.inlined > 0), body.map(_.after.show).getOrElse(""))
+            // and the ranking that would have surfaced it without a manual read
+            near = LogCompilation.budgetCandidates(dflt, "")
+            _ = check("budget-proximity ranking surfaces it", near.exists(_.method.contains("run$56")), near.take(4).map(_.show).mkString("; "))
+            _ = near.take(3).foreach(v => println(s"       near budget: ${v.method} ${v.nearBudget.getOrElse("")}"))
+            // must-not-fire twin: a log against itself moved nothing
+            _ = check("a log diffed against itself shows no change", LogCompilation.diffVerdicts(dflt, dflt, "").isEmpty, "a diff that reports changes against identical input cannot prove a flag took")
 
             _ <- Console.printLine(
                 if failures == 0 then "\nall oracle checks passed\n"

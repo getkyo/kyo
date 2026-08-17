@@ -58,7 +58,35 @@ object Model:
             if alwaysInlined then s"${bytes}B inlined"
             else if alwaysRefused then s"${bytes}B refused (${reasons.headMaybe.getOrElse("no reason")})"
             else s"${bytes}B refused at $refused/$sites sites (${reasons.headMaybe.getOrElse("no reason")})"
+
+        /** Whether this method is refused for size while sitting close enough to a budget that shrinking it could plausibly flip the verdict.
+          *
+          * The distinction a bare refusal list cannot make: a 379-byte body refused against a 325-byte budget is one edit away from
+          * inlining, and a 4000-byte one is furniture. That 379-byte case was the whole mechanism behind a regression this harness had failed
+          * to explain for two sessions, and finding it took a manual read of the log because nothing here ranked refusals this way.
+          *
+          * Within twice the budget is the window: far enough to catch a method that needs real work, near enough to exclude the hopeless.
+          */
+        def nearBudget: Maybe[String] =
+            val sizeRefusal = reasons.exists(r => r.contains("too big") || r.contains("too large"))
+            if !sizeRefusal || refused == 0 then Maybe.empty
+            else
+                val budgets = Seq(35 -> "MaxInlineSize", 325 -> "FreqInlineSize")
+                Maybe.fromOption(
+                    budgets.collectFirst {
+                        case (limit, name) if bytes > limit && bytes <= limit * 2 =>
+                            f"${bytes}B against $name ($limit), ${bytes.toDouble / limit}%.2fx over"
+                    }
+                )
     end InlineSites
+
+    /** One method's inlining verdict moving between two runs of the same sources under different conditions.
+      *
+      * Proving that a JVM flag actually took effect requires exactly this and nothing more. Without it the efficacy gate, which is the step
+      * that separates a measured mechanism from a confident story, is a manual diff of two logs and therefore in practice optional.
+      */
+    case class VerdictChange(method: String, bytes: Int, before: InlineSites, after: InlineSites) derives Schema:
+        def show: String = s"$method: ${before.inlined}ok/${before.refused}fail -> ${after.inlined}ok/${after.refused}fail"
 
     /** How much of an artifact a parser actually consumed.
       *
