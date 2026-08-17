@@ -29,7 +29,20 @@ below is therefore a prediction, not an observation.
 
 ## The ten
 
-### 1. DIS-1: dispatch tier split
+### 1. DIS-1: dispatch tier split  —  **CONFIRMED BY ISOLATION**
+
+**Measured.** Forcing `Eval$::dispatch$1` (607B, refused `hot method too big`) to inline takes
+`continuationBodiesFuse` from 27.455 to 25.566 us/op: -6.88% against its own default and -2.65%
+against the old design. The efficacy gate passed on the target method (0 inlined / 2 refused ->
+2 inlined / 0 refused). So the frame is the mechanism, and the current design is better than the old
+one once it is gone. See `bench-results/exp2/RESULT.md`.
+
+Two budget probes preceding it were inconclusive and are recorded as such: `dispatch$1` never inlines
+at `FreqInlineSize=600` (still too big) or 700 (caller too big by then), so neither gap speaks to it.
+
+What remains unmeasured is the actual fix. Forcing a compile command is a diagnostic; making the
+method small enough to inline unaided is the candidate's real content.
+
 **Hypothesis.** The two suspension arms are not symmetric. The `Suspend` arm calls `dispatchInline`,
 expanded into the loop (bci 146-790); the `SuspendWith` arm calls `dispatch`, which `javap` shows as a
 separate **607-byte `dispatch$1`** invoked at bci 821 of a 1582-byte `Eval$::loop`. `ask.map{...}` used
