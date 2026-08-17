@@ -59,3 +59,18 @@ That is the harness working as a procedure while contributing nothing as a progr
 Nothing here is a surprise: items 1, 2 and 4 are Phases 6 and 3 of the plan, unimplemented. The value
 of running the experiment first is knowing which order to build them in, and that item 3 was not in
 the plan at all.
+
+## Added after experiment 2
+
+**6. A malformed JVM flag produces a completely normal-looking run.** `-XX:CompileCommand=inline,...`
+on a Scala method name cannot survive the shell and sbt quoting chain: two runs were spent before the
+log showed `CompileCommand: An error occurred during parsing`, and both had produced plausible
+output. `CompileCommandFile` avoids the escaping entirely. The harness must, when it issues a compile
+command, assert that the JVM parsed it, and must prefer the file form. Without that, Phase 6 Tier A
+would silently test nothing while reporting refutations.
+
+**7. The efficacy gate earned its place twice, in opposite directions.** On the budget probes it
+showed the flag never achieved the intended state (`dispatch$1` refused at 600 and at 700, for two
+different reasons), which made those runs inconclusive rather than evidence against the hypothesis.
+On the forced-inline run it showed the change took exactly, which is what licensed reading the score.
+A harness without it would have concluded the opposite of the truth from the same four numbers.
