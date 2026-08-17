@@ -170,7 +170,7 @@ about implicit resolution and codegen was wrong four times; javap was right ever
 found both bugs. Every compile I call clean must be a real `clean`. And when the owner says the same
 thing three times, the error is in my model, not their phrasing.
 
-**The coverage merge, file by file. IN PROGRESS, 2 of 5 done, 262/262 green.** The old-impl test
+**The coverage merge, file by file. IN PROGRESS, 3 of 5 done, 5 red on a real bug being fixed now.** The old-impl test
 files I deleted in `f211bf5548` calling them "duplicates superseded by the proto versions" were not:
 by case name the proto covered almost none of them. Corrected framing: five of the six were 100%
 commented out at deletion (they tested against the stubbed old `Eval.run`), and only `ImplicitsTest`
@@ -183,9 +183,29 @@ implement it.
 |---|---|---|---|
 | `EffectTest` | 21 | yes | 1 live (`nested defer`), 17 commented (`catching`, `detach`: APIs this kernel lacks) |
 | `EffectTraceTest` | 19 | yes | 15 live, 2 commented (`catching`), 4 already covered |
-| `EvalTest` | 55 | next | |
-| `ArrowEffectTest` | 97 | | |
+| `EvalTest` | 55 | yes | 25 live + 7 new clause-scope cases; **5 red on a clause-scope leak, one a livelock** |
+| `ArrowEffectTest` | 97 | next | |
 | `PendingTest` | 33 | | likely mostly renames, check by content |
+
+**Third file, third real bug, and the added coverage localised it exactly.** A handler's clause is the
+handler's own code and its effects belong to the handlers *outside* the region. This kernel answers a
+clause's effect with handlers the region's *body* installed inside it, so a user's `Say` handler wrapped
+inside an `Ask` region captures the `Ask` handler's own logging. Seven new cases under `"clause scope"`
+show it is **one path**: a clause that suspends *before* its outcome is scoped correctly (3 shapes,
+green); a clause whose **outcome carries** the suspension, `Loop.continue(say(...))`, leaks (4 red);
+and when the leaked effect is the handler's **own tag** it is a **livelock**, since the re-raise finds
+this very handler inside the region and its clause re-raises again. That hung two test runs; the case
+now bounds the clause with a counter and fails with `"clause answered its own re-raise"`.
+
+The structural cause is an asymmetry in `Eval.dispatchInline`. When the clause *suspends* and later
+settles to `Continue(arrow)`, `outcome(whole, h, i)` **captures the region's stack segment above `i`
+into an `Arrow.Eval`, truncates to `i`, and runs the answer with the region gone**, rebuilding it on
+settle. That is correctness by construction: no scope exists to leak into. When the clause returns
+`Continue(arrow)` *synchronously*, the `case p: Arrow => Chain(p, whole)` shortcut runs `p` with the
+stack untouched. Same result, only one path parks the region. **Fix: route the synchronous case through
+`outcome` too**, so there is one path for "answer carrying an Arrow" and it truncates by construction.
+`outcome` already fast-paths the no-inner-region case (`!marked`, no copy), so the common path pays
+nothing.
 
 **The merge found and fixed a real kernel bug on its second file.** Five ported `EffectTraceTest` cases
 went red: a throw inside a `map` **over a suspension** lost its `map` frames in the effect trace. Two
