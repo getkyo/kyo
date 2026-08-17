@@ -6,8 +6,8 @@ description: Design ethos and type-safety discipline for working on the kernel. 
 # Working on the kernel
 
 This skill captures how kernel work is done, distilled from the sessions that built the Arrow-based kernel. It is
-the standard the code is held to, not a suggestion. Scope for now: design ethos, type safety, and how concessions
-are made. Other areas (benchmarking workflow, porting, docs) come later.
+the standard the code is held to, not a suggestion. Scope for now: design ethos, type safety, how concessions are
+made, and how performance claims are established. Other areas (porting, docs) come later.
 
 ## Composition first, the evaluator second
 
@@ -148,4 +148,94 @@ Two meta-rules bind the concessions together:
   is not done.
 - **Nothing is rolled back or accepted on feel.** Optimizations are not reverted, and regressions are not
   accepted, without measurement and explicit sign-off; probes are run one variable at a time and reported with
-  their numbers.
+  their numbers. The procedure that makes this checkable is below.
+
+## Evaluating performance
+
+A performance result is a number **and** a named mechanism. A number alone cannot be acted on, and a mechanism
+alone is a guess. The rules here exist because skipping them produced days of motion: a redesign was proposed,
+measured, and defended before anyone knew which of its two changes the numbers belonged to.
+
+### One variable per measurement
+
+**A measurement over a bundled change attributes nothing.** The worked example is the suspension redesign. Two
+changes shipped together: a node-layout change (a suspension stops being a `Transform` and its continuation moves
+into a separate node) and an implementation change (currency handling hoisted out of the suspension's protocol
+method into the two evaluator sites that produce currency). The bundle was faster, and the win was confidently
+attributed first to the node layout, then, after a JIT log arrived, to the method size. Both stories were wrong
+as told. Isolating the currency hoist onto the *old* layout settled it: the protocol method went from 68 bytes
+and `failed to inline: callee is too large` to 25 bytes and `inline (hot)`, worth about 3% on the fused-handler
+row, while the remaining ~7% (and ~13% on trailing maps) belonged to the layout. Two independent costs; neither
+single-cause explanation survived the isolation run.
+
+Rules that follow:
+
+- **Split design changes from implementation changes and measure each.** If a probe changes a node's class *and*
+  the body of a method on the hot path, it has no attribution until one of them is measured alone.
+- **The cheap direction first.** Reverse the implementation change on the old design before redesigning around
+  it; that experiment is two edits and it can dissolve the case for the redesign entirely.
+- **Diagnose, then design.** "It is slower, so replace it" is not a diagnosis, and a redesign justified that way
+  is unfalsifiable. Name the mechanism first, then decide whether it is reachable without a redesign.
+
+### The evidence ladder
+
+Wall clock says *whether*; it never says *why*. Climb until the mechanism is named, and stop there:
+
+| step | what it answers | how |
+|---|---|---|
+| wall clock | is there a delta outside drift | `Jmh/run -f 3 <rows>` |
+| allocation totals | did allocation change at all | `-prof gc`, read `gc.alloc.rate.norm` (B/op) |
+| allocation sites | which classes are allocated, and by whom | `-prof "async:libPath=<dylib>;event=alloc"` |
+| cycles | roughly where time goes | `-prof "async:libPath=<dylib>;event=itimer"` |
+| JIT decisions | what the compiler refused, and why | `-f 1 -wi 5 -i 1 -jvmArgsAppend "-XX:+UnlockDiagnosticVMOptions -XX:+PrintInlining"` |
+
+Reading notes that decide how much weight each carries:
+
+- **`gc.alloc.rate.norm` is exact and nearly noise-free.** Identical B/op across two variants *rules out*
+  allocation as the cause and forces the search into path length or code shape; a delta localizes immediately
+  when paired with the allocation-site profile.
+- **The CPU profile is coarse.** A one-second iteration yields a few hundred samples, so a 1.6% entry is seven
+  samples. Use it directionally, to notice that a method appeared or vanished, never to attribute percentages.
+- **`PrintInlining` is the highest-signal tool for kernel work**, because it prints each callee's bytecode size
+  next to the decision. Grep it for the specific method rather than reading it whole.
+
+### Method size is a design property, not a micro-optimization
+
+HotSpot inlines by budget: roughly 35 bytes always, 325 for hot callees, and `failed to inline: callee is too
+large` on a *small* method means the caller had already spent its budget. So a hot-path method's bytecode size
+is part of its design, and the way to keep it small is to move cold work out of line: currency checks, error
+paths, region rebuilds, growth and truncation loops. The 68-to-25-byte result above is exactly this, and it was
+invisible to every measurement except the inlining log.
+
+Two corollaries the logs make concrete:
+
+- **The drive itself will never inline** (`Eval$::loop` at ~1500 bytes, `dispatch` at ~557 report
+  `inlining prohibited by policy` / `hot method too big`). That is expected and fine; it is precisely why
+  everything they call on the per-suspension path must be small enough to inline *into* them.
+- **`no static binding` on a 0-byte abstract method is megamorphism, not a defect.** `Step::head`, `Step::tail`,
+  and `Transform::apply` report it in every variant, because those sites see every arrow kind and every user map
+  site. Do not chase it; confirm it is equal across variants and move on.
+
+### Brackets, drift, and preservation
+
+- **Controls are same-session and back-to-back.** Numbers from an earlier session are not comparable, and a
+  design's numbers are meaningless without its control re-measured beside it.
+- **Know the drift band before believing a delta.** Repeat runs of identical code have moved 3-4% here. Inside
+  that band there is no result; widen the run or find the mechanism.
+- **`-f 3` for a claim, `-f 1` for diagnosis.** Never report a `-f 1` number as a result.
+- **Commit before the bracket.** A/B brackets check out other commits over the working tree; uncommitted work in
+  that tree is destroyed by the experiment. Commit first, even red, even mid-refactor.
+- **Rejected experiments become branches, never stashes.** A stash is invisible in every later summary and gets
+  forgotten; `parked/<name>` keeps the diff and the reason findable.
+- **Know what fraction of the row is yours.** `boxToInteger` accounts for ~44% of samples on the suspension rows
+  because the benchmarks thread `Int`s through effect boundaries and the pending union is erased. Kernel deltas
+  are therefore diluted in these rows, and an "optimization" that moves boxing is measuring the benchmark.
+
+### Mechanics specific to this module
+
+- **Jmh extends Test here.** A bracket that checks out an older commit's `main` sources must check out that
+  commit's tests too, or the run fails to compile against the newer suite.
+- **The first Jmh invocation after a recompile can report no matching benchmarks.** Rerun it; it is not a
+  configuration error.
+- **Never edit sources while a run is in flight**, and remove the untracked `<Bench>-AverageTime/` directories
+  the profiler leaves behind.
