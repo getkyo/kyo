@@ -11,6 +11,10 @@ import kyo.*
 case class RunOpts(
     @HelpMessage("throwaway worktree to measure in; must not be the primary one")
     worktree: String,
+    @HelpMessage("session id from a previous leg; omit to open a new session, which measures this machine's drift first")
+    session: Option[String] = None,
+    @HelpMessage("row used to measure session drift when opening one")
+    driftRow: String = "suspensionBaseline",
     @HelpMessage("label for this leg, e.g. control or variant")
     label: String,
     @HelpMessage("commit whose sources the leg measures")
@@ -61,7 +65,13 @@ object BenchRun extends KyoCaseApp[RunOpts]:
     run { (opts: RunOpts) =>
         for
             evidence <- Cli.parseEvidence(opts.evidence)
+            // a session carries the machine's measured drift; reusing one keeps legs comparable,
+            // opening one costs two extra runs and is what makes the band a measurement
+            session <- opts.session match
+                case Some(id) => Store.session(Path(opts.store), id)
+                case None     => Bench.openSession(Path(opts.worktree), opts.driftRow)
             leg <- Bench.runLeg(
+                session = session,
                 worktree = Path(opts.worktree),
                 label = opts.label,
                 sha = opts.sha,

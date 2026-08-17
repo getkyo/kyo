@@ -16,8 +16,20 @@ import scala.util.control.NoStackTrace
   */
 object Bench:
 
-    /** Observed run-to-run spread on this machine. A delta inside it is not a result. */
+    /** Fallback when a session did not measure its own spread. Sessions should always measure it. */
     val DriftBand = 4.0
+
+    /** A CPU site attributed fewer samples than this cannot support a percentage. */
+    val MinCpuSamples = 30
+
+    /** Classes the benchmark spends time in that no kernel change can move. */
+    val KnownNoise = Seq("BoxesRunTime", "java.lang.Integer", "jmh_generated")
+
+    /** JIT refusals that are inherent rather than actionable: a 0-byte abstract method at a site that sees every arrow kind is
+      * megamorphic by construction, and chasing it wastes a session.
+      */
+    def actionableJit(e: JitEntry): Boolean =
+        !e.inlined && !e.reason.contains("no static binding") && !e.reason.contains("virtual call")
 
     val BenchClass  = "kyo.kernel.bench.ProtoKernelBench"
     val BenchSource = "kyo-kernel2/jvm/src/jmh/scala/kyo/kernel/bench/ProtoKernelBench.scala"
@@ -44,6 +56,32 @@ object Bench:
                 BracketFailed(s"$worktree is the primary worktree; brackets need a throwaway one (git worktree add --detach)")
             )
         yield ()
+
+    /** Refuses a dirty worktree. A bracket overwrites sources, so uncommitted work in it is destroyed by the experiment. */
+    def requireClean(worktree: Path)(using Frame): Unit < (Async & Fail) =
+        exec(worktree, "git", "status", "--porcelain").map { out =>
+            val dirty = out.linesIterator.filterNot(_.startsWith("??")).toSeq
+            Abort.when(dirty.nonEmpty)(BracketFailed(s"$worktree has uncommitted changes; commit before measuring:\n${dirty.mkString("\n")}"))
+        }
+
+    /** Hash of the measured sources, so an edit during a run invalidates the leg instead of silently changing what was measured. */
+    def treeHash(worktree: Path, paths: Seq[String])(using Frame): String < (Async & Fail) =
+        exec(worktree, (Seq("git", "ls-files", "-s", "--") ++ paths)*).map(_.hashCode.toHexString)
+
+    /** Measures this machine's run-to-run spread by repeating one row on an unchanged tree. Classifying against a measured floor is the
+      * difference between a verdict and a guess.
+      */
+    def measureDrift(worktree: Path, row: String)(using Frame): Double < (Async & Fail) =
+        val json = worktree / "bench-drift.json"
+        def once =
+            exec(worktree, "sbt", "--client", s"kyo-kernel2JVM/Jmh/run -f 1 -rf json -rff ${json.toString} $BenchClass.$row")
+                .andThen(json.read).map(parseJmh).map(_.head.score)
+        for
+            a <- once
+            b <- once
+        yield Math.abs(b - a) / a * 100
+        end for
+    end measureDrift
 
     /** Working-tree-only restore. Never `checkout`, which would also stage. */
     def restore(worktree: Path, sha: String, paths: Seq[String])(using Frame): Unit < (Async & Fail) =
@@ -119,7 +157,19 @@ object Bench:
 
     // --- one leg ----------------------------------------------------------------
 
+    def openSession(worktree: Path, driftRow: String)(using Frame): Session < (Async & Fail) =
+        for
+            _    <- requireThrowaway(worktree)
+            _    <- requireClean(worktree)
+            host <- exec(worktree, "hostname").map(_.trim)
+            jvm  <- System.property[String]("java.version", "unknown")
+            // measured, never assumed: this is the floor every verdict in the session is read against
+            drift <- measureDrift(worktree, driftRow)
+            now   <- Clock.now
+        yield Session(s"s-${now.toDuration.toMillis}", host, jvm, drift)
+
     def runLeg(
+        session: Session,
         worktree: Path,
         label: String,
         sha: String,
@@ -162,6 +212,7 @@ object Bench:
             _        <- restore(worktree, sha, paths)
             declared <- declaredRows(worktree)
             before   <- readMarkers(worktree, markerSpecs)
+            hashBefore <- treeHash(worktree, paths)
             // a faster variant whose suite is red is not a result; gate before spending the runs
             _         <- sbt("kyo-kernel2JVM/testOnly kyo.kernel.proto.*")
             measured  <- measure(1, declared)
@@ -170,9 +221,14 @@ object Bench:
             cpuSites   <- if evidence == Evidence.Full then profile("itimer").map(parseCpu) else Chunk.empty[CpuSite]: Chunk[CpuSite] < Any
             after      <- readMarkers(worktree, markerSpecs)
             _          <- Abort.when(before != after)(BracketFailed(s"leg $label markers moved mid-run: $before -> $after"))
-            now        <- Clock.now
+            hashAfter  <- treeHash(worktree, paths)
+            // sources must not be edited while a run is in flight; if they were, the numbers describe no single tree
+            _   <- Abort.when(hashBefore != hashAfter)(BracketFailed(s"leg $label sources changed mid-run"))
+            now <- Clock.now
         yield Run(
             id = s"$label-${sha.take(10)}-${now.toDuration.toMillis}",
+            session = session,
+            treeHash = hashAfter,
             label = label,
             sha = sha,
             forks = forks,
@@ -191,15 +247,29 @@ object Bench:
 
     // --- comparison (pure, over stored runs) ------------------------------------
 
+    def band(control: Run, variant: Run): Double =
+        val measured = Math.max(control.session.driftPercent, variant.session.driftPercent)
+        if measured > 0.0 then measured else DriftBand
+
+    /** Fraction of a run's sampled time in classes no kernel change can move. */
+    def noiseShare(run: Run): Double =
+        val total = run.cpu.map(_.nanos).sum
+        if total == 0L then 0.0
+        else run.cpu.filter(c => KnownNoise.exists(c.method.contains)).map(_.nanos).sum.toDouble / total * 100
+
+    def sameSession(control: Run, variant: Run): Boolean =
+        control.session.id == variant.session.id
+
     def compare(control: Run, variant: Run): Comparison =
         val deltas = Chunk.from(control.rows).flatMap { c =>
             Chunk.from(variant.row(c.name)).map { v =>
                 val percent = (v.score - c.score) / c.score * 100
+                val drift = band(control, variant)
                 val verdict =
                     // a score whose error is a large fraction of itself cannot support a percentage
                     if c.error > c.score * 0.5 || c.score <= 0.0 then Verdict.BelowResolution
-                    else if percent < -DriftBand then Verdict.Faster
-                    else if percent > DriftBand then Verdict.Regressed
+                    else if percent < -drift then Verdict.Faster
+                    else if percent > drift then Verdict.Regressed
                     else Verdict.Flat
                 val allocDelta =
                     for
@@ -218,7 +288,9 @@ object Bench:
 
     /** Methods whose size or inlining verdict moved between the two runs. This diff is what named the mechanism the timing could not. */
     def jitShift(control: Run, variant: Run): Chunk[String] =
-        Chunk.from(variant.jit).flatMap { v =>
+        // inherent refusals (megamorphic sites) are filtered: they differ between runs as
+        // sampling noise and chasing them wastes a session
+        Chunk.from(variant.jit.filter(e => e.inlined || actionableJit(e))).flatMap { v =>
             control.jitFor(v.method) match
                 case Maybe.Present(c) if c.bytes != v.bytes || c.inlined != v.inlined =>
                     Chunk(s"${v.method}: ${c.bytes}B ${if c.inlined then "inlined" else "refused"} -> ${v.bytes}B ${if v.inlined then "inlined" else "refused"}")

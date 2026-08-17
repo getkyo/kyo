@@ -38,6 +38,14 @@ object Store:
                 }
         }
 
+    /** Recovers a session from any run that recorded it, so later legs join the same one. */
+    def session(root: Path, id: String)(using Frame): Session < (Sync & Abort[FileFsException | FileReadException | Bench.BracketFailed]) =
+        list(root).map { runs =>
+            runs.find(_.session.id == id) match
+                case Some(r) => r.session
+                case None    => Abort.fail(Bench.BracketFailed(s"no stored run belongs to session $id"))
+        }
+
 end Store
 
 /** Renders a comparison.
@@ -64,10 +72,15 @@ object Report:
         val evidence =
             if control.evidence == Evidence.Full && variant.evidence == Evidence.Full then "full ladder"
             else "timing only, so no movement here is attributed"
+        val forksNote = if variant.forks < 3 then s", -f ${variant.forks} is diagnostic and not a claim" else ""
+        val drift     = Bench.band(control, variant)
+        val bandNote =
+            if control.session.driftPercent > 0 then f"drift $drift%.1f%% measured this session"
+            else f"drift $drift%.1f%% assumed, not measured"
 
         val header =
             s"""|Control `${control.sha.take(10)}` (${control.label}) against variant `${variant.sha.take(10)}` (${variant.label}).
-                |JMH -f ${variant.forks}, $scope, $evidence. Drift band ${Bench.DriftBand}%.
+                |JMH -f ${variant.forks}$forksNote, $scope, $evidence, $bandNote.
                 |Markers control ${control.markers.map(m => s"${m.name}=${m.count}").mkString(" ")} | variant ${variant.markers.map(m => s"${m.name}=${m.count}").mkString(" ")}
                 |
                 || | row | mode | cnt | control | variant | delta | B/op delta | mechanism |
@@ -88,8 +101,27 @@ object Report:
             if c.jitChanges.isEmpty then ""
             else "\nInlining changed:\n" + c.jitChanges.map(s => s"  - $s").mkString("\n")
 
-        val reds = c.deltas.filter(_.verdict == Verdict.Regressed)
+        val reds        = c.deltas.filter(_.verdict == Verdict.Regressed)
+        val wins        = c.deltas.filter(_.verdict == Verdict.Faster)
         val unexplained = c.deltas.filter(_.unexplained)
+
+        val sessionWarning =
+            if Bench.sameSession(control, variant) then ""
+            else
+                // comparing across sessions is what made a parity row look like a regression
+                "\u274c These runs are from different sessions, so the deltas below are not comparable. " +
+                    "Re-measure the control beside the variant.\n\n"
+
+        val noiseNote =
+            val n = Bench.noiseShare(variant)
+            if n < 25.0 then ""
+            else f"\n\u2139\ufe0f  $n%.0f%% of sampled time is in classes no kernel change can move, so kernel-attributable movement is a fraction of each delta above."
+
+        val bothWays =
+            if wins.isEmpty || reds.isEmpty then ""
+            else
+                "\n\u26a0\ufe0f  This change both wins and loses. Those are two diagnoses, not one tradeoff: the loss usually turns out " +
+                    "removable, and accepting it early ships a defect the same afternoon's work would have deleted."
 
         val verdictLine =
             if reds.nonEmpty then
@@ -106,7 +138,7 @@ object Report:
                 "\n⚠️  Moved with nothing in the evidence behind it, so the cause is not known yet:\n" +
                     unexplained.map(d => s"  - ${d.row}: check allocation sites and the inlining log before proposing a mechanism").mkString("\n")
 
-        s"$header\n$body$jit$verdictLine$ladder"
+        s"$sessionWarning$header\n$body$jit$verdictLine$ladder$bothWays$noiseNote"
     end render
 
 end Report
