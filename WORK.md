@@ -151,6 +151,18 @@ experiments become branches rather than floating commits. The same branch also r
    inlining **cannot** be attributed to a row from a whole-class leg — if that join is derivable,
    item 2 is wrong and better work exists.
 
+10. **A second opus is compiling a feature survey, IN FLIGHT.** Complementary to the review, which
+    judges the plan: this one establishes the ground truth the plan should have been built on. Four
+    tables, all grounded in file:line: every entrypoint with its sources and its **verbatim output
+    sections**; every public function classified `PRODUCTION` / `TEST-ONLY` / `DEAD` by grep, with the
+    transitive path shown; all 22 `Run` fields against what renders them; and every `Report.render`
+    section with its trigger condition. Then three lists: captured-but-never-rendered,
+    computed-but-never-called, rendered-but-not-captured.
+
+    It is briefed as an inventory, not a critique, with no recommendations, because my
+    "five unwired selectors" count is exactly the kind of number I have been wrong about twice this
+    session and it should be established independently rather than by my own grep.
+
 **Everything else remaining is a ruling**, each with a recorded default: the four gated candidates in
 `RULINGS-NEEDED.md`, the C4 trade, and DIS-3's cast above.
 
