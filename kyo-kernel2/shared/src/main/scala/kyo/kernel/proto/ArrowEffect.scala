@@ -116,9 +116,10 @@ object ArrowEffect:
         inline effectTag: Tag[E],
         v: A < (E & S)
     )(
-        inline f: [C] => I[C] => Outcome[O[C] < (E & S), B] < S,
+        inline handle: [C] => I[C] => Outcome[O[C] < (E & S), B] < S,
         inline done: A => B < S
     ): B < S =
+        def onDone(v: A) = done(v)
         v match
             case body: Arrow[Any, A, E & S] @unchecked =>
                 new Handle[E, A, B, B, S]:
@@ -126,11 +127,12 @@ object ArrowEffect:
                     val handler =
                         new Handler.HandleLoop[I, O, E, A, B, S]:
                             def tag                 = effectTag
-                            def run[C](input: I[C]) = f[C](input)
-                            def complete(a: A)      = done(Nested.unnest[A](a))
+                            def run[C](input: I[C]) = handle[C](input)
+                            def complete(a: A)      = onDone(Nested.unnest[A](a))
                     def cont = Arrow[B]
             case a =>
-                done(Nested.unnest[A](a))
+                onDone(Nested.unnest[A](a))
+        end match
     end handleLoop
 
     @nowarn("msg=anonymous")
@@ -143,6 +145,7 @@ object ArrowEffect:
     )[C2, S2](
         inline cont: B => C2 < S2
     )(using inline _frame: Frame): C2 < (S & S2) =
+        def onDone(v: A) = done(v)
         def arrow =
             new Transform[B, C2, S2]:
                 def frame = _frame
@@ -171,10 +174,10 @@ object ArrowEffect:
                         new Handler.HandleLoop[I, O, E, A, B, S]:
                             def tag                 = effectTag
                             def run[C](input: I[C]) = f[C](input)
-                            def complete(a: A)      = done(Nested.unnest[A](a))
+                            def complete(a: A)      = onDone(Nested.unnest[A](a))
                     def cont = arrow
             case a =>
-                arrow(done(Nested.unnest[A](a)), Arrow[C2])
+                arrow(onDone(Nested.unnest[A](a)), Arrow[C2])
         end match
     end handleLoopWith
 
@@ -184,9 +187,10 @@ object ArrowEffect:
         state: State,
         v: A < (E & S)
     )(
-        inline f: [C] => (State, I[C]) => Outcome2[State, O[C] < (E & S), B] < S,
+        inline handle: [C] => (State, I[C]) => Outcome2[State, O[C] < (E & S), B] < S,
         inline done: (State, A) => B < S
     ): B < S =
+        def onDone(s: State, v: A) = done(s, v)
         v match
             case body: Arrow[Any, A, E & S] @unchecked =>
                 new Handle[E, A, B, B, S]:
@@ -195,11 +199,12 @@ object ArrowEffect:
                         new Handler.HandleLoopState[I, O, E, A, B, S, State]:
                             def tag                            = effectTag
                             def initialState                   = state
-                            def run[C](st: State, input: I[C]) = f[C](st, input)
-                            def complete(st: State, a: A)      = done(st, Nested.unnest[A](a))
+                            def run[C](st: State, input: I[C]) = handle[C](st, input)
+                            def complete(st: State, a: A)      = onDone(st, Nested.unnest[A](a))
                     def cont = Arrow[B]
             case a =>
-                done(state, Nested.unnest[A](a))
+                onDone(state, Nested.unnest[A](a))
+        end match
     end handleLoopState
 
     @nowarn("msg=anonymous")
@@ -208,15 +213,16 @@ object ArrowEffect:
         state: State,
         v: A < (E & S)
     )(
-        inline f: [C] => (State, I[C]) => Outcome2[State, O[C] < (E & S), B] < S,
+        inline handle: [C] => (State, I[C]) => Outcome2[State, O[C] < (E & S), B] < S,
         inline done: (State, A) => B < S
     )[C2, S2](
         inline cont: B => C2 < S2
     )(using inline _frame: Frame): C2 < (S & S2) =
+        def onDone(s: State, v: A) = done(s, v)
         def arrow =
             new Transform[B, C2, S2]:
                 def frame = _frame
-                def apply[C3, S3](v: B < S3, next: Arrow[C2, C3, S3]): C3 < (S2 & S3) =
+                def apply[C3, S3](v: B < S3, next: Arrow[C2, C3, S3]) =
                     v match
                         case v: Arrow[Any, B, S3] @unchecked =>
                             v.chain(this.chain(next))
@@ -241,11 +247,11 @@ object ArrowEffect:
                         new Handler.HandleLoopState[I, O, E, A, B, S, State]:
                             def tag                            = effectTag
                             def initialState                   = state
-                            def run[C](st: State, input: I[C]) = f[C](st, input)
-                            def complete(st: State, a: A)      = done(st, Nested.unnest[A](a))
+                            def run[C](st: State, input: I[C]) = handle[C](st, input)
+                            def complete(st: State, a: A)      = onDone(st, Nested.unnest[A](a))
                     def cont = arrow
             case a =>
-                arrow(done(state, Nested.unnest[A](a)), Arrow[C2])
+                arrow(onDone(state, Nested.unnest[A](a)), Arrow[C2])
         end match
     end handleLoopStateWith
 
