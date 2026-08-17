@@ -68,3 +68,15 @@ replicates. None of that changes the direction of any result. It changes what ma
 Four experiments' verdicts had to be re-issued. No re-measurement was needed, because the raw json
 survived, but it survived by luck: `.gitignore` carried a global `*.json` and none of it was
 committed until the drift was caught.
+
+**Correction, added later: only half of it survived.** The json is here, but the *configuration* that
+produced it is not. The campaign's headline pair, `continuationBodiesFuse` at -6.8% under a forced
+inline, is two runs sharing a `sha` and a `treeHash` whose only difference was a
+`-XX:CompileCommandFile`. That file is gone from disk and the runs never recorded it, so the pair is
+**unrecoverable rather than merely unexplained**: it can be loaded, re-compared and re-reported
+forever, and no reader can say what it measured.
+
+So "no re-measurement was needed" was true and is no longer the reassurance it sounded like. Had a
+re-measurement been needed, it could not have been done from what was kept. Defect 25 fixes the
+recording and defect 25's fix is being exercised by the replication in
+`bench-results/sweep-replicated`, but neither retrieves the original pair.
