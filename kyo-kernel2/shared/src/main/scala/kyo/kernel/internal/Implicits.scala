@@ -79,10 +79,9 @@ object Implicits:
         inline scala.compiletime.erasedValue[A] match
             case _: (Int | Long | Float | Double | Boolean | Byte | Short | Char | Unit | String) =>
                 v.asInstanceOf[A < S]
-            // an Arrow is already a computation and must not be boxed: this import shadows the
-            // companion's fromArrow, so the case fromArrow handled has to be handled here too
+            // an Arrow is a computation, never a value to lift; `<.fromArrow` is the only bridge
             case _: Arrow[?, ?, ?] =>
-                v.asInstanceOf[A < S]
+                scala.compiletime.error("Cannot lift an Arrow: an Arrow is a computation, not a value. Use `<.fromArrow`.")
             case _ =>
                 Nested.nest[A, S](v)
 

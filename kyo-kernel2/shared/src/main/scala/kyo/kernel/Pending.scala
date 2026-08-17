@@ -14,8 +14,9 @@ import scala.language.implicitConversions
 opaque type <[+A, -S] = A | Arrow[Any, A, S] | Nested[A]
 
 object `<` extends Implicits:
-    // TODO why isn't this in Implicits?
-    implicit def fromArrow[A, S](v: Arrow[Any, A, S]): A < S = v
+    // the kernel's own bridge from a computation to its `<`; users never see an Arrow as a `<`,
+    // and the lift macro rejects the attempt
+    implicit private[kyo] def fromArrow[A, S](v: Arrow[Any, A, S]): A < S = v
 
     extension [A, S](self: A < S)
 

@@ -157,7 +157,7 @@ object Eval:
                             val tags    = stack.copyTags(i + 1)
                             val states  = stack.copyStates(i + 1)
                             stack.truncate(i + 1)
-                            hc.run(s.input, o => Arrow.Eval(entries, tags, states, whole(o)))
+                            hc.run(s.input, o => `<`.fromArrow(Arrow.Eval(entries, tags, states, whole(o))))
                         end if
                     case hl: Handler.HandleLoop[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
                         hl.run(s.input) match

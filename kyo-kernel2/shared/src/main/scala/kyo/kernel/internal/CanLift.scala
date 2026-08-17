@@ -1,5 +1,6 @@
 package kyo.kernel.internal
 
+import kyo.Arrow
 import kyo.kernel.<
 import scala.annotation.implicitNotFound
 import scala.quoted.*
@@ -48,6 +49,8 @@ object CanLift:
         def isNothing = tpe =:= TypeRepr.of[Nothing]
         def isModule  = sym.fullName.startsWith("kyo.") && sym.flags.is(Flags.Module) && !sym.flags.is(Flags.Case)
         def isValue   = wide <:< TypeRepr.of[AnyVal] || wide <:< TypeRepr.of[String]
+        // an Arrow is a computation, never a value to lift; `<.fromArrow` is the only bridge
+        def isArrow = wide <:< TypeRepr.of[Arrow[?, ?, ?]]
         // a final class admits no Boxed subtype, so a value of the type is
         // provably not a computation and the box test can never fire
         def isSafeFinalClass =
@@ -56,6 +59,11 @@ object CanLift:
 
         if isModule then
             report.errorAndAbort(s"Cannot lift '${sym.fullName}' to a '${sym.name} < S'", Position.ofMacroExpansion)
+        else if isArrow then
+            report.errorAndAbort(
+                s"Cannot lift an Arrow to a '${sym.name} < S': an Arrow is a computation, not a value. Use `<.fromArrow`.",
+                Position.ofMacroExpansion
+            )
         else if isNothing || isValue || isSafeFinalClass then '{ $v.asInstanceOf[A < S] } else '{ Nested.nest[A, S]($v) }
         end if
     end liftImpl
