@@ -106,6 +106,30 @@ Re-running the C4 comparison reproduced v3's headline defect in a **sharper** fo
 It is not merely withholding evidence it holds. It is directing the operator to an inlining log **this
 run provably does not contain**. Filed as defect 43; item 2's acceptance must cover the Timing case.
 
+## 6b. Items 5 and 7 also reproduced live, by the same single command
+
+Re-running the C4 comparison to adjudicate finding 4 confirmed three separate plan items at once,
+which is worth recording because it cost one command and no measurement.
+
+**Item 5, the A/A null is absent from `compare`.** The output opens with
+`Replicated over 3 control and 2 variant leg(s)` and goes straight to the table. **No A/A null line at
+all.** The same five legs read through `bracket` print `A/A null: clean, ... (N rows)`. So re-reading a
+stored bracket reproduces its verdict while silently dropping the strongest refusal the tool has, which
+is exactly what item 5 says and what `Bench.scala` itself calls "the only check here that can fail in
+the direction that matters".
+
+**Item 7, the `-f N` note contradicts the report's own footer.** In one render:
+
+    header: JMH -f 1, -f 1 is diagnostic and not a claim, all 15 rows, timing only, ...
+    footer: ... (alpha 0.00333 after correcting for 15 rows, df 3).
+
+It disclaims the result as diagnostic-only *because of the fork count*, and three lines later reports a
+Bonferroni-corrected threshold at **df 3**, which it earned from five legs. Five legs at `-f 1` are five
+independent JVMs; the claim rests on replication, not on forks. Keying the note on `resolution.df == 0`
+is the fix, and this render is its acceptance case.
+
+**Defect 43** (finding 6 above) came from the same output.
+
 ## 7. Corpus sweep: every other recorded delta is consistent
 
 Having found one table that contradicted itself, I swept the rest rather than assuming it was isolated.
