@@ -15,22 +15,16 @@ they expose facts to check output the tool already produced. Computing a delta, 
 by hand is the failure this project exists to prevent, and it happened for four experiments before
 being caught.
 
-## In flight
+## Re-measurement done, and it overturned a correction
 
-`exp6/base-wi25.json`: the base leg re-measured at `-wi 25` instead of 10, because three comparisons
-are blocked on `emittingClausesPayRegionRebuild`'s control leg never settling. If 25 warmup
-iterations settle it, the blocked comparisons can be re-issued; if not, that row needs a different
-remedy and the tool should say so rather than the operator guessing.
+`-wi 25` settles `emittingClausesPayRegionRebuild`: its error falls from ±12.33 to ±2.97 and the
+blocker clears, exit 0. The row is a **-9.5% win** after all. So the original hand number was roughly
+right, my intermediate correction ("never a win, it is flat") was wrong, and the truth is the leg was
+*unmeasurable*. The tool had said so correctly by refusing the whole comparison; I read the refusal
+as a verdict. See `bench-results/exp6/RESULT.md`.
 
-Next commands, so they need no re-deriving:
-
-    # ingest and compare against the forced-inline leg
-    BenchIngest --json bench-results/exp6/base-wi25.json --label e6-base-wi25 --sha d85ee6821f \
-                --session validation --declared-rows 15 --store bench-results/store
-    BenchCompare --control <e6-base-wi25 id> --variant <sweep-forced id> --store bench-results/store
-
-Expected: the blocker clears for that row, or it does not and the row is unmeasurable at this warmup.
-Either is a result.
+The settling problem moved rather than vanished: `handleLoopFusesContinuation` now reports ±14.55%
+and is flat at -8.8%. One re-measurement does not buy a clean sweep, and the tool is saying so.
 
 ## Now
 
