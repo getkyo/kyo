@@ -237,8 +237,8 @@ object Report:
                 |JMH -f ${variant.forks}$forksNote, $scope, $evidence, $bandNote.
                 |Markers control ${control.markers.map(m => s"${m.name}=${m.count}").mkString(" ")} | variant ${variant.markers.map(m => s"${m.name}=${m.count}").mkString(" ")}
                 |
-                || | row | mode | cnt | control | variant | delta | B/op delta | mechanism |
-                ||---|---|---|---|---|---|---|---|---|""".stripMargin
+                || | row | mode | cnt | control | variant | delta | resolves | B/op delta | mechanism |
+                ||---|---|---|---|---|---|---|---|---|---|""".stripMargin
 
         // a leg whose first measured iteration sits far from the rest was still warming up, and its
         // score and error both absorb that without showing it. Only the per-iteration series reveals
@@ -280,13 +280,18 @@ object Report:
 
         val body = c.deltas.map { d =>
             val delta = if d.verdict == Verdict.BelowResolution then "below resolution" else f"${d.percent}%+.1f%%"
+            // this row's OWN threshold, not the worst across the table. The footer reports only the
+            // worst, which cannot answer the question a flat row actually raises: was it close to
+            // resolving, or nowhere near? On the replicated sweep two rows at -12.5% and -10.7% came
+            // back flat while a -7.1% row was a win, and the table gave no way to see why.
+            val res = d.resolution.map(r => f"±${r.percent}%.1f%%").getOrElse("-")
             val alloc = d.allocDelta.map(a => f"$a%+.0f").getOrElse("-")
             val mech =
                 if d.mechanism.nonEmpty then d.mechanism.mkString("; ")
                 else if d.unexplained then "**none found**"
                 else "-"
             f"| ${icon(d.verdict)} | `${d.row}` | ${d.control.mode} | ${d.variant.count} | " +
-                s"${score(d.control.score)} ± ${score(d.control.error)} | ${score(d.variant.score)} ± ${score(d.variant.error)} | $delta | $alloc | $mech |"
+                s"${score(d.control.score)} ± ${score(d.control.error)} | ${score(d.variant.score)} ± ${score(d.variant.error)} | $delta | $res | $alloc | $mech |"
         }.mkString("\n")
 
         val jit =

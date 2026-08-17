@@ -30,10 +30,10 @@ case class RunOpts(
 )
 
 case class CompareOpts(
-    @HelpMessage("run id of the control leg")
-    control: String,
-    @HelpMessage("run id of the variant leg")
-    variant: String,
+    @HelpMessage("run id of a control leg, repeatable; give every control leg of a bracket to get its replicated verdict back")
+    control: List[String],
+    @HelpMessage("run id of a variant leg, repeatable")
+    variant: List[String],
     store: String = "bench-runs"
 )
 
@@ -352,9 +352,27 @@ object BenchCompare extends KyoCaseApp[CompareOpts]:
     run { (opts: CompareOpts) =>
         Cli.guard(
         for
-            control <- Store.load(Path(opts.store), opts.control)
-            variant <- Store.load(Path(opts.store), opts.variant)
-            cmp = Bench.compare(control, variant)
+            controls <- Kyo.foreach(Chunk.from(opts.control))(id => Store.load(Path(opts.store), id))
+            variants <- Kyo.foreach(Chunk.from(opts.variant))(id => Store.load(Path(opts.store), id))
+            _ <- Abort.when(controls.isEmpty || variants.isEmpty)(
+                Bench.BracketFailed("give at least one --control and one --variant")
+            )
+            // A bracket's replicated verdict used to be visible only while the bracket ran. Once its
+            // legs were stored, the only thing recoverable from them was the single-pair statistic,
+            // which is the weaker one: on the replicated sweep the pair says five wins and the
+            // replicate statistic says three. So the harness's own principle, that a comparison is a
+            // pure function over records and two run ids always produce the same verdict, held for
+            // the weaker claim and not for the stronger one.
+            replicated = controls.size > 1 || variants.size > 1
+            cmp        = if replicated then Bench.compareReplicated(controls, variants) else Bench.compare(controls.head, variants.head)
+            _ <- Console.printLine(
+                if replicated then
+                    s"Replicated over ${controls.size} control and ${variants.size} variant leg(s): the threshold below is " +
+                        "estimated from the spread between them.\n"
+                else
+                    "One control leg against one variant, so the bound below is the legs' own error and not a " +
+                        "threshold estimated from replicates. Pass every leg of a bracket to get its real verdict.\n"
+            )
             _ <- Console.printLine(Report.render(cmp))
             // a non-steady-state leg fails the run rather than warning inside it. A warning is
             // something a reader skips; an exit code is not, and this tool exists for a reader who

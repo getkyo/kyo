@@ -210,6 +210,41 @@ comparisons (`Arm(sha, jvmArgs)`) without gaining the ability to *record* one.
 prints exactly which arguments differ. A same-sha pair with nothing recorded says so, and names the
 two readings, rather than presenting itself as a clean comparison.
 
+## Found by validating one part of the tool against another
+
+**27, a bracket's replicated verdict could not be re-read from its own store.** `bench compare` took
+exactly one control id and one variant id, so once a bracket's legs were stored the only statistic
+recoverable from them was the **single-pair** one, which is the weaker of the two. On the replicated
+sweep the pair says *five* wins and the replicate statistic says *three*. So the harness's stated
+principle, that a comparison is a pure function over records and two run ids always produce the same
+verdict, held for the weaker claim and silently not for the stronger one, and the stronger one existed
+only in the terminal scrollback of the run that produced it. **Fixed**: `--control` and `--variant`
+repeat, and more than one leg on either side selects `compareReplicated`. Re-rendering the sweep from
+its store now reproduces the bracket's own three wins exactly.
+
+**28, the report showed only the worst resolution, never each row's own.** The footer says "flat to
+within its own resolution, at worst ±X", which cannot answer the question a flat row actually raises:
+was it close to resolving or nowhere near? On the replicated sweep `emittingClausesPayRegionRebuild`
+came back flat at **-12.5% against its own ±12.6%**, missing by a tenth of a point, and nothing in the
+table said so. **Fixed**: a `resolves` column per row.
+
+**29, `BenchPlan` is systematically optimistic, and now measurably so.** It forecasts from control legs
+only, while the threshold it is predicting pools the spread of *both* arms, so it cannot see the
+variance the variant legs contribute. Measured against the replicated sweep, forecast against actual:
+
+| row | forecast | actual | |
+|---|---|---|---|
+| `handleLoopAnswersInPlace` | ±10.0% | ±14.4% | under by 1.4x |
+| `continuationBodiesFuse` | ±1.9% | ±3.6% | under by 1.9x |
+| `suspensionBaseline` | ±3.2% | ±3.9% | under |
+| `handleLoopFusesContinuation` | ±6.8% | ±5.8% | over |
+| `emittingClausesPayRegionRebuild` | ±14.6% | ±12.6% | over |
+
+It is right about the shape every time, which is what it is for, and it under-predicts more often than
+it over-predicts. **Open**: the fix is to forecast from both arms when both exist, or to state the
+bias. Recorded rather than fixed because the correction changes what the command claims, and its first
+version was already wrong once in the opposite direction.
+
 ## Status, reconciled
 
 | # | defect | state |
@@ -240,8 +275,11 @@ two readings, rather than presenting itself as a clean comparison.
 | 24 | a dirty A/A null printed a line and exited 0 | **fixed**: a blocker, with the exit code |
 | 25 | a stored run did not record the JVM args that produced it | **fixed**: recorded and reported; the headline pair remains unrecoverable |
 | 26 | two fixed decimals made a nanosecond row unreadable | **fixed**: precision scales with magnitude |
+| 27 | a bracket's replicated verdict could not be re-read from its store | **fixed**: `--control`/`--variant` repeat |
+| 28 | the report showed only the worst resolution, not each row's | **fixed**: a `resolves` column |
+| 29 | `BenchPlan` forecasts from one arm and the threshold pools two | **open**, measured and quantified |
 
-Twenty-six entries: **22 fixed**, 1 bounded (23), 1 open (9), 1 an observation (7), 1 superseded (5).
+Twenty-nine entries: **24 fixed**, 1 bounded (23), 1 open (9), 1 an observation (7), 1 superseded (5).
 Counted from the table rather than tallied by hand, because this line had drifted from it once
 already. Defect 9's mitigation is now wired into every
 bracket rather than available on request; what remains irreducible about 9 is that fixtures are
