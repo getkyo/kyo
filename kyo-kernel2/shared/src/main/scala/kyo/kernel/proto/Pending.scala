@@ -6,10 +6,11 @@ import scala.annotation.nowarn
 import scala.annotation.static
 import scala.language.implicitConversions
 
-opaque type <[+A, -S] = A | Arrow[Any, A, S] | Nested[A]
-
 private[kyo] trait Boxed
 
+opaque type <[+A, -S] = A | Arrow[Any, A, S] | Nested[A]
+
+// TODO let's move to Nested.scala
 final private[proto] case class Nested[+A](value: A) extends Boxed
 
 object Nested:
@@ -31,6 +32,7 @@ object Nested:
 end Nested
 
 object `<` extends Implicits:
+    // TODO why isn't this in Implicits?
     implicit def fromArrow[A, S](v: Arrow[Any, A, S]): A < S = v
 
     extension [A, S](self: A < S)

@@ -3,6 +3,7 @@ package kyo.kernel.proto
 import kyo.bug
 import kyo.kernel.proto.Arrow.*
 
+// TODO Eval should be private[kernel]. The external apis are <.eval/evalNow and ArrowEffect.*
 object Eval:
 
     private val noEntries = kyo.Span.empty[Arrow[?, ?, ?]]

@@ -16,6 +16,7 @@ import scala.util.control.NoStackTrace
   * and no others: its presence among `getSuppressed` marks an exception as already enriched, it accumulates the reconstructions of every
   * boundary an exception crosses, and `getMessage` renders them for a reader that would rather not parse a stack trace.
   */
+// TODO I'm planning to make this KyoException and updting the codebase. Launch an opus agent to consider the swap and implications by looking at the use of KyoException
 final private[kyo] class EffectTrace extends Exception(null, null, false, false):
 
     private[kyo] var elements: Array[StackTraceElement]        = EffectTrace.noElements

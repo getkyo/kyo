@@ -17,4 +17,7 @@ object Effect:
                 val step = next.step
                 step.head(f, step.tail)
 
+
+    // TODO launch an opus agent to explore the design of Effect.catching. Please do not overengineer, you always do when we get to this point. THink in terms of composition and see how the old kernel does this. I need exploration please not a quick solution
+
 end Effect

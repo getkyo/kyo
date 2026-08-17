@@ -7,6 +7,8 @@ import kyo.kernel.proto.Loop.Outcome
 import kyo.kernel.proto.Loop.Outcome2
 import scala.annotation.nowarn
 
+// TODO we also need to add ContextEffect. I'm considering making it an ArrowEffect that keeps a map with all the contextual values
+
 abstract class ArrowEffect[-I[_], +O[_]]
 
 object ArrowEffect:

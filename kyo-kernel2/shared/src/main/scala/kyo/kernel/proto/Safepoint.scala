@@ -5,6 +5,7 @@ import kyo.StaticFlag
 import scala.annotation.static
 import scala.annotation.tailrec
 
+// TODO this should be private[kernel]
 class Safepoint
 
 object Safepoint:
