@@ -83,6 +83,14 @@ being caught.
    under-predicts on only 4, erring both ways. Corrected in `tool-defects.md` and pinned by a test
    that asserts a difference rather than a direction.
 
+6. **Every fix from this stream is now pinned by a test, which was itself a gap.** Defects 25 to 29
+   were fixed and verified by running commands and reading output, leaving nothing to catch a
+   regression, which is the exact shape this project corrects in its own results. `PlanTest` (new,
+   reads the real bracket) and four checks on the resolution column close it. **324 checks green
+   across eight suites.** Defect 27's CLI wiring, two lines choosing `compareReplicated` when given
+   more than one leg per side, is exercised by running it and not by a test; the statistic it selects
+   is covered by `PlanTest` on real stored legs.
+
 **Everything else remaining is a ruling**, each with a recorded default: the four gated candidates in
 `RULINGS-NEEDED.md`, the C4 trade, and DIS-3's cast above.
 
@@ -459,7 +467,7 @@ demonstrably skips. On the real sweep it fires once, on the true positive, and e
   leg, drift off the session path, the ingest path.
 - All 12 implementation-review findings closed.
 - Phase 5 (allocation attribution), Phase 6 Tier A (the investigator), the CLI QA, and the
-  never-exercised guards. **266 checks green across seven suites** is the current figure; the counts
+  never-exercised guards. **324 checks green across eight suites** is the current figure; the counts
   quoted inside the sections above are the counts as of those steps and are left as written.
 - Experiment data force-added to git; `.gitignore` had a global `*.json` hiding all of it.
 
