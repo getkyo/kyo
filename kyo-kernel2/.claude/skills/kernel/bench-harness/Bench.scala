@@ -108,8 +108,10 @@ object Bench:
             modified <- exec(worktree, (Seq("git", "diff", "HEAD", "--") ++ paths)*)
         yield (tracked + modified).hashCode.toHexString
 
-    /** Measures this machine's run-to-run spread by repeating one row on an unchanged tree. Classifying against a measured floor is the
-      * difference between a verdict and a guess.
+    /** Measures this machine's run-to-run spread by repeating one row on an unchanged tree.
+      *
+      * No longer on the session path: a bracket estimates its spread from its own replicate legs, on the same tree it measures. This remains
+      * for a single-pair comparison, which cannot replicate and therefore has nothing better to classify against.
       */
     def measureDrift(worktree: Path, row: String, samples: Int = 3)(using Frame): Double < (Async & Fail) =
         val json = worktree / "bench-drift.json"
@@ -200,10 +202,12 @@ object Bench:
             _    <- requireClean(worktree)
             host <- exec(worktree, "hostname").map(_.trim)
             jvm  <- System.property[String]("java.version", "unknown")
-            // measured, never assumed: this is the floor every verdict in the session is read against
-            drift <- measureDrift(worktree, driftRow)
-            now   <- Clock.now
-        yield Session(s"s-${now.toDuration.toMillis}", host, jvm, drift)
+            now  <- Clock.now
+        // no drift measurement here any more. A bracket estimates its spread from its own replicate
+        // legs, which is both a better estimate and one taken on the same tree as the measurement;
+        // the old session drift was three extra runs on HEAD sources belonging to neither leg, and
+        // keeping both left two competing noise estimates with the report using the worse one.
+        yield Session(s"s-${now.toDuration.toMillis}", host, jvm, 0.0)
 
     def runLeg(
         session: Session,
