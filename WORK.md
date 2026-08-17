@@ -37,7 +37,36 @@ invalidates either, that is rework to schedule and say out loud, not a fact to b
 failure is doing the work while the check on the work is still running, which is the same shape as
 reading a benchmark before its efficacy gate.
 
-## OPEN, in the order it should be picked up
+## OPEN
+
+**Six things are open.** The numbered stream below is no longer a todo list: 12 of its 18 entries are
+finished work or narrative, and it had drifted into claiming otherwise. It is kept for its reasoning
+and renamed accordingly.
+
+| task | open work | blocked on |
+|---|---|---|
+| 19 | integrate the v3 held-out review, then produce v4 or record that v3 stands | its report, requested |
+| 20 | Step 0a: confirm multi-row `LogFile` truncation end to end | a quiet machine |
+| 21 | Step 0b/0c: make jit data loadable and ingestable | nothing, ready now |
+| 22 | plan items 6, 5, 10, 11 | task 19 |
+| 23 | plan items 1, 2, 3, 8, including defect 43's Timing case | tasks 19, 20, 21 |
+| 24 | five rulings: C4, DIS-3, IN-3, C3, DIS-4 | the owner |
+
+**C4 is the only ruling with a live consequence**: the safepoint depth leak is in the proto kernel
+right now and the fix is parked on `parked/c4-safepoint-root-guard`, not landed. The other four are
+about whether to spend effort. Every default is recorded in `RULINGS-NEEDED.md`.
+
+**Landed from the v3 plan so far**, both green at 287 checks and both **out of order**, per the process
+error recorded above: **item 7**, the diagnostic note keyed on the earned threshold rather than the
+fork count, which also fixed a false negative at `-f 3`; and **item 4**, the noise predicate inverted
+from a noise list to the kernel package, moving the real-profile figure from 29.07% to 83.97%.
+
+**Superseded by the v3 plan**, and closed as separate work: the v1 plan and its review (entries 7, 8),
+v2 and its table (entry 9), and the two agent reports (entry 10), which now live in `reviews/`. The
+defect ledger (entry 12) is `tool-defects.md`'s job and the re-derived figures (entry 13) are
+`reviews/ORACLES.md`'s; both are subordinate documents and this file should carry only their state.
+
+## How the stream got here, in the order it happened
 
 1. **C4 is measured and needs a ruling.** The fix costs **+26.2% on `evalFixedOverhead`**
    (0.005853 → 0.007364, about 1.5 ns per top-level `eval`), every other row flat, A/A null clean.
@@ -193,7 +222,8 @@ experiments become branches rather than floating commits. The same branch also r
     The fraction is filter-dependent and is no longer quoted; item 2 rests on the mechanism, which
     holds. See `reviews/ORACLES.md`.
 
-11. **`IMPROVEMENT-PLAN.md` is now v3, committed, and a fresh held-out reviewer is IN FLIGHT on it.**
+11. **`IMPROVEMENT-PLAN.md` is now v3, committed. The fresh held-out reviewer has gone idle and its
+    report is requested; integrating it is task 19.**
     The thesis is restated at the scale the evidence supports: **the harness captures a great deal at
     real cost and renders almost none of it.** `Run.alloc` and `Run.cpu` cost one extra JMH invocation
     each and surface as one integer and one percentage that prints only above 25%; 14 of 22 `Run`
@@ -268,7 +298,9 @@ experiments become branches rather than floating commits. The same branch also r
       and that render is the acceptance case.
     - **Defect 43**, above.
 
-18. **Item 4 is designed and is the strongest starting point. See `reviews/ITEM-4-DESIGN.md`.** The
+18. **Item 4: designed, then IMPLEMENTED and green. See `reviews/ITEM-4-DESIGN.md` and commit
+    `50a8b73dfd`.** (This entry said "designed and is the strongest starting point" after the fix had
+    landed, which is exactly the drift the restructure above removes.) The
     finding sharpened while designing it: `KnownNoise`'s predicate is **inverted**, not merely
     incomplete. It asks which frames are noise, which requires enumerating everything that is not the
     kernel, an open set that grows with every benchmark added. Adding `ProtoKernelBench` fixes this
@@ -291,8 +323,10 @@ experiments become branches rather than floating commits. The same branch also r
     returning to raw data or re-running the tool, none by re-reading the writeup. That is the argument
     for the rule, not an anecdote about it.
 
-**Everything else remaining is a ruling**, each with a recorded default: the four gated candidates in
-`RULINGS-NEEDED.md`, the C4 trade, and DIS-3's cast above.
+**Everything remaining in the *kernel-candidate* stream is a ruling**, each with a recorded default:
+the four gated candidates in `RULINGS-NEEDED.md`, the C4 trade, and DIS-3's cast above. That sentence
+once read "everything else remaining", which stopped being true the moment the v3 plan opened a second
+stream of real work; the harness items are tasks 19 to 23 and are not rulings.
 
 **On DIS-3 specifically**: its recorded default is proceed, but the exception opened for kernel work
 was scoped to C4, and the skill requires sign-off for casts. I surfaced the cast and did not start the
