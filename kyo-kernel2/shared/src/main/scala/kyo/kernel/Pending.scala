@@ -1,4 +1,4 @@
-package kyo.kernel.proto
+package kyo.kernel
 
 import kyo.Frame
 import kyo.Maybe
@@ -11,7 +11,7 @@ private[kyo] trait Boxed
 opaque type <[+A, -S] = A | Arrow[Any, A, S] | Nested[A]
 
 // TODO let's move to Nested.scala
-final private[proto] case class Nested[+A](value: A) extends Boxed
+final private[kyo] case class Nested[+A](value: A) extends Boxed
 
 object Nested:
 

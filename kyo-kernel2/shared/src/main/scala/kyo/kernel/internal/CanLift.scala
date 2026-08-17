@@ -1,4 +1,4 @@
-package kyo.kernel.proto
+package kyo.kernel.internal
 
 import scala.annotation.implicitNotFound
 import scala.quoted.*
@@ -40,7 +40,7 @@ object CanLift:
     end unsafe
 
     /** The lift's emission, expanded at the site the conversion lands on. */
-    private[proto] inline def lift[A, S](inline v: A): A < S = ${ liftImpl[A, S]('v) }
+    private[kyo] inline def lift[A, S](inline v: A): A < S = ${ liftImpl[A, S]('v) }
 
     private def liftImpl[A: Type, S: Type](v: Expr[A])(using Quotes): Expr[A < S] =
         import quotes.reflect.*

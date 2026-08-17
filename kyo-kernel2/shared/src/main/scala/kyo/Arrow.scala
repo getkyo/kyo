@@ -1,10 +1,10 @@
-package kyo.kernel.proto
+package kyo
 
 import kyo.Frame
 import kyo.Span
 import kyo.Tag
-import kyo.kernel.proto.Loop.Outcome
-import kyo.kernel.proto.Loop.Outcome2
+import kyo.kernel.Loop.Outcome
+import kyo.kernel.Loop.Outcome2
 import scala.runtime.AbstractFunction1
 
 sealed abstract class Arrow[-A, +B, -S] extends AbstractFunction1[A, B < S] with Boxed:
@@ -94,7 +94,7 @@ object Arrow:
     ) extends Defer[Any, B, S]
 
     // TODO rename to Park and rename related methods to keep the "park" theme cosnistent
-    final private[proto] class Eval[+A, +B, -S](
+    final private[kyo] class Eval[+A, +B, -S](
         val entries: Span[Arrow[?, ?, ?]],
         val tags: Span[AnyRef],
         val states: Span[AnyRef],
@@ -116,7 +116,7 @@ object Arrow:
             else SuspendWith(this, f)
     end Suspend
 
-    final private[proto] class SuspendWith[I[_], O[_], E <: ArrowEffect[I, O], A, X, B, S, S2](
+    final private[kyo] class SuspendWith[I[_], O[_], E <: ArrowEffect[I, O], A, X, B, S, S2](
         val susp: Suspend[I, O, E, A, X, S],
         val cont: Arrow[X, B, S2]
     ) extends Defer[Any, B, E & S & S2]:

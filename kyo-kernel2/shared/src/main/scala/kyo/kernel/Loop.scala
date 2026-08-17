@@ -1,4 +1,4 @@
-package kyo.kernel.proto
+package kyo.kernel
 
 import kyo.Frame
 import scala.annotation.nowarn

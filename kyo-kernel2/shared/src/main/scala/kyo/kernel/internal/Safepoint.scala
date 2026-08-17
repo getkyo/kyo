@@ -1,4 +1,4 @@
-package kyo.kernel.proto
+package kyo.kernel.internal
 
 import java.util.concurrent.atomic.AtomicReferenceArray
 import kyo.StaticFlag

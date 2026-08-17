@@ -1,4 +1,4 @@
-package kyo.kernel.proto
+package kyo.kernel.internal
 
 import kyo.Frame
 import kyo.Maybe
@@ -110,9 +110,9 @@ private[kyo] object EffectTrace:
       */
     private def isPlumbing(e: StackTraceElement): Boolean =
         val cls = e.getClassName
-        cls.startsWith("kyo.kernel.proto.Eval") || cls.startsWith("kyo.kernel.proto.Arrow") ||
-        cls.startsWith("kyo.kernel.proto.ArrowEffect") || cls.startsWith("kyo.kernel.proto.Stack") ||
-        cls.startsWith("kyo.kernel.proto.Nested") || cls.startsWith("kyo.kernel.proto.Pending")
+        cls.startsWith("kyo.kernel.internal.Eval") || cls.startsWith("kyo.Arrow") ||
+        cls.startsWith("kyo.kernel.ArrowEffect") || cls.startsWith("kyo.kernel.internal.Stack") ||
+        cls.startsWith("kyo.kernel.Nested") || cls.startsWith("kyo.kernel.Pending")
     end isPlumbing
 
     private def find(ex: Throwable): Maybe[EffectTrace] =

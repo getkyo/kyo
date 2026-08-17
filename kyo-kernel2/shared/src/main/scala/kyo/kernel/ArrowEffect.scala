@@ -1,10 +1,10 @@
-package kyo.kernel.proto
+package kyo.kernel
 
 import kyo.Frame
 import kyo.Tag
-import kyo.kernel.proto.Arrow.*
-import kyo.kernel.proto.Loop.Outcome
-import kyo.kernel.proto.Loop.Outcome2
+import kyo.Arrow.*
+import kyo.kernel.Loop.Outcome
+import kyo.kernel.Loop.Outcome2
 import scala.annotation.nowarn
 
 // TODO we also need to add ContextEffect. I'm considering making it an ArrowEffect that keeps a map with all the contextual values

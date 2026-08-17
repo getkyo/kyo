@@ -1,7 +1,7 @@
-package kyo.kernel.proto
+package kyo.kernel
 
 import kyo.Frame
-import kyo.kernel.proto.Arrow.*
+import kyo.Arrow.*
 import scala.annotation.nowarn
 
 object Effect:

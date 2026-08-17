@@ -1,7 +1,7 @@
-package kyo.kernel.proto
+package kyo.kernel.internal
 
 import kyo.bug
-import kyo.kernel.proto.Arrow.*
+import kyo.Arrow.*
 
 // TODO Eval should be private[kernel]. The external apis are <.eval/evalNow and ArrowEffect.*
 object Eval:
@@ -10,21 +10,6 @@ object Eval:
     private val noRefs    = kyo.Span.empty[AnyRef]
 
     def apply[A](v: A < Any): A =
-        // `Safepoint.exit` is not protected by a finally in the delivery arms, deliberately: guarding
-        // all eight would put an exception handler on the hottest path in the kernel. It does not need
-        // one. On every normal path the pairs balance, including a drained budget, where the arm that
-        // parks never completed an `enter` and every frame that did runs its `exit` as the parked value
-        // propagates up. The only way to skip an `exit` is an exception, and every catch in the drive
-        // rethrows, so every exception reaches a boundary. There are two boundaries into `loop` and
-        // `partial` already guards the other one, so one guard here is necessary and sufficient.
-        //
-        // Without it a throw escaping a root drive left the depth low on a slot that is per thread, so
-        // later unrelated computations on that thread paid for it: exactly one depth of 512 lost per
-        // throw, permanently, with nothing ever restoring it.
-        //
-        // `save` rather than a bare read, so a nested eval gets its own budget instead of inheriting a
-        // nearly drained one and trampolining immediately for no reason, and `restore` gives the outer
-        // drive its own accounting back.
         val slot  = Safepoint.get()
         val saved = Safepoint.save(slot)
         try Nested.unnest[A](loop(v, armed = false, neverStop))

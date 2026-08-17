@@ -1,4 +1,4 @@
-package kyo.kernel.proto
+package kyo.kernel.internal
 
 import java.util.Arrays
 import kyo.Span
@@ -6,7 +6,7 @@ import kyo.Tag
 import scala.annotation.static
 import scala.annotation.tailrec
 
-final private[proto] class Stack:
+final private[internal] class Stack:
 
     private var entries = new Array[Arrow[?, ?, ?]](32)
     private var tags    = new Array[AnyRef](32)
@@ -100,7 +100,7 @@ final private[proto] class Stack:
 
 end Stack
 
-private[proto] object Stack:
+private[internal] object Stack:
 
     @static private val local: ThreadLocal[Stack] =
         new ThreadLocal[Stack]:
