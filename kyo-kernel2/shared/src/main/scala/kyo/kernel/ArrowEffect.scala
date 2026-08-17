@@ -6,6 +6,7 @@ import kyo.Frame
 import kyo.Tag
 import kyo.kernel.Loop.Outcome
 import kyo.kernel.Loop.Outcome2
+import kyo.kernel.internal.Nested
 import kyo.kernel.internal.Safepoint
 import scala.annotation.nowarn
 
