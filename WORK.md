@@ -42,7 +42,14 @@ being caught.
      an added 4-byte kind field lands in existing padding and is **free** on all four, the opposite of
      the candidate's stated risk. This does not kill it; the expensive half, the drive rewrite, is
      what the gate is really about.
-3. **The sweep was never replicated**: one leg per configuration.
+3. **The sweep was never replicated**, and trying to replicate it found something worse. The
+   compile-command file that produced the campaign's headline (`continuationBodiesFuse` -6.8% under a
+   forced inline) is **gone from disk**, and the stored runs never recorded it: the control and
+   variant share a `sha` and a `treeHash` and differ only in a configuration nowhere in the record.
+   **That measurement is therefore unrecoverable**, not merely unstated, and re-running it means
+   reconstructing the configuration from the writeups rather than from the store. Defect 25 is fixed
+   so this cannot recur, but the fix does not retrieve the old pair.
+   Replication itself remains open and needs the machine to itself for roughly 25 minutes.
 
 Everything else below is finished work, kept for its reasoning.
 
