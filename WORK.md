@@ -43,23 +43,34 @@ reading a benchmark before its efficacy gate.
 finished work or narrative, and it had drifted into claiming otherwise. It is kept for its reasoning
 and renamed accordingly.
 
+**`IMPROVEMENT-PLAN.md` is now v4**, rewritten against the third held-out review
+(`reviews/REVIEW-PLAN-V3.md`). It is the first version whose every load-bearing number was re-derived
+by someone other than its author. v4 corrects **seven** v3 claims, three of which were mine.
+
 | task | open work | blocked on |
 |---|---|---|
-| 19 | integrate the v3 held-out review, then produce v4 or record that v3 stands | its report, requested |
-| 20 | Step 0a: confirm multi-row `LogFile` truncation end to end | a quiet machine |
-| 21 | Step 0b/0c: make jit data loadable and ingestable | nothing, ready now |
-| 22 | plan items 6, 5, 10, 11 | task 19 |
-| 23 | plan items 1, 2, 3, 8, including defect 43's Timing case | tasks 19, 20, 21 |
+| 25 | **free-standing**: item 4's three-way rework, item 12 (`mode`/`unit`), 9, 10, ingest `forks`/`jvmArgs` | nothing, start here |
+| 20 | Step 0a: multi-row `LogFile`, plus its two output consequences (F13, F14) | a quiet machine |
+| 21 | Step 0b/0c: **two** schema classes, not one; `StoreSchemaTest` does not exist | nothing, ready |
+| 26 | Step 0d-0g, including a QA main whose checks cannot fail | nothing, ready |
+| 22 | items 6 and 5, **neither prerequisite-free**; item 5 as designed breaks both commands it wires | model/default changes |
+| 23 | items 1, 2, 3, 8; item 2's content is re-decided by 0a, not merely unblocked | 25, 26, 20, 21 |
 | 24 | five rulings: C4, DIS-3, IN-3, C3, DIS-4 | the owner |
 
 **C4 is the only ruling with a live consequence**: the safepoint depth leak is in the proto kernel
 right now and the fix is parked on `parked/c4-safepoint-root-guard`, not landed. The other four are
 about whether to spend effort. Every default is recorded in `RULINGS-NEEDED.md`.
 
-**Landed from the v3 plan so far**, both green at 287 checks and both **out of order**, per the process
-error recorded above: **item 7**, the diagnostic note keyed on the earned threshold rather than the
-fork count, which also fixed a false negative at `-f 3`; and **item 4**, the noise predicate inverted
-from a noise list to the kernel package, moving the real-profile figure from 29.07% to 83.97%.
+**Landed so far**, both **out of order** per the process error recorded above:
+
+- **Item 7**, and the review **confirms it correct** as shipped, including the `exists` choice. It also
+  fixed a false negative: single-pair at `-f 3` was silently treated as a claim.
+- **Item 4, partially, and the shipped half is contested.** The *inversion* is right and stays: a noise
+  list must enumerate an open set, a kernel package is closed. But the two-way partition classifies
+  `ProtoKernelBench$$anon$95` as immovable, **and that allocation is the entire subject of candidate
+  C3**. So 83.97% is a third classification, not "the truth", exactly as 70% was not. The note also now
+  fires on every Full leg, and one that always prints carries no information. `Bench.cpuPartition` is
+  committed unwired (`a70e15f89a`); wiring it and dropping the inference is task 25.
 
 **Superseded by the v3 plan**, and closed as separate work: the v1 plan and its review (entries 7, 8),
 v2 and its table (entry 9), and the two agent reports (entry 10), which now live in `reviews/`. The
