@@ -17,28 +17,28 @@ object ArrowEffect:
         using inline _frame: Frame
     )[I[_], O[_], E <: ArrowEffect[I, O]](
         inline effectTag: Tag[E],
-        inline input0: I[C]
+        inline effectInput: I[C]
     ): O[C] < E =
         new Suspend[I, O, E, C, O[C], Any]:
-            def frame                     = _frame
-            def tag                       = effectTag
-            def input                     = input0
-            def cont(v: O[C]): O[C] < Any = v
+            def frame         = _frame
+            def tag           = effectTag
+            def input         = effectInput
+            def cont(v: O[C]) = v
 
     @nowarn("msg=anonymous")
     inline def suspendWith[C](
         using inline _frame: Frame
     )[I[_], O[_], E <: ArrowEffect[I, O], B, S](
         inline effectTag: Tag[E],
-        inline input0: I[C]
+        inline effectInput: I[C]
     )(
         inline f: O[C] => B < S
     ): B < (E & S) =
         new Suspend[I, O, E, C, B, S]:
-            def frame                = _frame
-            def tag                  = effectTag
-            def input                = input0
-            def cont(v: O[C]): B < S = f(Nested.unnest[O[C]](v))
+            def frame         = _frame
+            def tag           = effectTag
+            def input         = effectInput
+            def cont(v: O[C]) = f(Nested.unnest[O[C]](v))
     end suspendWith
 
     @nowarn("msg=anonymous")
@@ -46,9 +46,10 @@ object ArrowEffect:
         inline effectTag: Tag[E],
         v: A < (E & S)
     )(
-        inline f: [C] => (I[C], O[C] => A < (E & S)) => A < (E & S),
+        inline handle: [C] => (I[C], O[C] => A < (E & S)) => A < (E & S),
         inline done: A => B < S
     ): B < S =
+        def onDone(v: A) = done(v)
         v match
             case body: Arrow[Any, A, E & S] @unchecked =>
                 new Handle[E, A, B, B, S]:
@@ -56,11 +57,12 @@ object ArrowEffect:
                     val handler =
                         new Handler.HandleCont[I, O, E, A, B, S]:
                             def tag                                            = effectTag
-                            def run[C](input: I[C], cont: O[C] => A < (E & S)) = f[C](input, cont)
-                            def complete(a: A)                                 = done(Nested.unnest[A](a))
+                            def run[C](input: I[C], cont: O[C] => A < (E & S)) = handle[C](input, cont)
+                            def complete(a: A)                                 = onDone(Nested.unnest[A](a))
                     def cont = Arrow[B]
             case a =>
-                done(Nested.unnest[A](a))
+                onDone(Nested.unnest[A](a))
+        end match
     end handleCont
 
     @nowarn("msg=anonymous")
@@ -68,15 +70,16 @@ object ArrowEffect:
         inline effectTag: Tag[E],
         v: A < (E & S)
     )(
-        inline f: [C] => (I[C], O[C] => A < (E & S)) => A < (E & S),
+        inline handle: [C] => (I[C], O[C] => A < (E & S)) => A < (E & S),
         inline done: A => B < S
     )[C2, S2](
         inline cont: B => C2 < S2
     )(using inline _frame: Frame): C2 < (S & S2) =
+        def onDone(v: A) = done(v)
         def arrow =
             new Transform[B, C2, S2]:
                 def frame = _frame
-                def apply[C3, S3](v: B < S3, next: Arrow[C2, C3, S3]): C3 < (S2 & S3) =
+                def apply[C3, S3](v: B < S3, next: Arrow[C2, C3, S3]) =
                     v match
                         case v: Arrow[Any, B, S3] @unchecked =>
                             v.chain(this.chain(next))
@@ -100,11 +103,11 @@ object ArrowEffect:
                     val handler =
                         new Handler.HandleCont[I, O, E, A, B, S]:
                             def tag                                            = effectTag
-                            def run[C](input: I[C], cont: O[C] => A < (E & S)) = f[C](input, cont)
-                            def complete(a: A)                                 = done(Nested.unnest[A](a))
+                            def run[C](input: I[C], cont: O[C] => A < (E & S)) = handle[C](input, cont)
+                            def complete(a: A)                                 = onDone(Nested.unnest[A](a))
                     def cont = arrow
             case a =>
-                arrow(done(Nested.unnest[A](a)), Arrow[C2])
+                arrow(onDone(Nested.unnest[A](a)), Arrow[C2])
         end match
     end handleContWith
 
