@@ -76,8 +76,8 @@ that never contained one. Corrected in `bench-results/exp1/RESULT.md`, with the 
   statistic still has never consumed real legs.
 - **The actual DIS-1 fix is unmeasured.** A compile command is a diagnostic; making the method small
   enough to inline unaided is the candidate's real content.
-- **The 15-row sweep** of forced-inline against default is running as of this writing; a dispatch
-  change touches every row's path, so the one-row result cannot stand alone.
+- **A second sweep leg.** The 15-row comparison ran one leg per configuration, so its five wins and
+  one loss sit outside their combined errors but were never replicated.
 
 ## Standing constraints honoured
 
