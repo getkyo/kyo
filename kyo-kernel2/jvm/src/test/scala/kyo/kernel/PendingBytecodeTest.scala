@@ -59,9 +59,10 @@ class PendingBytecodeTest extends AnyFreeSpec:
     }
 
     "lift of a generic value is one runtime test" in {
-        // abstract types keep the runtime Boxed test, as a single static call
+        // abstract types keep the runtime Boxed test, as a single static call:
+        // aload, invokestatic Nested.nest, areturn
         val sizes = methodBytecodeSize[TestLiftGeneric]
-        assert(sizes == Map("test" -> 8))
+        assert(sizes == Map("test" -> 5))
     }
 
     private def methodBytecodeSize[A](using ct: ClassTag[A]): Map[String, Int] =
