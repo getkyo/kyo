@@ -1,149 +1,121 @@
-# bench-harness improvement plan
+# bench-harness improvement plan (v2)
 
-## The thesis
+Supersedes v1 entirely. v1's thesis was "the tool refuses well and volunteers poorly", which a held-out
+review showed covers about one defect in eight. This version rests on a different finding, arrived at
+by asking why I bypassed the tool six times in one campaign.
 
-The harness is good at **refusing** and weak at **volunteering**.
+## The finding
 
-Refusing is what it was built for and it works. Across this campaign it killed five optimization
-candidates cheaply and correctly, caught an operator contaminating a live measurement, inverted a
-conclusion that a −17.4% number would otherwise have cemented, and corrected a headline result from
-five wins to three. Twenty-nine of its own defects were found by using it; twenty-five are fixed;
-324 checks are green across eight suites.
+The harness contains **eight result-driven selectors**: functions whose job is to decide *what is worth
+showing given what the results were*. That is exactly the mechanism the tool needs, and it was built.
 
-Volunteering is where the remaining value is. Almost every insight that redirected this campaign was a
-**synthesis the tool had all the data for and left to the reader**: that the largest deltas were the
-unresolvable ones, that a row had never once been measurable across four attempts, that 70% of a row
-belongs to code no kernel change can touch, that the top budget candidate was the benchmark's own
-closure. The operator this tool exists for demonstrably skims. Every item in section A converts
-something already in the store into something the report says out loud.
+| selector | selects on | wired into production? |
+|---|---|---|
+| `LogCompilation.diffVerdicts` | verdict changed between legs | yes, via `Comparison.jitChanges` |
+| `Bench.actionableJit` | refusal worth chasing vs inherent | yes, 1 call |
+| `InlineSites.nearBudget` | method sits close to a budget | yes, 1 call, inside `Investigate` |
+| **`LogCompilation.budgetCandidates`** | refusals ranked by site count | **no** |
+| **`Bytecode.Change.crossedBudget`** | size change flipped an inlining budget | **no** |
+| **`Bytecode.diff` / `Bytecode.of`** | per-method sizes between two trees | **no** |
+| **`LogCompilation.efficacy`** | did the instructed flag actually take | **no** |
+| **`LogCompilation.unprofiledSites`** | sites with no receiver data | **no** |
 
-Ordering is by value, not by cost. Section A first.
+**Three wired, five not.** Every one of the five has tests. `Bytecode` is an entire tested module with
+zero production call sites. `unprofiledSites` has no caller anywhere but its own definition.
 
----
+Every throwaway probe written during this campaign called one of the five. That is the whole
+explanation, and it is not a discipline failure: **the logic was on no code path, so no amount of
+remembering would have surfaced it.** Writing a probe was the only way to reach it.
 
-## A. Make the tool volunteer what it already knows
+## The rule this yields
 
-### A1. Flag when the largest movements are the unresolvable ones
+> **A flag must carry its own evidence.** If the report says a row is unexplained, that paragraph
+> contains the evidence it is standing on. If it proposes an experiment, it can score that experiment.
+> If a guard fails a leg, the failure names what did not reconcile. **No output may instruct the
+> operator to go and look something up.**
 
-**Evidence.** In the replicated sweep the two biggest deltas on the board, −12.5% and −10.7%, were
-both flat, while a −7.1% row was a win. That inversion is the single most counterintuitive fact the
-campaign produced and the reader has to notice it unaided by scanning fifteen rows.
+The tool violates this in its own text today:
 
-**Change.** After the table, when any row in the top three by |delta| is `Flat` or `BelowResolution`,
-say so explicitly and name the leg count that would change it.
+```
+⚠️  Moved with nothing in the evidence behind it, so the cause is not known yet:
+  - continuationBodiesFuse: check allocation sites and the inlining log before proposing a mechanism
+```
 
-**Acceptance.** Fires on the replicated sweep naming both rows. Silent on a run where the largest
-deltas resolve. Both directions tested, from the real stored legs.
+It holds `alloc`, `allocByMethod`, `jit` (944 entries), `cpu` and `deopts` for both legs, and responds
+to "I cannot explain this" by assigning homework.
 
-### A2. Cross-reference a row against its own history in the store
+**Acceptance test for the whole plan:** grep the renderers for imperatives — *check, look at, verify,
+see the, diagnose*. Each surviving one is a place the tool knows something and delegated it back.
 
-**Evidence.** `emittingClausesPayRegionRebuild` produced −9.78%, then "unmeasurable", then −9.5%, then
-−12.5%-flat across four separate attempts. Every one of those is in the store. Three times a verdict
-about that row was recorded and later withdrawn, and nothing ever said "this row has disagreed with
-itself before".
+## The changes
 
-**Change.** A comparison consults the store for prior runs on the same rows and flags any row whose
-current verdict contradicts a previous one, or whose deltas across runs exceed its own resolution.
+### 1. Wire `efficacy` into the comparison report
+The highest-value item. It is the guard that stopped DIS-2 being credited with a −17.4% win the flag
+never caused, and it fires today only if someone writes a probe. When two legs differ in `jvmArgs`,
+the report must state whether the instructed method's verdict actually moved, and whether anything
+else moved with it. **Acceptance:** the stored DIS-2 pair reports that `dispatch$1` is refused in both
+logs, without a probe.
 
-**Acceptance.** On the current store it names `emittingClausesPayRegionRebuild` and does **not** name
-`continuationBodiesFuse`, which has been consistent across every measurement.
+### 2. Give the unexplained-row flag its evidence
+Replace the homework line with what exists: the row's own allocation delta (per-row, real), the leg's
+actionable refusals and near-budget methods, **explicitly labelled leg-wide**, and then the honest
+statement that a whole-class leg cannot attribute inlining to one row. **This is a hard limit, not an
+omission:** fifteen rows produce one compilation log and the model has no row→method mapping. Saying
+so is the fix; inventing the join would be the tool asserting what it cannot know.
 
-**Risk to watch.** This is the most speculative item here: "contradicts" needs a definition that does
-not fire on every ordinary re-measurement. Prefer under-firing.
+### 3. `Report.renderRun`, used by `run` and `show`
+`run` spends four JMH invocations building a 22-field `Run` and prints one line. `show` renders 944 jit
+entries as the number 944. One renderer, two call sites, gives homes to `budgetCandidates`,
+`unprofiledSites`, the per-leg JIT cost table, allocation attribution, and `coverage`.
+**Open question for the reviewer:** a bracket calls `runLeg` five times, so a full per-leg render would
+emit five reports before the comparison. Suppress under `bracket`, or print a digest?
 
-### A3. Per-row noise share, not one global number
+### 4. Fix `KnownNoise`, and name frames instead of one aggregate
+`Seq("BoxesRunTime", "java.lang.Integer", "jmh_generated")` matches `boxToInteger` and nothing else on
+the only real profile in the repository. The benchmark's own generated code is `ProtoKernelBench.loop$9`
+(17.1%), `run$39` (13.2%), `ask` (11.1%). So the report prints **29% where the truth is 70%**,
+understated in the direction that flatters the kernel. Its fixture is two authored frames with no
+`ProtoKernelBench` in them, so it cannot fail. Fix the constant, name the top contributors, and take
+the fixture from `qa-artifacts/qa-cpu.txt` rather than authoring it.
 
-**Evidence.** `noiseShare` exists, computes a whole-run figure, and warns above 25%. But 29.1% of
-`nestedPayloadsUnwrapInMaps` is `boxToInteger` and another 41.4% is the benchmark's own generated
-methods: **70% of that row is code no kernel change can move**. That fact refuted C1's premise and
-reframed IN-2 and DIS-2, and in each case I derived it by hand from a profile.
+### 5. Run the A/A null in `compare` and `chain`
+Its only call sites are `Cli.scala:210/215`, inside `BenchBracket`. Re-reading a stored bracket through
+`compare` reproduces the verdict and **silently drops the strongest refusal the tool has**. `chain`
+never checks itself on any step.
 
-**Change.** Attribute the CPU profile per row where the profile allows it, and mark rows whose
-kernel-attributable share is below a stated threshold. Where the profile covers only one row, say that
-rather than generalising.
+### 6. Annotate `resolves` with which term binds it
+`Stats.threshold` is `max(t·se, ownError·controlMean)` and both terms are already computed. Seven of
+fifteen rows in the replicated sweep are floor-bound, including `handleLoopAnswersInPlace` at −10.7%
+with a ±14.4% threshold set **entirely** by the own-error floor against a ±8.2% spread term — the row
+whose demotion turned five wins into three. `±14.4% (own error)` is fixed by forks; `±12.6% (spread)`
+by more legs. `Plan.scala` currently tells the operator, unconditionally, that forks do not help.
 
-**Acceptance.** Names `nestedPayloadsUnwrapInMaps` from the stored capture with a share near 70%,
-and states plainly that the other fourteen rows have no profile.
+### 7. Capture method sizes in `runLeg`, so `crossedBudget` has two sides
+The only item needing new capture. `Bytecode.of` reads compiled classes at analysis time and nothing
+calls it, so no leg records sizes and `crossedBudget` has nothing to compare. Capture **sizes for a
+named method set**, not instruction listings: every use in this campaign was "how big is this method".
+Guard on the classes matching the leg's sha, and record absence rather than guessing.
 
-### A4. Say when a budget candidate is not kernel code
+### 8. Orphaned `Investigate.adjudicate`
+The report proposes experiments and cannot score them. This is the one genuine new shape (baseline,
+isolation, target) and the only place I think a new entrypoint is justified.
 
-**Evidence.** The top entry in the budget-proximity ranking, above every kernel method, is
-`ProtoKernelBench::run$56` at 379 B refused 10/10. It is the benchmark's own closure. The tool ranks
-it helpfully and never mentions that optimizing it would be optimizing the benchmark.
+### 9. `allocConservation` must explain itself
+Called in `runLeg`, can fail a leg, and its result never reaches any output.
 
-**Change.** Partition the ranking into kernel and non-kernel by package prefix and label it.
+### 10. `Ingest` records a warmup it cannot know
+`Ingest.scala` writes `warmup = Bench.WarmupIterations` unconditionally. `e6-base-wi25` was measured at
+`-wi 25` and is **stored as 10**. Not a missing field but a fabricated one.
 
-**Acceptance.** `run$56` appears under a non-kernel heading; `dispatch$1` and `Stack::grow` under
-kernel.
+## Anti-goals
 
-### A5. Run `BenchPlan` automatically before a bracket
+- **No new subcommands** except item 8. A command is another thing to remember, and forgetting is the
+  problem being solved.
+- **No new statistics.** The replicate statistic, the A/A null and the resolution floor are validated.
+- **No claim the data cannot support**, specifically no row→method attribution from a whole-class leg.
 
-**Evidence.** `BenchPlan` now reproduces real thresholds exactly, verified against all fifteen rows of
-the replicated sweep. It still runs only on request. Sessions were spent reporting a 25% regression on
-a row that resolves to ±22.6%, and the tool could have said so beforehand from data already stored.
+## Ordering
 
-**Change.** A bracket forecasts from any prior legs in its store before measuring, and warns, naming
-rows that cannot resolve the target. Refusing outright is probably too strong; the operator may be
-measuring exactly to improve the estimate.
-
-**Acceptance.** A bracket on the current store prints the forecast first. A bracket on an empty store
-says it has no basis to forecast from, rather than silently skipping.
-
----
-
-## B. Ergonomics that cost real time
-
-### B1. `bench session <store>`
-
-Re-reading a five-leg bracket currently means assembling ten `--control`/`--variant` flags with a
-shell loop, and getting the arm split right by hand. A store plus a session id already determines
-this. **Acceptance:** one command reproduces the replicated verdict for a stored bracket.
-
-### B2. Invert the fork default
-
-Every report in this campaign carries "-f 1 is diagnostic and not a claim", and `-f 3` was never once
-run. The label is doing the work that a default should. **Change:** `-f 3` for anything that renders a
-verdict; `-f 1` behind `--diagnostic`. **Acceptance:** the existing label becomes unreachable without
-the flag.
-
-### B3. Detect a dangling configuration reference
-
-`Run.jvmArgs` now records `-XX:CompileCommandFile=/path`. If that file is deleted, the run is exactly
-as unrecoverable as the headline pair was, and nothing notices. **Change:** on load, check referenced
-files still exist and mark the run's configuration unverifiable if not. **Acceptance:** deleting
-`forced-inline.cmd` makes the sweep replication report its configuration as unverifiable.
-
----
-
-## C. Coverage gaps in the tool's own tests
-
-### C1. The CLI dispatch is untested
-
-Two lines choose `compareReplicated` when given more than one leg per side. They are exercised by
-running the command, not by a test. Given that defect 27 was exactly this path being *absent*, it
-should be pinned.
-
-### C2. `compare` and `compareReplicated` disagree by design and only one is labelled
-
-On the same legs the pair says five wins and the replicate statistic says three. The CLI now prints
-which it used. The stronger guard is that a single-pair comparison over legs that *could* have been
-replicated should say so.
-
----
-
-## D. Structural, already filed
-
-The harness is 3,500 lines with hand-rolled test mains, no CI, and a `check` that aborts the suite on
-first failure. Filed in `kernel2-backlog.md` with two shapes and a recommendation; unchanged by this
-plan and still awaiting a ruling.
-
----
-
-## What this plan deliberately does not propose
-
-- **No new statistics.** The replicate statistic, the A/A null and the resolution floor are validated
-  and should not be touched.
-- **No changes to the refusal set.** Every blocker in the tool exists because its absence produced a
-  wrong conclusion that was believed at the time.
-- **Nothing that makes a verdict easier to obtain.** Every item either adds context to a verdict or
-  makes an existing refusal easier to act on.
+1, 2, 4, 5, 6 first: all are wiring or correcting existing logic, none needs new capture, and each
+closes a case where the tool held the answer. Then 3 (the renderer), 9, 10. Then 7 (capture) and 8
+(new entrypoint), which are the only two that add rather than connect.
