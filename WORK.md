@@ -15,16 +15,18 @@ they expose facts to check output the tool already produced. Computing a delta, 
 by hand is the failure this project exists to prevent, and it happened for four experiments before
 being caught.
 
-## In flight
+## DIS-1 is refuted, by measurement, in three forms
 
-Tier-split variant 3 bracketed against base: three rows, C V C V C. Variant 3 finds the stack index
-once and hands it to whichever tier runs, where variants 1 and 2 looked it up twice on a fast-path
-miss and cost the handler rows 22 to 35%. Committed in the detached throwaway worktree as
-`9685c9b445` purely so the bracket can restore it by sha; no branch contains it.
+Variant 3 halves the handler regression (+11.2% against +21.7%) and avoids the allocation cliff
+(+24 B/op against +240,000), and delivers **no win**: `continuationBodiesFuse` is flat at -0.7%
+against the -6.8% that forcing the whole 607-byte body inline delivers.
 
-Rows chosen to test the specific hypothesis: `continuationBodiesFuse` (should win),
-`handleLoopAnswersInPlace` (the row variants 1 and 2 destroyed, should now be flat), and
-`trailingMapsStayLinear` (should not gain the 240,000 B/op the crude forced inline costs).
+The win comes from inlining the whole body, and a small inlined fast path does not approximate it.
+What helps the target row is exactly what breaks `trailingMapsStayLinear`'s escape analysis, and
+shrinking what gets inlined shrinks the win with it. See `bench-results/tier3/RESULT.md`.
+
+Open: whether some other shape recovers the win without enlarging the compilation unit. Nothing
+measured suggests one, and proposing another without a mechanism would be guessing.
 
 ## The central question, answered with replication
 
@@ -102,10 +104,8 @@ demonstrably skips. On the real sweep it fires once, on the true positive, and e
 
 - **Phases 5, 6, 7**: allocation attribution via `output=collapsed`; the investigator's rule table;
   steady-state recalibration and the CLI QA that has never run.
-- **The DIS-1 tier split is unresolved.** Variants 1 and 2 measured, both regress the handler rows
-  22-35%. Variant 3 (index found once, so a fast-path miss does not pay for a second stack scan) was
-  written and compiled with 126 tests green; **its measurement was interrupted and has never run**.
-  Measuring it is the next task, as a bracket rather than a single leg.
+- **DIS-1 is closed: refuted in all three constructible forms.** See above. The remaining candidates
+  in `optimization-plan.md` are untouched.
 - **The sweep was never replicated**: one leg per configuration.
 - **Ten tool defects** in `tool-defects.md`, of which two are now fixed (efficacy gate, budget
   ranking) and one is being fixed (ingest). Seven open.
