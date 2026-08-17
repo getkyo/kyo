@@ -248,6 +248,34 @@ program typed `< Any`. **Nothing built; awaiting the owner's S1/T ruling.** The 
 above is the same question in the other drive mode: under S1 an own-tag re-raise with no outer
 handler reaches the no-handler branch, so "park or bug" and "S1 or T" should be decided together.
 
+**Rulings from the owner on the design and on the park, in their words, and the state now.**
+
+- On the design's re-wrap Transform and on `Parked`: **"fucking no you won't introduce stuff like
+  ContinueAnswer or Parked. You keep thinking of this as a VM-like execution when you should be
+  thinking of COMPOSITION. let's go little by little."** So `CLAUSE-SCOPE-DESIGN.md` §4.2-4.4 as
+  written is not the fix; its findings 1-4 (the fork, the second site, D5, the `Defer` claim) stand.
+- On the ruling itself, found in the project's own guide while answering: `kyo-kernel2/CONTRIBUTING.md`
+  rule 7, **"A continue whose answer is itself pending runs at `node`: inside the handler's own cell,
+  so a re-raise of the scope's effect is answered by the same handler. Note the asymmetry with 6: a
+  pending clause *outcome* runs outside its own region, a pending *answer* runs inside it."** That is
+  T. `EvalTest` :501 contradicts the owner's own doc and is to become the old kernel2's stateful
+  successor form unless the owner overrules rule 7. Not yet ruled explicitly.
+- On the root cause, the owner: **"The root of these issues is the extreme unsafety of the code making
+  it impossible to nest/unnest stuff properly."** Confirmed: `var cur: Any` is the `<` union erased
+  (raw | `Nested` | bare `Arrow`), every hand-off in `Eval` is that same erased slot, and which shape a
+  line holds is a convention. Then: **"we'll redesign Eval. First, let's try to encapsulate things in
+  Stack as the TODOs indicate."** and **"also consider how we can increase safety of the stack
+  methods. both statically and at runtime"**.
+- Delivered, read-only: `reviews/EVAL-STACK-DESIGN.md` (`Segment` as a value, `Park` for
+  `Arrow.Eval`, opaque `Slot`/`Base`, `fold`/`cut`/`detachInterior`/`detachRegion`/`dropRegion`, the
+  floor replacing the `base` parameter, the static and runtime guards, and a four-step order with the
+  bench rows each step must run). **The owner is editing the kernel now** (`Arrow`, `ArrowEffect`,
+  `Pending`, `EffectTrace`, `Eval`, plus new `KyoInternal.scala` and `kyo/proto/`), with the standing
+  instruction **"do not make changes, I'm working on the code"**. I am read-only until released; no
+  sbt runs either, since a build reformats the files being edited. The test-merge items below
+  (`ContextEffectTest`, `KyoInternalTest`, the fully commented `Kyo*` tests, `ArrowEffectBytecodeTest`,
+  the clean full run) are paused on that, not abandoned.
+
 **Third file, third real bug, and the added coverage localised it exactly.** A handler's clause is the
 handler's own code and its effects belong to the handlers *outside* the region. This kernel answers a
 clause's effect with handlers the region's *body* installed inside it, so a user's `Say` handler wrapped
@@ -269,6 +297,10 @@ not a prescription**), and launched a held-out Fable for **analysis only** to se
 (what the pre-regression drive did with a computation-valued payload), adjudicate the `Defer`-only
 claim, and design the path forward under the governing goal: safer lift/nest/unnest, no
 rearchitecture, `handle*` shape unchanged, tests as written.
+
+*(The next two paragraphs are the reasoning as it stood before the design review; the "only `Defer`s"
+claim and the "route the synchronous case through `outcome`" fix are both superseded by the design's
+corrections 1 to 3 above and by the owner's rulings. Kept for the record, not for action.)*
 
 The owner's two observations that reframed it: **the answer slot is missing a `Nested`** (`Loop.continue`
 stores its payload raw, so a computation-valued answer arrives as a bare `Arrow` and the drive guesses),
