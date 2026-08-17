@@ -1,90 +1,71 @@
 # Overnight status
 
-Read `bench-harness-plan.md` (v4) for the design and `optimization-plan.md` for the candidates.
-This file is the state of play.
+`bench-harness-plan.md` (v4) is the design, `optimization-plan.md` the candidates,
+`bench-results/*/RESULT.md` the measurements, `tool-defects.md` what the tool failed to do for me.
+
+## The headline
+
+**The `continuationBodiesFuse` regression is diagnosed and measured.** It was open across sessions
+with allocation, inlining and megamorphism all previously "ruled out".
+
+The cause is `kyo.kernel.proto.Eval$::dispatch$1`, 607 bytes, refused by HotSpot as
+`hot method too big`. Forcing it to inline:
+
+    current design, default           27.455 +- 0.336 us/op   (+4.55% vs old design)
+    current design, dispatch$1 forced 25.566 +- 0.190         (-6.88%, and -2.65% vs old)
+
+Efficacy gate passed on the target and nothing else: `0 inlined / 2 refused` becomes
+`2 inlined / 0 refused`. `ask.map{...}` used to mint a `Suspend`, expanded into the drive loop, and
+now mints a `SuspendWith` whose delivery is that separate 607-byte method. On this row alone the
+continuation body is itself too big to repay the frame through downstream inlining.
+
+This confirms candidate DIS-1 by isolation, and says the current design is **better** than the old
+one once the frame is gone.
 
 ## Done and green
 
-**Plan finalized through three review rounds** (two with a reviewer holding context, one held-out and
-blind). Each round found real defects; the third found that the plan's own centerpiece statistic was
-unsound.
+Plan finalized through three review rounds; each found real defects and the third proved the plan's
+own centerpiece statistic unsound. Phase 1 (instruments), Phase 4 (bytecode), the verdict statistic,
+the A/A null, the efficacy gate and budget-proximity ranking are implemented and committed.
 
-**Phase 1, repair the instruments.** Committed, 17 oracle checks green.
-**Phase 4, bytecode.** Committed, 13 checks green.
-**The verdict statistic** (the heart of phases 2 and 3). Committed, 21 checks green. Replicate legs,
-pooled spread, t threshold at a stated alpha Bonferroni-corrected over 15 rows, common-mode drift
-measured but not double-charged, and a minimum detectable effect on every flat row. The harness now
-states its own resolution: **flat to within 2.44% at df=3**, which means the open +4.3% regression is
-detectable and anything under ~2.4% is not.
-**Ten candidate optimizations.** Written, with hypotheses, predicted fields, and falsifiers.
-
-**Phase 3, the A/A null.** Committed. Control legs run against each other through the identical
-pipeline, so any row it classifies is false by construction. Tested in both directions: silent on
-quiet controls, and it catches a deliberately dirty null.
-
-Suites: **92 checks green** across four files (44 BenchTest, 17 oracle, 12 bytecode, 19 stats).
-
-## The results that matter
-
-**A first explanation for `continuationBodiesFuse` +4.3%**, open since before this session and never
-diagnosed. The two suspension arms are not symmetric: `Suspend` is expanded into the drive loop,
-`SuspendWith` calls a separate 607-byte `dispatch$1` at bci 821 of a 1582-byte loop. `ask.map{...}`
-used to mint a `Suspend` and now mints a `SuspendWith`, moving this row's whole per-iteration path
-from the inlined copy to a non-inlinable call, 1000 times per op. Six rows made the same move and got
-faster; this is the only one whose continuation body is itself too big to inline, so it alone cannot
-repay the frame. **An isolation experiment needing no source change is ready** (add the frame to
-`36b41336fb` and measure).
-
-**Every inline refusal in the kernel was warmup noise.** 1929 of 1969 refusals are C1; `callee is too
-large` is 1166 C1 against **0** C2. The harness was reporting all of them. `Stack::push` refused at
-7 of 8 sites, which seeded three analyses, is a red herring twice over.
-
-**100% of the hot row's allocation is kernel node shapes.** `anon$95` reads like the benchmark's
-lambda and is the kernel's `Arrow.Suspend` node. 32,080.04 B/op is two 16-byte kernel objects per
-iteration.
+**92 checks green** across four suites (BenchTest, LogCompilationTest oracle-based, BytecodeTest,
+StatsTest). The build works: `Jmh/compile` succeeds in 16s.
 
 ## Bugs found and fixed in the harness
 
-Seven, five of them in code written tonight:
+Ten, nearly all written tonight. Four shared one root cause: matching XML elements by attribute
+*order* rather than element *shape*, which I reintroduced three times while fixing it once. The
+mutation-testing review found three more that the tests could not catch:
 
-1. Morphism reported 46 of 47 sites as "measured polymorphic" with receiver counts of zero.
-2. Deopts counted 633 compiler-planted guards as 6 runtime events.
-3. Inlining folded per-method, so one warmup site decided a verdict; two runs of one comparison named
-   disjoint mechanisms.
-4. Runtime deopts modelled as task children when all 6 precede the first task: dropped silently.
-5. Planted traps anchored on `bci=`, missing the 121 that lead with `method=`.
-6. `c2Tasks` read 0 in both stored production runs for a fork that performed 88.
-7. OSR tasks read 0 of 5, because they carry `compile_kind` before `method`.
+- `ParseCoverage` counted `seen` inside the parse loop, so a 12.5% parse reported 100% coverage
+- `tCritical` returned Infinity for df 7 and 9; a 100% regression classified Flat under a green
+  all-clear
+- `Bytecode` merged static initializers into the preceding method, reporting 11B against an actual 5B
 
-Four of these are one root cause: **matching elements by attribute order instead of by shape.** I
-reintroduced it three times while fixing it once.
+I built three guards against silent failure tonight and two of them could not themselves fail. **A
+check that has never failed is a claim, not a check.**
+
+## One error of mine, caught and corrected
+
+My first Experiment 1 writeup blamed `run$56`, the benchmark's 379-byte continuation body. That was
+measured but never compared: it is refused in *both* designs, so it cannot separate them. I had
+compared the current design against itself at two budgets and read a design difference out of data
+that never contained one. Corrected in `bench-results/exp1/RESULT.md`, with the error left visible.
 
 ## Not done
 
-- **Phase 2 remainder**: config-from-json equality gate, diffstat scope, heap pinning.
-- **Phase 3 remainder**: leg orchestration to actually *run* C V C V C (the comparison and null are
-  implemented and tested; the runner still produces one leg per invocation), and the classfile
-  equality guard.
-- **Phase 5** allocation attribution via `output=collapsed`.
-- **Phase 6** the investigator with efficacy-gated flag falsifiers.
-- **Phase 7** guardrails and QA that can fail.
-- **Phase 8** known-answer fixtures. **The most important gap**: every validation so far is a null,
-  and a harness tuned only against nulls converges on abstaining.
-- **No measurement has been run tonight.** Nothing here rests on a fresh benchmark; it rests on the
-  captured artifacts and on static reading. **But measurement is now unblocked**: `Jmh/compile`
-  succeeds in 16s with zero errors in the throwaway worktree, all three design shas resolve, and
-  `measurement-protocol.md` writes out the two experiments ready to run. The gate is machine
-  exclusivity: a measurement cannot share the machine with a review agent, so the runs wait for the
-  implementation review to finish.
-
-## Open decisions defaulted (reversible, flagged for ruling)
-
-Assembly automation dropped; unified JFR dropped in favour of `output=collapsed`; two Tier A
-falsifiers cut (megamorphism unstatable at 12 profiled sites of 5093, GC already pinned);
-`PrintEliminateAllocations` taken; heap and collector pinned; Phase 4 scoped to named methods;
-`bench-harness-qa.md` deleted in favour of per-phase acceptance criteria; A/A moved from 3 legs to 5.
+- **Phase 3 leg orchestration** (C V C V C). The statistic and the null are implemented and tested;
+  the runner still produces one leg per invocation, so no measurement tonight used them.
+- **Phases 5, 6, 7** (allocation attribution via `output=collapsed`, the investigator, guardrails).
+- **Phase 8 known-answer fixtures**, still the most important gap: every validation is a null.
+- **Six review findings** open: `recompiled` counts tier escalation, suffix-anchored attribute
+  patterns, four checks that cannot fail, untested parser surface, comment errors.
+- **The actual DIS-1 fix is unmeasured.** A compile command is a diagnostic; making the method small
+  enough to inline unaided is the candidate's real content.
+- **The 15-row sweep** of forced-inline against default is running as of this writing; a dispatch
+  change touches every row's path, so the one-row result cannot stand alone.
 
 ## Standing constraints honoured
 
-No kernel source was edited. No candidate was landed. No `inline` added. No PR touched. Every commit
-under your identity with no attribution.
+No kernel source edited or landed. Every candidate measured in the detached throwaway worktree. No
+`inline` added. No PR touched. Every commit under your identity, no attribution.
