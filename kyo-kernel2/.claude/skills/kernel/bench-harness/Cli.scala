@@ -72,6 +72,16 @@ case class IngestOpts(
     store: String = "bench-runs"
 )
 
+case class PlanOpts(
+    @HelpMessage("stored runs on the rows you intend to measure; give several legs of the same configuration for a between-leg estimate, which is the quantity a bracket's threshold actually rests on")
+    from: List[String],
+    @HelpMessage("legs the planned bracket would run")
+    legs: Int = 5,
+    @HelpMessage("effect size you need to detect, as a percentage")
+    target: Double = 5.0,
+    store: String = "bench-runs"
+)
+
 case class ShowOpts(id: String, store: String = "bench-runs")
 case class ListOpts(store: String = "bench-runs")
 
@@ -195,6 +205,36 @@ object BenchIngest extends KyoCaseApp[IngestOpts]:
         yield ()
     }
 end BenchIngest
+
+/** Says what a planned session could detect, before it is spent.
+  *
+  * Three runs were spent reporting a 25% timing regression on a row that resolves to ±22.6% and
+  * cannot support a verdict of that size. Each was believed at the time. This answers that question
+  * from data already stored.
+  */
+object BenchPlan extends KyoCaseApp[PlanOpts]:
+    run { (opts: PlanOpts) =>
+        for
+            priors <- Kyo.foreach(Chunk.from(opts.from))(id => Store.load(Path(opts.store), id))
+            prior = priors.head
+            fs    = Plan.forecast(priors, opts.legs, Bench.FamilyAlpha)
+            blind = Plan.blind(fs, opts.target / 100.0)
+            _ <- Console.printLine(
+                f"Planning ${opts.legs} legs against a target of ±${opts.target}%.1f%%, from ${prior.rows.size} rows across ${priors.size} prior leg(s).\n" +
+                    (if priors.size < 2 then "One leg only, so the estimate uses within-leg error, which is a different quantity from the between-leg spread a threshold rests on. Give more legs for a real forecast.\n" else "")
+            )
+            _ <- Kyo.foreachDiscard(fs)(f => Console.printLine("  " + f.show))
+            _ <- Console.printLine(
+                if blind.isEmpty then f"\nEvery row can resolve ±${opts.target}%.1f%% at this configuration."
+                else
+                    f"\n\u26a0\ufe0f  ${blind.size} row(s) cannot resolve ±${opts.target}%.1f%% and will report flat whatever happens:\n" +
+                        blind.map(f => s"  - ${f.row}").mkString("\n") +
+                        "\n\nMore forks will not help: calibration showed tripling them moved the resolution by 0.05 points, " +
+                        "because the variance is between legs rather than within them. More legs, or a quieter machine."
+            )
+        yield ()
+    }
+end BenchPlan
 
 object BenchCompare extends KyoCaseApp[CompareOpts]:
     run { (opts: CompareOpts) =>

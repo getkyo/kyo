@@ -202,6 +202,31 @@ object BenchTest:
             Bench.nullComparison(trending).forall(_.deltas.forall(_.verdict == Verdict.Flat)),
             Bench.nullComparison(trending).map(_.deltas.map(d => s"${d.row}=${d.verdict} ${d.percent}").mkString(",")).getOrElse(""))
 
+        println("forecasting what a session can resolve")
+        // from the real bracket: trailingMapsStayLinear resolves to +-22.64%, so three runs were spent
+        // reporting a 25% regression on a row that cannot support a verdict of that size
+        val priorRun = leg("prior", Seq(("noisy", 300.0, 18.0, 640.0), ("tight", 28.0, 0.25, 640.0)))
+        val fc = Plan.forecast(Chunk(priorRun), 5, 0.05)
+        check("a forecast per row", fc.size == 2, s"${fc.size}")
+        check("the noisy row is listed first", fc.head.row == "noisy", fc.map(_.row).mkString(","))
+        check("the noisy row cannot see 5%", !fc.head.canSee(0.05), f"${fc.head.resolvable * 100}%.1f%%")
+        check("the tight row can", fc.last.canSee(0.05), f"${fc.last.resolvable * 100}%.1f%%")
+        check("blind() names exactly the rows that cannot", Plan.blind(fc, 0.05).map(_.row) == Chunk("noisy"), Plan.blind(fc, 0.05).map(_.row).mkString(","))
+        // more legs must improve it, since that is the advice the tool gives
+        check("more legs resolve more", Plan.forecast(Chunk(priorRun), 9, 0.05).head.resolvable < fc.head.resolvable,
+            f"${Plan.forecast(Chunk(priorRun), 9, 0.05).head.resolvable * 100}%.1f%% vs ${fc.head.resolvable * 100}%.1f%%")
+        check("and a target nobody can meet blinds every row", Plan.blind(fc, 0.0001).size == 2)
+        // the basis matters: a single leg reports within-leg error, a bracket's threshold rests on
+        // between-leg spread, and using the first to predict the second called a row unresolvable at
+        // +-14.6% that a real bracket resolved a -6.8% win on
+        check("one leg is marked as an approximation", !fc.head.fromReplicates)
+        val twoLegs = Chunk(priorRun, leg("prior2", Seq(("noisy", 302.0, 18.0, 640.0), ("tight", 28.1, 0.25, 640.0))))
+        val fc2 = Plan.forecast(twoLegs, 5, 0.05)
+        check("several legs give a between-leg estimate", fc2.forall(_.fromReplicates))
+        check("and it can differ sharply from the within-leg one",
+            Math.abs(fc2.find(_.row == "noisy").map(_.resolvable).getOrElse(0.0) - fc.find(_.row == "noisy").map(_.resolvable).getOrElse(0.0)) > 0.01,
+            f"between ${fc2.find(_.row == "noisy").map(_.resolvable).getOrElse(0.0)}%.4f vs within ${fc.find(_.row == "noisy").map(_.resolvable).getOrElse(0.0)}%.4f")
+
         println("bracket ordering")
         val plan = Bench.bracketPlan("aaa", "bbb")
         check("five legs", plan.size == 5, s"${plan.size}")

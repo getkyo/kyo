@@ -100,6 +100,22 @@ demonstrably skips. On the real sweep it fires once, on the true positive, and e
 - **165 checks green** across five suites.
 - Experiment data force-added to git; `.gitignore` had a global `*.json` hiding all of it.
 
+## Tool defect 8 closed: the session says what it can resolve, first
+
+`BenchPlan` forecasts each row's detectable effect before a session is spent. Three runs were spent
+reporting a 25% timing regression on a row that resolves to ±22.6% and cannot support a verdict of
+that size, and each was believed at the time.
+
+Its first version was wrong in the way this campaign keeps being wrong: it estimated between-leg
+spread from a single leg's *within-leg* error, which the fork calibration had already shown are
+different quantities. It called `continuationBodiesFuse` unresolvable at ±14.6% when a real bracket
+resolved a -6.8% win on it, and would have talked me out of the campaign's best measurement.
+
+Corrected to use between-leg spread when legs exist, and to label the single-leg case an
+approximation. Validated against the bracket that refuted it: forecast ±1.5% for
+`continuationBodiesFuse` (bracket resolved -6.8%) and ±15.0% for `trailingMapsStayLinear` (bracket
+reported ±22.6%, called +9.5% flat). Same conclusions, both rows.
+
 ## Open, beyond the validation stream
 
 - **Phases 5, 6, 7**: allocation attribution via `output=collapsed`; the investigator's rule table;
@@ -107,8 +123,8 @@ demonstrably skips. On the real sweep it fires once, on the true positive, and e
 - **DIS-1 is closed: refuted in all three constructible forms.** See above. The remaining candidates
   in `optimization-plan.md` are untouched.
 - **The sweep was never replicated**: one leg per configuration.
-- **Ten tool defects** in `tool-defects.md`, of which two are now fixed (efficacy gate, budget
-  ranking) and one is being fixed (ingest). Seven open.
+- **Thirteen tool defects** in `tool-defects.md`: nine fixed, three open, one an observation. The
+  three open ones share a shape, the tool knowing after the fact what it could have said beforehand.
 
 ## The kernel result, for a reader arriving cold
 
