@@ -71,7 +71,11 @@ reintroduced it three times while fixing it once.
 - **Phase 8** known-answer fixtures. **The most important gap**: every validation so far is a null,
   and a harness tuned only against nulls converges on abstaining.
 - **No measurement has been run tonight.** Nothing here rests on a fresh benchmark; it rests on the
-  captured artifacts and on static reading.
+  captured artifacts and on static reading. **But measurement is now unblocked**: `Jmh/compile`
+  succeeds in 16s with zero errors in the throwaway worktree, all three design shas resolve, and
+  `measurement-protocol.md` writes out the two experiments ready to run. The gate is machine
+  exclusivity: a measurement cannot share the machine with a review agent, so the runs wait for the
+  implementation review to finish.
 
 ## Open decisions defaulted (reversible, flagged for ruling)
 
