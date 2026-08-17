@@ -57,8 +57,17 @@ being caught.
    controls recorded nothing, and the report printed the difference. See
    `bench-results/sweep-replicated/RESULT.md`.
 
-**There is no unblocked work left in this campaign.** Everything remaining is a ruling: the four
-gated candidates in `RULINGS-NEEDED.md` and the C4 trade, each with a recorded default.
+4. **DIS-3 is designed and blocked on one sign-off.** Proceeding under its own recorded default got
+   as far as the design and the cast, which I said I would surface before measuring. The request is
+   narrower than the plan implied: the collapsed arm keeps the `@unchecked` typed pattern the drive
+   **already uses at both arms today**, on one arm instead of two, so this introduces no new category
+   of concession. `Suspend.chain` already carries a reference-identity cast on its `Identity` fast
+   path as precedent. See `bench-results/dis3/DESIGN.md` for the exact spelling, the acceptance
+   conditions (`dispatch$1` must be **gone**, not smaller; 128 tests green; must not share a bracket
+   with DIS-1) and the falsifier.
+
+**Everything remaining is a ruling**, each with a recorded default: the four gated candidates in
+`RULINGS-NEEDED.md`, the C4 trade, and DIS-3's cast above.
 
 Everything else below is finished work, kept for its reasoning.
 
