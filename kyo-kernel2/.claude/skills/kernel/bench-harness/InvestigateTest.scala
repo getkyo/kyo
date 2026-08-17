@@ -122,6 +122,41 @@ object InvestigateTest:
         )
         check("an experiment with no power to separate says so", cannotSeparate.show.contains("could not have separated"), cannotSeparate.show)
 
+        println("\nthe quantity a hypothesis is about")
+        // found by running the rule table against the campaign's own sweep: the escape-analysis
+        // hypothesis is a claim about bytes per operation, and adjudicating it against wall clock
+        // reads the wrong column. The row it fires on is one whose timing does not resolve at all.
+        check("the escape-analysis hypothesis is judged on allocation", Investigate.quantity(Investigate.Hypothesis.RidesScalarReplacement("r")) == Investigate.Quantity.Allocation)
+        check("and an inlining hypothesis on time", Investigate.quantity(h) == Investigate.Quantity.Time)
+
+        // the real numbers from experiment 4. Disabling escape analysis on the unmodified design
+        // reproduced the variant's allocation to 23.8 bytes on 2.56 MB
+        def allocLeg(label: String, alloc: Double) =
+            leg(label, Seq(("trailing", 300.0, 25.0, alloc)), Chunk.empty)
+        val eaF = Investigate.Falsifier(
+            Investigate.Hypothesis.RidesScalarReplacement("trailing"), Investigate.Arm.Control,
+            Seq("-XX:-EliminateAllocations"), "x"
+        )
+        val eaOut = Investigate.adjudicate(eaF, "trailing", allocLeg("c", 2321410.04), allocLeg("iso", 2561410.32), target = 2561386.53)
+        check("a reproduction to six significant figures is confirmed", eaOut.isInstanceOf[Investigate.Outcome.Confirmed], eaOut.show)
+        // the band is derived from A/A data (worst observed spread 47.8 B on 2.32 MB) rather than
+        // picked; a flat one-byte band refused exactly this result when it was first written
+        check("the band is wide enough for the measured A/A spread", Investigate.Quantity.Allocation.resolution(
+            BenchTest.rows(("trailing", 300.0, 25.0, 2321410.04)).head,
+            BenchTest.rows(("trailing", 300.0, 25.0, 2321457.84)).head
+        ) > 47.8)
+        // and still narrow enough to resolve the effect it exists for
+        val eaNo = Investigate.adjudicate(eaF, "trailing", allocLeg("c", 2321410.04), allocLeg("iso", 2321410.04), target = 2561386.53)
+        check("an allocation that did not move is refuted", eaNo.isInstanceOf[Investigate.Outcome.Refuted], eaNo.show)
+        // a leg measured without the gc profiler carries no allocation figure at all, and cannot
+        // answer an allocation question however its timing came out
+        val unprofiled =
+            allocLeg("iso", 0.0).copy(rows = Chunk(
+                Row("trailing", "avgt", 5, 300.0, 25.0, "us/op", Chunk(300.0), Maybe.empty, Maybe.empty, Maybe.empty)
+            ))
+        val noAlloc = Investigate.adjudicate(eaF, "trailing", allocLeg("c", 2321410.04), unprofiled, target = 2561386.53)
+        check("a leg with no allocation figure is not an answer", noAlloc.show.contains("never measured"), noAlloc.show)
+
         println("\nrendering")
         val rendered = Investigate.render(cmp)
         check("the experiments are offered with the comparison", rendered.contains("Next experiments"), rendered)

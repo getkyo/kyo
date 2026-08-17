@@ -204,12 +204,57 @@ object Investigate:
                                 )
     end efficacy
 
+    /** Which measured quantity answers a hypothesis.
+      *
+      * Not a detail: `RidesScalarReplacement` is a claim about bytes per operation, and adjudicating
+      * it against wall clock reads the wrong column and answers a question nobody asked. That is what
+      * this did on its first outing against real data, where the row it fires on is one whose timing
+      * does not resolve at all and whose allocation is exact.
+      */
+    enum Quantity derives CanEqual:
+        case Time, Allocation
+
+        def of(r: Row): Maybe[Double] =
+            this match
+                case Time       => Maybe(r.score)
+                case Allocation => r.allocPerOp
+
+        /** Allocation is nearly exact, and "nearly" is measured rather than assumed.
+          *
+          * Across four A/A sets of three legs each on identical sources, every row that allocates
+          * kilobytes reproduced its `gc.alloc.rate.norm` to the byte. The one row that allocates
+          * megabytes did not: `trailingMapsStayLinear` spread 47.8 B on 2.32 MB in one set and 24.2 B
+          * in another, so 2.1e-5 relative at worst.
+          *
+          * A flat one-byte threshold was tried first and it refused the campaign's own escape-analysis
+          * result: the isolation landed 23.8 B from its target on 2.56 MB, which is a reproduction to
+          * six significant figures, and was reported inconclusive. The band is therefore relative,
+          * at 5e-5, a little over twice the worst spread ever observed here, with a one-byte floor so
+          * the rows that really are exact stay exact. On the 240,000 B/op effect this has to resolve,
+          * that band is 128 bytes, so it costs nothing that matters.
+          */
+        def resolution(b: Row, i: Row): Double =
+            this match
+                case Time => Math.max(b.relativeError, i.relativeError) * Math.max(b.score, i.score)
+                case Allocation =>
+                    val scale = Math.max(b.allocPerOp.getOrElse(0.0), i.allocPerOp.getOrElse(0.0))
+                    Math.max(1.0, 5e-5 * scale)
+
+        def unit: String = if this == Time then "" else " B/op"
+    end Quantity
+
+    def quantity(h: Hypothesis): Quantity =
+        h match
+            case Hypothesis.RidesScalarReplacement(_) => Quantity.Allocation
+            case _                                    => Quantity.Time
+
     /** Adjudicates one falsifier from the run it produced.
       *
       * `baseline` is the leg the hypothesis is about, `isolation` the same leg re-run under the flag,
-      * and `target` the number the hypothesis predicts the isolation will reach. The recovery
-      * threshold is the isolation's own resolution rather than a fixed percentage, because a leg that
-      * cannot resolve the effect cannot answer the question either way.
+      * and `target` the number the hypothesis predicts the isolation will reach, in whichever quantity
+      * the hypothesis is about. The recovery threshold is the legs' own resolution rather than a fixed
+      * percentage, because a leg that cannot resolve the effect cannot answer the question either way,
+      * and saying so is a result.
       */
     def adjudicate(
         f: Falsifier,
@@ -218,31 +263,36 @@ object Investigate:
         isolation: Run,
         target: Double
     ): Outcome =
+        val q = quantity(f.hypothesis)
         efficacy(f.hypothesis, baseline, isolation) match
             case Maybe.Present(why) => Outcome.Inconclusive(why)
             case Maybe.Absent =>
-                val b = baseline.rows.find(_.name == row)
-                val i = isolation.rows.find(_.name == row)
-                (b, i) match
+                (baseline.rows.find(_.name == row), isolation.rows.find(_.name == row)) match
                     case (Some(bb), Some(ii)) =>
-                        val gap        = Math.abs(bb.score - target)
-                        val resolution = Math.max(bb.relativeError, ii.relativeError) * Math.max(bb.score, ii.score)
-                        if gap <= resolution then
-                            Outcome.Inconclusive(
-                                f"the baseline is already within its own resolution of the target (${gap}%.2f against +-${resolution}%.2f), " +
-                                    "so this experiment could not have separated them whatever it returned"
-                            )
-                        else
-                            val reached = Math.abs(ii.score - target)
-                            if reached <= resolution then
-                                Outcome.Confirmed(f"$row moved from ${bb.score}%.2f to ${ii.score}%.2f, reaching ${target}%.2f within +-${resolution}%.2f")
-                            else if Math.abs(ii.score - bb.score) <= resolution then
-                                Outcome.Refuted(f"$row stayed at ${ii.score}%.2f against ${bb.score}%.2f while the flag demonstrably took; the delta is not this")
-                            else
+                        (q.of(bb), q.of(ii)) match
+                            case (Maybe.Present(b), Maybe.Present(i)) =>
+                                val resolution = q.resolution(bb, ii)
+                                val gap        = Math.abs(b - target)
+                                if gap <= resolution then
+                                    Outcome.Inconclusive(
+                                        f"the baseline is already within its own resolution of the target (${gap}%.2f against +-${resolution}%.2f${q.unit}), " +
+                                            "so this experiment could not have separated them whatever it returned"
+                                    )
+                                else if Math.abs(i - target) <= resolution then
+                                    Outcome.Confirmed(f"$row moved from ${b}%.2f to ${i}%.2f${q.unit}, reaching ${target}%.2f within +-${resolution}%.2f")
+                                else if Math.abs(i - b) <= resolution then
+                                    Outcome.Refuted(f"$row stayed at ${i}%.2f${q.unit} against ${b}%.2f while the flag demonstrably took; the delta is not this")
+                                else
+                                    Outcome.Inconclusive(
+                                        f"$row moved from ${b}%.2f to ${i}%.2f${q.unit}, which is neither the target ${target}%.2f nor no move at all"
+                                    )
+                            case _ =>
                                 Outcome.Inconclusive(
-                                    f"$row moved from ${bb.score}%.2f to ${ii.score}%.2f, which is neither the target ${target}%.2f nor no move at all"
+                                    s"$row carries no ${if q == Quantity.Allocation then "allocation figure" else "score"} on one of the legs, " +
+                                        "so the quantity this hypothesis is about was never measured"
                                 )
                     case _ => Outcome.Inconclusive(s"$row is missing from one of the two legs")
+        end match
     end adjudicate
 
     /** The report the investigator adds to a comparison. */

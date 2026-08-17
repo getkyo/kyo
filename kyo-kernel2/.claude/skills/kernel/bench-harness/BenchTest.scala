@@ -343,6 +343,21 @@ object BenchTest:
             check("and legs with no collapsed view say nothing", !Report.render(cmp).contains("Allocation moved at these sites"))
         }
 
+        println("a stored run survives a field being added to Run")
+        // adding `allocByMethod` without a default made every run already in the store undecodable,
+        // all 34 of them, with the campaign's whole measurement history behind them. The store is the
+        // durable record; a schema addition must leave the old records readable.
+        locally {
+            val encoded = Json.encode(leg("c", base))
+            val older   = encoded.replaceAll(""","allocByMethod":\[[^\]]*\]""", "")
+            check("the field really was removed from the fixture", !older.contains("allocByMethod"), older.take(120))
+            Json.decode[Run](older) match
+                case Result.Success(r) =>
+                    check("a run recorded before the field still decodes", r.rows.size == base.size, s"${r.rows.size} rows")
+                    check("and reads as having no attribution rather than failing", r.allocByMethod.isEmpty)
+                case other => check("a run recorded before the field still decodes", false, other.toString)
+        }
+
         println("the store answers for what it does not have")
         // a mistyped --store used to read as an empty one: "no runs stored", exit 0. The tool then
         // says nothing at all about the only thing that was wrong.

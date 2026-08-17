@@ -119,6 +119,26 @@ path; the observation about kyo stands separately.
 shas used the first two and discarded the third, so a mis-typed invocation ingested under shas the
 operator did not intend. **Fixed**: the count must be one per file or one for all.
 
+## Added by using the investigator on the campaign's own data
+
+**17, adding a field to `Run` made every stored run undecodable.** All 34, across six stores, with the
+campaign's whole measurement history behind them. The tool reported it clearly and refused, which is
+correct, but the store is the durable record and a schema addition must leave the old records
+readable. **Fixed**: the field is defaulted, and a test decodes a run recorded before it existed.
+
+**18, the escape-analysis falsifier was adjudicated on wall clock.** It is a claim about bytes per
+operation, and the row it fires on is one whose *timing does not resolve at all*, so judging it on
+timing answers a question nobody asked. Found by running the new rule table against the real sweep.
+**Fixed**: each hypothesis names the quantity that answers it.
+
+**19, a one-byte allocation band refused the campaign's own result.** `gc.alloc.rate.norm` is nearly
+exact, and "nearly" had been assumed rather than measured: the escape-analysis isolation landed 23.8 B
+from its target on 2.56 MB, a reproduction to six significant figures, and was reported inconclusive.
+**Fixed**, from data: across four A/A sets of three legs on identical sources, every kilobyte-scale
+row reproduced to the byte and the one megabyte-scale row spread 47.8 B on 2.32 MB. The band is 5e-5
+relative with a one-byte floor, twice the worst observed spread, and 1,875x smaller than the effect it
+has to resolve.
+
 ## Status, reconciled
 
 | # | defect | state |
@@ -139,8 +159,11 @@ operator did not intend. **Fixed**: the count must be one per file or one for al
 | 14 | a store that does not exist reads as a store that is empty | **fixed**: reading one requires it to exist |
 | 15 | an unknown run id answered with a file path, printed twice | **fixed**: names the id, lists what exists, prints once |
 | 16 | a leftover `--sha` dropped silently | **fixed**: one per file or one for all |
+| 17 | a field added to `Run` made every stored run undecodable | **fixed**: defaulted, with a decode test |
+| 18 | the escape-analysis falsifier judged on wall clock | **fixed**: a hypothesis names its quantity |
+| 19 | a one-byte allocation band refused a six-figure reproduction | **fixed**: band measured from the A/A legs |
 
-Fourteen fixed, one open, one an observation.
+Seventeen fixed, one open, one an observation.
 
 The one that remains, 9, is not fully fixable: every fixture is written by the same understanding
 that wrote the code under it. The mitigation is the A/A null, whose input is not authored, and it has

@@ -109,7 +109,13 @@ hypothesis must be **confirmed** and a planted false one **refuted**, so an alwa
 implementation fails half of it. Three further answers are distinguished from both: the flag never
 fired, the row half-moved, and the experiment never had the power to separate the two.
 
-**246 checks green** across seven suites.
+**255 checks green** across seven suites.
+
+Run against the campaign's own sweep, the rule table proposes **exactly the experiment I ran by hand**
+in experiment 4, and adjudicates it from stored data: `trailingMapsStayLinear` rides scalar
+replacement, CONFIRMED, 2,321,410 to 2,561,410 B/op against a target of 2,561,387. That round trip
+found three more defects, two of them in the investigator itself and one much worse: adding a field to
+`Run` had made **every stored run undecodable**, all 34 of them. See defects 17 to 19.
 
 ## Now
 
@@ -184,7 +190,7 @@ reported ±22.6%, called +9.5% flat). Same conclusions, both rows.
 - **DIS-1 is closed: refuted in all three constructible forms.** See above. The remaining candidates
   in `optimization-plan.md` are untouched.
 - **The sweep was never replicated**: one leg per configuration.
-- **Sixteen tool defects** in `tool-defects.md`: fourteen fixed, one open, one an observation.
+- **Nineteen tool defects** in `tool-defects.md`: seventeen fixed, one open, one an observation.
 
 ## The kernel result, for a reader arriving cold
 

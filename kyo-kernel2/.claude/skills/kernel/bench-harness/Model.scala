@@ -291,8 +291,15 @@ object Model:
         /** How much of each parsed artifact was actually consumed, so a silent partial parse is visible in the record. */
         coverage: Chunk[ParseCoverage],
         alloc: Chunk[AllocSite],
-        /** Who allocated each class, from the collapsed view of the same recording. */
-        allocByMethod: Chunk[AllocByMethod],
+        /** Who allocated each class, from the collapsed view of the same recording.
+          *
+          * Defaulted, and that default is load-bearing rather than a convenience: adding this field
+          * without one made every run already in the store undecodable, all 34 of them, with the
+          * whole campaign's data behind them. A stored run is the durable record; a field added to
+          * `Run` must leave the old ones readable, and `StoreSchemaTest` decodes a run recorded before
+          * this field existed to keep that true.
+          */
+        allocByMethod: Chunk[AllocByMethod] = Chunk.empty,
         cpu: Chunk[CpuSite],
         deopts: Chunk[Deopt],
         morphism: Chunk[CallMorphism],
