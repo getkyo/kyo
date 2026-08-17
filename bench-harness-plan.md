@@ -1,5 +1,13 @@
 # bench-harness: implementation plan (v4)
 
+**Every phase is DONE.** Closed out with 296 checks green across seven suites. What each phase
+actually cost, and what it found, is recorded per phase below and in `tool-defects.md`; the campaign
+state lives in `WORK.md`, which is the authority if this file disagrees with it.
+
+Phase 5 and 6 were the two that changed conclusions rather than just adding capability: allocation
+attribution refuted candidate C1 from a profile already on disk, and the investigator's efficacy gate
+showed that the -17.4% attributed to DIS-2 came from a flag that never reached the method it named.
+
 The harness measures kernel changes and is meant to make a wrong conclusion hard to reach.
 
 Three reviews got it here. v1 proposed building an investigator on signals that were broken. v2
@@ -47,7 +55,7 @@ per-site fixture at all, because `parseJit` folded verdicts before storing them.
 
 Green: 34 BenchTest, 13 oracle, 13 bytecode.
 
-## Phase 2: make a verdict answerable for its own uncertainty
+## Phase 2: make a verdict answerable for its own uncertainty  —  **DONE**
 
 1. Per-row error enters the verdict, with the combination rule **stated**. At `-f 1` the stored
    errors are ±3.8% and ±4.6% against a measured session drift of 3.95%; if the rule is additive the
@@ -64,7 +72,7 @@ Green: 34 BenchTest, 13 oracle, 13 bytecode.
 4. Add the JMH benchmark source to restored, hashed and markered paths.
 5. Pin heap and collector (`-Xms=-Xmx`, fixed GC).
 
-## Phase 3: the A/A null, respecified
+## Phase 3: the A/A null, respecified  —  **DONE**, and a dirty null now blocks with an exit code
 
 v3's estimator was `V - mean(C1,C2)` with band `|C2 - C1|`. Simulated locally under its own model:
 
@@ -106,7 +114,7 @@ the code length), diffed as added and removed instructions, with budget crossing
 deltas that decide nothing. It runs for methods a Tier A falsifier names, or for one step of a
 declared sha chain, never across a whole bracket.
 
-## Phase 5: allocation attribution
+## Phase 5: allocation attribution  —  **DONE**, validated on a real JMH run
 
 v3 proposed `output=collapsed` aggregated by `frame[0]`, gated on conservation. Three corrections:
 
@@ -129,7 +137,7 @@ the JIT placed the allocation, so an inlining change relocates it with no change
 A per-method allocation "mechanism" is therefore confounded with the inlining mechanism, and the
 report says so rather than implying independence.
 
-## Phase 6: the investigator
+## Phase 6: the investigator  —  **DONE**, Tier A and Tier B
 
 18. **Tier A, automated: falsifiers that are JVM flags**, each one extra run of a configuration
     already issued.
@@ -158,7 +166,7 @@ Acceptance, both directions: a planted **false** hypothesis must be refuted, and
 one must be confirmed. v3 had only the refute direction, so an always-refutes pipeline passed both
 halves of its own anti-unfalsifiability criterion.
 
-## Phase 7: guardrails, dead code, QA that can fail
+## Phase 7: guardrails, dead code, QA that can fail  —  **DONE**
 
 22. Recalibrate the steady-state guard: 1% of the window is 50 ms while the motivating run spent
     4.0 ms, ~12x too lax. Fix `QaEndToEnd.scala:74`, which passes whenever nothing is flagged.
