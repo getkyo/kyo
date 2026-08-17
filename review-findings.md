@@ -12,14 +12,16 @@ method that found the worst defects, because the tests all passed either way.
 | F2 | `Bytecode` dropped declarations not ending `);`: static initializers (19 of 60 classes) and `throws` clauses, merging their instructions into the previous method. 11B reported against an actual 5B | **fixed** |
 | F3 | `tCritical` returned Infinity for df 7 and 9; a 100% regression classified Flat under a green all-clear | **fixed**, table replaced by computation |
 | F4 | Untabulated-alpha fallback was looser than the truth and non-monotone: 16 rows loosened the test against 15 | **fixed** by the same change |
-| F5 | Every check on the receiver verdict passes with the comparison inverted, because `morphism` pre-filters to profiled sites and no `kyo.` callee is polymorphic in this capture | open |
+| F5 (fixed) | Every check on the receiver verdict passes with the comparison inverted, because `morphism` pre-filters to profiled sites and no `kyo.` callee is polymorphic in this capture | **fixed** |
 | F6 | A comparison where every row was unresolvable printed the green all-clear | **fixed** |
 | F7 | The A/A null required 4 control legs where the session has 3, so it never ran; and its contiguous split put warm-up drift in the numerator | **fixed**, splits by alternation |
-| F8 | `recompiled` counts ordinary tier escalation: 74 of 84 are level-3-then-4 promotion, which tiered compilation does to every hot method | open |
-| F9 | Remaining order- and suffix-anchored patterns: `Klass`, `Inlined`/`NotInlined` fix attribute order; `AttrCount` matches `receiver_count` by suffix | open |
-| F10 | Four checks cannot fail: two assert arithmetic on local constants, one is implied by its neighbour, one holds by definition | open |
-| F11 | Untested surface (`parseAlloc`, `parseCpu`, `Store` round trip, `verifyAgainst`), unused oracles, and absolute paths that make the suite unrunnable off this machine | open |
-| F12 | Comment claims the artifacts contradict, including my own "1920 C1 refusals" against an actual 1929 | open |
+| F8 (fixed) | `recompiled` counts ordinary tier escalation: 74 of 84 are level-3-then-4 promotion, which tiered compilation does to every hot method | **fixed** |
+| F9 (fixed) | Remaining order- and suffix-anchored patterns: `Klass`, `Inlined`/`NotInlined` fix attribute order; `AttrCount` matches `receiver_count` by suffix | **fixed** |
+| F10 (fixed) | Four checks cannot fail: two assert arithmetic on local constants, one is implied by its neighbour, one holds by definition | **fixed** |
+| F11 (fixed) | Untested surface (`parseAlloc`, `parseCpu`, `Store` round trip, `verifyAgainst`), unused oracles, and absolute paths that make the suite unrunnable off this machine | **fixed** |
+| F12 (fixed) | Comment claims the artifacts contradict, including my own "1920 C1 refusals" against an actual 1929 | **fixed** |
+
+All twelve are closed. 129 checks green across four suites.
 
 ## What the pattern says
 

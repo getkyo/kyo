@@ -12,9 +12,12 @@ import kyo.*
   */
 object LogCompilationTest extends KyoApp:
 
-    val results = Path("/Users/fwbrasil/workspace/kyo/.claude/worktrees/effervescent-painting-backus/bench-results/exp1")
-    val artifacts = Path("/Users/fwbrasil/workspace/kyo/.claude/worktrees/effervescent-painting-backus/qa-artifacts")
-    val script    = Path("/Users/fwbrasil/workspace/kyo/.claude/worktrees/effervescent-painting-backus/kyo-kernel2/.claude/skills/kernel/bench-harness/oracles.sh")
+    // derived from the source location, not hardcoded: absolute paths made the suite unrunnable
+    // anywhere but the machine that wrote it, and one of them named a Metals session directory
+    val root      = Roots.repo
+    val results   = root / "bench-results" / "exp1"
+    val artifacts = root / "qa-artifacts"
+    val script    = Roots.harness / "oracles.sh"
 
     case class Failed(what: String) extends Exception(what) with scala.util.control.NoStackTrace
 
@@ -209,6 +212,38 @@ object LogCompilationTest extends KyoApp:
                 "the drive loop's C2 size refusal is reported",
                 driveLoop.exists(v => v.alwaysRefused && v.reasons.exists(_.contains("hot method too big"))),
                 s"Eval\\$$::loop reports ${driveLoop.map(_.show).getOrElse("nothing")}"
+            )
+
+            // Bench's profiler parsers are checked here rather than in BenchTest because this is
+            // where the oracle harness lives; BenchTest is synthetic by design and runs no
+            // subprocess. Before this they had no oracle coverage at all, only nonEmpty and
+            // bytes > 0, which is the shape assertion this whole design replaced.
+            _ = println("\nprofiler parsers, against the same oracle")
+            allocRaw <- (artifacts / "qa-alloc.txt").read
+            allocSites = Bench.parseAlloc(allocRaw)
+            _ = expect(
+                "every class in the flat table is parsed",
+                allocSites.size.toLong,
+                o.getOrElse("alloc_flat_classes", -1L),
+                "a partial allocation table read as a complete one"
+            )
+            _ = expect(
+                "and their bytes sum to the table's total",
+                allocSites.map(_.bytes).sum,
+                o.getOrElse("alloc_flat_bytes", -1L),
+                "allocation totals that do not reconcile with the profiler's own aggregation"
+            )
+            cpuRaw <- (artifacts / "qa-cpu.txt").read
+            cpuSites = Bench.parseCpu(cpuRaw)
+            _ = check("cpu sites parse", cpuSites.nonEmpty && cpuSites.forall(_.nanos > 0), s"${cpuSites.size} sites")
+            // native frames (semaphore_wait_trap, __psynch_cvwait) carry no package and are real
+            // entries, so requiring a dot would fail on correct output. What must hold is that no
+            // name is empty or carries whitespace, which is what a regex sliding across columns
+            // produces.
+            _ = check(
+                "and no site name is a stray fragment",
+                cpuSites.forall(c => c.method.nonEmpty && !c.method.exists(_.isWhitespace)),
+                cpuSites.filter(c => c.method.isEmpty || c.method.exists(_.isWhitespace)).take(3).map(_.method).mkString(",")
             )
 
             _ = println("\nthe efficacy gate, against two real configurations")

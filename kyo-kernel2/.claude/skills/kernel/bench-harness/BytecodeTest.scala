@@ -9,9 +9,9 @@ import kyo.*
   */
 object BytecodeTest extends KyoApp:
 
-    val classpath = Path(
-        "/Users/fwbrasil/workspace/kyo/.claude/worktrees/effervescent-painting-backus/.bloop/kyo-kernel2JVM/bloop-bsp-clients-classes/classes-Metals-HW3GXRmfQLCsg2UoVIDngA=="
-    )
+    // the sbt output directory, which any build produces, rather than a Metals session's bloop
+    // directory whose name is unique to one editor session on one machine
+    val classpath = Roots.classes
 
     /** Every JVM method ends in one of these, and each is a single byte. */
     val Terminators = Set("return", "areturn", "ireturn", "lreturn", "freturn", "dreturn", "athrow")
