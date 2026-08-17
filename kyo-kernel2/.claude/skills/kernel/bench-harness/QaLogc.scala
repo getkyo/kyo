@@ -15,6 +15,11 @@ object QaLogc:
         ok &= check("tasks parsed", tasks.nonEmpty, s"${tasks.size}")
         ok &= check("task methods named", tasks.exists(_.method.contains("kyo")), tasks.take(2).map(_.method).mkString(","))
 
+        val m = LogCompilation.metrics(tasks, 0.0, 0.0)
+        ok &= check("C2 compilations counted", m.c2Tasks > 0, s"${m.c2Tasks} of ${m.tasks}")
+        ok &= check("C1 tiers counted too", m.tasks - m.c2Tasks > 0, s"${m.tasks - m.c2Tasks}")
+        println(f"       ${m.tasks} tasks, ${m.c2Tasks} C2, ${m.recompiled} recompiled, last at ${m.lastCompileAt}%.2fs")
+
         val deopts = LogCompilation.deoptSummary(tasks)
         ok &= check("deoptimizations found", deopts.nonEmpty, s"${deopts.size} kinds")
         deopts.take(4).foreach(d => println(s"       ${d.reason} x${d.count}"))

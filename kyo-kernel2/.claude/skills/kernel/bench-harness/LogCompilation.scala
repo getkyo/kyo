@@ -52,7 +52,9 @@ object LogCompilation:
                 // ids are per-task, so the symbol table starts over with every compilation
                 klasses = Map.empty
                 methods = Map.empty
-                val lvl = TaskLevel.findFirstMatchIn(line).map(_.group(1).toInt).getOrElse(0)
+                // HotSpot emits level only for the tiered C1 levels; the top tier carries no
+                // attribute at all, so an absent level means C2 rather than unknown
+                val lvl = TaskLevel.findFirstMatchIn(line).map(_.group(1).toInt).getOrElse(4)
                 val st  = TaskStamp.findFirstMatchIn(line).map(_.group(1).toDouble).getOrElse(0.0)
                 current = Maybe((m.group(1).toInt, m.group(2), lvl, st))
             }

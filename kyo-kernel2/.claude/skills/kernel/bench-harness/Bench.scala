@@ -249,7 +249,7 @@ object Bench:
         def profile(event: String) =
             sbt(
                 s"""kyo-kernel2JVM/Jmh/run -f 1 -wi $WarmupIterations -i 1 -r ${IterationSeconds}s -w ${IterationSeconds}s """ +
-                    s""""-prof" "async:libPath=$AsyncProf;event=$event" $selector"""
+                    s"""-prof "async:libPath=$AsyncProf;event=$event" $selector"""
             )
 
         def jitLog =

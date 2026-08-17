@@ -33,6 +33,11 @@ object QaEndToEnd extends KyoApp:
             _    = check("jit collected", ctl.jit.nonEmpty, s"${ctl.jit.size} entries")
             _    = check("alloc sites collected", ctl.alloc.nonEmpty, s"${ctl.alloc.size} sites")
             _    = check("cpu sites collected", ctl.cpu.nonEmpty, s"${ctl.cpu.size} sites")
+            _    = check("compiler time captured by -prof comp", ctl.rows.head.compilerMsProfiled.isDefined, s"${ctl.rows.head.compilerMsProfiled}")
+            _    = check("compilation log collected", ctl.jit_metrics.isDefined, s"${ctl.jit_metrics}")
+            _    = check("deopts collected", ctl.deopts.nonEmpty, s"${ctl.deopts.size} kinds")
+            _    = check("morphism collected", ctl.morphism.nonEmpty, s"${ctl.morphism.size} sites")
+            _    = check("warmup recorded", ctl.warmup == Bench.WarmupIterations, s"${ctl.warmup}")
             _    = check("markers show the old design", ctl.markers.find(_.name == "SuspendWith").exists(_.count == 0), ctl.markers.toString)
             _    = check("subset run is recorded as such", !ctl.wholeClass)
 
@@ -59,6 +64,15 @@ object QaEndToEnd extends KyoApp:
             out = Report.render(cmp)
             _   = check("subset run makes no suite-wide claim", !out.contains("across the whole class"))
             _   = check("band reported as measured", out.contains("measured this session"))
+            _   = check("jit cost table rendered", out.contains("JIT cost"), "no jit table")
+            _   = ctl.jit_metrics.foreach(m =>
+                    println(f"       control jit: ${m.msInWindow}%.0fms in window, ${m.msTotal}%.0fms total, ${m.tasks} tasks, ${m.c2Tasks} C2, ${m.recompiled} recompiled, ${m.deopts} deopts, last at ${m.lastCompileAt}%.2fs")
+                  )
+            _   = vnt.jit_metrics.foreach(m =>
+                    println(f"       variant jit: ${m.msInWindow}%.0fms in window, ${m.msTotal}%.0fms total, ${m.tasks} tasks, ${m.c2Tasks} C2, ${m.recompiled} recompiled, ${m.deopts} deopts, last at ${m.lastCompileAt}%.2fs")
+                  )
+            _   = check("steady state assessed", Bench.stillCompiling(ctl).isEmpty || out.contains("NOT STEADY STATE"),
+                    s"unsettled: ${Bench.stillCompiling(ctl)}")
             _  <- Console.printLine("\n" + out + "\n")
             _  <- Console.printLine("PHASE 3 DONE")
         yield ()
