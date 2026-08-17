@@ -127,3 +127,21 @@ learn independently is a real block; "this is hard" is not.
 - Results for the candidates that fit the night, each with evidence or an explicit "inconclusive".
 - The tool defect list from stage 4.
 - The open decisions I defaulted, for your ruling.
+
+## Operational lessons from the night
+
+**Naming an agent prevents it from starting.** Spawning with a `name` registers it as a
+mailbox-addressable teammate rather than launching it: four agents sat idle for half an hour with
+their briefs undelivered, and messaging them later did not make them run either. The launch that
+works reports "Async agent launched successfully" with an output file; the one that does not reports
+"will receive instructions via mailbox". Check which you got before assuming work is underway, and
+re-spawn without a name rather than waiting.
+
+**A review and an edit cannot share the tree.** The first reviewer noted mid-report that files were
+changing under it and had to pin its citations. While a review is reading the harness and running its
+suites, do not edit that directory: a half-written file makes it report failures that are not real.
+Work on documents or another tree, or wait.
+
+**Verify the blockers, do not inherit them.** "The repo doesn't compile" was carried in this campaign
+as a settled fact and would have justified skipping every measurement. It took one 16-second build to
+find it false. A belief that conveniently excuses the expensive work is exactly the one to test first.
