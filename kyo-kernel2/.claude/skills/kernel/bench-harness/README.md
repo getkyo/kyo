@@ -62,6 +62,15 @@ Each guard exists because its absence corrupted or wasted a real measurement:
 - **Return a verdict from a falsifier whose flag never took.** `CompileCommand=inline` is a
   hint, and HotSpot still refuses on `MaxInlineLevel`, node budget, or a method it cannot
   compile. Such a run is inconclusive, never a refutation.
+- **Store a measurement without the configuration that produced it.** A configuration
+  comparison varies nothing but JVM arguments, so a stored pair with the same sha and tree hash
+  is otherwise indistinguishable. The campaign's headline result was stored exactly that way and
+  is unrecoverable because of it. Runs record their arguments, and a same-sha comparison prints
+  which ones differ.
+- **Round a verdict's own numbers away.** A cleanly separated 26.2% regression on a nanosecond
+  row once rendered as `0.01 ± 0.00` against `0.01 ± 0.00`. Precision scales with magnitude, so
+  the figures behind a verdict stay legible and the error column never reads as zero when it is
+  not.
 
 ## What it proposes next
 
