@@ -14,7 +14,8 @@ sealed abstract class Arrow[-A, +B, -S] extends AbstractFunction1[A, B < S] with
     def step: Arrow.Step[A, B, S]
 
     def chain[C, S2](f: Arrow[B, C, S2]): Arrow[A, C, S & S2] =
-        if f eq Arrow.Identity then
+        if f.isInstanceOf[Arrow.Identity]
+        then // TODO I've made Identity a class to use here. Check if this helps perf, convert other uses and measure
             this.asInstanceOf[Arrow[A, C, S & S2]]
         else
             Arrow.Chain(this, f)
@@ -55,7 +56,8 @@ object Arrow:
 
     end Transform
 
-    object Identity extends Transform[Any, Any, Any]:
+    sealed abstract class Identity extends Transform[Any, Any, Any]
+    object Identity extends Identity:
         def frame                                       = Frame.internal
         override def chain[C, S2](f: Arrow[Any, C, S2]) = f
         def apply[C, S2](v: Any < S2, next: Arrow[Any, C, S2]): C < S2 =
@@ -91,6 +93,7 @@ object Arrow:
         val cont: Arrow[A, B, S]
     ) extends Defer[Any, B, S]
 
+    // TODO rename to Park and rename related methods to keep the "park" theme cosnistent
     final private[proto] class Eval[+A, +B, -S](
         val entries: Span[Arrow[?, ?, ?]],
         val tags: Span[AnyRef],
