@@ -99,10 +99,23 @@ by evidence:** double-boxing (it is boxed once), `Nested.unnest` itself (correct
 and the `liftInternal` escape (adding it to `Pending`/`ArrowEffect` changed nothing, 22 before and
 after; reverted). The `Nested` class is the same one on both sides, `kyo.kernel.internal.Nested`.
 
-**Live hypothesis, untested:** `<` is opaque but **transparent inside its own defining package**, and
-the test now sits in `kyo.kernel` where `<` is defined while `Arrow` moved to `kyo` and `Nested` to
-`kyo.kernel.internal`. In the proto all four were in one package. Transparency changes what
-`lifted.map(...)` resolves against, so extension resolution is the next thing to check.
+**Also eliminated, by experiment:** the opaque-transparency hypothesis. Moving `PendingTest` to
+`kyo.kernel.internal` gave the **same 16 failures**, so it is not package-dependent and not extension
+resolution. Reverted. And the `Arrow.Eval` / `kyo.kernel.internal.Eval` name collision: `Eval.scala`
+qualifies all three of its uses as `Arrow.Eval`, and no other main file has a bare `Eval(`.
+
+**What the failure set points at.** The two failing suites are exactly the ones exercising *nested
+computations and regions*: `PendingTest`'s `settled`/`after` helpers, which lift a computation as a
+value, and `ArrowEffectTest`'s region tests (`a handle capture crossing an inner region`, `a crossed
+region resumes without re-running its body`, `a park preserves standing sibling regions`). Both paths
+go through `Arrow.Eval`, the park node, and the `Nested` box. `EffectTest`, `EvalTest`, `LoopTest`,
+`StackTest` and `SafepointTest` do not use them and all pass.
+
+So the next place to look is the **park/resume path**, where a boxed value is stored into an
+`Arrow.Eval` node and delivered again on resume: something on that path returns the box rather than
+unwrapping it. `Arrow.Eval`, `SuspendWith` and `Nested` all had their visibility widened from
+`private[proto]` to `private[kyo]` in the move, which should be inert, and that is worth confirming
+before looking further afield.
 
 The 22nd failure is `PendingBytecodeTest`, a size expectation that moved from 8 to 5.
 
