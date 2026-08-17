@@ -52,14 +52,28 @@ measured but never compared: it is refused in *both* designs, so it cannot separ
 compared the current design against itself at two budgets and read a design difference out of data
 that never contained one. Corrected in `bench-results/exp1/RESULT.md`, with the error left visible.
 
+## Now also done
+
+- **Phase 3 orchestration.** `bracketPlan` and `bracket` run C V C V C, so the replication statistic
+  and the A/A null finally have legs to consume. The ordering is a pure function and tested as one.
+- **Phase 8 known-answer fixture**, built from the sweep rather than synthetic data. It requires the
+  harness to find the regression, find the wins, and name allocation on exactly the row where
+  allocation moved. None of that can be satisfied by staying silent.
+- **All twelve review findings closed.**
+- **A leg carries JVM arguments**, and heap and collector are pinned on every leg. Without this a
+  configuration probe was inexpressible, which is why tonight's two diagnostic experiments ran from a
+  shell script the harness knew nothing about.
+
+**150 checks green across five suites.**
+
 ## Not done
 
-- **Phase 3 leg orchestration** (C V C V C). The statistic and the null are implemented and tested;
-  the runner still produces one leg per invocation, so no measurement tonight used them.
-- **Phases 5, 6, 7** (allocation attribution via `output=collapsed`, the investigator, guardrails).
-- **Phase 8 known-answer fixtures**, still the most important gap: every validation is a null.
-- **Six review findings** open: `recompiled` counts tier escalation, suffix-anchored attribute
-  patterns, four checks that cannot fail, untested parser surface, comment errors.
+- **Phases 5, 6, 7.** Allocation attribution via `output=collapsed`; the investigator's automatic
+  rule table (its two most valuable pieces, the efficacy gate and budget ranking, are built);
+  guardrails including the steady-state recalibration.
+- **No bracket has actually been run.** The orchestration is implemented and its ordering tested, but
+  a five-leg session takes roughly half an hour and none was run tonight, so the replication
+  statistic still has never consumed real legs.
 - **The actual DIS-1 fix is unmeasured.** A compile command is a diagnostic; making the method small
   enough to inline unaided is the candidate's real content.
 - **The 15-row sweep** of forced-inline against default is running as of this writing; a dispatch
