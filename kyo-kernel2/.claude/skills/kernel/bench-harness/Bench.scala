@@ -550,6 +550,29 @@ object Bench:
 
     def noiseShare(run: Run): Double = noiseShare(run.cpu)
 
+    /** Package holding the benchmark's own generated code. Its closures are the workload, not noise. */
+    val BenchmarkPackage = "kyo.kernel.bench."
+
+    /** Sampled time split three ways, which is the split that does not require deciding a contested question.
+      *
+      * Two-way is the trap. Calling everything outside `kyo.kernel.proto` immovable classifies `ProtoKernelBench$$anon$95` as
+      * unreachable by any kernel change, and that allocation is the entire subject of candidate C3: the benchmark's closures are the
+      * workload, and how often they run and whether they allocate is what the kernel's dispatch decides. Reporting the three shares
+      * separately states what was measured and leaves the inference to the reader, where it belongs.
+      */
+    case class CpuPartition(kernel: Double, benchmark: Double, other: Double)
+
+    def cpuPartition(cpu: Chunk[CpuSite]): CpuPartition =
+        val total = cpu.map(_.nanos).sum
+        if total == 0L then CpuPartition(0.0, 0.0, 0.0)
+        else
+            def share(p: CpuSite => Boolean) = cpu.filter(p).map(_.nanos).sum.toDouble / total * 100
+            CpuPartition(
+                kernel = share(_.method.startsWith(KernelPackage)),
+                benchmark = share(_.method.startsWith(BenchmarkPackage)),
+                other = share(c => !c.method.startsWith(KernelPackage) && !c.method.startsWith(BenchmarkPackage))
+            )
+
     /** The frames making up that share, largest first. The share alone tells the operator to go and look; these are what it would find. */
     def noiseFrames(cpu: Chunk[CpuSite], take: Int): Chunk[(String, Double)] =
         val total = cpu.map(_.nanos).sum
