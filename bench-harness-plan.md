@@ -1,151 +1,149 @@
-# bench-harness: implementation plan
+# bench-harness: implementation plan (v2, after review)
 
-The harness measures kernel changes and is meant to make a wrong conclusion hard to reach. It
-already enforces the measurement protocol; this plan takes it from a collector that reports
-anomalies to an investigator that arrives with the explanation already gathered.
+The harness measures kernel changes and is meant to make a wrong conclusion hard to reach.
 
-## Why the change in shape
+v1 of this plan proposed building an investigator on top of the signals the harness collects today.
+A review verified those signals against the captured artifacts and found three of the four are
+broken. Their numbers are reproduced below and I re-verified each one before rewriting. Building
+the investigator on them would have industrialized the failure it exists to prevent: an automatic
+generator of confident, well-cited, wrong mechanisms.
 
-The operator (me) has a demonstrated failure mode: skipping rungs of the evidence ladder,
-asserting mechanisms that were never measured, and not remembering to run the right tool at
-the right moment. Three mechanism claims in one session were contradicted by the next
-measurement. A tool that flags a symptom and expects a human follow-up inherits that failure.
-So the design goal is a complete picture out of the box, with the expensive evidence following
-the symptom automatically rather than waiting to be requested.
+So the order inverts. Fix the instruments, prove they can be wrong, and only then automate on top.
 
-## Current state
+## What the artifacts say
 
-Working and verified against live output: session grouping with measured drift, marker
-verification per leg, `git restore --worktree` design flips, detached-worktree and clean-tree
-guards, JMH json parsing with `gc.alloc.rate.norm` and `compiler.time.*`, compilation-log
-parsing (deopts, morphism, inlining), drift-band classification, subset and evidence stamps,
-steady-state detection, store round trip, and a 21-check self test plus live QA phases 1, 1.5,
-2 and 3.
+Verified directly, not taken from the review:
 
-Known defects and debts carried into this plan: the `PrintInlining` run is dead weight since
-the compilation log supersedes it; drift runs omit `-wi`/`-i` and so calibrate under different
-warmup than the legs they judge; `lastCompileAt` is displayed but never checked against the
-measurement window; evidence runs use `-i 1`, starving the CPU profile to ~300 samples; and
-QA phase 4 (the CLI surface) has never run.
+| Claim | Measured |
+|---|---|
+| Receiver profiles are rare | 5093 `<call>` elements, **12** carry `receiver=`, 664 carry `count=` |
+| "Deopts" are not deopts | 639 `<uncommon_trap>`, **6** runtime (`thread=`); 89 unparsed `<make_not_entrant>` |
+| The inlining diff is irreproducible | Two runs of the *identical* comparison named disjoint mechanisms |
 
-## Target run inventory
+The third, in full, because it is the one that would have shipped:
 
-Per session, 3 runs, drift calibration on one row:
+    run 1: Nested::unnest 21B refused -> inlined ; Nested$::apply 9B refused -> inlined
+    run 2: Pending$package$$less$::fromArrow 2B refused -> inlined
 
-    -f 1 -wi 10 -i 5 -r 1s -w 1s -rf json -rff <file>
+Same two shas, same machine. A 2-byte method is not refused for size; these are warmup-era sites.
+Both rows were **flat** (+0.8%, +0.3%) and both still printed a mechanism.
 
-Per leg, 2 runs plus a non-JMH correctness gate:
+## The redirection
 
-    sbt testOnly kyo.kernel.proto.*
-    -f N -wi 10 -i 5 -r 1s -w 1s -prof gc -prof comp -rf json -rff <file>
-    -f 1 -wi 10 -i 1 -jvmArgsAppend "-XX:+UnlockDiagnosticVMOptions -XX:+LogCompilation -XX:LogFile=<file>"
+The operator's documented failure is asserting mechanisms about code that was never run. More
+evidence about the same two runs does not touch that. The project's own record is that no profile
+ever settled an attribution; the isolation run did, every time.
 
-Per flagged row, 1 run, scoped to that row:
-
-    -f 1 -wi 10 -i 10 -prof "async:libPath=<dylib>;event=cpu;alloc=512k;lock=10ms;output=jfr;dir=<dir>"
-
-Per investigated method, 1 run, scoped to that method:
-
-    -f 1 -wi 10 -i 1 -jvmArgsAppend "-XX:+UnlockDiagnosticVMOptions -XX:CompileCommand=print,<Class>::<method>"
-
-Bytecode needs no run: `javap -c -p` on the compiled class, ~0.1s.
+So the investigator's deliverable is a hypothesis **plus the discriminating experiment that would
+kill it**, and the automation budget goes to running that experiment. Automate the isolation run,
+not the narrative.
 
 ## Phases
 
-### Phase A: cut the default cost
+### Phase 1: fix the broken instruments
 
-1. Delete the `PrintInlining` run and its parser; inlining comes from the compilation log,
-   which was measured as strictly more complete (3011 successes, 1865 failures, structured,
-   no thread interleaving).
-2. Give the drift runs the same `-wi 10 -i 5 -r 1s -w 1s` as the legs, so the noise floor
-   describes the same JVM state as the measurements it classifies.
-3. Verify a leg is 2 JMH runs and the suite still passes.
+These are parser and aggregation bugs, not design questions.
 
-Acceptance: a full-evidence leg costs 2 runs; QA phases 1.5 and 3 pass unchanged.
+1. **Morphism.** A missing `receiver` means "not a profiled virtual call", never "megamorphic".
+   Report morphism only for sites that carry a receiver profile; everything else is unclassified
+   and says so. Fix the `Call` regex, which matches 664 of 5093 elements and silently drops the C1
+   form.
+2. **Deopts.** Separate compile-time planted traps (`bci=`, a property of the code shape) from
+   runtime deopt events (`thread=`). Parse `<make_not_entrant>`, plus `decompiles=` and
+   `unstable_if_traps=` on `<task>`. The current count compares guard censuses and calls the
+   difference a deoptimization change.
+3. **Inlining.** Never fold to one verdict per method. Keep per-site verdicts, C2 and post-warmup
+   only, and report a flip as "1/6 sites" with its reason. A method whose refusal rests on one
+   warmup site is not a refused method.
+4. **Mechanism on flat rows.** A row inside the band gets no mechanism string, ever.
 
-### Phase B: unified profiling as tier 2
+Acceptance: re-parsing the captured log reproduces the measured table above; the two stored e2e
+runs no longer name disjoint mechanisms on flat rows.
 
-4. Replace the separate alloc and itimer runs with one unified JFR run
-   (`event=cpu;alloc=512k;lock=10ms;output=jfr`), verified working: one invocation produced
-   307 `jdk.ExecutionSample` and 22187 `jdk.ObjectAllocationInNewTLAB` events.
-5. Parse it with `jfr print --json --events jdk.ExecutionSample,jdk.ObjectAllocationInNewTLAB`,
-   decoding with kyo's `Json`. Allocation events carry full stack traces, so allocation moves
-   from class totals to "which method allocated it".
-6. Quarantine its scores: this run measured 8.42 against 6.15 unprofiled, a 37% inflation, so
-   it is attribution-only and no score from it may enter a delta. Enforce structurally, the
-   way subset runs are already barred from suite-wide claims.
-7. Scope it to flagged rows rather than the class, and spend the freed budget on `-i 10` for
-   roughly a thousand CPU samples instead of three hundred.
+### Phase 2: make a verdict answerable for its own uncertainty
 
-Acceptance: tier 2 is one run; allocation attribution names methods; a JFR-derived score
-cannot reach a comparison.
+5. Per-row error enters the verdict. The current rule (`error > score * 0.5`) is twelve times
+   looser than the skill's own stated rule; a delta smaller than the combined error is not a result.
+6. Record the run configuration **from the JMH json** (`jdkVersion`, `vmName`, `vmArgs`, `forks`,
+   `warmupIterations`, `measurementIterations`, blackhole mode), not from harness constants. Today
+   `Run.warmup` records a constant and `Session.jvm` records the harness's JVM, not the forked one.
+7. Record the source diff and diffstat between the two shas over the restored paths. The QA bracket
+   compared commits differing by 509 insertions and 221 deletions across 8 files; nothing recorded
+   that. A single-method mechanism is inadmissible while the diff spans multiple implicated methods.
+8. Add the JMH benchmark source to the restored, hashed and markered paths. An edit to it is
+   currently invisible to every guard.
 
-### Phase C: bytecode, always
+Acceptance: a comparison states its own resolution and its independent-variable count.
 
-8. `Bytecode.of(worktree, class, method)` via `javap -c -p`, with the method's size and
-   instruction listing.
-9. Collect for implicated methods on every comparison. It is free, deterministic, and it is
-   the source of truth for the byte counts that drove every inlining decision this session.
-10. Diff bytecode between legs for methods whose size changed.
+### Phase 3: the A/A null, interleaved
 
-Acceptance: a size change reports the instruction-level difference rather than only the number.
+The highest-value single addition, and the falsification test v1 lacked.
 
-### Phase D: the investigator
+9. Legs run interleaved: control, variant, control. The variant currently always runs second on a
+   hotter machine, a bias confounded with the design under test that always points one way.
+10. The two control legs form a free A/A comparison. **Any row it calls Faster or Regressed, and
+    any mechanism it names, is false by construction.**
+11. The A/A result gates the A/B report: a comparison whose own null is dirty says so at the top.
 
-11. Symptom classification per row: moved-with-allocation, moved-with-inlining-flip,
-    moved-unexplained, not-steady-state, polymorphic-hot-site.
-12. A rule table from symptom to evidence, executed automatically:
-    - allocation moved: allocation events grouped by allocating method, diffed
-    - inlining flipped: bytecode of that method in both legs, with sizes
-    - unexplained: top `kyo.*` methods by sampled time, their bytecode in both legs, then
-      assembly of the single top method
-    - not steady: deopt reasons, recompiled methods, `lastCompileAt` against the window
-    - polymorphic: receiver distribution for the site
-13. Implicated-method selection: intersect top `kyo.*` CPU methods with methods whose inlining
-    verdict or byte size changed; rank by sampled time; cap at three.
-14. Cost caps: assembly at most twice per comparison; tier 2 only for flagged rows.
-15. Dossier rendering per flagged row, stored with the comparison so re-reading never re-runs.
+Acceptance: the A/A pair runs through the full pipeline, and today's inlining diff fails it.
 
-Acceptance: a comparison with a regression emits a dossier containing the evidence that
-explains it, with no further commands.
+### Phase 4: bytecode
 
-### Phase E: the anti-fabrication guardrail
+The only rung with no statistics to get wrong: deterministic, zero-run, free.
 
-16. A mechanism is stated only when unambiguous: an allocation delta with nothing else moved,
-    or a verdict flip on a method that dominates the profile. Otherwise the dossier lists
-    candidates and says plainly that none is conclusive.
-17. Every dossier names what was checked, so a wrong rule is visible rather than persuasive.
-18. Tests that a dossier with ambiguous evidence refuses to name a cause.
+12. `Bytecode.of(worktree, class, method)` via `javap -c -p`, size plus listing, diffed between legs.
 
-Acceptance: a synthetic ambiguous case produces "no conclusive mechanism" and lists what was
-examined.
+Acceptance: a size change reports the instruction-level difference.
 
-### Phase F: finish QA
+### Phase 5: allocation attribution from what is already collected
 
-19. `lastCompileAt` becomes a guard, not a display: compilation finishing inside the
-    measurement window flags the row.
-20. QA phase 4, the CLI surface, which has never run.
-21. Re-run phases 1.5, 2 and 3 against the final shape.
+13. `qa-alloc.txt` is 8.1 MB of per-site stack trees and the parser reads only the 4-line flat
+    summary at the bottom. Parse the trees. This delivers v1's stated goal for the JFR pipeline
+    (which method allocated it) with no new tool and no 22k-event json decode.
+14. Drop the unified JFR run. Its scores are quarantined anyway, and nothing here uses lock events.
+15. Take `-XX:+PrintEliminateAllocations` instead: one flag on a run already being made, and it
+    separates "allocation eliminated" from "allocation cheap", which this kernel's design arguments
+    turn on.
 
-Acceptance: every QA phase passes against the code as shipped.
+Acceptance: allocation attribution names methods, from the existing capture.
 
-## Open decisions
+### Phase 6: the investigator, redirected
 
-- Whether assembly fires automatically or only on request. The automation argument says
-  automatically; it costs a run and perturbs compilation, so it is capped either way.
-- Whether the dossier runs on every comparison or only when a row flags. Always-on is simpler
-  and likelier to actually help; it slows a clean comparison for no benefit.
-- Whether to add `-XX:+PrintEliminateAllocations` for scalar-replacement evidence, which would
-  distinguish "allocation eliminated" from "allocation cheap", a distinction this kernel's
-  design arguments turn on.
-- The allocation sampling interval (512k) is untuned; these rows allocate megabytes per
-  operation, so it may be sampling far more heavily than needed.
+16. Symptom classification per flagged row, over the repaired signals only.
+17. For each candidate mechanism, emit the **discriminating experiment**: the isolation run that
+    would kill it. Reverse the one change onto the other design and measure.
+18. Run it automatically. This is where the budget goes, replacing v1's automatic assembly, which
+    no decision in this project's history ever turned on.
+19. A mechanism is reported as confirmed only when its isolation run confirms it.
 
-## Risks
+Acceptance: a flagged row produces a hypothesis, its falsifier, and the falsifier's result.
 
-The investigator could become a machine for confident wrong stories, which is the exact failure
-it exists to prevent; phase E is the mitigation and should be treated as load-bearing rather
-than polish. Tier 2 and 3 runs perturb what they observe, so their output describes a JVM like
-the measured one rather than that one, and reports must say so. Every evidence run remains a
-single fork of a single configuration, so deopt counts and site rankings carry no error bars
-and small differences between them mean nothing.
+### Phase 7: guardrails, honesty, and QA
+
+20. A dossier lists what was checked, and abstains when evidence is ambiguous.
+21. Test the **confident** direction: a synthetic case where a wrong mechanism is available must be
+    refused. v1's acceptance test was satisfied by an investigator that abstains always.
+22. Repeat each evidence step within a leg; keep only signals present in both.
+23. Delete the dead and the wrong: unused `MinCpuSamples` and `NoiseShare`, stranded doc comments,
+    the JIT-cost table's meaningless rows, README drift about the worktree guard.
+24. QA phase 4 (the CLI, never run), the red-tree gate (never made to refuse anything), and the
+    retry path (probably unreachable, reads a stale json).
+
+Acceptance: every QA phase passes, including one that fails on purpose.
+
+## Rulings taken without the user
+
+Recorded for morning, defaults chosen to be reversible:
+
+- Assembly automation: **dropped**, per the review's evidence that no decision here ever turned on it.
+- Unified JFR: **dropped** in favor of parsing the capture we already produce.
+- `PrintEliminateAllocations`: **taken**.
+- Dossier scope: flagged rows only, since the A/A null now runs on every comparison and is the
+  expensive part.
+
+## What this plan still cannot do
+
+Comparing two git commits does not isolate a variable, and no phase here changes that. Phase 2's
+diffstat makes the problem visible and Phase 6's isolation run is the only real answer. Machine
+state (CPU frequency, thermal, GC ergonomics, heap) remains unpinned and unrecorded; the interleaved
+A/A is the mitigation, not a fix.
