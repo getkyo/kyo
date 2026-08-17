@@ -38,6 +38,20 @@ class EvalTest extends AnyFreeSpec:
         assert(Eval(answerAsk(1)(tower(ask, 100000))) == 100001)
     }
 
+    "a continuation folded from the drive stack runs every pending map exactly once" in {
+        val runs = new Array[Int](2)
+        val body: Int < Ask =
+            ask.map(a => ask.map(b => a * 10 + b))
+                .map { v =>
+                    runs(0) += 1; v + 1
+                }
+                .map { v =>
+                    runs(1) += 1; v * 2
+                }
+        assert(Eval(answerAsk(3)(body)) == 68)
+        assert(runs.toList == List(1, 1))
+    }
+
     "deep recursion through map pays rescues only" in {
         def loop(i: Int): Int < Any =
             if i == 0 then 0 else (0: Int < Any).map(_ => loop(i - 1))
