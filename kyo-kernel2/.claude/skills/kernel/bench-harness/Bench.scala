@@ -29,7 +29,12 @@ object Bench:
       * megamorphic by construction, and chasing it wastes a session.
       */
     def actionableJit(e: JitEntry): Boolean =
-        !e.inlined && !e.reason.contains("no static binding") && !e.reason.contains("virtual call")
+        !e.inlined &&
+            // megamorphic by construction: the site sees every arrow kind, and chasing it wastes a session
+            !e.reason.contains("no static binding") && !e.reason.contains("virtual call") &&
+            // a warmup artifact rather than a decision: the class simply was not linked yet when the
+            // compiler first looked, and the same method inlines fine once it is
+            !e.reason.contains("not linked") && !e.reason.contains("never executed")
 
     val BenchClass  = "kyo.kernel.bench.ProtoKernelBench"
     val BenchSource = "kyo-kernel2/jvm/src/jmh/scala/kyo/kernel/bench/ProtoKernelBench.scala"
@@ -49,13 +54,16 @@ object Bench:
       * how uncommitted work and a whole redesign were destroyed.
       */
     def requireThrowaway(worktree: Path)(using Frame): Unit < (Async & Fail) =
-        for
-            gitDir    <- exec(worktree, "git", "rev-parse", "--absolute-git-dir").map(_.trim)
-            commonDir <- exec(worktree, "git", "rev-parse", "--path-format=absolute", "--git-common-dir").map(_.trim)
-            _ <- Abort.when(gitDir == commonDir)(
-                BracketFailed(s"$worktree is the primary worktree; brackets need a throwaway one (git worktree add --detach)")
+        // comparing git dirs only catches the repository's primary worktree, and the tree that
+        // matters is whichever one work happens in, which is always on a branch. A bracket
+        // worktree is created detached, so that is the property to require.
+        exec(worktree, "git", "rev-parse", "--abbrev-ref", "HEAD").map(_.trim).map { head =>
+            Abort.when(head != "HEAD")(
+                BracketFailed(
+                    s"$worktree is on branch '$head'; brackets need a detached throwaway worktree (git worktree add --detach <path> <sha>)"
+                )
             )
-        yield ()
+        }
 
     /** Refuses a dirty worktree. A bracket overwrites sources, so uncommitted work in it is destroyed by the experiment. */
     def requireClean(worktree: Path)(using Frame): Unit < (Async & Fail) =
@@ -66,7 +74,13 @@ object Bench:
 
     /** Hash of the measured sources, so an edit during a run invalidates the leg instead of silently changing what was measured. */
     def treeHash(worktree: Path, paths: Seq[String])(using Frame): String < (Async & Fail) =
-        exec(worktree, (Seq("git", "ls-files", "-s", "--") ++ paths)*).map(_.hashCode.toHexString)
+        // `ls-files -s` reads the index, so an unstaged edit leaves it unchanged and the guard
+        // goes blind to the case it exists for. Diffing the working tree against HEAD sees
+        // every modification, staged or not.
+        for
+            tracked  <- exec(worktree, (Seq("git", "ls-files", "-s", "--") ++ paths)*)
+            modified <- exec(worktree, (Seq("git", "diff", "HEAD", "--") ++ paths)*)
+        yield (tracked + modified).hashCode.toHexString
 
     /** Measures this machine's run-to-run spread by repeating one row on an unchanged tree. Classifying against a measured floor is the
       * difference between a verdict and a guess.
