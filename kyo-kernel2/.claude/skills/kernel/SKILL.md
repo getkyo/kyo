@@ -271,8 +271,15 @@ Two corollaries the logs make concrete:
 - **Know the drift band before believing a delta.** Repeat runs of identical code have moved 3-4% here. Inside
   that band there is no result; widen the run or find the mechanism.
 - **`-f 3` for a claim, `-f 1` for diagnosis.** Never report a `-f 1` number as a result.
-- **Commit before the bracket.** A/B brackets check out other commits over the working tree; uncommitted work in
-  that tree is destroyed by the experiment. Commit first, even red, even mid-refactor.
+- **A bracket runs in a throwaway worktree, never in the tree you commit from.** `git worktree add --detach`
+  costs seconds and makes the whole class of accidents impossible.
+- **Flip designs with `git restore --source=<sha> --worktree`, never `git checkout <sha> -- <paths>`.** Checkout
+  writes the *index* as well as the working tree, so an interrupted bracket leaves the comparison design staged,
+  and the next commit silently sweeps it in. That happened: a commit whose message claimed to touch only a skill
+  file reverted the entire redesign, and three later commits built on the reverted tree before anyone noticed.
+- **Commit before the bracket anyway.** Uncommitted work in a tree an experiment touches is destroyed by it.
+  Commit first, even red, even mid-refactor, and commit the user's in-progress TODOs on sight for the same
+  reason.
 - **Rejected experiments become branches, never stashes.** A stash is invisible in every later summary and gets
   forgotten; `parked/<name>` keeps the diff and the reason findable.
 - **Know what fraction of the row is yours.** `boxToInteger` accounts for ~44% of samples on the suspension rows
