@@ -42,29 +42,23 @@ being caught.
      an added 4-byte kind field lands in existing padding and is **free** on all four, the opposite of
      the candidate's stated risk. This does not kill it; the expensive half, the drive rewrite, is
      what the gate is really about.
-3. **The sweep was never replicated**, and trying to replicate it found something worse. The
-   compile-command file that produced the campaign's headline (`continuationBodiesFuse` -6.8% under a
-   forced inline) is **gone from disk**, and the stored runs never recorded it: the control and
-   variant share a `sha` and a `treeHash` and differ only in a configuration nowhere in the record.
-   **That measurement is therefore unrecoverable**, not merely unstated, and re-running it means
-   reconstructing the configuration from the writeups rather than from the store. Defect 25 is fixed
-   so this cannot recur, but the fix does not retrieve the old pair.
-   **The replication is now IN FLIGHT**, with the configuration reconstructed from the writeups:
+3. **The sweep is replicated. DONE.** Five legs of both configurations, A/A null clean, and it
+   corrects the original: **the sweep's "five wins" is three.** `suspensionBaseline` -9.7%,
+   `continuationBodiesFuse` -7.1% and `handleLoopFusesContinuation` -6.9% survive with a real
+   threshold and all three got *larger*. `handleLoopAnswersInPlace` was bolded as a win on one leg and
+   does not survive. The two **largest** deltas on the board, -12.5% and -10.7%, are both flat, which
+   is exactly what a threshold is for and what a single leg cannot see.
 
-       control  d85ee6821f, no extra JVM args
-       variant  d85ee6821f, -XX:CompileCommandFile=bench-results/forced-inline.cmd
-       file     inline kyo/kernel/proto/Eval$.dispatch$1
+   `trailingMapsStayLinear` allocates **+239,977 B/op** against the original's **+239,976**: two
+   independent measurements agreeing to one byte in 240,000. Its timing is still not established,
+   +43.2% against a ±59.94% resolution, and the original +23.80% was not established either.
 
-   Five legs, whole class, timing evidence, store `bench-results/sweep-replicated`. The command was
-   checked against a bare `java -version` first, which printed
-   `CompileCommand: inline kyo/kernel/proto/Eval$.dispatch$1 bool inline = true` and no parse error,
-   so the two runs defect 6 was written about are not spent again here.
+   It also passed the first test of defect 25's fix: variant legs recorded the `CompileCommandFile`,
+   controls recorded nothing, and the report printed the difference. See
+   `bench-results/sweep-replicated/RESULT.md`.
 
-   **This run doubles as the first test of defect 25's fix.** The original pair is unrecoverable
-   precisely because its configuration was never stored; this one should record
-   `-XX:CompileCommandFile=...` on the variant legs and nothing on the controls. Read that back from
-   the store when it lands, because if it does not appear, the fix does not work and the replication
-   inherits the same defect it was meant to escape.
+**There is no unblocked work left in this campaign.** Everything remaining is a ruling: the four
+gated candidates in `RULINGS-NEEDED.md` and the C4 trade, each with a recorded default.
 
 Everything else below is finished work, kept for its reasoning.
 
