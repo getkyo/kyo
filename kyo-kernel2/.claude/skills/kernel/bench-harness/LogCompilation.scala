@@ -41,6 +41,16 @@ object LogCompilation:
     private val Method     = """<method [^>]*>""".r
     private val AttrId     = """(?<![\w_])id='(\d+)'""".r
     private val AttrHolder = """holder='(\d+)'""".r
+    /** The log is XML, so its attribute values are escaped, and a constructor arrives as `&lt;init&gt;`.
+      *
+      * Every other tool in this ladder prints `<init>`: javap, async-profiler, the JVM's own
+      * `PrintInlining`. A name that agrees with none of them cannot be cross-referenced against any of
+      * them, and the failure is silent, a lookup that simply finds nothing.
+      */
+    def unescape(s: String): String =
+        if s.indexOf('&') < 0 then s
+        else s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&")
+
     private val AttrName   = """name='([^']+)'""".r
     private val AttrBytes  = """bytes='(\d+)'""".r
 
@@ -127,7 +137,7 @@ object LogCompilation:
                 case None                 => s"method#$methodId"
 
         def attr(re: scala.util.matching.Regex, s: String): Maybe[String] =
-            Maybe.fromOption(re.findFirstMatchIn(s).map(_.group(1)))
+            Maybe.fromOption(re.findFirstMatchIn(s).map(m => unescape(m.group(1))))
 
         // counted by a deliberately loose scan that shares no pattern with the matchers below.
         // Incrementing `seen` inside the parse loop made coverage self-referential: narrowing a

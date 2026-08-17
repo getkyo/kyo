@@ -258,6 +258,22 @@ object LogCompilationTest extends KyoApp:
                 cpuSites.map(_.method).filter(_.contains("G1Par")).mkString(",")
             )
 
+            // the log is XML, so a constructor arrives as `&lt;init&gt;`. Every other tool in the
+            // ladder prints `<init>`, so an undecoded name cross-references against none of them and
+            // the failure is a lookup that silently finds nothing.
+            _ = check(
+                "no parsed method name carries a raw XML entity",
+                LogCompilation.inlining(parsed, "").forall(v => !v.method.contains("&lt;") && !v.method.contains("&amp;")),
+                LogCompilation.inlining(parsed, "").map(_.method).filter(_.contains("&")).take(3).mkString(",")
+            )
+            _ = check(
+                "and constructors read as <init>",
+                LogCompilation.inlining(parsed, "").exists(_.method.endsWith("::<init>")),
+                LogCompilation.inlining(parsed, "").map(_.method).filter(_.contains("init")).take(3).mkString(",")
+            )
+            _ = check("unescape leaves an ordinary name alone", LogCompilation.unescape("kyo.Foo::bar") == "kyo.Foo::bar", LogCompilation.unescape("kyo.Foo::bar"))
+            _ = check("and decodes every entity the log uses", LogCompilation.unescape("a&lt;b&gt;c&amp;d&quot;e&apos;f") == "a<b>c&d\"e'f", LogCompilation.unescape("a&lt;b&gt;c&amp;d&quot;e&apos;f"))
+
             _ = println("\nthe efficacy gate, against two real configurations")
             dflt <- (results / "logc-new-default.xml").read.map(LogCompilation.parse)
             f600 <- (results / "logc-new-freq600.xml").read.map(LogCompilation.parse)

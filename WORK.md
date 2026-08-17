@@ -136,6 +136,26 @@ that had never been run wrong. Exercising them found four more defects (20 to 23
 
 **260 checks green** across seven suites.
 
+## DIS-2 answered, and the answer is that it was never tested
+
+Second in the plan's run order because it needs no source change. The tool says
+`continuationBodiesFuse` is **-17.4%** under `-XX:FreqInlineSize=600`, more than twice the -6.8% that
+forcing `dispatch$1` delivered, which invites the conclusion that the budget is the whole story.
+
+The efficacy gate says the opposite. `dispatch$1` is **607 B and refused for `hot method too big` in
+both logs**: 600 is below 607, so the flag never reached the method the hypothesis is about, and 700
+was refused for a different reason in experiment 2. The 37 verdicts that did move are almost entirely
+the *benchmark's own* closures, `run$57` through `run$67` at 119 B going from 1 inlined site to 3,
+plus two `anon$` constructors and `ask`. Every kernel method checked is unchanged.
+
+So a JVM flag made the benchmark's harness code inline better and the row got faster because of that.
+**DIS-2 is untested, not confirmed**, and the number its mechanism is worth remains the replicated
+-6.8%. See `bench-results/dis2/RESULT.md`.
+
+One defect out of it: the compilation log is XML, so a constructor arrived as `&lt;init&gt;` while
+every other tool in the ladder prints `<init>`, and those names cross-referenced against none of them,
+silently. **264 checks green.**
+
 ## Now
 
 **Validating the tool against the manual work.** Procedure: three-way comparison of raw data, tool
