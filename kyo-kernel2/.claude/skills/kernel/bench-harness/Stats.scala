@@ -77,14 +77,6 @@ object Stats:
         def deltaPercent: Double = if controlMean == 0.0 then 0.0 else (variantMean - controlMean) / controlMean * 100
     end Replicated
 
-    /** The threshold a row must clear, and the smallest effect that could have cleared it.
-      *
-      * `minimumDetectable` is reported on every flat row, so "flat" means "flat to within this much" rather than "nothing was found". A
-      * harness that cannot say how small an effect it could have seen is not entitled to call a row unchanged.
-      */
-    case class Threshold(row: String, absolute: Double, percent: Double, df: Int, alpha: Double) derives Schema:
-        def show: String = f"+-${percent}%.2f%% (t at alpha=$alpha%.5f, df=$df)"
-
     /** Per-row alpha after correcting for testing every row of the class at once.
       *
       * Fifteen independent tests at 5% each produce at least one false positive 54% of the time. Bonferroni is the conservative choice and
@@ -93,16 +85,16 @@ object Stats:
     def perRowAlpha(familyAlpha: Double, rows: Int): Double =
         if rows <= 0 then familyAlpha else familyAlpha / rows
 
-    def threshold(r: Replicated, familyAlpha: Double, rows: Int): Maybe[Threshold] =
+    def threshold(r: Replicated, familyAlpha: Double, rows: Int): Maybe[Resolution] =
         val alpha = perRowAlpha(familyAlpha, rows)
         r.standardError.map { se =>
             val t   = tCritical(r.degreesOfFreedom, alpha)
             val abs = t * se
-            Threshold(r.row, abs, if r.controlMean == 0.0 then 0.0 else abs / r.controlMean * 100, r.degreesOfFreedom, alpha)
+            Resolution(if r.controlMean == 0.0 then 0.0 else abs / r.controlMean * 100, abs, r.degreesOfFreedom, alpha)
         }
 
     /** Classifies one row against its own threshold. A row whose spread cannot be estimated is unresolved, never flat. */
-    def classify(r: Replicated, familyAlpha: Double, rows: Int): (Verdict, Maybe[Threshold]) =
+    def classify(r: Replicated, familyAlpha: Double, rows: Int): (Verdict, Maybe[Resolution]) =
         val th = threshold(r, familyAlpha, rows)
         th match
             case Maybe.Present(t) =>

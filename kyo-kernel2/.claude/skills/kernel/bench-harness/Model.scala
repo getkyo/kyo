@@ -177,6 +177,15 @@ object Model:
     enum Verdict derives Schema, CanEqual:
         case Faster, Flat, Regressed, BelowResolution
 
+    /** How small an effect this row could have detected, and on what basis.
+      *
+      * Carried on every delta, including flat ones. "Flat" without a resolution is not a result: it is indistinguishable from an instrument
+      * that cannot see anything, and a harness unable to say how small an effect it would have caught is not entitled to call a row
+      * unchanged.
+      */
+    case class Resolution(percent: Double, absolute: Double, df: Int, alpha: Double) derives Schema:
+        def show: String = f"detectable at +-${percent}%.2f%% (df=$df, alpha=$alpha%.5f)"
+
     /** A row's movement between two runs, together with whether anything in the evidence moved with it.
       *
       * `mechanism` is the point of the whole harness: a timing change with no allocation change, no inlining change and no shift in the
@@ -197,9 +206,14 @@ object Model:
         percent: Double,
         verdict: Verdict,
         allocDelta: Maybe[Double],
-        mechanism: Chunk[String]
+        mechanism: Chunk[String],
+        /** Present when the session replicated its legs. Absent means the verdict rests on a single pair, which cannot support a threshold. */
+        resolution: Maybe[Resolution] = Maybe.empty
     ) derives Schema:
         def unexplained: Boolean = verdict != Verdict.Flat && verdict != Verdict.BelowResolution && mechanism.isEmpty
+
+        /** A flat row with no resolution is not evidence of no change; it is evidence of nothing. */
+        def flatButUnbounded: Boolean = verdict == Verdict.Flat && resolution.isEmpty
     end Delta
 
     case class Comparison(

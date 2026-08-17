@@ -369,6 +369,61 @@ object Bench:
         Comparison(control, variant, deltas, jitShift(control, variant))
     end compare
 
+    /** Family-wise error rate a session is willing to accept across all its rows. */
+    val FamilyAlpha = 0.05
+
+    /** Compares replicate legs, which is the only shape that can support a threshold.
+      *
+      * A session measures control, variant, control, variant, control. Pooling the spread across those replicates is what makes a verdict
+      * answerable for its own uncertainty; the single-pair `compare` above can classify against a drift band but cannot say how small an
+      * effect it would have caught, so every flat row it produces is unbounded.
+      */
+    def compareReplicated(controls: Chunk[Run], variants: Chunk[Run]): Comparison =
+        val rowNames = Chunk.from(controls.headMaybe.map(_.rows.map(_.name)).getOrElse(Chunk.empty))
+        val reps =
+            rowNames.map { name =>
+                Stats.Replicated(
+                    name,
+                    Chunk.from(controls.flatMap(_.row(name)).map(_.score)),
+                    Chunk.from(variants.flatMap(_.row(name)).map(_.score))
+                )
+            }
+        val common = Stats.commonMode(reps)
+        val deltas =
+            reps.flatMap { r =>
+                for
+                    c <- Chunk.from(controls.headMaybe.flatMap(_.row(r.row)))
+                    v <- Chunk.from(variants.headMaybe.flatMap(_.row(r.row)))
+                yield
+                    val (verdict, resolution) = Stats.classify(r, FamilyAlpha, rowNames.size)
+                    val allocDelta =
+                        for
+                            ca <- c.allocPerOp
+                            va <- v.allocPerOp
+                        yield va - ca
+                    val mechanism =
+                        if verdict == Verdict.Flat || verdict == Verdict.BelowResolution then Chunk.empty
+                        else
+                            Chunk.from(Seq(
+                                allocDelta.filter(d => Math.abs(d) > 1.0).map(d => f"allocation ${d}%+.0f B/op"),
+                                jitShift(controls.head, variants.head).headMaybe.map(m => s"inlining changed: $m")
+                            ).flatMap(_.toOption))
+                    Delta(r.row, c, v, r.deltaPercent, verdict, allocDelta, mechanism, resolution)
+            }.sortBy(d => (d.verdict == Verdict.BelowResolution, d.percent))
+        Comparison(controls.head, variants.head, deltas, jitShift(controls.head, variants.head))
+    end compareReplicated
+
+    /** The A/A null: control legs against each other, through the identical pipeline.
+      *
+      * Any row this classifies, and any mechanism it names, is false by construction. It is the only check here that can fail in the
+      * direction that matters, since every other one asks the harness to stay silent and is therefore satisfied by silence.
+      */
+    def nullComparison(controls: Chunk[Run]): Maybe[Comparison] =
+        if controls.size < 4 then Maybe.empty
+        else
+            val (a, b) = controls.splitAt(controls.size / 2)
+            Maybe(compareReplicated(Chunk.from(a), Chunk.from(b)))
+
     /** Methods whose inlining verdict moved decisively between the two runs.
       *
       * Decisive means unanimous on both sides: every site inlined in one leg and every site refused in the other. Anything less is a

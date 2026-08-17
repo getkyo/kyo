@@ -136,6 +136,45 @@ object BenchTest:
         check("the report refuses the deltas", Report.render(Bench.compare(ctl, hot)).contains("NOT STEADY STATE"))
         check("and points at the JIT metrics", Report.render(Bench.compare(ctl, hot)).contains("JIT metrics below"))
 
+        println("replicated comparison")
+        def legScores(label: String, scores: Seq[(String, Double)]) =
+            leg(label, scores.map((n, s) => (n, s, 0.05, 640.0)))
+        val ctlLegs = Chunk(
+            legScores("c1", Seq(("a", 100.0), ("b", 50.0))),
+            legScores("c2", Seq(("a", 100.4), ("b", 50.2))),
+            legScores("c3", Seq(("a", 99.7), ("b", 49.8)))
+        )
+        val vntFlat = Chunk(legScores("v1", Seq(("a", 100.2), ("b", 50.1))), legScores("v2", Seq(("a", 99.9), ("b", 49.9))))
+        val vntSlow = Chunk(legScores("v1", Seq(("a", 118.0), ("b", 50.1))), legScores("v2", Seq(("a", 117.4), ("b", 49.9))))
+
+        val repFlat = Bench.compareReplicated(ctlLegs, vntFlat)
+        val repSlow = Bench.compareReplicated(ctlLegs, vntSlow)
+        check("replicated noise stays flat", repFlat.deltas.forall(_.verdict == Verdict.Flat), repFlat.deltas.map(d => s"${d.row}=${d.verdict}").mkString(","))
+        // the must-fire twin: without it, never classifying passes
+        check("a real regression is classified", repSlow.deltas.find(_.row == "a").exists(_.verdict == Verdict.Regressed))
+        check("and the untouched row is not", repSlow.deltas.find(_.row == "b").exists(_.verdict == Verdict.Flat))
+        check("every flat row carries a resolution", repFlat.deltas.forall(_.resolution.isDefined))
+        check("so no flat row is unbounded", repFlat.deltas.forall(!_.flatButUnbounded))
+        val out = Report.render(repFlat)
+        check("the report states the resolution", out.contains("flat to within its own resolution"), out.linesIterator.find(_.contains("resolution")).getOrElse(""))
+        // a single-pair comparison cannot bound anything, and must say so rather than implying it did
+        check("an unreplicated comparison admits it is unbounded", Report.render(cmp).contains("cannot say how small an effect"))
+
+        println("the A/A null")
+        val quietNull = Bench.nullComparison(Chunk(ctlLegs(0), ctlLegs(1), ctlLegs(2), legScores("c4", Seq(("a", 100.1), ("b", 50.05)))))
+        check("the null runs when there are enough control legs", quietNull.isDefined)
+        check("and names nothing on quiet controls", quietNull.forall(_.deltas.forall(_.verdict == Verdict.Flat)),
+            quietNull.map(_.deltas.map(d => s"${d.row}=${d.verdict}").mkString(",")).getOrElse(""))
+        check("and no mechanism", quietNull.forall(_.deltas.forall(_.mechanism.isEmpty)))
+        // must-fire: a null that cannot detect a difference is not a null, it is a rubber stamp
+        val dirtyNull = Bench.nullComparison(Chunk(
+            legScores("c1", Seq(("a", 100.0))), legScores("c2", Seq(("a", 100.2))),
+            legScores("c3", Seq(("a", 130.0))), legScores("c4", Seq(("a", 130.4)))
+        ))
+        check("a genuinely dirty null is caught", dirtyNull.exists(_.deltas.exists(_.verdict != Verdict.Flat)),
+            dirtyNull.map(_.deltas.map(d => s"${d.row}=${d.verdict}").mkString(",")).getOrElse("none"))
+        check("too few legs means no null at all", Bench.nullComparison(Chunk(ctlLegs(0), ctlLegs(1))).isEmpty)
+
         println("win and loss")
         check("a change that both wins and loses demands two diagnoses", Report.render(cmp).contains("two diagnoses"))
 

@@ -86,6 +86,18 @@ object Report:
                 || | row | mode | cnt | control | variant | delta | B/op delta | mechanism |
                 ||---|---|---|---|---|---|---|---|---|""".stripMargin
 
+        val resolutionNote =
+            val unbounded = c.deltas.count(_.flatButUnbounded)
+            val bounded   = c.deltas.flatMap(_.resolution)
+            if bounded.nonEmpty then
+                val worst = bounded.map(_.percent).max
+                f"\nEvery flat row below is flat to within its own resolution, at worst +-${worst}%.2f%% " +
+                    f"(alpha ${bounded.head.alpha}%.5f after correcting for ${c.deltas.size} rows, df ${bounded.head.df})."
+            else if unbounded > 0 then
+                s"\n⚠️  $unbounded flat rows carry no resolution: these legs were not replicated, so " +
+                    "'flat' here means the harness cannot say how small an effect it would have missed, not that nothing changed."
+            else ""
+
         val body = c.deltas.map { d =>
             val delta = if d.verdict == Verdict.BelowResolution then "below resolution" else f"${d.percent}%+.1f%%"
             val alloc = d.allocDelta.map(a => f"$a%+.0f").getOrElse("-")
@@ -192,7 +204,7 @@ object Report:
                 "\n⚠️  Moved with nothing in the evidence behind it, so the cause is not known yet:\n" +
                     unexplained.map(d => s"  - ${d.row}: check allocation sites and the inlining log before proposing a mechanism").mkString("\n")
 
-        s"$sessionWarning$header\n$body$jit$deoptShift$polymorphic$verdictLine$ladder$steadyState$jitTable$bothWays$noiseNote"
+        s"$sessionWarning$header\n$body$resolutionNote$jit$deoptShift$polymorphic$verdictLine$ladder$steadyState$jitTable$bothWays$noiseNote"
     end render
 
 end Report
