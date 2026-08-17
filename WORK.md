@@ -108,6 +108,30 @@ Two tier-split variants aimed at capturing the win without that cost both regres
 22 to 35%. A third variant, which finds the stack index once so a fast-path miss does not pay for a
 second scan, is written and compiles with 126 tests green but **has never been measured**.
 
+## Design for the three open tool defects
+
+They share a shape: the tool knows after the fact what it could have said beforehand, or does not
+assert that an instruction it issued was obeyed.
+
+**8, resolution reported only after spending the session.** A five-leg session at one fork resolves
+to ±5.77%, so it cannot see the +4.5% regression this campaign is about, and that was discovered by
+running it and reading the footer. Everything needed to say so first is already stored: any prior run
+on the same rows carries each leg's `scoreError`. A `bench plan` subcommand should take the intended
+configuration and a target effect size, and answer whether the configuration can resolve it, refusing
+or warning when it cannot. Calibration measured earlier says forks will not help, since the variance
+is between legs rather than within them, so the answer will usually be "more legs" and it should say
+that rather than leaving the operator to guess.
+
+**6, a malformed JVM flag produces a normal-looking run.** Two runs were spent before a log line
+revealed `CompileCommand: An error occurred during parsing`. The harness must assert that a compile
+command it issued was parsed, and prefer the file form, which does not have to survive shell and sbt
+quoting. Without this, Phase 6's Tier A would silently test nothing while reporting refutations.
+
+**9, synthetic validation agrees with the code's blind spots.** Not fully fixable: every fixture is
+written by the same understanding that wrote the code. The mitigation is the A/A null, whose input is
+not authored, and it has already earned that keep by catching a missing floor that 31 unit tests and
+a simulation-backed review missed. It should run on every session rather than on request.
+
 ## Standing constraints
 
 No kernel source landed. Candidates measured in the detached throwaway worktree only. No `inline`
