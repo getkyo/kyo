@@ -15,6 +15,16 @@ they expose facts to check output the tool already produced. Computing a delta, 
 by hand is the failure this project exists to prevent, and it happened for four experiments before
 being caught.
 
+## In flight
+
+A real replicated bracket on the campaign's central question: base against `dispatch$1` forced
+inline, C V C V C, two rows. This is the first time that question has been asked with replication;
+every previous answer was a single leg reporting a floor. It became expressible only now, because a
+bracket could previously flip shas but not JVM configurations, and forced-inline is a configuration.
+
+Expected: a real threshold rather than a floor, and an A/A null over the three control legs whose
+verdict decides whether the comparison is readable at all.
+
 ## Re-measurement done, and it overturned a correction
 
 `-wi 25` settles `emittingClausesPayRegionRebuild`: its error falls from ±12.33 to ±2.97 and the
