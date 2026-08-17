@@ -15,6 +15,23 @@ they expose facts to check output the tool already produced. Computing a delta, 
 by hand is the failure this project exists to prevent, and it happened for four experiments before
 being caught.
 
+## In flight
+
+`exp6/base-wi25.json`: the base leg re-measured at `-wi 25` instead of 10, because three comparisons
+are blocked on `emittingClausesPayRegionRebuild`'s control leg never settling. If 25 warmup
+iterations settle it, the blocked comparisons can be re-issued; if not, that row needs a different
+remedy and the tool should say so rather than the operator guessing.
+
+Next commands, so they need no re-deriving:
+
+    # ingest and compare against the forced-inline leg
+    BenchIngest --json bench-results/exp6/base-wi25.json --label e6-base-wi25 --sha d85ee6821f \
+                --session validation --declared-rows 15 --store bench-results/store
+    BenchCompare --control <e6-base-wi25 id> --variant <sweep-forced id> --store bench-results/store
+
+Expected: the blocker clears for that row, or it does not and the row is unmeasurable at this warmup.
+Either is a result.
+
 ## Now
 
 **Validating the tool against the manual work.** Procedure: three-way comparison of raw data, tool
