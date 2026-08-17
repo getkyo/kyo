@@ -1,10 +1,12 @@
-# Four gated candidates, each with a recorded default
+# Five decisions, each with a recorded default
 
-> **Critical path.** Every probe promised below is now done, and all eight phases of the harness plan
-> are closed. Once the sweep replication in `bench-results/sweep-replicated` reports, **there is no
-> unblocked work left in this campaign**: what remains is DIS-3 (default proceed, needs one
-> `@unchecked` signed off), IN-3, C3 and DIS-4 (default hold, each needs a ruling), and the C4 trade
-> (1.5 ns per eval against a permanent per-thread budget leak, default keep the fix).
+> **Critical path.** Every probe promised below is done, all eight phases of the harness plan are
+> closed, and the sweep replication has reported. **There is no unblocked work left in this campaign.**
+> Five decisions remain: C4 (land the safepoint fix or leave the leak), DIS-3 (needs one `@unchecked`
+> signed off, default proceed), and IN-3, C3, DIS-4 (default hold).
+>
+> **C4 is the one with a live consequence.** The other four are about whether to spend effort. C4 is
+> about a defect that is in the proto kernel right now.
 >
 > Three of the four probes weakened their candidate and one strengthened it, so the defaults are not
 > uniform and are not guesses.
@@ -18,6 +20,41 @@ nothing**, so this is a flag rather than a stall.
 
 Nothing here is started. No kernel source is landed anywhere; the throwaway worktree holds the C4 fix
 and nothing else.
+
+---
+
+## C4, land the safepoint fix or leave the leak
+
+**Not a candidate and not an optimization**: a bug fix, listed here because it is a decision and this
+file is where decisions live.
+
+**What is wrong today.** A throw escaping a root `eval` leaks one unit of safepoint depth,
+permanently, on a slot that is per thread and therefore shared with every later unrelated computation.
+Reproduced: 50 throws lost exactly 50 of 512, one per throw, linear, never recovered. The symptom is
+not a wrong answer; `enter` returning false is the ordinary budget-exhausted path, so an affected
+thread simply parks and allocates progressively more, forever, with nothing to point at. That is why
+it survived this long.
+
+**The fix.** One `try`/`finally` at `Eval.apply`, matching the guard `Eval.partial` already carries.
+The delivery arms stay unguarded, deliberately: every normal path balances its `enter`/`exit` pairs
+including a drained budget, and all eight catch sites in the drive rethrow, so an exception always
+reaches a boundary. There are two boundaries and only one was guarded. 128 proto tests green.
+
+**Cost, measured.** +26.2% on `evalFixedOverhead` (0.005853 → 0.007364, about 1.5 ns per top-level
+`eval`), every other row flat, A/A null clean. That row measures nothing but call overhead, so it is
+the row that should move and the only one that did.
+
+**Decision needed:** land it, keep it parked, or ask for the cheaper shape to be measured.
+
+**Default if you say nothing:** *keep the fix as written, parked, not landed*. It is exactly correct,
+its cost is confined to one row that measures only call overhead, and correctness at 1.5 ns is the
+trade this project's rules take by default. A cheaper `catch`-based variant exists but is **not
+equivalent**, since `reset` installs a fresh budget rather than the outer drive's exact value, which
+differs whenever user code catches a throw from a nested `eval`. Settling that needs a three-sha
+chain, not a pair, and I have not run one.
+
+**Where it is.** `parked/c4-safepoint-root-guard` in the throwaway worktree. Not landed, so **the leak
+is live in the proto kernel right now**.
 
 ---
 
