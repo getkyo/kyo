@@ -170,9 +170,33 @@ about implicit resolution and codegen was wrong four times; javap was right ever
 found both bugs. Every compile I call clean must be a real `clean`. And when the owner says the same
 thing three times, the error is in my model, not their phrasing.
 
-**Still open in the merge:** the extra cases in the old duplicated tests are not folded in yet. Old
-`ArrowEffectTest` was 1030 lines against the proto's 587, `EvalTest` 634 against 224, `PendingTest` 387
-against 304, `EffectTest` 314 against 70. Retrievable at `6d2538ab26`.
+**The coverage merge, file by file. IN PROGRESS, 2 of 5 done, 262/262 green.** The old-impl test
+files I deleted in `f211bf5548` calling them "duplicates superseded by the proto versions" were not:
+by case name the proto covered almost none of them. Corrected framing: five of the six were 100%
+commented out at deletion (they tested against the stubbed old `Eval.run`), and only `ImplicitsTest`
+had live cases, all 18 of which the proto already had. But commented coverage is still coverage someone
+intended, and by case name the gap was ~225 cases. Rule from the owner: **cases for APIs not yet in
+this kernel are added as commented code**, so the specification survives in the file that will
+implement it.
+
+| file | old cases not in proto | done | result |
+|---|---|---|---|
+| `EffectTest` | 21 | yes | 1 live (`nested defer`), 17 commented (`catching`, `detach`: APIs this kernel lacks) |
+| `EffectTraceTest` | 19 | yes | 15 live, 2 commented (`catching`), 4 already covered |
+| `EvalTest` | 55 | next | |
+| `ArrowEffectTest` | 97 | | |
+| `PendingTest` | 33 | | likely mostly renames, check by content |
+
+**The merge found and fixed a real kernel bug on its second file.** Five ported `EffectTraceTest` cases
+went red: a throw inside a `map` **over a suspension** lost its `map` frames in the effect trace. Two
+one-identifier fixes, the same defect at two levels, the walker being handed the suspension without its
+continuation: `Eval.dispatchInline` attached `s` (the bare `Suspend`) where `whole` (the `SuspendWith`
+carrying the continuation, and what actually threw) was right; and `EffectTrace.Builder.drain`'s
+`SuspendWith` arm pushed `m.tail`, which is `this` for a `Defer`, so it re-enqueued itself until the cap
+(latent, `dropped` read 0, but real). The proto's own throw-in-map test maps over a *pure* value, which
+chains as a `Step`, so it never saw either. Reproduced first, then fixed, per the rule.
+
+Retrievable at `6d2538ab26`.
 
 **Still untouched per instruction:** benchmarks. `ProtoKernelBench` and six bench-harness files import
 `kyo.kernel.proto.*`, and the harness's `KernelPackage = "kyo.kernel.proto."` constant means **stored
