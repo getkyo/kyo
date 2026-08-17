@@ -37,6 +37,47 @@ invalidates either, that is rework to schedule and say out loud, not a fact to b
 failure is doing the work while the check on the work is still running, which is the same shape as
 reading a benchmark before its efficacy gate.
 
+## kyo-kernel2: the proto kernel is now the module's implementation
+
+**Done and compiling clean, zero errors.** The old `Kyo`-based implementation is discarded and the
+proto sits in the `kyo-kernel` shape: `kyo.Arrow` public, five files in `kyo.kernel`
+(`ArrowEffect`, `Effect`, `Loop`, `Pending`, and `<`), six in `kyo.kernel.internal` (`CanLift`,
+`EffectTrace`, `Eval`, `Implicits`, `Nested`, `Safepoint`, `Stack`).
+
+The two representations are what settled which was which:
+
+    discarded  kernel/Pending.scala :  opaque type < = A | Kyo[A, S]                (old)
+    kept       proto/Pending.scala  :  opaque type < = A | Arrow[...] | Nested[A]   (new)
+
+`KyoInternal.scala` went with the old impl: it is that impl's entire node model (`Kyo`, `Kyo.Defer`,
+`Kyo.Suspend`, `Kyo.Handle*`, its own `Boxed`/`Nested`), all of which the proto folds into `Arrow`.
+
+**Two mistakes worth keeping, both mine, both caught by the owner:**
+
+1. **I deleted the same-module lift escape as "dead imports".** `<.fromKyo` and
+   `Implicits.liftInternal` each appeared once, on their own import line, so a grep for usage said
+   dead. They are **implicit-scope imports** added by `afada84394` precisely to stop the `CanLift`
+   macro expanding inside the module that defines it. Removing them produced a
+   `StaleSymbolException` in the inlining phase, which I then spent several rounds misdiagnosing as
+   build state, then as opaque-type transparency, then as a structural flaw in the layout. It was
+   none of those. **A grep for textual usage cannot see an implicit-scope import.**
+2. **I proposed `CanLift.unsafe.bypass` as the fix.** The owner rejected it: an unconditional
+   `CanLift` given waives the representation check for every type wherever it is imported, including
+   types the evidence exists to reject. The correct shape, which the old impl already had, is a
+   **separate internal lift**: `object Implicits.liftInternal`, `private[kyo]`, performing the same
+   emission the macro would so nothing is waived. `bypass` is deleted.
+
+`fromArrow` needs no import: `object \`<\`` is the opaque type's companion and is already in implicit
+scope. Only `liftInternal` must be imported, since winning lexically over the companion's macro is its
+whole purpose.
+
+**`Kyo.scala` needed no porting.** It was only ever failing on the missing escape.
+
+**Open, and deliberately untouched per instruction:** tests and benchmarks still import
+`kyo.kernel.proto.*` and will not compile until repointed. That includes `ProtoKernelBench` and six
+bench-harness files, and the harness's `KernelPackage = "kyo.kernel.proto."` constant, which also
+means **stored jit and cpu data keyed on the old package names is now stale**.
+
 ## OPEN
 
 **Six things are open.** The numbered stream below is no longer a todo list: 12 of its 18 entries are
