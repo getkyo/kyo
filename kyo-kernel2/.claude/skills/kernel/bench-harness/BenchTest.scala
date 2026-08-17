@@ -343,6 +343,45 @@ object BenchTest:
             check("and legs with no collapsed view say nothing", !Report.render(cmp).contains("Allocation moved at these sites"))
         }
 
+        println("what two shas cannot say")
+        // the skill's worked example: a node-layout change and a currency hoist shipped together, the
+        // bundle was faster, the win was credited first to one and then to the other, and both
+        // stories were wrong as told. A pair of shas cannot separate them, and the report has to say
+        // so rather than leave the reader to supply the mechanism themselves.
+        locally {
+            def atSha(label: String, sha: String) =
+                leg(label, base).copy(sha = sha)
+            val designPair = Report.render(Bench.compare(atSha("c", "aaaaaaaaaa"), atSha("v", "bbbbbbbbbb")))
+            check("a two-sha comparison refuses source-level attribution", designPair.contains("no source-level mechanism is attributable"), designPair)
+            check("and says what would fix it", designPair.contains("chain of shas"), designPair)
+
+            // the same sha under two sets of JVM args has nothing to partition, so the note would be
+            // noise and is not printed
+            val configPair = Report.render(Bench.compare(atSha("c", "aaaaaaaaaa"), atSha("v", "aaaaaaaaaa")))
+            check("a configuration comparison gets no such note", !configPair.contains("no source-level mechanism"), configPair)
+
+            // one step of a declared chain is exactly the case where attribution IS available
+            val step = Report.render(Bench.compare(atSha("c", "aaaaaaaaaa"), atSha("v", "bbbbbbbbbb")), chainLength = 4)
+            check("a chain step says the delta is isolated", step.contains("isolated contribution"), step)
+            check("and does not also refuse attribution", !step.contains("no source-level mechanism"), step)
+        }
+
+        println("a chain needs three shas")
+        locally {
+            val pair = Bench.requireChain(Seq("a", "b"))
+            check("two shas is refused before any leg is run", pair.isDefined, pair.toString)
+            check(
+                "with the reason, and where to go instead",
+                pair.exists(w => w.contains("cannot isolate anything") && w.contains("bracket")),
+                pair.toString
+            )
+            check("three distinct shas is a chain", Bench.requireChain(Seq("a", "b", "c")).isEmpty, Bench.requireChain(Seq("a", "b", "c")).toString)
+            // a step to the same tree measures nothing and would report a threshold for it anyway
+            val repeated = Bench.requireChain(Seq("a", "b", "a"))
+            check("a repeated sha is refused", repeated.isDefined, repeated.toString)
+            check("and named", repeated.exists(_.contains("a")), repeated.toString)
+        }
+
         println("a dirty A/A null stops the session")
         // it used to print a line with a cross on it and exit 0. Every row an A/A null classifies is
         // a false positive by construction, so a dirty null is the strongest statement available that

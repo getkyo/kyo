@@ -150,6 +150,32 @@ object Report:
                 f"A/A null: clean, no control row classified against another control leg (${n.deltas.size} rows).\n"
             case _ => ""
 
+    /** What a two-sha comparison is structurally unable to say.
+      *
+      * A comparison of two commits measures the difference between two trees. Any statement of the
+      * form "this row moved *because of* change X" additionally requires that X was isolated, and two
+      * shas do not carry that: the partition between the changes inside the diff was never declared,
+      * so the harness has nothing to attribute to.
+      *
+      * This is the failure the skill records as its worked example. Two changes shipped together, a
+      * node-layout change and a currency hoist; the bundle was faster and the win was confidently
+      * attributed first to one and then to the other, and both stories were wrong as told. What
+      * settled it was running the pieces separately, which is a chain of shas rather than a pair.
+      *
+      * A configuration comparison, the same sha under two sets of JVM args, has nothing to partition
+      * and gets no note.
+      */
+    def partitionNote(control: Run, variant: Run, chainLength: Int): String =
+        if control.sha == variant.sha then ""
+        else if chainLength > 2 then
+            s"\nThis is one step of a $chainLength-sha chain, so the delta above is the isolated contribution of " +
+                "this step and nothing else moved with it."
+        else
+            "\n⚠️  Two shas, so no source-level mechanism is attributable from this comparison. The diff " +
+                "between them may contain any number of changes and the partition between them was never declared, " +
+                "so a sentence of the form 'this moved because of change X' is not supported by anything here, " +
+                "however plausible X is. Declare a chain of shas to isolate one."
+
     def icon(v: Verdict): String =
         v match
             case Verdict.Faster          => "🟢"
@@ -157,7 +183,7 @@ object Report:
             case Verdict.Regressed       => "🔴"
             case Verdict.BelowResolution => "🔵"
 
-    def render(c: Comparison): String =
+    def render(c: Comparison, chainLength: Int = 2): String =
         val control = c.control
         val variant = c.variant
         val scope =
@@ -373,11 +399,13 @@ object Report:
                     "mixes warm and cold code is not a measurement of the code. Re-run with more warmup.\n" +
                     bs.map(b => s"  - $b").mkString("\n") + "\n" + "=" * 78 + "\n"
 
+        val partition = partitionNote(control, variant, chainLength)
+
         // the next experiment is part of the report, not something to be asked for. A delta with no
         // falsifier attached is where "it is slower, so replace it" comes from.
         val investigation = Investigate.render(c)
 
-        s"$blockerBanner$sessionWarning$header\n$body$rampNote$resolutionNote$jit$deoptShift$polymorphic$allocSites$allocNote$verdictLine$ladder$steadyState$jitTable$bothWays$noiseNote$investigation"
+        s"$blockerBanner$sessionWarning$header\n$body$rampNote$resolutionNote$jit$deoptShift$polymorphic$allocSites$allocNote$partition$verdictLine$ladder$steadyState$jitTable$bothWays$noiseNote$investigation"
     end render
 
 end Report

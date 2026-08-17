@@ -82,6 +82,20 @@ case class PlanOpts(
     store: String = "bench-runs"
 )
 
+case class ChainOpts(
+    @HelpMessage("throwaway worktree to measure in; must not be the primary one")
+    worktree: String,
+    @HelpMessage("commits in order, oldest first, each isolating one change from the one before it; three or more, since two is a pair and isolates nothing")
+    sha: List[String],
+    @HelpMessage("benchmark rows; omit to measure the whole class")
+    row: List[String] = Nil,
+    @HelpMessage("legs per sha; two gives the chain a spread to threshold against")
+    legs: Int = 2,
+    forks: Int = 1,
+    evidence: String = "timing",
+    store: String = "bench-runs"
+)
+
 case class ShowOpts(id: String, store: String = "bench-runs")
 case class ListOpts(store: String = "bench-runs")
 
@@ -285,6 +299,54 @@ object BenchPlan extends KyoCaseApp[PlanOpts]:
         )
     }
 end BenchPlan
+
+/** Isolates a source-level mechanism, which a pair of shas structurally cannot.
+  *
+  * A bracket measures the difference between two trees. Attributing that difference to one change
+  * inside it requires the partition to have been declared, and a pair does not declare one. A chain
+  * does: each step is one change, and each adjacent comparison is that change's isolated contribution.
+  */
+object BenchChain extends KyoCaseApp[ChainOpts]:
+    run { (opts: ChainOpts) =>
+        Cli.guard(
+        for
+            // before the worktree is touched at all: a chain that is not one should cost nothing
+            _ <- Kyo.foreachDiscard(Chunk.from(Bench.requireChain(opts.sha).toList))(w =>
+                Abort.fail[Bench.BracketFailed](Bench.BracketFailed(w))
+            )
+            evidence <- Cli.parseEvidence(opts.evidence)
+            session  <- Bench.openSession(Path(opts.worktree), opts.row.headOption.getOrElse("suspensionBaseline"))
+            steps <- Bench.chain(
+                session = session,
+                worktree = Path(opts.worktree),
+                shas = opts.sha,
+                paths = Cli.protoPaths,
+                markerSpecs = Cli.markerSpecs,
+                rows = opts.row,
+                forks = opts.forks,
+                evidence = evidence,
+                legsPerSha = opts.legs
+            )
+            _ <- Kyo.foreachDiscard(steps.flatMap(_._2))(r => Store.save(Path(opts.store), r).unit)
+            _ <- Console.printLine(
+                s"Chain of ${steps.size} shas, ${opts.legs} legs each. Each comparison below is one step's " +
+                    "isolated contribution, which is the only shape that can carry a source-level mechanism.\n"
+            )
+            blockers <- Kyo.foreach(Chunk.from(steps.sliding(2).toSeq).filter(_.size == 2)) { pair =>
+                val (fromSha, fromLegs) = pair(0)
+                val (toSha, toLegs)     = pair(1)
+                val cmp                 = Bench.compareReplicated(fromLegs, toLegs)
+                Console.printLine(s"\n${"-" * 78}\n${fromSha.take(10)} -> ${toSha.take(10)}\n")
+                    .andThen(Console.printLine(Report.render(cmp, chainLength = steps.size)))
+                    .andThen(Report.blockers(cmp))
+            }.map(_.flatten)
+            _ <- Abort.when(blockers.nonEmpty)(
+                Bench.BracketFailed(s"${blockers.size} step(s) of the chain are not readable:\n${blockers.map(b => s"  - $b").mkString("\n")}")
+            )
+        yield ()
+        )
+    }
+end BenchChain
 
 object BenchCompare extends KyoCaseApp[CompareOpts]:
     run { (opts: CompareOpts) =>

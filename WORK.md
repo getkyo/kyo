@@ -17,15 +17,12 @@ being caught.
 
 ## OPEN, in the order it should be picked up
 
-1. **Phase 6 Tier B**: a bracket that accepts a *chain* of shas, so a source-level mechanism can be
-   isolated. With two shas the harness must refuse any source-level claim and say the partition was
-   never declared.
-2. **Phase 7 remainder**: dead code (`MinCpuSamples`, `NoiseShare`, stranded doc comments, README
+1. **Phase 7 remainder**: dead code (`MinCpuSamples`, `NoiseShare`, stranded doc comments, README
    drift), and delete `bench-harness-qa.md`.
-3. **The remaining candidates.** IN-2's premise is confirmed and its targets ranked, so it is the next
+2. **The remaining candidates.** IN-2's premise is confirmed and its targets ranked, so it is the next
    one worth an edit. C3, DIS-3, C4, DIS-4 are untouched. IN-3 and C1 are owner-gated, and C1 no
    longer needs its gate because it is refuted.
-4. **The sweep was never replicated**: one leg per configuration.
+3. **The sweep was never replicated**: one leg per configuration.
 
 Everything else below is finished work, kept for its reasoning.
 
@@ -211,6 +208,25 @@ And the finding that belongs to no candidate: the method ranked **first**, above
 is `ProtoKernelBench::run$56` at 379 B refused 10/10. It is the benchmark's own closure, the same
 family the FreqInlineSize flag moved for a 17.4% score change that had nothing to do with the kernel.
 Two independent readings now say a material share of these rows is the benchmark's own generated code.
+
+## Phase 6 Tier B is done: a pair is now told what it cannot say
+
+A bracket measures the difference between two trees. Attributing that difference to one change inside
+it requires the partition to have been declared, and a pair does not declare one. Every two-sha
+comparison now says so in the report: the diff may contain any number of changes, so a sentence of the
+form "this moved because of change X" is not supported by anything in it, however plausible X is.
+
+A configuration comparison, the same sha under two sets of JVM args, has nothing to partition and gets
+no note. A step of a declared chain gets the opposite note, that its delta *is* isolated.
+
+`bench chain` runs three or more shas, legs interleaved across shas rather than grouped so machine
+drift does not land entirely in one step, and renders each adjacent pair as its own replicated
+comparison. It refuses a pair, and refuses a repeated sha, before the worktree is touched at all:
+verified against a nonexistent worktree path, which it never looked at.
+
+This is the skill's own worked example made mechanical. A node-layout change and a currency hoist
+shipped together, the bundle was faster, the win was credited first to one and then to the other, and
+both stories were wrong as told. **284 checks green.**
 
 ## Defect 9's mitigation is wired in: a dirty A/A null now stops the session
 

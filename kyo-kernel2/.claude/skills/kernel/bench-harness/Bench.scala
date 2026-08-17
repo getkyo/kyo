@@ -652,6 +652,61 @@ object Bench:
         }
     end bracket
 
+    /** A chain of shas, each step isolating one change from the step before it.
+      *
+      * The reason this exists rather than a second pair: a two-sha comparison measures the difference
+      * between two trees and cannot attribute it, because the partition between the changes inside
+      * that diff was never declared. The skill's worked example is exactly this. Two changes shipped
+      * together, a node-layout change and a currency hoist; the bundle was faster, the win was
+      * credited first to one and then to the other, and both stories were wrong as told. Running the
+      * pieces separately settled it, and running the pieces separately is a chain.
+      *
+      * Each adjacent pair is measured as its own replicated comparison, so every step carries a
+      * threshold rather than a single difference of two numbers.
+      */
+    /** Why a proposed chain is not one, or empty when it is.
+      *
+      * Pure and separate from the runner so the refusal can be tested without a worktree: the whole
+      * point of the guard is that it fires before a single leg is measured.
+      */
+    def requireChain(shas: Seq[String]): Maybe[String] =
+        if shas.size < 3 then
+            Maybe(
+                s"a chain needs three or more shas; ${shas.size} is a pair, and a pair cannot isolate anything. " +
+                    "Use `bracket` for a pair, which reports that it attributes no source-level mechanism."
+            )
+        else if shas.distinct.size != shas.size then
+            Maybe(s"the chain repeats a sha (${shas.diff(shas.distinct).distinct.mkString(", ")}); a step to the same tree isolates nothing")
+        else Maybe.empty
+
+    def chain(
+        session: Session,
+        worktree: Path,
+        shas: Seq[String],
+        paths: Seq[String],
+        markerSpecs: Seq[(String, String, String)],
+        rows: Seq[String],
+        forks: Int,
+        evidence: Evidence,
+        legsPerSha: Int = 2
+    )(using Frame): Chunk[(String, Chunk[Run])] < (Async & Fail) =
+        requireChain(shas) match
+        case Maybe.Present(why) => Abort.fail(BracketFailed(why))
+        case _ =>
+            // interleaved rather than grouped: measuring all of sha A then all of sha B puts any
+            // machine drift entirely into the difference between them, which is the mistake the A/A
+            // null's alternating split already exists to avoid
+            val plan =
+                Chunk.from(
+                    (1 to Math.max(2, legsPerSha)).flatMap(rep => shas.zipWithIndex.map((sha, i) => (s"s$i-$rep", sha)))
+                )
+            Kyo.foreach(plan) { (label, sha) =>
+                runLeg(session, worktree, label, sha, paths, markerSpecs, rows, forks, evidence)
+            }.map { ls =>
+                Chunk.from(shas.zipWithIndex.map((sha, i) => sha -> Chunk.from(ls.filter(_.label.startsWith(s"s$i-")))))
+            }
+    end chain
+
     /** Compares replicate legs, which is the only shape that can support a threshold.
       *
       * A session measures control, variant, control, variant, control. Pooling the spread across those replicates is what makes a verdict
