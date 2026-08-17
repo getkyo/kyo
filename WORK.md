@@ -283,6 +283,11 @@ handler reaches the no-handler branch, so "park or bug" and "S1 or T" should be 
   `parked/merge-hoisted-currency` (the currency-hoist isolation experiment). Both `partial` variants
   `bug` at an operation with no region on the stack; the parking semantics the four red tests assert
   come from the old kernel2 only. Refs verified identical to the stashes; no working-tree change.
+- The owner's uncommitted redesign edits (`Arrow`, `ArrowEffect`, `Pending`, `EffectTrace`, `Eval`,
+  `EffectTraceTest`, new `internal/KyoInternal.scala` and `kyo/proto/`; 8 files, +549/-351, last
+  touched 19:21) are preserved as `snapshot/owner-eval-redesign-0817-2048`, a ref built through a
+  temporary index: HEAD, index and working tree untouched. Safe to delete once the work is committed
+  by its author; it exists so a crash cannot take the only copy.
 
 **Third file, third real bug, and the added coverage localised it exactly.** A handler's clause is the
 handler's own code and its effects belong to the handlers *outside* the region. This kernel answers a
