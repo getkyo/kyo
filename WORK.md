@@ -126,10 +126,25 @@ go through `Arrow.Eval`, the park node, and the `Nested` box. `EffectTest`, `Eva
 directly from the test returns the unwrapped `Arrow`, using `map`'s exact type argument. The identical
 call inside `map` leaves `c` boxed. No explanation yet, and no sixth guess offered.
 
-**In flight:** running the original `kyo.kernel.proto.PendingTest` in a baseline worktree at
-`5b93defa9a~1` to settle whether these 16 ever passed. Every "I broke it" claim so far rests on the
-263/23 baseline, where the 23 were all `LoopTest`/`SafepointConcurrencyTest`, but I have not confirmed
-this suite specifically was green.
+**SETTLED against raw data, and it localises the bug precisely.** The original
+`kyo.kernel.proto.PendingTest`, run in a baseline worktree at `5b93defa9a~1`, passes **32 of 32**.
+Ours is **16 of 32**. So I did break it; that is now evidence, not inference.
+
+Probing both at the same point, with the same test code:
+
+    BASELINE   settled(inner) = Nested        ->  c = PendingTest$$anon$88   (unwrapped)
+    OURS       settled(inner) = Nested        ->  c = Nested                (NOT unwrapped)
+
+**The box is identical on both sides.** The difference is entirely that baseline's `map` unnests and
+ours does not, from byte-identical `map` and `unnest` sources, with `unnest` verified correct in
+isolation on both. So the fault is in how `map`'s inlined `Nested.unnest[A](v)` resolves or behaves
+once expanded, not in the box, not in `unnest`, and not in the deferred `Bind` path.
+
+Attempted: moving `Boxed`/`Nested` back beside `<` to test co-location. **Inconclusive**, it failed on
+an unused-import warning under `-Werror` rather than running. Worth noting the owner's objection, which
+is correct: co-locating them recreates the cross-package edge from `CanLift`'s macro definition back to
+a file that uses the macro, which is the edge the move existed to break. So even if that experiment ran
+green it could not be the fix.
 
 **Owner preference, recorded so it is not undone:** the long rationale comment on `Eval.apply` was
 **removed deliberately**, not lost in the move. No large explanatory comment blocks in kernel sources.
