@@ -116,6 +116,40 @@ object Report:
         unsettled ++ compiling
     end blockers
 
+    /** What the A/A null establishes, and what it refuses.
+      *
+      * The null compares control legs against each other, so every row it classifies is a false
+      * positive by construction. That makes a dirty null the strongest possible statement that the
+      * session below is unreadable, and it was reported as a line of text that let the process exit 0.
+      * The unsettled-leg finding is the same shape and was already fixed this way: a reader who skims
+      * a thirty-line report skims a warning inside it, so this is a blocker with an exit code.
+      *
+      * A session with too few control legs to run a null at all is also a blocker, and for a stronger
+      * reason: it is not that the check failed, it is that the session cannot check itself.
+      */
+    def nullBlockers(null_ : Maybe[Comparison], controlLegs: Int): Chunk[String] =
+        null_ match
+            case Maybe.Present(n) =>
+                val named = n.deltas.filter(_.verdict != Verdict.Flat)
+                if named.isEmpty then Chunk.empty
+                else
+                    Chunk(
+                        s"the A/A null classified ${named.size} row(s) comparing control legs against each other: " +
+                            named.map(d => f"${d.row} ${d.percent}%+.1f%% (${d.verdict})").mkString(", ") +
+                            ". Those verdicts are false by construction, so nothing below is readable."
+                    )
+            case _ =>
+                Chunk(
+                    s"$controlLegs control leg(s) is too few to run an A/A null, so this session cannot check itself. " +
+                        "Five legs gives three controls and is what the threshold below assumes."
+                )
+
+    def nullNote(null_ : Maybe[Comparison]): String =
+        null_ match
+            case Maybe.Present(n) if n.deltas.forall(_.verdict == Verdict.Flat) =>
+                f"A/A null: clean, no control row classified against another control leg (${n.deltas.size} rows).\n"
+            case _ => ""
+
     def icon(v: Verdict): String =
         v match
             case Verdict.Faster          => "🟢"

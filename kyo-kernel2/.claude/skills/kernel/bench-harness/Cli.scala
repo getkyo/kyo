@@ -193,19 +193,21 @@ object BenchBracket extends KyoCaseApp[BracketOpts]:
             )
             (controls, variants) = legs
             _ <- Kyo.foreachDiscard(controls ++ variants)(r => Store.save(Path(opts.store), r).unit)
-            _ <- Bench.nullComparison(controls) match
-                case Maybe.Present(n) =>
-                    val named = n.deltas.count(_.verdict != Verdict.Flat)
-                    Console.printLine(
-                        if named == 0 then "A/A null: clean, no control row classified against another control leg.\n"
-                        else s"\u274c A/A null: $named row(s) classified comparing controls against each other. " +
-                            "Those verdicts are false by construction, so the comparison below is not readable.\n"
-                    )
-                case _ => Console.printLine("A/A null: not enough control legs to run one.\n")
+            aa  = Bench.nullComparison(controls)
             cmp = Bench.compareReplicated(controls, variants)
+            // the null's verdict and the steady-state verdict are the same kind of statement, that
+            // the numbers below cannot be read, so they are one banner and one exit code. Reporting
+            // a dirty null as a line of text and exiting 0 is the failure this tool exists to refuse.
+            blockers = Report.nullBlockers(aa, controls.size) ++ Report.blockers(cmp)
+            _ <- Console.printLine(
+                if blockers.isEmpty then Report.nullNote(aa)
+                else
+                    "\n" + "=" * 78 + s"\n\u26d4 NOT A VALID SESSION: ${blockers.size} reason(s).\n" +
+                        blockers.map(b => s"  - $b").mkString("\n") + "\n" + "=" * 78 + "\n"
+            )
             _ <- Console.printLine(Report.render(cmp))
-            _ <- Abort.when(Report.blockers(cmp).nonEmpty)(
-                Bench.BracketFailed(s"${Report.blockers(cmp).size} leg(s) did not reach steady state; the verdicts above are not readable")
+            _ <- Abort.when(blockers.nonEmpty)(
+                Bench.BracketFailed(s"${blockers.size} reason(s) make this session unreadable; see the banner above")
             )
         yield ()
         )

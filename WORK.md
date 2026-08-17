@@ -17,18 +17,15 @@ being caught.
 
 ## OPEN, in the order it should be picked up
 
-1. **Defect 9's mitigation is not wired in.** The A/A null runs on request; it should run on every
-   session. It is the only check whose input the author does not control and it has caught two things
-   nothing else did.
-2. **Phase 6 Tier B**: a bracket that accepts a *chain* of shas, so a source-level mechanism can be
+1. **Phase 6 Tier B**: a bracket that accepts a *chain* of shas, so a source-level mechanism can be
    isolated. With two shas the harness must refuse any source-level claim and say the partition was
    never declared.
-3. **Phase 7 remainder**: dead code (`MinCpuSamples`, `NoiseShare`, stranded doc comments, README
+2. **Phase 7 remainder**: dead code (`MinCpuSamples`, `NoiseShare`, stranded doc comments, README
    drift), and delete `bench-harness-qa.md`.
-4. **The remaining candidates.** IN-2's premise is confirmed and its targets ranked, so it is the next
+3. **The remaining candidates.** IN-2's premise is confirmed and its targets ranked, so it is the next
    one worth an edit. C3, DIS-3, C4, DIS-4 are untouched. IN-3 and C1 are owner-gated, and C1 no
    longer needs its gate because it is refuted.
-5. **The sweep was never replicated**: one leg per configuration.
+4. **The sweep was never replicated**: one leg per configuration.
 
 Everything else below is finished work, kept for its reasoning.
 
@@ -214,6 +211,17 @@ And the finding that belongs to no candidate: the method ranked **first**, above
 is `ProtoKernelBench::run$56` at 379 B refused 10/10. It is the benchmark's own closure, the same
 family the FreqInlineSize flag moved for a 17.4% score change that had nothing to do with the kernel.
 Two independent readings now say a material share of these rows is the benchmark's own generated code.
+
+## Defect 9's mitigation is wired in: a dirty A/A null now stops the session
+
+The null already ran on every bracket, so "runs on request" was not the gap. The gap was that its
+failure was a printed line with a cross on it, and the process exited 0. Every row an A/A null
+classifies is a false positive by construction, so a dirty null is the strongest available statement
+that the session is unreadable, and it was the one statement the tool made in passing.
+
+It is now a blocker, in the same banner and behind the same exit code as an unsettled leg, naming the
+rows it falsely classified. A session with too few control legs to run a null at all is blocked too,
+for a stronger reason: it cannot check itself. **274 checks green.**
 
 ## Validation against the manual work: COMPLETE
 

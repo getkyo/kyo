@@ -343,6 +343,34 @@ object BenchTest:
             check("and legs with no collapsed view say nothing", !Report.render(cmp).contains("Allocation moved at these sites"))
         }
 
+        println("a dirty A/A null stops the session")
+        // it used to print a line with a cross on it and exit 0. Every row an A/A null classifies is
+        // a false positive by construction, so a dirty null is the strongest statement available that
+        // the session is unreadable, and it was the one statement the tool made in passing.
+        locally {
+            val clean = Bench.nullComparison(ctlLegs)
+            check("a clean null blocks nothing", Report.nullBlockers(clean, ctlLegs.size).isEmpty, Report.nullBlockers(clean, ctlLegs.size).mkString)
+            check("and says so once", Report.nullNote(clean).contains("clean"), Report.nullNote(clean))
+
+            // the same alternating contamination the null's own must-fire fixture uses: every other
+            // leg is slow, so the two arms genuinely differ
+            val dirty = Bench.nullComparison(Chunk(
+                legScores("c1", Seq(("a", 100.0))), legScores("c2", Seq(("a", 130.0))),
+                legScores("c3", Seq(("a", 100.4))), legScores("c4", Seq(("a", 130.4)))
+            ))
+            val dirtyBlockers = Report.nullBlockers(dirty, 4)
+            check("a dirty null is a blocker", dirtyBlockers.nonEmpty, dirty.map(_.deltas.map(d => s"${d.row}=${d.verdict}").mkString(",")).getOrElse("no null"))
+            check("naming the rows it falsely classified", dirtyBlockers.exists(_.contains("a +")), dirtyBlockers.mkString)
+            check("and saying why they are false", dirtyBlockers.exists(_.contains("false by construction")), dirtyBlockers.mkString)
+            check("a clean null is not reported as a blocker", Report.nullNote(dirty).isEmpty, Report.nullNote(dirty))
+
+            // a session that cannot run a null at all is worse than one whose null failed: it cannot
+            // check itself, and that used to print "not enough control legs" and carry on
+            val tooFew = Report.nullBlockers(Bench.nullComparison(Chunk(ctlLegs(0))), 1)
+            check("a session that cannot run a null is blocked too", tooFew.nonEmpty, tooFew.mkString)
+            check("and told what it would take", tooFew.exists(_.contains("Five legs")), tooFew.mkString)
+        }
+
         println("a refusal that can be read")
         // the red-tree gate was exercised for the first time by planting a failing test in the
         // throwaway worktree. It refused, correctly, and buried the one line naming the failing test

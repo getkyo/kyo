@@ -167,6 +167,18 @@ compile-time figure, none is unsettled by the series criterion. **Bounded rather
 0.5%, under three times the worst share observed, and documented as not-yet-validated. The signal
 actually catching unsettled legs is `Row.unsettledStart`.
 
+## Defect 9's mitigation, wired in
+
+**24, a dirty A/A null printed a line and exited 0.** The null runs on every bracket, so the "runs on
+request" half of defect 9 was already closed; what was not is that its failure was reported as a
+warning. Every row an A/A null classifies is a false positive by construction, comparing control legs
+against each other, so a dirty null is the strongest statement available that the session below is
+unreadable, and it was the one statement the tool made in passing. **Fixed**: it is a blocker, in the
+same banner and behind the same exit code as an unsettled leg, naming the rows it falsely classified.
+
+A session with too few control legs is blocked too, and for a stronger reason: it is not that the
+check failed, it is that the session cannot check itself. That also used to be a printed line.
+
 ## Status, reconciled
 
 | # | defect | state |
@@ -194,8 +206,12 @@ actually catching unsettled legs is `Row.unsettledStart`.
 | 21 | the red-tree gate had never refused anything | **verified** it refuses; its message **fixed** to be readable |
 | 22 | a QA check that passed whenever nothing was flagged | **fixed**: the biconditional it meant |
 | 23 | the compile-time steady-state limit is uncalibratable from any data here | **bounded**, and labelled as such |
+| 24 | a dirty A/A null printed a line and exited 0 | **fixed**: a blocker, with the exit code |
 
-Twenty-one fixed, one bounded, one open, one an observation.
+Twenty-two fixed, one bounded, one an observation. Defect 9's mitigation is now wired into every
+bracket rather than available on request; what remains irreducible about 9 is that fixtures are
+written by the understanding that wrote the code, which is why the A/A, whose input is not authored,
+is the check that keeps earning its place.
 
 The one that remains, 9, is not fully fixable: every fixture is written by the same understanding
 that wrote the code under it. The mitigation is the A/A null, whose input is not authored, and it has
