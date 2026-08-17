@@ -132,36 +132,64 @@ experiments become branches rather than floating commits. The same branch also r
 
    Cut A2, A3-as-written, B2, C2. Rework A1, A4, A5. Order accepted as the reviewer gave it.
 
-9. **`IMPROVEMENT-PLAN.md` rewritten as v2; the same reviewer is resumed on it.** v1's thesis is
-   discarded. v2 rests on a finding neither the plan nor the review had: the harness contains **eight
-   result-driven selectors**, functions that decide what is worth showing given what the results were,
-   and **five are wired into no production path at all** (`budgetCandidates`, `Bytecode.crossedBudget`,
-   `Bytecode.diff`/`of`, `efficacy`, `unprofiledSites`). Every one has tests; `Bytecode` is a whole
-   tested module with zero production call sites. **Every throwaway probe written this campaign called
-   one of the five**, so the bypassing was not forgetfulness: the logic was on no code path and no
-   amount of remembering would have surfaced it.
+9. **v2's central table was wrong twice, both times flattering the tool. Superseded by v3.** v2 said
+   the harness holds eight result-driven selectors and **three are wired**. It is **one**
+   (`InlineSites.nearBudget`). I counted definition lines as call sites. Verified three ways that
+   agree: a held-out review, an independent feature survey, and my own re-derived reference counts.
+   - `actionableJit` has **one reference repo-wide, its own definition**: no caller, no test, and a
+     six-line docstring documenting a vocabulary "verified against a capture".
+   - `diffVerdicts` is worse than unwired. `Comparison.jitChanges` comes from `Bench.jitShift`, a
+     **separate implementation of the same question** over a different type. Two implementations of
+     one question, in different modules, and the tested one is the dead one.
+   - Six more the table never listed are dead or test-only: `allocConservation`, `jitUnstable`,
+     `measureDrift`, `residual`, `verifyAgainst`, and the whole `Bytecode` module. Plus
+     `Stats.commonMode`, *called* at `Bench.scala:729` and its result bound and never read.
+   - v2's item 9 said `allocConservation` is "called in `runLeg`". It is called nowhere in production.
 
-   The rule v2 adopts: **a flag must carry its own evidence, and no output may tell the operator to go
-   look something up.** The tool violates this in its own text, printing "check allocation sites and
-   the inlining log" for an unexplained row while holding 944 inlining entries for both legs.
-   Acceptance is grepping the renderers for imperatives.
+10. **Both held-out agents landed and their reports are preserved in `reviews/`.** They ran
+    independently, did not see each other, and agree with each other and with my own greps.
+    `REVIEW-PLAN-V2.md` attacked the plan; `FEATURE-SURVEY.md` enumerated every feature, all 22 `Run`
+    fields, and every `Report.render` section; `VERIFIED.md` is what I re-derived personally plus two
+    defects neither agent could settle.
 
-   Ten items, ordered so the five that only *connect* existing logic come first; only two add
-   anything. The reviewer is asked to break three specific claims, above all my assertion that
-   inlining **cannot** be attributed to a row from a whole-class leg — if that join is derivable,
-   item 2 is wrong and better work exists.
+    **Two I settled by running rather than reading:**
+    - **A multi-row leg's compilation log describes only its LAST row.** `runLeg` passes a fixed
+      `-XX:LogFile` path and JMH forks a JVM per benchmark. Two JVMs sharing one `LogFile` leave one
+      `<hotspot_log>` header and one pid, and the survivor carries only the second JVM's content. A
+      15-row selector stores one row's log labelled as the leg's. Defect 30.
+    - **No decodable jit data exists in the repository.** 47 of 49 stored runs are `Timing` with no
+      jit; the two that carry it fail with `⛔ Missing required field 'osrTasks'`. Four of v2's ten
+      items consumed `Run.jit`. Defects 31 to 33.
 
-10. **A second opus is compiling a feature survey, IN FLIGHT.** Complementary to the review, which
-    judges the plan: this one establishes the ground truth the plan should have been built on. Four
-    tables, all grounded in file:line: every entrypoint with its sources and its **verbatim output
-    sections**; every public function classified `PRODUCTION` / `TEST-ONLY` / `DEAD` by grep, with the
-    transitive path shown; all 22 `Run` fields against what renders them; and every `Report.render`
-    section with its trigger condition. Then three lists: captured-but-never-rendered,
-    computed-but-never-called, rendered-but-not-captured.
+    **Where v2 over-claimed in the other direction:** it called row-to-method attribution a hard limit
+    and made *saying so* the fix. It is not a limit. The row key is on the `<task>` element and the
+    harness already parses it into `Task.method`; one `flatMap` at `LogCompilation.scala:272` discards
+    it. True for the 91% of verdicts that are shared methods, false for the 8.9% that are the row's own
+    OSR stub, which the harness itself calls the compile that matters most.
 
-    It is briefed as an inventory, not a critique, with no recommendations, because my
-    "five unwired selectors" count is exactly the kind of number I have been wrong about twice this
-    session and it should be established independently rather than by my own grep.
+11. **`IMPROVEMENT-PLAN.md` is now v3, committed, and a fresh held-out reviewer is IN FLIGHT on it.**
+    The thesis is restated at the scale the evidence supports: **the harness captures a great deal at
+    real cost and renders almost none of it.** `Run.alloc` and `Run.cpu` cost one extra JMH invocation
+    each and surface as one integer and one percentage that prints only above 25%; 14 of 22 `Run`
+    fields reach no output; `bench run` prints one line after four invocations.
+
+    v3 adds a **Step 0** (items 1 to 3 consume `Run.jit`, which no stored run can load), cuts v2's
+    item 7 (`InlineSites.bytes` already carries per-method sizes at 94% population, from HotSpot's own
+    attribute), and replaces the acceptance test: v2's imperative-grep is **83% false positives** and
+    passes the plan's own headline example, so it becomes a selector-inventory gate plus a per-section
+    evidence assertion, neither satisfiable by rewording.
+
+    The new reviewer is deliberately **not** the one that reviewed v2, which has now seen its own
+    criticisms adopted and is anchored on them. It is briefed to test whether I **over-rotated**, to
+    re-derive the load-bearing numbers rather than trust them, and to check the thing I am least sure
+    of: whether v3's inventory gate is implementable at all in a harness with no test framework.
+
+12. **The defect ledger is 29 to 42 entries, 25 fixed and 14 open**, and the shape of the new ones is
+    the finding. **Ten of the thirteen are silence, not error.** Defects 1 to 29 came from operating
+    the harness and watching it misbehave, which surfaces what it *says* wrongly. `bench show` printing
+    `944` for 944 jit entries is not a wrong statement, so careful operation was never going to flag
+    it, and across the whole campaign it did not. That is the case for the inventory gate: the failure
+    mode is structural and only a structural check finds it.
 
 **Everything else remaining is a ruling**, each with a recorded default: the four gated candidates in
 `RULINGS-NEEDED.md`, the C4 trade, and DIS-3's cast above.
