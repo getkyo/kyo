@@ -97,6 +97,12 @@ right, my intermediate correction ("never a win, it is flat") was wrong, and the
 *unmeasurable*. The tool had said so correctly by refusing the whole comparison; I read the refusal
 as a verdict. See `bench-results/exp6/RESULT.md`.
 
+**Superseded by the replication, which is the fourth reading of this row and the first with a
+threshold: -12.5%, and flat.** So "a -9.5% win after all" does not stand either. Across four attempts
+this row has produced -9.78%, "unmeasurable", -9.5% and -12.5%, and the only claim consistent with all
+four is that **it has never been measurable**, not that it moves and not that it does not. Its control
+leg is flagged for a warmup ramp in the replication too, the same failure it has shown every time.
+
 The settling problem moved rather than vanished: `handleLoopFusesContinuation` now reports ±14.55%
 and is flat at -8.8%. One re-measurement does not buy a clean sweep, and the tool is saying so.
 
