@@ -1,10 +1,11 @@
-package kyo.kernel.internal
+package kyo.kernel.proto
 
 import java.util.concurrent.atomic.AtomicReferenceArray
 import kyo.StaticFlag
 import scala.annotation.static
 import scala.annotation.tailrec
 
+// TODO this should be private[kernel]
 class Safepoint
 
 object Safepoint:

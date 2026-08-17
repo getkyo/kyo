@@ -1,26 +1,42 @@
-package kyo.kernel
+package kyo.kernel.proto
 
-import kyo.Arrow
 import kyo.Frame
 import kyo.Maybe
-import kyo.kernel.internal.*
 import scala.annotation.nowarn
+import scala.annotation.static
 import scala.language.implicitConversions
 
-opaque type <[+A, -S] = A | Kyo[A, S]
+private[kyo] trait Boxed
+
+opaque type <[+A, -S] = A | Arrow[Any, A, S] | Nested[A]
+
+// TODO let's move to Nested.scala
+final private[proto] case class Nested[+A](value: A) extends Boxed
+
+object Nested:
+
+    /** The runtime arm the lift emission calls when a value of the type could be a computation. A monomorphic bridge rather than the
+      * wrapping directly: the emission lands at every generic lift site, and the shortest call keeps those sites inside the JIT's inline
+      * budget.
+      */
+    @static def nest[A, S](v: A): A < S =
+        v match
+            case v: Boxed => Nested(v).asInstanceOf[A < S]
+            case v        => v.asInstanceOf[A < S]
+
+    @static def unnest[A](v: Any): A =
+        (v match
+            case n: Nested[?] => n.value
+            case _            => v
+        ).asInstanceOf[A]
+end Nested
 
 object `<` extends Implicits:
-
-    // the representation stays sealed: nodes convert privately instead of
-    // publishing Kyo as a subtype of < through a lower bound
-    implicit inline def fromKyo[A, S](v: Kyo[A, S]): A < S = v
+    // TODO why isn't this in Implicits?
+    implicit def fromArrow[A, S](v: Arrow[Any, A, S]): A < S = v
 
     extension [A, S](self: A < S)
 
-        // the per-site Transform is self-contained: its apply carries the whole
-        // evaluation step and the object is its own continuation node
-        // (this.chain(next)), so no mapLoop wraps the expansion and each site
-        // contributes one class definition and one call
         @nowarn("msg=anonymous")
         inline def map[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
             def arrow =
@@ -28,16 +44,15 @@ object `<` extends Implicits:
                     def frame = _frame
                     def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S & S2 & S3) =
                         run(v, next)
-                    end apply
             def run[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S & S2 & S3) =
                 v match
-                    case kyo: Kyo[A, S3] @unchecked =>
-                        kyo.map(arrow.chain(next))
+                    case v: Arrow[Any, A, S3] @unchecked =>
+                        v.chain(arrow.chain(next))
                     case v =>
-                        val res  = Kyo.unnest(v)
+                        val res  = Nested.unnest[A](v)
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
-                            Kyo.defer(v, arrow.chain(next))
+                            Arrow.Bind(v, arrow.chain(next))
                         else
                             val step = next.step
                             val out  = step.head(f(res), step.tail)
@@ -56,16 +71,15 @@ object `<` extends Implicits:
                     def frame = _frame
                     def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S & S2 & S3) =
                         run(v, next)
-                    end apply
             def run[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S & S2 & S3) =
                 v match
-                    case kyo: Kyo[A, S3] @unchecked =>
-                        kyo.map(arrow.chain(next))
+                    case v: Arrow[Any, A, S3] @unchecked =>
+                        v.chain(arrow.chain(next))
                     case v =>
-                        val res  = Kyo.unnest(v)
+                        val res  = Nested.unnest[A](v)
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
-                            Kyo.defer(v, arrow.chain(next))
+                            Arrow.Bind(v, arrow.chain(next))
                         else
                             val step = next.step
                             val out  = step.head(f(res), step.tail)
@@ -79,20 +93,19 @@ object `<` extends Implicits:
 
         @nowarn("msg=anonymous")
         inline def andThen[B, S2](inline f: => B < S2)(using inline _frame: Frame): B < (S & S2) =
-            @nowarn("msg=anonymous") def andThenLoop[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S & S2 & S3) =
-                def arrow =
-                    new Arrow.Transform[A, C, S & S2 & S3]:
-                        def frame = _frame
-                        def apply[D, S4](v: A < S4, next2: Arrow[C, D, S4]) =
-                            andThenLoop(v, next.chain(next2))
+            def arrow =
+                new Arrow.Transform[A, B, S & S2]:
+                    def frame = _frame
+                    def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S & S2 & S3) =
+                        run(v, next)
+            def run[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S & S2 & S3) =
                 v match
-                    case kyo: Kyo[A, S3] @unchecked =>
-                        kyo.map(arrow)
+                    case v: Arrow[Any, A, S3] @unchecked =>
+                        v.chain(arrow.chain(next))
                     case v =>
-                        // the value is discarded, so it stays boxed
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
-                            Kyo.defer(v, arrow)
+                            Arrow.Bind(v, arrow.chain(next))
                         else
                             val step = next.step
                             val out  = step.head(f, step.tail)
@@ -100,26 +113,25 @@ object `<` extends Implicits:
                             out
                         end if
                 end match
-            end andThenLoop
-            andThenLoop(self: A < S, Arrow[B])
+            end run
+            run(self: A < S, Arrow[B])
         end andThen
 
         @nowarn("msg=anonymous")
         inline def unit(using inline _frame: Frame): Unit < S =
-            @nowarn("msg=anonymous") def unitLoop[C, S3](v: A < S3, next: Arrow[Unit, C, S3]): C < (S & S3) =
-                def arrow =
-                    new Arrow.Transform[A, C, S & S3]:
-                        def frame = _frame
-                        def apply[D, S4](v: A < S4, next2: Arrow[C, D, S4]) =
-                            unitLoop(v, next.chain(next2))
+            def arrow =
+                new Arrow.Transform[A, Unit, S]:
+                    def frame = _frame
+                    def apply[C, S3](v: A < S3, next: Arrow[Unit, C, S3]): C < (S & S3) =
+                        run(v, next)
+            def run[C, S3](v: A < S3, next: Arrow[Unit, C, S3]): C < (S & S3) =
                 v match
-                    case kyo: Kyo[A, S3] @unchecked =>
-                        kyo.map(arrow)
+                    case v: Arrow[Any, A, S3] @unchecked =>
+                        v.chain(arrow.chain(next))
                     case v =>
-                        // the value is discarded, so it stays boxed
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
-                            Kyo.defer(v, arrow)
+                            Arrow.Bind(v, arrow.chain(next))
                         else
                             val step = next.step
                             val out  = step.head((), step.tail)
@@ -127,28 +139,20 @@ object `<` extends Implicits:
                             out
                         end if
                 end match
-            end unitLoop
-            unitLoop(self: A < S, Arrow[Unit])
+            end run
+            run(self: A < S, Arrow[Unit])
         end unit
 
         inline def eval(using S =:= Any): A =
-            (self: A < S) match
-                case kyo: Kyo[?, ?] =>
-                    Eval(self: A < S) match
-                        case kyo: Kyo[?, ?] => throw new IllegalStateException(s"unhandled suspension: $kyo")
-                        case v              => Kyo.unnest(v.asInstanceOf[A < Any])
-                case v =>
-                    Kyo.unnest(v.asInstanceOf[A < Any])
-        end eval
+            Eval((self: A < S).asInstanceOf[A < Any])
 
         private[kyo] inline def evalNow: Maybe[A] =
             (self: A < S) match
-                case kyo: Kyo[?, ?] => Maybe.Absent
-                case v              => Maybe(Kyo.unnest(v))
+                case _: Arrow[?, ?, ?] => Maybe.Absent
+                case v                 => Maybe(Nested.unnest[A](v))
 
-        /** Applies a transformation to this computation, allowing a fluent
-          * style for effect handling: `computation.handle(Abort.run, Env.run(1))`
-          * instead of `Env.run(1)(Abort.run(computation))`.
+        /** Applies a transformation to this computation, allowing a fluent style for effect handling:
+          * `computation.handle(Abort.run, Env.run(1))` instead of `Env.run(1)(Abort.run(computation))`.
           */
         inline def handle[B](inline f: (=> A < S) => B): B =
             f(self: A < S)
@@ -264,23 +268,23 @@ object `<` extends Implicits:
     end extension
 
     extension [A, S, S2](self: A < S < S2)
-        /** Flattens a nested pending computation into a single computation. */
+
         @nowarn("msg=anonymous")
         inline def flatten(using inline _frame: Frame): A < (S & S2) =
-            @nowarn("msg=anonymous") def flattenLoop[C, S3](v: (A < S) < S3, next: Arrow[A, C, S3]): C < (S & S2 & S3) =
-                def arrow =
-                    new Arrow.Transform[A < S, C, S & S2 & S3]:
-                        def frame = _frame
-                        def apply[D, S4](v: (A < S) < S4, next2: Arrow[C, D, S4]) =
-                            flattenLoop(v, next.chain(next2))
+            def arrow =
+                new Arrow.Transform[A < S, A, S & S2]:
+                    def frame = _frame
+                    def apply[C, S3](v: A < S < S3, next: Arrow[A, C, S3]): C < (S & S2 & S3) =
+                        run(v, next)
+            def run[C, S3](v: A < S < S3, next: Arrow[A, C, S3]): C < (S & S2 & S3) =
                 v match
-                    case kyo: Kyo[A < S, S3] @unchecked =>
-                        kyo.map(arrow)
+                    case v: Arrow[Any, A < S, S3] @unchecked =>
+                        v.chain(arrow.chain(next))
                     case v =>
-                        val res  = Kyo.unnest(v)
+                        val res  = Nested.unnest[A < S](v)
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
-                            Kyo.defer(v, arrow)
+                            Arrow.Bind(v, arrow.chain(next))
                         else
                             val step = next.step
                             val out  = step.head(res, step.tail)
@@ -288,9 +292,10 @@ object `<` extends Implicits:
                             out
                         end if
                 end match
-            end flattenLoop
-            flattenLoop(self: A < S < S2, Arrow[A])
+            end run
+            run(self: A < S < S2, Arrow[A])
         end flatten
+
     end extension
 
 end `<`

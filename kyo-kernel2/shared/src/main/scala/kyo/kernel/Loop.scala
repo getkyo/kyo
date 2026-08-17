@@ -1,12 +1,10 @@
-package kyo.kernel
+package kyo.kernel.proto
 
 import kyo.Frame
-import kyo.kernel.`<`.fromKyo
-import kyo.kernel.Implicits.liftInternal
-import kyo.kernel.internal.*
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.annotation.targetName
+import scala.language.implicitConversions
 
 /** Provides utilities for creating and managing iterative computations with effects.
   *
@@ -81,7 +79,7 @@ object Loop:
       * @tparam O
       *   The type of the final value if completing
       */
-    opaque type Outcome[A, O] = O | Continue[A]
+    opaque type Outcome[A, +O] = O | Continue[A]
 
     /** Represents the result of a loop iteration with two state values.
       *
@@ -92,7 +90,7 @@ object Loop:
       * @tparam O
       *   The type of the final value if completing
       */
-    opaque type Outcome2[A, B, O] = O | Continue2[A, B]
+    opaque type Outcome2[A, B, +O] = O | Continue2[A, B]
 
     /** Represents the result of a loop iteration with three state values.
       *
@@ -105,7 +103,7 @@ object Loop:
       * @tparam O
       *   The type of the final value if completing
       */
-    opaque type Outcome3[A, B, C, O] = O | Continue3[A, B, C]
+    opaque type Outcome3[A, B, C, +O] = O | Continue3[A, B, C]
 
     /** Represents the result of a loop iteration with four state values.
       *
@@ -120,7 +118,7 @@ object Loop:
       * @tparam O
       *   The type of the final value if completing
       */
-    opaque type Outcome4[A, B, C, D, O] = O | Continue4[A, B, C, D]
+    opaque type Outcome4[A, B, C, D, +O] = O | Continue4[A, B, C, D]
 
     private val _continueUnit: Continue[Unit] =
         new Continue:
@@ -147,7 +145,7 @@ object Loop:
     // only Boxed values, so the boxing arm is unreachable for every value the
     // continue constructors build and the cast stands in for it. Each cast
     // names its own result type: a shared helper taking the type from
-    // inference solves it to the Kyo member of the currency union at some
+    // inference solves it to the pending member of the currency union at some
     // sites, and the checkcast that produces fails when the loop runs.
     // The done payloads are bare: the value lift at the clause boundary boxes
     // a payload that is itself a computation held as data, which keeps the
@@ -223,7 +221,12 @@ object Loop:
       *   The fourth state value
       */
     @nowarn("msg=anonymous")
-    inline def continue[A, B, C, D, O](inline v1: A, inline v2: B, inline v3: C, inline v4: D): Outcome4[A, B, C, D, O] < Any =
+    inline def continue[A, B, C, D, O](
+        inline v1: A,
+        inline v2: B,
+        inline v3: C,
+        inline v4: D
+    ): Outcome4[A, B, C, D, O] < Any = // TODO fuck, this came back. No these methods should have no < Any. You introduced a hack at some point and keeps poping up over and over
         val outcome =
             new Continue4[A, B, C, D]:
                 val _1 = v1
@@ -290,7 +293,7 @@ object Loop:
             v match
                 case next: Continue[A] @unchecked =>
                     loop(run(next._1))
-                case kyo: Kyo[?, ?] =>
+                case arrow: Arrow[?, ?, ?] =>
                     suspended(v)
                 case res =>
                     res.asInstanceOf[O < S]
@@ -320,7 +323,7 @@ object Loop:
             v match
                 case next: Continue2[A, B] @unchecked =>
                     loop(run(next._1, next._2))
-                case kyo: Kyo[?, ?] =>
+                case arrow: Arrow[?, ?, ?] =>
                     suspended(v)
                 case res =>
                     res.asInstanceOf[O < S]
@@ -352,7 +355,7 @@ object Loop:
             v match
                 case next: Continue3[A, B, C] @unchecked =>
                     loop(run(next._1, next._2, next._3))
-                case kyo: Kyo[?, ?] =>
+                case arrow: Arrow[?, ?, ?] =>
                     suspended(v)
                 case res =>
                     res.asInstanceOf[O < S]
@@ -386,7 +389,7 @@ object Loop:
             v match
                 case next: Continue4[A, B, C, D] @unchecked =>
                     loop(run(next._1, next._2, next._3, next._4))
-                case kyo: Kyo[?, ?] =>
+                case arrow: Arrow[?, ?, ?] =>
                     suspended(v)
                 case res =>
                     res.asInstanceOf[O < S]
@@ -411,7 +414,7 @@ object Loop:
             v match
                 case next: Continue[Unit] @unchecked =>
                     loop(idx + 1)(run(idx))
-                case kyo: Kyo[?, ?] =>
+                case arrow: Arrow[?, ?, ?] =>
                     suspended(idx)(v)
                 case res =>
                     res.asInstanceOf[O < S]
@@ -437,7 +440,7 @@ object Loop:
             v match
                 case next: Continue[A] @unchecked =>
                     loop(idx + 1)(run(idx, next._1))
-                case kyo: Kyo[?, ?] =>
+                case arrow: Arrow[?, ?, ?] =>
                     suspended(idx)(v)
                 case res =>
                     res.asInstanceOf[O < S]
@@ -467,7 +470,7 @@ object Loop:
             v match
                 case next: Continue2[A, B] @unchecked =>
                     loop(idx + 1)(run(idx, next._1, next._2))
-                case kyo: Kyo[?, ?] =>
+                case arrow: Arrow[?, ?, ?] =>
                     suspended(idx)(v)
                 case res =>
                     res.asInstanceOf[O < S]
@@ -499,7 +502,7 @@ object Loop:
             v match
                 case next: Continue3[A, B, C] @unchecked =>
                     loop(idx + 1)(run(idx, next._1, next._2, next._3))
-                case kyo: Kyo[?, ?] =>
+                case arrow: Arrow[?, ?, ?] =>
                     suspended(idx)(v)
                 case res =>
                     res.asInstanceOf[O < S]
@@ -533,7 +536,7 @@ object Loop:
             v match
                 case next: Continue4[A, B, C, D] @unchecked =>
                     loop(idx + 1)(run(idx, next._1, next._2, next._3, next._4))
-                case kyo: Kyo[?, ?] =>
+                case arrow: Arrow[?, ?, ?] =>
                     suspended(idx)(v)
                 case res =>
                     res.asInstanceOf[O < S]
@@ -548,7 +551,7 @@ object Loop:
       * @param run
       *   The function to execute repeatedly until completion
       * @return
-      *   Unit after the loop completes
+      *   The final value after the loop completes
       */
     inline def foreach[A, S](inline run: Outcome[Unit, A] < S)(using inline _frame: Frame): A < S =
         def suspended(v: Outcome[Unit, A] < S): A < S =
@@ -557,7 +560,7 @@ object Loop:
             v match
                 case next: Continue[Unit] @unchecked =>
                     loop(run)
-                case kyo: Kyo[?, ?] =>
+                case arrow: Arrow[?, ?, ?] =>
                     suspended(v)
                 case res =>
                     res.asInstanceOf[A < S]
@@ -583,7 +586,7 @@ object Loop:
             if i > n then ()
             else
                 v match
-                    case kyo: Kyo[?, ?] =>
+                    case arrow: Arrow[?, ?, ?] =>
                         suspended(i)(v)
                     case _ =>
                         loop(i + 1)(run)
@@ -607,7 +610,7 @@ object Loop:
             v.map(_ => loop(run))
         @tailrec def loop(v: Any < S): Nothing < S =
             v match
-                case kyo: Kyo[?, ?] =>
+                case arrow: Arrow[?, ?, ?] =>
                     suspended(v)
                 case _ =>
                     loop(run)
@@ -631,7 +634,7 @@ object Loop:
             condition.map {
                 case true =>
                     v match
-                        case kyo: Kyo[?, ?] =>
+                        case arrow: Arrow[?, ?, ?] =>
                             v.map(_ => loop(run))
                         case _ =>
                             loop(run)

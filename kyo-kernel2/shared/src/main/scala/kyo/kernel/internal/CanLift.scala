@@ -1,6 +1,5 @@
-package kyo.kernel.internal
+package kyo.kernel.proto
 
-import kyo.kernel.<
 import scala.annotation.implicitNotFound
 import scala.quoted.*
 import scala.util.NotGiven
@@ -11,7 +10,7 @@ import scala.util.NotGiven
   * given, so it resolves once where the conversion is written and is baked as a value, which waives an inline method with an abstract type
   * parameter and keeps it sound through the boxing emission. The emission must re-expand: it is the macro, so an inline method instantiated
   * at a concrete type still gets that type's strategy, the bare cast where a value of the type can never be a computation and the runtime
-  * Boxed test everywhere else.
+  * boxing test everywhere else.
   *
   * Invariance is load-bearing: with a covariant evidence the derivation leaves the type under-constrained and the negation becomes
   * satisfiable through Nothing, so the lint never fires.
@@ -41,12 +40,7 @@ object CanLift:
     end unsafe
 
     /** The lift's emission, expanded at the site the conversion lands on. */
-    private[kyo] inline def lift[A, S](inline v: A): A < S = ${ liftImpl[A, S]('v) }
-
-    /** The runtime arm the emission calls when a value of the type could be a computation. A monomorphic bridge rather than the box
-      * directly: the emission lands at every generic lift site, and the shortest call keeps those sites inside the JIT's inline budget.
-      */
-    private[kyo] def box[A, S](v: A): A < S = Nested.lift(v)
+    private[proto] inline def lift[A, S](inline v: A): A < S = ${ liftImpl[A, S]('v) }
 
     private def liftImpl[A: Type, S: Type](v: Expr[A])(using Quotes): Expr[A < S] =
         import quotes.reflect.*
@@ -66,7 +60,7 @@ object CanLift:
 
         if isModule then
             report.errorAndAbort(s"Cannot lift '${sym.fullName}' to a '${sym.name} < S'", Position.ofMacroExpansion)
-        else if isNothing || isValue || isSafeFinalClass then '{ $v.asInstanceOf[A < S] } else '{ CanLift.box[A, S]($v) }
+        else if isNothing || isValue || isSafeFinalClass then '{ $v.asInstanceOf[A < S] } else '{ Nested.nest[A, S]($v) }
         end if
     end liftImpl
 

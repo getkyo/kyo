@@ -1,7 +1,6 @@
-package kyo.kernel
+package kyo.kernel.proto
 
 import kyo.Render
-import kyo.kernel.internal.*
 import scala.language.implicitConversions
 
 trait Implicits:
@@ -55,28 +54,8 @@ trait Implicits:
 
     given [A, S, APendingS <: A < S](using ra: Render[A]): Render[APendingS] with
         def asString(value: APendingS): String = value match
-            case sus: Kyo[?, ?] => sus.toString
-            case a              => s"Kyo(${ra.asString(Nested.unnest[A](a))})"
+            case sus: Arrow[?, ?, ?] => sus.toString
+            case a                   => s"Kyo(${ra.asString(Nested.unnest[A](a))})"
     end given
-
-end Implicits
-
-object Implicits:
-
-    /** The macro-free lift for this module's own sources. The kernel's core files sit in a
-      * dependency cycle with any macro-bearing evidence (CanLift needs Pending, Pending
-      * needs Arrow, and Arrow's own body lifts), so the module cannot summon its own
-      * derivation macro; historically the attempt also crashed the inliner
-      * (StaleSymbolException, diagnosed with -Xprint-suspension). Files inside kyo-kernel2
-      * import this conversion instead: an import has lexical-scope priority over the
-      * companion's implicit scope, so the macro never expands in the module that defines
-      * it, while every other module and this module's own tests take the evidence path.
-      */
-    implicit private[kyo] inline def liftInternal[A, S](v: A): A < S =
-        inline scala.compiletime.erasedValue[A] match
-            case _: (Int | Long | Float | Double | Boolean | Byte | Short | Char | Unit | String) =>
-                v.asInstanceOf[A < S]
-            case _ =>
-                Nested.lift(v)
 
 end Implicits

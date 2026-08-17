@@ -1,11 +1,9 @@
-package kyo.kernel.internal
+package kyo.kernel.proto
 
-import kyo.Arrow
 import kyo.Frame
 import kyo.Maybe
 import kyo.Tag
 import kyo.discard
-import kyo.kernel.Effect
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayDeque
 import scala.util.control.NonFatal
@@ -18,6 +16,7 @@ import scala.util.control.NoStackTrace
   * and no others: its presence among `getSuppressed` marks an exception as already enriched, it accumulates the reconstructions of every
   * boundary an exception crosses, and `getMessage` renders them for a reader that would rather not parse a stack trace.
   */
+// TODO I'm planning to make this KyoException and updting the codebase. Launch an opus agent to consider the swap and implications by looking at the use of KyoException
 final private[kyo] class EffectTrace extends Exception(null, null, false, false):
 
     private[kyo] var elements: Array[StackTraceElement]        = EffectTrace.noElements
@@ -53,32 +52,14 @@ private[kyo] object EffectTrace:
             builder.entries(stack, base)
         }
 
-    /** The settle boundary: the throw crossed a frame that continues an answered operation, so the operation's suspension leads the
-      * reconstruction as the innermost element.
+    /** The application boundary: the evaluator applied a frame through the step protocol with the pending continuation already folded into
+      * `next`, so the fold, not the stack, holds what was left to run.
       */
-    def attach(ex: Throwable, suspended: Kyo.Suspend[?, ?, ?, ?, ?, ?] | Null, v: Any, stack: Stack, base: Int): Unit =
+    def attach(ex: Throwable, v: Any, next: Arrow[?, ?, ?], stack: Stack, base: Int): Unit =
         reconstruct(ex) { builder =>
-            suspended match
-                case suspended: Kyo.Suspend[?, ?, ?, ?, ?, ?] => builder.value(suspended)
-                case null                                     => ()
             builder.value(v)
-            builder.entries(stack, base)
-        }
-
-    /** The frame-only boundary: `Effect.catching`'s outer arm, where the guarded computation has already been consumed and only the
-      * `catching` call site remains in scope.
-      */
-    def attach(ex: Throwable, frame: Frame): Unit =
-        reconstruct(ex)(_.frame(frame))
-
-    /** The chain boundary: `Effect.catching`'s guard arm, which holds the steps that were running inside the guard (`cont`) and the steps
-      * that follow it (`next`), with the `catching` site between them.
-      */
-    def attach(ex: Throwable, frame: Frame, cont: Arrow[?, ?, ?], next: Arrow[?, ?, ?]): Unit =
-        reconstruct(ex) { builder =>
-            builder.arrow(cont)
-            builder.frame(frame)
             builder.arrow(next)
+            builder.entries(stack, base)
         }
 
     /** Runs one reconstruction into the exception's carrier.
@@ -128,7 +109,11 @@ private[kyo] object EffectTrace:
       * line numbers, so it is the most informative physical frame present and is never filtered.
       */
     private def isPlumbing(e: StackTraceElement): Boolean =
-        e.getClassName.startsWith("kyo.kernel.") || e.getClassName.startsWith("kyo.Arrow")
+        val cls = e.getClassName
+        cls.startsWith("kyo.kernel.proto.Eval") || cls.startsWith("kyo.kernel.proto.Arrow") ||
+        cls.startsWith("kyo.kernel.proto.ArrowEffect") || cls.startsWith("kyo.kernel.proto.Stack") ||
+        cls.startsWith("kyo.kernel.proto.Nested") || cls.startsWith("kyo.kernel.proto.Pending")
+    end isPlumbing
 
     private def find(ex: Throwable): Maybe[EffectTrace] =
         val suppressed = ex.getSuppressed
@@ -152,9 +137,8 @@ private[kyo] object EffectTrace:
     /** The reconstruction walk.
       *
       * The cap is the walk's stack-safe carrier: emission stops at it and the worklist never holds more than that many arrows, so a chain or
-      * a drive stack of any depth is bounded, and nothing recurses on the Java stack. The worklist is local rather than
-      * `Arrow.AndThen.step`'s shared scratch, and `step` is never called: it clears a buffer another in-flight step on this thread may own
-      * and mints a `Step` per node in the chain, on a path that is already handling a failure.
+      * a drive stack of any depth is bounded, and nothing recurses on the Java stack. The worklist is local rather than shared scratch, and
+      * the step protocol is never invoked: it mints nodes on a path that is already handling a failure.
       */
     final private class Builder(budget: Int):
 
@@ -192,23 +176,12 @@ private[kyo] object EffectTrace:
             end if
         end region
 
-        /** One value in either of its roles. A fused suspendWith node is both an arrow and a suspension; the arrow arm claims it, and both
-          * halves carry the same frame, so the rendering is the same either way.
-          */
+        /** One value in either of its roles: a payload unwraps once, an arrow walks its chain, anything settled contributes nothing. */
         def value(v: Any): Unit =
             v match
-                case a: Arrow[?, ?, ?] =>
-                    arrow(a)
-                case s: Kyo.Suspend[?, ?, ?, ?, ?, ?] =>
-                    frame(s.frame)
-                case d: Kyo.Defer[?, ?, ?] =>
-                    arrow(d.cont)
-                case h: Kyo.HandleCont[?, ?, ?, ?, ?, ?] =>
-                    region(h.tag)
-                case h: Kyo.HandleLoop[?, ?, ?, ?, ?, ?] =>
-                    region(h.tag)
-                case _ => ()
-        end value
+                case n: Nested[?]      => value(n.value)
+                case a: Arrow[?, ?, ?] => arrow(a)
+                case _                 => ()
 
         /** The pending continuation of the drive, innermost first: every entry from the stack's top down to the drive's base. Entries the
           * cap keeps the sweep from reaching are counted as dropped.
@@ -246,11 +219,29 @@ private[kyo] object EffectTrace:
                 work.clear()
             else
                 work.removeHead() match
-                    case at: Arrow.AndThen[?, ?, ?, ?] =>
-                        push(at.b)
-                        push(at.a)
-                    case g: Effect.Guard[?, ?, ?] =>
-                        push(g.wrapped)
+                    case c: Arrow.Chain[?, ?, ?, ?] =>
+                        push(c.b)
+                        push(c.a)
+                    case s: Arrow.Suspend[?, ?, ?, ?, ?, ?] =>
+                        frame(s.frame)
+                    case m: Arrow.SuspendWith[?, ?, ?, ?, ?, ?, ?, ?] =>
+                        push(m.tail)
+                        frame(m.susp.frame)
+                    case h: Arrow.Handle[?, ?, ?, ?, ?] =>
+                        region(h.handler.tag)
+                    case b: Arrow.Bind[?, ?, ?] =>
+                        push(b.cont)
+                        b.value match
+                            case v: Arrow[?, ?, ?] => push(v)
+                            case _                 => ()
+                    case e: Arrow.Eval[?, ?, ?] =>
+                        var i = 0
+                        while i < e.entries.size do
+                            push(e.entries(i))
+                            i += 1
+                        e.value match
+                            case v: Arrow[?, ?, ?] => push(v)
+                            case _                 => ()
                     case t: Arrow.Transform[?, ?, ?] =>
                         frame(t.frame)
                     case s: Arrow.Step[?, ?, ?] =>

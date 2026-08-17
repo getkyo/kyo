@@ -1,249 +1,310 @@
-package kyo.kernel.internal
+package kyo.kernel.proto
 
-import kyo.Arrow
-import kyo.Frame
 import kyo.bug
-import kyo.kernel.*
-import kyo.kernel.`<`.fromKyo
-import scala.annotation.tailrec
+import kyo.kernel.proto.Arrow.*
 
+// TODO Eval should be private[kernel]. The external apis are <.eval/evalNow and ArrowEffect.*
 object Eval:
 
-    def apply[A, S](v: A < S): A < S =
+    private val noEntries = kyo.Span.empty[Arrow[?, ?, ?]]
+    private val noRefs    = kyo.Span.empty[AnyRef]
+
+    def apply[A](v: A < Any): A =
+        // `Safepoint.exit` is not protected by a finally in the delivery arms, deliberately: guarding
+        // all eight would put an exception handler on the hottest path in the kernel. It does not need
+        // one. On every normal path the pairs balance, including a drained budget, where the arm that
+        // parks never completed an `enter` and every frame that did runs its `exit` as the parked value
+        // propagates up. The only way to skip an `exit` is an exception, and every catch in the drive
+        // rethrows, so every exception reaches a boundary. There are two boundaries into `loop` and
+        // `partial` already guards the other one, so one guard here is necessary and sufficient.
+        //
+        // Without it a throw escaping a root drive left the depth low on a slot that is per thread, so
+        // later unrelated computations on that thread paid for it: exactly one depth of 512 lost per
+        // throw, permanently, with nothing ever restoring it.
+        //
+        // `save` rather than a bare read, so a nested eval gets its own budget instead of inheriting a
+        // nearly drained one and trampolining immediately for no reason, and `restore` gives the outer
+        // drive its own accounting back.
         val slot  = Safepoint.get()
         val saved = Safepoint.save(slot)
-        try run(v, slot, partial = false)
+        try Nested.unnest[A](loop(v, armed = false, neverStop))
         finally Safepoint.restore(slot, saved)
     end apply
 
-    def partial[A, S](v: A < S): A < S =
+    private[kyo] def partial[A, S](v: A < S): A < S =
+        partial(v, neverStop)
+
+    private[kyo] def partial[A, S](v: A < S, stop: () => Boolean): A < S =
         val slot = Safepoint.get()
         if Safepoint.consumeStopped(slot) then v
         else
             val saved = Safepoint.save(slot)
             Safepoint.arm(slot)
-            try run(v, slot, partial = true)
+            try loop(v.asInstanceOf[A < Any], armed = true, () => Safepoint.consumeStopped(slot) || stop()).asInstanceOf[A < S]
             finally Safepoint.restore(slot, saved)
         end if
     end partial
 
-    private def run[A, S](v: A < S, slot: Safepoint.Slot, partial: Boolean): A < S = ???
-    //     val stack = Stack.current()
-    //     val base  = stack.size
+    private val neverStop: () => Boolean = () => false
 
-    //     // the most recent operation answered in place: a throw in a frame that
-    //     // continues it is attributed to the suspension, whose identity the
-    //     // in-place answer otherwise drops
-    //     var suspended: Kyo.Suspend[?, ?, ?, ?, ?, ?] | Null = null
+    private def loop[A](v: A < Any, armed: Boolean, stop: () => Boolean): Any =
+        val stack = Stack.current()
+        val base  = stack.size
 
-    //     def dispatch(kyo: Kyo.Suspend[?, ?, ?, ?, ?, ?], i: Int): Any < Nothing =
-    //         try
-    //             stack(i) match
-    //                 case h: Kyo.HandleLoop[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
-    //                     h.run(kyo.input) match
-    //                         case p: Kyo[Any, Nothing] @unchecked =>
-    //                             val seg = stack.copyFrom(i)
-    //                             stack.truncate(i)
-    //                             stack.push(interpret(seg))
-    //                             p
-    //                         case v =>
-    //                             Nested.unnest[Loop.Outcome[Any < Nothing, Any]](v) match
-    //                                 case c: Loop.Continue[Any < Nothing] @unchecked =>
-    //                                     c._1 match
-    //                                         case p: Kyo[?, ?] if i + 1 < stack.size =>
-    //                                             // an effectful answer sees the region, whose successor
-    //                                             // answers a re-raise, but not the region's interior:
-    //                                             // that is the operation's continuation and receives
-    //                                             // the answer's result
-    //                                             val seg = stack.copyFrom(i + 1)
-    //                                             stack.truncate(i + 1)
-    //                                             stack.push(resume(seg, 0))
-    //                                             c._1
-    //                                         case _ =>
-    //                                             c._1
-    //                                 case b =>
-    //                                     stack.truncate(i)
-    //                                     Nested.lift(b)
-    //                 case h: Kyo.HandleCont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
-    //                     val seg = stack.copyFrom(i + 1)
-    //                     val out = h.run(kyo.input, o => rebuild(seg, 0, Nested.lift(o)))
-    //                     if h.deep then stack.truncate(i + 1)
-    //                     else stack.truncate(i)
-    //                     out
-    //                 case f =>
-    //                     bug(s"eval stack corruption: found $f where a handler was expected")
-    //         catch
-    //             case ex: Throwable =>
-    //                 EffectTrace.attach(ex, kyo, stack, base)
-    //                 throw ex
+        def dump(): Arrow[Any, Any, Any] =
+            val top = stack.size
+            var i   = top
+            while i > base && !stack.marked(i - 1) do i -= 1
+            if i == top then Arrow[Any]
+            else
+                var acc = stack(i)
+                var j   = i + 1
+                while j < top do
+                    acc = stack(j).chain(acc)
+                    j += 1
+                stack.truncate(i)
+                acc
+            end if
+        end dump
 
-    //     def unhandled(kyo: Kyo.Suspend[?, ?, ?, ?, ?, ?]): Nothing =
-    //         try bug(s"unhandled suspension: $kyo, no handler for its effect is installed in the current evaluation")
-    //         catch
-    //             case ex: Throwable =>
-    //                 EffectTrace.attach(ex, kyo, stack, base)
-    //                 throw ex
+        def outcome(
+            resume: Arrow[Any, Any, Any],
+            h: Handle[Nothing, Any, Any, Any, Any],
+            i: Int
+        ): Arrow[Any, Any, Any] =
+            val top = stack.size
+            var j   = i + 1
+            while j < top && !stack.marked(j) do j += 1
+            val marked  = j < top
+            val entries = if marked then stack.copyEntries(i + 1) else noEntries
+            val tags    = if marked then stack.copyTags(i + 1) else noRefs
+            val states  = if marked then stack.copyStates(i + 1) else noRefs
+            val body =
+                if marked then
+                    stack.truncate(i)
+                    resume
+                else
+                    var k: Arrow[Any, Any, Any] = Arrow[Any]
+                    var m                       = i + 1
+                    while m < top do
+                        k = stack(m).chain(k)
+                        m += 1
+                    stack.truncate(i)
+                    resume.chain(k)
+            def region(regionHandler: Handler[Nothing, Any, Any, Any], payload: Any): Arrow[Any, Any, Any] =
+                new Handle[Nothing, Any, Any, Any, Any]:
+                    def v       = Arrow.Eval(entries, tags, states, Identity(payload.asInstanceOf[Any < Any], body))
+                    def handler = regionHandler
+                    def cont    = Arrow[Any]
+            new Transform[Any, Any, Any]:
+                def frame = kyo.Frame.internal
+                def apply[C2, S2](v: Any < S2, next: Arrow[Any, C2, S2]): C2 < S2 =
+                    v match
+                        case p: Arrow[Any, Any, S2] @unchecked =>
+                            Chain(p, this.chain(next))
+                        case c: Loop.Continue[?] =>
+                            Identity(region(h.handler, c._1).asInstanceOf[Any < S2], next)
+                        case c: Loop.Continue2[?, ?] =>
+                            h.handler match
+                                case hls: Handler.HandleLoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
+                                    val st = c._1
+                                    Identity(
+                                        region(
+                                            new Handler.HandleLoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any]:
+                                                def tag                         = hls.tag
+                                                def initialState                = st
+                                                def run[C](s2: Any, input: Any) = hls.run[C](s2, input)
+                                                def complete(s2: Any, a: Any)   = hls.complete(s2, a)
+                                            ,
+                                            c._2
+                                        ).asInstanceOf[Any < S2],
+                                        next
+                                    )
+                                case other =>
+                                    bug(s"stateful answer for a stateless region: $other")
+                        case done =>
+                            Identity(done.asInstanceOf[Any < S2], next)
+            end new
+        end outcome
 
-    //     def settle(f: Stack.Entry, settled: Any < Nothing): Any < Nothing =
-    //         var applied: Any = f
-    //         try
-    //             f match
-    //                 case a: Arrow[Any, Any, Nothing] @unchecked =>
-    //                     // the contiguous arrow run below rides in the tail, so the whole
-    //                     // run applies through the nested protocol in one iteration and a
-    //                     // pending value mid-run carries the unconsumed rest by reference.
-    //                     // The fold runs upward so each transform chains as a right-nested
-    //                     // Step; the run stops at the base and at region entries
-    //                     val top = stack.size
-    //                     var i   = top
-    //                     while i > base && stack(i - 1).isInstanceOf[Arrow[?, ?, ?]] do i -= 1
-    //                     var whole = a
-    //                     if i < top then
-    //                         var acc = stack(i).asInstanceOf[Arrow[Any, Any, Nothing]]
-    //                         var j   = i + 1
-    //                         while j < top do
-    //                             acc = stack(j).asInstanceOf[Arrow[Any, Any, Nothing]].chain(acc)
-    //                             j += 1
-    //                         stack.truncate(i)
-    //                         whole = a.chain(acc)
-    //                         applied = whole
-    //                     end if
-    //                     val step = whole.step
-    //                     step.head(settled, step.tail)
-    //                 case h: Kyo.HandleCont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
-    //                     h.complete(Nested.unnest[Any](settled))
-    //                 case h: Kyo.HandleLoop[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
-    //                     h.complete(Nested.unnest[Any](settled))
-    //                 case f =>
-    //                     bug(s"eval stack corruption: cannot settle a value against frame $f")
-    //         catch
-    //             case ex: Throwable =>
-    //                 EffectTrace.attach(ex, suspended, applied, stack, base)
-    //                 throw ex
-    //         end try
-    //     end settle
+        def reify(v: Any): Any =
+            if stack.size == base then v
+            else
+                val entries = stack.copyEntries(base)
+                val tags    = stack.copyTags(base)
+                val states  = stack.copyStates(base)
+                stack.truncate(base)
+                Arrow.Eval(entries, tags, states, v.asInstanceOf[Any < Any])
+        end reify
 
-    //     var cur: Any < Nothing = v
-    //     var running            = true
-    //     try
-    //         while running do
-    //             cur match
-    //                 case kyo: Kyo.Defer[?, ?, ?] =>
-    //                     if partial && Safepoint.consumeStopped(slot) then
-    //                         cur = rebuild(stack.copyFrom(base), 0, kyo)
-    //                         running = false
-    //                     else
-    //                         suspended = null
-    //                         Safepoint.reset(slot)
-    //                         stack.push(kyo.cont)
-    //                         cur = kyo.value
-    //                 case kyo: Kyo.Suspend[?, ?, ?, ?, ?, ?] =>
-    //                     val i = stack.find(kyo.tag.erased, base)
-    //                     if i >= 0 then
-    //                         suspended = kyo
-    //                         kyo match
-    //                             case cont: Arrow[?, ?, ?] =>
-    //                                 // a fused suspendWith node is its own continuation:
-    //                                 // it rides the interior as an arrow so the answer
-    //                                 // resumes through it
-    //                                 stack.push(cont)
-    //                             case _ =>
-    //                                 ()
-    //                         end match
-    //                         cur = dispatch(kyo, i)
-    //                     else if partial then
-    //                         cur = rebuild(stack.copyFrom(base), 0, kyo)
-    //                         running = false
-    //                     else unhandled(kyo)
-    //                     end if
-    //                 case kyo: Kyo.HandleCont[?, ?, ?, ?, ?, ?, ?] =>
-    //                     suspended = null
-    //                     stack.push(kyo, kyo.tag.erased)
-    //                     cur = kyo.value
-    //                 case kyo: Kyo.HandleLoop[?, ?, ?, ?, ?, ?] =>
-    //                     suspended = null
-    //                     stack.push(kyo, kyo.tag.erased)
-    //                     cur = kyo.value
-    //                 case settled =>
-    //                     if stack.size == base then running = false
-    //                     else cur = settle(stack.pop(), settled)
-    //         end while
-    //     catch
-    //         case ex: Throwable =>
-    //             EffectTrace.splice(ex)
-    //             throw ex
-    //     finally stack.truncate(base)
-    //     end try
-    //     cur.asInstanceOf[A < S]
-    // end run
+        var cur: Any = v
+        var running  = true
 
-    // private def interpret(seg: Array[Stack.Entry]): Arrow.Transform[Any, Any, Any] =
-    //     new Arrow.Transform[Any, Any, Any]:
-    //         def frame = Frame.internal
-    //         def apply[C, S2](v: Any < S2, next: Arrow[Any, C, S2]): C < S2 =
-    //             (v: @unchecked) match
-    //                 case _: Kyo[?, ?] =>
-    //                     Kyo.defer(v, this.chain(next))
-    //                 case v =>
-    //                     val r =
-    //                         Nested.unnest[Loop.Outcome[Any < Nothing, Any]](v) match
-    //                             case c: Loop.Continue[Any < Nothing] @unchecked =>
-    //                                 c._1 match
-    //                                     case p: Kyo[?, ?] if seg.length > 1 =>
-    //                                         renode(seg(0), Kyo.defer(c._1, resume(seg, 1)))
-    //                                     case _ =>
-    //                                         rebuild(seg, 0, c._1)
-    //                             case b =>
-    //                                 Nested.lift(b)
-    //                     (r: @unchecked) match
-    //                         case kyo: Kyo[Any, Nothing] =>
-    //                             kyo.map(next).asInstanceOf[C < S2]
-    //                         case r =>
-    //                             val step = next.step
-    //                             step.head(r.asInstanceOf[Any < S2], step.tail)
-    //                     end match
+        inline def dispatchInline(s: Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any], whole: Arrow[Any, Any, Any]): Any =
+            try
+                // TODO let's encapsulate this access in Stack. It should provide more high level apis
+                val i = stack.find(s.tag.erased, base)
+                if i < 0 then bug(s"unhandled suspension: $s")
+                val h = stack(i).asInstanceOf[Handle[Nothing, Any, Any, Any, Any]]
+                h.handler match
+                    case hc: Handler.HandleCont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
+                        val top = stack.size
+                        var j   = i + 1
+                        while j < top && !stack.marked(j) do j += 1
+                        if j == top then
+                            if i + 1 == top then hc.run(s.input, whole)
+                            else
+                                // TODO this also looks like a stack operation
+                                var k: Arrow[Any, Any, Any] = Arrow[Any]
+                                var m                       = i + 1
+                                while m < top do
+                                    k = stack(m).chain(k)
+                                    m += 1
+                                stack.truncate(i + 1)
+                                hc.run(s.input, whole.chain(k))
+                        else
+                            val entries = stack.copyEntries(i + 1)
+                            val tags    = stack.copyTags(i + 1)
+                            val states  = stack.copyStates(i + 1)
+                            stack.truncate(i + 1)
+                            hc.run(s.input, o => Arrow.Eval(entries, tags, states, whole(o)))
+                        end if
+                    case hl: Handler.HandleLoop[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
+                        hl.run(s.input) match
+                            case out: Arrow[Any, Any, Any] @unchecked =>
+                                Chain(out, outcome(whole, h, i))
+                            case c: Loop.Continue[?] =>
+                                c._1 match
+                                    case p: Arrow[Any, Any, Any] @unchecked => Chain(p, whole)
+                                    case o                                  => whole(Nested.unnest[Any](o))
+                            case done =>
+                                stack.truncate(i)
+                                done
+                    case hls: Handler.HandleLoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
+                        hls.run(stack.state(i), s.input) match
+                            case out: Arrow[Any, Any, Any] @unchecked =>
+                                Chain(out, outcome(whole, h, i))
+                            case c: Loop.Continue2[?, ?] =>
+                                stack.setState(i, c._1)
+                                c._2 match
+                                    case p: Arrow[Any, Any, Any] @unchecked => Chain(p, whole)
+                                    case o                                  => whole(Nested.unnest[Any](o))
+                            case done =>
+                                stack.truncate(i)
+                                done
+                end match
+            catch
+                case ex: Throwable =>
+                    EffectTrace.attach(ex, s, stack, base)
+                    throw ex
+            end try
+        end dispatchInline
 
-    // private def resume(seg: Array[Stack.Entry], from: Int): Arrow.Transform[Any, Any, Any] =
-    //     new Arrow.Transform[Any, Any, Any]:
-    //         def frame = Frame.internal
-    //         def apply[C, S2](v: Any < S2, next: Arrow[Any, C, S2]): C < S2 =
-    //             (v: @unchecked) match
-    //                 case _: Kyo[?, ?] =>
-    //                     Kyo.defer(v, this.chain(next))
-    //                 case v =>
-    //                     rebuild(seg, from, v.asInstanceOf[Any < Nothing]) match
-    //                         case kyo: Kyo[Any, Nothing] @unchecked =>
-    //                             kyo.map(next).asInstanceOf[C < S2]
-    //                         case r =>
-    //                             val step = next.step
-    //                             step.head(r.asInstanceOf[Any < S2], step.tail)
+        def dispatch(s: Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any], whole: Arrow[Any, Any, Any]): Any =
+            dispatchInline(s, whole)
 
-    // private def rebuild(seg: Array[Stack.Entry], from: Int, v: Any < Nothing): Any < Nothing =
-    //     @tailrec def loop(i: Int, acc: Any < Nothing): Any < Nothing =
-    //         if i < from then acc
-    //         else loop(i - 1, renode(seg(i), acc))
-    //     loop(seg.length - 1, v)
-    // end rebuild
-
-    // private def renode(entry: Stack.Entry, acc: Any < Nothing): Any < Nothing =
-    //     entry match
-    //         case a: Arrow[Any, Any, Nothing] @unchecked =>
-    //             Kyo.defer(acc, a)
-    //         case hc: Kyo.HandleCont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
-    //             new Kyo.HandleCont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any]:
-    //                 def tag                                            = hc.tag
-    //                 def value                                          = acc
-    //                 def run[X](input: Any, cont: Any => Any < Nothing) = hc.run(input, cont)
-    //                 def complete(v: Any)                               = hc.complete(v)
-    //                 override def deep                                  = hc.deep
-    //         case hl: Kyo.HandleLoop[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
-    //             new Kyo.HandleLoop[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any]:
-    //                 def tag                = hl.tag
-    //                 def value              = acc
-    //                 def run[X](input: Any) = hl.run(input)
-    //                 def complete(v: Any)   = hl.complete(v)
-    //         case f =>
-    //             bug(s"eval stack corruption: cannot rebuild captured frame $f into a computation")
-    // end renode
-
+        try
+            // TODO rewrite while loops to @tailrec def loop. Avoid vars if possible
+            while running do
+                if armed && stop() then
+                    cur = reify(cur)
+                    running = false
+                else
+                    cur match
+                        case c: Chain[?, ?, ?, ?] =>
+                            stack.push(c.b)
+                            cur = c.a
+                        case b: Bind[?, ?, ?] =>
+                            stack.push(b.cont)
+                            cur = b.value
+                        case s: Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
+                            cur = dispatchInline(s, s.asInstanceOf[Arrow[Any, Any, Any]])
+                        case m: SuspendWith[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any] @unchecked =>
+                            cur = dispatch(m.susp, m.asInstanceOf[Arrow[Any, Any, Any]])
+                        case h: Handle[Nothing, Any, Any, Any, Any] @unchecked =>
+                            stack.push(h.cont)
+                            h.handler match
+                                case hls: Handler.HandleLoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
+                                    stack.push(h, h.handler.tag.erased, hls.initialState)
+                                case _ =>
+                                    stack.push(h, h.handler.tag.erased)
+                            end match
+                            cur = h.v
+                        case e: Arrow.Eval[?, ?, ?] =>
+                            stack.pushAll(e.entries, e.tags, e.states)
+                            cur = e.value
+                        case a: Arrow[Any, Any, Any] @unchecked =>
+                            val s0   = a.step
+                            val next = s0.tail.chain(dump())
+                            try cur = s0.head((), next)
+                            catch
+                                case ex: Throwable =>
+                                    EffectTrace.attach(ex, a, next, stack, base)
+                                    throw ex
+                            end try
+                        case settled =>
+                            if stack.size == base then running = false
+                            else
+                                val marked = stack.marked(stack.size - 1)
+                                val st     = stack.state(stack.size - 1)
+                                stack.pop() match
+                                    case c: Chain[?, ?, ?, ?] =>
+                                        stack.push(c.b)
+                                        stack.push(c.a)
+                                    case h: Handle[Nothing, Any, Any, Any, Any] @unchecked if marked =>
+                                        try
+                                            h.handler match
+                                                case hc: Handler.HandleCont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
+                                                    cur = hc.complete(settled)
+                                                case hl: Handler.HandleLoop[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
+                                                    cur = hl.complete(settled)
+                                                case hls: Handler.HandleLoopState[
+                                                        [X] =>> Any,
+                                                        [X] =>> Any,
+                                                        Nothing,
+                                                        Any,
+                                                        Any,
+                                                        Any,
+                                                        Any
+                                                    ] @unchecked =>
+                                                    cur = hls.complete(st, settled)
+                                        catch
+                                            case ex: Throwable =>
+                                                EffectTrace.attach(ex, h, stack, base)
+                                                throw ex
+                                        end try
+                                    case s: Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
+                                        try cur = s(Nested.unnest[Any](settled))
+                                        catch
+                                            case ex: Throwable =>
+                                                EffectTrace.attach(ex, s, stack, base)
+                                                throw ex
+                                        end try
+                                    case m: SuspendWith[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any] @unchecked =>
+                                        try cur = m(Nested.unnest[Any](settled))
+                                        catch
+                                            case ex: Throwable =>
+                                                EffectTrace.attach(ex, m, stack, base)
+                                                throw ex
+                                        end try
+                                    case d: Defer[?, ?, ?] =>
+                                        cur = d
+                                    case a =>
+                                        val s    = a.step
+                                        val next = s.tail.chain(dump())
+                                        try cur = s.head(settled.asInstanceOf[Any < Any], next)
+                                        catch
+                                            case ex: Throwable =>
+                                                EffectTrace.attach(ex, a, next, stack, base)
+                                                throw ex
+                                        end try
+                                end match
+        catch
+            case ex: Throwable =>
+                EffectTrace.splice(ex)
+                throw ex
+        finally stack.truncate(base)
+        end try
+        cur
+    end loop
 end Eval
