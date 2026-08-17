@@ -156,6 +156,26 @@ One defect out of it: the compilation log is XML, so a constructor arrived as `&
 every other tool in the ladder prints `<init>`, and those names cross-referenced against none of them,
 silently. **264 checks green.**
 
+## C1 refuted, for the cost of reading a profile already on disk
+
+Third in the run order and the plan's own "single cheapest decisive candidate". Also owner-gated: it
+needs an explicit `Nested(...)` spelling the skill forbids without sign-off. It needed neither the
+edit nor the sign-off.
+
+Its hypothesis is that the `Nested` box exists only because the park arm stores the incoming union.
+The collapsed allocation view, which the harness could not produce until this week, says **all 3,790
+`Nested` samples on the row, 100%, come from one stack**: `loop$9` → `ProtoKernelBench$.boxed` →
+`Nested.nest` → `Nested$.apply`. That is the *benchmark's own* boxing at the lift boundary. Zero
+samples reach any park arm, so the eight edits C1 proposes would remove nothing on this row.
+
+Limits stated: one row only (C1 also names the boxing rows, unprofiled), and the inlining confound
+applies as always, though a four-deep stack landing in the benchmark's own `boxed` is not a placement
+a park arm could be mistaken for. See `bench-results/c1/RESULT.md`.
+
+It forced one tool fix: the first attribution named `Nested$.apply`, a type's own factory, which is
+where every instance of it is allocated and decides nothing. The report now names the first frame
+outside the allocated type's own code as well. **266 checks green.**
+
 ## Now
 
 **Validating the tool against the manual work.** Procedure: three-way comparison of raw data, tool

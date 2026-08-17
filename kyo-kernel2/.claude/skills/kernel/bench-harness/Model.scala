@@ -193,10 +193,25 @@ object Model:
       * attribution without anything about the allocation changing, so a per-method allocation
       * mechanism is never independent of the inlining mechanism, and the report says so.
       */
-    case class AllocByMethod(cls: String, method: String, samples: Long, bytes: Maybe[Double] = Maybe.empty) derives Schema:
+    case class AllocByMethod(
+        cls: String,
+        /** The frame the allocation happened in, which is often the type's own factory. */
+        method: String,
+        samples: Long,
+        bytes: Maybe[Double] = Maybe.empty,
+        /** The first frame in the stack that is not the allocated type's own code.
+          *
+          * The immediate frame is frequently useless on its own: every `Nested` on
+          * `nestedPayloadsUnwrapInMaps` is minted at `Nested$.apply`, which is true, unsurprising, and
+          * decides nothing. One frame further out is `ProtoKernelBench$.boxed`, and that is the
+          * answer to the question anyone is actually asking, which is who asked for the allocation.
+          */
+        site: String = ""
+    ) derives Schema:
         def show: String =
             val b = bytes.map(x => f", ~${x}%.0f B").getOrElse("")
-            s"$cls minted at $method ($samples samples$b)"
+            val where = if site.isEmpty || site == method then method else s"$method, called from $site"
+            s"$cls minted at $where ($samples samples$b)"
 
     /** A sampled method and the nanoseconds attributed to it. */
     case class CpuSite(method: String, nanos: Long) derives Schema

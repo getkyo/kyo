@@ -135,6 +135,19 @@ object QaParsers:
                 .exists(m => m.cls == "kyo.kernel.proto.Nested" && m.method == "kyo.kernel.proto.Nested$.apply"),
             realCollapsed.take(2).map(_.show).mkString(" | ")
         )
+        // the immediate frame is the type's own factory and decides nothing. The frame outside it is
+        // the whole answer: on this row every Nested is asked for by the benchmark's own boxing, not
+        // by any kernel arm, which is what refutes candidate C1 on its stated field.
+        ok &= check(
+            "and the caller outside the type's own code is named too",
+            realCollapsed.headOption.exists(_.site == "kyo.kernel.bench.ProtoKernelBench$.boxed"),
+            realCollapsed.headOption.map(_.show).getOrElse("")
+        )
+        ok &= check(
+            "a site that is already outside the type is left alone",
+            plantedCollapsed.head.site == "Planted.plantedAllocator",
+            plantedCollapsed.head.show
+        )
         Bench.apportion(realFlat, realCollapsed).foreach(m => println(s"       ${m.show}"))
 
         println(if ok then "\nPHASE 1 PASS" else "\nPHASE 1 FAIL")

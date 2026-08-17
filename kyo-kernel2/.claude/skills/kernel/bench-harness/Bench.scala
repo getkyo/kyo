@@ -277,16 +277,22 @@ object Bench:
                 else
                     val (stack, value) = (line.substring(0, cut), line.substring(cut + 1).trim)
                     value.toLongOption.flatMap { n =>
-                        val frames = stack.split(';').filter(_.nonEmpty)
+                        val frames = stack.split(';').filter(_.nonEmpty).map(_.replace('/', '.'))
                         if frames.length < 2 then None
                         else
-                            val cls = frames.last.replaceAll("_\\[[a-z]\\]$", "").replace('/', '.')
-                            Some(((cls, frames(frames.length - 2).replace('/', '.')), n))
+                            val cls    = frames.last.replaceAll("_\\[[a-z]\\]$", "")
+                            val method = frames(frames.length - 2)
+                            // walk out past the type's own frames. Every Nested on the nested-payload
+                            // row is minted at `Nested$.apply`, which decides nothing; one frame
+                            // further out is who asked for it.
+                            val own  = Seq(cls + ".", cls + "$.")
+                            val site = frames.init.reverseIterator.find(f => !own.exists(f.startsWith)).getOrElse(method)
+                            Some(((cls, method, site), n))
                     }
             }.toSeq
         Chunk.from(
             entries.groupMapReduce(_._1)(_._2)(_ + _).toSeq
-                .map((k, n) => AllocByMethod(k._1, k._2, n))
+                .map((k, n) => AllocByMethod(k._1, k._2, n, Maybe.empty, k._3))
                 .sortBy(-_.samples)
         )
     end parseCollapsed
