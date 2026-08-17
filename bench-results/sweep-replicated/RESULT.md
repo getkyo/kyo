@@ -28,11 +28,17 @@ Raw data is the arbiter. The tool-verdict column is `BenchCompare` over the stor
 
 **The three largest deltas in the whole run do not resolve.** `trailingMapsStayLinear` at +43.2% is
 the largest of all and is also flat; an earlier version of this document said "two" and named only the
-next two, which understated the very fact it was making. `emittingClausesPayRegionRebuild` at
--12.5% and `handleLoopAnswersInPlace` at -10.7% are the biggest movements on the board and both are
-flat, while `continuationBodiesFuse` at -7.1% is a win. That is the entire point of a threshold: those
-two rows have a between-leg spread that swallows their delta, and the single-leg sweep could not see
-it because a single leg has no spread to measure.
+next two, which understated the very fact it was making. `emittingClausesPayRegionRebuild` at -12.5%
+and `handleLoopAnswersInPlace` at -10.7% follow it, and both are flat too, while
+`continuationBodiesFuse` at -7.1% is a win. That is the entire point of a threshold: those three rows
+have spread that swallows their delta, and the single-leg sweep could not see it because a single leg
+has no spread to measure.
+
+One correction a later review forced, because it changes what this row means: **the ±14.4% that makes
+`handleLoopAnswersInPlace` flat is set entirely by the legs' own reported error, not by between-leg
+spread**, whose term is ±8.2%. So this row is not "too noisy between legs"; it is limited by the
+precision of each leg, and more forks or longer iterations would plausibly resolve it as a win. It is
+the row whose demotion turned five wins into three, so that matters.
 
 So **the sweep's "five wins" is three.** `handleLoopAnswersInPlace` was bolded as a win on one leg and
 does not survive replication. `emittingClausesPayRegionRebuild` was never bolded, was later re-measured

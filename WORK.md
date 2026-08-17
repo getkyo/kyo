@@ -92,7 +92,7 @@ being caught.
    more than one leg per side, is exercised by running it and not by a test; the statistic it selects
    is covered by `PlanTest` on real stored legs.
 
-7. **`IMPROVEMENT-PLAN.md` written, held-out opus review IN FLIGHT.** Thesis: the tool refuses well
+7. **`IMPROVEMENT-PLAN.md` written; the review landed, see item 8.** Thesis: the tool refuses well
    and volunteers poorly, and the remaining value is converting what is already in the store into
    statements the report makes out loud. Five such syntheses (A1-A5) are things I derived by hand this
    campaign and the tool had all the data for. The reviewer is briefed to attack the thesis, to check
