@@ -12,7 +12,7 @@ the time. The raw data is the arbiter; two of three agreeing settles nothing.
 |---|---|---|---|
 | the regression | +4.55% | 🔴 +4.5%, "none found" | confirmed, but marginal: the floor is 4.0% |
 | forcing dispatch$1 inline | -6.88% | 🟢 -6.9%, "none found" | confirmed |
-| the sweep: 5 wins, 1 loss | 5 / 1 | 4 wins, 1 loss, 1 **blocked** | corrected, see below |
+| the sweep: 5 wins, 1 loss | 5 / 1 | blocked, then 4-5 wins on settled legs | see the correction chain below |
 | allocation on the regressed row | +239,976 B/op | named, on that row only | confirmed |
 | escape analysis off, timing | declined to claim | ⚪ flat, floor ±15.18% | my refusal was right |
 | tier split v1 and v2 | regress handlers 22-35% | 🔴 confirmed, comparison **blocked** | confirmed but unreadable |
@@ -24,9 +24,18 @@ the time. The raw data is the arbiter; two of three agreeing settles nothing.
 had no way to see it. The tool now blocks on it.
 
 **That `emittingClausesPayRegionRebuild` was never measurable.** Its control leg reads
-`86.4, 80.8, 81.4, 78.5, 78.6` and reports ±15.2% of its own score. I called it a -9.8% win in the
-sweep writeup. It is flat at best, and the leg it came from never settled. **Every comparison built
-on that leg is now blocked**, which is three of the five experiments.
+`86.4, 80.8, 81.4, 78.5, 78.6` and reports ±15.2% of its own score, so it supports no verdict in
+either direction. Every comparison built on that leg was blocked, which was three of the five
+experiments.
+
+**Re-measured at `-wi 25` the leg settles**, its error falls to ±2.97, the blocker clears, and the
+row is a **-9.5% win**. So the correction chain ran: hand arithmetic said a win, the tool with the
+error floor said flat, and a properly warmed leg says a win again. The original number was roughly
+right; my intermediate correction was wrong; and the honest state in between was neither, it was
+"unmeasurable, re-measure".
+
+The distinction matters because the tool never said "flat". It **refused the comparison**. I read the
+refusal as a verdict, which is the same error as computing one by hand: taking silence for an answer.
 
 ## What I found that the tool did not
 
