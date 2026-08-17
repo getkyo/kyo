@@ -20,6 +20,14 @@ object QaLogc:
         ok &= check("C1 tiers counted too", m.tasks - m.c2Tasks > 0, s"${m.tasks - m.c2Tasks}")
         println(f"       ${m.tasks} tasks, ${m.c2Tasks} C2, ${m.recompiled} recompiled, last at ${m.lastCompileAt}%.2fs")
 
+        val inl = LogCompilation.inlining(tasks)
+        ok &= check("inlining derived from the compilation log", inl.nonEmpty, s"${inl.size}")
+        ok &= check("byte sizes attached", inl.exists(_.bytes > 0))
+        ok &= check("both verdicts present", inl.exists(_.inlined) && inl.exists(!_.inlined))
+        ok &= check("more complete than PrintInlining gave", inl.size > 30, s"${inl.size}")
+        inl.filter(e => e.method.contains("Suspend") || e.method.contains("Eval")).take(4).foreach(e =>
+            println(s"       ${e.method} ${e.bytes}B ${if e.inlined then "inlined" else e.reason}"))
+
         val deopts = LogCompilation.deoptSummary(tasks)
         ok &= check("deoptimizations found", deopts.nonEmpty, s"${deopts.size} kinds")
         deopts.take(4).foreach(d => println(s"       ${d.reason} x${d.count}"))

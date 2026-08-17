@@ -19,12 +19,23 @@ object LogCompilation:
     private val Method   = """<method id='(\d+)' holder='(\d+)' name='([^']+)'[^>]*bytes='(\d+)'[^>]*iicount='(\d+)'""".r
     private val Call     = """<call method='(\d+)' count='(\d+)'[^>]*?(?:receiver='(\d+)' receiver_count='(\d+)')?/>""".r
     private val Trap     = """<uncommon_trap[^>]*reason='([^']+)' action='([^']+)'""".r
+    private val CallRef  = """<call method='(\d+)'""".r
+    private val Inlined  = """<inline_success reason='([^']*)'""".r
+    private val NotInlined = """<inline_fail reason='([^']*)'""".r
     private val TaskOpen  = """<task compile_id='(\d+)' method='([^']+)'""".r
     private val TaskLevel = """level='(\d+)'""".r
     private val TaskStamp = """stamp='([\d.]+)'""".r
 
     /** One compilation's worth of facts. */
-    case class Task(compileId: Int, method: String, level: Int, stamp: Double, deopts: Chunk[String], calls: Chunk[CallMorphism])
+    case class Task(
+        compileId: Int,
+        method: String,
+        level: Int,
+        stamp: Double,
+        deopts: Chunk[String],
+        calls: Chunk[CallMorphism],
+        inlines: Chunk[JitEntry]
+    )
 
     def parse(raw: String): Chunk[Task] =
         var klasses = Map.empty[String, String]
@@ -32,14 +43,19 @@ object LogCompilation:
         var current = Maybe.empty[(Int, String, Int, Double)]
         var deopts  = Chunk.empty[String]
         var calls   = Chunk.empty[CallMorphism]
+        var inlines = Chunk.empty[JitEntry]
+        // <call> names the callee, and the verdict follows on the next inline element
+        var pending = Maybe.empty[String]
         var out     = Chunk.empty[Task]
 
         def flush(): Unit =
             current.foreach { (id, m, lvl, st) =>
-                out = out.append(Task(id, m, lvl, st, deopts, calls))
+                out = out.append(Task(id, m, lvl, st, deopts, calls, inlines))
             }
             deopts = Chunk.empty
             calls = Chunk.empty
+            inlines = Chunk.empty
+            pending = Maybe.empty
 
         def name(methodId: String): String =
             methods.get(methodId) match
@@ -63,6 +79,15 @@ object LogCompilation:
                 methods += m.group(1) -> (m.group(2), m.group(3), m.group(4).toInt, m.group(5).toLong)
             )
             Trap.findAllMatchIn(line).foreach(m => deopts = deopts.append(s"${m.group(1)}/${m.group(2)}"))
+            CallRef.findFirstMatchIn(line).foreach(m => pending = Maybe(m.group(1)))
+            def verdict(reason: String, ok: Boolean): Unit =
+                pending.foreach { id =>
+                    val bytes = methods.get(id).map(_._3).getOrElse(0)
+                    inlines = inlines.append(JitEntry(name(id), bytes, ok, reason))
+                }
+                pending = Maybe.empty
+            Inlined.findFirstMatchIn(line).foreach(m => verdict(m.group(1), true))
+            NotInlined.findFirstMatchIn(line).foreach(m => verdict(m.group(1), false))
             Call.findAllMatchIn(line).foreach { m =>
                 val count = m.group(2).toLong
                 val recvd = Maybe(m.group(4)).map(_.toLong)
@@ -81,6 +106,18 @@ object LogCompilation:
         flush()
         out
     end parse
+
+    /** Inlining decisions, worst verdict per method.
+      *
+      * Replaces `PrintInlining` entirely: that log interleaves output across compiler threads, so its tree cannot be trusted and even its
+      * flat entries are lossy. Here each decision sits beside the `<method>` that declares its byte size, in structure.
+      */
+    def inlining(tasks: Chunk[Task]): Chunk[JitEntry] =
+        Chunk.from(
+            tasks.flatMap(_.inlines).filter(_.method.startsWith("kyo."))
+                .groupBy(_.method).values
+                .map(es => es.find(!_.inlined).getOrElse(es.head))
+        )
 
     /** Everything the compilation log says about what compiling this run cost. */
     def metrics(tasks: Chunk[Task], profiledMs: Double, totalMs: Double): JitMetrics =
