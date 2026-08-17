@@ -3,8 +3,16 @@
 Candidate 8, and the only one of the ten whose deliverable is a failing test rather than a number. It
 is in the list deliberately, to test whether the harness can handle such a candidate at all.
 
-**Status: diagnosed by reading, NOT yet reproduced.** By this project's own rule that is a hypothesis,
-not a result. The reproduction is the next step and has not been run.
+**Status: reproduced, fixed, suite green. Performance impact under measurement.**
+
+The reproduction failed on pristine sources for exactly the right reason, which is the only kind of
+red that counts:
+
+    a fresh budget is 512 deep
+    fresh budget 512, budget after 50 throws through a root eval 462, lost 50
+
+Fifty throws, fifty depth. Linear, one per throw, and nothing ever gives it back. After the fix the
+same test reports `lost 0`, and the whole proto suite is 128 tests green.
 
 ## What C4 claims
 
@@ -68,11 +76,47 @@ correctness failure to point at, which is the kind of thing that is found years 
 
 ## The fix
 
-One boundary guard at `Eval.apply`, matching the one `Eval.partial` already carries. `arm` is not
-wanted at the root (`armed = false` there), so it is a `save`/`finally restore`, or a `reset` in a
-`finally`.
+One boundary guard at `Eval.apply`, matching the one `Eval.partial` already carries:
+
+```scala
+val slot  = Safepoint.get()
+val saved = Safepoint.save(slot)
+try Nested.unnest[A](loop(v, armed = false, neverStop))
+finally Safepoint.restore(slot, saved)
+```
+
+`arm` is not wanted at the root, since `armed = false` there. `save` rather than a bare read, because
+`save` resets to a fresh budget: a nested eval must get its own rather than inherit a nearly-drained
+one and trampoline immediately for no reason.
+
+**Why one guard is sufficient, which is the part worth keeping.** `Safepoint.exit` is unprotected in
+all eight delivery arms and does not need protecting. Every normal path balances its pairs, *including
+a drained budget*: the arm that parks never completed an `enter`, and every frame that did runs its
+`exit` as the parked value propagates back up. So the only way to skip an `exit` is an exception, and
+all eight catch sites in `Eval.scala` are `EffectTrace.attach(...); throw ex`, so no exception is ever
+absorbed mid-drive. Every one reaches a boundary. There are exactly two boundaries, `partial` and
+`apply`, and only one of them was guarded.
+
+Ordinary kyo failure does not reach this at all: `Abort` is a typed effect that suspends and
+short-circuits through the normal drive path with balanced pairs, never unwinding the JVM stack. The
+leak needs a genuine `Throwable`, which is why it survived this long with no visible symptom.
 
 Owner's direction, verbatim: *"eval should reset it at the root of the execution if it doesn't."*
+
+## Two wrong turns, recorded because they were both plausible
+
+**`peek` instead of `save`.** The first fix read the depth without resetting and restored it after, on
+the reasoning that a nested eval inheriting a fresh budget could let the real stack reach 512 + 512.
+Wrong: a nested eval that inherits a nearly-drained budget trampolines immediately, allocating a
+`Bind` per step for an unrelated computation. The bound that matters is per drive. The owner's
+question, *"I don't see where you reset the depth at all"*, is what surfaced it, and the old kernel's
+own commented-out tests carry the correct `save` / `reset` / `restore` shape.
+
+**A reset on every trampoline iteration.** Argued next, on the reasoning that each `cur = ...` in the
+drive loop is a point where the JVM stack has unfolded, so the counter should be re-anchored to ground
+truth there. It would be an unconditional write to a static array on the kernel's hottest loop, and it
+buys nothing: the normal path is already balanced, so there is no drift for it to correct. Retracted
+after the owner asked whether the exception path is the only one that needs it. It is.
 
 ## What this says about the harness, which is why C4 is in the list
 

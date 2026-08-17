@@ -212,6 +212,42 @@ is `ProtoKernelBench::run$56` at 379 B refused 10/10. It is the benchmark's own 
 family the FreqInlineSize flag moved for a 17.4% score change that had nothing to do with the kernel.
 Two independent readings now say a material share of these rows is the benchmark's own generated code.
 
+## C4 is FIXED, and the harness caught me contaminating its own measurement
+
+Owner opened an explicit exception to the tooling focus to fix this kernel bug and watch the tooling
+being used on it.
+
+**Reproduced, then fixed, 128 tests green.** Red first for the right reason: 50 throws escaping a root
+`eval` lost exactly 50 of 512 depth, one per throw, permanently, on a slot that is per thread. After
+the fix the same test reports `lost 0`.
+
+The fix is one `try`/`finally` at `Eval.apply`, matching what `Eval.partial` already carries. The
+reasoning that makes it sufficient, which took two wrong turns to reach:
+
+- `Safepoint.exit` is unprotected in all eight delivery arms **by design**, and does not need
+  protecting. Every normal path balances its pairs, *including a drained budget*: the arm that parks
+  never completed an `enter`, and every frame that did runs its `exit` as the parked value propagates
+  up. So only an exception can skip an `exit`.
+- All eight catch sites in `Eval.scala` rethrow, so no exception is absorbed mid-drive and every one
+  reaches a boundary. There are exactly two boundaries and only one was guarded. **That asymmetry was
+  the entire bug.**
+- `save` not `peek`, so a nested eval gets its own budget rather than inheriting a drained one.
+
+Two wrong turns, both recorded in `bench-results/c4/RESULT.md` because both were plausible: `peek`
+instead of `save`, and a reset on every trampoline iteration (an unconditional write on the kernel's
+hottest loop, correcting a drift that cannot happen).
+
+**The tooling finding, which is the point of the exercise.** The first bracket failed with
+`⛔ leg control-2 sources changed mid-run`. That is the harness's own guard, firing correctly, because
+I was editing kernel sources in the throwaway worktree while a measurement was in flight. It refused
+to produce a number from a tree that changed underneath it, which is exactly the corruption it exists
+to prevent, and it caught the operator rather than a hypothetical one. Re-run in flight against the
+committed fix (`9685c9b445` against `2fc76b9cc6`), store `bench-results/c4-store2`.
+
+The other half of the finding stands from before: **the harness has no path for a candidate whose
+deliverable is a failing test.** The diagnosis and the fix came from reading and from sbt; the tool
+contributed the guard above and will contribute the cost measurement, and nothing else.
+
 ## C4 diagnosed, not yet reproduced
 
 The only candidate whose deliverable is a failing test, in the list to see whether the harness can
