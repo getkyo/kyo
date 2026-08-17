@@ -109,6 +109,37 @@ object Report:
                 "\nDeoptimization changed, which no timing or allocation figure explains:\n" +
                     moved.map(d => s"  - ${d.reason}: ${cd.getOrElse(d.reason, 0)} -> ${d.count}").mkString("\n")
 
+        val steadyState =
+            val cs = Bench.stillCompiling(control)
+            val vs = Bench.stillCompiling(variant)
+            if cs.isEmpty && vs.isEmpty then ""
+            else
+                "\n\U0001f6d1 NOT STEADY STATE. These rows were still being compiled while they were measured, so the scores mix compiled " +
+                    "and compiling code. Do not read the deltas above until this is diagnosed. Warming longer would hide it: a benchmark " +
+                    "that needs unusual warmup is reporting something about the code under it.\n" +
+                    (cs.map((r, p) => f"  - control $r%s spent ${p}%.1f%% of its window compiling") ++
+                        vs.map((r, p) => f"  - variant $r%s spent ${p}%.1f%% of its window compiling")).mkString("\n") +
+                    "\n  Start from the JIT metrics below: more tasks, more recompilation or more deopts on one leg is the cause, not noise."
+
+        val jitTable =
+            (control.jit_metrics, variant.jit_metrics) match
+                case (Maybe.Present(c), Maybe.Present(v)) =>
+                    def row(n: String, a: Double, b: Double, unit: String = "") =
+                        val d = if a == 0.0 then "" else f" (${(b - a) / a * 100}%+.0f%%)"
+                        f"| $n%-24s | $a%10.0f$unit | $b%10.0f$unit |$d |"
+                    "\n\nJIT cost, which is a property of the design and not only of the run:\n" +
+                        "| metric | control | variant | |\n|---|---|---|---|\n" +
+                        Seq(
+                            row("compiling in window", c.msInWindow, v.msInWindow, "ms"),
+                            row("compiling total", c.msTotal, v.msTotal, "ms"),
+                            row("compilation tasks", c.tasks.toDouble, v.tasks.toDouble),
+                            row("C2 tasks", c.c2Tasks.toDouble, v.c2Tasks.toDouble),
+                            row("methods recompiled", c.recompiled.toDouble, v.recompiled.toDouble),
+                            row("deoptimizations", c.deopts.toDouble, v.deopts.toDouble),
+                            row("last compile at", c.lastCompileAt, v.lastCompileAt, "s")
+                        ).mkString("\n")
+                case _ => ""
+
         val polymorphic =
             val poly = variant.morphism.filterNot(_.monomorphic).take(3)
             if poly.isEmpty then ""
@@ -153,7 +184,7 @@ object Report:
                 "\n⚠️  Moved with nothing in the evidence behind it, so the cause is not known yet:\n" +
                     unexplained.map(d => s"  - ${d.row}: check allocation sites and the inlining log before proposing a mechanism").mkString("\n")
 
-        s"$sessionWarning$header\n$body$jit$deoptShift$polymorphic$verdictLine$ladder$bothWays$noiseNote"
+        s"$sessionWarning$header\n$body$jit$deoptShift$polymorphic$verdictLine$ladder$steadyState$jitTable$bothWays$noiseNote"
     end render
 
 end Report

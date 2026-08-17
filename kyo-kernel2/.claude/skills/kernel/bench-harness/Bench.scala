@@ -36,6 +36,19 @@ object Bench:
             // compiler first looked, and the same method inlines fine once it is
             !e.reason.contains("not linked") && !e.reason.contains("never executed")
 
+    /** One warmup configuration for every step of a leg.
+      *
+      * The measurement and the evidence runs must reach the same compilation state, or a timing from a well-warmed JVM gets attributed to
+      * inlining decisions captured from a colder one. Ten warmup iterations rather than five because `-prof comp` showed compilation still
+      * running into the first measured iterations at five.
+      */
+    val WarmupIterations  = 10
+    val MeasureIterations = 5
+    val IterationSeconds  = 1
+
+    /** Above this share of the measured window spent compiling, the run had not settled and its score is not a steady-state figure. */
+    val CompilingShareLimit = 1.0
+
     val BenchClass  = "kyo.kernel.bench.ProtoKernelBench"
     val BenchSource = "kyo-kernel2/jvm/src/jmh/scala/kyo/kernel/bench/ProtoKernelBench.scala"
     val AsyncProf   = "/opt/homebrew/opt/async-profiler/lib/libasyncProfiler.dylib"
@@ -153,7 +166,9 @@ object Bench:
                     score = e.primaryMetric.primaryScore,
                     error = e.primaryMetric.safeError,
                     unit = e.primaryMetric.scoreUnit,
-                    allocPerOp = Maybe.fromOption(e.secondaryMetrics.get("gc.alloc.rate.norm").map(_.score))
+                    allocPerOp = Maybe.fromOption(e.secondaryMetrics.get("gc.alloc.rate.norm").map(_.score)),
+                    compilerMsProfiled = Maybe.fromOption(e.secondaryMetrics.get("compiler.time.profiled").map(_.score)),
+                    compilerMsTotal = Maybe.fromOption(e.secondaryMetrics.get("compiler.time.total").map(_.score))
                 )
             }
 
@@ -215,8 +230,11 @@ object Bench:
 
         def sbt(task: String) = exec(worktree, "sbt", "--client", task)
 
-        def measure(n: Int, expected: Int): Chunk[Row] < (Async & Fail) =
-            sbt(s"kyo-kernel2JVM/Jmh/run -f $forks -prof gc -rf json -rff ${json.toString} $selector")
+        def measureWith(warmup: Int, n: Int, expected: Int): Chunk[Row] < (Async & Fail) =
+            sbt(
+                s"kyo-kernel2JVM/Jmh/run -f $forks -wi $warmup -i $MeasureIterations -r ${IterationSeconds}s " +
+                    s"-w ${IterationSeconds}s -prof gc -prof comp -rf json -rff ${json.toString} $selector"
+            )
                 .andThen(json.read)
                 .map(parseJmh)
                 .map { parsed =>
@@ -224,16 +242,19 @@ object Bench:
                     if parsed.size == want then parsed
                     // the first invocation after a recompile can match nothing; a short read is a
                     // failed run, never a clean one
-                    else if n < attempts then measure(n + 1, expected)
+                    else if n < attempts then measureWith(warmup, n + 1, expected)
                     else Abort.fail(BracketFailed(s"leg $label produced ${parsed.size}/$want rows after $attempts attempts"))
                 }
 
         def profile(event: String) =
-            sbt(s"""kyo-kernel2JVM/Jmh/run -f 1 -prof "async:libPath=$AsyncProf;event=$event" $selector""")
+            sbt(
+                s"""kyo-kernel2JVM/Jmh/run -f 1 -wi $WarmupIterations -i 1 -r ${IterationSeconds}s -w ${IterationSeconds}s """ +
+                    s""""-prof" "async:libPath=$AsyncProf;event=$event" $selector"""
+            )
 
         def jitLog =
             sbt(
-                s"""kyo-kernel2JVM/Jmh/run -f 1 -wi 5 -i 1 -jvmArgsAppend "-XX:+UnlockDiagnosticVMOptions -XX:+PrintInlining" $selector"""
+                s"""kyo-kernel2JVM/Jmh/run -f 1 -wi $WarmupIterations -i 1 -jvmArgsAppend "-XX:+UnlockDiagnosticVMOptions -XX:+PrintInlining" $selector"""
             )
 
         val logcFile = worktree / s"logc-$label.xml"
@@ -241,7 +262,7 @@ object Bench:
         /** The compilation log carries what PrintInlining cannot: deoptimizations and measured receiver profiles. */
         def compilationLog =
             sbt(
-                s"""kyo-kernel2JVM/Jmh/run -f 1 -wi 3 -i 1 -jvmArgsAppend "-XX:+UnlockDiagnosticVMOptions -XX:+LogCompilation -XX:LogFile=${logcFile.toString}" $selector"""
+                s"""kyo-kernel2JVM/Jmh/run -f 1 -wi $WarmupIterations -i 1 -jvmArgsAppend "-XX:+UnlockDiagnosticVMOptions -XX:+LogCompilation -XX:LogFile=${logcFile.toString}" $selector"""
             ).andThen(logcFile.read).map(LogCompilation.parse)
 
         for
@@ -254,7 +275,7 @@ object Bench:
             _          <- sbt("kyo-kernel2JVM/testOnly kyo.kernel.proto.*")
             before     <- readMarkers(worktree, markerSpecs)
             hashBefore <- treeHash(worktree, paths)
-            measured  <- measure(1, declared)
+            measured  <- measureWith(WarmupIterations, 1, declared)
             jitEntries <- if evidence == Evidence.Full then jitLog.map(parseJit) else Chunk.empty[JitEntry]: Chunk[JitEntry] < Any
             allocSites <- if evidence == Evidence.Full then profile("alloc").map(parseAlloc) else Chunk.empty[AllocSite]: Chunk[AllocSite] < Any
             cpuSites   <- if evidence == Evidence.Full then profile("itimer").map(parseCpu) else Chunk.empty[CpuSite]: Chunk[CpuSite] < Any
@@ -276,10 +297,19 @@ object Bench:
             wholeClass = wholeClass,
             declaredRows = declared,
             markers = before,
+            warmup = WarmupIterations,
             rows = measured,
             jit = jitEntries,
             alloc = allocSites,
             cpu = cpuSites,
+            jit_metrics =
+                if evidence == Evidence.Full then
+                    Maybe(LogCompilation.metrics(
+                        logc,
+                        measured.flatMap(_.compilerMsProfiled).sum,
+                        measured.flatMap(_.compilerMsTotal).sum
+                    ))
+                else Maybe.empty,
             deopts = LogCompilation.deoptSummary(logc),
             morphism = LogCompilation.morphism(logc),
             recordedAt = now.show
@@ -298,6 +328,18 @@ object Bench:
         val total = run.cpu.map(_.nanos).sum
         if total == 0L then 0.0
         else run.cpu.filter(c => KnownNoise.exists(c.method.contains)).map(_.nanos).sum.toDouble / total * 100
+
+    /** Rows whose measured window still contained meaningful compilation.
+      *
+      * Deliberately not corrected by warming longer. A benchmark that needs unusual warmup is reporting something about the code under it,
+      * bigger methods, recompilation churn, or an unstable profile, and warming past it discards the finding. The flag exists so the cause
+      * gets diagnosed.
+      */
+    def stillCompiling(run: Run): Chunk[(String, Double)] =
+        val measuredMs = run.forks * MeasureIterations * IterationSeconds * 1000.0
+        Chunk.from(run.rows.flatMap { r =>
+            r.compilingShare(measuredMs).filter(_ > CompilingShareLimit).map(share => r.name -> share)
+        })
 
     def sameSession(control: Run, variant: Run): Boolean =
         control.session.id == variant.session.id

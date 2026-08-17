@@ -6,13 +6,17 @@ import kyo.*
   */
 object BenchTest:
 
-    def jmh(name: String, score: Double, error: Double, alloc: Double): String =
+    def jmh(name: String, score: Double, error: Double, alloc: Double, compileMs: Double = 0.0): String =
         s"""{"benchmark":"kyo.kernel.bench.ProtoKernelBench.$name","mode":"avgt","forks":3,
            |"primaryMetric":{"score":$score,"scoreError":$error,"scoreUnit":"us/op","rawData":[[1,2,3,4,5]]},
-           |"secondaryMetrics":{"gc.alloc.rate.norm":{"score":$alloc},"gc.count":{"score":9}}}""".stripMargin
+           |"secondaryMetrics":{"gc.alloc.rate.norm":{"score":$alloc},"gc.count":{"score":9},
+           |"compiler.time.profiled":{"score":$compileMs},"compiler.time.total":{"score":150.0}}}""".stripMargin
 
     def rows(entries: (String, Double, Double, Double)*)(using Frame): Chunk[Row] =
-        Abort.run(Bench.parseJmh(entries.map(jmh.tupled).mkString("[", ",", "]"))).eval.getOrThrow
+        Abort.run(Bench.parseJmh(entries.map(e => jmh(e._1, e._2, e._3, e._4)).mkString("[", ",", "]"))).eval.getOrThrow
+
+    def rowsCompiling(name: String, compileMs: Double)(using Frame): Chunk[Row] =
+        Abort.run(Bench.parseJmh("[" + jmh(name, 10.0, 0.1, 64.0, compileMs) + "]")).eval.getOrThrow
 
     val session  = Session("s-1", "host", "25", 4.0)
     val session2 = Session("s-2", "host", "25", 4.0)
@@ -30,12 +34,13 @@ object BenchTest:
         Run(
             id = s"$label-x", session = sess, treeHash = "abc", label = label, sha = "0123456789abcdef", forks = forks, evidence = evidence,
             wholeClass = whole, declaredRows = 15, markers = Chunk(Marker("SuspendWith", 4)),
+            warmup = 10, jit_metrics = Maybe.empty,
             rows = rows(entries*), jit = jit, alloc = Chunk.empty, cpu = cpu,
             deopts = Chunk.empty, morphism = Chunk.empty, recordedAt = "now"
         )
 
-    def check(name: String, cond: Boolean): Unit =
-        println(if cond then s"  ok   $name" else s"  FAIL $name")
+    def check(name: String, cond: Boolean, detail: String = ""): Unit =
+        println(if cond then s"  ok   $name" else s"  FAIL $name${if detail.nonEmpty then s"  <- $detail" else ""}")
         if !cond then throw new AssertionError(name)
 
     def main(args: Array[String]): Unit =
@@ -67,8 +72,8 @@ object BenchTest:
 
         println("jit diff")
         val withJit = Bench.compare(
-            leg("control", base, Chunk(JitEntry("A::apply", 6, true, "inline (hot)"))),
-            leg("variant", base, Chunk(JitEntry("A::apply", 87, false, "failed to inline: callee is too large")))
+            leg("control", base, Chunk(JitEntry("kyo.kernel.proto.Arrow$SuspendWith::apply", 6, true, "inline (hot)"))),
+            leg("variant", base, Chunk(JitEntry("kyo.kernel.proto.Arrow$SuspendWith::apply", 87, false, "failed to inline: callee is too large")))
         )
         check("a size and verdict change is surfaced", withJit.jitChanges.exists(s => s.contains("6B inlined") && s.contains("87B refused")))
 
@@ -97,6 +102,16 @@ object BenchTest:
         check("a single-fork run is stamped diagnostic", Report.render(Bench.compare(leg("c", base, forks = 1), leg("v", base, forks = 1))).contains("diagnostic and not a claim"))
         val noisy = leg("v", base, cpu = Chunk(CpuSite("scala.runtime.BoxesRunTime.boxToInteger", 600), CpuSite("kyo.kernel.proto.Eval$.loop", 400)))
         check("a boxing-dominated run says so", Report.render(Bench.compare(ctl, noisy)).contains("no kernel change can move"))
+
+        println("steady state")
+        val settled = rows(("a", 10.0, 0.1, 64.0))
+        check("compiler time parsed", settled.head.compilerMsProfiled == Maybe(0.0), s"${settled.head.compilerMsProfiled}")
+        val hot = Run("h", session, "h", "s", "t", 3, Evidence.Full, true, 15, Chunk.empty, 10, Maybe.empty,
+            rowsCompiling("a", 900.0), Chunk.empty, Chunk.empty, Chunk.empty, Chunk.empty, Chunk.empty, "now")
+        check("a window with heavy compilation is flagged", Bench.stillCompiling(hot).nonEmpty, s"${Bench.stillCompiling(hot)}")
+        check("a settled window is not flagged", Bench.stillCompiling(ctl).isEmpty)
+        check("the report refuses the deltas", Report.render(Bench.compare(ctl, hot)).contains("NOT STEADY STATE"))
+        check("and points at the JIT metrics", Report.render(Bench.compare(ctl, hot)).contains("JIT metrics below"))
 
         println("win and loss")
         check("a change that both wins and loses demands two diagnoses", Report.render(cmp).contains("two diagnoses"))

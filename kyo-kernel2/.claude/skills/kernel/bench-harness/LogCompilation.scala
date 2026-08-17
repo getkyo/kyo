@@ -19,22 +19,24 @@ object LogCompilation:
     private val Method   = """<method id='(\d+)' holder='(\d+)' name='([^']+)'[^>]*bytes='(\d+)'[^>]*iicount='(\d+)'""".r
     private val Call     = """<call method='(\d+)' count='(\d+)'[^>]*?(?:receiver='(\d+)' receiver_count='(\d+)')?/>""".r
     private val Trap     = """<uncommon_trap[^>]*reason='([^']+)' action='([^']+)'""".r
-    private val TaskOpen = """<task compile_id='(\d+)' method='([^']+)'""".r
+    private val TaskOpen  = """<task compile_id='(\d+)' method='([^']+)'""".r
+    private val TaskLevel = """level='(\d+)'""".r
+    private val TaskStamp = """stamp='([\d.]+)'""".r
 
     /** One compilation's worth of facts. */
-    case class Task(compileId: Int, method: String, deopts: Chunk[String], calls: Chunk[CallMorphism])
+    case class Task(compileId: Int, method: String, level: Int, stamp: Double, deopts: Chunk[String], calls: Chunk[CallMorphism])
 
     def parse(raw: String): Chunk[Task] =
         var klasses = Map.empty[String, String]
         var methods = Map.empty[String, (String, String, Int, Long)] // id -> (holder klass id, name, bytes, iicount)
-        var current = Maybe.empty[(Int, String)]
+        var current = Maybe.empty[(Int, String, Int, Double)]
         var deopts  = Chunk.empty[String]
         var calls   = Chunk.empty[CallMorphism]
         var out     = Chunk.empty[Task]
 
         def flush(): Unit =
-            current.foreach { (id, m) =>
-                out = out.append(Task(id, m, deopts, calls))
+            current.foreach { (id, m, lvl, st) =>
+                out = out.append(Task(id, m, lvl, st, deopts, calls))
             }
             deopts = Chunk.empty
             calls = Chunk.empty
@@ -50,7 +52,9 @@ object LogCompilation:
                 // ids are per-task, so the symbol table starts over with every compilation
                 klasses = Map.empty
                 methods = Map.empty
-                current = Maybe((m.group(1).toInt, m.group(2)))
+                val lvl = TaskLevel.findFirstMatchIn(line).map(_.group(1).toInt).getOrElse(0)
+                val st  = TaskStamp.findFirstMatchIn(line).map(_.group(1).toDouble).getOrElse(0.0)
+                current = Maybe((m.group(1).toInt, m.group(2), lvl, st))
             }
             Klass.findAllMatchIn(line).foreach(m => klasses += m.group(1) -> m.group(2))
             Method.findAllMatchIn(line).foreach(m =>
@@ -75,6 +79,21 @@ object LogCompilation:
         flush()
         out
     end parse
+
+    /** Everything the compilation log says about what compiling this run cost. */
+    def metrics(tasks: Chunk[Task], profiledMs: Double, totalMs: Double): JitMetrics =
+        val byMethod = tasks.groupBy(_.method)
+        JitMetrics(
+            msInWindow = profiledMs,
+            msTotal = totalMs,
+            tasks = tasks.size,
+            c2Tasks = tasks.count(_.level >= 4),
+            // a method compiled more than once was recompiled after its profile changed
+            recompiled = byMethod.count(_._2.size > 1),
+            deopts = tasks.map(_.deopts.size).sum,
+            lastCompileAt = if tasks.isEmpty then 0.0 else tasks.map(_.stamp).max
+        )
+    end metrics
 
     /** Deoptimization reasons and how often each fired, worst first. */
     def deoptSummary(tasks: Chunk[Task]): Chunk[Deopt] =

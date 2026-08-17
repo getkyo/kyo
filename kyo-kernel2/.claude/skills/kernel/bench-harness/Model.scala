@@ -21,8 +21,16 @@ object Model:
         score: Double,
         error: Double,
         unit: String,
-        allocPerOp: Maybe[Double]
-    ) derives Schema
+        allocPerOp: Maybe[Double],
+        /** Milliseconds the JIT spent compiling *during the measured window*. Non-trivial values mean the JVM had not reached steady state
+          * and the score describes a mixture of compiled and compiling code.
+          */
+        compilerMsProfiled: Maybe[Double],
+        compilerMsTotal: Maybe[Double]
+    ) derives Schema:
+        /** Compilation during measurement as a fraction of the measured wall time. */
+        def compilingShare(measuredMs: Double): Maybe[Double] = compilerMsProfiled.map(_ / measuredMs * 100)
+    end Row
 
     /** One inlining decision, as the JIT reported it. The byte count is the part that matters: it is what turns a delivery path from
       * always-inlined into never-inlined, and it is invisible to every other tool.
@@ -34,6 +42,24 @@ object Model:
 
     /** A sampled method and the nanoseconds attributed to it. */
     case class CpuSite(method: String, nanos: Long) derives Schema
+
+    /** What compiling this leg cost, and whether it finished in time.
+      *
+      * Collected because a design that takes materially longer to reach steady state is telling you something: bigger methods, more
+      * recompilation, or an unstable profile that keeps deoptimising. Treating that as noise to warm past would discard the finding.
+      */
+    case class JitMetrics(
+        /** Milliseconds compiling during the measured window. Above the threshold the score is a mixture, not a steady state. */
+        msInWindow: Double,
+        /** Milliseconds compiling over the whole fork. */
+        msTotal: Double,
+        tasks: Int,
+        c2Tasks: Int,
+        recompiled: Int,
+        deopts: Int,
+        /** Seconds from JVM start to the last compilation. Compare against when measurement began. */
+        lastCompileAt: Double
+    ) derives Schema
 
     /** A deoptimization reason and how often it fired.
       *
@@ -73,6 +99,12 @@ object Model:
         wholeClass: Boolean,
         declaredRows: Int,
         markers: Chunk[Marker],
+        /** False when the measured window still contained meaningful compilation. A comparison built from such a leg cannot be trusted, so
+          * the fact travels with the record rather than living only in a printed line.
+          */
+        /** Warmup iterations used. Fixed per session so legs are comparable, never silently escalated. */
+        warmup: Int,
+        jit_metrics: Maybe[JitMetrics],
         rows: Chunk[Row],
         jit: Chunk[JitEntry],
         alloc: Chunk[AllocSite],
