@@ -49,7 +49,22 @@ being caught.
    **That measurement is therefore unrecoverable**, not merely unstated, and re-running it means
    reconstructing the configuration from the writeups rather than from the store. Defect 25 is fixed
    so this cannot recur, but the fix does not retrieve the old pair.
-   Replication itself remains open and needs the machine to itself for roughly 25 minutes.
+   **The replication is now IN FLIGHT**, with the configuration reconstructed from the writeups:
+
+       control  d85ee6821f, no extra JVM args
+       variant  d85ee6821f, -XX:CompileCommandFile=bench-results/forced-inline.cmd
+       file     inline kyo/kernel/proto/Eval$.dispatch$1
+
+   Five legs, whole class, timing evidence, store `bench-results/sweep-replicated`. The command was
+   checked against a bare `java -version` first, which printed
+   `CompileCommand: inline kyo/kernel/proto/Eval$.dispatch$1 bool inline = true` and no parse error,
+   so the two runs defect 6 was written about are not spent again here.
+
+   **This run doubles as the first test of defect 25's fix.** The original pair is unrecoverable
+   precisely because its configuration was never stored; this one should record
+   `-XX:CompileCommandFile=...` on the variant legs and nothing on the controls. Read that back from
+   the store when it lands, because if it does not appear, the fix does not work and the replication
+   inherits the same defect it was meant to escape.
 
 Everything else below is finished work, kept for its reasoning.
 
