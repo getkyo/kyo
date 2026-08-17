@@ -38,3 +38,30 @@ adjustment.
 Recorded rather than smoothed over, because the tempting move here is to relax the floor until the
 known result becomes visible again, and that is precisely the reward-hack this harness exists to
 prevent, aimed at its own gate.
+
+## Calibration: more forks does not help, more legs would
+
+Same A/A at three forks per leg instead of one:
+
+    -f 1   leg error +-0.30 (4.9%)    resolution +-5.77%
+    -f 3   leg error +-0.05 (0.8%)    resolution +-5.72%
+
+Tripling the forks cut each leg's own error six-fold and moved the resolution by 0.05 points. The
+variance is **between** legs, not within them: each leg measures itself precisely and the legs
+disagree with each other. Leg one of the control read 6.17 and leg one of the variant 6.39, a 3.6%
+gap between identical sources, while the five-leg means differed by 0.0%.
+
+So the earlier writeup was half wrong, and measuring it is what showed that. "More forks or more
+legs" is not a choice here: forks buy precision within a leg, which is not the quantity that limits
+this bracket. Only more legs, or a quieter machine, moves the resolution.
+
+That also means the +4.55% regression stays below this bracket's resolution at any fork count worth
+paying for, and the way to see it is more legs.
+
+## A reporting defect the calibration exposed
+
+The table printed `6.17 -> 6.39` beside `+0.0%`. Those were leg one's scores next to a mean-based
+percentage, so a reader doing the arithmetic on the displayed numbers got +3.6% while the harness
+reported +0.0%, and both were "right" about different quantities. The delta now carries the replicate
+means and the pooled spread, so the displayed numbers are the ones the displayed percentage comes
+from, and a test asserts exactly that.

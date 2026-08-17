@@ -154,6 +154,15 @@ object BenchTest:
         check("a real regression is classified", repSlow.deltas.find(_.row == "a").exists(_.verdict == Verdict.Regressed))
         check("and the untouched row is not", repSlow.deltas.find(_.row == "b").exists(_.verdict == Verdict.Flat))
         check("every flat row carries a resolution", repFlat.deltas.forall(_.resolution.isDefined))
+        // the displayed scores must be the ones the displayed percentage is computed from. A real
+        // run printed "6.17 -> 6.39 ... +0.0%" because the table carried leg one while the delta
+        // carried the mean, so the reader's own arithmetic contradicted the verdict.
+        check("the displayed scores are the replicate means, not leg one",
+            repSlow.deltas.find(_.row == "a").exists { d =>
+                val recomputed = (d.variant.score - d.control.score) / d.control.score * 100
+                Math.abs(recomputed - d.percent) < 0.01
+            },
+            repSlow.deltas.find(_.row == "a").map(d => f"shown ${d.control.score}%.2f -> ${d.variant.score}%.2f but reported ${d.percent}%+.2f%%").getOrElse(""))
         check("so no flat row is unbounded", repFlat.deltas.forall(!_.flatButUnbounded))
         val out = Report.render(repFlat)
         check("the report states the resolution", out.contains("flat to within its own resolution"), out.linesIterator.find(_.contains("resolution")).getOrElse(""))

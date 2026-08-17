@@ -451,9 +451,15 @@ object Bench:
         val deltas =
             reps.flatMap { r =>
                 for
-                    c <- Chunk.from(controls.headMaybe.flatMap(_.row(r.row)))
-                    v <- Chunk.from(variants.headMaybe.flatMap(_.row(r.row)))
+                    c0 <- Chunk.from(controls.headMaybe.flatMap(_.row(r.row)))
+                    v0 <- Chunk.from(variants.headMaybe.flatMap(_.row(r.row)))
                 yield
+                    // the rows carried on the delta are the replicate MEANS, not the first leg's
+                    // scores. Showing leg one beside a mean-based percentage let the table read
+                    // "6.17 -> 6.39 ... +0.0%", where a reader computing the displayed numbers gets
+                    // +3.6% and the harness is reporting something else entirely.
+                    val c = c0.copy(score = r.controlMean, error = r.pooledSd.getOrElse(c0.error))
+                    val v = v0.copy(score = r.variantMean, error = r.pooledSd.getOrElse(v0.error))
                     val (verdict, resolution) = Stats.classify(r, FamilyAlpha, rowNames.size)
                     val allocDelta =
                         for
