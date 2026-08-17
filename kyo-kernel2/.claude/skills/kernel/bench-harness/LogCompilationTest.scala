@@ -91,6 +91,30 @@ object LogCompilationTest extends KyoApp:
                 "a JIT-cost row reading 'deoptimizations 642 vs 645' built from compiler-planted guards"
             )
 
+            // the planted population is two forms, 512 leading with `bci=` and 121 with `method=`.
+            // A parser anchored on the first silently drops 19% and still passes any check derived
+            // by subtracting the runtime count from the total.
+            _ = expect(
+                "both forms of planted guard are counted",
+                tasks.map(_.plantedTraps.size.toLong).sum,
+                o.getOrElse("traps_planted", -1L),
+                "one attribute ordering of uncommon_trap dropped without trace"
+            )
+            trapCoverage = parsed.coverage.find(_.what == "uncommon traps")
+            _ = check(
+                "every trap lands in exactly one population",
+                tasks.map(_.plantedTraps.size).sum + parsed.runtimeDeopts.size == o.getOrElse("traps_total", -1L).toInt,
+                s"planted ${tasks.map(_.plantedTraps.size).sum} + runtime ${parsed.runtimeDeopts.size} != ${o.getOrElse("traps_total", -1L)}"
+            )
+            _ = check("the trap parse is complete", trapCoverage.exists(_.complete), trapCoverage.map(_.show).getOrElse("none"))
+
+            _ = println("\ncompilation tiers")
+            metrics = LogCompilation.metrics(parsed, 0.0, 0.0)
+            // both stored production runs recorded 0 C2 tasks for a fork that performed 88
+            _ = expect("C2 tasks are counted", metrics.c2Tasks.toLong, o.getOrElse("tasks_c2", -1L), "a fork's top-tier compilation invisible")
+            _ = expect("OSR tasks are counted", metrics.osrTasks.toLong, o.getOrElse("tasks_osr", -1L), "the JMH stub loop folded into the standard counts")
+            _ = expect("made-not-entrant is counted", metrics.madeNotEntrant.toLong, o.getOrElse("make_not_entrant", -1L), "the real recompilation signal missing")
+
             _ = println("\nmethod resolution")
             // The unloaded form carries no bytes/iicount, so a regex demanding both drops it and
             // leaves ids that no later stage can resolve.

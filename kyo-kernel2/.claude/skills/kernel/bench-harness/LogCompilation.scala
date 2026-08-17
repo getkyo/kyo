@@ -38,14 +38,25 @@ object LogCompilation:
     private val AttrName   = """name='([^']+)'""".r
     private val AttrBytes  = """bytes='(\d+)'""".r
 
-    private val TrapRuntime = """<uncommon_trap thread='[^']*'[^>]*reason='([^']+)' action='([^']+)'""".r
-    private val TrapPlanted = """<uncommon_trap bci=[^>]*reason='([^']+)' action='([^']+)'""".r
-    private val NotEntrant  = """<make_not_entrant""".r
+    // matched by shape, then classified by attribute. Anchoring on `bci=` saw only 512 of the 633
+    // planted traps: 121 of them lead with `method=` instead and carry `bci` further in. That is the
+    // same defect as the old `<call>` and `<method>` patterns, which is why nothing here anchors on
+    // attribute order any more.
+    private val Trap       = """<uncommon_trap [^>]*>""".r
+    private val AttrThread = """thread='(\d+)'""".r
+    private val AttrReason = """reason='([^']+)'""".r
+    private val AttrAction = """action='([^']+)'""".r
+    private val NotEntrant = """<make_not_entrant""".r
 
     private val Inlined    = """<inline_success reason='([^']*)'""".r
     private val NotInlined = """<inline_fail reason='([^']*)'""".r
 
-    private val TaskOpen  = """<task compile_id='(\d+)' method='([^']+)'""".r
+    // matched by shape for the same reason as everything else here: OSR tasks carry
+    // `compile_kind='osr'` between `compile_id` and `method`, so a pattern fixing that order missed
+    // all 5 of them, reporting 0 OSR tasks and 3 fewer C2 tasks than the fork performed.
+    private val TaskOpen  = """<task [^>]*>""".r
+    private val AttrCompileId = """compile_id='(\d+)'""".r
+    private val AttrName2 = """method='([^']+)'""".r
     private val TaskLevel = """level='(\d+)'""".r
     private val TaskStamp = """stamp='([\d.]+)'""".r
     private val TaskOsr   = """osr_bci=""".r
@@ -91,6 +102,8 @@ object LogCompilation:
         var pending      = Maybe.empty[String]
         var out          = Chunk.empty[Task]
         var notEntrant   = 0
+        var trapsSeen    = 0
+        var trapsParsed  = 0
         var callsSeen    = 0
         var callsParsed  = 0
         var methodsSeen  = 0
@@ -114,16 +127,20 @@ object LogCompilation:
             Maybe.fromOption(re.findFirstMatchIn(s).map(_.group(1)))
 
         raw.linesIterator.foreach { line =>
-            TaskOpen.findFirstMatchIn(line).foreach { m =>
+            TaskOpen.findFirstMatchIn(line).map(_.matched).foreach { el =>
                 flush()
                 // ids are per-task, so the symbol table starts over with every compilation
                 klasses = Map.empty
                 methods = Map.empty
-                // HotSpot emits level only for the tiered C1 levels; the top tier carries no
-                // attribute at all, so an absent level means C2 rather than unknown
-                val lvl = TaskLevel.findFirstMatchIn(line).map(_.group(1).toInt).getOrElse(4)
-                val st  = TaskStamp.findFirstMatchIn(line).map(_.group(1).toDouble).getOrElse(0.0)
-                current = Maybe((m.group(1).toInt, m.group(2), lvl, TaskOsr.findFirstMatchIn(line).isDefined, st))
+                // read from the task element itself, never from the line. A `<method>` element
+                // sharing the line carries its own `level='3'`, and scanning the whole line picked
+                // that up instead: both stored production runs recorded 0 C2 tasks for a fork that
+                // actually performed 88 of them.
+                val lvl = TaskLevel.findFirstMatchIn(el).map(_.group(1).toInt).getOrElse(4)
+                val st  = TaskStamp.findFirstMatchIn(el).map(_.group(1).toDouble).getOrElse(0.0)
+                val id  = attr(AttrCompileId, el).map(_.toInt).getOrElse(-1)
+                val mth = attr(AttrName2, el).getOrElse("unknown")
+                current = Maybe((id, mth, lvl, TaskOsr.findFirstMatchIn(el).isDefined, st))
             }
 
             Klass.findAllMatchIn(line).foreach(m => klasses += m.group(1) -> m.group(2))
@@ -143,8 +160,21 @@ object LogCompilation:
                 if parsedMethod.isDefined then methodsKnown += 1
             }
 
-            TrapRuntime.findAllMatchIn(line).foreach(m => runtime = runtime.append(s"${m.group(1)}/${m.group(2)}"))
-            TrapPlanted.findAllMatchIn(line).foreach(m => planted = planted.append(s"${m.group(1)}/${m.group(2)}"))
+            Trap.findAllMatchIn(line).map(_.matched).foreach { el =>
+                trapsSeen += 1
+                val kind =
+                    for
+                        reason <- attr(AttrReason, el)
+                        action <- attr(AttrAction, el)
+                    yield s"$reason/$action"
+                kind.foreach { k =>
+                    trapsParsed += 1
+                    // `thread=` means a running method fell back to the interpreter. Anything else is
+                    // a guard planted during compilation, which is a property of the code, not an event.
+                    if attr(AttrThread, el).isDefined then runtime = runtime.append(k)
+                    else planted = planted.append(k)
+                }
+            }
             notEntrant += NotEntrant.findAllMatchIn(line).size
 
             Call.findAllMatchIn(line).map(_.matched).foreach { el =>
@@ -152,7 +182,9 @@ object LogCompilation:
                 attr(AttrMethod, el).foreach { id =>
                     callsParsed += 1
                     pending = Maybe(id)
-                    val count = attr(AttrCount, el).map(_.toLong).getOrElse(0L)
+                    // `count='-1'` is HotSpot's no-profile marker; 27 C2 sites carry it. Reading it
+                    // as a count would make a site look profiled-with-negative-calls.
+                    val count = attr(AttrCount, el).map(_.toLong).filter(_ >= 0).getOrElse(0L)
                     val recvd = attr(AttrRecvN, el).map(_.toLong)
                     calls = calls.append(
                         CallMorphism(
@@ -181,7 +213,11 @@ object LogCompilation:
             out,
             runtime,
             notEntrant,
-            Chunk(ParseCoverage("call sites", callsSeen, callsParsed), ParseCoverage("method declarations", methodsSeen, methodsKnown))
+            Chunk(
+                ParseCoverage("call sites", callsSeen, callsParsed),
+                ParseCoverage("method declarations", methodsSeen, methodsKnown),
+                ParseCoverage("uncommon traps", trapsSeen, trapsParsed)
+            )
         )
     end parse
 

@@ -34,6 +34,9 @@ echo "calls_with_count=$(grep -o "<call method='[0-9]*' count='" "$logc" | wc -l
 # compiling, which is a property of the code shape and not an event that happened.
 echo "traps_total=$(grep -o '<uncommon_trap' "$logc" | wc -l | tr -d ' ')"
 echo "traps_runtime=$(grep -o "<uncommon_trap thread='" "$logc" | wc -l | tr -d ' ')"
+# derived, never subtracted: the planted population leads with `bci=` in 512 cases and with
+# `method=` in 121 more, so taking it as total-minus-runtime hides whichever form a parser misses.
+echo "traps_planted=$(grep -o '<uncommon_trap [a-z_]*=' "$logc" | grep -vc "thread=" | tr -d ' ')"
 echo "make_not_entrant=$(grep -o '<make_not_entrant' "$logc" | wc -l | tr -d ' ')"
 
 # --- compilation log: method declarations ----------------------------------------------
@@ -51,6 +54,16 @@ echo "tasks_total=$(grep -o '<task compile_id=' "$logc" | wc -l | tr -d ' ')"
 # task_queued and nmethod elements, so the occurrence count overstates the task count.
 echo "tasks_osr=$(grep -o '<task [^>]*osr_bci=' "$logc" | wc -l | tr -d ' ')"
 echo "osr_mentions=$(grep -o "compile_kind='osr'" "$logc" | wc -l | tr -d ' ')"
+# a task with no level attribute is C2. Both stored production runs reported 0 of these for a fork
+# that performed 88, because the level was read off the whole line and a <method> element sharing
+# it carries level='3'.
+echo "tasks_c2=$(grep -o '<task compile_id=[^>]*>' "$logc" | grep -vc "level='" | tr -d ' ')"
+
+# --- call sites worth distinguishing ------------------------------------------------------
+# `count='-1'` is HotSpot's no-profile marker rather than a count, and bimorphic sites (carrying a
+# second receiver) are the only real polymorphism evidence the log contains.
+echo "calls_no_profile=$(grep -o "<call [^>]*count='-1'" "$logc" | wc -l | tr -d ' ')"
+echo "calls_bimorphic=$(grep -o '<call [^>]*receiver2=' "$logc" | wc -l | tr -d ' ')"
 
 # --- allocation ------------------------------------------------------------------------
 # The flat table is an independent aggregation of the same data the stack traces carry, so
