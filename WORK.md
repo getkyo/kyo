@@ -15,6 +15,28 @@ they expose facts to check output the tool already produced. Computing a delta, 
 by hand is the failure this project exists to prevent, and it happened for four experiments before
 being caught.
 
+## Execution structure for the v3 plan
+
+Tracked as tasks 19-24 with real dependencies, because the plan was being worked without one and that
+produced the error recorded immediately below.
+
+| # | work | state |
+|---|---|---|
+| 19 | integrate the v3 held-out review | **in progress, blocks 22 and 23** |
+| 20 | Step 0a, confirm multi-row `LogFile` truncation end to end | needs a quiet machine |
+| 21 | Step 0b/0c, make jit data loadable and ingestable | ready |
+| 22 | items 6, 5, 10, 11 | blocked by 19 |
+| 23 | items 1, 2, 3, 8 | blocked by 19, 20, 21 |
+| 24 | five owner rulings | blocked on the owner |
+
+**Process error, recorded because it is the kind this project exists to catch.** I commissioned a
+held-out review of v3 specifically to test whether items should be cut or reordered and whether the
+acceptance gate is implementable at all, and then **began implementing before reading its answer**.
+Items 4 and 7 are landed and green (287 checks), but they were landed out of order. If the review
+invalidates either, that is rework to schedule and say out loud, not a fact to bury. The general
+failure is doing the work while the check on the work is still running, which is the same shape as
+reading a benchmark before its efficacy gate.
+
 ## OPEN, in the order it should be picked up
 
 1. **C4 is measured and needs a ruling.** The fix costs **+26.2% on `evalFixedOverhead`**
