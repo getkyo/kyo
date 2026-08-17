@@ -79,3 +79,24 @@ Two corrections it produced on first run, both against figures I had accepted:
 `alloc_traced_bytes` (2,713,185,225) against the flat table's 19,017,986,638 is the 14.27% ceiling
 on anything per-method attribution can explain from these truncated traces.
 
+
+## The fabrication, in stored data
+
+`qa-artifacts/store/runs/qa-control-*.json` holds a complete pre-repair run. Its morphism section:
+
+    morphism sites: 47, monomorphic: 1, NOT monomorphic: 46
+    sites with a receiver count > 0: 2
+
+    what the report prints as "measured polymorphic":
+      kyo.kernel.proto.Nested::value    count=538998  receiverCount=0
+      kyo.kernel.proto.Nested::unnest   count=504944  receiverCount=0
+      ProtoKernelBench::loop$9          count=504782  receiverCount=0
+
+The heading is "Measured polymorphic call sites (receiver counts, not inferred from the code)"
+(`Store.scala:147`). Every site under it has a receiver count of zero. The parenthetical exists to
+assure the reader the number was measured rather than guessed, and it is attached to sites for which
+no measurement exists.
+
+This is the whole failure in one artifact, and it makes an ideal regression fixture: after Phase 1
+these 46 sites must render as unclassified, and the 2 sites carrying receiver data are the only ones
+the report may say anything about.
