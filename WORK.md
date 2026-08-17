@@ -15,15 +15,19 @@ they expose facts to check output the tool already produced. Computing a delta, 
 by hand is the failure this project exists to prevent, and it happened for four experiments before
 being caught.
 
-## In flight
+## The central question, answered with replication
 
-A real replicated bracket on the campaign's central question: base against `dispatch$1` forced
-inline, C V C V C, two rows. This is the first time that question has been asked with replication;
-every previous answer was a single leg reporting a floor. It became expressible only now, because a
-bracket could previously flip shas but not JVM configurations, and forced-inline is a configuration.
+First bracket with a real threshold: A/A null clean, `continuationBodiesFuse` **-6.8%** when
+`dispatch$1` is forced inline. The headline survives.
 
-Expected: a real threshold rather than a floor, and an A/A null over the three control legs whose
-verdict decides whether the comparison is readable at all.
+The correction is on the other row: `trailingMapsStayLinear`'s **timing** regression is *not*
+established. It resolves to ±22.64%, so the +23.8% and +26.6% I reported from single legs were
+outside their legs' resolution rather than measured. Its **allocation** regression is established and
+unaffected: +240,000 B/op, exact, matching two independent earlier measurements.
+
+Exposed one defect, fixed: mechanisms are suppressed on flat rows, so a 240,000 B/op change showed
+only as a column entry. Allocation does not need the timing to resolve. See
+`bench-results/bracket1/RESULT.md`.
 
 ## Re-measurement done, and it overturned a correction
 
@@ -87,10 +91,10 @@ demonstrably skips. On the real sweep it fires once, on the true positive, and e
 
 - **Phases 5, 6, 7**: allocation attribution via `output=collapsed`; the investigator's rule table;
   steady-state recalibration and the CLI QA that has never run.
-- **The DIS-1 tier split is unresolved.** Variants 1 and 2 measured and both regress the handler rows
-  22-35%; variant 3 (index found once, so a fast-path miss does not pay for a second stack scan) was
-  edited and compiled with 126 tests green, but **its measurement was interrupted and never ran**.
-  `bench-results/exp5/tiered3-1.json` is 0 bytes.
+- **The DIS-1 tier split is unresolved.** Variants 1 and 2 measured, both regress the handler rows
+  22-35%. Variant 3 (index found once, so a fast-path miss does not pay for a second stack scan) was
+  written and compiled with 126 tests green; **its measurement was interrupted and has never run**.
+  Measuring it is the next task, as a bracket rather than a single leg.
 - **The sweep was never replicated**: one leg per configuration.
 - **Ten tool defects** in `tool-defects.md`, of which two are now fixed (efficacy gate, budget
   ranking) and one is being fixed (ingest). Seven open.
