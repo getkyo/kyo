@@ -126,89 +126,49 @@ go through `Arrow.Eval`, the park node, and the `Nested` box. `EffectTest`, `Eva
 directly from the test returns the unwrapped `Arrow`, using `map`'s exact type argument. The identical
 call inside `map` leaves `c` boxed. No explanation yet, and no sixth guess offered.
 
-**FOUND AND FIXED. 240 of 246 green on a genuine clean build.** `ArrowEffect.scala` uses bare `Nested`
-at 15 sites and had no import for it. While `Boxed`/`Nested` briefly lived in `Pending.scala` (package
-`kyo.kernel`) none was needed; moving them to `kyo.kernel.internal` made it necessary, and **zinc kept
-resolving the name against the stale `kyo.kernel.Nested` class file instead of failing.** So the box was
-created as `kyo.kernel.internal.Nested` while `map`'s inlined `unnest` tested `instanceof` against
-`kyo.kernel.Nested`; the test never matched and the value came back boxed.
+**ALL GREEN: 246 of 246 on a clean build.** Two bugs, both mine, both from the move, both found by
+bytecode after reasoning had cleared every hypothesis.
 
-That is why the symptom looked impossible: both `Nested` methods are byte-identical to the baseline,
-and `unnest` unwrapped correctly whenever called directly, because *those* call sites resolved to the
-real class.
+**Bug 1, sixteen `PendingTest` failures: a missing import masked by incremental compilation.**
+`ArrowEffect.scala` uses bare `Nested` at 15 sites. While `Boxed`/`Nested` briefly lived in
+`kyo.kernel` that needed no import; after the move to `kyo.kernel.internal` it did, and zinc kept
+resolving the name against the stale `kyo.kernel.Nested` class file instead of failing. Boxes were
+created as one class and `instanceof`-tested against another. Every "clean compile" I had reported
+was incremental; the first genuine `clean` turned it into 15 honest `Not found: Nested` errors.
 
-**Two process lessons, both mine.** Every "clean compile" I reported was incremental; the first genuine
-`clean` turned the silent mis-resolution into 15 honest `Not found: Nested` errors in one file. And the
-thing that cracked it was **javap on the owner's suggestion**, after reasoning had eliminated every
-hypothesis: the call site read `kyo/kernel/Nested.unnest` where every neighbouring instruction read
-`kyo/Arrow` and `kyo/kernel/internal/Safepoint`.
+**Bug 2, five `ArrowEffectTest` region/park failures: `liftInternal` shadowed `fromArrow`.** The
+resume continuation in the drive returns an `Arrow.Eval` park node where `A < S` is expected. The
+proto bridged that with the companion's `fromArrow` (identity). My `liftInternal` is a *lexical*
+import, which outranks the companion, so it took the site and routed the node through `Nested.nest`,
+which wraps any `Boxed`, and `Arrow extends Boxed`. Every park handed back a box around the node, the
+node was then treated as a value, and it reached the handler clause as the `Int` it should have
+produced: `Arrow$Eval cannot be cast to Integer`, verbatim. Found by diffing the compiled resume
+lambda: `fromArrow` in the proto, `Nested.nest` in ours, from identical source.
 
-**Remaining red: 6.**
+**The design that landed, per the owner, after I first fixed it the wrong way.** I had taught
+`liftInternal` to pass an `Arrow` through as the `<`. That is wrong for the reason the owner kept
+stating and I kept talking past: a lift of an `Arrow` **as a value must nest it**, or the drive runs
+data as code. `Nested.nest` was correct throughout and is untouched. The real distinction is that an
+`Arrow` returned as the computation is not a lift at all. So:
 
-Five in `ArrowEffectTest`, all region/park/capture cases, all failing at the test's own `Say.handle`
-with a value arriving in the wrong representation:
+- the lift **rejects** a statically `Arrow`-typed `A`, in both the macro and `liftInternal`, with a
+  message pointing at `<.fromArrow`. A user can never have an `Arrow` silently nested or silently
+  converted; nothing to conflict, nothing to confuse.
+- `fromArrow` stays as the kernel's own bridge, **`private[kyo]`**. `private[kernel]` was too tight:
+  `Arrow.scala` is in package `kyo` and needs it at three sites. `Arrow` being user-facing does not
+  make `Arrow`-as-`<` user-facing.
+- the one drive site returning a park node names the bridge explicitly, because the lexical import
+  outranks the companion and the reject fires first. Same shadowing that caused the bug, now loud.
 
-    a handle capture crossing an inner region            Nested      -> Integer
-    a crossed region resumes without re-running its body  Nested      -> Integer
-    a crossed stateful region resumes with in-flight state Nested     -> Integer
-    each shot of a multi-shot capture resumes from state   Arrow$Eval -> Integer
-    a park preserves standing sibling regions             ClassCast
+**`PendingBytecodeTest`** re-pinned from 8 to 5 after verifying by javap that 5 is still exactly what
+the test guards: `aload`, `invokestatic Nested.nest`, `areturn`, one runtime `Boxed` test as a single
+static call.
 
-**Not the same defect as the ArrowEffect import.** Swept every main and test source: no other file uses
-`Nested` without importing it. `ArrowEffectTest` imports only `kyo.kernel.internal.Eval`, with no
-wildcard, so there is no `Arrow.Eval` versus driver-`Eval` ambiguity in it either. `Eval.scala`
-qualifies all three of its park-node constructions as `Arrow.Eval`.
-
-**Eliminated by experiment, in order:** the `Arrow.toString`/`frameInfo` additions (removed them, same
-5 failures, restored since `ArrowTest` needs them); `CanLift.unsafe.bypass`'s removal (it was never
-referenced anywhere in the proto, main or test, so deleting it changed nothing). And by diff against
-the proto, ignoring package and import lines: **`ArrowEffect.scala` is byte-identical**, `Eval.scala`
-is identical in logic, `Pending.scala`'s `map`/`flatMap` are identical, and both `Nested` methods are
-identical in bytecode.
-
-What still differs and is untested: `Stack`'s visibility (`private[proto]` to `private[internal]`) and
-the five `liftInternal` imports replacing the macro at kernel-internal lift sites. The latter is the
-only remaining semantic change, though the two emissions look equivalent on inspection: for a concrete
-primitive both cast, for a generic or `<`-typed `A` both route through `Nested.nest`.
-
-So this is a genuine behavioural difference on the park/resume path, where a value is stored into an
-`Arrow.Eval` node and delivered again: one delivery is handing back the node or the box rather than the
-value. The `Arrow$Eval -> Integer` case is the most informative, since the park node itself reaches a
-value position. These passed at baseline, so they are mine.
-
-The sixth is `PendingBytecodeTest` "lift of a generic value is one runtime test": `Map("test" -> 5)`
-against an expected `Map("test" -> 8)`. That is a *shape* assertion about the lift emission, and 5
-against 8 may well be correct now rather than a regression, since `liftInternal` emits a different
-shape from the macro at kernel-internal call sites. It needs reading before it is either fixed or
-re-baselined; overwriting the number without understanding it would discard the check.
-
-### How it was localised, kept because the method worked
-
-**SETTLED against raw data.** The original
-`kyo.kernel.proto.PendingTest`, run in a baseline worktree at `5b93defa9a~1`, passes **32 of 32**.
-Ours is **16 of 32**. So I did break it; that is now evidence, not inference.
-
-Probing both at the same point, with the same test code:
-
-    BASELINE   settled(inner) = Nested        ->  c = PendingTest$$anon$88   (unwrapped)
-    OURS       settled(inner) = Nested        ->  c = Nested                (NOT unwrapped)
-
-**The box is identical on both sides.** The difference is entirely that baseline's `map` unnests and
-ours does not, from byte-identical `map` and `unnest` sources, with `unnest` verified correct in
-isolation on both. So the fault is in how `map`'s inlined `Nested.unnest[A](v)` resolves or behaves
-once expanded, not in the box, not in `unnest`, and not in the deferred `Bind` path.
-
-Attempted: moving `Boxed`/`Nested` back beside `<` to test co-location. **Inconclusive**, it failed on
-an unused-import warning under `-Werror` rather than running. Worth noting the owner's objection, which
-is correct: co-locating them recreates the cross-package edge from `CanLift`'s macro definition back to
-a file that uses the macro, which is the edge the move existed to break. So even if that experiment ran
-green it could not be the fix.
-
-**Owner preference, recorded so it is not undone:** the long rationale comment on `Eval.apply` was
-**removed deliberately**, not lost in the move. No large explanatory comment blocks in kernel sources.
-I re-added it as a "regression" and was corrected; reverted.
-
-The 22nd failure is `PendingBytecodeTest`, a size expectation that moved from 8 to 5.
+**Process lessons this section exists to keep.** A grep for textual usage cannot see an implicit-scope
+import; I deleted the same-module escape that way and misdiagnosed the fallout three ways. Reasoning
+about implicit resolution and codegen was wrong four times; javap was right every time it was used and
+found both bugs. Every compile I call clean must be a real `clean`. And when the owner says the same
+thing three times, the error is in my model, not their phrasing.
 
 **Still open in the merge:** the extra cases in the old duplicated tests are not folded in yet. Old
 `ArrowEffectTest` was 1030 lines against the proto's 587, `EvalTest` 634 against 224, `PendingTest` 387
