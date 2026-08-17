@@ -29,8 +29,8 @@ object Bench:
       *
       * The reason vocabulary is the compilation log's, verified against a capture: `callee is too large` 1166, `no static binding` 205,
       * `callee uses too much stack` 173, `not inlineable` 121, `callee's klass not linked yet` 60, `low call site frequency` 19,
-      * `already compiled into a big method` 6, `hot method too big` 5. The strings this filtered on before came from `PrintInlining` and two
-      * of them ("virtual call", "never executed") match nothing the log ever emits.
+      * `already compiled into a big method` 6, `hot method too big` 5. The strings this filtered on before came from `PrintInlining`'s vocabulary:
+      * "never executed" matches nothing the log emits, and "virtual call" appears twice in C2, so neither was doing useful work.
       */
     def actionableJit(v: InlineSites): Boolean =
         v.refused > 0 &&

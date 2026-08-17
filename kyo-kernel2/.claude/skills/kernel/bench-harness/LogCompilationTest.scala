@@ -91,6 +91,25 @@ object LogCompilationTest extends KyoApp:
                 )
             }
 
+            // both directions, on the unfiltered set. The earlier check ran downstream of a filter
+            // that removes unprofiled sites and of a `kyo.` prefix that removes every bimorphic site,
+            // so inverting the comparison in the parser left all of it green.
+            // compared per SITE, not per callee: `morphism` aggregates by callee, and the three
+            // bimorphic sites in this capture resolve to two callees, so comparing the aggregate to a
+            // site count compares different things and fails on a correct parser.
+            _ = expect(
+                "the bimorphic sites are exactly the ones classified polymorphic",
+                tasks.flatMap(_.calls).count(_.monomorphic.contains(false)).toLong,
+                o.getOrElse("calls_bimorphic", -1L),
+                "an inverted receiver comparison, which every other check tolerates"
+            )
+            allMorph = LogCompilation.morphism(parsed, "")
+            _ = check(
+                "and the rest of the profiled sites are monomorphic",
+                allMorph.count(_.monomorphic.contains(true)) > 0,
+                s"${allMorph.size} profiled sites, ${allMorph.count(_.monomorphic.contains(true))} monomorphic"
+            )
+
             _ = println("\ndeoptimization")
             // `thread=` is an event that happened at runtime. `bci=` is a guard the compiler
             // planted while compiling, a property of the code shape. Summing both and calling the
@@ -125,6 +144,14 @@ object LogCompilationTest extends KyoApp:
             _ = expect("C2 tasks are counted", metrics.c2Tasks.toLong, o.getOrElse("tasks_c2", -1L), "a fork's top-tier compilation invisible")
             _ = expect("OSR tasks are counted", metrics.osrTasks.toLong, o.getOrElse("tasks_osr", -1L), "the JMH stub loop folded into the standard counts")
             _ = expect("made-not-entrant is counted", metrics.madeNotEntrant.toLong, o.getOrElse("make_not_entrant", -1L), "the real recompilation signal missing")
+            // 84 methods have more than one task; only 10 were recompiled at the same tier. The rest
+            // are level-3-then-4 promotion, which tiered compilation does to every hot method.
+            _ = expect(
+                "recompilation excludes ordinary tier escalation",
+                metrics.recompiled.toLong,
+                o.getOrElse("methods_recompiled_same_tier", -1L),
+                "74 tier promotions reported as profile-driven recompilation"
+            )
 
             _ = println("\ncompiler tier")
             // C1 runs for about two warmup iterations and has only a 35-byte gate with no frequency

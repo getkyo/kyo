@@ -51,11 +51,13 @@ object StatsTest:
         println("\nthe old estimator, for the record")
         // |C2 - C1| as a threshold: a single draw, not a bound. Kept as a check so the mistake cannot
         // return quietly.
+        // the retired rule is exercised through the code under test rather than restated as
+        // arithmetic on three local literals, which passed with Stats.scala deleted
         val c1 = 100.0; val c2 = 100.6; val v = 101.4
-        val oldBand = Math.abs(c2 - c1)
-        val oldEst  = v - (c1 + c2) / 2
-        check("the retired rule would have classified this noise", Math.abs(oldEst) > oldBand, s"est $oldEst vs band $oldBand")
-        check("the replicate rule does not", Stats.classify(rep("same", Seq(c1, c2, 100.2), Seq(v, 100.9)), alpha, rows)._1 == Verdict.Flat)
+        val retired = Math.abs(v - (c1 + c2) / 2) > Math.abs(c2 - c1)
+        val current = Stats.classify(rep("same", Seq(c1, c2, 100.2), Seq(v, 100.9)), alpha, rows)._1
+        check("the retired rule classified this noise and the current one does not",
+            retired && current == Verdict.Flat, s"retired=$retired current=$current")
 
         println("\ndrift")
         // every row rising together is the machine warming, not fifteen regressions

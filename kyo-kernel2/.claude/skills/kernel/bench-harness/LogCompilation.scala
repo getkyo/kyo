@@ -25,15 +25,21 @@ object LogCompilation:
     // Matching just the first silently dropped 4456 of 5093 elements, so the shape is matched first and the attributes read after.
     private val Call       = """<call [^>]*>""".r
     private val AttrMethod = """method='(\d+)'""".r
-    private val AttrCount  = """count='(\d+)'""".r
+    // boundary-anchored: an unanchored `count='` also matches `receiver_count='`, which reads
+    // correctly today only because count always precedes it. On a site where it did not, the parser
+    // would take the receiver count as the call count and then call the site monomorphic, since
+    // `recvd == count` becomes trivially true.
+    private val AttrCount  = """(?<![\w_])count='(\d+)'""".r
     private val AttrRecv   = """receiver='(\d+)'""".r
     private val AttrRecvN  = """receiver_count='(\d+)'""".r
 
-    private val Klass = """<klass id='(\d+)' name='([^']+)'""".r
+    // by shape, for the same reason as the rest: fixing `id` before `name` is one reordering away
+    // from silently dropping the symbol table
+    private val Klass = """<klass [^>]*>""".r
     // `bytes` and `iicount` are absent on the `unloaded='1'` form, so requiring both dropped 89 of 4466 declarations and left 118 call
     // sites resolving to raw ids downstream.
     private val Method     = """<method [^>]*>""".r
-    private val AttrId     = """id='(\d+)'""".r
+    private val AttrId     = """(?<![\w_])id='(\d+)'""".r
     private val AttrHolder = """holder='(\d+)'""".r
     private val AttrName   = """name='([^']+)'""".r
     private val AttrBytes  = """bytes='(\d+)'""".r
@@ -48,8 +54,8 @@ object LogCompilation:
     private val AttrAction = """action='([^']+)'""".r
     private val NotEntrant = """<make_not_entrant""".r
 
-    private val Inlined    = """<inline_success reason='([^']*)'""".r
-    private val NotInlined = """<inline_fail reason='([^']*)'""".r
+    private val Inlined    = """<inline_success [^>]*>""".r
+    private val NotInlined = """<inline_fail [^>]*>""".r
 
     // matched by shape for the same reason as everything else here: OSR tasks carry
     // `compile_kind='osr'` between `compile_id` and `method`, so a pattern fixing that order missed
@@ -155,7 +161,12 @@ object LogCompilation:
                 current = Maybe((id, mth, lvl, TaskOsr.findFirstMatchIn(el).isDefined, st))
             }
 
-            Klass.findAllMatchIn(line).foreach(m => klasses += m.group(1) -> m.group(2))
+            Klass.findAllMatchIn(line).map(_.matched).foreach { el =>
+                for
+                    id <- attr(AttrId, el)
+                    nm <- attr(AttrName, el)
+                yield klasses += id -> nm
+            }
 
             Method.findAllMatchIn(line).map(_.matched).foreach { el =>
                 val parsedMethod =
@@ -214,8 +225,8 @@ object LogCompilation:
                     inlines = inlines.append(JitEntry(name(id), methods.get(id).map(_._3).getOrElse(0), ok, reason))
                 }
                 pending = Maybe.empty
-            Inlined.findFirstMatchIn(line).foreach(m => verdict(m.group(1), true))
-            NotInlined.findFirstMatchIn(line).foreach(m => verdict(m.group(1), false))
+            Inlined.findFirstMatchIn(line).map(_.matched).foreach(el => verdict(attr(AttrReason, el).getOrElse(""), true))
+            NotInlined.findFirstMatchIn(line).map(_.matched).foreach(el => verdict(attr(AttrReason, el).getOrElse(""), false))
         }
         flush()
         Parsed(
@@ -232,7 +243,7 @@ object LogCompilation:
 
     /** Inlining decisions per method, keeping every site, **from C2 compilations only**.
       *
-      * The tier filter is not a refinement, it is the difference between a signal and noise. In a captured run, of 1969 refusals 1920 come
+      * The tier filter is not a refinement, it is the difference between a signal and noise. In a captured run, of 1969 refusals 1929 come
       * from C1 tier 3 and 40 from C2, and the split by reason is total:
       *
       *   - `callee is too large`: 1166 in C1, **0** in C2
@@ -272,8 +283,11 @@ object LogCompilation:
             tasks = p.tasks.size,
             c2Tasks = p.tasks.count(_.level >= 4),
             osrTasks = p.tasks.count(_.osr),
-            // a method compiled more than once was recompiled after its profile changed
-            recompiled = byMethod.count(_._2.size > 1),
+            // recompilation at the SAME tier. Counting every method with more than one task counted
+            // ordinary tier escalation: of 84 such methods in a capture, 74 are a level-3 compile
+            // followed by a level-4 one, which tiered compilation performs on every hot method by
+            // design and which says nothing about an unstable profile.
+            recompiled = byMethod.count((_, ts) => ts.groupBy(_.level).exists(_._2.size > 1)),
             runtimeDeopts = p.runtimeDeopts.size,
             plantedTraps = p.tasks.map(_.plantedTraps.size).sum,
             madeNotEntrant = p.madeNotEntrant,

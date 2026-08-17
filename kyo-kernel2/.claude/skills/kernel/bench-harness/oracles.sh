@@ -93,7 +93,7 @@ fi
 # --- inlining decisions that can affect a measured score -----------------------------------
 # C1 refusals are warmup-tier decisions: C1 runs for roughly two warmup iterations and has only a
 # 35-byte gate with no frequency tier, so it refuses callees C2 inlines hot. Of 1969 refusals in this
-# capture 1920 are C1 and 40 are C2, and 'callee is too large' is 1166 C1 against 0 C2. Reporting the
+# capture 1929 are C1 and 40 are C2, and 'callee is too large' is 1166 C1 against 0 C2. Reporting the
 # C1 set as a method's inlining behaviour points optimization at code the score never executes.
 if command -v python3 >/dev/null; then
 python3 - "$logc" <<'PY'
@@ -115,5 +115,26 @@ for t in re.split(r"(?=<task )", raw):
 print(f"refusals_c2={c2}")
 print(f"refusals_c1={c1}")
 print(f"refusals_c2_too_large={c2_too_large}")
+PY
+fi
+
+# --- recompilation that is not tier escalation --------------------------------------------
+# A method compiled at level 3 and then at level 4 was promoted, which tiered compilation does to
+# every hot method. Counting those as recompilations reported 84 where 10 methods were actually
+# recompiled at the same tier.
+if command -v python3 >/dev/null; then
+python3 - "$logc" <<'PY'
+import re, sys
+from collections import defaultdict
+raw = open(sys.argv[1], errors='replace').read()
+per = defaultdict(list)
+for m in re.finditer(r"<task [^>]*>", raw):
+    el = m.group(0)
+    name = re.search(r"method='([^']+)'", el)
+    lvl = re.search(r"level='(\d+)'", el)
+    if name:
+        per[name.group(1)].append(lvl.group(1) if lvl else '4')
+print(f"methods_multi_task={sum(1 for v in per.values() if len(v) > 1)}")
+print(f"methods_recompiled_same_tier={sum(1 for v in per.values() if len(v) != len(set(v)))}")
 PY
 fi
