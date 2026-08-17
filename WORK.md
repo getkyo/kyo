@@ -233,6 +233,34 @@ experiments become branches rather than floating commits. The same branch also r
     because a measurement must not share the machine with a running agent. **Open task, not a
     limitation.**
 
+17. **Corpus sweep clean, and three plan items confirmed live by one command.** Having found one
+    self-contradicting table I swept the rest rather than assuming it was isolated: every recorded
+    control/variant/delta triple in `bench-results` recomputes correctly (`bracket1` twice, `exp2`
+    twice including its implied baseline). **One inconsistency in the corpus, already fixed.**
+
+    The same `BenchCompare` run that adjudicated C4 also reproduced, at no measurement cost:
+    - **Item 5**: the output goes straight from the replicated preamble to the table with **no A/A null
+      line at all**, where the same legs through `bracket` print one.
+    - **Item 7**: the header says "`-f 1` is diagnostic and not a claim" and three lines later the
+      footer reports a corrected threshold at **df 3**. The report contradicts itself in one render,
+      and that render is the acceptance case.
+    - **Defect 43**, above.
+
+18. **Item 4 is designed and is the strongest starting point. See `reviews/ITEM-4-DESIGN.md`.** The
+    finding sharpened while designing it: `KnownNoise`'s predicate is **inverted**, not merely
+    incomplete. It asks which frames are noise, which requires enumerating everything that is not the
+    kernel, an open set that grows with every benchmark added. Adding `ProtoKernelBench` fixes this
+    profile and not the next one. **The kernel is the closed set**, so the predicate becomes
+    `filterNot(_.method.startsWith(KernelPackage))`, moving the printed figure from 29.07% to 83.97%.
+
+    Needs no prerequisite: it touches `Run.cpu`, not `Run.jit`, so Step 0 does not gate it, and the
+    fix, the acceptance table and the fixture are all already derived. **Open question flagged, not
+    guessed**: the prefix hardcodes the proto kernel, and `Cli.protoPaths` localises that assumption
+    elsewhere; default is a named `KernelPackage` constant so the assumption is at least visible.
+
+    Why it survived the whole campaign: `QaParsers.scala:72` only *prints* `noiseShare` and asserts
+    nothing, so nothing anywhere fails when the number is wrong.
+
     **Five numbers I have published this campaign have been wrong**: a one-arm forecast called
     "systematically optimistic" when it errs both ways; "the two largest deltas are flat" when it was
     three; "three of eight selectors wired" when it is one; "70%" when it is 84%; and the C4 table's
