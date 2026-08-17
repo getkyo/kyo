@@ -43,6 +43,13 @@ reading a benchmark before its efficacy gate.
 finished work or narrative, and it had drifted into claiming otherwise. It is kept for its reasoning
 and renamed accordingly.
 
+**Defect 44 is broader than the review found, and I found the rest by checking rather than accepting.**
+The review cited the single-pair classifier. `Stats.classify` (`Stats.scala:171`) has the identical
+flaw, `diff < 0` yielding `Faster` with no reference to `mode`, so **a `thrpt` row is classified
+backwards in replicated comparisons too** — the path every bracket and the entire sweep went through.
+`mode` is display-only; `Row.unit` has **zero readers anywhere**. Latent today only because the
+harness's own benchmark is `AverageTime`; `bench ingest` takes arbitrary JMH json and checks neither.
+
 **The selection rule v4 never wrote down is drafted**: `reviews/RESULT-DRIVEN-DESIGN.md`, written
 deliberately *before* the fourth review answers, so the two can be compared rather than one anchoring
 the other. It carries a selection table (one row per result shape to the evidence the report must
