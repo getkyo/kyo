@@ -1,196 +1,220 @@
-# bench-harness: implementation plan (v3)
+# bench-harness: implementation plan (v4)
 
 The harness measures kernel changes and is meant to make a wrong conclusion hard to reach.
 
-v1 proposed building an investigator on the signals collected today. Review found three of four
-broken; each was re-verified here (see `bench-harness-evidence.md`). v2 inverted the order to
-repair-first. Review of v2 found its allocation phase unsound, its A/A estimator wrong, and its
-automation promise undecidable as written. v3 fixes those.
+Three reviews got it here. v1 proposed building an investigator on signals that were broken. v2
+inverted the order to repair-first but got the allocation phase, the A/A estimator and the
+automation promise wrong. v3 fixed those and was then held-out-reviewed, which found the A/A
+statistic unsound in both directions, most acceptance criteria degenerate-satisfiable, and two live
+parser bugs. Every number below was re-derived locally, not accepted.
 
-The order is: repair the instruments, prove they can be wrong, then automate only what is
-mechanically decidable.
+Phase 1 is implemented and green. The rest follows.
 
-## The QA rule these bugs all defeated
+## The rule these bugs all defeated
 
-Every one shipped past a green suite. `QaParsers` asserted shape: "sites parsed", `nonEmpty`,
-`bytes > 0`. All passed while the morphism verdict was inverted, the deopt count measured guards,
-and the allocation parser discarded 109,799 of the lines in the file it was reading.
+QA asserted shape: "entries parsed", `nonEmpty`, `bytes > 0`. All passed while the morphism verdict
+was inverted, deopts counted compiler-planted guards, and 118 sites resolved to raw ids.
 
 Binding on every phase:
 
-**A parser is tested by independently deriving the same fact from the raw artifact and asserting
-equality.** The oracle is a `grep`/`python` derivation recorded beside the assertion. "12 receiver
-profiles" is checked against `grep -c "receiver='"`, never against `nonEmpty`.
+**Derive the oracle, never subtract it.** `oracles.sh` computes each fact from the artifact by means
+the parser does not share. The planted-trap count is the cautionary case: taking it as
+`total - runtime` gave 633, which is correct by arithmetic and useless as a check, and it concealed
+a parser that saw only 512 of them.
 
-**A rendered claim is tested against the tool output backing it.** If the report prints a mechanism,
-the test confirms the mechanism's evidence exists.
+**Match elements by shape, never by attribute order.** Four separate bugs, three of them introduced
+while fixing the first, came from patterns that fixed an attribute ordering: `<call>` (dropped
+4456), `<method>` (dropped 89), `<uncommon_trap>` (dropped 121), `<task>` (dropped all 5 OSR).
 
-**Coverage is part of the assertion.** A parser reading 664 of 5093 elements, or 4 lines of an 8 MB
-file, states the fraction it consumed and fails when that fraction drops.
+**Coverage is part of the assertion.** A parser states the fraction it consumed and fails when it
+drops. Populations that partition must be asserted to partition: runtime + planted == total.
 
-**An acceptance criterion must be able to fail.** Criteria are written so that a pipeline which
-always abstains, or always confirms, is rejected.
+**Every criterion needs a must-fire twin.** A criterion satisfiable by a pipeline that always
+abstains is not a criterion. Each below pairs a must-not-fire case with a must-fire one.
 
-## Phase 1: repair the instruments
+## Phase 1: repair the instruments (DONE, green)
 
-1. **Morphism.** A missing `receiver` means "not a profiled virtual call", never "megamorphic".
-   Report only sites carrying a receiver profile; label the rest unclassified. Fix the `Call` regex
-   (664 of 5093 matched) to stop the silent drop. **State plainly that this adds no signal:** the
-   4429 unmatched are the C1 `<call method instr>` form carrying neither `count` nor `receiver`.
-   Morphism is a signal about 12 sites, correctly labelled, and cannot answer more than that.
-2. **Deopts.** Separate runtime events (`thread=`, 6) from compiler-planted guards (`bci=`, 633).
-   Parse `<make_not_entrant>` (89), `decompiles=`, `unstable_if_traps=`. **Distinguish OSR tasks**
-   from standard ones: 5 of 883 tasks are OSR (the figure 19 counts `compile_kind='osr'` across
-   `task`, `task_queued` and `nmethod` elements, and is not a task count). One is the JMH stub loop,
-   which is where the measured code actually runs, so folding it into the standard counts hides it.
-3. **Inlining.** Never fold to one verdict per method. Per-site, C2-only, post-warmup. A flip renders
-   as "1/6 sites, low call site frequency". Fix the `Method` regex, which requires both `bytes=` and
-   `iicount=` and so drops 89 of 4466 declarations (the `unloaded='1'` form), producing the 118
-   `method#N` entries the `kyo.` filter then hides.
-4. **No mechanism on flat rows**, ever.
-5. **CPU profile: raise to `-i 10`.** v2 dropped this with the JFR run. It is the only instrument
-   that speaks to a `moved-unexplained` row, and it currently yields ~12 methods at ~90 samples.
-   This is an instrument repair, not a nicety.
-6. **Repeat each evidence step within a leg; keep only signals present in both.** A precondition for
-   Phase 6, not a Phase 7 guardrail.
-7. **Perturbation check.** Compare the profiled run's top-N `kyo.*` methods and row ordering against
-   the unprofiled leg. Mark any attribution built on a profile whose hot set disagrees. The alloc
-   profile measured 8.428 against 5.839 unprofiled, concentrated in the path it attributes.
+Morphism reports only sites the JIT profiled a receiver for; absence is `Maybe.empty`, not `false`.
+Deopts separate runtime events (6, run-scoped: all of them precede the first task) from planted
+guards (633, both attribute forms). Inlining is per site with a denominator; a flip counts only when
+unanimous. Mechanisms are suppressed on flat rows. `Run.jit` comes from the log, deleting the
+`PrintInlining` run. C2 tasks (88), OSR tasks (5), `make_not_entrant` (89), `count='-1'` (27) and
+bimorphic sites (3) are all parsed and pinned by oracles.
 
-Acceptance: re-parsing the captured log reproduces the fixed table (5093/12/664, 639/6/89,
-4466/89). With mechanism-suppression **off**, per-site verdict sets for methods of identical
-bytecode agree across the two stored captures, and `Nested::unnest` renders as "1/6 sites, low call
-site frequency" in both. (v2's criterion was satisfiable by item 4 simply suppressing the output.)
+Corrections this phase forced on the plan's own text: `Nested::unnest` is inlined at **18 of 18**
+sites, not 1 of 6; the 1-of-6 shape is `Safepoint::enter`. The stored runs cannot serve as the
+per-site fixture at all, because `parseJit` folded verdicts before storing them.
+
+Green: 34 BenchTest, 13 oracle, 13 bytecode.
 
 ## Phase 2: make a verdict answerable for its own uncertainty
 
-8. Per-row error enters the verdict. Test behaviorally: a synthetic delta smaller than the combined
-   error must not classify Faster or Regressed.
-9. Record run config from the JMH json (`jdkVersion`, `vmName`, `jvmArgs`, `forks`, warmup and
-   measurement iterations, blackhole mode), not harness constants. **And gate on it: the legs must
-   agree.** Recording a field without comparing it is the defect that produced the original
-   `lastCompileAt` debt.
-10. Record the source diff and diffstat between shas. Gate item 7's rule: with the 8-file QA bracket,
-    the report must state that no single-method mechanism is admissible.
-11. Add the JMH benchmark source to restored, hashed and markered paths.
-12. **Pin heap and collector** (`-Xms=-Xmx`, fixed GC) via `-jvmArgsAppend`. One flag, removes a real
-    variance source: the row allocates ~32 KB/op at ~6 us/op, roughly 5 GB/s, with G1 frames visible.
-    v2 called this unmitigable; it is one line.
+1. Per-row error enters the verdict, with the combination rule **stated**. At `-f 1` the stored
+   errors are ±3.8% and ±4.6% against a measured session drift of 3.95%; if the rule is additive the
+   floor is ~8% and the harness resolves nothing smaller. State the floor in the report.
+   - must-not-fire: a sub-error synthetic does not classify.
+   - **must-fire**: a supra-threshold synthetic does classify, at the right sign and size.
+2. Record run config from the JMH json, and **gate on leg equality**.
+   - must-fire: a mismatched pair fails. must-not-fire: a matching pair compares.
+3. Record the diffstat **over the restored paths**, and say which. The three scopes differ:
+   8 files/304/221 (proto main), 11 files/509/221 (main+test, what `Cli.protoPaths` restores),
+   14 files/983/224 (whole tree). v3 paired an 11-file insertion count with an 8-file file count.
+   - must-not-fire: the 11-file bracket refuses a single-method mechanism.
+   - **must-fire**: a one-file bracket permits one.
+4. Add the JMH benchmark source to restored, hashed and markered paths.
+5. Pin heap and collector (`-Xms=-Xmx`, fixed GC).
 
-Acceptance: the sub-error synthetic does not classify; the 8-file bracket refuses a single-method
-mechanism; a leg-config mismatch fails the comparison.
+## Phase 3: the A/A null, respecified
 
-## Phase 3: the interleaved A/A null
+v3's estimator was `V - mean(C1,C2)` with band `|C2 - C1|`. Simulated locally under its own model:
 
-The centerpiece, respecified with the right estimator.
+    pure noise:        per-row P(classified) = 0.455, P(zero of 15 rows) = 0.000113
+    drift 3 sigma/leg: band median 6.00 sigma, a true +4 sigma regression detected 14% of the time
 
-13. Legs run **control, variant, control**.
-14. **Compare V against the per-row mean of C1 and C2.** Under linear drift this estimates the
-    control at the time V ran and cancels ordering bias to first order. Comparing V against C1 alone
-    makes the null span two intervals while the A/B spans one, so the null overstates and every
-    monotone machine trend lands in the delta with the same sign.
-15. **The null is per-row `|C2 - C1|`**, giving 15 per-row bands for free. This retires the
-    single-scalar band applied to 15 heterogeneous rows.
-16. **Decompose, do not threshold.** Report `median(C2-C1)` as common-mode (machine state, which the
-    mean-of-controls cancels) and per-row `|(C2-C1) - median|` as noise. Common-mode 3% with 0.5%
-    residual is a usable bracket; a 3% residual on one row suppresses that row only; large residuals
-    on most rows fail the session.
-17. **`measureDrift` and the scalar band are deleted.** The session band comes from the null. Two
-    competing noise estimates means the report keeps using the worse one.
-18. **Classfile equality guard.** C1 and C2 are separated by two `git restore`s and two incremental
-    recompiles, which are not guaranteed to reproduce C1's classfiles. Hash the compiled classes for
-    both control legs and require byte equality, or the null measures the build system. This also
-    catches stale-compilation classes of bug for free.
+So it over-classifies without drift and goes blind with it, and its acceptance ("zero rows
+classified") fails 99.99% of the time on a *correct* implementation. The predictable response is to
+widen the band until it passes: reward-hacking the harness's own gate. Items 15 and 16 also
+contradicted each other, the band being the very common mode the estimator cancels.
 
-Acceptance: the A/A on the repaired pipeline names **zero** mechanisms and classifies **zero** rows
-Faster or Regressed; and against the stored pre-repair fixture, the null flags the old inlining
-diff. The null's numbers are the band the report uses.
+6. **Replicate**: legs run C V C V C. Two variant legs and three control legs.
+7. **Estimate σ̂ from the replicates**, with at least 2 degrees of freedom. A one-sample absolute
+   difference is not a threshold.
+8. **Threshold** at `t(df, α) · σ̂ · √(1/n_V + 1/n_C)`, with **α stated** and **multiplicity over 15
+   rows stated**. A family-wise "zero of 15" gate needs α ≈ 0.7% per row to pass 90% of the time;
+   v3 never derived one.
+9. **Detrend across legs and test the residual.** Linear cancellation is not enough: curvature in the
+   drift biases the estimator, which local simulation confirms as a real effect (though not at the
+   magnitude the review cited).
+10. **Report the minimum detectable effect on every Flat row**, so "flat" means "flat to within X%"
+    rather than "nothing was found".
+11. `measureDrift` and the scalar band are deleted; the band comes from the replicates.
+12. **Classfile equality guard** between control legs, specifying both open questions: hash the
+    compiled classes **including the JMH generated classes** (item 4 puts the benchmark source in the
+    restored set) and **excluding the zinc analysis store**; on failure **fail the session** rather
+    than rebuilding, since a clean per-leg build costs minutes and perturbs the machine state the
+    replication exists to hold still.
 
-## Phase 4: bytecode
+Acceptance: on the repaired pipeline the A/A classifies at the stated α and no more; and against a
+**known-positive fixture** it classifies correctly (see Phase 8).
 
-19. `javap -c -p`, size plus listing, diffed between legs.
+## Phase 4: bytecode (DONE, scoped)
 
-Acceptance: reports **added and removed instructions**, not both listings side by side.
+`javap -c -p`, sizes exact (verified: every method ends in a one-byte return, so last offset + 1 is
+the code length), diffed as added and removed instructions, with budget crossings named.
 
-## Phase 5: allocation attribution, done soundly
+**Scoped deliberately**: diffing two shas that differ by 304 lines yields thousands of instruction
+deltas that decide nothing. It runs for methods a Tier A falsifier names, or for one step of a
+declared sha chain, never across a whole bracket.
 
-v2 proposed parsing async-profiler's stack tree. Measured, that is unsound: the capture holds 200
-trace sections covering **14.27%** of allocation (2,713,185,225 of 19,017,986,638 bytes), largest
-trace 0.09%, smallest 0.07%, depths 23 to 1046, so one logical site fragments across hundreds of
-stacks by recursion depth. Re-aggregating collapses to 4 (class, allocator) pairs recovering ~14% of
-each class's bytes. Enough to rank; useless for a between-leg per-method delta, because the
-truncation point itself moves between runs.
+## Phase 5: allocation attribution
 
-20. Use **`output=collapsed`**: folded stacks, one line per stack, untruncated, machine-defined.
-    Aggregate by frame[0] (allocated class) and frame[1] (allocating method).
-21. Parse the **file** async-profiler writes, not sbt stdout with its `[info]` prefixes and ANSI.
-22. Take `-XX:+PrintEliminateAllocations` (separates eliminated from cheap; this kernel's design
-    arguments turn on it). Drop the unified JFR run.
+v3 proposed `output=collapsed` aggregated by `frame[0]`, gated on conservation. Three corrections:
 
-Acceptance: **conservation.** Per-method totals summed by allocated class reproduce the flat table's
-per-class bytes within a stated tolerance. That fails loudly on truncation, regex rot and format
-change, which naming a method does not.
+13. **Index from the leaf end.** Collapsed is FlameGraph folded format, root-first, so `frame[0]` is
+    `java.lang.Thread.run` and the allocated class is *last*. v3 had it inverted.
+14. **State the counter.** Collapsed values are sample counts unless the total counter is requested,
+    while the flat table is bytes. As v3 specified it, conservation compared samples to bytes and
+    could never pass. Verify the option reaches the agent through JMH before gating on it.
+15. **Capture text and collapsed from one recording**, so the two aggregations describe the same
+    samples. Otherwise conservation is bounded by run-to-run variance rather than parser correctness.
+16. **Conservation is a coverage guard, not the acceptance.** It holds equally for a correct
+    attribution and for one assigning every byte of a class to a single arbitrary method.
+17. Take `-XX:+PrintEliminateAllocations`. Drop the unified JFR run.
 
-## Phase 6: the investigator, split by what is actually decidable
+Acceptance: a **planted row with one known allocation site** whose top allocator the parser names a
+priori. Conservation additionally holds.
 
-23. **Tier A, automated now: mechanisms whose falsifier is a JVM flag.** Derived from the hypothesis
-    alone, needing nothing from the diff, each one extra run of a configuration already issued:
+Known limitation, stated because it cannot be removed: with inlining, the attributed frame is where
+the JIT placed the allocation, so an inlining change relocates it with no change in what allocated.
+A per-method allocation "mechanism" is therefore confounded with the inlining mechanism, and the
+report says so rather than implying independence.
 
-    | hypothesis | falsifier | reads |
-    |---|---|---|
-    | X stopped inlining, and that is the delta | rerun variant `-XX:CompileCommand=inline,...X::y` | delta gone: confirmed |
-    | X exceeded the budget | rerun variant `-XX:FreqInlineSize=<bytes+1>`, then sweep | the byte count is the threshold or it is not |
-    | the win came from inlining, not layout | rerun **control** `-XX:CompileCommand=dontinline,...` | control should lose the win |
-    | the row rides scalar replacement | `-XX:-EliminateAllocations` | disappears or does not |
-    | the site is megamorphic | `-XX:TypeProfileWidth`, `-XX:-UseTypeSpeculation` | speculation is load-bearing or not |
-    | the delta is GC or ergonomics | pin heap and collector | disappears or does not |
+## Phase 6: the investigator
 
-24. **Tier B, not automatable: source-level reversal.** "Reverse the one change" presumes a partition
-    that does not exist in a two-sha input (509 insertions, 221 deletions, 8 files). Hunk bisection is
-    not a workaround: most subsets do not compile, the space is exponential, and the meaningful
-    partition is semantic, not syntactic. Instead make the partition **declarable**: a bracket accepts
-    a **chain** of shas (base, step1, step2), measures all legs in one interleaved session, and renders
-    each isolated delta. With only two shas the harness refuses to state any source-level mechanism,
-    emits the Tier A falsifiers, and says the partition was never declared.
-25. A mechanism is reported confirmed only when its falsifier ran and failed to kill it.
+18. **Tier A, automated: falsifiers that are JVM flags**, each one extra run of a configuration
+    already issued.
 
-Acceptance: a **planted false hypothesis** ("X stopped inlining" asserted on a pair where X's
-per-site verdicts and bytecode are identical) must be refuted by its isolation run, and at least one
-real refutation is recorded before the loop is trusted. A pipeline whose falsifier always confirms
-fails this.
+    | hypothesis | falsifier |
+    |---|---|
+    | X stopped inlining, and that is the delta | rerun variant `-XX:CompileCommand=inline,...X::y` |
+    | X exceeded a budget | sweep `-XX:FreqInlineSize` (hot sites) **and** `-XX:MaxInlineSize` (cold), naming which applies |
+    | the win came from inlining, not layout | rerun **control** with `dontinline` |
+    | the row rides scalar replacement | `-XX:-EliminateAllocations` |
 
-## Phase 7: guardrails, honesty, QA that can fail
+19. **Every falsifier carries an efficacy gate.** `CompileCommand=inline` is a hint: HotSpot still
+    refuses on `MaxInlineLevel`, node budget, or not-compilable. Without a gate, a harness whose
+    flags silently never take effect **refutes every hypothesis and passes**. The isolation run
+    re-collects the site's per-site verdict and proves the flag took before any verdict is recorded.
+    Forcing a callee also changes the caller's remaining budget, so a confirm additionally requires
+    that only X's verdict moved.
+20. **Cut**: the megamorphism falsifier (12 profiled sites in 5093: the hypothesis is unstatable from
+    these instruments) and the GC/ergonomics falsifier (Phase 2 pins heap and collector on every leg,
+    so the condition cannot arise; to keep it, it would have to *unpin*).
+21. **Tier B, not automatable**: source reversal presumes a partition absent from a two-sha input.
+    Make it declarable: a bracket accepts a **chain** of shas and renders each isolated delta. With
+    two shas the harness refuses any source-level mechanism and says the partition was never declared.
 
-26. Dossiers list what was checked and abstain on ambiguous evidence.
-27. **Recalibrate the steady-state guard.** `CompilingShareLimit = 1.0` means 50 ms of a 5000 ms
-    window while the run that motivated raising warmup spent **4.0 ms** in-window: ~12x too lax to
-    have ever fired. Calibrate against measured values, and fix `QaEndToEnd.scala:74`, which passes
-    whenever nothing is flagged.
-28. Delete the dead and the wrong: `MinCpuSamples` and `NoiseShare` (1 reference each, their own
-    definitions), stranded doc comments, the JIT-cost table's meaningless rows, README drift about
-    the worktree guard.
-29. QA phase 4 (the CLI, never run). Reconcile the QA doc with the code: P1.2 tests `parseJit` on
-    output Phase 1 makes irrelevant, P2.3 is unimplemented, and QaGuards' numbering no longer matches.
+Acceptance, both directions: a planted **false** hypothesis must be refuted, and a planted **true**
+one must be confirmed. v3 had only the refute direction, so an always-refutes pipeline passed both
+halves of its own anti-unfalsifiability criterion.
 
-Acceptance: named failing-on-purpose cases, not a general claim. **The red-tree gate must actually
-refuse** a leg whose suite is red (QA P2.3, never implemented, so the gate protecting against
-measuring a red tree has never refused anything). **The retry path must be exercised** by a fixture
-returning a short row set; today it fires only after a zero exit and a successful parse, which the
-documented failure cannot produce, and it re-reads a fixed path that may hold a stale json.
+## Phase 7: guardrails, dead code, QA that can fail
+
+22. Recalibrate the steady-state guard: 1% of the window is 50 ms while the motivating run spent
+    4.0 ms, ~12x too lax. Fix `QaEndToEnd.scala:74`, which passes whenever nothing is flagged.
+23. Delete `MinCpuSamples`, `NoiseShare`, stranded doc comments, README worktree-guard drift.
+24. **Delete `bench-harness-qa.md`.** Its acceptance criteria are now per-phase and keeping two
+    documents in sync changes no decision. Its real findings (P2.3, the CLI) are carried below.
+25. The red-tree gate must **actually refuse** a leg whose suite is red. Never once exercised.
+26. The retry path must be exercised by a fixture returning a short row set; today it fires only
+    after a zero exit and a successful parse, which the failure it exists for cannot produce, and it
+    re-reads a fixed path that may hold a stale json.
+27. QA phase 4, the CLI, never run.
+
+## Phase 8: known-answer fixtures  —  **DONE**
+
+Built from measured reality rather than synthetic data. The 15-row sweep of `dispatch$1` forced
+inline against default is a known-answer pair whose truth was established by four separate
+experiments: five rows improve 5 to 10%, `trailingMapsStayLinear` regresses 23.8%, fourteen rows are
+byte-identical in allocation and that one gains 239,976 B/op, which a further run showed is exactly
+the scalar replacement the enlarged compilation unit destroyed.
+
+`BenchKnownAnswerTest` requires the harness to find the regression at roughly the right size, find
+the wins, name allocation as the mechanism on the row where allocation moved **and on no other**, and
+flag the win-and-loss shape. None of that is expressible as staying quiet, which is the point: every
+other check in the suite is a null and is satisfied by silence.
+
+## Phase 8 as originally specified
+
+The gap under everything else: **every validation is a null**. A/A classifies nothing, sub-error
+does not classify, planted-false is refuted. Nothing establishes that a known effect of known size is
+detected, named and sized correctly, and a harness tuned only against nulls converges on abstaining.
+
+28. **Known null across different shas.** One already exists: between the two QA shas the benchmark
+    source differs by a single added comment. It exercises restore, recompile, the classfile guard
+    and the whole ladder, which a same-sha A/A does not.
+29. **Known positive.** A variant with a deliberate sized cost (an extra hot-path allocation, or a
+    control leg under `-XX:-Inline`). The harness must classify it, size it within its own band, and
+    name the right mechanism.
+
+These are the positive twins for every criterion above.
+
+## Cost
+
+A session is 5 legs. Item 6's repetition is scoped to the two signals that can carry a claim
+(per-site inlining, allocation) and to rows under investigation, not the whole class; unscoped it is
+24 JMH invocations and roughly 90 minutes of evidence alone, and a guard too expensive to run
+protects nothing. State the measured wall clock once calibrated.
 
 ## Rulings taken without the user
 
-Reversible defaults, recorded for morning:
-
-- Assembly automation: **dropped** (no decision in this project's history turned on it).
-- Unified JFR: **dropped** in favor of `output=collapsed`.
-- `PrintEliminateAllocations`: **taken**.
-- Heap and collector: **pinned**.
-- Dossier scope: flagged rows only, since the A/A null now runs on every comparison.
+Reversible, recorded for morning: assembly automation dropped; unified JFR dropped; two Tier A
+falsifiers cut; `PrintEliminateAllocations` taken; heap and collector pinned; Phase 4 scoped to named
+methods; `bench-harness-qa.md` deleted; A/A moved from 3 legs to 5.
 
 ## What this still cannot do
 
-Two shas do not isolate a variable. Phase 2's diffstat makes that visible, Phase 6's sha chain makes
-it declarable, and neither infers it. CPU frequency and thermal state stay unmeasured; the
-interleaved A/A with common-mode decomposition is the mitigation, not a fix. Morphism remains a
-signal about 12 call sites and no amount of parsing changes that.
+Two shas do not isolate a variable; the sha chain makes it declarable, not inferable. Morphism speaks
+for 12 sites and no parsing changes that. Allocation attribution is confounded with inlining. CPU
+frequency and thermal state stay unmeasured, and replication plus detrending is a mitigation, not a
+fix.
