@@ -89,6 +89,28 @@ row, and on the kernel rows the `Object[]` is the stack), and JVM-internal C++ f
 
 **220 checks green.**
 
+## Phase 6 Tier A is done: every delta now arrives with its next experiment
+
+A comparison used to say a row moved and stop. It now offers the falsifiers that could contradict the
+obvious reading of it, each one flag and one run: force the refused method, raise only the budget it
+is over, force the *control*'s refused method to test whether the win was the inlining rather than the
+design, disable escape analysis when allocation moved. The megamorphism and GC falsifiers are
+deliberately absent, the first unstatable from a log that profiles a receiver at 12 sites in 5,093,
+the second impossible while every leg pins heap and collector.
+
+The gate that makes an answer worth having: **a falsifier whose flag did not take refutes nothing.**
+`CompileCommand=inline` is a hint and HotSpot still refuses on `MaxInlineLevel`, node budget, or a
+method it cannot compile, so a pipeline without this gate refutes every hypothesis and passes its own
+acceptance. A confirm additionally requires that *only* the instructed method's verdict moved, since
+forcing a callee spends the caller's remaining budget.
+
+Acceptance runs in both directions, which is what the earlier design got wrong: a planted true
+hypothesis must be **confirmed** and a planted false one **refuted**, so an always-refutes
+implementation fails half of it. Three further answers are distinguished from both: the flag never
+fired, the row half-moved, and the experiment never had the power to separate the two.
+
+**246 checks green** across seven suites.
+
 ## Now
 
 **Validating the tool against the manual work.** Procedure: three-way comparison of raw data, tool
@@ -154,13 +176,15 @@ reported ±22.6%, called +9.5% flat). Same conclusions, both rows.
 
 ## Open, beyond the validation stream
 
-- **Phases 5, 6, 7**: allocation attribution via `output=collapsed`; the investigator's rule table;
-  steady-state recalibration and the CLI QA that has never run.
+- **Phase 6 Tier B**: a bracket that accepts a *chain* of shas, so a source-level mechanism can be
+  isolated. With two shas the harness must refuse any source-level claim and say the partition was
+  never declared. Tier A (the falsifiers that are JVM flags) is done.
+- **Phase 7**: steady-state recalibration, the red-tree gate that has never refused anything, and the
+  retry path that has never been exercised. Phase 5 and the CLI QA are done.
 - **DIS-1 is closed: refuted in all three constructible forms.** See above. The remaining candidates
   in `optimization-plan.md` are untouched.
 - **The sweep was never replicated**: one leg per configuration.
-- **Thirteen tool defects** in `tool-defects.md`: nine fixed, three open, one an observation. The
-  three open ones share a shape, the tool knowing after the fact what it could have said beforehand.
+- **Sixteen tool defects** in `tool-defects.md`: fourteen fixed, one open, one an observation.
 
 ## The kernel result, for a reader arriving cold
 

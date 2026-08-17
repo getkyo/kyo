@@ -339,7 +339,11 @@ object Report:
                     "mixes warm and cold code is not a measurement of the code. Re-run with more warmup.\n" +
                     bs.map(b => s"  - $b").mkString("\n") + "\n" + "=" * 78 + "\n"
 
-        s"$blockerBanner$sessionWarning$header\n$body$rampNote$resolutionNote$jit$deoptShift$polymorphic$allocSites$allocNote$verdictLine$ladder$steadyState$jitTable$bothWays$noiseNote"
+        // the next experiment is part of the report, not something to be asked for. A delta with no
+        // falsifier attached is where "it is slower, so replace it" comes from.
+        val investigation = Investigate.render(c)
+
+        s"$blockerBanner$sessionWarning$header\n$body$rampNote$resolutionNote$jit$deoptShift$polymorphic$allocSites$allocNote$verdictLine$ladder$steadyState$jitTable$bothWays$noiseNote$investigation"
     end render
 
 end Report
