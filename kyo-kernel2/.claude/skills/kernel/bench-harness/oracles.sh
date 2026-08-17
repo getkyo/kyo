@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Ground truth for the parsers, derived from the captured artifacts by means the
+# parsers do not share.
+#
+# The harness's QA once asserted shape ("entries parsed", nonEmpty, bytes > 0) and passed
+# while the morphism verdict was inverted, the deopt count measured compiler-planted guards
+# rather than runtime events, and the allocation parser discarded 109,799 of the lines in
+# the file it was reading. Shape assertions cannot fail that way.
+#
+# So every parser is tested against an independent derivation of the same fact. This script
+# is that derivation: it prints `name=value` lines the test compares its typed output to.
+# Deriving rather than hardcoding is the point, since a constant copied into a test rots
+# silently when the capture is replaced.
+#
+# Usage: oracles.sh [artifact-dir]
+
+set -euo pipefail
+dir="${1:-$(dirname "$0")/../../../../../qa-artifacts}"
+logc="$dir/qa-logc.xml"
+alloc="$dir/qa-alloc.txt"
+
+[ -f "$logc" ] || { echo "no compilation log at $logc" >&2; exit 1; }
+
+# --- compilation log: call sites -------------------------------------------------------
+# A missing `receiver` attribute means the site is not a profiled virtual call, never that
+# it is megamorphic. The gap between these two numbers is why: only a handful of sites in
+# the whole log carry a receiver profile at all.
+echo "calls_total=$(grep -o '<call ' "$logc" | wc -l | tr -d ' ')"
+echo "calls_with_receiver=$(grep -o "<call [^>]*receiver='" "$logc" | wc -l | tr -d ' ')"
+echo "calls_with_count=$(grep -o "<call method='[0-9]*' count='" "$logc" | wc -l | tr -d ' ')"
+
+# --- compilation log: deoptimization ---------------------------------------------------
+# `thread=` marks a real runtime deopt. `bci=` marks a guard the compiler planted while
+# compiling, which is a property of the code shape and not an event that happened.
+echo "traps_total=$(grep -o '<uncommon_trap' "$logc" | wc -l | tr -d ' ')"
+echo "traps_runtime=$(grep -o "<uncommon_trap thread='" "$logc" | wc -l | tr -d ' ')"
+echo "make_not_entrant=$(grep -o '<make_not_entrant' "$logc" | wc -l | tr -d ' ')"
+
+# --- compilation log: method declarations ----------------------------------------------
+# The unloaded form carries no `bytes`/`iicount`, so a regex demanding both silently drops
+# it and leaves unresolvable `method#N` ids downstream.
+echo "methods_total=$(grep -o '<method id=' "$logc" | wc -l | tr -d ' ')"
+echo "methods_unloaded=$(grep -o "<method [^>]*unloaded='1'" "$logc" | wc -l | tr -d ' ')"
+
+# --- compilation log: tasks ------------------------------------------------------------
+# HotSpot omits `level` for the top tier, so an absent attribute means C2, not unknown.
+# OSR tasks compile a loop already running; the JMH stub loop is one, and it is where the
+# measured code actually lives, so folding them into the standard counts hides them.
+echo "tasks_total=$(grep -o '<task compile_id=' "$logc" | wc -l | tr -d ' ')"
+# count the tasks, not every element mentioning osr: `compile_kind='osr'` also appears on
+# task_queued and nmethod elements, so the occurrence count overstates the task count.
+echo "tasks_osr=$(grep -o '<task [^>]*osr_bci=' "$logc" | wc -l | tr -d ' ')"
+echo "osr_mentions=$(grep -o "compile_kind='osr'" "$logc" | wc -l | tr -d ' ')"
+
+# --- allocation ------------------------------------------------------------------------
+# The flat table is an independent aggregation of the same data the stack traces carry, so
+# per-method totals summed by class must reproduce it. That conservation check is what
+# fails loudly when a parser truncates, rots, or meets a changed format.
+if [ -f "$alloc" ]; then
+    # a trace section opens with `--- <bytes> bytes (<pct>%), <n> samples`. This capture is
+    # sbt console output, so every line carries an `[info] ` prefix and ANSI codes, which is
+    # itself the reason to read the file async-profiler writes instead of this.
+    echo "alloc_trace_sections=$(grep -cE '^\[info\] --- [0-9]+ bytes' "$alloc" || true)"
+    echo "alloc_frame_lines=$(grep -c '\[ *[0-9]*\]' "$alloc" || true)"
+    echo "alloc_total_samples=$(grep -oE 'Total samples *: *[0-9]+' "$alloc" | grep -oE '[0-9]+$' || true)"
+    # bytes covered by the traces, against the flat table's total. The traces are truncated
+    # to a fixed number of sections, so this fraction is the ceiling on what per-method
+    # attribution derived from them can ever explain.
+    echo "alloc_traced_bytes=$(grep -oE '^\[info\] --- [0-9]+ bytes' "$alloc" | grep -oE '[0-9]+' | paste -sd+ - | bc || true)"
+fi
