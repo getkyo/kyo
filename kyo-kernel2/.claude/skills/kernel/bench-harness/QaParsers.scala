@@ -54,7 +54,7 @@ object QaParsers:
         ok &= check("sites parsed", cpu.nonEmpty, s"got ${cpu.size}")
         ok &= check("method names captured", cpu.take(5).forall(_.method.nonEmpty))
         cpu.take(4).foreach(c => println(s"       ${c.method} ${c.nanos}"))
-        println(f"       noise share would be ${Bench.noiseShare(Run("x", Session("s", "h", "j", 1.0), "l", "t", "h", 1, Evidence.Full, true, 15, Chunk.empty, Chunk.empty, Chunk.empty, Chunk.empty, cpu, "now"))}%.0f%%")
+        println(f"       noise share would be ${Bench.noiseShare(Run("x", Session("s", "h", "j", 1.0), "l", "t", "h", 1, Evidence.Full, true, 15, Chunk.empty, Chunk.empty, Chunk.empty, Chunk.empty, cpu, Chunk.empty, Chunk.empty, "now"))}%.0f%%")
 
         println(if ok then "\nPHASE 1 PASS" else "\nPHASE 1 FAIL")
         if !ok then sys.exit(1)

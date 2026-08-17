@@ -35,6 +35,20 @@ object Model:
     /** A sampled method and the nanoseconds attributed to it. */
     case class CpuSite(method: String, nanos: Long) derives Schema
 
+    /** A deoptimization reason and how often it fired.
+      *
+      * Invisible to every other tool here. A method whose profile went unstable falls back to the interpreter and is recompiled, which is a
+      * real cost that no timing or allocation figure explains.
+      */
+    case class Deopt(reason: String, count: Int) derives Schema
+
+    /** A call site's receiver profile, aggregated by callee.
+      *
+      * `monomorphic` is measured from the log's receiver counts rather than inferred from the shape of the code, which is the mistake that
+      * produced a confident and wrong megamorphism claim.
+      */
+    case class CallMorphism(callee: String, count: Long, receiverCount: Long, monomorphic: Boolean) derives Schema
+
     /** A source pattern whose occurrence count identifies which design a tree held. */
     case class Marker(name: String, count: Int) derives Schema
 
@@ -63,6 +77,8 @@ object Model:
         jit: Chunk[JitEntry],
         alloc: Chunk[AllocSite],
         cpu: Chunk[CpuSite],
+        deopts: Chunk[Deopt],
+        morphism: Chunk[CallMorphism],
         recordedAt: String
     ) derives Schema:
         def row(name: String): Maybe[Row] = Maybe.fromOption(rows.find(_.name == name))

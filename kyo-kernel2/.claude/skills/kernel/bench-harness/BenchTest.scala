@@ -30,7 +30,8 @@ object BenchTest:
         Run(
             id = s"$label-x", session = sess, treeHash = "abc", label = label, sha = "0123456789abcdef", forks = forks, evidence = evidence,
             wholeClass = whole, declaredRows = 15, markers = Chunk(Marker("SuspendWith", 4)),
-            rows = rows(entries*), jit = jit, alloc = Chunk.empty, cpu = cpu, recordedAt = "now"
+            rows = rows(entries*), jit = jit, alloc = Chunk.empty, cpu = cpu,
+            deopts = Chunk.empty, morphism = Chunk.empty, recordedAt = "now"
         )
 
     def check(name: String, cond: Boolean): Unit =

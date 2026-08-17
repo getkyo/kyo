@@ -101,6 +101,21 @@ object Report:
             if c.jitChanges.isEmpty then ""
             else "\nInlining changed:\n" + c.jitChanges.map(s => s"  - $s").mkString("\n")
 
+        val deoptShift =
+            val cd = control.deopts.map(d => d.reason -> d.count).toMap
+            val moved = variant.deopts.filter(d => Math.abs(d.count - cd.getOrElse(d.reason, 0)) > cd.getOrElse(d.reason, 0) / 4 + 5)
+            if moved.isEmpty then ""
+            else
+                "\nDeoptimization changed, which no timing or allocation figure explains:\n" +
+                    moved.map(d => s"  - ${d.reason}: ${cd.getOrElse(d.reason, 0)} -> ${d.count}").mkString("\n")
+
+        val polymorphic =
+            val poly = variant.morphism.filterNot(_.monomorphic).take(3)
+            if poly.isEmpty then ""
+            else
+                "\nMeasured polymorphic call sites (receiver counts, not inferred from the code):\n" +
+                    poly.map(m => s"  - ${m.callee} ${m.count} calls").mkString("\n")
+
         val reds        = c.deltas.filter(_.verdict == Verdict.Regressed)
         val wins        = c.deltas.filter(_.verdict == Verdict.Faster)
         val unexplained = c.deltas.filter(_.unexplained)
@@ -138,7 +153,7 @@ object Report:
                 "\n⚠️  Moved with nothing in the evidence behind it, so the cause is not known yet:\n" +
                     unexplained.map(d => s"  - ${d.row}: check allocation sites and the inlining log before proposing a mechanism").mkString("\n")
 
-        s"$sessionWarning$header\n$body$jit$verdictLine$ladder$bothWays$noiseNote"
+        s"$sessionWarning$header\n$body$jit$deoptShift$polymorphic$verdictLine$ladder$bothWays$noiseNote"
     end render
 
 end Report

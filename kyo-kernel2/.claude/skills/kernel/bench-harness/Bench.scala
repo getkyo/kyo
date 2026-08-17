@@ -65,7 +65,16 @@ object Bench:
             )
         }
 
-    /** Refuses a dirty worktree. A bracket overwrites sources, so uncommitted work in it is destroyed by the experiment. */
+    /** Discards whatever a previous bracket left behind, so a session starts from a defined tree.
+      *
+      * A throwaway worktree is expected to be dirty after use, since every leg restores sources over it. Requiring it to be pristine would
+      * refuse the normal case; the tree that must never be scribbled on is the one work happens in, and the detached-HEAD guard already
+      * excludes that one.
+      */
+    def resetWorktree(worktree: Path, paths: Seq[String])(using Frame): Unit < (Async & Fail) =
+        exec(worktree, (Seq("git", "restore", "--worktree", "--") ++ paths)*).unit
+
+    /** Asserts a tree carries no uncommitted changes. Used as the post-condition of a reset rather than as an entry requirement. */
     def requireClean(worktree: Path)(using Frame): Unit < (Async & Fail) =
         exec(worktree, "git", "status", "--porcelain").map { out =>
             val dirty = out.linesIterator.filterNot(_.startsWith("??")).toSeq
@@ -85,16 +94,20 @@ object Bench:
     /** Measures this machine's run-to-run spread by repeating one row on an unchanged tree. Classifying against a measured floor is the
       * difference between a verdict and a guess.
       */
-    def measureDrift(worktree: Path, row: String)(using Frame): Double < (Async & Fail) =
+    def measureDrift(worktree: Path, row: String, samples: Int = 3)(using Frame): Double < (Async & Fail) =
         val json = worktree / "bench-drift.json"
         def once =
             exec(worktree, "sbt", "--client", s"kyo-kernel2JVM/Jmh/run -f 1 -rf json -rff ${json.toString} $BenchClass.$row")
-                .andThen(json.read).map(parseJmh).map(_.head.score)
-        for
-            a <- once
-            b <- once
-        yield Math.abs(b - a) / a * 100
-        end for
+                .andThen(json.read).map(parseJmh).map(_.head)
+        Kyo.foreach(Chunk.from(1 to samples))(_ => once).map { rs =>
+            val scores = rs.map(_.score)
+            val spread = (scores.max - scores.min) / scores.min * 100
+            // two lucky-quiet runs can report a spread far below the real noise floor, and a band
+            // tighter than the measurement's own error would classify its own uncertainty as a
+            // result. JMH's scoreError is that uncertainty, so the band never goes under it.
+            val ownError = rs.map(r => r.error / r.score * 100).max
+            Math.max(spread, ownError)
+        }
     end measureDrift
 
     /** Working-tree-only restore. Never `checkout`, which would also stage. */
@@ -174,6 +187,8 @@ object Bench:
     def openSession(worktree: Path, driftRow: String)(using Frame): Session < (Async & Fail) =
         for
             _    <- requireThrowaway(worktree)
+            // start from a defined tree: a previous bracket leaves its last leg's sources in place
+            _    <- resetWorktree(worktree, Cli.protoPaths)
             _    <- requireClean(worktree)
             host <- exec(worktree, "hostname").map(_.trim)
             jvm  <- System.property[String]("java.version", "unknown")
@@ -221,18 +236,29 @@ object Bench:
                 s"""kyo-kernel2JVM/Jmh/run -f 1 -wi 5 -i 1 -jvmArgsAppend "-XX:+UnlockDiagnosticVMOptions -XX:+PrintInlining" $selector"""
             )
 
+        val logcFile = worktree / s"logc-$label.xml"
+
+        /** The compilation log carries what PrintInlining cannot: deoptimizations and measured receiver profiles. */
+        def compilationLog =
+            sbt(
+                s"""kyo-kernel2JVM/Jmh/run -f 1 -wi 3 -i 1 -jvmArgsAppend "-XX:+UnlockDiagnosticVMOptions -XX:+LogCompilation -XX:LogFile=${logcFile.toString}" $selector"""
+            ).andThen(logcFile.read).map(LogCompilation.parse)
+
         for
             _        <- requireThrowaway(worktree)
             _        <- restore(worktree, sha, paths)
             declared <- declaredRows(worktree)
-            before   <- readMarkers(worktree, markerSpecs)
+            // a faster variant whose suite is red is not a result; gate before spending the runs.
+            // this also settles the sources: the build formats on compile, so the baseline below
+            // must be taken after it or the leg invalidates itself on its own formatting
+            _          <- sbt("kyo-kernel2JVM/testOnly kyo.kernel.proto.*")
+            before     <- readMarkers(worktree, markerSpecs)
             hashBefore <- treeHash(worktree, paths)
-            // a faster variant whose suite is red is not a result; gate before spending the runs
-            _         <- sbt("kyo-kernel2JVM/testOnly kyo.kernel.proto.*")
             measured  <- measure(1, declared)
             jitEntries <- if evidence == Evidence.Full then jitLog.map(parseJit) else Chunk.empty[JitEntry]: Chunk[JitEntry] < Any
             allocSites <- if evidence == Evidence.Full then profile("alloc").map(parseAlloc) else Chunk.empty[AllocSite]: Chunk[AllocSite] < Any
             cpuSites   <- if evidence == Evidence.Full then profile("itimer").map(parseCpu) else Chunk.empty[CpuSite]: Chunk[CpuSite] < Any
+            logc       <- if evidence == Evidence.Full then compilationLog else Chunk.empty[LogCompilation.Task]: Chunk[LogCompilation.Task] < Any
             after      <- readMarkers(worktree, markerSpecs)
             _          <- Abort.when(before != after)(BracketFailed(s"leg $label markers moved mid-run: $before -> $after"))
             hashAfter  <- treeHash(worktree, paths)
@@ -254,6 +280,8 @@ object Bench:
             jit = jitEntries,
             alloc = allocSites,
             cpu = cpuSites,
+            deopts = LogCompilation.deoptSummary(logc),
+            morphism = LogCompilation.morphism(logc),
             recordedAt = now.show
         )
         end for
@@ -302,11 +330,12 @@ object Bench:
 
     /** Methods whose size or inlining verdict moved between the two runs. This diff is what named the mechanism the timing could not. */
     def jitShift(control: Run, variant: Run): Chunk[String] =
-        // inherent refusals (megamorphic sites) are filtered: they differ between runs as
-        // sampling noise and chasing them wastes a session
-        Chunk.from(variant.jit.filter(e => e.inlined || actionableJit(e))).flatMap { v =>
+        Chunk.from(variant.jit.filter(e => e.method.startsWith("kyo.") && (e.inlined || actionableJit(e)))).flatMap { v =>
             control.jitFor(v.method) match
-                case Maybe.Present(c) if c.bytes != v.bytes || c.inlined != v.inlined =>
+                // only a verdict flip is a mechanism. A byte count that moved while the decision
+                // stayed the same changed nothing the CPU can see, and reporting it attributes a
+                // movement to something that did not happen
+                case Maybe.Present(c) if c.inlined != v.inlined =>
                     Chunk(s"${v.method}: ${c.bytes}B ${if c.inlined then "inlined" else "refused"} -> ${v.bytes}B ${if v.inlined then "inlined" else "refused"}")
                 case _ => Chunk.empty
         }
