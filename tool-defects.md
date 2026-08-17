@@ -294,15 +294,36 @@ materially different estimate, and the test asserts that rather than a bias.
 | 27 | a bracket's replicated verdict could not be re-read from its store | **fixed**: `--control`/`--variant` repeat |
 | 28 | the report showed only the worst resolution, not each row's | **fixed**: a `resolves` column |
 | 29 | `BenchPlan` forecast from one arm, unpooled, and without the threshold's floor | **fixed**: reproduces real thresholds |
+| 30 | a multi-row leg's compilation log describes only its **last** row: fixed `-XX:LogFile` path, one JVM forked per benchmark | **open**, verified by a two-JVM probe |
+| 31 | no decodable jit data exists: the two jit-bearing runs fail to load on a missing `osrTasks`, and their entries are the old `JitEntry` shape | **open**, verified by running `bench show` |
+| 32 | `StoreSchemaTest` covers an *added* field but not a **changed field shape**, which is how 31 got in | **open** |
+| 33 | `Ingest.run` hardcodes `evidence = Timing` and `jit = Chunk.empty`, so the ingest path cannot build a jit-bearing fixture at all | **open** |
+| 34 | `Bench.actionableJit` has a 6-line docstring documenting a vocabulary "verified against a capture", and no caller and no test | **open** |
+| 35 | `diffVerdicts` and `Bench.jitShift` are two implementations of one question, over different types, in different modules; the tested one is unwired | **open** |
+| 36 | `--drift-row` is inert: `openSession` never references the parameter | **open** |
+| 37 | `driftPercent` is hardcoded `0.0`, so "drift measured this session" is unreachable and every report prints "4.0% assumed" | **open** |
+| 38 | `QaEndToEnd` asserts `driftPercent > 0.0` and therefore fails by construction | **open** |
+| 39 | `Delta.flatButUnbounded` can never be true: both producers always attach a `Resolution` to a `Flat` verdict | **open** |
+| 40 | `Stats.commonMode` is computed on every replicated comparison, bound to `common`, and never read | **open** |
+| 41 | the `-f N is diagnostic` note is keyed on fork count, so it fires on every replicated bracket that has a real threshold | **open** |
+| 42 | `Run.alloc` and `Run.cpu` cost one extra JMH invocation each and surface as one integer and one percentage printed only above 25% | **open** |
 
-Twenty-nine entries: **25 fixed**, 1 bounded (23), 1 open (9), 1 an observation (7), 1 superseded (5).
+Forty-two entries: **25 fixed**, 14 open (9, 30-42), 1 bounded (23), 1 an observation (7),
+1 superseded (5).
 Counted from the table rather than tallied by hand, because this line had drifted from it once
 already. Defect 9's mitigation is now wired into every
 bracket rather than available on request; what remains irreducible about 9 is that fixtures are
 written by the understanding that wrote the code, which is why the A/A, whose input is not authored,
 is the check that keeps earning its place.
 
-The one that remains, 9, is not fully fixable: every fixture is written by the same understanding
-that wrote the code under it. The mitigation is the A/A null, whose input is not authored, and it has
-earned that keep twice: catching a missing floor that 31 unit tests and a simulation-backed review
-missed, and catching a forecast that would have talked me out of the campaign's best measurement.
+Defect 9 is not fully fixable: every fixture is written by the same understanding that wrote the code
+under it. The mitigation is the A/A null, whose input is not authored, and it has earned that keep
+twice: catching a missing floor that 31 unit tests and a simulation-backed review missed, and catching
+a forecast that would have talked me out of the campaign's best measurement.
+
+**30 through 42 were all found in one pass, by two held-out agents and by re-deriving my own numbers,
+after I had declared the tool validated.** None was found by using the tool. That is the finding: 1-29
+came from operating the harness and watching it misbehave, which surfaces what the harness *says*
+wrongly; it cannot surface what the harness never says at all. Ten of these thirteen are silence, not
+error. `bench show` printing `944` for 944 jit entries is not a wrong statement, so no amount of
+careful operation would ever have flagged it, and none did across the whole campaign.
