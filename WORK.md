@@ -15,6 +15,23 @@ they expose facts to check output the tool already produced. Computing a delta, 
 by hand is the failure this project exists to prevent, and it happened for four experiments before
 being caught.
 
+## OPEN, in the order it should be picked up
+
+1. **Defect 9's mitigation is not wired in.** The A/A null runs on request; it should run on every
+   session. It is the only check whose input the author does not control and it has caught two things
+   nothing else did.
+2. **Phase 6 Tier B**: a bracket that accepts a *chain* of shas, so a source-level mechanism can be
+   isolated. With two shas the harness must refuse any source-level claim and say the partition was
+   never declared.
+3. **Phase 7 remainder**: dead code (`MinCpuSamples`, `NoiseShare`, stranded doc comments, README
+   drift), and delete `bench-harness-qa.md`.
+4. **The remaining candidates.** IN-2's premise is confirmed and its targets ranked, so it is the next
+   one worth an edit. C3, DIS-3, C4, DIS-4 are untouched. IN-3 and C1 are owner-gated, and C1 no
+   longer needs its gate because it is refuted.
+5. **The sweep was never replicated**: one leg per configuration.
+
+Everything else below is finished work, kept for its reasoning.
+
 ## DIS-1 is refuted, by measurement, in three forms
 
 Variant 3 halves the handler regression (+11.2% against +21.7%) and avoids the allocation cliff
@@ -198,11 +215,10 @@ is `ProtoKernelBench::run$56` at 379 B refused 10/10. It is the benchmark's own 
 family the FreqInlineSize flag moved for a 17.4% score change that had nothing to do with the kernel.
 Two independent readings now say a material share of these rows is the benchmark's own generated code.
 
-## Now
+## Validation against the manual work: COMPLETE
 
-**Validating the tool against the manual work.** Procedure: three-way comparison of raw data, tool
-verdict, and my recorded claim, per experiment. The raw data is the arbiter; two of three agreeing
-settles nothing.
+Three-way comparison of raw data, tool verdict, and recorded claim, per experiment. The raw data was
+the arbiter; two of three agreeing settled nothing.
 
 | exp | ingested | tool verdict | 3-way table | disagreements discharged |
 |---|---|---|---|---|
@@ -242,10 +258,12 @@ demonstrably skips. On the real sweep it fires once, on the true positive, and e
   known-answer fixture, the verdict statistic, efficacy gate, budget-proximity ranking, JVM args per
   leg, drift off the session path, the ingest path.
 - All 12 implementation-review findings closed.
-- **165 checks green** across five suites.
+- Phase 5 (allocation attribution), Phase 6 Tier A (the investigator), the CLI QA, and the
+  never-exercised guards. **266 checks green across seven suites** is the current figure; the counts
+  quoted inside the sections above are the counts as of those steps and are left as written.
 - Experiment data force-added to git; `.gitignore` had a global `*.json` hiding all of it.
 
-## Tool defect 8 closed: the session says what it can resolve, first
+## How defect 8 was closed, and the wrong first version of the fix
 
 `BenchPlan` forecasts each row's detectable effect before a session is spent. Three runs were spent
 reporting a 25% timing regression on a row that resolves to ±22.6% and cannot support a verdict of
@@ -290,12 +308,18 @@ Two tier-split variants aimed at capturing the win without that cost both regres
 22 to 35%. A third variant, which finds the stack index once so a fast-path miss does not pay for a
 second scan, is written and compiles with 126 tests green but **has never been measured**.
 
-## Design for the three open tool defects
+## The one tool defect still open
 
-They share a shape: the tool knows after the fact what it could have said beforehand, or does not
-assert that an instruction it issued was obeyed.
+**9, synthetic validation agrees with the code's blind spots.** Not fully fixable: every fixture is
+written by the same understanding that wrote the code. The mitigation is the A/A null, whose input is
+not authored, and it has earned that keep twice: catching a missing floor that 31 unit tests and a
+simulation-backed review missed, and catching a forecast that would have talked me out of the
+campaign's best measurement. **It still runs on request rather than on every session, and that is the
+open part.**
 
-**8, resolution reported only after spending the session.** A five-leg session at one fork resolves
+### Closed, kept for the reasoning (defects 6 and 8)
+
+**8, resolution reported only after spending the session.** *Fixed by `BenchPlan`.* A five-leg session at one fork resolves
 to ±5.77%, so it cannot see the +4.5% regression this campaign is about, and that was discovered by
 running it and reading the footer. Everything needed to say so first is already stored: any prior run
 on the same rows carries each leg's `scoreError`. A `bench plan` subcommand should take the intended
@@ -304,15 +328,11 @@ or warning when it cannot. Calibration measured earlier says forks will not help
 is between legs rather than within them, so the answer will usually be "more legs" and it should say
 that rather than leaving the operator to guess.
 
-**6, a malformed JVM flag produces a normal-looking run.** Two runs were spent before a log line
+**6, a malformed JVM flag produces a normal-looking run.** *Fixed: a rejected compile command fails
+the leg.* Two runs were spent before a log line
 revealed `CompileCommand: An error occurred during parsing`. The harness must assert that a compile
 command it issued was parsed, and prefer the file form, which does not have to survive shell and sbt
 quoting. Without this, Phase 6's Tier A would silently test nothing while reporting refutations.
-
-**9, synthetic validation agrees with the code's blind spots.** Not fully fixable: every fixture is
-written by the same understanding that wrote the code. The mitigation is the A/A null, whose input is
-not authored, and it has already earned that keep by catching a missing floor that 31 unit tests and
-a simulation-backed review missed. It should run on every session rather than on request.
 
 ## Standing constraints
 
