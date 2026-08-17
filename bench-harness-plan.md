@@ -40,8 +40,9 @@ always abstains, or always confirms, is rejected.
    Morphism is a signal about 12 sites, correctly labelled, and cannot answer more than that.
 2. **Deopts.** Separate runtime events (`thread=`, 6) from compiler-planted guards (`bci=`, 633).
    Parse `<make_not_entrant>` (89), `decompiles=`, `unstable_if_traps=`. **Distinguish OSR tasks**
-   from standard ones; 19 OSR tasks exist, including the JMH stub loop recompiled 3+ times, and that
-   loop is where the measured code runs.
+   from standard ones: 5 of 883 tasks are OSR (the figure 19 counts `compile_kind='osr'` across
+   `task`, `task_queued` and `nmethod` elements, and is not a task count). One is the JMH stub loop,
+   which is where the measured code actually runs, so folding it into the standard counts hides it.
 3. **Inlining.** Never fold to one verdict per method. Per-site, C2-only, post-warmup. A flip renders
    as "1/6 sites, low call site frequency". Fix the `Method` regex, which requires both `bytes=` and
    `iicount=` and so drops 89 of 4466 declarations (the `unloaded='1'` form), producing the 118
@@ -114,7 +115,7 @@ Acceptance: reports **added and removed instructions**, not both listings side b
 ## Phase 5: allocation attribution, done soundly
 
 v2 proposed parsing async-profiler's stack tree. Measured, that is unsound: the capture holds 200
-trace sections covering **14.46%** of allocation (2,713,185,225 of 19,017,986,638 bytes), largest
+trace sections covering **14.27%** of allocation (2,713,185,225 of 19,017,986,638 bytes), largest
 trace 0.09%, smallest 0.07%, depths 23 to 1046, so one logical site fragments across hundreds of
 stacks by recursion depth. Re-aggregating collapses to 4 (class, allocator) pairs recovering ~14% of
 each class's bytes. Enough to rank; useless for a between-leg per-method delta, because the

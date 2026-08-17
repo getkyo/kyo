@@ -33,9 +33,19 @@ worst-verdict-per-method fold. Both rows were flat (+0.8%, +0.3%) and both print
 
 ## The discarded data
 
-`qa-alloc.txt` is **8.0 MB** containing **109,799** stack-frame lines. `parseAlloc` reads the
-four-line JMH summary at the tail and discards all of it. Per-method allocation attribution, which
-v1 proposed adding a JFR pipeline to obtain, is already in the capture.
+`qa-alloc.txt` is **8.0 MB** containing **109,799** stack-frame lines across **200** trace sections.
+`parseAlloc` reads only the flat table at the tail.
+
+Precisely what that costs, since it is easy to overstate: the flat table is a **complete** per-class
+attribution (4 classes, 19,017,986,638 bytes, every allocated byte accounted for). Class-level
+totals are therefore correct today. What is lost is **per-method** resolution, which is the level a
+mechanism claim needs.
+
+But the traces cannot supply it either, as captured: their 200 sections cover 2,713,185,225 bytes,
+**14.27%** of the total, largest section 0.09% and smallest 0.07%, with depths from 23 to 1046
+frames, so one logical site fragments across hundreds of stacks by recursion depth. Enough to rank
+on a row with one dominant allocator per class; useless for a between-leg per-method delta, because
+the truncation point itself moves between runs. Hence `output=collapsed` plus conservation.
 
 ## What this means
 
@@ -66,6 +76,6 @@ Two corrections it produced on first run, both against figures I had accepted:
   console output and every line carries an `[info] ` prefix. That is the same defect the harness
   has: it reads sbt stdout rather than the file async-profiler writes.
 
-`alloc_traced_bytes` (2,713,185,225) against the flat table's 19,017,986,638 is the 14.46% ceiling
+`alloc_traced_bytes` (2,713,185,225) against the flat table's 19,017,986,638 is the 14.27% ceiling
 on anything per-method attribution can explain from these truncated traces.
 

@@ -67,4 +67,12 @@ if [ -f "$alloc" ]; then
     # to a fixed number of sections, so this fraction is the ceiling on what per-method
     # attribution derived from them can ever explain.
     echo "alloc_traced_bytes=$(grep -oE '^\[info\] --- [0-9]+ bytes' "$alloc" | grep -oE '[0-9]+' | paste -sd+ - | bc || true)"
+
+    # The flat table is a complete per-class attribution: every allocated byte is accounted
+    # for, by class. What it cannot say is which method allocated them. That is the whole
+    # reason to read the traces, and it is also the independent total the conservation check
+    # reconciles per-method sums against.
+    echo "alloc_flat_classes=$(grep -cE '^\[info\] +[0-9]+ +[0-9.]+% +[0-9]+ +[a-zA-Z]' "$alloc" || true)"
+    # take the bytes column positionally; extracting digits would split "50.01%" into two numbers
+    echo "alloc_flat_bytes=$(awk '/^\[info\] +[0-9]+ +[0-9.]+% +[0-9]+ +[a-zA-Z]/ {s+=$2} END {print s+0}' "$alloc")"
 fi
