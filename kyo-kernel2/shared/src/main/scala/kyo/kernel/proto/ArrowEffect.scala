@@ -6,6 +6,7 @@ import kyo.kernel.proto.Arrow.*
 import kyo.kernel.proto.Loop.Outcome
 import kyo.kernel.proto.Loop.Outcome2
 import scala.annotation.nowarn
+import scala.language.implicitConversions
 
 abstract class ArrowEffect[-I[_], +O[_]]
 
@@ -37,7 +38,7 @@ object ArrowEffect:
             def frame                = _frame
             def tag                  = effectTag
             def input                = input0
-            def cont(v: O[C]): B < S = f(v)
+            def cont(v: O[C]): B < S = f(Nested.unnest[O[C]](v))
     end suspendWith
 
     @nowarn("msg=anonymous")

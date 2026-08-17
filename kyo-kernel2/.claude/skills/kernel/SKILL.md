@@ -175,6 +175,23 @@ What this forbids, concretely:
   completion. The remaining delta gets its own diagnosis, from its own profile of the actual variant in hand,
   never from a profile of a sibling variant or from reasoning about the code.
 
+**The claim covers every row, not the rows you chose.** A subset run cannot support "no regression". The rows an
+author picks are the ones the author is already thinking about, and the surprise lives in the others: kernel
+changes land on shared machinery (node layout, delivery, currency handling, the drive loop, the safepoint poll),
+so an edit aimed at trailing maps also runs under stateful handlers, region rebuilds, nested payloads, the idle
+handler, and every fusion row.
+
+- **The unit of measurement for a claim is the whole benchmark class on both variants**, same session, back to
+  back. A hand-picked subset is for iteration while hunting a mechanism; it never becomes the evidence.
+- **Name the rows the change reaches before running.** Touching the `HandleLoopState` arms makes the stateful row
+  mandatory; touching region rebuild makes the emitting row mandatory; touching the loop head makes all of them
+  mandatory. A row that exercises changed code and was not measured is an unverified claim, never a safe omission.
+- **Screen wide, then confirm narrow.** Full class at `-f 1` on both variants to find suspects, then `-f 3` on any
+  row outside the drift band. One long run removes the whole class of hidden regressions; skipping it means the
+  next person finds them.
+- **An empty or short result set is a failed run, not a clean one.** Count the rows returned against the rows the
+  class defines, and rerun when they disagree (the first invocation after a recompile can silently match nothing).
+
 **Deviations are allowed, and they are written down.** Sometimes the correct design does cost measurable time.
 That outcome is reached, never assumed, and it is presented as a self-contained case the reader can decide on
 without reconstructing the session: which rows regressed and by how much, the mechanism named and evidenced,
