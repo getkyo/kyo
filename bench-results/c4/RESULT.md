@@ -9,10 +9,18 @@ is in the list deliberately, to test whether the harness can handle such a candi
 
 Bracket `9685c9b445` against `2fc76b9cc6`, five legs, whole class, A/A null clean across all 15 rows.
 
-| | row | control | variant | delta |
-|---|---|---|---|---|
-| 🔴 | `evalFixedOverhead` | 0.005853 ± 0.000317 | 0.007364 ± 0.000111 | **+26.2%** |
-| ⚪ | every other row | | | flat |
+| | row | control | variant | delta | resolves |
+|---|---|---|---|---|---|
+| 🔴 | `evalFixedOverhead` | 0.005818 ± 0.000037 | 0.007342 ± 0.000037 | **+26.2%** | ±5.4% |
+| ⚪ | every other row | | | flat | |
+
+**Corrected.** This table previously showed `0.005853 ± 0.000317` and `0.007364 ± 0.000111`, which are
+**leg one's** scores, beside a percentage the tool computes from the **arm means**. A reader
+recomputing the delta from those printed numbers gets +25.8% and concludes the tool is wrong. It is
+not: re-running `BenchCompare` over the stored legs prints the means above, and +26.2% follows from
+them exactly. The error was mine in transcribing, and it is the same failure `Bench.scala:736-739`
+records fixing on the tool's side, where showing leg one beside a mean-based percentage once made a
+table read "6.17 -> 6.39 ... +0.0%".
 
 That is the row that measures the fixed overhead of `Eval.apply`, which is the method the fix changes,
 so it is the row that should move and the only one that did. **About 1.5 ns per top-level `eval`**:

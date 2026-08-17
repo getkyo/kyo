@@ -307,8 +307,9 @@ materially different estimate, and the test asserts that rather than a bias.
 | 40 | `Stats.commonMode` is computed on every replicated comparison, bound to `common`, and never read | **open** |
 | 41 | the `-f N is diagnostic` note is keyed on fork count, so it fires on every replicated bracket that has a real threshold | **open** |
 | 42 | `Run.alloc` and `Run.cpu` cost one extra JMH invocation each and surface as one integer and one percentage printed only above 25% | **open** |
+| 43 | the unexplained-row line tells the operator to "check the inlining log" on a **Timing** run, whose `jit` is empty by construction: it names evidence the run provably does not contain | **open**, reproduced live |
 
-Forty-two entries: **25 fixed**, 14 open (9, 30-42), 1 bounded (23), 1 an observation (7),
+Forty-three entries: **25 fixed**, 15 open (9, 30-43), 1 bounded (23), 1 an observation (7),
 1 superseded (5).
 Counted from the table rather than tallied by hand, because this line had drifted from it once
 already. Defect 9's mitigation is now wired into every

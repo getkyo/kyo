@@ -69,10 +69,50 @@ direction that flatters the kernel. Only **16.04%** of this profile is kernel-ow
 
 **Item 4's acceptance is this table**, and its fixture is this capture rather than authored frames.
 
+## 4. The C4 table: TOOL RIGHT, MY DOCUMENT WRONG
+
+`bench-results/c4/RESULT.md` showed `0.005853 → 0.007364` beside **+26.2%**. Recomputing from those two
+numbers gives **+25.82%**, so the document contradicted itself.
+
+Adjudicated by re-running the tool over the stored legs rather than by hand:
+
+    | 🔴 | evalFixedOverhead | 0.005818 ± 0.000037 | 0.007342 ± 0.000037 | +26.2% | ±5.4% |
+
+The tool prints the **arm means** (3 controls, 2 variants) and +26.2% follows from them exactly. The
+document had transcribed **leg one's** scores beside the mean-based percentage. `Bench.scala:736-739`
+documents fixing precisely this on the tool's side; I reintroduced it by hand in the writeup.
+
+**Classification: tool-right / document-wrong. Discharged** by correcting the table to the tool's own
+output. This one matters more than the others because that document is the basis of the C4 ruling.
+
+## 5. Defect 30's evidence status, stated honestly
+
+- **Mechanism: proven.** Two JVMs sharing one `-XX:LogFile` leave one `<hotspot_log>` header and one
+  pid, and the survivor carries only the second JVM's content. HotSpot truncates on open.
+- **End-to-end on a multi-row leg: NOT yet confirmed.** All five compilation logs in `bench-results/`
+  contain exactly one row (`continuationBodiesFuse`), and all were single-row invocations, so none can
+  distinguish per-fork truncation from having only ever had one row.
+- **Open task, not a limitation:** one two-row `--evidence full` invocation settles it. Deferred only
+  because a measurement must not share the machine with a running agent.
+
+## 6. The ladder line fires on evidence it knows is absent
+
+Re-running the C4 comparison reproduced v3's headline defect in a **sharper** form than v3 states. On a
+**Timing** leg, whose `jit` is empty by construction, the report still prints:
+
+    ⚠️  Moved with nothing in the evidence behind it, so the cause is not known yet:
+      - evalFixedOverhead: check allocation sites and the inlining log before proposing a mechanism
+
+It is not merely withholding evidence it holds. It is directing the operator to an inlining log **this
+run provably does not contain**. Filed as defect 43; item 2's acceptance must cover the Timing case.
+
 ## The pattern
 
-Four numbers I have published in this campaign have been wrong: a one-arm forecast called
-"systematically optimistic" when it errs both ways, "the two largest deltas are flat" when it was
-three, "three of eight selectors wired" when it is one, and now "70%" when it is 84%. Every one was
-wrong in the direction that flattered either the tool or the kernel, and every one was caught by going
-back to the raw data rather than by re-reading the writeup.
+Five numbers I have published in this campaign have been wrong: a one-arm forecast called
+"systematically optimistic" when it errs both ways; "the two largest deltas are flat" when it was
+three; "three of eight selectors wired" when it is one; "70%" when it is 84%; and the C4 table's
+scores, which were leg one's beside a mean-based percentage.
+
+Four of the five flattered either the tool or the kernel. **The fifth points the other way, and that is
+the useful one: it made the tool look wrong when the tool was right.** Every one was caught by going
+back to the raw data or re-running the tool, and none by re-reading the writeup.
