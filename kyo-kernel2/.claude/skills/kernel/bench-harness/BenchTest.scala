@@ -166,6 +166,12 @@ object BenchTest:
         check("so no flat row is unbounded", repFlat.deltas.forall(!_.flatButUnbounded))
         val out = Report.render(repFlat)
         check("the report states the resolution", out.contains("flat to within its own resolution"), out.linesIterator.find(_.contains("resolution")).getOrElse(""))
+        // the fork-count note is keyed on whether a threshold was earned, not on -f N. Five legs at
+        // -f 1 are five independent JVMs, so a replicated session must not disclaim itself: this once
+        // printed "-f 1 is diagnostic and not a claim" in the header while the footer reported df 3.
+        check("a replicated session does not disclaim the threshold it earned",
+            !out.contains("diagnostic and not a claim"),
+            out.linesIterator.find(_.contains("JMH -f")).getOrElse(""))
         // a single-pair comparison cannot bound anything, and must say so rather than implying it did
         // a single pair now states the floor it used, which is a real bound, but it must not read as
         // the equal of a replicated threshold

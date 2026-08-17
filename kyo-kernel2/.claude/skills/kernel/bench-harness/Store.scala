@@ -226,7 +226,13 @@ object Report:
         val evidence =
             if control.evidence == Evidence.Full && variant.evidence == Evidence.Full then "full ladder"
             else "timing only, so no movement here is attributed"
-        val forksNote = if variant.forks < 3 then s", -f ${variant.forks} is diagnostic and not a claim" else ""
+        // keyed on whether any row earned a real threshold, not on the fork count. Five legs at -f 1
+        // are five independent JVMs, so the claim rests on replication; keying this on forks made
+        // every replicated bracket disclaim itself in the header while reporting df 3 in the footer.
+        // `exists` and not `forall`: one unresolved row must not suppress the note for a session that
+        // earned a threshold elsewhere.
+        val earnedThreshold = c.deltas.exists(_.resolution.exists(_.df > 0))
+        val forksNote       = if earnedThreshold then "" else ", no threshold was estimated, so this is diagnostic and not a claim"
         val drift     = Bench.band(control, variant)
         val bandNote =
             if control.session.driftPercent > 0 then f"drift $drift%.1f%% measured this session"
