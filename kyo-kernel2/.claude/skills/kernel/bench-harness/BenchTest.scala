@@ -228,6 +228,8 @@ object BenchTest:
             f"between ${fc2.find(_.row == "noisy").map(_.resolvable).getOrElse(0.0)}%.4f vs within ${fc.find(_.row == "noisy").map(_.resolvable).getOrElse(0.0)}%.4f")
 
         println("bracket ordering")
+        // the same call `bracket` makes, so this pins the ordering that actually runs. It used to
+        // pin a copy: the runner built its own plan inline and nothing covered it.
         val plan = Bench.bracketPlan("aaa", "bbb")
         check("five legs", plan.size == 5, s"${plan.size}")
         check("three controls and two variants", plan.count(_._2 == "aaa") == 3 && plan.count(_._2 == "bbb") == 2, plan.map(_._1).mkString(","))

@@ -342,13 +342,6 @@ object Model:
       * sampled profile is either noise or an unexplained mechanism. Saying which is not the tool's job, but refusing to let the reader
       * assume one was found is.
       */
-    /** Whether a row's remaining time is mostly the kernel's or mostly the benchmark's own overhead.
-      *
-      * On the suspension rows roughly 60% of samples are the benchmark boxing its own `Int`s, so a percentage on those rows is a percentage
-      * of something the kernel cannot change, and reading it as kernel work overstates the effect.
-      */
-    case class NoiseShare(row: String, fraction: Double) derives Schema
-
     case class Delta(
         row: String,
         control: Row,

@@ -17,12 +17,10 @@ being caught.
 
 ## OPEN, in the order it should be picked up
 
-1. **Phase 7 remainder**: dead code (`MinCpuSamples`, `NoiseShare`, stranded doc comments, README
-   drift), and delete `bench-harness-qa.md`.
-2. **The remaining candidates.** IN-2's premise is confirmed and its targets ranked, so it is the next
+1. **The remaining candidates.** IN-2's premise is confirmed and its targets ranked, so it is the next
    one worth an edit. C3, DIS-3, C4, DIS-4 are untouched. IN-3 and C1 are owner-gated, and C1 no
    longer needs its gate because it is refuted.
-3. **The sweep was never replicated**: one leg per configuration.
+2. **The sweep was never replicated**: one leg per configuration.
 
 Everything else below is finished work, kept for its reasoning.
 
@@ -208,6 +206,22 @@ And the finding that belongs to no candidate: the method ranked **first**, above
 is `ProtoKernelBench::run$56` at 379 B refused 10/10. It is the benchmark's own closure, the same
 family the FreqInlineSize flag moved for a 17.4% score change that had nothing to do with the kernel.
 Two independent readings now say a material share of these rows is the benchmark's own generated code.
+
+## Phase 7 is done, and the dead code was hiding a real one
+
+`MinCpuSamples` was declared and never read. `NoiseShare` was a case class nothing ever constructed.
+`bench-harness-qa.md` was already gone.
+
+The third item was not dead code but a **duplicate**: `bracketPlan` builds the C V C V C ordering and
+`bracket` built the same ordering again inline, so the test pinning the ordering covered a function
+the runner did not call, and the ordering that actually ran was pinned by nothing. `bracketPlan` is
+now generic in what a leg measures and both call it.
+
+The README drift was real too: it described the throwaway-worktree guard as comparing git dirs, which
+is what the code did before it was changed to require a detached HEAD, and the reason for that change
+(a git-dir comparison catches only the *primary* worktree, while the tree that must not be scribbled
+on is whichever one work happens in) had not reached the document. Corrected, along with the four
+commands the README never listed and the four newer refusals.
 
 ## Phase 6 Tier B is done: a pair is now told what it cannot say
 

@@ -19,9 +19,6 @@ object Bench:
     /** Fallback when a session did not measure its own spread. Sessions should always measure it. */
     val DriftBand = 4.0
 
-    /** A CPU site attributed fewer samples than this cannot support a percentage. */
-    val MinCpuSamples = 30
-
     /** Classes the benchmark spends time in that no kernel change can move. */
     val KnownNoise = Seq("BoxesRunTime", "java.lang.Integer", "jmh_generated")
 
@@ -616,11 +613,18 @@ object Bench:
       */
     case class Arm(sha: String, jvmArgs: Seq[String] = Nil)
 
-    def bracketPlan(controlSha: String, variantSha: String, legs: Int = 5): Chunk[(String, String)] =
+    /** The C V C V C ordering, alternating so machine drift lands in both arms rather than one.
+      *
+      * Generic in what a leg measures because `bracket` compares two `Arm`s and the test that pins
+      * this ordering compares two shas. It was written twice for that reason, once here and once
+      * inline in `bracket`, so the test covered a function the runner did not call and the ordering
+      * that actually ran was pinned by nothing.
+      */
+    def bracketPlan[A](control: A, variant: A, legs: Int = 5): Chunk[(String, A)] =
         Chunk.from(
             (0 until Math.max(2, legs)).map { i =>
-                if i % 2 == 0 then (s"control-${i / 2 + 1}", controlSha)
-                else (s"variant-${i / 2 + 1}", variantSha)
+                if i % 2 == 0 then (s"control-${i / 2 + 1}", control)
+                else (s"variant-${i / 2 + 1}", variant)
             }
         )
 
@@ -641,11 +645,7 @@ object Bench:
         evidence: Evidence,
         legs: Int = 5
     )(using Frame): (Chunk[Run], Chunk[Run]) < (Async & Fail) =
-        val plan =
-            Chunk.from((0 until Math.max(2, legs)).map { i =>
-                if i % 2 == 0 then (s"control-${i / 2 + 1}", control) else (s"variant-${i / 2 + 1}", variant)
-            })
-        Kyo.foreach(plan) { (label, arm) =>
+        Kyo.foreach(bracketPlan(control, variant, legs)) { (label, arm) =>
             runLeg(session, worktree, label, arm.sha, paths, markerSpecs, rows, forks, evidence, arm.jvmArgs)
         }.map { ls =>
             (Chunk.from(ls.filter(_.label.startsWith("control"))), Chunk.from(ls.filter(_.label.startsWith("variant"))))
