@@ -176,6 +176,28 @@ It forced one tool fix: the first attribution named `Nested$.apply`, a type's ow
 where every instance of it is allocated and decides nothing. The report now names the first frame
 outside the allocated type's own code as well. **266 checks green.**
 
+## Three more candidates read from evidence already on disk
+
+No run spent. See `bench-results/premises/RESULT.md`.
+
+- **IN-1's stated field is dead.** `Arrow$Identity$::apply` is 92 B and *inlined at all 25 sites*, so
+  there is no refusal for a fast/slow split to flip and the candidate's own falsifier is satisfied
+  before the edit is written. Not a refutation of the candidate, a refutation of the field it chose:
+  the effect worth looking for is whether freeing 86 B in 25 callers lets something else in.
+- **IN-3's headline number is not checkable against this instrument.** It claims one
+  `AtomicReferenceArray.get` force-inlines 434 B; the log reports that callee at 12 B. Both can be
+  true, since 434 is the transitive VarHandle expansion the log does not show. Its second field,
+  `javap` of the hot unit, is the right one. Also owner-gated.
+- **IN-2's premise holds and its targets are ranked.** `Stack::truncate` is 52 B against the 35 B cold
+  budget refused at 2/4 sites, `Stack::grow` 55 B refused at 4/4. One correction: the candidate names
+  `Eval.dump`, which is not in the ranking at all, and omits `Stack::grow`, which is the worse of the
+  two by ratio.
+
+And the finding that belongs to no candidate: the method ranked **first**, above every kernel method,
+is `ProtoKernelBench::run$56` at 379 B refused 10/10. It is the benchmark's own closure, the same
+family the FreqInlineSize flag moved for a 17.4% score change that had nothing to do with the kernel.
+Two independent readings now say a material share of these rows is the benchmark's own generated code.
+
 ## Now
 
 **Validating the tool against the manual work.** Procedure: three-way comparison of raw data, tool
