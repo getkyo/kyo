@@ -37,8 +37,11 @@ being caught.
      benchmark's own `ask`, 49.1% of the row. Not refuted, because its claim is about preemption
      design rather than about this site, but the conversation now has a first question: by what
      mechanism does moving the park trigger stop `ask` minting that node?
-   - **DIS-4 probe outstanding**: whether a kind field costs a word per node, settleable on one node
-     type as a spike before anything touches the drive.
+   - **DIS-4 probed, as layout arithmetic**: `Suspend` declares 0 fields, `SuspendWith`, `Bind` and
+     `Chain` declare 2. Under a 12-byte header with 8-byte alignment those occupy 16 and 24 bytes, so
+     an added 4-byte kind field lands in existing padding and is **free** on all four, the opposite of
+     the candidate's stated risk. This does not kill it; the expensive half, the drive rewrite, is
+     what the gate is really about.
 3. **The sweep was never replicated**: one leg per configuration.
 
 Everything else below is finished work, kept for its reasoning.

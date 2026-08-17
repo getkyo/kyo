@@ -134,9 +134,31 @@ the cheap half of this candidate is decisively answerable before the expensive h
 **Decision needed:** approve adding a field to every `Arrow`, or approve the cheap probe alone.
 
 **Default if you say nothing:** *probe only*. Adding a field to every node type is the largest change
-in the ten and is API-adjacent, so it does not happen on a default. But the allocation question can be
-settled on a single node type as a spike, and if a word per node shows up there the candidate is dead
-before anyone touches the drive.
+in the ten and is API-adjacent, so it does not happen on a default.
+
+**The probe is done as layout arithmetic**, which is how the plan itself retired the analogous
+`Frame`-field candidate, and it is labelled arithmetic rather than measurement. Declared instance
+fields, read from the compiled classes:
+
+    Arrow$Suspend       0 fields
+    Arrow$SuspendWith   2 fields
+    Arrow$Bind          2 fields
+    Arrow$Chain         2 fields
+
+Under the default 12-byte header with 8-byte alignment, a 2-reference instance occupies 12 + 8 = 20,
+padded to **24 bytes**, and adding a 4-byte `int` lands in the existing padding, so it is **free** for
+`SuspendWith`, `Bind` and `Chain`. `Arrow$Suspend` has no declared fields, so it occupies 12 padded to
+**16 bytes**, and an added `int` fits the padding there too. On these four node types a kind field
+therefore costs **nothing**, which is the opposite of the candidate's own stated risk that "a kind
+field may cost a word".
+
+Two honest limits. This is four node types and DIS-4 touches every one, so a node already sitting at a
+multiple of 8 would pay the full 8 bytes; the four that matter most do not. And this is arithmetic, so
+the confirming measurement is still `gc.alloc.rate.norm`, which the harness now resolves to about
+128 bytes on a 2.5 MB row and would show a per-node word immediately.
+
+**Consequence for the ruling:** the cheap half of DIS-4 is answered and it does *not* kill the
+candidate. What remains is the expensive half, the drive rewrite, and the gate on it is unchanged.
 
 ---
 
