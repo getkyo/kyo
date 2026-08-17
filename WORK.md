@@ -43,6 +43,13 @@ reading a benchmark before its efficacy gate.
 finished work or narrative, and it had drifted into claiming otherwise. It is kept for its reasoning
 and renamed accordingly.
 
+**A fourth held-out review is IN FLIGHT on v4**, briefed differently from the first three: not "find
+what is wrong" but **"does this plan still serve the founding requirement, and has it overcorrected?"**
+The risk it is asked to test is that v4 has drifted into a defect-cleanup backlog that fixes many real
+bugs while leaving the operator no better informed at the moment a result lands, and that its hedging
+("state the partition, not the inference") produces a tool that declines to do its job. Scope
+completeness is the second question, not the first.
+
 **`IMPROVEMENT-PLAN.md` is now v4**, rewritten against the third held-out review
 (`reviews/REVIEW-PLAN-V3.md`). It is the first version whose every load-bearing number was re-derived
 by someone other than its author. v4 corrects **seven** v3 claims, three of which were mine.
@@ -80,7 +87,8 @@ defect ledger (entry 12) is `tool-defects.md`'s job and the re-derived figures (
 ## How the stream got here, in the order it happened
 
 1. **C4 is measured and needs a ruling.** The fix costs **+26.2% on `evalFixedOverhead`**
-   (0.005853 → 0.007364, about 1.5 ns per top-level `eval`), every other row flat, A/A null clean.
+   (**0.005818 → 0.007342**, the arm means, about 1.5 ns per top-level `eval`; this entry once carried
+   leg one's scores instead, see item 14), every other row flat, A/A null clean.
    That is the row that measures `Eval.apply`'s fixed overhead, so it is the row that should move.
    The trade is 1.5 ns per eval against a permanent per-thread budget leak on exceptions. A cheaper
    `catch`-based shape exists but is not equivalent and is a hypothesis, not a recommendation; the

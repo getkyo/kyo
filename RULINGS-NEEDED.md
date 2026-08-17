@@ -40,7 +40,8 @@ The delivery arms stay unguarded, deliberately: every normal path balances its `
 including a drained budget, and all eight catch sites in the drive rethrow, so an exception always
 reaches a boundary. There are two boundaries and only one was guarded. 128 proto tests green.
 
-**Cost, measured.** +26.2% on `evalFixedOverhead` (0.005853 → 0.007364, about 1.5 ns per top-level
+**Cost, measured.** +26.2% on `evalFixedOverhead` (**0.005818 → 0.007342**, the arm means over 3 control
+and 2 variant legs, about 1.5 ns per top-level
 `eval`), every other row flat, A/A null clean. That row measures nothing but call overhead, so it is
 the row that should move and the only one that did.
 
