@@ -1,8 +1,10 @@
-package kyo.kernel
+package kyo.kernel.internal
 
+import kyo.Arrow
 import kyo.Const
 import kyo.Render
 import kyo.Result
+import kyo.kernel.*
 import kyo.render
 import org.scalatest.freespec.AnyFreeSpec
 import scala.compiletime.testing.typeCheckErrors
@@ -93,19 +95,9 @@ class ImplicitsTest extends AnyFreeSpec:
         }
 
         "kyo modules do not lift" in {
-            // the conversion is simply not found for module singletons, so the
-            // rejection surfaces as a plain mismatch; the macro's guided message
-            // is unreachable from the conversion path today
-            typeCheckFailure("val bad: ArrowEffect.type < Any = ArrowEffect")("Required: kyo.kernel.ArrowEffect.type < Any")
-            typeCheckFailure("val bad: Loop.type < Any = Loop")("Required: kyo.kernel.Loop.type < Any")
+            typeCheckFailure("val bad: ArrowEffect.type < Any = ArrowEffect")("Required: kyo.kernel.proto.ArrowEffect.type < Any")
+            typeCheckFailure("val bad: Loop.type < Any = Loop")("Required: kyo.kernel.proto.Loop.type < Any")
         }
-
-        // the abortCastUnit trap (a Unit row mismatch aborts with the issue-903
-        // guidance) cannot be pinned here: the abort fires during inline
-        // expansion inside compiletime.testing, whose capture is
-        // zinc-state-dependent and flips between runs. The deterministic pin
-        // compiles the shape with a real dotc: kyo-compile-bench
-        // CompileBenchNegativeTest.
     }
 
     "lifted functions" - {

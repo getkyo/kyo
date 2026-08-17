@@ -18,12 +18,13 @@ class StackTest extends AnyFreeSpec:
 
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
-    def askRegion: Stack.Entry =
-        ArrowEffect.handleLoop(Tag[Ask], ask)([X] => _ => Loop.continue(1)) match
-            case kyo: Kyo[?, ?] => kyo
-            case v              => fail(s"expected a region node, got $v")
+    // stack entries are `Arrow` nodes now; the old kernel's `Stack.Entry` aliased its `Kyo` model
+    def askRegion: Arrow[?, ?, ?] =
+        ArrowEffect.handleLoop(Tag[Ask], ask)([X] => _ => Loop.continue(1), (i: Int) => i) match
+            case a: Arrow[?, ?, ?] => a
+            case v                 => fail(s"expected a region node, got $v")
 
-    def arrow: Stack.Entry = Arrow[Int]
+    def arrow: Arrow[?, ?, ?] = Arrow[Int]
 
     "starts empty" in {
         val stack = new Stack
@@ -124,7 +125,7 @@ class StackTest extends AnyFreeSpec:
         assert(stack.find(Tag[Ask].erased, 0) == 0)
     }
 
-    "copyFrom copies the segment above the index in order" in {
+    "copyEntries copies the segment above the index in order" in {
         val stack = new Stack
         val a     = arrow
         val b     = askRegion
@@ -132,8 +133,8 @@ class StackTest extends AnyFreeSpec:
         stack.push(a)
         stack.push(b)
         stack.push(c)
-        val seg = stack.copyFrom(1)
-        assert(seg.length == 2)
+        val seg = stack.copyEntries(1)
+        assert(seg.size == 2)
         assert(seg(0) eq b)
         assert(seg(1) eq c)
         assert(stack.size == 3)

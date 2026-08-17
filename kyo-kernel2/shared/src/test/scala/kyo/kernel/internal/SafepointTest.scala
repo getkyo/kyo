@@ -10,22 +10,22 @@ class SafepointTest extends AnyFreeSpec:
     "stop wraps the slot and stopped consumes it once" in {
         val slot = Safepoint.get()
         assert(!Safepoint.consumeStopped(slot))
-        assert(Safepoint.stop(Threads.current()))
+        assert(Safepoint.stop(Thread.currentThread()))
         assert(Safepoint.consumeStopped(slot))
         assert(!Safepoint.consumeStopped(slot))
     }
 
     "a second stop while one is pending is idempotent" in {
         val slot = Safepoint.get()
-        assert(Safepoint.stop(Threads.current()))
-        assert(Safepoint.stop(Threads.current()))
+        assert(Safepoint.stop(Thread.currentThread()))
+        assert(Safepoint.stop(Thread.currentThread()))
         assert(Safepoint.consumeStopped(slot))
         assert(!Safepoint.consumeStopped(slot))
     }
 
     "get resolves the owning slot while a stop is pending" in {
         val slot = Safepoint.get()
-        assert(Safepoint.stop(Threads.current()))
+        assert(Safepoint.stop(Thread.currentThread()))
         val slot2 = Safepoint.get()
         assert(Safepoint.consumeStopped(slot2))
     }
