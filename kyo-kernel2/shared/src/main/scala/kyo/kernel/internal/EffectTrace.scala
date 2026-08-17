@@ -1,9 +1,11 @@
 package kyo.kernel.internal
 
+import kyo.Arrow
 import kyo.Frame
 import kyo.Maybe
 import kyo.Tag
 import kyo.discard
+import kyo.kernel.Nested
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayDeque
 import scala.util.control.NonFatal

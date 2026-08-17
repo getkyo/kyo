@@ -1,7 +1,11 @@
 package kyo.kernel.internal
 
+import kyo.Arrow
 import kyo.Arrow.*
 import kyo.bug
+import kyo.kernel.<
+import kyo.kernel.Loop
+import kyo.kernel.Nested
 
 // TODO Eval should be private[kernel]. The external apis are <.eval/evalNow and ArrowEffect.*
 object Eval:

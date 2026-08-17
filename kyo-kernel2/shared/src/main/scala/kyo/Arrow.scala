@@ -3,6 +3,7 @@ package kyo
 import kyo.Frame
 import kyo.Span
 import kyo.Tag
+import kyo.kernel.ArrowEffect
 import kyo.kernel.Boxed
 import kyo.kernel.Loop.Outcome
 import kyo.kernel.Loop.Outcome2

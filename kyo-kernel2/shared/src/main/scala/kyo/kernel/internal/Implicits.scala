@@ -1,7 +1,9 @@
-package kyo.kernel
+package kyo.kernel.internal
 
+import kyo.Arrow
 import kyo.Render
-import kyo.kernel.internal.CanLift
+import kyo.kernel.<
+import kyo.kernel.Nested
 import scala.language.implicitConversions
 
 trait Implicits:

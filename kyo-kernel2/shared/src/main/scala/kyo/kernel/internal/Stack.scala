@@ -1,6 +1,7 @@
 package kyo.kernel.internal
 
 import java.util.Arrays
+import kyo.Arrow
 import kyo.Span
 import kyo.Tag
 import scala.annotation.static

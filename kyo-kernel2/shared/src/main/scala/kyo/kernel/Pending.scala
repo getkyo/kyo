@@ -3,6 +3,9 @@ package kyo.kernel
 import kyo.Arrow
 import kyo.Frame
 import kyo.Maybe
+import kyo.kernel.internal.Eval
+import kyo.kernel.internal.Implicits
+import kyo.kernel.internal.Safepoint
 import scala.annotation.nowarn
 import scala.annotation.static
 import scala.language.implicitConversions
