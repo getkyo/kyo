@@ -46,8 +46,9 @@ being caught.
    corrects the original: **the sweep's "five wins" is three.** `suspensionBaseline` -9.7%,
    `continuationBodiesFuse` -7.1% and `handleLoopFusesContinuation` -6.9% survive with a real
    threshold and all three got *larger*. `handleLoopAnswersInPlace` was bolded as a win on one leg and
-   does not survive. The two **largest** deltas on the board, -12.5% and -10.7%, are both flat, which
-   is exactly what a threshold is for and what a single leg cannot see.
+   does not survive. The **three** largest deltas on the board are all flat: +43.2%, -12.5% and
+   -10.7%. That is exactly what a threshold is for and what a single leg cannot see. (An earlier
+   version of this entry said "two", omitting the largest of the three.)
 
    `trailingMapsStayLinear` allocates **+239,977 B/op** against the original's **+239,976**: two
    independent measurements agreeing to one byte in 240,000. Its timing is still not established,
@@ -110,6 +111,26 @@ gone. Now `parked/c4-safepoint-root-guard`, per the skill's own rule that reject
 experiments become branches rather than floating commits. The same branch also rescues
 `9685c9b445`, DIS-1's tier-split variant 3, which was floating for the same reason. A sweep of every
 `measure-only` commit confirms all three are now on a ref.
+
+8. **The held-out review landed and it is severe. See `REVIEW-FINDINGS-PLAN.md`.** My plan's thesis
+   ("refuses well, volunteers poorly") is wrong: classified by shape, the dominant failure across 29
+   defects is **a confident statement that was wrong**, 7 cases, not silence, 3-4 cases. Four of my
+   five section-A items add a new derived claim, landing in exactly that category, with no new
+   cross-validation proposed for any of them.
+
+   Two findings I verified myself, both real: **`compare` and `chain` never run the A/A null** (only
+   call sites are `Cli.scala:210/215`, inside `BenchBracket`), so the strongest refusal is unreachable
+   from stored records; and **`KnownNoise` misses the benchmark's own frames**, so `noiseShare` prints
+   **29% where the truth is 70%**, understated by 41 points in the direction that flatters the kernel,
+   with a fixture that cannot catch it. A live instance of open defect 9.
+
+   The finding I would not have reached: **7 of 15 rows are floor-bound**, and
+   `handleLoopAnswersInPlace` at -10.7% has a ±14.4% threshold set *entirely* by the own-error floor
+   against a spread term of ±8.2%. Halve the legs' own error and **the row resolves as a win** - the
+   very row whose demotion made the sweep's five wins into three. Meanwhile `Plan.scala` tells the
+   operator unconditionally that forks do not help, on the strength of one A/A on one row.
+
+   Cut A2, A3-as-written, B2, C2. Rework A1, A4, A5. Order accepted as the reviewer gave it.
 
 **Everything else remaining is a ruling**, each with a recorded default: the four gated candidates in
 `RULINGS-NEEDED.md`, the C4 trade, and DIS-3's cast above.
@@ -517,7 +538,7 @@ reported ±22.6%, called +9.5% flat). Same conclusions, both rows.
 - **DIS-1 is closed: refuted in all three constructible forms.** See above. The remaining candidates
   in `optimization-plan.md` are untouched.
 - **The sweep was never replicated**: one leg per configuration.
-- **Twenty-three tool defects** in `tool-defects.md`: twenty-one fixed, one bounded, one open, one an observation.
+- **Twenty-nine tool defects** in `tool-defects.md`: twenty-five fixed, one bounded, one an observation, one superseded.
 
 ## The kernel result, for a reader arriving cold
 

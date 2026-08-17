@@ -26,7 +26,9 @@ Raw data is the arbiter. The tool-verdict column is `BenchCompare` over the stor
 
 ## What changed, and it is not what a bigger delta would suggest
 
-**The two largest deltas in the whole run do not resolve.** `emittingClausesPayRegionRebuild` at
+**The three largest deltas in the whole run do not resolve.** `trailingMapsStayLinear` at +43.2% is
+the largest of all and is also flat; an earlier version of this document said "two" and named only the
+next two, which understated the very fact it was making. `emittingClausesPayRegionRebuild` at
 -12.5% and `handleLoopAnswersInPlace` at -10.7% are the biggest movements on the board and both are
 flat, while `continuationBodiesFuse` at -7.1% is a win. That is the entire point of a threshold: those
 two rows have a between-leg spread that swallows their delta, and the single-leg sweep could not see
