@@ -54,6 +54,20 @@ case class BracketOpts(
     store: String = "bench-runs"
 )
 
+case class IngestOpts(
+    @HelpMessage("JMH json files to ingest, in order; label and sha are taken from --label/--sha positionally")
+    json: List[String],
+    @HelpMessage("labels, one per json")
+    label: List[String],
+    @HelpMessage("commit each json was measured at, one per json (or one for all)")
+    sha: List[String],
+    @HelpMessage("session id to file them under; they must share one to be comparable")
+    session: String = "ingested",
+    @HelpMessage("rows the benchmark class declares; a json with fewer is a subset run")
+    declaredRows: Int = 15,
+    store: String = "bench-runs"
+)
+
 case class ShowOpts(id: String, store: String = "bench-runs")
 case class ListOpts(store: String = "bench-runs")
 
@@ -142,6 +156,37 @@ object BenchBracket extends KyoCaseApp[BracketOpts]:
         yield ()
     }
 end BenchBracket
+
+/** Brings measurements taken outside the harness under it.
+  *
+  * Without this the tool can only speak about runs it produced itself, which is what drove an entire
+  * campaign's worth of verdicts into hand-written python.
+  */
+object BenchIngest extends KyoCaseApp[IngestOpts]:
+    run { (opts: IngestOpts) =>
+        val session = Session(opts.session, "ingested", "unknown", 0.0)
+        for
+            _ <- Abort.when(opts.json.size != opts.label.size)(
+                Bench.BracketFailed(s"${opts.json.size} json files but ${opts.label.size} labels; they must correspond")
+            )
+            runs <- Kyo.foreach(Chunk.from(opts.json.zip(opts.label).zipWithIndex)) { case ((j, l), i) =>
+                Ingest.file(
+                    Path(j), l,
+                    opts.sha.lift(i).orElse(opts.sha.headOption).getOrElse("unknown"),
+                    session, Path(opts.store), opts.declaredRows
+                )
+            }
+            _ <- Kyo.foreachDiscard(runs) { r =>
+                Console.printLine(f"ingested ${r.id}%-52s ${r.rows.size}%2d rows  ${if r.wholeClass then "whole class" else "SUBSET"}")
+            }
+            _ <- Console.printLine(
+                "\nThese are timing-only runs: no markers, no tree hash, no evidence ladder. The report will " +
+                    "refuse to attribute any movement in them to a mechanism, which is correct, because nothing " +
+                    "about how they were produced was under the harness's control."
+            )
+        yield ()
+    }
+end BenchIngest
 
 object BenchCompare extends KyoCaseApp[CompareOpts]:
     run { (opts: CompareOpts) =>
