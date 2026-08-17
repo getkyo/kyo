@@ -69,8 +69,13 @@ object Model:
             else
                 val rest     = iterations.tail
                 val restMean = rest.sum / rest.size
+                // measured against this row's OWN iterations, never against `score`. A delta from a
+                // replicated bracket carries the mean across legs in `score`, so comparing it to one
+                // leg's iterations measures the gap between legs and calls it a warmup ramp. That
+                // misfired on 26.5, 27.3, 27.2, 27.3, 27.2, a series whose own mean is stable.
+                val allMean = iterations.sum / iterations.size
                 if restMean <= 0.0 then Maybe.empty
-                else Maybe((score - restMean) / restMean)
+                else Maybe((allMean - restMean) / restMean)
 
         /** Whether the first iteration both stands out from the rest and moves the reported score.
           *

@@ -239,6 +239,13 @@ object BenchTest:
         check("the real ramp is caught", realRamp.head.unsettledStart, f"bias ${realRamp.head.startBias.getOrElse(0.0) * 100}%.2f%%")
         check("the fast row that merely jitters is not", !realFine.head.unsettledStart, f"bias ${realFine.head.startBias.getOrElse(0.0) * 100}%.2f%%")
         check("and both would trip a bare outlier test", true, "which is why the criterion is the bias, not the outlier")
+        // from a real bracket: a settled series whose row carries a replicated mean in `score`.
+        // Comparing that mean to one leg's iterations measured the gap between legs and reported a
+        // warmup ramp that was not there.
+        val replicated = rows(("a", 28.35, 1.05, 640.0)).map(_.copy(iterations = Chunk(26.5, 27.3, 27.2, 27.3, 27.2)))
+        check("a settled series is not a ramp even when score holds a replicate mean",
+            !replicated.head.unsettledStart,
+            f"bias ${replicated.head.startBias.getOrElse(0.0) * 100}%.2f%% on iterations ${replicated.head.iterations}")
 
         val blocked = Bench.compare(
             leg("c", base).copy(rows = rampRows),
