@@ -58,7 +58,7 @@ object Ingest:
                     rows = rows,
                     jit = Chunk.empty,
                     coverage = Chunk.empty,
-                    alloc = Chunk.empty,
+                    alloc = Chunk.empty, allocByMethod = Chunk.empty,
                     cpu = Chunk.empty,
                     deopts = Chunk.empty,
                     morphism = Chunk.empty,

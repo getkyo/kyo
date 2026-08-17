@@ -265,6 +265,26 @@ object Report:
                     "so this is a real change regardless of what the timing could or could not show:\n" +
                     allocMoved.map(d => f"  - ${d.row}%s ${d.allocDelta.getOrElse(0.0)}%+.0f B/op, timing ${d.percent}%+.1f%% (${d.verdict})").mkString("\n")
 
+        // which method minted the class whose bytes moved. The flat table can only say that `Nested`
+        // is half the allocation; this says half the allocation is `Nested`, minted at one site.
+        val allocSites =
+            val before = control.allocByMethod.map(m => (m.cls, m.method) -> m).toMap
+            val after  = variant.allocByMethod.map(m => (m.cls, m.method) -> m).toMap
+            val moved =
+                (before.keySet ++ after.keySet).toSeq.flatMap { k =>
+                    val b = before.get(k).map(_.samples).getOrElse(0L)
+                    val a = after.get(k).map(_.samples).getOrElse(0L)
+                    // a quarter of the larger side, so ordinary sampling jitter does not fill the list
+                    if Math.abs(a - b) * 4 > Math.max(a, b) then Seq((k, b, a)) else Nil
+                }.sortBy((_, b, a) => -Math.abs(a - b)).take(6)
+            if moved.isEmpty then ""
+            else
+                "\nAllocation moved at these sites, by sample count:\n" +
+                    moved.map((k, b, a) => s"  - ${k._1} at ${k._2}: $b -> $a").mkString("\n") +
+                    "\n  These are whole-leg figures, not per row, and the frame named is where the JIT *placed* the " +
+                    "allocation. An inlining change relocates it with nothing about the allocation changing, so this " +
+                    "is never independent of the inlining verdicts above."
+
         val reds        = c.deltas.filter(_.verdict == Verdict.Regressed)
         val wins        = c.deltas.filter(_.verdict == Verdict.Faster)
         val unexplained = c.deltas.filter(_.unexplained)
@@ -319,7 +339,7 @@ object Report:
                     "mixes warm and cold code is not a measurement of the code. Re-run with more warmup.\n" +
                     bs.map(b => s"  - $b").mkString("\n") + "\n" + "=" * 78 + "\n"
 
-        s"$blockerBanner$sessionWarning$header\n$body$rampNote$resolutionNote$jit$deoptShift$polymorphic$allocNote$verdictLine$ladder$steadyState$jitTable$bothWays$noiseNote"
+        s"$blockerBanner$sessionWarning$header\n$body$rampNote$resolutionNote$jit$deoptShift$polymorphic$allocSites$allocNote$verdictLine$ladder$steadyState$jitTable$bothWays$noiseNote"
     end render
 
 end Report

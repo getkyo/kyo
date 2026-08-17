@@ -37,7 +37,7 @@ object BenchKnownAnswerTest extends KyoApp:
             id = label, session = Session("known", "host", "25", 0.0), label = label, sha = "d85ee6821f",
             treeHash = "fixture", forks = 1, evidence = Evidence.Full, wholeClass = true, declaredRows = 15,
             markers = Chunk.empty, warmup = 10, jit_metrics = Maybe.empty, rows = rows, jit = Chunk.empty,
-            coverage = Chunk.empty, alloc = Chunk.empty, cpu = Chunk.empty, deopts = Chunk.empty,
+            coverage = Chunk.empty, alloc = Chunk.empty, allocByMethod = Chunk.empty, cpu = Chunk.empty, deopts = Chunk.empty,
             morphism = Chunk.empty, recordedAt = "fixture"
         )
 

@@ -168,8 +168,35 @@ object Model:
         def complete: Boolean = seen == parsed
         def show: String      = if complete then s"$what $parsed/$seen" else s"$what $parsed/$seen (INCOMPLETE)"
 
-    /** Bytes allocated by one class, as the allocation profiler attributed them. */
-    case class AllocSite(cls: String, bytes: Long) derives Schema
+    /** Bytes allocated by one class, as the allocation profiler attributed them.
+      *
+      * `samples` is carried alongside `bytes` because it is the only currency the two allocation
+      * views share: the flat table reports both, the collapsed view reports samples only, and a
+      * conservation check between them has to compare like with like.
+      */
+    case class AllocSite(cls: String, bytes: Long, samples: Long = 0L) derives Schema
+
+    /** Which method allocated a class, from the collapsed (FlameGraph folded) view.
+      *
+      * The flat table answers *what* was allocated and never *by whom*: four classes and four byte
+      * totals say nothing about which of the twenty call sites produced them. The collapsed view
+      * carries the whole stack per sample, so the allocating frame is recoverable, and that is the
+      * difference between "Nested is half the allocation" and "half the allocation is Nested, minted
+      * at this one site".
+      *
+      * Its value is a sample count, never bytes: the collapsed dump JMH issues carries no `total`
+      * option. `bytes` here is therefore apportioned from the flat table's byte figure for the same
+      * class, in proportion to samples, and is labelled an estimate everywhere it is shown.
+      *
+      * The confound that cannot be removed: with inlining, the frame the profiler names is where the
+      * JIT *placed* the allocation, not where the source wrote it. An inlining change relocates this
+      * attribution without anything about the allocation changing, so a per-method allocation
+      * mechanism is never independent of the inlining mechanism, and the report says so.
+      */
+    case class AllocByMethod(cls: String, method: String, samples: Long, bytes: Maybe[Double] = Maybe.empty) derives Schema:
+        def show: String =
+            val b = bytes.map(x => f", ~${x}%.0f B").getOrElse("")
+            s"$cls minted at $method ($samples samples$b)"
 
     /** A sampled method and the nanoseconds attributed to it. */
     case class CpuSite(method: String, nanos: Long) derives Schema
@@ -264,6 +291,8 @@ object Model:
         /** How much of each parsed artifact was actually consumed, so a silent partial parse is visible in the record. */
         coverage: Chunk[ParseCoverage],
         alloc: Chunk[AllocSite],
+        /** Who allocated each class, from the collapsed view of the same recording. */
+        allocByMethod: Chunk[AllocByMethod],
         cpu: Chunk[CpuSite],
         deopts: Chunk[Deopt],
         morphism: Chunk[CallMorphism],

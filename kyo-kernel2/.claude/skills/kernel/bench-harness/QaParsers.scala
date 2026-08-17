@@ -34,11 +34,29 @@ object QaParsers:
         // checked against the log by LogCompilationTest, with oracles rather than shape assertions.
 
         println("P1.3 async-profiler alloc")
-        val alloc = Bench.parseAlloc(read("qa-alloc.txt"))
+        val allocRaw = read("qa-alloc.txt")
+        val alloc    = Bench.parseAlloc(allocRaw)
+        // the oracle counts the table's data rows by a route the parser does not share: everything
+        // between the column header and the line naming the summary file
+        val tableRows =
+            allocRaw.linesIterator.dropWhile(!_.contains("percent  samples")).drop(2)
+                .takeWhile(!_.contains("Async profiler results")).count(_.trim.nonEmpty)
         ok &= check("sites parsed", alloc.nonEmpty, s"got ${alloc.size}")
+        ok &= check(s"every table row parsed, and no line outside the table", alloc.size == tableRows, s"parsed ${alloc.size}, table has $tableRows")
         ok &= check("class names look like classes", alloc.take(5).forall(_.cls.contains(".")), alloc.take(3).map(_.cls).mkString(","))
         ok &= check("bytes positive", alloc.forall(_.bytes > 0))
-        alloc.take(4).foreach(a => println(s"       ${a.cls} ${a.bytes}"))
+        ok &= check("samples captured, the currency the collapsed view shares", alloc.forall(_.samples > 0), alloc.map(_.samples).mkString(","))
+        alloc.take(4).foreach(a => println(s"       ${a.cls} ${a.bytes} bytes, ${a.samples} samples"))
+
+        // an array type is the case the old character-class spelling could not express: it stopped
+        // at the `[` and reported `java.lang.Object`, so an Object[] allocation and an Object
+        // allocation became one row. On the kernel rows the Object[] is the stack.
+        val arrays = Bench.parseAlloc(
+            "       bytes  percent  samples  top\n  ----------  -------  -------  ---\n" +
+                "  9510041893   50.01%    18139  java.lang.Object[]\n" +
+                "    16777184    0.09%       32  java.lang.Object\n"
+        )
+        ok &= check("an array type keeps its brackets", arrays.map(_.cls) == Chunk("java.lang.Object[]", "java.lang.Object"), arrays.map(_.cls).mkString(","))
 
         println("P1.4 async-profiler itimer")
         val cpu = Bench.parseCpu(read("qa-cpu.txt"))
@@ -49,9 +67,49 @@ object QaParsers:
             id = "x", session = Session("s", "h", "j", 1.0), label = "l", sha = "t", treeHash = "h", forks = 1,
             evidence = Evidence.Full, wholeClass = true, declaredRows = 15, markers = Chunk.empty, warmup = 10,
             jit_metrics = Maybe.empty, rows = Chunk.empty, jit = Chunk.empty, coverage = Chunk.empty,
-            alloc = Chunk.empty, cpu = cpu, deopts = Chunk.empty, morphism = Chunk.empty, recordedAt = "now"
+            alloc = Chunk.empty, allocByMethod = Chunk.empty, cpu = cpu, deopts = Chunk.empty, morphism = Chunk.empty, recordedAt = "now"
         )
         println(f"       noise share would be ${Bench.noiseShare(probe)}%.0f%%")
+
+        println("P1.5 allocation attributed to the method that allocated it")
+        // acceptance is a planted program, not conservation: `Planted.plantedAllocator` is the only
+        // significant allocator in it and is named here before the parser runs. Conservation holds
+        // equally for a correct attribution and for one assigning every sample to an arbitrary frame,
+        // so it is a coverage guard and never the acceptance.
+        val plantedFlat      = Bench.parseAlloc(read("qa-planted-flat.txt"))
+        val plantedCollapsed = Bench.parseCollapsed(read("qa-planted-collapsed.txt"))
+        ok &= check("collapsed lines parsed", plantedCollapsed.nonEmpty, s"got ${plantedCollapsed.size}")
+        val top = plantedCollapsed.head
+        ok &= check("the top allocator is the planted one", top.method == "Planted.plantedAllocator", top.show)
+        ok &= check("and the class it minted is the planted one", top.cls == "byte[]", top.show)
+        // the collapsed format is root-first, so an index from the front names `Planted.main` on
+        // every line and attributes the whole program to its entry point
+        ok &= check(
+            "no entry is attributed to the root frame",
+            plantedCollapsed.forall(_.method != "Planted.main"),
+            plantedCollapsed.map(_.method).mkString(",")
+        )
+        ok &= check(
+            "a class allocated from two places is split, which the flat table cannot show",
+            plantedCollapsed.count(_.cls == "byte[]") == 2,
+            plantedCollapsed.filter(_.cls == "byte[]").map(_.show).mkString(" | ")
+        )
+        val apportioned = Bench.apportion(plantedFlat, plantedCollapsed)
+        ok &= check(
+            "bytes are apportioned from the flat table for classes it lists",
+            apportioned.find(_.method == "Planted.plantedAllocator").exists(_.bytes.exists(_ > 1e11)),
+            apportioned.take(2).map(_.show).mkString(" | ")
+        )
+        plantedCollapsed.foreach(m => println(s"       ${m.show}"))
+        // these two captures are separate recordings of the same program, which is exactly the case
+        // the conservation gate must refuse: it is bounded by run-to-run variance, not by the parser
+        val crossRecording = Bench.allocConservation(plantedFlat, plantedCollapsed)
+        ok &= check("conservation refuses two different recordings", crossRecording.nonEmpty, crossRecording.mkString)
+        val sameRecording = Bench.allocConservation(
+            Chunk(AllocSite("byte[]", 163586456879L, 312719L)),
+            plantedCollapsed.filter(_.cls == "byte[]")
+        )
+        ok &= check("and passes when the samples do come from one", sameRecording.isEmpty, sameRecording.mkString)
 
         println(if ok then "\nPHASE 1 PASS" else "\nPHASE 1 FAIL")
         if !ok then sys.exit(1)

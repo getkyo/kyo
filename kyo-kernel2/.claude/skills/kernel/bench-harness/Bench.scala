@@ -59,7 +59,7 @@ object Bench:
 
     case class BracketFailed(reason: String) extends Exception(reason) with NoStackTrace
 
-    type Fail = Abort[BracketFailed | CommandException | FileReadException]
+    type Fail = Abort[BracketFailed | CommandException | FileReadException | FileFsException]
 
     /** Lines a JVM prints when it rejected a compile command and ran anyway.
       *
@@ -194,13 +194,89 @@ object Bench:
 
     // --- evidence parsers -------------------------------------------------------
 
-    private val ProfLine = """\s*(\d+)\s+[\d.]+%\s+\d+\s+([\w.$/<>]+)""".r
+    // the name column runs to end of line. It was previously spelled as a character class, which
+    // silently truncated every array type the profiler prints: `java.lang.Object[]` arrived as
+    // `java.lang.Object`, so an array allocation and an allocation of its element type became the
+    // same row. On the kernel rows the interesting allocation is the stack's Object[].
+    private val ProfLine = """(?m)^.*?(\d+)\s+[\d.]+%\s+(\d+)\s+(\S.*?)\s*$""".r
 
     def parseAlloc(raw: String): Chunk[AllocSite] =
-        Chunk.from(ProfLine.findAllMatchIn(raw).map(m => AllocSite(m.group(2), m.group(1).toLong)).toSeq)
+        Chunk.from(ProfLine.findAllMatchIn(raw).map(m => AllocSite(m.group(3), m.group(1).toLong, m.group(2).toLong)).toSeq)
 
     def parseCpu(raw: String): Chunk[CpuSite] =
-        Chunk.from(ProfLine.findAllMatchIn(raw).map(m => CpuSite(m.group(2), m.group(1).toLong)).toSeq)
+        Chunk.from(ProfLine.findAllMatchIn(raw).map(m => CpuSite(m.group(3), m.group(1).toLong)).toSeq)
+
+    /** The collapsed (FlameGraph folded) allocation view: `frame;frame;...;Class_[i] value`.
+      *
+      * Three things about this format decide whether a parse of it means anything, and all three were
+      * got wrong in the first design of this phase:
+      *
+      *   - **It is root-first.** `frames.head` is `java.lang.Thread.run` on every line. The allocated
+      *     class is the *last* frame and the method that allocated it is the one before that, so both
+      *     are indexed from the leaf end.
+      *   - **The value is a sample count**, because the dump JMH issues carries no `total` option.
+      *     Comparing it against the flat table's bytes is comparing two different quantities, and a
+      *     conservation gate written that way can never pass.
+      *   - **The leaf carries a TLAB marker**, `_[i]` inside and `_[k]` outside, which is part of the
+      *     sample and not part of the class name.
+      */
+    def parseCollapsed(raw: String): Chunk[AllocByMethod] =
+        val entries =
+            raw.linesIterator.flatMap { line =>
+                val cut = line.lastIndexOf(' ')
+                if cut <= 0 then None
+                else
+                    val (stack, value) = (line.substring(0, cut), line.substring(cut + 1).trim)
+                    value.toLongOption.flatMap { n =>
+                        val frames = stack.split(';').filter(_.nonEmpty)
+                        if frames.length < 2 then None
+                        else
+                            val cls = frames.last.replaceAll("_\\[[a-z]\\]$", "").replace('/', '.')
+                            Some(((cls, frames(frames.length - 2).replace('/', '.')), n))
+                    }
+            }.toSeq
+        Chunk.from(
+            entries.groupMapReduce(_._1)(_._2)(_ + _).toSeq
+                .map((k, n) => AllocByMethod(k._1, k._2, n))
+                .sortBy(-_.samples)
+        )
+    end parseCollapsed
+
+    /** Turns the collapsed sample counts into byte estimates using the flat table's bytes per class.
+      *
+      * Only ever an apportionment: the profiler weights each sample by the bytes it stands for, and
+      * that weighting is not recoverable per frame from a sample count. Within one class the sizes
+      * are near-constant, which is what makes the split usable, and it is labelled an estimate.
+      */
+    def apportion(flat: Chunk[AllocSite], byMethod: Chunk[AllocByMethod]): Chunk[AllocByMethod] =
+        val perClass = flat.map(a => a.cls -> a).toMap
+        val totals   = byMethod.groupMapReduce(_.cls)(_.samples)(_ + _)
+        byMethod.map { m =>
+            val estimate =
+                for
+                    site  <- Maybe.fromOption(perClass.get(m.cls))
+                    total <- Maybe.fromOption(totals.get(m.cls)).filter(_ > 0)
+                yield site.bytes.toDouble * m.samples / total
+            m.copy(bytes = estimate)
+        }
+    end apportion
+
+    /** Whether the two views describe the same samples, per class.
+      *
+      * A coverage guard and nothing more: it holds equally for a correct attribution and for one that
+      * assigns every sample of a class to a single arbitrary frame. What it does catch is the parse
+      * losing lines, which is the failure this file has had four times. Both views must come from one
+      * recording, or the comparison is bounded by run-to-run variance instead of by parser
+      * correctness: two recordings of the same planted program differed by 0.25% on the same class.
+      */
+    def allocConservation(flat: Chunk[AllocSite], byMethod: Chunk[AllocByMethod]): Chunk[String] =
+        val totals = byMethod.groupMapReduce(_.cls)(_.samples)(_ + _)
+        flat.filter(_.samples > 0).flatMap { site =>
+            val got = totals.getOrElse(site.cls, 0L)
+            if got == site.samples then Chunk.empty
+            else Chunk(s"${site.cls}: flat table has ${site.samples} samples, the collapsed view accounts for $got")
+        }
+    end allocConservation
 
     // --- one leg ----------------------------------------------------------------
 
@@ -276,11 +352,30 @@ object Bench:
                     else Abort.fail(BracketFailed(s"leg $label produced ${parsed.size}/$want rows after $attempts attempts"))
                 }
 
-        def profile(event: String) =
+        // both views of the allocation profile come out of one recording, which is the only way the
+        // conservation check between them measures the parse rather than run-to-run variance: JMH
+        // stops the profiler once and dumps it twice. `text` is printed inline and carries the bytes;
+        // `collapsed` is written to a file and carries the stacks.
+        val allocDir = worktree / s"alloc-$label"
+
+        def profile(event: String, extra: String = "") =
             sbt(
                 s"""kyo-kernel2JVM/Jmh/run -f 1 -wi $WarmupIterations -i 1 -r ${IterationSeconds}s -w ${IterationSeconds}s """ +
-                    s"""-prof "async:libPath=$AsyncProf;event=$event" $selector"""
+                    s"""-prof "async:libPath=$AsyncProf;event=$event$extra" $selector"""
             )
+
+        /** The collapsed dumps JMH leaves on disk, wherever under `dir` it decided to put them. */
+        def collapsedFiles(using Frame): Chunk[Path] < (Sync & Abort[FileFsException]) =
+            allocDir.exists.map {
+                case false => Chunk.empty[Path]: Chunk[Path] < Any
+                case true =>
+                    allocDir.list.map { entries =>
+                        Kyo.foreach(entries) { e =>
+                            e.list.map(_.filter(_.name.exists(n => n.startsWith("collapsed") && n.endsWith(".csv"))))
+                                .handle(Abort.recover[FileFsException](_ => Chunk.empty[Path]))
+                        }.map(_.flatten)
+                    }
+            }
 
         val logcFile = worktree / s"logc-$label.xml"
 
@@ -306,8 +401,23 @@ object Bench:
             before     <- readMarkers(worktree, markerSpecs)
             hashBefore <- treeHash(worktree, paths)
             measured   <- measureWith(WarmupIterations, 1, declared)
-            allocSites <- if evidence == Evidence.Full then profile("alloc").map(parseAlloc) else Chunk.empty[AllocSite]: Chunk[AllocSite] < Any
-            cpuSites   <- if evidence == Evidence.Full then profile("itimer").map(parseCpu) else Chunk.empty[CpuSite]: Chunk[CpuSite] < Any
+            allocOut <- if evidence == Evidence.Full then profile("alloc", s";output=text,collapsed;dir=${allocDir.toString}")
+            else "": String < Any
+            allocSites = parseAlloc(allocOut)
+            collapsed <- collapsedFiles.map(fs => Kyo.foreach(fs)(_.read)).map(_.mkString("\n"))
+            byMethod   = apportion(allocSites, parseCollapsed(collapsed))
+            // the collapsed dump is requested by an option string that has to survive shell, sbt and
+            // JMH quoting. When it does not, JMH runs the profiler anyway and prints a normal-looking
+            // table, so the leg would report allocation with no attribution and nothing would say the
+            // instruction had been dropped. A rejected compile command taught this exact lesson twice.
+            _ <- Abort.when(evidence == Evidence.Full && allocSites.nonEmpty && byMethod.isEmpty)(
+                BracketFailed(
+                    s"leg $label profiled ${allocSites.size} allocated classes but produced no collapsed view, " +
+                        s"so nothing can be attributed to a method. Expected a collapsed-*.csv under $allocDir; " +
+                        "check that output=text,collapsed reached JMH."
+                )
+            )
+            cpuSites  <- if evidence == Evidence.Full then profile("itimer").map(parseCpu) else Chunk.empty[CpuSite]: Chunk[CpuSite] < Any
             logc       <- if evidence == Evidence.Full then compilationLog else LogCompilation.Parsed(Chunk.empty, Chunk.empty, 0, Chunk.empty): LogCompilation.Parsed < Any
             after      <- readMarkers(worktree, markerSpecs)
             _          <- Abort.when(before != after)(BracketFailed(s"leg $label markers moved mid-run: $before -> $after"))
@@ -331,6 +441,7 @@ object Bench:
             jit = LogCompilation.inlining(logc),
             coverage = logc.coverage,
             alloc = allocSites,
+            allocByMethod = byMethod,
             cpu = cpuSites,
             jit_metrics =
                 if evidence == Evidence.Full then

@@ -237,13 +237,25 @@ object LogCompilationTest extends KyoApp:
             cpuSites = Bench.parseCpu(cpuRaw)
             _ = check("cpu sites parse", cpuSites.nonEmpty && cpuSites.forall(_.nanos > 0), s"${cpuSites.size} sites")
             // native frames (semaphore_wait_trap, __psynch_cvwait) carry no package and are real
-            // entries, so requiring a dot would fail on correct output. What must hold is that no
-            // name is empty or carries whitespace, which is what a regex sliding across columns
-            // produces.
+            // entries, so requiring a dot would fail on correct output. "No whitespace in a name"
+            // was the previous spelling and it was wrong about real output too: a JVM-internal frame
+            // is a C++ signature, `void G1ScanEvacuatedObjClosure::do_oop_work<narrowOop>`, and the
+            // space in it belongs to the name. Four such frames were being truncated at `::` by the
+            // character class this replaced, one of them reported as a method called `void`.
             _ = check(
                 "and no site name is a stray fragment",
-                cpuSites.forall(c => c.method.nonEmpty && !c.method.exists(_.isWhitespace)),
-                cpuSites.filter(c => c.method.isEmpty || c.method.exists(_.isWhitespace)).take(3).map(_.method).mkString(",")
+                cpuSites.forall(c => c.method.nonEmpty && !c.method.contains('%') && !c.method.trim.headOption.exists(_.isDigit)),
+                cpuSites.filter(c => c.method.isEmpty || c.method.contains('%')).take(3).map(c => s"'${c.method}'").mkString(",")
+            )
+            // the oracle for "the regex did not slide across columns" is the row count, derived from
+            // the file by a route the parser does not share
+            cpuTableRows = cpuRaw.linesIterator.dropWhile(!_.contains("percent  samples")).drop(2)
+                .takeWhile(!_.contains("Async profiler results")).count(_.trim.nonEmpty)
+            _ = check("every table row parsed, and nothing outside it", cpuSites.size == cpuTableRows, s"parsed ${cpuSites.size}, table has $cpuTableRows")
+            _ = check(
+                "a C++ frame keeps its qualified name",
+                cpuSites.exists(_.method.contains("G1ParScanThreadState::do_copy_to_survivor_space")),
+                cpuSites.map(_.method).filter(_.contains("G1Par")).mkString(",")
             )
 
             _ = println("\nthe efficacy gate, against two real configurations")

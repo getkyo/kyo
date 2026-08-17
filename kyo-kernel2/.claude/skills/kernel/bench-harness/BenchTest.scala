@@ -35,7 +35,7 @@ object BenchTest:
             id = s"$label-x", session = sess, treeHash = "abc", label = label, sha = "0123456789abcdef", forks = forks, evidence = evidence,
             wholeClass = whole, declaredRows = 15, markers = Chunk(Marker("SuspendWith", 4)),
             warmup = 10, jit_metrics = Maybe.empty,
-            rows = rows(entries*), jit = jit, coverage = Chunk.empty, alloc = Chunk.empty, cpu = cpu,
+            rows = rows(entries*), jit = jit, coverage = Chunk.empty, alloc = Chunk.empty, allocByMethod = Chunk.empty, cpu = cpu,
             deopts = Chunk.empty, morphism = Chunk.empty, recordedAt = "now"
         )
 
@@ -128,7 +128,7 @@ object BenchTest:
         val hot = Run(
             id = "h", session = session, label = "h", sha = "s", treeHash = "t", forks = 3, evidence = Evidence.Full,
             wholeClass = true, declaredRows = 15, markers = Chunk.empty, warmup = 10, jit_metrics = Maybe.empty,
-            rows = rowsCompiling("a", 900.0), jit = Chunk.empty, coverage = Chunk.empty, alloc = Chunk.empty,
+            rows = rowsCompiling("a", 900.0), jit = Chunk.empty, coverage = Chunk.empty, alloc = Chunk.empty, allocByMethod = Chunk.empty,
             cpu = Chunk.empty, deopts = Chunk.empty, morphism = Chunk.empty, recordedAt = "now"
         )
         check("a window with heavy compilation is flagged", Bench.stillCompiling(hot).nonEmpty, s"${Bench.stillCompiling(hot)}")
@@ -323,6 +323,25 @@ object BenchTest:
 
         println("win and loss")
         check("a change that both wins and loses demands two diagnoses", Report.render(cmp).contains("two diagnoses"))
+
+        println("allocation attributed to a site")
+        locally {
+            def withSites(label: String, sites: Chunk[AllocByMethod]) =
+                leg(label, base).copy(allocByMethod = sites)
+            val moved = Report.render(Bench.compare(
+                withSites("c", Chunk(AllocByMethod("kyo.kernel.proto.Nested", "kyo.kernel.proto.Eval$.dispatch", 18000))),
+                withSites("v", Chunk(AllocByMethod("kyo.kernel.proto.Nested", "kyo.kernel.proto.Eval$.dispatch", 400)))
+            ))
+            check("a site whose samples collapsed is named", moved.contains("Nested at kyo.kernel.proto.Eval$.dispatch: 18000 -> 400"), moved)
+            check("with the inlining confound stated rather than implied", moved.contains("where the JIT *placed* the"), moved)
+            // sampling jitter must not fill the section: a few percent is not a move
+            val jitter = Report.render(Bench.compare(
+                withSites("c", Chunk(AllocByMethod("kyo.kernel.proto.Nested", "kyo.kernel.proto.Eval$.dispatch", 18000))),
+                withSites("v", Chunk(AllocByMethod("kyo.kernel.proto.Nested", "kyo.kernel.proto.Eval$.dispatch", 17900)))
+            ))
+            check("but sampling jitter is not", !jitter.contains("Allocation moved at these sites"), jitter)
+            check("and legs with no collapsed view say nothing", !Report.render(cmp).contains("Allocation moved at these sites"))
+        }
 
         println("the store answers for what it does not have")
         // a mistyped --store used to read as an empty one: "no runs stored", exit 0. The tool then
