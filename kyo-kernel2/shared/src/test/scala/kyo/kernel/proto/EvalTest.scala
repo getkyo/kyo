@@ -191,6 +191,34 @@ class EvalTest extends AnyFreeSpec:
             assert(r.asInstanceOf[AnyRef] eq v.asInstanceOf[AnyRef])
             assert(Eval.partial(r).evalNow == Maybe(42))
         }
+
+        // A throw escaping a root eval skipped `Safepoint.exit`, leaking one unit of depth per throw
+        // on a slot that is per thread, so every later unrelated computation on that thread paid for
+        // it. The symptom is not a wrong answer: `enter` returning false is the ordinary
+        // budget-exhausted path, so an affected thread simply parks and allocates more, forever, with
+        // nothing to point at. `partial` already bracketed its boundary and `apply` did not, and that
+        // asymmetry was the whole bug. Measured before the fix at exactly one of 512 lost per throw.
+        "a throw escaping a root eval leaves the safepoint depth unchanged" in {
+            val slot = Safepoint.get()
+            // `save` resets as it reads, so reading it back is a save/restore pair
+            def depth() =
+                val d = Safepoint.save(slot)
+                Safepoint.restore(slot, d)
+                d
+            end depth
+            val before = depth()
+            var caught = 0
+            var i      = 0
+            while i < 50 do
+                try discard(Eval(answerAsk(1)(ask.map(v => if v > 0 then throw new RuntimeException("boom") else v))))
+                catch case _: RuntimeException => caught += 1
+                i += 1
+            end while
+            assert(caught == 50)
+            // `equals` rather than `==`: `State` is opaque and carries no `CanEqual`, and a cast to
+            // its underlying Int would be a new cast for a test's convenience
+            assert(depth().equals(before))
+        }
     }
 
 end EvalTest
