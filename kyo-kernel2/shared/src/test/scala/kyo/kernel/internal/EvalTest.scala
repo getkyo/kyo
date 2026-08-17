@@ -223,6 +223,36 @@ class EvalTest extends AnyFreeSpec:
             assert(Eval.partial(answerAsk(21)(ask.map(_ * 2))).evalNow == Maybe(42))
         }
 
+        "an unhandled operation parks the slice for a handler installed later" in {
+            var reached = false
+            val v: Int < Ask = ask.map { a =>
+                reached = true; a + 1
+            }
+            val parked: Int < Ask = Eval.partial(v)
+            assert(parked.evalNow == Maybe.Absent)
+            assert(!reached)
+            assert(Eval(answerAsk(41)(parked)) == 42)
+            assert(reached)
+        }
+
+        "an unhandled operation parks the slice with the regions above it intact" in {
+            var seen                 = List.empty[String]
+            val v: Int < (Ask & Say) = say("before").map(_ => ask).map(a => say("after").map(_ => a + 1))
+            val inner: Int < Ask = ArrowEffect.handleLoop(Tag[Say], v)(
+                [C] =>
+                    s =>
+                        seen = s :: seen
+                        Loop.continue(())
+                ,
+                a => a
+            )
+            val parked: Int < Ask = Eval.partial(inner)
+            assert(parked.evalNow == Maybe.Absent)
+            assert(seen == List("before"))
+            assert(Eval(answerAsk(41)(parked)) == 42)
+            assert(seen == List("after", "before"))
+        }
+
         "a stop delivered between slices short-circuits" in {
             val v: Int < Any = answerAsk(41)(ask.map(_ + 1))
             discard(Safepoint.stop(Thread.currentThread()))
