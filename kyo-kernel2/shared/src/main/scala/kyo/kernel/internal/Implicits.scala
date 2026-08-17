@@ -3,7 +3,7 @@ package kyo.kernel.internal
 import kyo.Arrow
 import kyo.Render
 import kyo.kernel.<
-import kyo.kernel.Nested
+import kyo.kernel.internal.Nested
 import scala.language.implicitConversions
 
 trait Implicits:

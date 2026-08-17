@@ -1,8 +1,6 @@
 package kyo.kernel.internal
 
 import kyo.kernel.<
-import kyo.kernel.Boxed
-import kyo.kernel.Nested
 import scala.annotation.implicitNotFound
 import scala.quoted.*
 import scala.util.NotGiven
