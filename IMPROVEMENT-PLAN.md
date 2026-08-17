@@ -1,218 +1,133 @@
-# bench-harness improvement plan (v4)
+# bench-harness improvement plan (v5)
 
-Supersedes v3. Three held-out reviews and my own re-derivations have now run against this plan; v4 is
-the first version whose every load-bearing number was re-derived by someone other than its author.
-Evidence: `reviews/REVIEW-PLAN-V3.md`, `reviews/ORACLES.md`, `reviews/FEATURE-SURVEY.md`.
+Supersedes v4. Four held-out reviews have run. v4's numbers survived attack; **its ordering did not**.
 
-## What v3 got wrong, corrected up front
+> **v4 was an accurate defect list and a poor delivery plan.** After executing v4 in full, no item
+> changes *which evidence the report reaches for as a function of the result*, except one line in
+> item 2. The section count goes 19 to about 20. Under v4's order the operator gets nothing new until
+> the last two items.
 
-| v3 claim | truth | source |
-|---|---|---|
-| "14 of 22 `Run` fields reach no output" | **3** (`coverage`, `treeHash`, `warmup`). The list named 13 things, 5 of them `Run` fields, and 2 of those do render | F3 |
-| "`Run.alloc` costs a full extra JMH invocation, surfaces as one integer" | one recording dumped twice; `allocByMethod` **is** rendered. Only the `itimer` run has the thin yield | F4 |
-| "the other 91% are shared methods and belong to no row" | **64.8% is row-attributable** on the C2 population, 74.5% on the `kyo.`-callee population | F1 |
-| my "8.9% is wrong, it is 2.2%" | **backwards.** 8.9% was right; `Run.jit` is C2-only (`level >= 4`), and 837 of 946 tasks carry C1 levels | ORACLES §2 |
-| `KnownNoise` "truth is 83.97%" | a **third classification**, not the truth, and its predicate is contested | F5 |
-| "fifteen result-driven selectors" | **twelve**; `Bytecode.of`/`diff` are captures, `measureDrift` is a measurement | F15 |
-| acceptance gates A and B | A is under-specified and self-defeating; B is unsatisfiable on the data that triggers it | F6, F7 |
+v5 keeps v4's diagnoses and **inverts the order**: the founding requirement first, the sparsest
+evidence last.
 
-## The thesis, right-sized
+## Two findings that reorder everything, both verified here
 
-v3 said "the harness captures a great deal at real cost and renders almost none of it". That indicts
-everything and ranks nothing, and `Report.render` in fact emits fifteen conditional sections. Replaced:
+**1. The CPU partition has no denominator, so item 4 was about to print noise as fact.** `profile()`
+runs `-i 1` (`Bench.scala:436`), so `Run.cpu` is one second of itimer. On the two stored Full legs,
+same row, scores agreeing to 0.3%:
 
-> **The per-leg evidence has no renderer, and the comparison renderer withholds exactly the fields that
-> say whether it can be trusted.** `bench run` prints one line after four JMH invocations
-> (`Cli.scala:178`); `bench show` prints five (`:393-397`). `coverage`, `warmup` and `treeHash`, the
-> three fields that answer "is this leg readable at all", reach no output. Per-row attribution is
-> discarded by one `flatMap`.
+    qa-control  93 samples   kernel  7.5%   bench 46.2%
+    qa-variant  92 samples   kernel 15.2%   bench 45.7%
 
-That statement ranks the work by itself: it is items 3 and 2, in that order.
+**The kernel share doubled between two legs that did not move.** One sample is 1.1 points. `qa-cpu.txt`
+reaches 461 samples only because it used JMH's default `-i 5`. So **item 4 is demoted to last**, and it
+may not print a share without its count, per this codebase's own rule (`Model.scala:118`: "a verdict is
+only meaningful with its denominator, so the denominator is carried"). The cheap fix is raising `-i` on
+an invocation already being paid for, which is worth more than most of v4.
 
-## Acceptance, rebuilt
+**2. The verdict line contradicts the allocation note, in the highest-consequence line of the output.**
+From the real `sweep-replicated.log`:
 
-**Gate A, selector reachability.** A source-symbol walk from a declared root set (the eight
-`KyoCaseApp` objects), **with no allowlist**. An allowlist is the edit-around, and the plan cannot
-claim a gate "fails loudly" one sentence after granting one. Unreachable means wire-or-delete, which is
-what item 10 already says for `commonMode`. Not reflection (declared members, never call sites) and not
-`Bytecode.parse` (`javap -c` omits the `BootstrapMethods` attribute where Scala 3 lambda bodies live).
+    | ⚪ | trailingMapsStayLinear | ... | +43.2% | +239977 |
+    ℹ️  Allocation moved ... Allocation is exact and per-operation, so this is a real change ...
+    🟢 No row regressed beyond the drift band, across the whole class.
 
-**Gate B, per-section evidence**, conditioned on `Evidence.Full`, with a Timing-path variant asserting
-on the row's iteration series. Its fixture is **produced by 0c**, not assumed. As v3 wrote it, the gate
-asked the report to print a method name from `variant.jit`, which on a Timing leg is empty by
-construction, for precisely the comparisons that produce unexplained rows today.
+`allocMoved` is computed at `Store.scala:364` and `verdictLine` (`:421-434`) never reads it. **One
+branch, free-standing, and it is the line an operator trusts most.**
 
-## Step 0, prerequisites
+## The ordering
 
-**0a. A multi-row leg's compilation log describes only its last row.** `runLeg` passes a fixed
-`-XX:LogFile` at `-f 1` through `-jvmArgsAppend`, which JMH applies to every fork, and JMH runs one
-forked JVM per matched benchmark. My two-JVM probe shows HotSpot truncates on open. **Fix: HotSpot's
-own `%p` expansion, a one-token change**, then parse the set. Still unobserved end to end by anyone
-(task 20); everything said about it is inference from the fixed path.
+**Step 1, unblock every Full render.** 0b: the two Full runs are undecodable, and `coverage`
+(`Model.scala:307`) is a new field with **no default**, so defect 17's original class is live now. Add
+tests for **both** schema classes. `StoreSchemaTest` does not exist; the check is inline at
+`BenchTest.scala:498-511` and a stale comment at `Model.scala:323` names the phantom. 0c: `Ingest`
+cannot produce a jit-bearing run at all.
 
-**0a has two consequences already in the output, which v3 never stated:**
-- **F14**: `msInWindow`/`msTotal` are summed across all rows from `-prof comp` while the task census
-  comes from the single surviving fork's log, printed as one table headed "JIT cost, which is a
-  property of the design". A multi-row Full bracket renders a 15-row compile-time sum beside a 1-row
-  census.
-- **F13**: `parseAlloc` runs over the whole sbt stdout, one flat table per benchmark, so `Run.alloc`
-  carries duplicate `cls` rows; `apportion` is last-wins on the numerator while `totals` sums across
-  all benchmarks. **`allocConservation`, item 9's subject, is the check that fires on this.**
+**Step 2, the founding requirement. This is the step that pays.**
+- **The verdict-line fix** above.
+- **`Report.renderRun`**, and **extended to `compare` and `chain`**, which v4 omitted. That is the path
+  that re-reads stored legs, where `coverage`, `warmup` and `treeHash` matter most because nobody
+  watched the measurement.
+- **"Absence is a result and it names its remedy."** Per comparison, enumerate the checks that did not
+  run and why: no A/A null (fewer than three control legs), no efficacy (legs share `jvmArgs`), no
+  mechanism (Timing evidence), no attribution (whole-class leg). Never "check the inlining log";
+  instead the command that would produce it. This converts every "the operator must remember" case into
+  "the output already told them", and it depends on nothing.
 
-**0b. No decodable jit data, and defect 17's ORIGINAL class is live.** The two Full runs fail on
-`osrTasks` and carry the old `JitEntry` shape. But also: they lack `coverage`, `jvmArgs` and
-`allocByMethod`, and of those **`coverage` (`Model.scala:307`) has no default**. So a new field with no
-default is in the tree right now, and v3 asked only for a changed-shape test. Both are needed.
+  Three of the four are computable at the render site; **the A/A case is not.** `Comparison`
+  (`Model.scala:371`) carries one control `Run`, not the leg count. That same model change is needed by
+  items 6 and 10, so **all three land together**.
 
-**`StoreSchemaTest` does not exist.** The check is inline at `BenchTest.scala:498-511` and covers
-`allocByMethod` only; the name came from a stale comment at `Model.scala:323` that v3 inherited
-unchecked. Fix the comment too.
+**Step 3, correctness.** Item 12: `mode`/`unit` unchecked in **both** classifiers (`Bench.scala:615`,
+`Stats.classify` `Stats.scala:171`), so a `thrpt` row is classified backwards including on the
+replicated path, **and `Investigate.Quantity.Time` reads `r.score` raw, so adjudication is backwards
+too**. Refuse mismatched units; invert for `thrpt`.
 
-**0c. `Ingest` cannot produce a jit-bearing run at all** (`evidence = Timing`, `jit = Chunk.empty`
-hardcoded). Gate B's fixture depends on this.
+**Step 4, the threshold advice, which is currently backwards for half the rows.** The threshold is
+`max(t·se, ownError·mean)`; more legs shrink only `t·se`. On the **7 of 15 floor-bound rows more legs
+cannot move the threshold at all**, yet `Cli.scala:295-296` prints "More forks will not help ... More
+legs, or a quieter machine", while `Plan.scala:15-17` records that tripling forks cut own error
+six-fold. **Item 6** (carry the binding term on `Resolution`) plus fixing that sentence, plus **wiring
+`Plan.forecast` into the report**: it takes `Chunk[Run]`, exactly what a `Comparison` holds, and today
+is reachable only through a command that must be remembered.
 
-**0d.** `--drift-row` is inert: `openSession(worktree, driftRow)` never references the parameter.
+**Step 5, Gate A and the eight stranded selectors.** v4 defined its gates and **scheduled them
+nowhere**. Gate A is a source-symbol reachability walk from the eight `KyoCaseApp` roots, **no
+allowlist**, and its work items are the eight: `actionableJit`, `jitUnstable`, `budgetCandidates`,
+`unprofiledSites`, `diffVerdicts`/`efficacy`, `verifyAgainst`, `Bytecode.diff`/`crossedBudget`. Two of
+them answer entries 2 and 3 of the founding defect ledger. **`nearBudget` is the one wired selector and
+it is reachable only through `falsifiers`, which requires `regressed.nonEmpty`, so on a flat or winning
+report a method sitting 379B against a 325B budget is invisible.**
 
-**0e.** `driftPercent` hardcoded `0.0` in both `openSession` and ingest, so "drift measured this
-session" is unreachable for anything measured now. Caveat: `Store.session` can recover an older session
-carrying a real value (the QA fixtures hold 3.95), so this is not "every stored pair".
+**Step 6, multi-row correctness.** 0a (`%p`, then parse the set) with its two output consequences: the
+JIT table's mixed scopes, and the allocation break. **Plus a stale-file guard**: `allocDir` is never
+cleared and `collapsedFiles` reads every `collapsed-*.csv` under it, so a repeated bracket label
+concatenates a previous leg's dumps into `byMethod`; `measureWith` already learned this for the json
+(`Bench.scala:399-404`). **Item 9** (`allocConservation`) is the check that catches both.
 
-**0f.** `QaEndToEnd` asserts `driftPercent > 0.0`, now always false. **And its `check` only prints**
-(`:17-18`), unlike `BenchTest.check` which throws (`:41-43`), so "fails by construction" today means
-"prints FAIL and exits 0". **A QA main whose checks cannot fail is the more serious half.**
+"The row key is the filename" is imprecise: only the `..._jmhTest ..._jmhStub` task names a row, so
+`Task.method` is still needed after 0a, once per file rather than per verdict.
 
-**0g. Corrected from v3, which called this unreachable.** `flatButUnbounded` is unreachable, but the
-warning is not: `Store.scala:263` counts `flatButUnbounded || verdict == BelowResolution`, reachable
-via `bracket --legs 2` (df 0, empty threshold). **The live defect is the text**, which says "N flat
-rows carry no resolution" about rows that are not flat. Deleting the branch as dead would remove a
-reachable, mislabelled warning.
+**Step 7, items 1 and 2.** Item 1 has a **blocking** problem: `jvmArgs` carries a **path**, not a
+method. The stored run holds `-XX:CompileCommandFile=.../forced-inline.cmd` and the instructed method
+lives inside that file, and `Bench.scala:386-389` *instructs* operators to use the file form. **Store
+the file's contents**, or the instructed method is unrecoverable on the harness's own mandated path.
+Also: do **not** delete `diffVerdicts`. Its real dependency is `Chunk[InlineSites]`, which `Run`
+already carries, so re-type it. `Investigate.efficacy` says *whether* the flag took; `diffVerdicts`
+names *what moved*, which is what item 1's own rationale asks for.
 
-## The changes
+Item 2's content is re-decided after 0a. Attribution, verified: 1,117 C2 verdicts, 99 (8.9%) the row's
+stub, 625 (56.0%) the benchmark's own code, **724 (64.8%) row-attributable**, on a single-row leg. The
+whole-class ratio is unmeasured by anyone.
 
-### 1. Wire `efficacy` into the comparison report
-**Disambiguated (F15):** there are two. `LogCompilation.efficacy` takes two `Parsed`, a type never
-persisted; `Investigate.efficacy` takes two `Run`s and **is the wirable one**, dead only because
-`adjudicate` is dead. Wire the `Run`-based one; delete the `Parsed`-based pair or move it behind an
-ingest that stores `Parsed`. Needs 0c, and needs `jvmArgs` on ingest (F11) since that is the only route
-by which it can learn which method a `CompileCommandFile` instructed.
+**Step 8, adjudication as a report section, not a command.** Item 8 was a new subcommand, which the
+founding requirement calls a failure by construction: `bench adjudicate` must be remembered at exactly
+the moment it will not be. `BenchCompare` holds the store and both runs and already detects a
+configuration comparison (`Store.scala:169`). **Adjudication belongs in the report the isolation leg
+renders.**
 
-### 2. Per-row attribution, re-decided AFTER 0a
-**F2: 0a subsumes most of this and v3 did not notice.** Once each fork writes its own log, the row key
-is the filename and every verdict in the file belongs to that row. The `Task.method` join v3 proposed
-then discards about 90% of what the file already attributes. **So item 2's content is re-decided after
-0a, not merely unblocked.** What survives regardless: the unexplained-row line must carry its own
-evidence, and must not name an inlining log on a Timing run (defect 43).
+**Step 9, last.** Item 4 with its denominator, items 10, 11, 0d-0g.
 
-Numbers for the item, all re-derived: on the C2 population, 99 verdicts (8.9%) are the row's own stub,
-625 (56.0%) the benchmark's own code, **724 (64.8%) row-attributable**. On a *single-row* leg, where
-attribution is trivial. **The whole-class ratio is unmeasured by anyone.**
-
-### 3. `Report.renderRun`, used by `run` and `show`
-The thesis's first half. Full render for `run` and `show`; for `bracket`, a one-line digest per leg
-carrying `coverage` completeness, jit entry count and guard status, plus the full render only for a leg
-that failed a guard. Gives `coverage`, `warmup` and `treeHash` their first output.
-
-### 4. REWORK IN FLIGHT: the three-way split
-Landed as a two-way split (`50a8b73dfd`), and the inversion is right and stays: a noise **list** must
-enumerate an open set, a kernel **package** is closed. Three problems remain (F5):
-
-1. The sentence still ends "so kernel-attributable movement is a fraction of each delta above", which
-   does not follow from a frame-name partition and is now asserted at 84% instead of 29%.
-2. **The note now fires on every Full leg.** The `n < 25.0` gate became unreachable in the other
-   direction, and a note that always prints carries no information, which is this plan's own complaint.
-3. **The partition is contested.** `KernelPackage` classifies `ProtoKernelBench$$anon$95` as immovable,
-   and that allocation is the entire subject of candidate C3.
-
-**Fix: report three shares and let the reader infer.** `Bench.cpuPartition` is committed unwired
-(`a70e15f89a`); wire it and drop the inference:
-
-    16% kernel (kyo.kernel.proto), 48% the benchmark's own closures, which the kernel
-    decides how often to run, 36% boxing and infrastructure. Largest contributors: ...
-
-**Open question, flagged:** whether async-profiler's `itimer` flat output credits inlined callees to
-the inlining frame. Unsettled by anyone; the three-way split does not depend on it, which is a further
-argument for it over either two-way partition.
-
-### 5. REWORK: the A/A null breaks both commands it wires
-**F8, and v3 called this prerequisite-free.** `nullComparison` returns `Maybe.empty` below three
-controls and `nullBlockers` turns empty into a blocker with an exit code. Wired as designed, **every
-single-pair `compare` and every default `chain` (2 legs per sha) exits non-zero.** Needs a conditional
-or a default change: below three controls the report states that the null could not run and why, which
-is evidence-carrying, and does not fail the command.
-
-### 6. REWORK: `resolves` needs a model change, not a render change
-**F8.** Both terms are computed inside `Stats.threshold` and **discarded there**; `Resolution` carries
-only `percent, absolute, df, alpha`. "Already computed" is not "available at the render site". Add the
-bound to `Resolution`, which is on `Delta` and never persisted, so no schema risk.
-
-Confirmed to the digit by the reviewer re-implementing `Stats.threshold` independently: 7 of 15
-floor-bound, `handleLoopAnswersInPlace` at −10.72% with a 14.43% threshold set entirely by own error
-against an 8.20% spread term.
-
-### 7. DONE and confirmed correct
-Keyed on the earned threshold rather than the fork count; `exists` is right and matches the existing
-branch at `Store.scala:269`. Also fixed a false negative: single-pair at `-f 3` was treated as a claim.
-
-### 8. Orphaned `Investigate.adjudicate`
-The report proposes experiments and cannot score them. The only justified new entrypoint.
-
-### 9. `allocConservation` has no production caller
-**And F13 gives it its real job:** it is the check that fires on the multi-row allocation break. Wire
-it beside 0a rather than as a standalone rendering fix.
-
-### 10. `commonMode` computed and discarded, and it closes 0e
-Carrying it on `Comparison` lets the report print a measured drift instead of the assumed 4.0, and
-gives `residual` a meaning. Wire or delete both, with no allowlist.
-
-### 11. RESCOPED: `warmup` is the harmless half
-**F11, and v3 picked the wrong field.** `warmup` is fabricated and has **zero readers**. In the same
-constructor:
-- **`forks = 1` is equally fabricated and the json carries the truth.** It has **three** readers: the
-  header, the diagnostic note item 7 just rewrote, and `stillCompiling`'s measured-window denominator,
-  where a wrong value mis-scales the steady-state guard.
-- **`jvmArgs` is discarded entirely** though every JMH json carries it, so an ingested configuration
-  pair prints "no recorded JVM arguments on either leg ... the difference is unrecoverable" about a
-  difference sitting in the file it just read. **Item 1's acceptance depends on this.**
-
-Only `warmup`, `forks` and `jvmArgs` on `Run` touch the persisted schema; default every added field.
-
-### 12. NEW: `mode` and `unit` are captured and never checked
-**F12, ranked above item 11**, and **verified broader than the review stated**. The review cited the
-single-pair path only. Both paths have it:
-
-- `Bench.compare`: `if percent < -drift then Verdict.Faster` (`Bench.scala:615`)
-- `Stats.classify`: `if diff < 0 then (Verdict.Faster, th)` (`Stats.scala:171`)
-
-Neither consults `mode`. So **a `thrpt` row is classified backwards in replicated comparisons too**,
-not just single pairs, and two legs in different time units give a percentage off by the unit ratio.
-
-`mode` is captured (`Bench.scala:233`) and used **only for display** (`Store.scala:299`). `Row.unit` has
-**zero readers anywhere**. The harness's own benchmark is `AverageTime`, so this is latent today; the
-exposure is `bench ingest`, which accepts arbitrary JMH json with no check on either field.
-
-Fix: refuse a pair whose `unit`s differ or whose `mode`s differ, and invert the sign convention for
-`thrpt` in both classifiers. **Acceptance:** a synthetic `thrpt` pair where the variant has higher
-throughput classifies `Faster`, and today classifies `Regressed`.
+- **Item 4** must carry the sample count, and should say the two things every version has omitted:
+  the largest single frame is `boxToInteger` at 29%, neither kernel nor benchmark logic and the biggest
+  lever in the table; and **the kernel share is a lower bound, not a ceiling**, because inlined kernel
+  code is credited to its inlining frame. Its "largest contributors" list must not come from
+  `noiseFrames`, which ranks non-kernel frames and would list two 48%-bucket frames under a sentence
+  about the 36% bucket. Its render-side acceptance needs 0b, so **it was never free-standing**.
+- **Item 11**: `stillCompiling`'s denominator has **three** fabricated terms, not one.
+  `MeasureIterations` and `IterationSeconds` are harness constants while the json carries
+  `measurementIterations`/`measurementTime`. `forks` has three readers; `warmup` has zero.
 
 ## Anti-goals
 
-- **No new subcommands** except item 8.
+- **No new subcommands at all**, including item 8. A command is another thing to remember.
 - **No new statistics.**
-- **No claim the data cannot support.** Narrowed twice now: not "no row→method attribution" (false),
-  and not "the non-kernel share is X" (contested). State the partition, not the inference.
-- **v2's item 7 stays cut.** Confirmed: HotSpot's `bytes=` and javap's size are the same quantity, and
-  `verifyAgainst` exists to assert that identity. Three caveats carried into items 1/2: the 94% was
-  measured over the fixtures' old JDK-inclusive records so the population under the current C2 +
-  `kyo.`-prefixed path is unmeasured; `bytes = 0` means "unloaded, size unknown" and must be treated as
-  unknown or every method missing a size reports "grew past MaxInlineSize"; and `InlineSites` keys on
-  `class::method` with no signature, so overloads collapse.
+- **No claim without its denominator.** New, and it is what item 4 violated.
+- **v2's item 7 stays cut**, with its three caveats: the 94% was measured over JDK-inclusive records so
+  the current C2 + `kyo.`-prefixed population is unmeasured; `bytes = 0` means "unloaded, unknown"; and
+  `InlineSites` keys without a signature, so overloads collapse.
 
-## Ordering
+## Why this order
 
-**Free-standing, start now:** 4 (rework, in flight), 9, 10, 12, and 11's `forks`/`jvmArgs` half.
-**Then Step 0**: 0a (with F13/F14), 0b (both schema classes), 0c, and the corrections 0d, 0e, 0f, 0g.
-**Then** 6 and 5, which need model and default changes respectively.
-**Then** 1 and 2, whose content 0a re-decides, then 3, then 8.
-
-Item 7 is done. Lowest value in the plan is item 11's `warmup` half, kept only because it rides along
-with `forks` and `jvmArgs` in the same constructor.
+After **step 2** the operator gets useful output on the very next run, and every later item improves an
+output they are already reading. Under v4's order they got nothing new until the end.
