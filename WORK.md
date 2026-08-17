@@ -17,10 +17,15 @@ being caught.
 
 ## OPEN, in the order it should be picked up
 
-1. **The remaining candidates.** IN-2's premise is confirmed and its targets ranked, so it is the next
+1. **C4: reproduce, then fix at the root.** Diagnosed but NOT reproduced, so it is a hypothesis. The
+   delivery arms are unguarded by design and guarding them is the wrong fix; the hole is that
+   `Eval.apply`, the root entry, lacks the `save`/`finally restore` boundary guard that `Eval.partial`
+   already has. Owner's direction, verbatim: *"eval should reset it at the root of the execution if it
+   doesn't."* Next step is the failing test, before any edit.
+2. **The remaining candidates.** IN-2's premise is confirmed and its targets ranked, so it is the next
    one worth an edit. C3, DIS-3, C4, DIS-4 are untouched. IN-3 and C1 are owner-gated, and C1 no
    longer needs its gate because it is refuted.
-2. **The sweep was never replicated**: one leg per configuration.
+3. **The sweep was never replicated**: one leg per configuration.
 
 Everything else below is finished work, kept for its reasoning.
 
@@ -206,6 +211,32 @@ And the finding that belongs to no candidate: the method ranked **first**, above
 is `ProtoKernelBench::run$56` at 379 B refused 10/10. It is the benchmark's own closure, the same
 family the FreqInlineSize flag moved for a 17.4% score change that had nothing to do with the kernel.
 Two independent readings now say a material share of these rows is the benchmark's own generated code.
+
+## C4 diagnosed, not yet reproduced
+
+The only candidate whose deliverable is a failing test, in the list to see whether the harness can
+handle one. It cannot: every shape it models ends in a Run, a Comparison and a Verdict over benchmark
+rows, and a failing test produces none of those. The *symptom* is measurable though, since a leaked
+depth forces parks and parks allocate, so `gc.alloc.rate.norm` could carry the confirmation even
+though nothing in the harness carries the diagnosis.
+
+The candidate says `Safepoint.exit` is unguarded at the eight delivery arms. It is, and that is by
+design, confirmed by the owner: a `try`/`finally` at each would put an exception handler on the
+hottest path in the kernel. The design puts one guard at the boundary instead, and `Eval.partial` has
+it: `save` / `arm` / `try` / `finally restore`.
+
+The hole is that the **root** entry does not:
+
+    def apply[A](v: A < Any): A =
+        Nested.unnest[A](loop(v, armed = false, neverStop))
+
+Every top-level `.eval` goes through that. A throw escaping it unwinds past every skipped
+`Safepoint.exit` with nothing restoring the depth, and the slot is per thread, so the loss is paid by
+later unrelated computations on that thread. No wrong answers, just a thread that parks more and
+allocates more forever after, which is how this stays hidden.
+
+**Diagnosed by reading, so it is a hypothesis until the reproduction fails for the right reason.**
+See `bench-results/c4/RESULT.md`.
 
 ## IN-2 refuted, and more strongly than its own analysis claimed
 
