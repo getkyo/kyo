@@ -121,7 +121,8 @@ experiments become branches rather than floating commits. The same branch also r
    Two findings I verified myself, both real: **`compare` and `chain` never run the A/A null** (only
    call sites are `Cli.scala:210/215`, inside `BenchBracket`), so the strongest refusal is unreachable
    from stored records; and **`KnownNoise` misses the benchmark's own frames**, so `noiseShare` prints
-   **29% where the truth is 70%**, understated by 41 points in the direction that flatters the kernel,
+   **29.07% where the truth is 83.97%** (corrected from 70%, see `reviews/ORACLES.md`), understated by
+   54.9 points in the direction that flatters the kernel,
    with a fixture that cannot catch it. A live instance of open defect 9.
 
    The finding I would not have reached: **7 of 15 rows are floor-bound**, and
@@ -164,8 +165,11 @@ experiments become branches rather than floating commits. The same branch also r
     **Where v2 over-claimed in the other direction:** it called row-to-method attribution a hard limit
     and made *saying so* the fix. It is not a limit. The row key is on the `<task>` element and the
     harness already parses it into `Task.method`; one `flatMap` at `LogCompilation.scala:272` discards
-    it. True for the 91% of verdicts that are shared methods, false for the 8.9% that are the row's own
-    OSR stub, which the harness itself calls the compile that matters most.
+    it. True for the shared methods, false for the row's own OSR stub, which the harness itself calls
+    the compile that matters most. **The review's "8.9%" was quoted without deriving and is wrong**:
+    re-derived it is 141 of 6,329 verdicts, 2.2%, against 31.4% `kyo.`-rooted and 66.4% JMH/JDK-rooted.
+    The fraction is filter-dependent and is no longer quoted; item 2 rests on the mechanism, which
+    holds. See `reviews/ORACLES.md`.
 
 11. **`IMPROVEMENT-PLAN.md` is now v3, committed, and a fresh held-out reviewer is IN FLIGHT on it.**
     The thesis is restated at the scale the evidence supports: **the harness captures a great deal at
@@ -190,6 +194,29 @@ experiments become branches rather than floating commits. The same branch also r
     `944` for 944 jit entries is not a wrong statement, so careful operation was never going to flag
     it, and across the whole campaign it did not. That is the case for the inventory gate: the failure
     mode is structural and only a structural check finds it.
+
+13. **v3's three borrowed numbers re-derived from raw data: one right, two wrong. See
+    `reviews/ORACLES.md`.** v3 quoted the held-out review rather than deriving, which is the same
+    mistake in a new place.
+    - `InlineSites.bytes` at **94%** population: **CONFIRMED exactly** (887/944, 904/958). Cutting
+      v2's item 7 is correct.
+    - OSR attribution "99 of 1,117 verdicts, 8.9%": **WRONG as quoted.** It is **141 of 6,329, 2.2%**.
+      Same direction, different denominator; the review filtered to a subset it never stated. Item 2
+      is unharmed because it rests on the mechanism (the row key is on the `<task>` element, parsed
+      into `Task.method`, discarded by one `flatMap`), not on the fraction.
+    - `KnownNoise` "29% where the truth is 70%": **WRONG, and worse than recorded. The truth is
+      83.97%.** Only **16.04%** of that profile is kernel-owned; the benchmark's own code is 48.37%
+      and `KnownNoise` misses all of it. Understated by **54.9 points**, not 41.
+
+    Corrected in every document that carried the stale figures: `IMPROVEMENT-PLAN.md`,
+    `REVIEW-FINDINGS-PLAN.md`, `bench-results/in2/RESULT.md`, and two places in this file. Item 4's
+    acceptance is now the derived table itself rather than a remembered number.
+
+    **Four numbers I have published this campaign have been wrong**: a one-arm forecast called
+    "systematically optimistic" when it errs both ways; "the two largest deltas are flat" when it was
+    three; "three of eight selectors wired" when it is one; and "70%" when it is 84%. Every one
+    flattered either the tool or the kernel, and every one was caught by returning to the raw data
+    rather than by re-reading the writeup. That is the argument for the rule, not an anecdote about it.
 
 **Everything else remaining is a ruling**, each with a recorded default: the four gated candidates in
 `RULINGS-NEEDED.md`, the C4 trade, and DIS-3's cast above.
@@ -474,8 +501,12 @@ Limits stated: one row profiled, the log carries no invocation counts for these 
 28-frame profile is directional only.
 
 **Third independent reading of the same underlying finding**: 29.1% of this row is `boxToInteger` and
-the next three frames, 41.4% more, are the benchmark's own generated methods. 70% of the profile is
-code no kernel change touches.
+the next three frames, 41.4% more, are the benchmark's own generated methods.
+
+**Corrected (`reviews/ORACLES.md`): that 70.5% is a lower bound, not the total.** Counting every frame,
+only **16.04%** is kernel-owned, so **83.97%** of the profile is code no kernel change touches. The
+original stopped at the top three benchmark frames and omitted `anon$95.<init>` (6.72%) and the 6.53%
+of JDK and native frames.
 
 ## Phase 7 is done, and the dead code was hiding a real one
 

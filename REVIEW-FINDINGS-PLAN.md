@@ -29,9 +29,13 @@ is not in my plan. `bench chain` never checks itself on any step.
 It is `Seq("BoxesRunTime", "java.lang.Integer", "jmh_generated")`. On the only real CPU profile in the
 repository it matches `boxToInteger` at 29.1% and **nothing else**: the benchmark's own generated code
 is `ProtoKernelBench.loop$9` (17.1%), `run$39` (13.2%), `ask` (11.1%), `anon$95.<init>` (6.7%), none
-of which contain `jmh_generated`. So `noiseShare` reports **29%** where the true non-kernel share is
-**70%**, under the sentence "% of sampled time is in classes no kernel change can move" — understated
-by 41 points, biased toward making the kernel look more relevant than it is. Its test fixture cannot
+of which contain `jmh_generated`. So `noiseShare` reports **29.07%** under the sentence "% of sampled
+time is in classes no kernel change can move".
+
+**Corrected by re-derivation (`reviews/ORACLES.md`): the true share is 83.97%, not the 70% this
+document first recorded.** Only **16.04%** of that profile is kernel-owned (`kyo.kernel.proto.*`); the
+benchmark's own code is 48.37% and JDK/native is 6.53%. So it is understated by **54.9 points**, not
+41, biased toward making the kernel look more relevant than it is. Its test fixture cannot
 catch this, being two authored frames with no `ProtoKernelBench` in them: **a live instance of open
 defect 9.**
 

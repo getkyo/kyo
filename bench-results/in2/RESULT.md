@@ -70,7 +70,14 @@ not "the sizes drop and the score does not move", but "the methods are not on th
 ## The finding underneath, for the third time
 
 29.1% of this row's samples are `boxToInteger` and the next three frames, another 41.4%, are the
-benchmark's own generated methods. Together that is 70% of the profile in code no kernel change
-touches. This is the third independent reading pointing the same way: the largest flag effect measured
+benchmark's own generated methods.
+
+**Corrected (`reviews/ORACLES.md`): that 70.5% is a lower bound, not the total.** Counting every frame,
+kernel-owned code (`kyo.kernel.proto.*`) is **16.04%**, so **83.97%** of the profile is code no kernel
+change touches. This reading stopped at the top three benchmark frames and omitted `anon$95.<init>`
+(6.72%) and 6.53% of JDK and native frames. The correction strengthens the finding rather than
+weakening it.
+
+This is the third independent reading pointing the same way: the largest flag effect measured
 belonged to the benchmark's closures, the top budget candidate is one of them, and now the CPU profile
 says most of the time is theirs too.
