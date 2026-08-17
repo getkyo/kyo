@@ -152,7 +152,11 @@ object BenchBracket extends KyoCaseApp[BracketOpts]:
                             "Those verdicts are false by construction, so the comparison below is not readable.\n"
                     )
                 case _ => Console.printLine("A/A null: not enough control legs to run one.\n")
-            _ <- Console.printLine(Report.render(Bench.compareReplicated(controls, variants)))
+            cmp = Bench.compareReplicated(controls, variants)
+            _ <- Console.printLine(Report.render(cmp))
+            _ <- Abort.when(Report.blockers(cmp).nonEmpty)(
+                Bench.BracketFailed(s"${Report.blockers(cmp).size} leg(s) did not reach steady state; the verdicts above are not readable")
+            )
         yield ()
     }
 end BenchBracket
@@ -193,7 +197,14 @@ object BenchCompare extends KyoCaseApp[CompareOpts]:
         for
             control <- Store.load(Path(opts.store), opts.control)
             variant <- Store.load(Path(opts.store), opts.variant)
-            _       <- Console.printLine(Report.render(Bench.compare(control, variant)))
+            cmp = Bench.compare(control, variant)
+            _ <- Console.printLine(Report.render(cmp))
+            // a non-steady-state leg fails the run rather than warning inside it. A warning is
+            // something a reader skips; an exit code is not, and this tool exists for a reader who
+            // demonstrably skips them.
+            _ <- Abort.when(Report.blockers(cmp).nonEmpty)(
+                Bench.BracketFailed(s"${Report.blockers(cmp).size} leg(s) did not reach steady state; the verdicts above are not readable")
+            )
         yield ()
     }
 end BenchCompare

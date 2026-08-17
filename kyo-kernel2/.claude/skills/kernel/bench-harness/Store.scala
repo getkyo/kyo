@@ -56,6 +56,33 @@ end Store
   */
 object Report:
 
+    /** Conditions under which the numbers below are not readable, whatever they say.
+      *
+      * Both members are the same failure: a score that mixes warm and cold code. They were previously
+      * a warning line each, one in the middle of the report and one near the end, which is a placement
+      * that assumes the reader is disciplined. The operator this tool exists for is demonstrably not,
+      * and glanced past exactly such a line on a leg whose first iteration was an outlier.
+      *
+      * So they become blockers: rendered first, under a banner, and the process exits non-zero. The
+      * data is still printed in full, because suppressing it would trade one silent failure for
+      * another; what changes is that the run cannot be mistaken for a clean one.
+      */
+    def blockers(c: Comparison): Chunk[String] =
+        val unsettled =
+            c.deltas.flatMap { d =>
+                Chunk.from(Seq(
+                    Option.when(d.control.unsettledStart)(s"${d.row} (control) never settled: iterations ${d.control.iterations.map(x => f"$x%.1f").mkString(", ")}"),
+                    Option.when(d.variant.unsettledStart)(s"${d.row} (variant) never settled: iterations ${d.variant.iterations.map(x => f"$x%.1f").mkString(", ")}")
+                ).flatten)
+            }
+        val compiling =
+            Chunk.from(
+                (Bench.stillCompiling(c.control).map((r, p) => f"$r%s (control) spent ${p}%.1f%% of its measured window compiling") ++
+                    Bench.stillCompiling(c.variant).map((r, p) => f"$r%s (variant) spent ${p}%.1f%% of its measured window compiling"))
+            )
+        unsettled ++ compiling
+    end blockers
+
     def icon(v: Verdict): String =
         v match
             case Verdict.Faster          => "🟢"
@@ -86,13 +113,39 @@ object Report:
                 || | row | mode | cnt | control | variant | delta | B/op delta | mechanism |
                 ||---|---|---|---|---|---|---|---|---|""".stripMargin
 
+        // a leg whose first measured iteration sits far from the rest was still warming up, and its
+        // score and error both absorb that without showing it. Only the per-iteration series reveals
+        // it, and for an ingested run it is the only steady-state signal that exists at all.
+        val RampLimit = 0.05
+        val ramped =
+            c.deltas.flatMap { d =>
+                Chunk.from(Seq(
+                    d.control.warmupRamp.filter(_ > RampLimit).map(r => (d.row, "control", r)),
+                    d.variant.warmupRamp.filter(_ > RampLimit).map(r => (d.row, "variant", r))
+                ).flatMap(_.toOption))
+            }
+        val rampNote =
+            if ramped.isEmpty then ""
+            else
+                "\n\u26a0\ufe0f  A leg's first measured iteration sits far from the rest, so it was still warming up and " +
+                    "its score includes that ramp:\n" +
+                    ramped.map((row, side, r) => f"  - $row%s ($side%s) first iteration is ${r * 100}%.0f%% from the median of the rest")
+                        .mkString("\n")
+
         val resolutionNote =
             val unbounded = c.deltas.count(d => d.flatButUnbounded || d.verdict == Verdict.BelowResolution)
             val bounded   = c.deltas.flatMap(_.resolution)
             if bounded.nonEmpty then
                 val worst = bounded.map(_.percent).max
-                f"\nEvery flat row below is flat to within its own resolution, at worst +-${worst}%.2f%% " +
-                    f"(alpha ${bounded.head.alpha}%.5f after correcting for ${c.deltas.size} rows, df ${bounded.head.df})."
+                // df 0 marks a single-pair comparison: the bound is the legs' own reported error, not
+                // a threshold estimated from replicates, and the two are not the same claim
+                if bounded.head.df == 0 then
+                    f"\nEvery flat row below is flat to within +-${worst}%.2f%%, the floor set by the legs' own reported " +
+                        "error. These legs were not replicated, so this bounds the result without estimating the spread; " +
+                        "a replicated bracket would give a real threshold and this does not."
+                else
+                    f"\nEvery flat row below is flat to within its own resolution, at worst +-${worst}%.2f%% " +
+                        f"(alpha ${bounded.head.alpha}%.5f after correcting for ${c.deltas.size} rows, df ${bounded.head.df})."
             else if unbounded > 0 then
                 s"\n⚠️  $unbounded flat rows carry no resolution: these legs were not replicated, so " +
                     "'flat' here means the harness cannot say how small an effect it would have missed, not that nothing changed."
@@ -212,7 +265,16 @@ object Report:
                 "\n⚠️  Moved with nothing in the evidence behind it, so the cause is not known yet:\n" +
                     unexplained.map(d => s"  - ${d.row}: check allocation sites and the inlining log before proposing a mechanism").mkString("\n")
 
-        s"$sessionWarning$header\n$body$resolutionNote$jit$deoptShift$polymorphic$verdictLine$ladder$steadyState$jitTable$bothWays$noiseNote"
+        val blockerBanner =
+            val bs = blockers(c)
+            if bs.isEmpty then ""
+            else
+                "\n" + "=" * 78 + "\n\u26d4 NOT A VALID MEASUREMENT: " + bs.size + " leg(s) did not reach steady state.\n" +
+                    "The rows below are printed in full, and none of their verdicts can be trusted: a score that\n" +
+                    "mixes warm and cold code is not a measurement of the code. Re-run with more warmup.\n" +
+                    bs.map(b => s"  - $b").mkString("\n") + "\n" + "=" * 78 + "\n"
+
+        s"$blockerBanner$sessionWarning$header\n$body$rampNote$resolutionNote$jit$deoptShift$polymorphic$verdictLine$ladder$steadyState$jitTable$bothWays$noiseNote"
     end render
 
 end Report

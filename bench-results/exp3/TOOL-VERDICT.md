@@ -9,11 +9,31 @@ This file records where the tool and the hand analysis differ, because that diff
 Five winners, one loser, the same magnitudes, and allocation named as the mechanism on exactly the
 row whose allocation moved and on no other. The substance of the earlier writeup holds.
 
-## Where they differ, with the tool right each time
+## Correction to this file's first version
 
-**1. The hand analysis missed a winner.** My screen required a delta to exceed the two legs' combined
-error: for `emittingClausesPayRegionRebuild` that is `(12.33 + 2.26) / 81.12 = 18%`, so a real -9.8%
-did not clear my bar. The tool classifies it Faster. I reported "4 faster, 1 slower"; it is 5.
+Its first version said "the tool is right each time". That was written after comparing two things,
+the tool and my python, and declaring the tool the winner. Checking both against the raw data, which
+is the only arbiter, shows the tool was wrong on the row we disagreed about.
+
+`emittingClausesPayRegionRebuild`: the control leg reports **±15.2%** of its own score, and the tool
+classified a **-9.8%** delta as a win. `Bench.compare` had no floor at the legs' own error; that floor
+existed only in `compareReplicated`. My python was right to withhold the verdict, for a cruder reason
+than it deserved.
+
+Worse, the raw iterations `[86.4, 80.8, 81.4, 78.5, 78.6]` show that leg never settled, and dropping
+the first iteration moves its mean by 1.64%. Neither the tool nor I saw that, because nothing was
+looking at the per-iteration series at all.
+
+Both are fixed: single-pair comparison now floors at the legs' own error, and an unsettled leg is a
+blocker that fails the run. Re-run, the tool calls that row flat and refuses the comparison entirely.
+
+## Where they differ, with the tool right in three of four places
+
+**1. Neither of us was right, and I was less wrong.** My screen required a delta to exceed the legs'
+combined error, 18% on this row, so -9.8% did not clear it. The tool classified it Faster. The raw
+data says the control leg reports ±15.2% and never reached steady state, so no verdict is available
+at all. The corrected tool calls it flat and blocks the comparison. My crude screen happened to reach
+the right conclusion by a wrong route; the tool reached the wrong one by a route that looked rigorous.
 
 **2. The tool refuses to leave the wins unexplained.** All five are marked `**none found**` and listed
 under "moved with nothing in the evidence behind it, so the cause is not known yet". The hand analysis

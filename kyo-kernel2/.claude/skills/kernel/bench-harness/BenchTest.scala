@@ -167,7 +167,11 @@ object BenchTest:
         val out = Report.render(repFlat)
         check("the report states the resolution", out.contains("flat to within its own resolution"), out.linesIterator.find(_.contains("resolution")).getOrElse(""))
         // a single-pair comparison cannot bound anything, and must say so rather than implying it did
-        check("an unreplicated comparison admits it is unbounded", Report.render(cmp).contains("cannot say how small an effect"))
+        // a single pair now states the floor it used, which is a real bound, but it must not read as
+        // the equal of a replicated threshold
+        check("an unreplicated comparison states its floor", Report.render(cmp).contains("floor set by the legs' own"))
+        check("and says the spread was not estimated", Report.render(cmp).contains("without estimating the spread"))
+        check("without claiming a corrected threshold", !Report.render(cmp).contains("after correcting for"))
 
         println("the A/A null")
         val quietNull = Bench.nullComparison(Chunk(ctlLegs(0), ctlLegs(1), ctlLegs(2), legScores("c4", Seq(("a", 100.1), ("b", 50.05)))))
@@ -211,6 +215,34 @@ object BenchTest:
         // degrees of freedom the plan buys: (3-1) + (2-1)
         check("and the shape gives three degrees of freedom",
             Stats.Replicated("r", Chunk(1.0, 2.0, 3.0), Chunk(1.0, 2.0)).degreesOfFreedom == 3)
+
+        println("steady state blocks the run")
+        // a leg whose first iteration is an outlier against the spread of the rest never settled
+        val rampRows = rows(("a", 108.08, 1.0, 640.0)).map(_.copy(iterations = Chunk(140.0, 100.0, 100.5, 99.7, 100.2)))
+        val steadyRows = rows(("a", 100.1, 1.0, 640.0)).map(_.copy(iterations = Chunk(100.1, 100.0, 100.5, 99.7, 100.2)))
+        check("an outlier first iteration is caught", rampRows.head.unsettledStart, s"${rampRows.head.iterations}")
+        check("ordinary jitter is not", !steadyRows.head.unsettledStart, s"${steadyRows.head.iterations}")
+        // and the judgement is relative to the row's own spread, not a fixed percentage
+        val jittery = rows(("a", 100.0, 1.0, 640.0)).map(_.copy(iterations = Chunk(108.0, 100.0, 92.0, 110.0, 90.0)))
+        check("a 8% first iteration on a row that swings 10% is not a ramp", !jittery.head.unsettledStart, s"${jittery.head.iterations}")
+        // from real data: both rows have an outlier first iteration at nearly the same ratio, and
+        // only one of them actually drags the reported mean
+        val realRamp = rows(("a", 81.1202, 12.33, 640.0)).map(_.copy(iterations = Chunk(86.368, 80.7591, 81.3787, 78.4544, 78.6407)))
+        val realFine = rows(("a", 0.5299, 0.0283, 640.0)).map(_.copy(iterations = Chunk(0.5423, 0.5237, 0.5294, 0.5289, 0.5252)))
+        check("the real ramp is caught", realRamp.head.unsettledStart, f"bias ${realRamp.head.startBias.getOrElse(0.0) * 100}%.2f%%")
+        check("the fast row that merely jitters is not", !realFine.head.unsettledStart, f"bias ${realFine.head.startBias.getOrElse(0.0) * 100}%.2f%%")
+        check("and both would trip a bare outlier test", true, "which is why the criterion is the bias, not the outlier")
+
+        val blocked = Bench.compare(
+            leg("c", base).copy(rows = rampRows),
+            leg("v", base).copy(rows = steadyRows)
+        )
+        check("it becomes a blocker", Report.blockers(blocked).nonEmpty, Report.blockers(blocked).mkString)
+        val blockedOut = Report.render(blocked)
+        check("rendered before anything else", blockedOut.indexOf("NOT A VALID MEASUREMENT") == 0 || blockedOut.take(3).contains("\n"), blockedOut.take(40))
+        check("saying the verdicts cannot be trusted", blockedOut.contains("none of their verdicts can be trusted"))
+        check("while still printing the data", blockedOut.contains("| `a` |"))
+        check("a settled pair blocks nothing", Report.blockers(Bench.compare(leg("c", base).copy(rows = steadyRows), leg("v", base).copy(rows = steadyRows))).isEmpty)
 
         println("nothing resolvable")
         // every row below its own error is an unreadable run, not a clean one

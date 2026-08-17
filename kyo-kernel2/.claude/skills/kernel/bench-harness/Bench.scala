@@ -169,6 +169,7 @@ object Bench:
                     name = e.benchmark.split('.').last,
                     mode = e.mode,
                     count = e.primaryMetric.rawData.map(_.size).sum,
+                    iterations = Chunk.from(e.primaryMetric.rawData.flatten),
                     score = e.primaryMetric.primaryScore,
                     error = e.primaryMetric.safeError,
                     unit = e.primaryMetric.scoreUnit,
@@ -356,7 +357,12 @@ object Bench:
         val deltas = Chunk.from(control.rows).flatMap { c =>
             Chunk.from(variant.row(c.name)).map { v =>
                 val percent = (v.score - c.score) / c.score * 100
-                val drift = band(control, variant)
+                // never tighter than either leg's own uncertainty. The drift band alone classified a
+                // -9.8% delta as a win on a row whose control leg reported +-15.2%, which is the same
+                // defect the replicate statistic had and had already been fixed there: a threshold
+                // below the measurement's own error classifies that error as a result.
+                val ownError = Math.max(c.relativeError, v.relativeError) * 100
+                val drift    = Math.max(band(control, variant), ownError)
                 val verdict =
                     // a score whose error is a large fraction of itself cannot support a percentage
                     if c.error > c.score * 0.5 || c.score <= 0.0 then Verdict.BelowResolution
@@ -378,7 +384,9 @@ object Bench:
                             allocDelta.filter(d => Math.abs(d) > 1.0).map(d => f"allocation ${d}%+.0f B/op"),
                             jitShift(control, variant).headMaybe.map(m => s"inlining changed: $m")
                         ).flatMap(_.toOption))
-                Delta(c.name, c, v, percent, verdict, allocDelta, mechanism)
+                // a single pair cannot support a t threshold, but it can state the floor it used,
+                // so a flat row is bounded rather than merely quiet
+                Delta(c.name, c, v, percent, verdict, allocDelta, mechanism, Maybe(Resolution(drift, drift * c.score / 100, 0, 0.0)))
             }
         }.sortBy(d => (d.verdict == Verdict.BelowResolution, d.percent))
         Comparison(control, variant, deltas, jitShift(control, variant))

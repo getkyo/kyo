@@ -21,6 +21,14 @@ object Model:
         score: Double,
         error: Double,
         unit: String,
+        /** The per-iteration series JMH recorded, kept rather than reduced to a count.
+          *
+          * A summary score hides the shape that produced it. A real control leg read
+          * `[86.4, 80.8, 81.4, 78.5, 78.6]`: a warmup ramp whose first iteration inflated both the
+          * mean and the error, and which the harness could not see at all because it kept only the
+          * count. That leg then carried a -9.8% "win" that was substantially its own unsettled start.
+          */
+        iterations: Chunk[Double],
         allocPerOp: Maybe[Double],
         /** Milliseconds the JIT spent compiling *during the measured window*. Non-trivial values mean the JVM had not reached steady state
           * and the score describes a mixture of compiled and compiling code.
@@ -30,6 +38,64 @@ object Model:
     ) derives Schema:
         /** Compilation during measurement as a fraction of the measured wall time. */
         def compilingShare(measuredMs: Double): Maybe[Double] = compilerMsProfiled.map(_ / measuredMs * 100)
+
+        /** This row's own relative uncertainty, as a fraction of its score. */
+        def relativeError: Double = if score <= 0.0 then 0.0 else error / score
+
+        /** How far the first measured iteration sits from the median of the rest, as a fraction.
+          *
+          * A leg still warming up shows it here and nowhere else: the score and the error absorb the
+          * ramp without revealing it. This is the only steady-state signal available to a run ingested
+          * from outside the harness, which carries no `compiler.time.profiled`.
+          */
+        def warmupRamp: Maybe[Double] =
+            if iterations.size < 3 then Maybe.empty
+            else
+                val rest   = iterations.tail.sorted
+                val median = rest(rest.size / 2)
+                if median <= 0.0 then Maybe.empty else Maybe(Math.abs(iterations.head - median) / median)
+
+        /** Whether the first iteration is an outlier against the spread of the remaining ones.
+          *
+          * A bare percentage cannot decide this: 5% is ordinary jitter on a noisy row and a serious
+          * ramp on a stable one. The remaining iterations already say how much this row varies when
+          * nothing is warming up, so the question is whether the first sits outside that, by a margin.
+          *
+          * The margin is a factor of two over the widest deviation among the rest, with a small
+          * absolute floor so a perfectly stable row does not trip on rounding.
+          */
+        def startBias: Maybe[Double] =
+            if iterations.size < 4 then Maybe.empty
+            else
+                val rest     = iterations.tail
+                val restMean = rest.sum / rest.size
+                if restMean <= 0.0 then Maybe.empty
+                else Maybe((score - restMean) / restMean)
+
+        /** Whether the first iteration both stands out from the rest and moves the reported score.
+          *
+          * Two earlier criteria were tried against real data and both failed. "First iteration more
+          * than N% from the median" cannot work with a fixed N: 5% is jitter on a noisy row and a
+          * serious ramp on a stable one. "First iteration is an outlier against the rest's spread"
+          * fails differently: two real rows tripped it at 2.43x and 2.53x, one a genuine ramp and one
+          * a 0.53us row whose absolute jitter is negligible.
+          *
+          * What separates them is the quantity with consequences: how far the first iteration drags
+          * the mean the verdict is computed from. On those two rows that is 1.64% against 0.59%.
+          * Outlier status still has to hold, so ordinary noise in a single direction does not qualify.
+          */
+        def unsettledStart: Boolean =
+            if iterations.size < 4 then false
+            else
+                val rest   = iterations.tail
+                val sorted = rest.sorted
+                val median = sorted(sorted.size / 2)
+                if median <= 0.0 then false
+                else
+                    val spread   = rest.map(x => Math.abs(x - median)).max
+                    val first    = Math.abs(iterations.head - median)
+                    val isOutlier = first > 2.0 * spread
+                    isOutlier && startBias.exists(b => Math.abs(b) > 0.01)
     end Row
 
     /** One inlining decision at one call site, as the JIT reported it. The byte count is the part that matters: it is what turns a delivery
