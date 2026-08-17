@@ -436,6 +436,23 @@ object BenchTest:
             check("a design comparison still refuses attribution", design.contains("no source-level mechanism"), design)
         }
 
+        println("each row states its own resolution")
+        // the footer reports only the worst resolution across flat rows, which cannot answer the
+        // question a flat row actually raises: close to resolving, or nowhere near? On the replicated
+        // sweep `emittingClausesPayRegionRebuild` came back flat at -12.5% against its own ±12.6%,
+        // missing by a tenth of a point, and the table gave no way to see that.
+        locally {
+            val rep = Report.render(Bench.compareReplicated(ctlLegs, vntSlow))
+            check("the table has a resolves column", rep.contains("| resolves |"), rep.linesIterator.take(8).mkString("\n"))
+            // a resolution per row, not one number repeated in the footer
+            val cells = rep.linesIterator.filter(_.startsWith("| ")).flatMap(_.split('|').map(_.trim).filter(_.startsWith("±"))).toList
+            check("every data row carries one", cells.size == ctlLegs.head.rows.size, s"${cells.size} cells for ${ctlLegs.head.rows.size} rows")
+            check("and they are real numbers, not a placeholder", cells.forall(c => c.drop(1).takeWhile(_ != '%').toDoubleOption.isDefined), cells.mkString(","))
+            // a single-pair comparison has a bound too, from the legs' own error, and must show it
+            val pair = Report.render(Bench.compare(ctl, vnt))
+            check("a single pair shows its bound as well", pair.contains("±"), pair.linesIterator.filter(_.contains("`fast`")).mkString)
+        }
+
         println("a score that can be read")
         // found by running a real bracket: a cleanly separated regression on a nanosecond row printed
         // as `0.01 ± 0.00` against `0.01 ± 0.00` beside `+26.2%`. The real numbers were 0.005853 and
