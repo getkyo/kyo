@@ -118,8 +118,16 @@ object Arrow:
     ) extends Defer[Any, B, E & S & S2]:
 
         final override def apply(v: Any) =
-            val st = cont.step
-            st.head(susp(v), st.tail)
+            // a cont the evaluator folded pending entries into is a Chain, whose step
+            // heads with Identity and defers the answer through a Bind; stepping the
+            // Chain's left arm instead delivers into the composed tail directly
+            cont match
+                case c: Chain[X, Any, B, S2] @unchecked =>
+                    val st = c.a.step
+                    st.head(susp(v), st.tail.chain(c.b))
+                case cont =>
+                    val st = cont.step
+                    st.head(susp(v), st.tail)
 
         override def chain[C, S3](f: Arrow[B, C, S3]): Arrow[Any, C, E & S & S2 & S3] =
             if f eq Identity then this.asInstanceOf[Arrow[Any, C, E & S & S2 & S3]]
