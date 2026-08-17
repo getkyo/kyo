@@ -139,6 +139,34 @@ row reproduced to the byte and the one megabyte-scale row spread 47.8 B on 2.32 
 relative with a one-byte floor, twice the worst observed spread, and 1,875x smaller than the effect it
 has to resolve.
 
+## Added by exercising the guards that had never fired
+
+**20, a leg could adopt the previous leg's numbers.** The results json is a fixed path per label and
+was never deleted before a run. JMH exits 0 when its selector matches nothing, which is the exact
+failure the retry beside it exists for, so such a run would leave the previous attempt's file in place
+and this leg would parse it, pass the row-count check, and be stored as a measurement of sources it
+never ran against. **Fixed**: the file is deleted before every attempt, and its absence afterwards
+fails the leg with the reason.
+
+**21, the red-tree gate had never refused anything.** Verified for the first time by planting a
+failing test in the throwaway worktree: `sbt --client` does exit 1 on a test failure, `exec` does
+abort, and the leg does not run. The gate works. What did not was its message: `Failure(1)` followed
+by several hundred lines of *passing* test names, with the one line naming the failure far below the
+fold. **Fixed**: a failed command reports its error lines and its tail, and says how much it left out.
+
+**22, a QA check that passed whenever nothing was flagged.** `QaEndToEnd`'s steady-state check read
+`stillCompiling(ctl).isEmpty || out.contains("NOT STEADY STATE")`, so on every run ever made it
+asserted nothing. **Fixed** to the biconditional it meant.
+
+**23, the steady-state compile-time limit cannot be calibrated from any data this campaign has.** It
+was 1.0% of the measured window, 50 ms, against an observed maximum of 9 ms across 52 stored rows, so
+it has never fired and could not have. The plan called for tightening it to the ~4 ms of the run that
+motivated it; that would be wrong, because 8 of those 52 rows sit at or above 4 ms and every one is
+ordinary. Nor is there a positive case to fit: of the 25 rows carrying both an iteration series and a
+compile-time figure, none is unsettled by the series criterion. **Bounded rather than fixed**: set to
+0.5%, under three times the worst share observed, and documented as not-yet-validated. The signal
+actually catching unsettled legs is `Row.unsettledStart`.
+
 ## Status, reconciled
 
 | # | defect | state |
@@ -162,8 +190,12 @@ has to resolve.
 | 17 | a field added to `Run` made every stored run undecodable | **fixed**: defaulted, with a decode test |
 | 18 | the escape-analysis falsifier judged on wall clock | **fixed**: a hypothesis names its quantity |
 | 19 | a one-byte allocation band refused a six-figure reproduction | **fixed**: band measured from the A/A legs |
+| 20 | a leg could adopt the previous leg's json | **fixed**: deleted before every attempt, absence fails the leg |
+| 21 | the red-tree gate had never refused anything | **verified** it refuses; its message **fixed** to be readable |
+| 22 | a QA check that passed whenever nothing was flagged | **fixed**: the biconditional it meant |
+| 23 | the compile-time steady-state limit is uncalibratable from any data here | **bounded**, and labelled as such |
 
-Seventeen fixed, one open, one an observation.
+Twenty-one fixed, one bounded, one open, one an observation.
 
 The one that remains, 9, is not fully fixable: every fixture is written by the same understanding
 that wrote the code under it. The mitigation is the A/A null, whose input is not authored, and it has

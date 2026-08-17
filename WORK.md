@@ -117,6 +117,25 @@ replacement, CONFIRMED, 2,321,410 to 2,561,410 B/op against a target of 2,561,38
 found three more defects, two of them in the investigator itself and one much worse: adding a field to
 `Run` had made **every stored run undecodable**, all 34 of them. See defects 17 to 19.
 
+## The guards that had never fired, exercised
+
+Three of the harness's own guards had never once been triggered, which is the same shape as the CLI
+that had never been run wrong. Exercising them found four more defects (20 to 23):
+
+- **A leg could have adopted the previous leg's numbers.** The results json is a fixed path per label
+  and was never deleted; JMH exits 0 when its selector matches nothing, so such a run would parse the
+  previous attempt's file, pass the row-count check, and be stored as a measurement of sources it
+  never ran against. Deleted before every attempt now, and its absence fails the leg.
+- **The red-tree gate does work**, verified by planting a failing test in the throwaway worktree. Its
+  message did not: `Failure(1)` under several hundred lines of *passing* test names.
+- **A QA check asserted nothing** on every run ever made (`isEmpty || contains`).
+- **The compile-time steady-state limit cannot be calibrated from any data this campaign has**, and
+  saying so is the honest result. It was 50 ms against an observed maximum of 9 ms across 52 rows.
+  The plan's proposed 4 ms would fire on 8 of those 52, all ordinary. Bounded at 0.5% and labelled
+  not-yet-validated; `Row.unsettledStart` is the signal actually doing this work.
+
+**260 checks green** across seven suites.
+
 ## Now
 
 **Validating the tool against the manual work.** Procedure: three-way comparison of raw data, tool
@@ -185,12 +204,12 @@ reported ±22.6%, called +9.5% flat). Same conclusions, both rows.
 - **Phase 6 Tier B**: a bracket that accepts a *chain* of shas, so a source-level mechanism can be
   isolated. With two shas the harness must refuse any source-level claim and say the partition was
   never declared. Tier A (the falsifiers that are JVM flags) is done.
-- **Phase 7**: steady-state recalibration, the red-tree gate that has never refused anything, and the
-  retry path that has never been exercised. Phase 5 and the CLI QA are done.
+- **Phase 7 remainder**: dead code (`MinCpuSamples`, `NoiseShare`, stranded doc comments, README
+  drift) and deleting `bench-harness-qa.md`. The guards it named are all exercised now.
 - **DIS-1 is closed: refuted in all three constructible forms.** See above. The remaining candidates
   in `optimization-plan.md` are untouched.
 - **The sweep was never replicated**: one leg per configuration.
-- **Nineteen tool defects** in `tool-defects.md`: seventeen fixed, one open, one an observation.
+- **Twenty-three tool defects** in `tool-defects.md`: twenty-one fixed, one bounded, one open, one an observation.
 
 ## The kernel result, for a reader arriving cold
 

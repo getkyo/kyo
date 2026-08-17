@@ -71,8 +71,14 @@ object QaEndToEnd extends KyoApp:
             _   = vnt.jit_metrics.foreach(m =>
                     println(f"       variant jit: ${m.msInWindow}%.0fms in window, ${m.msTotal}%.0fms total, ${m.tasks} tasks, ${m.c2Tasks} C2, ${m.recompiled} recompiled, ${m.runtimeDeopts} runtime deopts, ${m.osrTasks} OSR, last at ${m.lastCompileAt}%.2fs")
                   )
-            _   = check("steady state assessed", Bench.stillCompiling(ctl).isEmpty || out.contains("NOT STEADY STATE"),
-                    s"unsettled: ${Bench.stillCompiling(ctl)}")
+            // this was `isEmpty || out.contains(...)`, which passes whenever nothing is flagged, so
+            // it asserted nothing on every run that has ever been made. The claim worth making is the
+            // biconditional: the report says it exactly when the guard found it.
+            _ = check(
+                "the report says NOT STEADY STATE exactly when the guard found something",
+                Bench.stillCompiling(ctl).nonEmpty == out.contains("NOT STEADY STATE"),
+                s"guard: ${Bench.stillCompiling(ctl)}, report says it: ${out.contains("NOT STEADY STATE")}"
+            )
             _  <- Console.printLine("\n" + out + "\n")
             _  <- Console.printLine("PHASE 3 DONE")
         yield ()

@@ -50,8 +50,27 @@ object Bench:
     val MeasureIterations = 5
     val IterationSeconds  = 1
 
-    /** Above this share of the measured window spent compiling, the run had not settled and its score is not a steady-state figure. */
-    val CompilingShareLimit = 1.0
+    /** Above this share of the measured window spent compiling, the run had not settled and its score is not a steady-state figure.
+      *
+      * Bounded by evidence rather than validated by it, and the difference is worth stating. Across
+      * every row this campaign has stored that carries `compiler.time.profiled`, 52 of them, the
+      * compile time inside the measured window is a median of 2 ms and a maximum of 9 ms, which is
+      * 0.18% of a 5,000 ms window. The previous limit of 1.0% is 50 ms, so it has never fired and
+      * could not have fired on anything measured here.
+      *
+      * The plan called for tightening it to around the 4 ms of the run that motivated it. That would
+      * be wrong: 8 of those 52 rows sit at or above 4 ms and every one of them is ordinary, so the
+      * tightened guard would be a false-alarm generator. Nor can the right value be found from the
+      * data, because there is no positive case in it: of the 25 rows carrying both an iteration series
+      * and a compile-time figure, none is unsettled by the series criterion, so the two signals have
+      * never been observed to disagree or agree.
+      *
+      * 0.5% is therefore what it is: a little under three times the worst share ever seen, which
+      * leaves room for a genuinely pathological run to trip it while nothing observed does. The signal
+      * actually catching unsettled legs today is `Row.unsettledStart`, from the iteration series, and
+      * this one should not be read as a second working guard until something trips it.
+      */
+    val CompilingShareLimit = 0.5
 
     val BenchClass  = "kyo.kernel.bench.ProtoKernelBench"
     val BenchSource = "kyo-kernel2/jvm/src/jmh/scala/kyo/kernel/bench/ProtoKernelBench.scala"
@@ -70,11 +89,41 @@ object Bench:
     def rejectedCompileCommand(out: String): Chunk[String] =
         Chunk.from(out.linesIterator.filter(l => l.contains("CompileCommand: An error occurred") || l.contains("Error: Method pattern")).toSeq)
 
+    /** The part of a failed command's output worth showing.
+      *
+      * The whole thing is not. Exercising the red-tree gate for the first time produced a correct
+      * refusal wrapped in several hundred lines of *passing* test names, with the one line naming the
+      * failing test far below the fold, which is a refusal an operator skims past. sbt marks what went
+      * wrong with `[error]` and with scalatest's `*** FAILED ***`; those lines and the tail are the
+      * diagnosis, and the rest is the log.
+      */
+    def failureExcerpt(out: String, tail: Int = 12): String =
+        val lines  = out.linesIterator.toVector
+        val marked = lines.filter(l => l.contains("[error]") || l.contains("*** FAILED ***") || l.contains("TESTS FAILED"))
+        val shown  = (marked.takeRight(20) ++ lines.takeRight(tail)).distinct
+        if shown.isEmpty then lines.takeRight(tail).mkString("\n")
+        else shown.mkString("\n") + (if lines.size > shown.size then s"\n  (${lines.size} lines of output, the rest of it green)" else "")
+
     def exec(worktree: Path, command: String*)(using Frame): String < (Async & Fail) =
         Command(command*).cwd(worktree).redirectErrorStream(true).textWithExitCode.map { (out, exit) =>
             if exit == ExitCode.Success then out
-            else Abort.fail(BracketFailed(s"$exit from ${command.mkString(" ")}\n$out"))
+            else
+                Abort.fail(BracketFailed(
+                    s"`${command.mkString(" ")}` failed with $exit in $worktree:\n${failureExcerpt(out)}"
+                ))
         }
+
+    /** The suite must be green before a leg is measured at all.
+      *
+      * A faster variant whose suite is red is not a result, and this is the gate that says so. It had
+      * never once refused anything, so it was verified by planting a failing test in the throwaway
+      * worktree: `sbt --client` exits 1 on a test failure, `exec` aborts, and the leg never runs.
+      */
+    def requireGreenSuite(worktree: Path, task: String)(using Frame): Unit < (Async & Fail) =
+        exec(worktree, "sbt", "--client", task).unit
+            .handle(Abort.recoverError[BracketFailed](e =>
+                Abort.fail(BracketFailed(s"the suite is red, so nothing measured here would be a result.\n${e.failureOrPanic}"))
+            ))
 
     /** Refuses a worktree that is the repository's primary one. A bracket writes over sources; doing that in the tree commits come from is
       * how uncommitted work and a whole redesign were destroyed.
@@ -336,11 +385,24 @@ object Bench:
         val extraVm = (Seq("-Xms4g", "-Xmx4g", "-XX:+UseG1GC") ++ jvmArgs).mkString(" ")
 
         def measureWith(warmup: Int, n: Int, expected: Int): Chunk[Row] < (Async & Fail) =
-            sbt(
-                s"kyo-kernel2JVM/Jmh/run -f $forks -wi $warmup -i $MeasureIterations -r ${IterationSeconds}s " +
-                    s"-w ${IterationSeconds}s -prof gc -prof comp -rf json -rff ${json.toString} " +
-                    "-jvmArgsAppend \"" + extraVm + "\" " + selector
-            )
+            // the results file is deleted first, every attempt. It is a fixed path per label, so a
+            // run that matched no benchmarks (which JMH exits 0 for, and which is the exact failure
+            // the retry below exists for) would otherwise leave the *previous* attempt's json in
+            // place, and this leg would silently adopt the previous leg's numbers with a row count
+            // that passes every check.
+            json.removeExisting
+                .andThen(sbt(
+                    s"kyo-kernel2JVM/Jmh/run -f $forks -wi $warmup -i $MeasureIterations -r ${IterationSeconds}s " +
+                        s"-w ${IterationSeconds}s -prof gc -prof comp -rf json -rff ${json.toString} " +
+                        "-jvmArgsAppend \"" + extraVm + "\" " + selector
+                ))
+                .andThen(json.exists)
+                .map { wrote =>
+                    Abort.when(!wrote)(BracketFailed(
+                        s"leg $label produced no results file at $json. JMH exits 0 when its selector matches " +
+                            "nothing, so this is a run that measured no benchmark rather than a run that failed."
+                    ))
+                }
                 .andThen(json.read)
                 .map(parseJmh)
                 .map { parsed =>
@@ -397,7 +459,7 @@ object Bench:
             // a faster variant whose suite is red is not a result; gate before spending the runs.
             // this also settles the sources: the build formats on compile, so the baseline below
             // must be taken after it or the leg invalidates itself on its own formatting
-            _          <- sbt("kyo-kernel2JVM/testOnly kyo.kernel.proto.*")
+            _          <- requireGreenSuite(worktree, "kyo-kernel2JVM/testOnly kyo.kernel.proto.*")
             before     <- readMarkers(worktree, markerSpecs)
             hashBefore <- treeHash(worktree, paths)
             measured   <- measureWith(WarmupIterations, 1, declared)

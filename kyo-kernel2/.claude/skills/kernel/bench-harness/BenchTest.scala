@@ -343,6 +343,29 @@ object BenchTest:
             check("and legs with no collapsed view say nothing", !Report.render(cmp).contains("Allocation moved at these sites"))
         }
 
+        println("a refusal that can be read")
+        // the red-tree gate was exercised for the first time by planting a failing test in the
+        // throwaway worktree. It refused, correctly, and buried the one line naming the failing test
+        // under several hundred lines of passing ones, which is a refusal an operator skims past.
+        locally {
+            val green = (1 to 200).map(i => s"[info] - some passing test $i (1 millisecond)")
+            val log = (green.take(120) ++ Seq(
+                "[info] - the one that failed *** FAILED *** (2 milliseconds)"
+            ) ++ green.drop(120) ++ Seq(
+                "[error] Failed tests:",
+                "[error] \tkyo.kernel.proto.SomeTest",
+                "[info] *** 1 TEST FAILED ***"
+            )).mkString("\n")
+            val excerpt = Bench.failureExcerpt(log)
+            check("the failing test is in the excerpt", excerpt.contains("*** FAILED ***"), excerpt)
+            check("and so is sbt's own summary of what failed", excerpt.contains("kyo.kernel.proto.SomeTest"), excerpt)
+            check("while the passing ones are not carried wholesale", excerpt.linesIterator.count(_.contains("some passing test")) < 15, excerpt)
+            check("and the reader is told how much was left out", excerpt.contains("the rest of it green"), excerpt)
+            // a command that failed with no error markers at all still has to say something
+            val bare = Bench.failureExcerpt((1 to 40).map(i => s"line $i").mkString("\n"))
+            check("output with no error markers still yields its tail", bare.contains("line 40"), bare)
+        }
+
         println("a stored run survives a field being added to Run")
         // adding `allocByMethod` without a default made every run already in the store undecodable,
         // all 34 of them, with the campaign's whole measurement history behind them. The store is the
