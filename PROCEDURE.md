@@ -145,3 +145,31 @@ Work on documents or another tree, or wait.
 **Verify the blockers, do not inherit them.** "The repo doesn't compile" was carried in this campaign
 as a settled fact and would have justified skipping every measurement. It took one 16-second build to
 find it false. A belief that conveniently excuses the expensive work is exactly the one to test first.
+
+## Operational lessons from the days after
+
+**Do not touch the measured tree while a bracket runs.** A leg died with `⛔ leg control-2 sources
+changed mid-run` because kernel sources were being edited in the throwaway worktree while legs were
+executing. The guard worked and refused to produce a number from a tree that shifted underneath it,
+but the run was lost. Commit before launching, then leave that tree alone; the harness sources and the
+documents are in a different worktree and are safe to work on.
+
+**A launcher's completion notification is not the job's.** Wrapping `nohup <job> &` inside a
+backgrounded shell call makes the notification fire when the *wrapper* exits, seconds later, while the
+job runs on for twenty minutes. Twice this looked like a finished bracket that had produced nothing.
+Check `pgrep` and the store's contents; never trust the notification alone.
+
+**A field added to a persisted record needs a default, always.** Adding `allocByMethod` to `Run`
+without one made **every stored run undecodable**, all 34, with the campaign's entire measurement
+history behind them. The tool reported it clearly and refused, which is correct, but the archive is
+the point of storing runs at all. `jvmArgs` was added later with a default and the archive survived.
+
+**The configuration that produced a measurement belongs in the record, not on disk beside it.** The
+compile-command file behind the campaign's headline result is gone, and the runs never recorded it, so
+that measurement is unrecoverable rather than merely unexplained: the two runs share a `sha` and a
+`treeHash` and differ in nothing that was kept. An artifact a run depends on must be committed, and
+the run must record what it was run with.
+
+**Backticks in a `git commit -m` are shell substitution.** A commit message describing
+`` `0.01 ± 0.00` `` silently lost the very text it was about. Use `-F` with a file for anything
+containing backticks, and read the message back after committing.
