@@ -66,14 +66,22 @@ being caught.
    conditions (`dispatch$1` must be **gone**, not smaller; 128 tests green; must not share a bracket
    with DIS-1) and the falsifier.
 
-5. **`BenchPlan` was systematically optimistic. FIXED and verified.** Validating it against the
+5. **`BenchPlan` did not reproduce the thresholds it forecasts. FIXED, tested, and one of my own
+   claims refuted in the process.** Validating it against the
    replicated sweep needed two other defects fixed first (27 and 28), and then it could be checked:
-   two defects, not one. It lumped all legs into a single spread rather than pooling *within* each
-   arm, and it omitted the floor `Stats.threshold` applies at the legs' own error. With both fixed it
-   reproduces the thresholds the replicated sweep actually produced: `handleLoopAnswersInPlace` ±14.4%
-   against ±14.4%, `fusionPastBudgetPaysRescuesOnly` ±8.9% against ±8.9%, `handleLoopFusesContinuation`
-   ±5.9% against ±5.8%. A one-arm forecast is still optimistic and cannot be otherwise, so it now
-   labels itself "one arm only, optimistic" instead of claiming a two-arm confidence.
+   three defects. It lumped all legs into one spread instead of pooling *within* each arm; it omitted
+   the floor `Stats.threshold` applies at the legs' own error; and it normalised against every leg's
+   mean where the threshold divides by the **control** mean, which cost 8.8 points on
+   `trailingMapsStayLinear` alone. The third was found by `PlanTest`, not by me.
+
+   It now reproduces **all 15** thresholds that bracket produced, most to a tenth of a point,
+   `trailingMapsStayLinear` included at ±59.9% against ±59.9%. `PlanTest` pins the relationship rather
+   than constants, so it fails if either estimator drifts.
+
+   **And it refuted a claim I had already written down.** I recorded that a one-arm forecast is
+   "systematically optimistic". It is not: it differs from the two-arm forecast on 8 rows of 15 and
+   under-predicts on only 4, erring both ways. Corrected in `tool-defects.md` and pinned by a test
+   that asserts a difference rather than a direction.
 
 **Everything else remaining is a ruling**, each with a recorded default: the four gated candidates in
 `RULINGS-NEEDED.md`, the C4 trade, and DIS-3's cast above.

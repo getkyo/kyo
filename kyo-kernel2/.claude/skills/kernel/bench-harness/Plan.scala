@@ -74,8 +74,16 @@ object Plan:
                 val ctl  = armScores("control")
                 val vnt  = armScores("variant")
                 val arms = Chunk(ctl, vnt).filter(_.size >= 2)
-                val all  = Chunk.from(priors.flatMap(_.row(name)).map(_.score))
-                val mean = if all.isEmpty then 0.0 else all.sum / all.size
+                val all = Chunk.from(priors.flatMap(_.row(name)).map(_.score))
+                // normalised against the CONTROL mean when there is one, because that is what
+                // `Stats.threshold` divides by. Using the mean of every leg understates the forecast
+                // whenever the arms genuinely differ: on `trailingMapsStayLinear`, whose variant runs
+                // a third slower than its control, that alone put the forecast 8.8 points below the
+                // threshold it was predicting.
+                val mean =
+                    if ctl.nonEmpty then ctl.sum / ctl.size
+                    else if all.isEmpty then 0.0
+                    else all.sum / all.size
 
                 def pooled(groups: Chunk[Chunk[Double]]): Maybe[Double] =
                     val df = groups.map(_.size - 1).sum

@@ -228,7 +228,7 @@ was it close to resolving or nowhere near? On the replicated sweep `emittingClau
 came back flat at **-12.5% against its own ±12.6%**, missing by a tenth of a point, and nothing in the
 table said so. **Fixed**: a `resolves` column per row.
 
-**29, `BenchPlan` is systematically optimistic, and now measurably so.** It forecasts from control legs
+**29, `BenchPlan` did not reproduce the thresholds it forecasts.** It forecasts from control legs
 only, while the threshold it is predicting pools the spread of *both* arms, so it cannot see the
 variance the variant legs contribute. Measured against the replicated sweep, forecast against actual:
 
@@ -240,26 +240,26 @@ variance the variant legs contribute. Measured against the replicated sweep, for
 | `handleLoopFusesContinuation` | ±6.8% | ±5.8% | over |
 | `emittingClausesPayRegionRebuild` | ±14.6% | ±12.6% | over |
 
-It is right about the shape every time, and it under-predicted more often than it over-predicted.
-
-**Fixed, and the diagnosis had two parts.** It lumped every prior leg into one spread, which sees only
+**Fixed, and the diagnosis had three parts, the third found by the test rather than by me.** It lumped every prior leg into one spread, which sees only
 one arm's variance when given one arm and folds the real between-arm difference into the "spread" when
-given both. It now splits by arm and pools *within* each, exactly as `Stats.pooledSd` does. And it
+given both. It now splits by arm and pools *within* each, exactly as `Stats.pooledSd` does. It
 omitted the floor `Stats.threshold` applies at the legs' own reported error, so it predicted
-resolutions the real comparison would never award.
+resolutions the real comparison would never award. And it normalised against the mean of *every* leg
+where the threshold divides by the **control** mean, which understates the forecast whenever the arms
+genuinely differ: on `trailingMapsStayLinear`, whose variant runs a third slower than its control,
+that alone put the forecast 8.8 points below the threshold it was predicting.
 
-With both corrections, forecasting the replicated sweep from its own legs reproduces the thresholds it
-actually produced:
+With all three corrections, forecasting the replicated sweep from its own legs reproduces **all 15**
+of the thresholds that bracket produced, most of them to a tenth of a point, including
+`trailingMapsStayLinear` at ±59.9% against ±59.9%. `PlanTest` pins that as a relationship rather than
+a table of constants, so it fails if either estimator drifts.
 
-| row | forecast | actual |
-|---|---|---|
-| `handleLoopAnswersInPlace` | ±14.4% | ±14.4% |
-| `fusionPastBudgetPaysRescuesOnly` | ±8.9% | ±8.9% |
-| `handleLoopFusesContinuation` | ±5.9% | ±5.8% |
-| `emittingClausesPayRegionRebuild` | ±13.3% | ±12.6% |
-
-A one-arm forecast is still optimistic and cannot be otherwise, so it now says so in its own output
-("one arm only, optimistic") rather than presenting the same confidence as a two-arm one.
+**A claim of mine that the test refuted.** I recorded that a one-arm forecast is "systematically
+optimistic". Measured, it is not: against this bracket it differs from the two-arm forecast on 8 rows
+of 15 and under-predicts on only **4**, erring in both directions. So the property worth labelling is
+not a direction but a difference, and the label reads "one arm only, optimistic" for a reason that is
+weaker than I first wrote. The honest statement is that seeing one arm's spread instead of two is a
+materially different estimate, and the test asserts that rather than a bias.
 
 ## Status, reconciled
 
