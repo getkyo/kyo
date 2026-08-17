@@ -23,10 +23,15 @@ settles nothing.
 
 | exp | ingested | tool verdict | 3-way table | disagreements discharged |
 |---|---|---|---|---|
-| exp3 sweep | yes | yes | **yes** | **yes**, 3 of 3 |
-| exp1 budget probes | no | no | no | no |
-| exp4 escape analysis | no | no | no | no |
-| exp5 tier splits | no | no | no | no |
+| exp3 sweep | yes | yes | yes | yes, 3 of 3 |
+| exp1 budget probes | yes | yes | yes | yes |
+| exp2 forced inline | yes | yes | yes | yes |
+| exp4 escape analysis | yes | yes | yes | yes |
+| exp5 tier splits | yes | yes | yes | yes |
+
+**Stream complete.** See `VALIDATION.md`. Every numeric claim survived; several confidences did not.
+Three of five comparisons are now blocked on a control leg that never settled, and the sweep's fifth
+"win" was never a win.
 
 ### Findings from this stream, all discharged
 
