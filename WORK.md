@@ -132,6 +132,25 @@ experiments become branches rather than floating commits. The same branch also r
 
    Cut A2, A3-as-written, B2, C2. Rework A1, A4, A5. Order accepted as the reviewer gave it.
 
+9. **`IMPROVEMENT-PLAN.md` rewritten as v2; the same reviewer is resumed on it.** v1's thesis is
+   discarded. v2 rests on a finding neither the plan nor the review had: the harness contains **eight
+   result-driven selectors**, functions that decide what is worth showing given what the results were,
+   and **five are wired into no production path at all** (`budgetCandidates`, `Bytecode.crossedBudget`,
+   `Bytecode.diff`/`of`, `efficacy`, `unprofiledSites`). Every one has tests; `Bytecode` is a whole
+   tested module with zero production call sites. **Every throwaway probe written this campaign called
+   one of the five**, so the bypassing was not forgetfulness: the logic was on no code path and no
+   amount of remembering would have surfaced it.
+
+   The rule v2 adopts: **a flag must carry its own evidence, and no output may tell the operator to go
+   look something up.** The tool violates this in its own text, printing "check allocation sites and
+   the inlining log" for an unexplained row while holding 944 inlining entries for both legs.
+   Acceptance is grepping the renderers for imperatives.
+
+   Ten items, ordered so the five that only *connect* existing logic come first; only two add
+   anything. The reviewer is asked to break three specific claims, above all my assertion that
+   inlining **cannot** be attributed to a row from a whole-class leg — if that join is derivable,
+   item 2 is wrong and better work exists.
+
 **Everything else remaining is a ruling**, each with a recorded default: the four gated candidates in
 `RULINGS-NEEDED.md`, the C4 trade, and DIS-3's cast above.
 
