@@ -23,10 +23,13 @@ being caught.
    evidence, store `bench-results/c4-store2`. Legs are saved only after all five complete, so an empty
    store means it is still running. When it lands, read it with `BenchCompare` over the two run ids
    rather than re-running anything.
-2. **The remaining candidates.** C3, DIS-3, DIS-4 are untouched and all three are owner-gated (C3
-   wants a conversation, DIS-3 needs a cast, DIS-4 adds a field to every `Arrow`). IN-3 is gated too.
-   C1, IN-1, IN-2, DIS-1 and DIS-2 are closed. **So every remaining candidate needs a ruling before it
-   can be worked**, which is the honest state of that stream rather than a queue I can drain.
+2. **The remaining candidates are all gated, and each now has a recorded default.** See
+   `RULINGS-NEEDED.md`. C1, IN-1, IN-2, DIS-1 and DIS-2 are closed; C3, DIS-3, DIS-4 and IN-3 need a
+   ruling. Defaults: **DIS-3 proceed** (it is the only open lead on the campaign's central regression,
+   since deleting `dispatch$1` by collapsing the two suspension arms is the "other shape" DIS-1's
+   refutation left open), **IN-3, C3 and DIS-4 hold**, each with a cheap reading I will do meanwhile
+   that could kill it outright. Three of four defaults are hold-and-probe because C1, IN-1 and IN-2
+   all died to exactly that treatment, from evidence already on disk, with no run spent.
 3. **The sweep was never replicated**: one leg per configuration.
 
 Everything else below is finished work, kept for its reasoning.
