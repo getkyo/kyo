@@ -105,11 +105,17 @@ Replace the homework line with the row's own allocation delta, the leg's actiona
 near-budget methods **explicitly labelled leg-wide**, and the honest split on attribution.
 
 v2 called row→method attribution a hard limit and made saying so the fix. **It is not a limit.** The
-row key is on the `<task>` element and the harness already parses it into `Task.method`; one `flatMap`
-at `LogCompilation.scala:272` discards it. Measured on a real log: **99 of 1,117 C2 verdicts (8.9%)**
-were made compiling the row's own `jmhStub` — the OSR compile the harness itself calls "where the
-measured code actually runs". The other 91% are shared methods and belong to no row. So the report says
-*these N belong to this row; these M belong to no row*, which is both true and stronger than the limit.
+row key is on the `<task>` element (`ProtoKernelBench_<row>_jmhTest <row>_avgt_jmhStub`) and the
+harness already parses it into `Task.method` (`LogCompilation.scala:170`); one `flatMap` at
+`LogCompilation.scala:272` discards it. So the report says *these N belong to this row; these M belong
+to no row*, which is both true and stronger than the limit.
+
+**Corrected from the review, which I had quoted without deriving.** It reported "99 of 1,117 C2
+verdicts (8.9%)". Re-derived from `bench-results/exp1/logc-new-default.xml`: **141 of 6,329, or 2.2%**,
+attributable to the row's own stub, against 31.4% `kyo.`-rooted and 66.4% JMH/JDK-rooted. Same
+direction, different denominator; the review filtered to a subset it did not state. **The fraction is
+filter-dependent and must not be quoted as a bare number.** What is not filter-dependent is the
+mechanism above, and that is what item 2 rests on. See `reviews/ORACLES.md`.
 
 ### 3. `Report.renderRun`, used by `run` and `show`
 One renderer, two call sites; gives homes to `budgetCandidates`, `unprofiledSites`, the per-leg JIT
@@ -123,10 +129,20 @@ per-leg fact the comparison cannot recover later.
 
 ### 4. Fix `KnownNoise`, and name frames instead of one aggregate
 `Seq("BoxesRunTime", "java.lang.Integer", "jmh_generated")` matches `boxToInteger` and nothing else on
-the only real profile in the repository. The benchmark's own code is `ProtoKernelBench.loop$9` (17.1%),
-`run$39` (13.2%), `ask` (11.1%). The report prints **29% where the truth is 70%**, understated in the
-direction that flatters the kernel. Its fixture is two authored frames containing no `ProtoKernelBench`
-and cannot fail. Fix the constant, name the top contributors, take the fixture from the real capture.
+the only real profile in the repository. Re-derived from `qa-artifacts/qa-cpu.txt`:
+
+    KnownNoise matches                  :  29.07%   <- what the tool prints
+    ProtoKernelBench.* (benchmark code) :  48.37%   <- missed entirely
+    kyo.kernel.proto.* (kernel-owned)   :  16.04%   <- the ONLY movable part
+    JDK / native / other                :   6.53%
+    => truly not movable by a kernel change: 83.97%
+
+The sentence printed is "% of sampled time is in classes no kernel change can move". The answer is
+**83.97%** and it prints **29.07%**: understated by **54.9 points**, in the direction that flatters the
+kernel. **This corrects the 70% figure carried in three documents**, which was also wrong; only 16% of
+this profile is kernel-owned at all. Its fixture is two authored frames containing no
+`ProtoKernelBench` and cannot fail. Fix the constant, name the top contributors, and take the fixture
+from this capture. **Acceptance is the table above.**
 
 ### 5. Run the A/A null in `compare` and `chain`
 Its only call sites are inside `BenchBracket`. Re-reading a stored bracket through `compare` reproduces
