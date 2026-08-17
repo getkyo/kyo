@@ -18,7 +18,11 @@ states its own resolution: **flat to within 2.44% at df=3**, which means the ope
 detectable and anything under ~2.4% is not.
 **Ten candidate optimizations.** Written, with hypotheses, predicted fields, and falsifiers.
 
-Suites: 34 BenchTest, 17 LogCompilationTest (oracle-based), 13 BytecodeTest, 21 StatsTest.
+**Phase 3, the A/A null.** Committed. Control legs run against each other through the identical
+pipeline, so any row it classifies is false by construction. Tested in both directions: silent on
+quiet controls, and it catches a deliberately dirty null.
+
+Suites: **92 checks green** across four files (44 BenchTest, 17 oracle, 12 bytecode, 19 stats).
 
 ## The results that matter
 
@@ -57,10 +61,10 @@ reintroduced it three times while fixing it once.
 
 ## Not done
 
-- **Wiring `Stats` into `Bench.compare` and the report.** The statistic is implemented and tested but
-  is not yet what a comparison calls; until it is, it is correct dead code.
 - **Phase 2 remainder**: config-from-json equality gate, diffstat scope, heap pinning.
-- **Phase 3 remainder**: leg orchestration for C V C V C, and the classfile equality guard.
+- **Phase 3 remainder**: leg orchestration to actually *run* C V C V C (the comparison and null are
+  implemented and tested; the runner still produces one leg per invocation), and the classfile
+  equality guard.
 - **Phase 5** allocation attribution via `output=collapsed`.
 - **Phase 6** the investigator with efficacy-gated flag falsifiers.
 - **Phase 7** guardrails and QA that can fail.
