@@ -111,6 +111,32 @@ object QaParsers:
         )
         ok &= check("and passes when the samples do come from one", sameRecording.isEmpty, sameRecording.mkString)
 
+        println("P1.6 the same recording, dumped twice, on a real kernel row")
+        // The planted program above proves the parser names the right frame. This proves it loses
+        // nothing on real input: 1,951 collapsed lines from `nestedPayloadsUnwrapInMaps`, and the
+        // flat table from the *same* JMH recording, so conservation here measures the parse and not
+        // run-to-run variance. Each stack is stored truncated to its last eight frames, because the
+        // untruncated file is 58 MB; the frames that decide the parse are the last two, and the
+        // root-first property still holds since frame zero is still not the allocated class.
+        val realFlat      = Bench.parseAlloc(read("qa-alloc-flat-real.txt"))
+        val realCollapsed = Bench.parseCollapsed(read("qa-alloc-collapsed-tail8.csv"))
+        val realCons      = Bench.allocConservation(realFlat, realCollapsed)
+        ok &= check("conservation is exact on one recording", realCons.isEmpty, realCons.mkString("; "))
+        ok &= check(
+            "and it accounts for every sample the profiler counted",
+            realCollapsed.map(_.samples).sum == realFlat.map(_.samples).sum,
+            s"${realCollapsed.map(_.samples).sum} against ${realFlat.map(_.samples).sum}"
+        )
+        // the attribution the flat table cannot reach: half of this row's allocation is Nested, and
+        // the collapsed view says all of it is minted at one site
+        ok &= check(
+            "the top allocated class is attributed to a single site",
+            Bench.apportion(realFlat, realCollapsed).headOption
+                .exists(m => m.cls == "kyo.kernel.proto.Nested" && m.method == "kyo.kernel.proto.Nested$.apply"),
+            realCollapsed.take(2).map(_.show).mkString(" | ")
+        )
+        Bench.apportion(realFlat, realCollapsed).foreach(m => println(s"       ${m.show}"))
+
         println(if ok then "\nPHASE 1 PASS" else "\nPHASE 1 FAIL")
         if !ok then sys.exit(1)
     end main

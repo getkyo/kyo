@@ -65,6 +65,30 @@ All three fixed, pinned by six new checks; **193 checks green** across five suit
 16 in `tool-defects.md`. One observation about kyo itself came out of it: `KyoAppRunner.onResult`
 prints a failed result and then rethrows it, so every kyo app renders its `Abort` failures twice.
 
+## Phase 5 is done: allocation is attributed to the method that allocated it
+
+The flat table says `Nested` is 50.7% of this row's allocation and can never say by whom. The
+collapsed view can, and now does, validated end to end on a real JMH run rather than on a fixture:
+
+    kyo.kernel.proto.Nested                    minted at kyo.kernel.proto.Nested$.apply   (3790 samples, ~1.99 GB)
+    kyo.kernel.bench.ProtoKernelBench$$anon$95 minted at ProtoKernelBench$.ask            (3676 samples, ~1.93 GB)
+
+Both views come from **one** recording, so the conservation check measures the parse: exact, 7,481
+samples across 1,951 collapsed lines, nothing lost. Two recordings of the same planted program differ
+by 0.25%, and the gate correctly refuses that pair, which is the whole reason the single-recording
+requirement is in the plan.
+
+Acceptance is a planted program whose only significant allocator is named before the parser runs, not
+conservation, which holds equally for a correct attribution and for one assigning every sample to an
+arbitrary frame.
+
+Two parser defects found on the way, both the character-class family that has bitten this file four
+times: an array type truncated at the bracket (`java.lang.Object[]` and `java.lang.Object` became one
+row, and on the kernel rows the `Object[]` is the stack), and JVM-internal C++ frames truncated at the
+`::`, one of them reported as a method called `void`.
+
+**220 checks green.**
+
 ## Now
 
 **Validating the tool against the manual work.** Procedure: three-way comparison of raw data, tool
