@@ -51,27 +51,11 @@ private[kyo] object EffectTrace:
             builder.entries(stack, base)
         }
 
-    /** The settle boundary: the throw crossed a frame that continues an answered operation, so the operation's suspension leads the
-      * reconstruction as the innermost element.
-      */
-    def attach(ex: Throwable, suspended: Maybe[Arrow.Suspend[?, ?, ?, ?, ?, ?]], v: Any, stack: Stack, base: Int): Unit =
-        reconstruct(ex) { builder =>
-            suspended match
-                case Maybe.Present(s) => builder.frame(s.frame)
-                case Maybe.Absent     => ()
-            builder.value(v)
-            builder.entries(stack, base)
-        }
-
     /** The application boundary: the evaluator applied a frame through the step protocol with the pending continuation already folded into
       * `next`, so the fold, not the stack, holds what was left to run.
       */
-    def attach(ex: Throwable, suspended: Maybe[Arrow.Suspend[?, ?, ?, ?, ?, ?]], v: Any, next: Arrow[?, ?, ?], stack: Stack, base: Int)
-        : Unit =
+    def attach(ex: Throwable, v: Any, next: Arrow[?, ?, ?], stack: Stack, base: Int): Unit =
         reconstruct(ex) { builder =>
-            suspended match
-                case Maybe.Present(s) => builder.frame(s.frame)
-                case Maybe.Absent     => ()
             builder.value(v)
             builder.arrow(next)
             builder.entries(stack, base)
@@ -239,6 +223,9 @@ private[kyo] object EffectTrace:
                         push(c.a)
                     case s: Arrow.Suspend[?, ?, ?, ?, ?, ?] =>
                         frame(s.frame)
+                    case m: Arrow.SuspendWith[?, ?, ?, ?, ?, ?, ?, ?] =>
+                        push(m.tail)
+                        frame(m.susp.frame)
                     case h: Arrow.Handle[?, ?, ?, ?, ?] =>
                         region(h.handler.tag)
                     case b: Arrow.Bind[?, ?, ?] =>

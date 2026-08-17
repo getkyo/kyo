@@ -5,8 +5,6 @@ import kyo.Span
 import kyo.Tag
 import kyo.kernel.proto.Loop.Outcome
 import kyo.kernel.proto.Loop.Outcome2
-import scala.annotation.nowarn
-import scala.language.implicitConversions
 import scala.runtime.AbstractFunction1
 
 sealed abstract class Arrow[-A, +B, -S] extends AbstractFunction1[A, B < S] with Boxed:
@@ -102,7 +100,6 @@ object Arrow:
 
     // TODO could these be type members instead of params? There's too much noise in the Eval code due to these params. I[_], O[_], E <: ArrowEffect[I, O], A, X
     abstract class Suspend[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Defer[Any, B, E & S]:
-        self =>
 
         def frame: Frame
         def tag: Tag[E]
@@ -113,13 +110,30 @@ object Arrow:
 
         override def chain[C, S2](f: Arrow[B, C, S2]): Arrow[Any, C, E & S & S2] =
             if f eq Identity then this.asInstanceOf[Arrow[Any, C, E & S & S2]]
-            else
-                new Suspend[I, O, E, A, C, S & S2]:
-                    def frame         = self.frame
-                    def tag           = self.tag
-                    def input         = self.input
-                    def cont(v: O[A]) = Arrow[B](self.cont(v), f)
+            else SuspendWith(this, f)
     end Suspend
+
+    final private[proto] class SuspendWith[I[_], O[_], E <: ArrowEffect[I, O], A, X, B, S, S2](
+        val susp: Suspend[I, O, E, A, X, S],
+        val cont: Arrow[X, B, S2]
+    ) extends Defer[Any, B, E & S & S2]:
+
+        final override def apply(v: Any) =
+            // a cont the evaluator folded pending entries into is a Chain, whose step
+            // heads with Identity and defers the answer through a Bind; stepping the
+            // Chain's left arm instead delivers into the composed tail directly
+            cont match
+                case c: Chain[X, Any, B, S2] @unchecked =>
+                    val st = c.a.step
+                    st.head(susp(v), st.tail.chain(c.b))
+                case cont =>
+                    val st = cont.step
+                    st.head(susp(v), st.tail)
+
+        override def chain[C, S3](f: Arrow[B, C, S3]): Arrow[Any, C, E & S & S2 & S3] =
+            if f eq Identity then this.asInstanceOf[Arrow[Any, C, E & S & S2 & S3]]
+            else SuspendWith(susp, cont.chain(f))
+    end SuspendWith
 
     // TODO could these be type members instead of params? There's too much noise in the Eval code due to these params. E <: ArrowEffect[?, ?], A, B,
     // this is also valid for the Handler subclasses

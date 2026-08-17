@@ -1,7 +1,9 @@
 package kyo.kernel.proto
 
 import kyo.Const
+import kyo.Maybe
 import kyo.Tag
+import kyo.discard
 import kyo.kernel.proto.Arrow.Bind
 import kyo.kernel.proto.Arrow.Identity
 import kyo.kernel.proto.Arrow.Transform
@@ -28,6 +30,26 @@ class EvalTest extends AnyFreeSpec:
         @tailrec def tower(v: Int < Any, n: Int): Int < Any =
             if n == 0 then v else tower(v.map(_ + 1), n - 1)
         assert(Eval(tower(0, 1000000)) == 1000000)
+    }
+
+    "a deep map tower over a suspension evaluates in bounded stack" in {
+        @tailrec def tower(v: Int < Ask, n: Int): Int < Ask =
+            if n == 0 then v else tower(v.map(_ + 1), n - 1)
+        assert(Eval(answerAsk(1)(tower(ask, 100000))) == 100001)
+    }
+
+    "a continuation folded from the drive stack runs every pending map exactly once" in {
+        val runs = new Array[Int](2)
+        val body: Int < Ask =
+            ask.map(a => ask.map(b => a * 10 + b))
+                .map { v =>
+                    runs(0) += 1; v + 1
+                }
+                .map { v =>
+                    runs(1) += 1; v * 2
+                }
+        assert(Eval(answerAsk(3)(body)) == 68)
+        assert(runs.toList == List(1, 1))
     }
 
     "deep recursion through map pays rescues only" in {
@@ -127,6 +149,48 @@ class EvalTest extends AnyFreeSpec:
         val ex = intercept[Throwable](Eval(ask.asInstanceOf[Int < Any]))
         assert(ex.getMessage.contains("unhandled suspension"))
         assert(Eval(stateful(ask.map(a => ask.map(b => a * 10 + b)))) == 1)
+    }
+
+    "partial evaluation" - {
+
+        "a preemption stop reifies and resumes with handler state" in {
+            def countdown(i: Int): Int < Ask =
+                if i == 0 then 0 else ask.map(a => countdown(i - a))
+            val counted: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 0, countdown(100))(
+                [C] =>
+                    (n, _) =>
+                        if n == 10 then discard(Safepoint.stop(Thread.currentThread()))
+                        Loop.continue(n + 1, 1)
+                ,
+                (n, a) => n + a
+            )
+            val first = Eval.partial(counted)
+            assert(first.evalNow == Maybe.Absent)
+            assert(Eval.partial(first).evalNow == Maybe(100))
+        }
+
+        "the stop function ends the slice" in {
+            var steps = 0
+            val stop = () =>
+                steps += 1; steps > 50
+            def countdown(i: Int): Int < Ask =
+                if i == 0 then 0 else ask.map(a => countdown(i - a))
+            val first = Eval.partial(answerAsk(1)(countdown(1000)), stop)
+            assert(first.evalNow == Maybe.Absent)
+            assert(Eval.partial(first).evalNow == Maybe(0))
+        }
+
+        "partial completes when nothing stops" in {
+            assert(Eval.partial(answerAsk(21)(ask.map(_ * 2))).evalNow == Maybe(42))
+        }
+
+        "a stop delivered between slices short-circuits" in {
+            val v: Int < Any = answerAsk(41)(ask.map(_ + 1))
+            discard(Safepoint.stop(Thread.currentThread()))
+            val r = Eval.partial(v)
+            assert(r.asInstanceOf[AnyRef] eq v.asInstanceOf[AnyRef])
+            assert(Eval.partial(r).evalNow == Maybe(42))
+        }
     }
 
 end EvalTest

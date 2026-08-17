@@ -221,7 +221,12 @@ object Loop:
       *   The fourth state value
       */
     @nowarn("msg=anonymous")
-    inline def continue[A, B, C, D, O](inline v1: A, inline v2: B, inline v3: C, inline v4: D): Outcome4[A, B, C, D, O] < Any =
+    inline def continue[A, B, C, D, O](
+        inline v1: A,
+        inline v2: B,
+        inline v3: C,
+        inline v4: D
+    ): Outcome4[A, B, C, D, O] < Any = // TODO fuck, this came back. No these methods should have no < Any. You introduced a hack at some point and keeps poping up over and over
         val outcome =
             new Continue4[A, B, C, D]:
                 val _1 = v1
