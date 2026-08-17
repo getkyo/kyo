@@ -15,6 +15,17 @@ they expose facts to check output the tool already produced. Computing a delta, 
 by hand is the failure this project exists to prevent, and it happened for four experiments before
 being caught.
 
+## In flight
+
+Tier-split variant 3 bracketed against base: three rows, C V C V C. Variant 3 finds the stack index
+once and hands it to whichever tier runs, where variants 1 and 2 looked it up twice on a fast-path
+miss and cost the handler rows 22 to 35%. Committed in the detached throwaway worktree as
+`9685c9b445` purely so the bracket can restore it by sha; no branch contains it.
+
+Rows chosen to test the specific hypothesis: `continuationBodiesFuse` (should win),
+`handleLoopAnswersInPlace` (the row variants 1 and 2 destroyed, should now be flat), and
+`trailingMapsStayLinear` (should not gain the 240,000 B/op the crude forced inline costs).
+
 ## The central question, answered with replication
 
 First bracket with a real threshold: A/A null clean, `continuationBodiesFuse` **-6.8%** when
