@@ -159,6 +159,18 @@ with a value arriving in the wrong representation:
 wildcard, so there is no `Arrow.Eval` versus driver-`Eval` ambiguity in it either. `Eval.scala`
 qualifies all three of its park-node constructions as `Arrow.Eval`.
 
+**Eliminated by experiment, in order:** the `Arrow.toString`/`frameInfo` additions (removed them, same
+5 failures, restored since `ArrowTest` needs them); `CanLift.unsafe.bypass`'s removal (it was never
+referenced anywhere in the proto, main or test, so deleting it changed nothing). And by diff against
+the proto, ignoring package and import lines: **`ArrowEffect.scala` is byte-identical**, `Eval.scala`
+is identical in logic, `Pending.scala`'s `map`/`flatMap` are identical, and both `Nested` methods are
+identical in bytecode.
+
+What still differs and is untested: `Stack`'s visibility (`private[proto]` to `private[internal]`) and
+the five `liftInternal` imports replacing the macro at kernel-internal lift sites. The latter is the
+only remaining semantic change, though the two emissions look equivalent on inspection: for a concrete
+primitive both cast, for a generic or `<`-typed `A` both route through `Nested.nest`.
+
 So this is a genuine behavioural difference on the park/resume path, where a value is stored into an
 `Arrow.Eval` node and delivered again: one delivery is handing back the node or the box rather than the
 value. The `Arrow$Eval -> Integer` case is the most informative, since the park node itself reaches a
