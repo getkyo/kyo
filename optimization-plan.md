@@ -27,9 +27,40 @@ and it runs about once per op against ~1000 map deliveries.
 `nestedPayloadsUnwrapInMaps` (59 hits; zero for the other fourteen). Every target-row prediction
 below is therefore a prediction, not an observation.
 
+## Scoreboard
+
+Every entry below now carries its outcome, because a plan that still reads as a to-do list after the
+work is done invites re-litigating settled questions. Six are closed, four are gated.
+
+| | candidate | outcome |
+|---|---|---|
+| 1 | DIS-1 | **refuted**, in all three constructible forms |
+| 2 | DIS-2 | **untested**: the score moved 17.4% and the flag never reached the method |
+| 3 | C1 | **refuted** on its stated field, from a profile already on disk |
+| 4 | IN-3 | gated; premise not verifiable with any instrument here |
+| 5 | IN-1 | **field is dead**: already inlined at all 25 sites |
+| 6 | C3 | gated; the second 16 KB/op turns out to be minted at the benchmark's own `ask` |
+| 7 | DIS-3 | gated, **default proceed**; the only open lead on the central regression |
+| 8 | C4 | **fixed and measured**, though this entry names the wrong location |
+| 9 | IN-2 | **refuted**: its targets are not sampled at all |
+| 10 | DIS-4 | gated; the cheap objection is answered and does not kill it |
+
+Five of the six closures cost **no benchmark run at all**: they came from evidence already stored.
+Two of them died because the candidate's own nominated field was the wrong instrument, which is worth
+more than either verdict.
+
 ## The ten
 
-### 1. DIS-1: dispatch tier split  —  **CONFIRMED BY ISOLATION**
+### 1. DIS-1: dispatch tier split  —  **REFUTED, in all three constructible forms**
+
+> **Outcome.** The heading below used to read "CONFIRMED BY ISOLATION" and that was wrong. The win
+> requires inlining the whole 607-byte body, and every tier split that keeps the body small loses the
+> win with it: variant 3 halves the handler regression and delivers -0.7% against the -6.8% that
+> forcing the whole body gives. What helps `continuationBodiesFuse` is exactly what destroys
+> `trailingMapsStayLinear`'s scalar replacement, 240,000 B/op, confirmed by reproducing it with
+> `-XX:-EliminateAllocations` to within 24 bytes on 2.5 MB. See `bench-results/tier3/RESULT.md`.
+> What it left open is whether some other shape recovers the win without enlarging the compilation
+> unit; **DIS-3 below is the only candidate that could be one.**
 
 **Measured.** Forcing `Eval$::dispatch$1` (607B, refused `hot method too big`) to inline takes
 `continuationBodiesFuse` from 27.455 to 25.566 us/op: -6.88% against its own default and -2.65%
@@ -55,7 +86,13 @@ itself too big to inline, so it alone cannot repay the frame with downstream inl
 **Rows.** `continuationBodiesFuse`, `suspensionFusesContinuation`. Not the fusion or map rows.
 **Cost.** Low. **Gates.** None.
 
-### 2. DIS-2: `Transform`-first delivery
+### 2. DIS-2: `Transform`-first delivery  —  **UNTESTED, not confirmed**
+
+> **Outcome.** `-XX:FreqInlineSize=600` moves the row -17.4%, but the efficacy gate shows the flag
+> never reached the method: `dispatch$1` is 607 bytes and refused `hot method too big` in BOTH logs,
+> and 700 was refused for another reason. The 37 verdicts that did move are almost entirely the
+> benchmark's own closures. So the score moved and the hypothesis was never tested. Its mechanism is
+> still worth the replicated -6.8%. See `bench-results/dis2/RESULT.md`.
 **Hypothesis.** The delivery path tests the less likely shape first, so the hot row pays a failed
 type test per step.
 **Field.** JMH score; bytecode order via `javap`; the `-XX:FreqInlineSize=600` probe moving both legs
@@ -65,7 +102,12 @@ budget, not order.
 **Rows.** `continuationBodiesFuse`, `trailingMapsStayLinear`.
 **Cost.** Low. **Gates.** None.
 
-### 3. C1: park from the payload, not from the incoming union
+### 3. C1: park from the payload, not from the incoming union  —  **REFUTED on its stated field**
+
+> **Outcome.** All 3,790 `Nested` samples on the row, 100%, come from `loop$9` -> `ProtoKernelBench$.boxed`
+> -> `Nested.nest` -> `Nested$.apply`: the benchmark's own boxing at the lift boundary. Zero reach any
+> park arm, so the eight edits proposed here remove nothing. No run spent; the profile was already on
+> disk. One row only. See `bench-results/c1/RESULT.md`.
 **Hypothesis.** The `Nested` box is heap-allocated only because the park arm stores the incoming
 union; taking it from the payload removes the allocation entirely.
 **Field.** `gc.alloc.rate.norm`, exact and per-op. The row is exactly 32,080.04 B/op, which is two
@@ -78,7 +120,13 @@ union; taking it from the payload removes the allocation entirely.
 forbids without sign-off.**
 The single cheapest decisive candidate: one allocation reading settles it either way.
 
-### 4. IN-3: take the VarHandle guard chain off `Safepoint.get`
+### 4. IN-3: take the VarHandle guard chain off `Safepoint.get`  —  **GATED; premise not verifiable**
+
+> **Outcome.** The poll's declared surface is 145 B against the 712 B claimed here, so the figure is
+> post-inlining expansion that javap cannot show and no instrument in this harness can settle. The
+> stated falsifier is dead independently: every safepoint method is inlined at 23-24 sites, so there
+> is no refusal for a smaller poll to flip. Only the CPU-profile motivation survives, ~8.4% of
+> samples. If revived, re-state it on the profile. See `RULINGS-NEEDED.md`.
 **Hypothesis.** One `AtomicReferenceArray.get` force-inlines 434 bytes into the 1708-byte hot unit
 (25.4%); the whole safepoint poll is 712 B (41.7%), and shrinking it may flip the log's hottest
 refusal.
@@ -88,7 +136,12 @@ method`, count 109,640); JMH score.
 **Rows.** All suspension rows.
 **Cost.** Medium. **Gates. Owner-gated: raises a memory-model question.**
 
-### 5. IN-1: split `Arrow.Identity.apply` into fast entry and slow path
+### 5. IN-1: split `Arrow.Identity.apply` into fast entry and slow path  —  **FIELD IS DEAD**
+
+> **Outcome.** `Arrow$Identity$::apply` is 92 B and inlined at all 25 sites, so there is no refusal
+> for a split to flip and the falsifier below is satisfied before the edit is written. Not a
+> refutation of the candidate, a refutation of the field it chose: the effect worth looking for is
+> whether freeing 86 B in 25 callers lets something else in. See `bench-results/premises/RESULT.md`.
 **Hypothesis.** 86 of 92 bytes are dead on the measured path; the branch record shows
 `if_acmpne taken=0 not_taken=6007`, never taken, inlined twice into the hot unit.
 **Field.** Per-site C2 verdict: predicts `deliver` refused with `low call site frequency` at the same
@@ -97,7 +150,13 @@ method`, count 109,640); JMH score.
 **Rows.** Map and delivery rows.
 **Cost.** Low. **Gates.** None (a fast/slow split, not an `inline` annotation).
 
-### 6. C3: move the park trigger out of the delivery arm into the chain structure
+### 6. C3: move the park trigger out of the delivery arm into the chain structure  —  **GATED**
+
+> **Outcome.** The second 16 KB/op has a name: `ProtoKernelBench$$anon$95`, minted at the benchmark's
+> own `ask`, 49.1% of the row, which is the suspension node created where the suspension is created
+> rather than in the delivery arm this proposes to change. Deliberately NOT refuted, since the claim
+> is about preemption design. The conversation should open with: by what mechanism does moving the
+> park trigger stop `ask` minting that node? See `RULINGS-NEEDED.md`.
 **Hypothesis.** While the park decision is a branch inside the delivery arm, every delivery pays for
 it; moving it into the structure removes the second 16 KB/op.
 **Field.** `gc.alloc.rate.norm`; JMH score across the suspension rows.
@@ -106,7 +165,13 @@ it; moving it into the structure removes the second 16 KB/op.
 **Cost.** High: a design change to preemption. **Gates. Owner-gated: wants a conversation first.**
 Highest ceiling of the allocation set, and the only one reaching the second 16 KB/op.
 
-### 7. DIS-3: one suspension arm, unifying `Suspend` and `SuspendWith`
+### 7. DIS-3: one suspension arm, unifying `Suspend` and `SuspendWith`  —  **GATED; default is PROCEED**
+
+> **Outcome.** Promoted by DIS-1's refutation rather than by anything measured here. It deletes the
+> 607-byte `dispatch$1` outright instead of forcing it inline, which is the one shape that could
+> recover the win without the scalar replacement that cost. The highest-value candidate left, and the
+> only open lead on the campaign's central regression. Needs sign-off on one `@unchecked` typed
+> pattern. Must not share a bracket with DIS-1.
 **Hypothesis.** The drive tests two classes and carries two copies of one concept; collapsing them
 deletes 607 bytes and one type test from every non-suspension path.
 **Field.** `javap` size of `Eval$::loop`; then the 15-row sweep.
@@ -116,7 +181,13 @@ deletes 607 bytes and one type test from every non-suspension path.
 Must not share a bracket with DIS-1: it subsumes the byte saving but leaves the frame in place, so it
 must not be credited if the row moves.
 
-### 8. C4: restore the safepoint budget when delivery throws
+### 8. C4: restore the safepoint budget when delivery throws  —  **FIXED, and measured**
+
+> **Outcome.** Real, reproduced, fixed. 50 throws escaping a root `eval` lost exactly 50 of 512
+> depth, permanently, on a per-thread slot. The location in this entry is wrong though: the delivery
+> arms are unguarded by design and every normal path balances its pairs, so the hole was that
+> `Eval.apply` lacked the boundary guard `Eval.partial` already had. Costs +26.2% on
+> `evalFixedOverhead`, ~1.5 ns per top-level eval, every other row flat. See `bench-results/c4/RESULT.md`.
 **Hypothesis.** `Safepoint.exit` is unguarded, so every exception unwinding through a delivery leaks
 budget permanently.
 **Field.** Not a score. A **reproduction**: budget after N throws.
@@ -125,7 +196,13 @@ budget permanently.
 tests whether the harness can handle a candidate whose deliverable is a failing test.
 **Cost.** Low. **Gates.** None. Needs a reproduction before any edit, per the project rule.
 
-### 9. IN-2: split `Eval.dump` and `Stack.truncate` at their entry test
+### 9. IN-2: split `Eval.dump` and `Stack.truncate` at their entry test  —  **REFUTED**
+
+> **Outcome.** Right answer, wrong reasoning, wrong targets. `Eval.dump` is 92 B and inlined at both
+> sites so it has nothing to fix; `Stack::truncate` IS refused at 2 of 4 sites, contradicting "both
+> already inline hot"; and the worst offender, `Stack::grow` at 4 of 4, is not named here. Then the
+> CPU profile settles it: no `Stack` or `dump` frame is sampled at all.
+> See `bench-results/in2/RESULT.md`.
 **Hypothesis.** Both execute entry-compare-and-return essentially always (`truncate` taken 4382/4382;
 `dump$1`'s `i == top` never-not-taken 4386), so the body is dead weight in the hot unit.
 **Field.** `javap` sizes; C2 verdicts at their 5 sites; JMH score.
@@ -134,7 +211,13 @@ tests whether the harness can handle a candidate whose deliverable is a failing 
 **Cost.** Low. **Gates.** None.
 Included as the honest low-ceiling case: its own analysis predicts it changes no score.
 
-### 10. DIS-4: replace the drive's linear `instanceof` chains with a node-kind switch
+### 10. DIS-4: replace the drive's linear `instanceof` chains with a node-kind switch  —  **GATED; cheap half answered**
+
+> **Outcome.** The stated allocation risk does not exist. `Suspend` declares 0 fields and
+> `SuspendWith`, `Bind` and `Chain` declare 2, so under a 12-byte header with 8-byte alignment they
+> occupy 16 and 24 bytes and an added 4-byte kind field lands in existing padding: free on all four.
+> This does NOT kill the candidate; it removes the cheap objection and leaves the drive rewrite,
+> which is what the gate was really about. See `RULINGS-NEEDED.md`.
 **Hypothesis.** Two linear type-test chains cost more than a tableswitch on an integer kind.
 **Field.** `gc.alloc.rate.norm` first (a kind field may cost a word), then the 15-row sweep;
 `javap` bytecode shape.
