@@ -143,8 +143,32 @@ thing that cracked it was **javap on the owner's suggestion**, after reasoning h
 hypothesis: the call site read `kyo/kernel/Nested.unnest` where every neighbouring instruction read
 `kyo/Arrow` and `kyo/kernel/internal/Safepoint`.
 
-**Remaining red: 6.** Five in `ArrowEffectTest`, all region and park cases; one in
-`PendingBytecodeTest`, a size expectation that moved from 8 to 5.
+**Remaining red: 6.**
+
+Five in `ArrowEffectTest`, all region/park/capture cases, all failing at the test's own `Say.handle`
+with a value arriving in the wrong representation:
+
+    a handle capture crossing an inner region            Nested      -> Integer
+    a crossed region resumes without re-running its body  Nested      -> Integer
+    a crossed stateful region resumes with in-flight state Nested     -> Integer
+    each shot of a multi-shot capture resumes from state   Arrow$Eval -> Integer
+    a park preserves standing sibling regions             ClassCast
+
+**Not the same defect as the ArrowEffect import.** Swept every main and test source: no other file uses
+`Nested` without importing it. `ArrowEffectTest` imports only `kyo.kernel.internal.Eval`, with no
+wildcard, so there is no `Arrow.Eval` versus driver-`Eval` ambiguity in it either. `Eval.scala`
+qualifies all three of its park-node constructions as `Arrow.Eval`.
+
+So this is a genuine behavioural difference on the park/resume path, where a value is stored into an
+`Arrow.Eval` node and delivered again: one delivery is handing back the node or the box rather than the
+value. The `Arrow$Eval -> Integer` case is the most informative, since the park node itself reaches a
+value position. These passed at baseline, so they are mine.
+
+The sixth is `PendingBytecodeTest` "lift of a generic value is one runtime test": `Map("test" -> 5)`
+against an expected `Map("test" -> 8)`. That is a *shape* assertion about the lift emission, and 5
+against 8 may well be correct now rather than a regression, since `liftInternal` emits a different
+shape from the macro at kernel-internal call sites. It needs reading before it is either fixed or
+re-baselined; overwriting the number without understanding it would discard the check.
 
 ### How it was localised, kept because the method worked
 
