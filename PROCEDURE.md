@@ -173,3 +173,11 @@ the run must record what it was run with.
 **Backticks in a `git commit -m` are shell substitution.** A commit message describing
 `` `0.01 ± 0.00` `` silently lost the very text it was about. Use `-F` with a file for anything
 containing backticks, and read the message back after committing.
+
+**Committed is not the same as reachable.** The rule that work must be committed rather than left in a
+working tree is not the whole of it: a commit on a **detached HEAD** is reachable from nothing but
+that HEAD, and the next `checkout` in that worktree orphans it for a prune to delete. The C4 safepoint
+fix sat that way for a day, reproduced and tested and one command from gone, while three
+`parked/*` branches already existed in the same repository showing the convention I had not applied
+to my own work. After committing in a throwaway worktree, `git branch --contains <sha>`; if the only
+answer is the detached HEAD, give it a `parked/<name>`.
