@@ -408,3 +408,54 @@ independently (down the full ladder, not by symmetry with the win), then ask whe
 exists that keeps the win without the loss. Only when that search has actually been run does
 the trade become a decision, and then it is the user's, presented with both mechanisms and
 the numbers.
+
+## Optimization techniques
+
+The catalog of moves that have actually worked here, and the ones that reliably look right and
+do not. Every entry is a hypothesis generator, never a justification: each was established by
+measurement on this codebase and each must be re-measured where it is applied next.
+
+**`inline` is never added without the user's approval.** It is a public-surface and
+compile-cost decision as much as a speed one: expansion multiplies bytecode at every call
+site, inflates compile time, and interacts with the macro suspension equilibrium. Two uses in
+the proto (`Eval.dispatchInline`, `Effect.deferInline`) were introduced without asking and
+stand as open questions rather than precedent. Propose it with a measurement and let the user
+decide.
+
+Moves that have paid:
+
+- **Make the hot method smaller by moving cold shapes out of line.** The entry point keeps the
+  common shape; every other shape becomes one call into a private method. This is what lets a
+  delivery path serve several continuation shapes without any of them paying for the others.
+- **Do the work once at construction instead of once per use.** The largest single win measured
+  here (41% on trailing maps) came from delivering through a folded continuation directly
+  rather than routing it through `Identity`, which allocated a `Bind` on every suspension.
+  Ask where in the value's life the work can happen only once.
+- **Hand back a value the caller already has.** Passing the whole arrow to a handler as its own
+  continuation removed a per-suspension closure allocation, because the continuation the
+  handler needs is the value the user already built.
+- **Specialize the degenerate tier.** The empty-region case of dispatch is three lines and is
+  what the fused rows execute every time; keeping it as its own branch above the general
+  region-copy path costs nothing and skips all of it.
+- **Delete state the hot loop maintains for a cold consumer.** A `suspended` variable written on
+  every iteration existed only to enrich an exception at one boundary, and no test pinned it.
+
+Moves that looked right and measured flat or worse:
+
+- **Inlining the delivery entry.** Making it small enough to inline measured *slower* than a
+  larger version that the JIT refused, on the same row. Method size is a lever on some paths
+  and inert on others; the log tells you which, and only the benchmark tells you whether it
+  matters.
+- **Fusing composition into wrappers.** Delegating wrappers made mapped suspensions fast and
+  made `tag`, `input` and `cont` O(depth), which is a stack overflow at 100k maps. Speed that
+  scales with user input is a defect, not a fast path.
+- **Unrolling a delivery by one level.** Tried against the trailing-map fold, measured no
+  better on its target row, reverted.
+- **Reference equality against a type test.** Measured indistinguishable on the composition
+  path; neither is a reason to choose the other.
+
+The framing that generates candidates: allocation per operation, indirections per delivery,
+work repeated per use that could happen per construction, and state maintained for a consumer
+that rarely reads it. Profile first to learn which of those the row is actually spending on,
+because on the suspension rows roughly 60% of samples are boxing the benchmark's own `Int`s
+and no kernel change touches that.
