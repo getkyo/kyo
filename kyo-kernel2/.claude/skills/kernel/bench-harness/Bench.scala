@@ -505,6 +505,7 @@ object Bench:
             rows = measured,
             jit = LogCompilation.inlining(logc),
             coverage = logc.coverage,
+            jvmArgs = Chunk.from(jvmArgs),
             alloc = allocSites,
             allocByMethod = byMethod,
             cpu = cpuSites,

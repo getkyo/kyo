@@ -179,6 +179,23 @@ same banner and behind the same exit code as an unsettled leg, naming the rows i
 A session with too few control legs is blocked too, and for a stronger reason: it is not that the
 check failed, it is that the session cannot check itself. That also used to be a printed line.
 
+## Found by trying to replicate the sweep
+
+**25, a stored run did not record the JVM arguments that produced it.** A configuration comparison
+varies nothing but those arguments, so a stored pair with the same `sha` and the same `treeHash` is
+otherwise indistinguishable. The campaign's **headline result** is stored exactly that way:
+`continuationBodiesFuse` at -6.8% under a forced inline, with the forcing recorded nowhere. Those runs
+can be loaded, re-compared and re-reported forever, and no reader can say what was measured. The
+compile-command file that produced them is no longer on disk either, so the configuration is
+unrecoverable rather than merely unstated.
+
+This is the same family as defect 11: the harness gained the ability to *express* configuration
+comparisons (`Arm(sha, jvmArgs)`) without gaining the ability to *record* one.
+
+**Fixed**: `Run.jvmArgs`, defaulted so the 34 stored runs still decode, and a same-sha comparison now
+prints exactly which arguments differ. A same-sha pair with nothing recorded says so, and names the
+two readings, rather than presenting itself as a clean comparison.
+
 ## Status, reconciled
 
 | # | defect | state |
@@ -207,6 +224,8 @@ check failed, it is that the session cannot check itself. That also used to be a
 | 22 | a QA check that passed whenever nothing was flagged | **fixed**: the biconditional it meant |
 | 23 | the compile-time steady-state limit is uncalibratable from any data here | **bounded**, and labelled as such |
 | 24 | a dirty A/A null printed a line and exited 0 | **fixed**: a blocker, with the exit code |
+| 25 | a stored run did not record the JVM args that produced it | **fixed**: recorded and reported; the headline pair remains unrecoverable |
+| 26 | two fixed decimals made a nanosecond row unreadable | **fixed**: precision scales with magnitude |
 
 Twenty-two fixed, one bounded, one an observation. Defect 9's mitigation is now wired into every
 bracket rather than available on request; what remains irreducible about 9 is that fixtures are

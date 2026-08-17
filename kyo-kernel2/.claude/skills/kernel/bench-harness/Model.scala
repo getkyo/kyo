@@ -305,6 +305,15 @@ object Model:
         jit: Chunk[InlineSites],
         /** How much of each parsed artifact was actually consumed, so a silent partial parse is visible in the record. */
         coverage: Chunk[ParseCoverage],
+        /** The extra JVM arguments this leg was measured under.
+          *
+          * A configuration comparison varies nothing but these, so a stored pair with the same `sha`
+          * and the same `treeHash` is otherwise indistinguishable, and the campaign's headline result
+          * was stored exactly that way: `continuationBodiesFuse` at -6.8% under a forced inline, with
+          * the forcing recorded nowhere. The run could be read, re-compared and re-reported, and no
+          * reader could say what it had measured.
+          */
+        jvmArgs: Chunk[String] = Chunk.empty,
         alloc: Chunk[AllocSite],
         /** Who allocated each class, from the collapsed view of the same recording.
           *

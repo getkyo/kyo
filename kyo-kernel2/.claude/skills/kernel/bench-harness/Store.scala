@@ -166,7 +166,21 @@ object Report:
       * and gets no note.
       */
     def partitionNote(control: Run, variant: Run, chainLength: Int): String =
-        if control.sha == variant.sha then ""
+        if control.sha == variant.sha then
+            // a configuration comparison varies nothing but the JVM arguments, so those ARE the
+            // change under test and the report is the only place a reader can see them. The
+            // campaign's headline was stored without them and could be re-read forever without
+            // anyone being able to say what it had measured.
+            val diff = variant.jvmArgs.diff(control.jvmArgs) ++ control.jvmArgs.diff(variant.jvmArgs)
+            if diff.isEmpty then
+                if control.jvmArgs.isEmpty && variant.jvmArgs.isEmpty then
+                    "\n⚠️  Same sha and no recorded JVM arguments on either leg, so nothing here says " +
+                        "what was varied. Either this is an A/A, or it was measured before the harness " +
+                        "recorded configuration and the difference is unrecoverable."
+                else ""
+            else
+                s"\nSame sha, so this is a configuration comparison and the difference is exactly:\n" +
+                    diff.map(a => s"  $a").mkString("\n")
         else if chainLength > 2 then
             s"\nThis is one step of a $chainLength-sha chain, so the delta above is the isolated contribution of " +
                 "this step and nothing else moved with it."

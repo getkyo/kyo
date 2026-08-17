@@ -412,6 +412,30 @@ object BenchTest:
             check("and told what it would take", tooFew.exists(_.contains("Five legs")), tooFew.mkString)
         }
 
+        println("a configuration comparison says what it configured")
+        // the campaign's headline, continuationBodiesFuse at -6.8% under a forced inline, is stored as
+        // two runs with the same sha and the same treeHash and nothing recording the forcing. It could
+        // be re-read, re-compared and re-reported forever without a reader being able to say what it
+        // had measured.
+        locally {
+            def cfg(label: String, args: String*) =
+                leg(label, base).copy(jvmArgs = Chunk.from(args))
+            val forced = Report.render(Bench.compare(
+                cfg("c"),
+                cfg("v", "-XX:CompileCommandFile=/tmp/inline.txt")
+            ))
+            check("the varied argument is named", forced.contains("-XX:CompileCommandFile=/tmp/inline.txt"), forced)
+            check("and called a configuration comparison", forced.contains("configuration comparison"), forced)
+            // a same-sha pair with nothing recorded is the pre-fix state, and must say so rather than
+            // presenting itself as a clean comparison
+            val silent = Report.render(Bench.compare(cfg("c"), cfg("v")))
+            check("a same-sha pair with no recorded args admits it", silent.contains("nothing here says"), silent)
+            check("and offers the two readings", silent.contains("A/A") && silent.contains("unrecoverable"), silent)
+            // two different shas is a design comparison and keeps the partition refusal
+            val design = Report.render(Bench.compare(leg("c", base).copy(sha = "aaa"), leg("v", base).copy(sha = "bbb")))
+            check("a design comparison still refuses attribution", design.contains("no source-level mechanism"), design)
+        }
+
         println("a score that can be read")
         // found by running a real bracket: a cleanly separated regression on a nanosecond row printed
         // as `0.01 ± 0.00` against `0.01 ± 0.00` beside `+26.2%`. The real numbers were 0.005853 and
