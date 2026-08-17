@@ -73,10 +73,31 @@ whole purpose.
 
 **`Kyo.scala` needed no porting.** It was only ever failing on the missing escape.
 
-**Open, and deliberately untouched per instruction:** tests and benchmarks still import
-`kyo.kernel.proto.*` and will not compile until repointed. That includes `ProtoKernelBench` and six
-bench-harness files, and the harness's `KernelPackage = "kyo.kernel.proto."` constant, which also
-means **stored jit and cpu data keyed on the old package names is now stale**.
+**Tests merged, 224 of 246 green.** Both trees folded onto the new implementation: proto tests hold the
+canonical names, `ImplicitsTest` followed `Implicits` into `internal`, `ContextEffectTest` and
+`KyoInternalTest` deleted as orphans, and `LoopTest`/`SafepointTest`/`StackTest` kept and ported since
+the proto tree had no equivalent.
+
+One piece of coverage was merged back into the **sources**, which is what the merge was for:
+`ArrowTest` covers `Arrow.toString`, and the proto had dropped it entirely, so every arrow rendered as
+`<function1>`. `frameInfo`/`toString` restored on `Transform`, `Step` and `Chain`, keeping the old
+design's constraint and its recorded reason: only the head's frame is walked, because a chain can be
+arbitrarily long and walking one from `toString` has broken value-stringifying tools before.
+
+**RED, 22 failures, and 21 are one symptom.** `ClassCastException: Nested cannot be cast to Integer` in
+`PendingTest` (16) and `ArrowEffectTest` (5): a lift box applied without a matching `unnest`. These
+passed in the proto before this work, so **I introduced it**. Leading suspect is the `liftInternal` I
+added, whose `erasedValue` match may not agree with the macro's analysis on every shape (the macro also
+has `isValue`, `isSafeFinalClass` and an `isModule` abort). That is a hypothesis, not a finding.
+The 22nd is `PendingBytecodeTest`, a size expectation that moved from 8 to 5.
+
+**Still open in the merge:** the extra cases in the old duplicated tests are not folded in yet. Old
+`ArrowEffectTest` was 1030 lines against the proto's 587, `EvalTest` 634 against 224, `PendingTest` 387
+against 304, `EffectTest` 314 against 70. Retrievable at `6d2538ab26`.
+
+**Still untouched per instruction:** benchmarks. `ProtoKernelBench` and six bench-harness files import
+`kyo.kernel.proto.*`, and the harness's `KernelPackage = "kyo.kernel.proto."` constant means **stored
+jit and cpu data keyed on the old package names is now stale**.
 
 ## OPEN
 
