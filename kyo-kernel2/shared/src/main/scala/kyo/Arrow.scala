@@ -33,6 +33,10 @@ object Arrow:
         def head: Transform[A, X, S]
         def tail: Arrow[X, B, S]
         final def step = this
+
+        // only the head's frame: a chain can be arbitrarily long, and walking one from `toString` has
+        // broken tools that stringify values, kyo-test among them
+        override def toString: String = s"Arrow.Step(${head.frameInfo})"
     end Step
 
     abstract class Transform[-A, B, -S] extends Step[A, B, S]:
@@ -46,6 +50,12 @@ object Arrow:
         def apply(v: A) = this(v, Arrow[B])
 
         def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]): C < (S & S2)
+
+        final private[kyo] def frameInfo: String =
+            if this eq Identity then "identity"
+            else s"${frame.position.show}, ${frame.snippetShort}"
+
+        override def toString: String = s"Arrow($frameInfo)"
 
         override def chain[C, S2](f: Arrow[B, C, S2]) =
             if f eq Identity then
@@ -89,7 +99,9 @@ object Arrow:
     final class Chain[A, XX, +B, -S](
         val a: Arrow[A, XX, S],
         val b: Arrow[XX, B, S]
-    ) extends Defer[A, B, S]
+    ) extends Defer[A, B, S]:
+        override def toString: String = s"Arrow.Chain($a, $b)"
+    end Chain
 
     final class Bind[A, +B, -S](
         val value: A < S,

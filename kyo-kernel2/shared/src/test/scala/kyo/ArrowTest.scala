@@ -53,9 +53,10 @@ class ArrowTest extends AnyFreeSpec:
         val step = inc.chain(inc)
         assert(step.toString.startsWith("Arrow.Step("))
         assert(step.toString.contains("ArrowTest.scala"))
-        val andThen = inc.chain(inc).chain(inc)
-        assert(andThen.toString.startsWith("Arrow.AndThen("))
-        assert(andThen.toString.contains("Arrow.Step("))
+        // the proto composes with `Chain` where the old kernel had `AndThen`
+        val chained = inc.chain(inc).chain(inc)
+        assert(chained.toString.startsWith("Arrow.Chain("))
+        assert(chained.toString.contains("Arrow.Step("))
     }
 
 end ArrowTest

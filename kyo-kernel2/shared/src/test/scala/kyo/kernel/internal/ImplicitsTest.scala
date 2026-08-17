@@ -95,8 +95,8 @@ class ImplicitsTest extends AnyFreeSpec:
         }
 
         "kyo modules do not lift" in {
-            typeCheckFailure("val bad: ArrowEffect.type < Any = ArrowEffect")("Required: kyo.kernel.proto.ArrowEffect.type < Any")
-            typeCheckFailure("val bad: Loop.type < Any = Loop")("Required: kyo.kernel.proto.Loop.type < Any")
+            typeCheckFailure("val bad: ArrowEffect.type < Any = ArrowEffect")("Required: kyo.kernel.ArrowEffect.type < Any")
+            typeCheckFailure("val bad: Loop.type < Any = Loop")("Required: kyo.kernel.Loop.type < Any")
         }
     }
 
