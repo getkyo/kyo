@@ -70,6 +70,21 @@ statement. Nothing enumerates, per comparison, the checks that did not run and w
 one control leg, no efficacy because both legs share `jvmArgs`, no mechanism because evidence is
 Timing, no attribution because the leg is whole-class.
 
-That enumeration is cheap, it is computable today from `Comparison` plus `Run.evidence`, and it is the
-single highest-value addition for an operator who forgets, because it converts silence into a
-checklist. I would put it above every remaining item except the correctness fix in item 12.
+That enumeration is the single highest-value addition for an operator who forgets, because it converts
+silence into a checklist. I would put it above every remaining item except the correctness fix in
+item 12.
+
+**Correction to my own paragraph above, made before it propagated.** I first wrote that the enumeration
+"is computable today from `Comparison` plus `Run.evidence`". Checked: `Comparison` (`Model.scala:371`)
+carries `control: Run, variant: Run, deltas, jitChanges`, **one control `Run`, not the leg count**. So:
+
+- *no mechanism, evidence is Timing*: computable, `Run.evidence`.
+- *no attribution, whole-class leg*: computable, `Run.wholeClass`.
+- *no efficacy, both legs share `jvmArgs`*: computable, `Run.jvmArgs`.
+- *no A/A null, fewer than three control legs*: **not computable**. The leg count exists only at the
+  `Cli` level and is thrown away before `Report.render` sees it.
+
+Three of four are free; the fourth needs the leg count carried on `Comparison`, which is the same model
+change item 6 needs for `Resolution` and item 10 needs for drift. **Those three items should land
+together as one change to `Comparison`**, not as three separate ones, and that is an ordering fact v4
+does not have.

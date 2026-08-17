@@ -43,6 +43,18 @@ reading a benchmark before its efficacy gate.
 finished work or narrative, and it had drifted into claiming otherwise. It is kept for its reasoning
 and renamed accordingly.
 
+**The selection rule v4 never wrote down is drafted**: `reviews/RESULT-DRIVEN-DESIGN.md`, written
+deliberately *before* the fourth review answers, so the two can be compared rather than one anchoring
+the other. It carries a selection table (one row per result shape to the evidence the report must
+surface), and the rule v4 lacks: **absence is a result and it names its remedy.** When the report
+cannot say something it states what, why, and the command that would change it, which converts every
+"the operator must remember" case into a "the output already told them" case.
+
+It also finds an ordering fact v4 does not have: **items 6, 10 and the not-evaluated checklist all need
+the same change to `Comparison` and should land as one.** `Comparison` (`Model.scala:371`) carries one
+control `Run` and not the leg count, so "no A/A null, fewer than three control legs" is *not*
+computable at the render site, contrary to what I first wrote there and corrected.
+
 **A fourth held-out review is IN FLIGHT on v4**, briefed differently from the first three: not "find
 what is wrong" but **"does this plan still serve the founding requirement, and has it overcorrected?"**
 The risk it is asked to test is that v4 has drifted into a defect-cleanup backlog that fixes many real
