@@ -212,11 +212,34 @@ experiments become branches rather than floating commits. The same branch also r
     `REVIEW-FINDINGS-PLAN.md`, `bench-results/in2/RESULT.md`, and two places in this file. Item 4's
     acceptance is now the derived table itself rather than a remembered number.
 
-    **Four numbers I have published this campaign have been wrong**: a one-arm forecast called
+14. **The C4 table contradicted itself. Tool-right, document-wrong, and it is the document backing the
+    C4 ruling.** `bench-results/c4/RESULT.md` showed `0.005853 → 0.007364` beside **+26.2%**, which
+    recomputes to **+25.82%**. Adjudicated by re-running `BenchCompare` over the stored legs instead of
+    by hand: the tool prints the **arm means**, `0.005818 ± 0.000037` and `0.007342 ± 0.000037`, and
+    +26.2% follows from them exactly. The document had transcribed **leg one's** scores beside a
+    mean-based percentage. `Bench.scala:736-739` records fixing precisely this on the tool's side; I
+    reintroduced it by hand in the writeup. **Corrected to the tool's own output.**
+
+15. **Defect 43, reproduced live by that same run.** On a **Timing** comparison, whose `jit` is empty
+    by construction, the report still prints `- evalFixedOverhead: check allocation sites and the
+    inlining log before proposing a mechanism`. It is not withholding evidence it holds; it is naming
+    evidence **the run provably does not contain**. This is sharper than v3 item 2 states, and item 2's
+    acceptance must cover the Timing case.
+
+16. **Defect 30's evidence status, stated honestly.** The truncation *mechanism* is proven: two JVMs
+    sharing one `-XX:LogFile` leave one `<hotspot_log>` header and one pid. But all five stored
+    compilation logs contain exactly one row and were single-row invocations, so **the end-to-end
+    multi-row confirmation is not done**. It is one two-row `--evidence full` invocation, deferred only
+    because a measurement must not share the machine with a running agent. **Open task, not a
+    limitation.**
+
+    **Five numbers I have published this campaign have been wrong**: a one-arm forecast called
     "systematically optimistic" when it errs both ways; "the two largest deltas are flat" when it was
-    three; "three of eight selectors wired" when it is one; and "70%" when it is 84%. Every one
-    flattered either the tool or the kernel, and every one was caught by returning to the raw data
-    rather than by re-reading the writeup. That is the argument for the rule, not an anecdote about it.
+    three; "three of eight selectors wired" when it is one; "70%" when it is 84%; and the C4 table's
+    scores. Four flattered either the tool or the kernel. **The fifth points the other way and is the
+    useful one: it made the tool look wrong when the tool was right.** Every one was caught by
+    returning to raw data or re-running the tool, none by re-reading the writeup. That is the argument
+    for the rule, not an anecdote about it.
 
 **Everything else remaining is a ruling**, each with a recorded default: the four gated candidates in
 `RULINGS-NEEDED.md`, the C4 trade, and DIS-3's cast above.
