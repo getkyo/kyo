@@ -341,3 +341,35 @@ Rules that make this hold:
   board keeps the reasoning.
 - **The board is committed on the working branch**, for the same reason. An untracked board is one stray
   `git checkout` or `git clean` from gone, and this project has already lost uncommitted work exactly that way.
+
+### Reporting a benchmark run
+
+Numbers are reported in one standard table carrying **everything the run produced**, never as
+prose with a few scores picked out. A reader must be able to judge the result without asking
+what was run, against what, or how confident it is.
+
+The header states provenance and configuration: the two commits compared, where the run
+happened, the JMH configuration (forks, warmup and measurement iterations), the verified
+design markers for each leg, and the machine's current drift band. Without the band a
+percentage is uninterpretable.
+
+The table carries one row per benchmark, with the score **and its error** for both legs, the
+delta, and a status marker. Never drop the error column: a delta smaller than the combined
+error is not a result, and a reader who cannot see the error cannot tell. Include every row
+the class defines, including the flat ones, because "everything else was unchanged" is a
+claim that has to be visible to be trusted. Sort by delta so the extremes read first.
+
+Status markers, used consistently:
+
+- 🟢 faster beyond the drift band
+- ⚪ flat, inside the band, no result
+- 🔴 regressed beyond the band, which means the work is unfinished
+- 🔵 below measurement resolution, where the percentage is an artifact and is labeled as one
+
+When a row is flagged, the table says what was done about it: confirmed at `-f 3` with the
+tighter numbers, or diagnosed with its mechanism, or listed as open. A flagged row with no
+follow-up line is an unfinished report.
+
+Secondary profiler data belongs in the same report when it exists: `gc.alloc.rate.norm` in
+B/op next to the score settles allocation questions on sight, and the inlining verdict for a
+method under discussion belongs beside the row it explains.
