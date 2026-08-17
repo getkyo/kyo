@@ -362,6 +362,34 @@ hand got that exact thing wrong and either corrupted a measurement or wasted a r
 below changes, change the harness with it; a protocol documented in one place and enforced in
 another drifts apart silently.
 
+The drift runs the other way too, and this list is the correction: these are rules the harness
+now enforces that the text below never stated, so a reader working from the prose alone would
+not know to follow them.
+
+- **A session that cannot check itself is not a session.** Every bracket runs an A/A null over
+  its control legs. Each row that null classifies is a false positive by construction, so a
+  dirty null, or too few control legs to run one, is a blocker with an exit code and not a
+  warning line. The data still prints in full; what changes is that it cannot be mistaken for
+  a clean run.
+- **Two shas attribute nothing.** A pair measures the difference between two trees, and the
+  partition between the changes inside that diff was never declared, so "this moved because of
+  X" is unsupported however plausible X is. Declare a chain of three or more shas to isolate
+  one change; each adjacent step is then attributable and says so.
+- **A falsifier whose flag did not take refutes nothing.** `CompileCommand=inline` is a hint,
+  and HotSpot still refuses on `MaxInlineLevel`, node budget, or a method it cannot compile.
+  Such a run is inconclusive. A confirm additionally requires that *only* the instructed
+  method's verdict moved, since forcing a callee spends the caller's remaining budget.
+- **A leg still warming up is a blocker.** Judged from the per-iteration series by how far the
+  first iteration drags the mean the verdict is computed from, not by a fixed percentage, which
+  cannot separate jitter on a noisy row from a ramp on a stable one.
+- **Allocation is attributed to a site, not just a class.** The flat profiler table names the
+  class and can never say by whom; the collapsed view carries the stack. Both come from one
+  recording, because conservation between two recordings measures run-to-run variance rather
+  than the parse. The frame named is where the JIT *placed* the allocation, so this is never
+  independent of the inlining verdicts.
+- **Every delta arrives with the experiment that could contradict it.** A comparison that stops
+  at "this row moved" is where "it is slower, so replace it" comes from.
+
 ### Reporting a benchmark run
 
 Numbers are reported in one standard table carrying **everything the run produced**, never as
