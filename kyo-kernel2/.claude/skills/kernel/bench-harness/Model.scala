@@ -32,10 +32,42 @@ object Model:
         def compilingShare(measuredMs: Double): Maybe[Double] = compilerMsProfiled.map(_ / measuredMs * 100)
     end Row
 
-    /** One inlining decision, as the JIT reported it. The byte count is the part that matters: it is what turns a delivery path from
-      * always-inlined into never-inlined, and it is invisible to every other tool.
+    /** One inlining decision at one call site, as the JIT reported it. The byte count is the part that matters: it is what turns a delivery
+      * path from always-inlined into never-inlined, and it is invisible to every other tool.
+      *
+      * This is a *site* record, never a method's verdict. The distinction is load-bearing: see `InlineSites`.
       */
     case class JitEntry(method: String, bytes: Int, inlined: Boolean, reason: String) derives Schema
+
+    /** Every inlining decision the JIT made about one method, kept per site.
+      *
+      * Folding a method's sites to a single worst verdict is what let one warmup-era refusal, at one site out of six, decide the method's
+      * verdict for a whole leg. Two runs of an identical comparison named disjoint mechanisms that way, one of them a 2-byte method
+      * "refused" for size. A verdict is only meaningful with its denominator, so the denominator is carried.
+      */
+    case class InlineSites(method: String, bytes: Int, inlined: Int, refused: Int, reasons: Chunk[String]) derives Schema:
+        def sites: Int = inlined + refused
+
+        /** True when the JIT refused at every site. Anything short of that is a mixed verdict and is reported as a fraction. */
+        def alwaysRefused: Boolean = inlined == 0 && refused > 0
+
+        /** True when the JIT inlined at every site. */
+        def alwaysInlined: Boolean = refused == 0 && inlined > 0
+
+        def show: String =
+            if alwaysInlined then s"${bytes}B inlined"
+            else if alwaysRefused then s"${bytes}B refused (${reasons.headMaybe.getOrElse("no reason")})"
+            else s"${bytes}B refused at $refused/$sites sites (${reasons.headMaybe.getOrElse("no reason")})"
+    end InlineSites
+
+    /** How much of an artifact a parser actually consumed.
+      *
+      * A parser that reads 637 of 5093 elements and reports what it found looks identical to one that read all of them. Carrying the
+      * fraction turns a silent partial parse into a visible one, and lets a test fail when the fraction drops.
+      */
+    case class ParseCoverage(what: String, seen: Int, parsed: Int) derives Schema:
+        def complete: Boolean = seen == parsed
+        def show: String      = if complete then s"$what $parsed/$seen" else s"$what $parsed/$seen (INCOMPLETE)"
 
     /** Bytes allocated by one class, as the allocation profiler attributed them. */
     case class AllocSite(cls: String, bytes: Long) derives Schema
@@ -55,8 +87,21 @@ object Model:
         msTotal: Double,
         tasks: Int,
         c2Tasks: Int,
+        /** Tasks compiling a loop that was already running. The JMH stub loop is one of these, and it is where the measured code actually
+          * runs, so folding them into `tasks` hides the compilation that matters most.
+          */
+        osrTasks: Int,
         recompiled: Int,
-        deopts: Int,
+        /** Deoptimizations that actually happened: `<uncommon_trap thread=...>`, emitted when a running method falls back to the
+          * interpreter. In a captured run there were 6 of these.
+          */
+        runtimeDeopts: Int,
+        /** Guards the compiler planted while compiling (`bci=`), a property of the code shape rather than an event. There were 633 in the
+          * same run, and summing them with the above produced a "deoptimizations 642 vs 645" row that compared guard censuses.
+          */
+        plantedTraps: Int,
+        /** Compiled methods invalidated and scheduled for recompilation. The real recompilation signal, and previously unparsed. */
+        madeNotEntrant: Int,
         /** Seconds from JVM start to the last compilation. Compare against when measurement began. */
         lastCompileAt: Double
     ) derives Schema
@@ -70,10 +115,17 @@ object Model:
 
     /** A call site's receiver profile, aggregated by callee.
       *
-      * `monomorphic` is measured from the log's receiver counts rather than inferred from the shape of the code, which is the mistake that
-      * produced a confident and wrong megamorphism claim.
+      * `monomorphic` is `Absent` when the log carries no receiver profile for the site, which is the common case by a wide margin: 12 of
+      * 5093 call elements in a captured run have one. Absence means the JIT never profiled the site as a virtual call, typically because it
+      * was statically bound or already devirtualized. It emphatically does not mean megamorphic.
+      *
+      * Encoding that as `Maybe` rather than `false` is the whole point. With a boolean, "no data" and "many receivers" are the same value,
+      * and a report printed 46 of 47 sites under a heading promising measured receiver counts when every one of them had a receiver count of
+      * zero. A site with no profile is now unrepresentable as a classification.
       */
-    case class CallMorphism(callee: String, count: Long, receiverCount: Long, monomorphic: Boolean) derives Schema
+    case class CallMorphism(callee: String, count: Long, receiverCount: Long, monomorphic: Maybe[Boolean]) derives Schema:
+        /** Sites the JIT actually profiled, the only ones anything may be said about. */
+        def profiled: Boolean = monomorphic.isDefined
 
     /** A source pattern whose occurrence count identifies which design a tree held. */
     case class Marker(name: String, count: Int) derives Schema
@@ -106,15 +158,20 @@ object Model:
         warmup: Int,
         jit_metrics: Maybe[JitMetrics],
         rows: Chunk[Row],
-        jit: Chunk[JitEntry],
+        /** Inlining decisions per method, with every site kept. Sourced from the compilation log, which supersedes `PrintInlining`
+          * entirely: that tool interleaves output across compiler threads and reports no denominator.
+          */
+        jit: Chunk[InlineSites],
+        /** How much of each parsed artifact was actually consumed, so a silent partial parse is visible in the record. */
+        coverage: Chunk[ParseCoverage],
         alloc: Chunk[AllocSite],
         cpu: Chunk[CpuSite],
         deopts: Chunk[Deopt],
         morphism: Chunk[CallMorphism],
         recordedAt: String
     ) derives Schema:
-        def row(name: String): Maybe[Row] = Maybe.fromOption(rows.find(_.name == name))
-        def jitFor(method: String): Maybe[JitEntry] = Maybe.fromOption(jit.find(_.method == method))
+        def row(name: String): Maybe[Row]              = Maybe.fromOption(rows.find(_.name == name))
+        def jitFor(method: String): Maybe[InlineSites] = Maybe.fromOption(jit.find(_.method == method))
     end Run
 
     enum Verdict derives Schema, CanEqual:

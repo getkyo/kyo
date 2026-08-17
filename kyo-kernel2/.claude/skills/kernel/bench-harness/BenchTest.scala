@@ -24,7 +24,7 @@ object BenchTest:
     def leg(
         label: String,
         entries: Seq[(String, Double, Double, Double)],
-        jit: Chunk[JitEntry] = Chunk.empty,
+        jit: Chunk[InlineSites] = Chunk.empty,
         whole: Boolean = true,
         evidence: Evidence = Evidence.Full,
         sess: Session = session,
@@ -35,7 +35,7 @@ object BenchTest:
             id = s"$label-x", session = sess, treeHash = "abc", label = label, sha = "0123456789abcdef", forks = forks, evidence = evidence,
             wholeClass = whole, declaredRows = 15, markers = Chunk(Marker("SuspendWith", 4)),
             warmup = 10, jit_metrics = Maybe.empty,
-            rows = rows(entries*), jit = jit, alloc = Chunk.empty, cpu = cpu,
+            rows = rows(entries*), jit = jit, coverage = Chunk.empty, alloc = Chunk.empty, cpu = cpu,
             deopts = Chunk.empty, morphism = Chunk.empty, recordedAt = "now"
         )
 
@@ -69,13 +69,30 @@ object BenchTest:
         check("an allocation change is reported as the mechanism", by("fast").mechanism.exists(_.contains("allocation")))
         check("a movement with no supporting evidence is flagged unexplained", by("slow").unexplained)
         check("a flat row is never called unexplained", !by("flat").unexplained)
+        // both stored e2e runs printed a mechanism beside a +0.8% and a +0.3% delta
+        check("a flat row carries no mechanism at all", by("flat").mechanism.isEmpty, by("flat").mechanism.mkString(","))
 
         println("jit diff")
+        val method = "kyo.kernel.proto.Arrow$SuspendWith::apply"
         val withJit = Bench.compare(
-            leg("control", base, Chunk(JitEntry("kyo.kernel.proto.Arrow$SuspendWith::apply", 6, true, "inline (hot)"))),
-            leg("variant", base, Chunk(JitEntry("kyo.kernel.proto.Arrow$SuspendWith::apply", 87, false, "failed to inline: callee is too large")))
+            leg("control", base, Chunk(InlineSites(method, 6, inlined = 8, refused = 0, Chunk.empty))),
+            leg("variant", base, Chunk(InlineSites(method, 87, inlined = 0, refused = 8, Chunk("callee is too large"))))
         )
-        check("a size and verdict change is surfaced", withJit.jitChanges.exists(s => s.contains("6B inlined") && s.contains("87B refused")))
+        check("a unanimous verdict flip is surfaced", withJit.jitChanges.exists(s => s.contains("6B inlined") && s.contains("87B refused")))
+
+        // the defect this whole rework exists for: a method inlined at 5 of 6 sites in one leg and
+        // 4 of 6 in the other has not decided anything, and calling it a mechanism is what let two
+        // runs of one comparison name disjoint causes
+        val marginal = Bench.compare(
+            leg("control", base, Chunk(InlineSites("kyo.kernel.proto.Safepoint::enter", 50, inlined = 5, refused = 1, Chunk("callee is too large")))),
+            leg("variant", base, Chunk(InlineSites("kyo.kernel.proto.Safepoint::enter", 50, inlined = 4, refused = 2, Chunk("callee is too large"))))
+        )
+        check("a fraction that moved is not a mechanism", marginal.jitChanges.isEmpty, marginal.jitChanges.mkString(","))
+        check("but it is still visible as unstable", Bench.jitUnstable(
+            leg("control", base, Chunk(InlineSites("kyo.kernel.proto.Safepoint::enter", 50, inlined = 5, refused = 1, Chunk.empty))),
+            leg("variant", base, Chunk(InlineSites("kyo.kernel.proto.Safepoint::enter", 50, inlined = 4, refused = 2, Chunk.empty)))
+        ).nonEmpty)
+        check("a verdict carries its denominator", InlineSites("m", 50, 5, 1, Chunk("too large")).show.contains("1/6"))
 
         println("subset guard")
         val subset = Bench.compare(leg("control", base.take(2), whole = false), leg("variant", base.take(2), whole = false))
@@ -106,8 +123,14 @@ object BenchTest:
         println("steady state")
         val settled = rows(("a", 10.0, 0.1, 64.0))
         check("compiler time parsed", settled.head.compilerMsProfiled == Maybe(0.0), s"${settled.head.compilerMsProfiled}")
-        val hot = Run("h", session, "h", "s", "t", 3, Evidence.Full, true, 15, Chunk.empty, 10, Maybe.empty,
-            rowsCompiling("a", 900.0), Chunk.empty, Chunk.empty, Chunk.empty, Chunk.empty, Chunk.empty, "now")
+        // named rather than positional: a nineteen-field record built by position silently
+        // misaligns the moment a field is added, which is how this test last broke
+        val hot = Run(
+            id = "h", session = session, label = "h", sha = "s", treeHash = "t", forks = 3, evidence = Evidence.Full,
+            wholeClass = true, declaredRows = 15, markers = Chunk.empty, warmup = 10, jit_metrics = Maybe.empty,
+            rows = rowsCompiling("a", 900.0), jit = Chunk.empty, coverage = Chunk.empty, alloc = Chunk.empty,
+            cpu = Chunk.empty, deopts = Chunk.empty, morphism = Chunk.empty, recordedAt = "now"
+        )
         check("a window with heavy compilation is flagged", Bench.stillCompiling(hot).nonEmpty, s"${Bench.stillCompiling(hot)}")
         check("a settled window is not flagged", Bench.stillCompiling(ctl).isEmpty)
         check("the report refuses the deltas", Report.render(Bench.compare(ctl, hot)).contains("NOT STEADY STATE"))

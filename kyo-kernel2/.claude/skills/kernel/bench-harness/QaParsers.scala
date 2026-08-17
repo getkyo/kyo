@@ -29,18 +29,9 @@ object QaParsers:
             println(s"       ${r.name} ${r.score} ± ${r.error} ${r.unit}, ${r.allocPerOp} B/op, n=${r.count}")
         }
 
-        println("P1.2 PrintInlining")
-        val jit = Bench.parseJit(read("qa-jit.txt"))
-        ok &= check("entries parsed", jit.nonEmpty, s"got ${jit.size}")
-        ok &= check("kernel methods present", jit.exists(_.method.contains("kyo.kernel.proto")), jit.take(3).map(_.method).mkString(","))
-        // 0 bytes is legitimate: abstract methods report it, and those are exactly the megamorphic sites
-        ok &= check("byte counts captured", jit.exists(_.bytes > 0) && jit.forall(_.bytes >= 0))
-        ok &= check("warmup artifacts are not treated as mechanisms", !jit.filter(Bench.actionableJit).exists(_.reason.contains("not linked")))
-        ok &= check("both verdicts observed", jit.exists(_.inlined) && jit.exists(!_.inlined))
-        ok &= check("actionable filter keeps something", jit.exists(Bench.actionableJit))
-        jit.filter(e => e.method.contains("Suspend") || e.method.contains("Arrow$")).take(4).foreach(e =>
-            println(s"       ${e.method} ${e.bytes}B ${if e.inlined then "inlined" else e.reason}")
-        )
+        // P1.2 covered the PrintInlining parser, which is gone: the compilation log supersedes it
+        // and carries a denominator per method, which PrintInlining never did. Inlining is now
+        // checked against the log by LogCompilationTest, with oracles rather than shape assertions.
 
         println("P1.3 async-profiler alloc")
         val alloc = Bench.parseAlloc(read("qa-alloc.txt"))
@@ -54,7 +45,13 @@ object QaParsers:
         ok &= check("sites parsed", cpu.nonEmpty, s"got ${cpu.size}")
         ok &= check("method names captured", cpu.take(5).forall(_.method.nonEmpty))
         cpu.take(4).foreach(c => println(s"       ${c.method} ${c.nanos}"))
-        println(f"       noise share would be ${Bench.noiseShare(Run("x", Session("s", "h", "j", 1.0), "l", "t", "h", 1, Evidence.Full, true, 15, Chunk.empty, 10, Maybe.empty, Chunk.empty, Chunk.empty, Chunk.empty, cpu, Chunk.empty, Chunk.empty, "now"))}%.0f%%")
+        val probe = Run(
+            id = "x", session = Session("s", "h", "j", 1.0), label = "l", sha = "t", treeHash = "h", forks = 1,
+            evidence = Evidence.Full, wholeClass = true, declaredRows = 15, markers = Chunk.empty, warmup = 10,
+            jit_metrics = Maybe.empty, rows = Chunk.empty, jit = Chunk.empty, coverage = Chunk.empty,
+            alloc = Chunk.empty, cpu = cpu, deopts = Chunk.empty, morphism = Chunk.empty, recordedAt = "now"
+        )
+        println(f"       noise share would be ${Bench.noiseShare(probe)}%.0f%%")
 
         println(if ok then "\nPHASE 1 PASS" else "\nPHASE 1 FAIL")
         if !ok then sys.exit(1)

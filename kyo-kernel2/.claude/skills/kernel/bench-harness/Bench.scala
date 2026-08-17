@@ -25,16 +25,20 @@ object Bench:
     /** Classes the benchmark spends time in that no kernel change can move. */
     val KnownNoise = Seq("BoxesRunTime", "java.lang.Integer", "jmh_generated")
 
-    /** JIT refusals that are inherent rather than actionable: a 0-byte abstract method at a site that sees every arrow kind is
-      * megamorphic by construction, and chasing it wastes a session.
+    /** JIT refusals that are inherent rather than actionable.
+      *
+      * The reason vocabulary is the compilation log's, verified against a capture: `callee is too large` 1166, `no static binding` 205,
+      * `callee uses too much stack` 173, `not inlineable` 121, `callee's klass not linked yet` 60, `low call site frequency` 19,
+      * `already compiled into a big method` 6, `hot method too big` 5. The strings this filtered on before came from `PrintInlining` and two
+      * of them ("virtual call", "never executed") match nothing the log ever emits.
       */
-    def actionableJit(e: JitEntry): Boolean =
-        !e.inlined &&
+    def actionableJit(v: InlineSites): Boolean =
+        v.refused > 0 &&
             // megamorphic by construction: the site sees every arrow kind, and chasing it wastes a session
-            !e.reason.contains("no static binding") && !e.reason.contains("virtual call") &&
+            !v.reasons.exists(_.contains("no static binding")) &&
             // a warmup artifact rather than a decision: the class simply was not linked yet when the
             // compiler first looked, and the same method inlines fine once it is
-            !e.reason.contains("not linked") && !e.reason.contains("never executed")
+            !v.reasons.exists(_.contains("klass not linked"))
 
     /** One warmup configuration for every step of a leg.
       *
@@ -178,17 +182,6 @@ object Bench:
 
     // --- evidence parsers -------------------------------------------------------
 
-    private val JitLine = """([\w.$]+::[\w$]+) \((\d+) bytes\).*?(inline \(hot\)|inline|failed to inline: [\w' ]+)""".r
-
-    def parseJit(raw: String): Chunk[JitEntry] =
-        val found = JitLine.findAllMatchIn(raw).map { m =>
-            val verdict = m.group(3)
-            JitEntry(m.group(1), m.group(2).toInt, verdict.startsWith("inline"), verdict)
-        }
-        // keep the worst verdict per method: a callee refused anywhere on a hot path is the fact that matters
-        Chunk.from(found.toSeq.groupBy(_.method).values.map(es => es.find(!_.inlined).getOrElse(es.head)))
-    end parseJit
-
     private val ProfLine = """\s*(\d+)\s+[\d.]+%\s+\d+\s+([\w.$/<>]+)""".r
 
     def parseAlloc(raw: String): Chunk[AllocSite] =
@@ -252,14 +245,14 @@ object Bench:
                     s"""-prof "async:libPath=$AsyncProf;event=$event" $selector"""
             )
 
-        def jitLog =
-            sbt(
-                s"""kyo-kernel2JVM/Jmh/run -f 1 -wi $WarmupIterations -i 1 -jvmArgsAppend "-XX:+UnlockDiagnosticVMOptions -XX:+PrintInlining" $selector"""
-            )
-
         val logcFile = worktree / s"logc-$label.xml"
 
-        /** The compilation log carries what PrintInlining cannot: deoptimizations and measured receiver profiles. */
+        /** The only source of inlining decisions.
+          *
+          * The `PrintInlining` run this replaces cost a whole JMH invocation to produce strictly less: no denominator per method, no
+          * deoptimizations, no receiver profiles, and output interleaved across compiler threads so its tree could not be trusted. One run
+          * removed from every leg.
+          */
         def compilationLog =
             sbt(
                 s"""kyo-kernel2JVM/Jmh/run -f 1 -wi $WarmupIterations -i 1 -jvmArgsAppend "-XX:+UnlockDiagnosticVMOptions -XX:+LogCompilation -XX:LogFile=${logcFile.toString}" $selector"""
@@ -275,11 +268,10 @@ object Bench:
             _          <- sbt("kyo-kernel2JVM/testOnly kyo.kernel.proto.*")
             before     <- readMarkers(worktree, markerSpecs)
             hashBefore <- treeHash(worktree, paths)
-            measured  <- measureWith(WarmupIterations, 1, declared)
-            jitEntries <- if evidence == Evidence.Full then jitLog.map(parseJit) else Chunk.empty[JitEntry]: Chunk[JitEntry] < Any
+            measured   <- measureWith(WarmupIterations, 1, declared)
             allocSites <- if evidence == Evidence.Full then profile("alloc").map(parseAlloc) else Chunk.empty[AllocSite]: Chunk[AllocSite] < Any
             cpuSites   <- if evidence == Evidence.Full then profile("itimer").map(parseCpu) else Chunk.empty[CpuSite]: Chunk[CpuSite] < Any
-            logc       <- if evidence == Evidence.Full then compilationLog else Chunk.empty[LogCompilation.Task]: Chunk[LogCompilation.Task] < Any
+            logc       <- if evidence == Evidence.Full then compilationLog else LogCompilation.Parsed(Chunk.empty, Chunk.empty, 0, Chunk.empty): LogCompilation.Parsed < Any
             after      <- readMarkers(worktree, markerSpecs)
             _          <- Abort.when(before != after)(BracketFailed(s"leg $label markers moved mid-run: $before -> $after"))
             hashAfter  <- treeHash(worktree, paths)
@@ -299,7 +291,8 @@ object Bench:
             markers = before,
             warmup = WarmupIterations,
             rows = measured,
-            jit = jitEntries,
+            jit = LogCompilation.inlining(logc),
+            coverage = logc.coverage,
             alloc = allocSites,
             cpu = cpuSites,
             jit_metrics =
@@ -360,25 +353,50 @@ object Bench:
                         ca <- c.allocPerOp
                         va <- v.allocPerOp
                     yield va - ca
-                val mechanism = Chunk.from(Seq(
-                    allocDelta.filter(d => Math.abs(d) > 1.0).map(d => f"allocation ${d}%+.0f B/op"),
-                    jitShift(control, variant).headMaybe.map(m => s"inlining changed: $m")
-                ).flatMap(_.toOption))
+                // a row inside the band has not moved, so nothing explains it. Both stored e2e runs
+                // printed a mechanism beside +0.8% and +0.3% deltas, which invites the reader to
+                // believe a cause was found for a difference that is not there.
+                val mechanism =
+                    if verdict == Verdict.Flat || verdict == Verdict.BelowResolution then Chunk.empty
+                    else
+                        Chunk.from(Seq(
+                            allocDelta.filter(d => Math.abs(d) > 1.0).map(d => f"allocation ${d}%+.0f B/op"),
+                            jitShift(control, variant).headMaybe.map(m => s"inlining changed: $m")
+                        ).flatMap(_.toOption))
                 Delta(c.name, c, v, percent, verdict, allocDelta, mechanism)
             }
         }.sortBy(d => (d.verdict == Verdict.BelowResolution, d.percent))
         Comparison(control, variant, deltas, jitShift(control, variant))
     end compare
 
-    /** Methods whose size or inlining verdict moved between the two runs. This diff is what named the mechanism the timing could not. */
+    /** Methods whose inlining verdict moved decisively between the two runs.
+      *
+      * Decisive means unanimous on both sides: every site inlined in one leg and every site refused in the other. Anything less is a
+      * fraction that moved, and those move on their own. In a captured pair, 11 of 85 kyo methods carried both verdicts, and for two of them
+      * a single site out of six decided the method's reported verdict. Two runs of one identical comparison named disjoint "mechanisms" that
+      * way, one of them a 2-byte method "refused" for size. Only a byte count moving with a unanimous flip can be a mechanism, so only that
+      * is reported as one.
+      */
     def jitShift(control: Run, variant: Run): Chunk[String] =
-        Chunk.from(variant.jit.filter(e => e.method.startsWith("kyo.") && (e.inlined || actionableJit(e)))).flatMap { v =>
+        Chunk.from(variant.jit.filter(_.method.startsWith("kyo."))).flatMap { v =>
             control.jitFor(v.method) match
-                // only a verdict flip is a mechanism. A byte count that moved while the decision
-                // stayed the same changed nothing the CPU can see, and reporting it attributes a
-                // movement to something that did not happen
-                case Maybe.Present(c) if c.inlined != v.inlined =>
-                    Chunk(s"${v.method}: ${c.bytes}B ${if c.inlined then "inlined" else "refused"} -> ${v.bytes}B ${if v.inlined then "inlined" else "refused"}")
+                case Maybe.Present(c) if c.alwaysInlined && v.alwaysRefused =>
+                    Chunk(s"${v.method}: ${c.bytes}B inlined at all ${c.sites} sites -> ${v.bytes}B refused at all ${v.sites} (${v.reasons.headMaybe.getOrElse("no reason")})")
+                case Maybe.Present(c) if c.alwaysRefused && v.alwaysInlined =>
+                    Chunk(s"${v.method}: ${c.bytes}B refused at all ${c.sites} sites -> ${v.bytes}B inlined at all ${v.sites}")
+                case _ => Chunk.empty
+        }
+
+    /** Methods whose site fractions moved without flipping decisively.
+      *
+      * Reported separately and never as a mechanism: this is the population that produced the irreproducible diffs, so naming it keeps it
+      * visible without letting it explain a delta.
+      */
+    def jitUnstable(control: Run, variant: Run): Chunk[String] =
+        Chunk.from(variant.jit.filter(_.method.startsWith("kyo."))).flatMap { v =>
+            control.jitFor(v.method) match
+                case Maybe.Present(c) if (c.refused != v.refused || c.inlined != v.inlined) && !(c.alwaysInlined && v.alwaysRefused) && !(c.alwaysRefused && v.alwaysInlined) =>
+                    Chunk(s"${v.method}: refused ${c.refused}/${c.sites} -> ${v.refused}/${v.sites}")
                 case _ => Chunk.empty
         }
 

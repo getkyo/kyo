@@ -3,64 +3,115 @@ import kyo.*
 
 /** Parses HotSpot's `-XX:+LogCompilation` XML.
   *
-  * `PrintInlining` gives a method's size and verdict and nothing reliable beyond that: its inline tree is interleaved across compiler
-  * threads, and its receiver profiles cover almost nothing of the measured code. This log carries what that one cannot.
+  * This is the sole source of inlining decisions. `PrintInlining` reports a verdict and a byte count and nothing reliable beyond that: its
+  * output interleaves across compiler threads, so its tree cannot be trusted. Here every decision sits beside the `<method>` element that
+  * declares the callee's size, in structure, and the log additionally carries what that one cannot:
   *
-  *   - deoptimizations, which are invisible everywhere else and are a real performance story: a method whose profile went unstable falls
-  *     back to the interpreter and is recompiled
+  *   - deoptimizations that actually happened, which are invisible everywhere else
   *   - receiver counts per call site, so monomorphic against megamorphic is measured rather than asserted
-  *   - the inline tree as nesting, so "the answer inlines four levels into the drive" is a fact rather than a reading of the source
+  *   - OSR compilations, which is where a benchmark's loop body actually lives
   *
   * Ids are scoped to a compilation task and reused across tasks, so the symbol table is rebuilt per `<task>`.
+  *
+  * Three distinctions here were each responsible for a wrong conclusion, and are preserved deliberately:
+  *
+  *   1. A call site with no `receiver` attribute is *unprofiled*, not megamorphic.
+  *   2. An `<uncommon_trap>` with `thread=` is an event; one with `bci=` is a guard the compiler planted.
+  *   3. A method's inlining verdict is per site. It has a denominator, and reporting it without one is a coin flip.
   */
 object LogCompilation:
 
-    private val Klass    = """<klass id='(\d+)' name='([^']+)'""".r
-    private val Method   = """<method id='(\d+)' holder='(\d+)' name='([^']+)'[^>]*bytes='(\d+)'[^>]*iicount='(\d+)'""".r
-    private val Call     = """<call method='(\d+)' count='(\d+)'[^>]*?(?:receiver='(\d+)' receiver_count='(\d+)')?/>""".r
-    private val Trap     = """<uncommon_trap[^>]*reason='([^']+)' action='([^']+)'""".r
-    private val CallRef  = """<call method='(\d+)'""".r
-    private val Inlined  = """<inline_success reason='([^']*)'""".r
+    // `<call>` appears in two forms: the C2 form carrying `count` (and sometimes `receiver`), and the C1 form carrying only `instr`.
+    // Matching just the first silently dropped 4456 of 5093 elements, so the shape is matched first and the attributes read after.
+    private val Call       = """<call [^>]*>""".r
+    private val AttrMethod = """method='(\d+)'""".r
+    private val AttrCount  = """count='(\d+)'""".r
+    private val AttrRecv   = """receiver='(\d+)'""".r
+    private val AttrRecvN  = """receiver_count='(\d+)'""".r
+
+    private val Klass = """<klass id='(\d+)' name='([^']+)'""".r
+    // `bytes` and `iicount` are absent on the `unloaded='1'` form, so requiring both dropped 89 of 4466 declarations and left 118 call
+    // sites resolving to raw ids downstream.
+    private val Method     = """<method [^>]*>""".r
+    private val AttrId     = """id='(\d+)'""".r
+    private val AttrHolder = """holder='(\d+)'""".r
+    private val AttrName   = """name='([^']+)'""".r
+    private val AttrBytes  = """bytes='(\d+)'""".r
+
+    private val TrapRuntime = """<uncommon_trap thread='[^']*'[^>]*reason='([^']+)' action='([^']+)'""".r
+    private val TrapPlanted = """<uncommon_trap bci=[^>]*reason='([^']+)' action='([^']+)'""".r
+    private val NotEntrant  = """<make_not_entrant""".r
+
+    private val Inlined    = """<inline_success reason='([^']*)'""".r
     private val NotInlined = """<inline_fail reason='([^']*)'""".r
+
     private val TaskOpen  = """<task compile_id='(\d+)' method='([^']+)'""".r
     private val TaskLevel = """level='(\d+)'""".r
     private val TaskStamp = """stamp='([\d.]+)'""".r
+    private val TaskOsr   = """osr_bci=""".r
 
     /** One compilation's worth of facts. */
     case class Task(
         compileId: Int,
         method: String,
         level: Int,
+        osr: Boolean,
         stamp: Double,
-        deopts: Chunk[String],
+        /** Guards the compiler planted while compiling this method. Task-scoped because that is what they are: a property of the code the
+          * compiler saw.
+          */
+        plantedTraps: Chunk[String],
         calls: Chunk[CallMorphism],
         inlines: Chunk[JitEntry]
     )
 
-    def parse(raw: String): Chunk[Task] =
+    /** Everything one log yielded, including how much of it was consumed.
+      *
+      * `runtimeDeopts` lives here rather than on `Task` because a deoptimization is not task-scoped: it happens while compiled code runs. In
+      * a captured log all 6 of them precede the first `<task>` element entirely, so modelling them as task children dropped every one while
+      * the parser looked correct.
+      */
+    case class Parsed(
+        tasks: Chunk[Task],
+        runtimeDeopts: Chunk[String],
+        madeNotEntrant: Int,
+        coverage: Chunk[ParseCoverage]
+    )
+
+    def parse(raw: String): Parsed =
         var klasses = Map.empty[String, String]
-        var methods = Map.empty[String, (String, String, Int, Long)] // id -> (holder klass id, name, bytes, iicount)
-        var current = Maybe.empty[(Int, String, Int, Double)]
-        var deopts  = Chunk.empty[String]
+        var methods = Map.empty[String, (String, String, Int)] // id -> (holder klass id, name, bytes)
+        var current = Maybe.empty[(Int, String, Int, Boolean, Double)]
+        // run-scoped: a deoptimization happens while compiled code runs, not while a task compiles
+        var runtime = Chunk.empty[String]
+        var planted = Chunk.empty[String]
         var calls   = Chunk.empty[CallMorphism]
         var inlines = Chunk.empty[JitEntry]
-        // <call> names the callee, and the verdict follows on the next inline element
-        var pending = Maybe.empty[String]
-        var out     = Chunk.empty[Task]
+        // `<call>` names the callee; the verdict follows on the next inline element
+        var pending      = Maybe.empty[String]
+        var out          = Chunk.empty[Task]
+        var notEntrant   = 0
+        var callsSeen    = 0
+        var callsParsed  = 0
+        var methodsSeen  = 0
+        var methodsKnown = 0
 
         def flush(): Unit =
-            current.foreach { (id, m, lvl, st) =>
-                out = out.append(Task(id, m, lvl, st, deopts, calls, inlines))
+            current.foreach { (id, m, lvl, osr, st) =>
+                out = out.append(Task(id, m, lvl, osr, st, planted, calls, inlines))
             }
-            deopts = Chunk.empty
+            planted = Chunk.empty
             calls = Chunk.empty
             inlines = Chunk.empty
             pending = Maybe.empty
 
         def name(methodId: String): String =
             methods.get(methodId) match
-                case Some((holder, n, _, _)) => s"${klasses.getOrElse(holder, holder)}::$n"
-                case None                    => s"method#$methodId"
+                case Some((holder, n, _)) => s"${klasses.getOrElse(holder, holder)}::$n"
+                case None                 => s"method#$methodId"
+
+        def attr(re: scala.util.matching.Regex, s: String): Maybe[String] =
+            Maybe.fromOption(re.findFirstMatchIn(s).map(_.group(1)))
 
         raw.linesIterator.foreach { line =>
             TaskOpen.findFirstMatchIn(line).foreach { m =>
@@ -72,85 +123,137 @@ object LogCompilation:
                 // attribute at all, so an absent level means C2 rather than unknown
                 val lvl = TaskLevel.findFirstMatchIn(line).map(_.group(1).toInt).getOrElse(4)
                 val st  = TaskStamp.findFirstMatchIn(line).map(_.group(1).toDouble).getOrElse(0.0)
-                current = Maybe((m.group(1).toInt, m.group(2), lvl, st))
+                current = Maybe((m.group(1).toInt, m.group(2), lvl, TaskOsr.findFirstMatchIn(line).isDefined, st))
             }
+
             Klass.findAllMatchIn(line).foreach(m => klasses += m.group(1) -> m.group(2))
-            Method.findAllMatchIn(line).foreach(m =>
-                methods += m.group(1) -> (m.group(2), m.group(3), m.group(4).toInt, m.group(5).toLong)
-            )
-            Trap.findAllMatchIn(line).foreach(m => deopts = deopts.append(s"${m.group(1)}/${m.group(2)}"))
-            CallRef.findFirstMatchIn(line).foreach(m => pending = Maybe(m.group(1)))
+
+            Method.findAllMatchIn(line).map(_.matched).foreach { el =>
+                methodsSeen += 1
+                val parsedMethod =
+                    for
+                        id     <- attr(AttrId, el)
+                        holder <- attr(AttrHolder, el)
+                        n      <- attr(AttrName, el)
+                    yield
+                        // the unloaded form declares no size; 0 is the honest reading, and keeping
+                        // the entry is what stops the id going unresolved later
+                        methods += id -> (holder, n, attr(AttrBytes, el).map(_.toInt).getOrElse(0))
+                        ()
+                if parsedMethod.isDefined then methodsKnown += 1
+            }
+
+            TrapRuntime.findAllMatchIn(line).foreach(m => runtime = runtime.append(s"${m.group(1)}/${m.group(2)}"))
+            TrapPlanted.findAllMatchIn(line).foreach(m => planted = planted.append(s"${m.group(1)}/${m.group(2)}"))
+            notEntrant += NotEntrant.findAllMatchIn(line).size
+
+            Call.findAllMatchIn(line).map(_.matched).foreach { el =>
+                callsSeen += 1
+                attr(AttrMethod, el).foreach { id =>
+                    callsParsed += 1
+                    pending = Maybe(id)
+                    val count = attr(AttrCount, el).map(_.toLong).getOrElse(0L)
+                    val recvd = attr(AttrRecvN, el).map(_.toLong)
+                    calls = calls.append(
+                        CallMorphism(
+                            callee = name(id),
+                            count = count,
+                            receiverCount = recvd.getOrElse(0L),
+                            // classified only where the JIT actually profiled a receiver. Absence is
+                            // not evidence of polymorphism, and encoding it as `false` is what put
+                            // unprofiled sites under a heading promising measured receiver counts.
+                            monomorphic = if attr(AttrRecv, el).isEmpty then Maybe.empty else Maybe(recvd.exists(_ == count))
+                        )
+                    )
+                }
+            }
+
             def verdict(reason: String, ok: Boolean): Unit =
                 pending.foreach { id =>
-                    val bytes = methods.get(id).map(_._3).getOrElse(0)
-                    inlines = inlines.append(JitEntry(name(id), bytes, ok, reason))
+                    inlines = inlines.append(JitEntry(name(id), methods.get(id).map(_._3).getOrElse(0), ok, reason))
                 }
                 pending = Maybe.empty
             Inlined.findFirstMatchIn(line).foreach(m => verdict(m.group(1), true))
             NotInlined.findFirstMatchIn(line).foreach(m => verdict(m.group(1), false))
-            Call.findAllMatchIn(line).foreach { m =>
-                val count = m.group(2).toLong
-                val recvd = Maybe(m.group(4)).map(_.toLong)
-                calls = calls.append(
-                    CallMorphism(
-                        callee = name(m.group(1)),
-                        count = count,
-                        receiverCount = recvd.getOrElse(0L),
-                        // a receiver taking every call is monomorphic; a site the JIT could not
-                        // pin to one receiver reports none at all
-                        monomorphic = recvd.exists(_ == count)
-                    )
-                )
-            }
         }
         flush()
-        out
+        Parsed(
+            out,
+            runtime,
+            notEntrant,
+            Chunk(ParseCoverage("call sites", callsSeen, callsParsed), ParseCoverage("method declarations", methodsSeen, methodsKnown))
+        )
     end parse
 
-    /** Inlining decisions, worst verdict per method.
+    /** Inlining decisions per method, keeping every site.
       *
-      * Replaces `PrintInlining` entirely: that log interleaves output across compiler threads, so its tree cannot be trusted and even its
-      * flat entries are lossy. Here each decision sits beside the `<method>` that declares its byte size, in structure.
+      * Deliberately not folded to one verdict. 11 of 85 kyo methods in a captured run carry both verdicts, and for two of them the refusal
+      * rests on a single site out of six. Folding turns that into a coin flip that reads as a mechanism.
       */
-    def inlining(tasks: Chunk[Task]): Chunk[JitEntry] =
+    def inlining(p: Parsed, prefix: String = "kyo."): Chunk[InlineSites] =
         Chunk.from(
-            tasks.flatMap(_.inlines).filter(_.method.startsWith("kyo."))
-                .groupBy(_.method).values
-                .map(es => es.find(!_.inlined).getOrElse(es.head))
+            p.tasks.flatMap(_.inlines).filter(_.method.startsWith(prefix))
+                .groupBy(_.method).toSeq
+                .map { (method, es) =>
+                    InlineSites(
+                        method = method,
+                        // sites disagree on size when a method is recompiled; the largest is the one that matters for a budget verdict
+                        bytes = es.map(_.bytes).maxOption.getOrElse(0),
+                        inlined = es.count(_.inlined),
+                        refused = es.count(!_.inlined),
+                        reasons = Chunk.from(es.filter(!_.inlined).map(_.reason).distinct)
+                    )
+                }
+                .sortBy(v => (-v.refused, v.method))
         )
 
     /** Everything the compilation log says about what compiling this run cost. */
-    def metrics(tasks: Chunk[Task], profiledMs: Double, totalMs: Double): JitMetrics =
-        val byMethod = tasks.groupBy(_.method)
+    def metrics(p: Parsed, profiledMs: Double, totalMs: Double): JitMetrics =
+        val byMethod = p.tasks.groupBy(_.method)
         JitMetrics(
             msInWindow = profiledMs,
             msTotal = totalMs,
-            tasks = tasks.size,
-            c2Tasks = tasks.count(_.level >= 4),
+            tasks = p.tasks.size,
+            c2Tasks = p.tasks.count(_.level >= 4),
+            osrTasks = p.tasks.count(_.osr),
             // a method compiled more than once was recompiled after its profile changed
             recompiled = byMethod.count(_._2.size > 1),
-            deopts = tasks.map(_.deopts.size).sum,
-            lastCompileAt = if tasks.isEmpty then 0.0 else tasks.map(_.stamp).max
+            runtimeDeopts = p.runtimeDeopts.size,
+            plantedTraps = p.tasks.map(_.plantedTraps.size).sum,
+            madeNotEntrant = p.madeNotEntrant,
+            lastCompileAt = if p.tasks.isEmpty then 0.0 else p.tasks.map(_.stamp).max
         )
     end metrics
 
-    /** Deoptimization reasons and how often each fired, worst first. */
-    def deoptSummary(tasks: Chunk[Task]): Chunk[Deopt] =
+    /** Runtime deoptimization reasons and how often each fired, worst first.
+      *
+      * Runtime events only. Compiler-planted guards are a property of the code the compiler saw, not of the run, and comparing their counts
+      * between legs compares guard censuses while calling the difference a deoptimization change.
+      */
+    def deoptSummary(p: Parsed): Chunk[Deopt] =
         Chunk.from(
-            tasks.flatMap(_.deopts).groupBy(identity).toSeq
+            p.runtimeDeopts.groupBy(identity).toSeq
                 .map((reason, hits) => Deopt(reason, hits.size))
                 .sortBy(-_.count)
         )
 
-    /** Call sites in the measured code, aggregated by callee, worst-polymorphism first. */
-    def morphism(tasks: Chunk[Task], prefix: String = "kyo."): Chunk[CallMorphism] =
+    /** Call sites the JIT profiled a receiver for, aggregated by callee, worst-polymorphism first.
+      *
+      * Only profiled sites appear. In a captured run that is 12 of 5093 call elements, so this answers a narrow question about a handful of
+      * sites and cannot speak for the rest. Reporting the unprofiled majority as polymorphic is the failure this exists to prevent.
+      */
+    def morphism(p: Parsed, prefix: String = "kyo."): Chunk[CallMorphism] =
         Chunk.from(
-            tasks.flatMap(_.calls).filter(_.callee.startsWith(prefix))
+            p.tasks.flatMap(_.calls).filter(c => c.profiled && c.callee.startsWith(prefix))
                 .groupBy(_.callee).toSeq
                 .map { (callee, cs) =>
-                    CallMorphism(callee, cs.map(_.count).sum, cs.map(_.receiverCount).sum, cs.forall(_.monomorphic))
+                    CallMorphism(callee, cs.map(_.count).sum, cs.map(_.receiverCount).sum, Maybe(cs.forall(_.monomorphic.contains(true))))
                 }
-                .sortBy(c => (c.monomorphic, -c.count))
+                .sortBy(c => (c.monomorphic.contains(true), -c.count))
         )
+
+    /** Sites the log carries no receiver profile for. Reported as a count, never as a classification. */
+    def unprofiledSites(p: Parsed, prefix: String = "kyo."): Int =
+        p.tasks.flatMap(_.calls).count(c => !c.profiled && c.callee.startsWith(prefix))
 
 end LogCompilation

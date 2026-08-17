@@ -134,18 +134,26 @@ object Report:
                             row("compiling total", c.msTotal, v.msTotal, "ms"),
                             row("compilation tasks", c.tasks.toDouble, v.tasks.toDouble),
                             row("C2 tasks", c.c2Tasks.toDouble, v.c2Tasks.toDouble),
+                            row("OSR tasks", c.osrTasks.toDouble, v.osrTasks.toDouble),
                             row("methods recompiled", c.recompiled.toDouble, v.recompiled.toDouble),
-                            row("deoptimizations", c.deopts.toDouble, v.deopts.toDouble),
+                            // runtime events only. The planted-guard census used to sit in this row
+                            // and swamped it: 633 guards against 6 real deoptimizations.
+                            row("runtime deopts", c.runtimeDeopts.toDouble, v.runtimeDeopts.toDouble),
+                            row("made not entrant", c.madeNotEntrant.toDouble, v.madeNotEntrant.toDouble),
                             row("last compile at", c.lastCompileAt, v.lastCompileAt, "s")
                         ).mkString("\n")
                 case _ => ""
 
         val polymorphic =
-            val poly = variant.morphism.filterNot(_.monomorphic).take(3)
+            // only sites the JIT actually profiled a receiver for. The previous version filtered on
+            // `!monomorphic`, which included every unprofiled site, and printed 46 of 47 of them
+            // under a heading promising measured receiver counts while each had a receiver count of
+            // zero. Absence of a profile is not evidence of polymorphism.
+            val poly = variant.morphism.filter(_.monomorphic.contains(false)).take(3)
             if poly.isEmpty then ""
             else
-                "\nMeasured polymorphic call sites (receiver counts, not inferred from the code):\n" +
-                    poly.map(m => s"  - ${m.callee} ${m.count} calls").mkString("\n")
+                "\nPolymorphic call sites, among the few the JIT profiled a receiver for:\n" +
+                    poly.map(m => s"  - ${m.callee} ${m.count} calls, ${m.receiverCount} to the top receiver").mkString("\n")
 
         val reds        = c.deltas.filter(_.verdict == Verdict.Regressed)
         val wins        = c.deltas.filter(_.verdict == Verdict.Faster)

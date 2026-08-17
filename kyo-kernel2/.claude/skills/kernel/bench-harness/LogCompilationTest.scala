@@ -48,10 +48,11 @@ object LogCompilationTest extends KyoApp:
         for
             raw <- (artifacts / "qa-logc.xml").read
             o   <- oracles
-            tasks = LogCompilation.parse(raw)
-            morphism = LogCompilation.morphism(tasks)
-            inlines  = LogCompilation.inlining(tasks)
-            deopts   = LogCompilation.deoptSummary(tasks)
+            parsed = LogCompilation.parse(raw)
+            tasks    = parsed.tasks
+            morphism = LogCompilation.morphism(parsed)
+            inlines  = LogCompilation.inlining(parsed)
+            deopts   = LogCompilation.deoptSummary(parsed)
 
             _ = println("\ncall sites and receiver profiles")
             // A site without a receiver profile is one the JIT never profiled as a virtual call,
@@ -59,15 +60,24 @@ object LogCompilationTest extends KyoApp:
             // "measured polymorphic call sites" above sites whose receiver count is zero.
             _ = expect(
                 "every site called polymorphic carries receiver data",
-                morphism.count(m => !m.monomorphic && m.receiverCount == 0),
-                0,
-                s"${morphism.count(m => !m.monomorphic && m.receiverCount == 0)} sites reported as measured-polymorphic on no measurement"
+                morphism.count(m => m.monomorphic.contains(false) && m.receiverCount == 0).toLong,
+                0L,
+                "sites reported as measured-polymorphic on no measurement"
             )
+            // against the log's own count of receiver attributes, so it fails if the parser ever
+            // starts inventing profiles or dropping the few real ones
             _ = expect(
+                "exactly the sites the log profiled are treated as profiled",
+                tasks.flatMap(_.calls).count(_.profiled).toLong,
+                o.getOrElse("calls_with_receiver", -1L),
+                "receiver profiles invented or dropped"
+            )
+            callCoverage = parsed.coverage.find(_.what == "call sites")
+            _ = check(
                 "the parser accounts for every call element",
-                tasks.map(_.calls.size).sum.toLong,
-                o.getOrElse("calls_total", -1L),
-                "a silent partial parse, so coverage never appears in any output"
+                callCoverage.exists(_.complete),
+                s"${callCoverage.map(_.show).getOrElse("no coverage recorded")}, oracle says ${o.getOrElse("calls_total", -1L)} exist. " +
+                    "A silent partial parse looks identical to a complete one."
             )
 
             _ = println("\ndeoptimization")
@@ -98,12 +108,17 @@ object LogCompilationTest extends KyoApp:
             // 11 of 85 kyo methods carry both verdicts. Folding to the worst one lets a single
             // warmup-era site decide a method's verdict for the whole leg, which is how two runs
             // of one comparison named disjoint mechanisms.
-            enterSites = tasks.flatMap(_.inlines).filter(_.method.endsWith("Safepoint::enter"))
+            enter = inlines.find(_.method.endsWith("Safepoint::enter"))
             _ = check(
-                "a method inlined at most sites is not reported refused",
-                inlines.find(_.method.endsWith("Safepoint::enter")).forall(_.inlined),
-                s"Safepoint::enter has ${enterSites.count(_.inlined)} inlined and ${enterSites.count(!_.inlined)} refused sites, " +
-                    "and is reported refused. A one-site refusal presented as the method's verdict is a coin flip between legs."
+                "a mixed verdict is reported as a fraction, not as refused",
+                enter.forall(v => !v.alwaysRefused),
+                s"Safepoint::enter reports ${enter.map(_.show).getOrElse("nothing")}. " +
+                    "A one-site refusal presented as the method's verdict is a coin flip between legs."
+            )
+            _ = check(
+                "the denominator survives into the rendering",
+                enter.forall(v => v.sites > 1 && v.show.contains("/")) || enter.forall(_.alwaysInlined),
+                s"Safepoint::enter renders as '${enter.map(_.show).getOrElse("")}' with ${enter.map(_.sites).getOrElse(0)} sites"
             )
 
             _ <- Console.printLine(
