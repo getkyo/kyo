@@ -177,11 +177,22 @@ constructor:
 Only `warmup`, `forks` and `jvmArgs` on `Run` touch the persisted schema; default every added field.
 
 ### 12. NEW: `mode` and `unit` are captured and never checked
-**F12, ranked above item 11.** `Bench.compare` calls a negative percentage `Faster` unconditionally
-(`Bench.scala:567`), so **a `thrpt` row is classified backwards**, and two legs in different time units
-give a percentage off by the unit ratio. The harness's own benchmark is `AverageTime`; the exposure is
-`bench ingest`, which accepts arbitrary JMH json with no check on either field. Refuse a mismatched
-`unit` pair, and invert for `thrpt`.
+**F12, ranked above item 11**, and **verified broader than the review stated**. The review cited the
+single-pair path only. Both paths have it:
+
+- `Bench.compare`: `if percent < -drift then Verdict.Faster` (`Bench.scala:615`)
+- `Stats.classify`: `if diff < 0 then (Verdict.Faster, th)` (`Stats.scala:171`)
+
+Neither consults `mode`. So **a `thrpt` row is classified backwards in replicated comparisons too**,
+not just single pairs, and two legs in different time units give a percentage off by the unit ratio.
+
+`mode` is captured (`Bench.scala:233`) and used **only for display** (`Store.scala:299`). `Row.unit` has
+**zero readers anywhere**. The harness's own benchmark is `AverageTime`, so this is latent today; the
+exposure is `bench ingest`, which accepts arbitrary JMH json with no check on either field.
+
+Fix: refuse a pair whose `unit`s differ or whose `mode`s differ, and invert the sign convention for
+`thrpt` in both classifiers. **Acceptance:** a synthetic `thrpt` pair where the variant has higher
+throughput classifies `Faster`, and today classifies `Regressed`.
 
 ## Anti-goals
 
