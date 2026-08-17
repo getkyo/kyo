@@ -100,3 +100,17 @@ no measurement exists.
 This is the whole failure in one artifact, and it makes an ideal regression fixture: after Phase 1
 these 46 sites must render as unclassified, and the 2 sites carrying receiver data are the only ones
 the report may say anything about.
+
+## A correction about who allocates
+
+`ProtoKernelBench$$anon$95` reads like the benchmark's own lambda and is not. It is the kernel's
+`Arrow.Suspend` node, emitted as an anon class into the benchmark by the inline `ArrowEffect.suspend`
+(`ArrowEffect.scala:17-27`); the JIT log shows `ask -> anon$95::<init> -> Arrow$Suspend::<init> ->
+Arrow$Defer -> Arrow$Step`. `anon$51` is likewise the map's `Arrow.Transform`.
+
+So **100% of this row's allocated bytes are kernel node shapes**, not the 50% an earlier reading of
+the class names suggested. `gc.alloc.rate.norm` is exactly 32,080.04 B/op against `NarrowDepth=1000`,
+which is two 16-byte objects per iteration: `Nested` 16,043 B/op and the `Suspend` node 15,985 B/op.
+
+This matters for what is worth optimizing: the allocation ceiling on this row is entirely the
+kernel's, and none of it is the benchmark's own overhead.

@@ -148,7 +148,7 @@ one unbox, per value. There is no redundant box to delete.
 
 **Must that box be heap-allocated? No, and this is where the 16 KB/op lives.** The box's
 lifetime on this row is a handful of instructions inside a single compiled unit
-(`qa-jit.txt:4224-4234`). It is on the heap only because the park arm at `Pending.scala:55`
+(`qa-jit.txt:4224-4233`). It is on the heap only because the park arm at `Pending.scala:55`
 stores the incoming reference into an `Arrow.Bind`, and that arm is profile-reachable
 (`Arrow$Bind` in the flat table). Nothing about the opaque encoding requires that; it is a
 property of what the cold arm chooses to store and of C2 having no partial escape analysis.
@@ -300,10 +300,10 @@ mean the escape was never the park branch; or `fusionAllocatesNothing` and `eval
 stop reporting their current floors, which would mean the boundary node leaked into shallow
 code and the design costs where it must cost nothing.
 
-**Target rows.** Moves: `nestedPayloadsUnwrapInMaps`, `deepRecursionPaysRescuesOnly`,
-`fusionPastBudgetPaysRescuesOnly`, and the two named-for-rescues rows generally. Must not move:
-`fusionAllocatesNothing`, `evalFixedOverhead`, `fusionPastBudgetPaysRescuesOnly` below its
-budget, that is, the rows that never park today must keep their current floors exactly.
+**Target rows.** Moves: `nestedPayloadsUnwrapInMaps`, plus the two rows named for paying
+rescues, `deepRecursionPaysRescuesOnly` and `fusionPastBudgetPaysRescuesOnly`. Must not move:
+`fusionAllocatesNothing` and `evalFixedOverhead`, the rows that never park today, which must
+keep their current floors exactly. A move there is the design leaking into shallow code.
 
 **Cost and risk.** Much the largest of the five. It wants a boundary node, and SKILL.md:22-23
 names wanting a new node kind as the signal you are off the path, which makes this a design
@@ -419,6 +419,11 @@ judgement here compiles clean and fails nine nesting tests. Getting `sealed` rig
 walking every leaf transitively and rejecting any hierarchy that is open at any level or that
 has a kyo-internal member. The pinning tests are the existing nesting suite plus one new case
 per admitted shape.
+
+**Gated constructs.** Yes. It edits the lift's macro (`CanLift.scala:45-65`), and the bare-cast
+arm it widens is itself the closed-set concession SKILL.md:87-88 names, so a new admission rule
+is an owner decision. It adds no `inline` and no public API change; the `asInstanceOf` it emits
+already exists at `CanLift.scala:63` and only fires at more sites.
 
 ## 4. Ranking and why
 
