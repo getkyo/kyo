@@ -373,3 +373,38 @@ follow-up line is an unfinished report.
 Secondary profiler data belongs in the same report when it exists: `gc.alloc.rate.norm` in
 B/op next to the score settles allocation questions on sight, and the inlining verdict for a
 method under discussion belongs beside the row it explains.
+
+### Finish the ladder; a rung that fits your guess is not the answer
+
+Eliminating a cause is not naming one. When `gc.alloc.rate.norm` comes back identical, that
+rules allocation out and says nothing about what the remaining cycles are doing. Stopping
+there and filling the gap by reading the code produces a sentence that sounds like a
+diagnosis and is really a hypothesis with a profiler's credibility borrowed from the previous
+rung.
+
+**Every statement about mechanism cites the tool output that shows it.** "The call site is
+megamorphic so it cannot inline" is a claim about what the JIT did, and the JIT publishes
+what it did; assert it only with the `PrintInlining` line in hand. The same holds for "this
+allocates more" (the B/op figure), "this is where the cycles go" (the CPU profile), and "this
+method got too big" (the byte count in the log). If no tool output was produced, the honest
+sentence is that the cause is not yet known.
+
+This work has no room for assumptions. Three times in one session a mechanism was stated
+confidently and then contradicted by the next measurement: a redesign was credited to the
+wrong one of its two changes, a residual was called structural before the variant had ever
+been profiled, and a type test was blamed for a regression that removing it did not fix.
+Each was reasoning about code that had not been run.
+
+### A win and a loss are two diagnoses, not one tradeoff
+
+When a change is a large win on one row and a smaller loss on another, the tempting move is
+to weigh them and ship. That decision is not available until **both sides have a named
+mechanism**, because the usual outcome of investigating the loss is that it turns out to be
+removable, and the trade never had to be made. Accepting the loss early ships a defect that
+the same afternoon's work would have deleted.
+
+So the sequence is: diagnose the win (what makes it fast, and is it real), diagnose the loss
+independently (down the full ladder, not by symmetry with the win), then ask whether a shape
+exists that keeps the win without the loss. Only when that search has actually been run does
+the trade become a decision, and then it is the user's, presented with both mechanisms and
+the numbers.
