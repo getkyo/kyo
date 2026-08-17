@@ -26,11 +26,22 @@ object Plan:
       * `continuationBodiesFuse` those are ±1.9% and ±0.9%, so a forecast from one leg called the row
       * unresolvable at ±14.6% while a real bracket resolved a -6.8% win on it.
       */
-    case class Forecast(row: String, priorError: Double, legs: Int, resolvable: Double, fromReplicates: Boolean) derives Schema:
+    case class Forecast(
+        row: String,
+        priorError: Double,
+        legs: Int,
+        resolvable: Double,
+        fromReplicates: Boolean,
+        /** True when the spread came from one arm only, which biases the forecast optimistic. */
+        oneArm: Boolean = false
+    ) derives Schema:
         def canSee(target: Double): Boolean = target >= resolvable
 
         def show: String =
-            val basis = if fromReplicates then "between-leg" else "within-leg, an approximation"
+            val basis =
+                if !fromReplicates then "within-leg, an approximation"
+                else if oneArm then "one arm only, optimistic"
+                else "both arms, pooled"
             f"$row%-34s $basis%-28s ±${priorError * 100}%.1f%%  ->  resolves ±${resolvable * 100}%.1f%% at $legs legs"
 
     /** Estimate the detectable effect for each row of a stored run.
@@ -48,18 +59,51 @@ object Plan:
         val t    = Stats.tCritical(df, Stats.perRowAlpha(familyAlpha, rows.size))
         Chunk.from(
             rows.map { name =>
-                val scores = Chunk.from(priors.flatMap(_.row(name)).map(_.score))
-                val mean   = if scores.isEmpty then 0.0 else scores.sum / scores.size
-                // between-leg spread when there are legs to measure it from; otherwise the leg's own
-                // error, which is a different quantity and is labelled as an approximation
-                val (rel, replicated) =
-                    if scores.size >= 2 && mean > 0.0 then
-                        val sd = Math.sqrt(scores.map(x => (x - mean) * (x - mean)).sum / (scores.size - 1))
-                        (sd / mean, true)
+                // Split by arm and pool WITHIN each, which is what `Stats.pooledSd` does and therefore
+                // what the threshold being forecast actually rests on. Lumping every prior into one
+                // spread is wrong twice over: given one arm it sees only that arm's variance, and
+                // given both it folds the real difference between them into the "spread" and inflates
+                // the forecast instead.
+                //
+                // Measured against the replicated sweep, the one-arm version under-predicted:
+                // `continuationBodiesFuse` forecast +-1.9% against an actual +-3.6%, and
+                // `handleLoopAnswersInPlace` +-10.0% against +-14.4%, because the variant legs carry
+                // more spread than the controls and a control-only forecast cannot see it.
+                def armScores(arm: String) =
+                    Chunk.from(priors.filter(_.label.startsWith(arm)).flatMap(_.row(name)).map(_.score))
+                val ctl  = armScores("control")
+                val vnt  = armScores("variant")
+                val arms = Chunk(ctl, vnt).filter(_.size >= 2)
+                val all  = Chunk.from(priors.flatMap(_.row(name)).map(_.score))
+                val mean = if all.isEmpty then 0.0 else all.sum / all.size
+
+                def pooled(groups: Chunk[Chunk[Double]]): Maybe[Double] =
+                    val df = groups.map(_.size - 1).sum
+                    if df <= 0 then Maybe.empty
                     else
-                        (priors.headMaybe.flatMap(_.row(name)).map(_.relativeError).getOrElse(0.0), false)
-                val se = rel * Math.sqrt(1.0 / nC + 1.0 / nV)
-                Forecast(name, rel, legs, t * se, replicated)
+                        val ss = groups.map { g =>
+                            val m = g.sum / g.size
+                            g.map(x => (x - m) * (x - m)).sum
+                        }.sum
+                        Maybe(Math.sqrt(ss / df))
+
+                val (rel, replicated) =
+                    pooled(arms) match
+                        case Maybe.Present(sd) if mean > 0.0 && arms.size >= 2 => (sd / mean, true)
+                        case Maybe.Present(sd) if mean > 0.0                   => (sd / mean, true)
+                        case _ =>
+                            if all.size >= 2 && mean > 0.0 then
+                                val sd = Math.sqrt(all.map(x => (x - mean) * (x - mean)).sum / (all.size - 1))
+                                (sd / mean, true)
+                            else
+                                (priors.headMaybe.flatMap(_.row(name)).map(_.relativeError).getOrElse(0.0), false)
+                val oneArm = arms.size < 2
+                val se     = rel * Math.sqrt(1.0 / nC + 1.0 / nV)
+                // the same floor `Stats.threshold` applies: a threshold below the legs' own reported
+                // uncertainty would classify that uncertainty as a result. Forecasting without it
+                // predicts a resolution the real comparison will never award.
+                val ownError = priors.flatMap(_.row(name)).map(_.relativeError).maxOption.getOrElse(0.0)
+                Forecast(name, rel, legs, Math.max(t * se, ownError), replicated, oneArm)
             }.sortBy(-_.resolvable)
         )
 

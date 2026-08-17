@@ -66,14 +66,14 @@ being caught.
    conditions (`dispatch$1` must be **gone**, not smaller; 128 tests green; must not share a bracket
    with DIS-1) and the falsifier.
 
-5. **`BenchPlan` is systematically optimistic. OPEN, measured, not fixed.** Validating it against the
+5. **`BenchPlan` was systematically optimistic. FIXED and verified.** Validating it against the
    replicated sweep needed two other defects fixed first (27 and 28), and then it could be checked:
-   it forecasts from **control legs only** while the threshold it predicts pools **both arms**, so it
-   cannot see the variance the variant legs contribute. Forecast against actual: `continuationBodiesFuse`
-   ±1.9% against ±3.6%, `handleLoopAnswersInPlace` ±10.0% against ±14.4%, `suspensionBaseline` ±3.2%
-   against ±3.9%; over-predicting on two others. It gets the *shape* right every time, which is what
-   it is for, and under-predicts more often than not. Left open deliberately: the correction changes
-   what the command claims, and its first version was already wrong once in the other direction.
+   two defects, not one. It lumped all legs into a single spread rather than pooling *within* each
+   arm, and it omitted the floor `Stats.threshold` applies at the legs' own error. With both fixed it
+   reproduces the thresholds the replicated sweep actually produced: `handleLoopAnswersInPlace` ±14.4%
+   against ±14.4%, `fusionPastBudgetPaysRescuesOnly` ±8.9% against ±8.9%, `handleLoopFusesContinuation`
+   ±5.9% against ±5.8%. A one-arm forecast is still optimistic and cannot be otherwise, so it now
+   labels itself "one arm only, optimistic" instead of claiming a two-arm confidence.
 
 **Everything else remaining is a ruling**, each with a recorded default: the four gated candidates in
 `RULINGS-NEEDED.md`, the C4 trade, and DIS-3's cast above.

@@ -240,10 +240,26 @@ variance the variant legs contribute. Measured against the replicated sweep, for
 | `handleLoopFusesContinuation` | ±6.8% | ±5.8% | over |
 | `emittingClausesPayRegionRebuild` | ±14.6% | ±12.6% | over |
 
-It is right about the shape every time, which is what it is for, and it under-predicts more often than
-it over-predicts. **Open**: the fix is to forecast from both arms when both exist, or to state the
-bias. Recorded rather than fixed because the correction changes what the command claims, and its first
-version was already wrong once in the opposite direction.
+It is right about the shape every time, and it under-predicted more often than it over-predicted.
+
+**Fixed, and the diagnosis had two parts.** It lumped every prior leg into one spread, which sees only
+one arm's variance when given one arm and folds the real between-arm difference into the "spread" when
+given both. It now splits by arm and pools *within* each, exactly as `Stats.pooledSd` does. And it
+omitted the floor `Stats.threshold` applies at the legs' own reported error, so it predicted
+resolutions the real comparison would never award.
+
+With both corrections, forecasting the replicated sweep from its own legs reproduces the thresholds it
+actually produced:
+
+| row | forecast | actual |
+|---|---|---|
+| `handleLoopAnswersInPlace` | ±14.4% | ±14.4% |
+| `fusionPastBudgetPaysRescuesOnly` | ±8.9% | ±8.9% |
+| `handleLoopFusesContinuation` | ±5.9% | ±5.8% |
+| `emittingClausesPayRegionRebuild` | ±13.3% | ±12.6% |
+
+A one-arm forecast is still optimistic and cannot be otherwise, so it now says so in its own output
+("one arm only, optimistic") rather than presenting the same confidence as a two-arm one.
 
 ## Status, reconciled
 
@@ -277,9 +293,9 @@ version was already wrong once in the opposite direction.
 | 26 | two fixed decimals made a nanosecond row unreadable | **fixed**: precision scales with magnitude |
 | 27 | a bracket's replicated verdict could not be re-read from its store | **fixed**: `--control`/`--variant` repeat |
 | 28 | the report showed only the worst resolution, not each row's | **fixed**: a `resolves` column |
-| 29 | `BenchPlan` forecasts from one arm and the threshold pools two | **open**, measured and quantified |
+| 29 | `BenchPlan` forecast from one arm, unpooled, and without the threshold's floor | **fixed**: reproduces real thresholds |
 
-Twenty-nine entries: **24 fixed**, 1 bounded (23), 1 open (9), 1 an observation (7), 1 superseded (5).
+Twenty-nine entries: **25 fixed**, 1 bounded (23), 1 open (9), 1 an observation (7), 1 superseded (5).
 Counted from the table rather than tallied by hand, because this line had drifted from it once
 already. Defect 9's mitigation is now wired into every
 bracket rather than available on request; what remains irreducible about 9 is that fixtures are
