@@ -91,6 +91,18 @@ being caught.
    more than one leg per side, is exercised by running it and not by a test; the statistic it selects
    is covered by `PlanTest` on real stored legs.
 
+7. **`IMPROVEMENT-PLAN.md` written, held-out opus review IN FLIGHT.** Thesis: the tool refuses well
+   and volunteers poorly, and the remaining value is converting what is already in the store into
+   statements the report makes out loud. Five such syntheses (A1-A5) are things I derived by hand this
+   campaign and the tool had all the data for. The reviewer is briefed to attack the thesis, to check
+   the cited numbers rather than accept them, and specifically to challenge A2 (false-alarm risk),
+   A3 (whether per-row attribution is derivable at all, since only one row was ever profiled) and
+   B2 (`-f 3` by default trades machine time against a variance that is between-leg, not within-leg).
+
+**The C4 fix is NOT landed.** It exists only in the throwaway worktree at `2fc76b9cc6`, per the
+standing rule. The safepoint depth leak is therefore still live in the proto kernel, and landing it is
+a ruling, not an action I take. It is also the **only** kernel change from this work.
+
 **Everything else remaining is a ruling**, each with a recorded default: the four gated candidates in
 `RULINGS-NEEDED.md`, the C4 trade, and DIS-3's cast above.
 
