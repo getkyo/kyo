@@ -24,13 +24,21 @@ being caught.
    `catch`-based shape exists but is not equivalent and is a hypothesis, not a recommendation; the
    honest way to settle it is a three-sha chain. **Default: keep the `save`/`finally` version.** See
    `bench-results/c4/RESULT.md`.
-2. **The remaining candidates are all gated, and each now has a recorded default.** See
-   `RULINGS-NEEDED.md`. C1, IN-1, IN-2, DIS-1 and DIS-2 are closed; C3, DIS-3, DIS-4 and IN-3 need a
-   ruling. Defaults: **DIS-3 proceed** (it is the only open lead on the campaign's central regression,
+2. **The remaining candidates are all gated, each has a recorded default, and two probes are done.**
+   See `RULINGS-NEEDED.md`. C1, IN-1, IN-2, DIS-1 and DIS-2 are closed; C3, DIS-3, DIS-4 and IN-3 need
+   a ruling. Defaults: **DIS-3 proceed** (the only open lead on the campaign's central regression,
    since deleting `dispatch$1` by collapsing the two suspension arms is the "other shape" DIS-1's
-   refutation left open), **IN-3, C3 and DIS-4 hold**, each with a cheap reading I will do meanwhile
-   that could kill it outright. Three of four defaults are hold-and-probe because C1, IN-1 and IN-2
-   all died to exactly that treatment, from evidence already on disk, with no run spent.
+   refutation left open), **IN-3, C3, DIS-4 hold**.
+   - **IN-3 probed**: the poll's declared surface is 145 B against a claimed 712 B, so its byte-count
+     premise is post-inlining expansion that javap cannot show and no instrument here can settle.
+     Its falsifier is dead independently (every safepoint method is inlined at 23-24 sites, so there
+     is no refusal to flip). Only the CPU-profile motivation survives, ~8.4% of samples.
+   - **C3 probed, no run needed**: the second 16 KB/op is `ProtoKernelBench$$anon$95` minted at the
+     benchmark's own `ask`, 49.1% of the row. Not refuted, because its claim is about preemption
+     design rather than about this site, but the conversation now has a first question: by what
+     mechanism does moving the park trigger stop `ask` minting that node?
+   - **DIS-4 probe outstanding**: whether a kind field costs a word per node, settleable on one node
+     type as a spike before anything touches the drive.
 3. **The sweep was never replicated**: one leg per configuration.
 
 Everything else below is finished work, kept for its reasoning.
