@@ -156,6 +156,37 @@ A performance result is a number **and** a named mechanism. A number alone canno
 alone is a guess. The rules here exist because skipping them produced days of motion: a redesign was proposed,
 measured, and defended before anyone knew which of its two changes the numbers belonged to.
 
+### A regression is never assumed to be acceptable
+
+**Nobody has agreed to a regression until they say so about that specific number.** A slower variant is an open
+defect, not a trade the author gets to make on the reader's behalf, and the bar is parity with the best number
+ever measured on that row, including numbers produced by a design that was later rejected for other reasons.
+Deleting the old design does not retire its measurements; they remain the target.
+
+What this forbids, concretely:
+
+- **Reporting a regression as settled.** Restating "+14% on this row" across several summaries while continuing
+  to build on the variant is not disclosure, it is normalization. If a row is red, the state of the work is
+  *unfinished*, and it is described that way every time it comes up.
+- **Substituting a rationale for a fix.** "Justified by the composition shape", "the price of stack safety",
+  "inherent to the representation" are conclusions that require an isolation experiment behind them. Until that
+  experiment exists, a rationale is a hypothesis, and shipping on a hypothesis is the failure this rule names.
+- **Stopping at the first mechanism found.** Finding *a* cause and closing part of the gap is progress, not
+  completion. The remaining delta gets its own diagnosis, from its own profile of the actual variant in hand,
+  never from a profile of a sibling variant or from reasoning about the code.
+
+**Deviations are allowed, and they are written down.** Sometimes the correct design does cost measurable time.
+That outcome is reached, never assumed, and it is presented as a self-contained case the reader can decide on
+without reconstructing the session: which rows regressed and by how much, the mechanism named and evidenced,
+every attempt made to close it and what each measured, why the remainder is structural rather than incidental,
+and what the design buys in exchange. Then the decision is the user's, explicitly. Silence, a passing mention,
+or a summary that leads with the win is not acceptance.
+
+**The balance point.** This is not a mandate for unbounded optimization; it is a mandate against quiet
+acceptance. The stopping condition is a named mechanism, evidence that closing it is either done or genuinely
+structural, and an explicit decision from the user. Reaching that point and stopping is correct. Reaching
+"it is slower but the design reads better" and stopping is not.
+
 ### One variable per measurement
 
 **A measurement over a bundled change attributes nothing.** The worked example is the suspension redesign. Two
