@@ -111,11 +111,29 @@ region resumes without re-running its body`, `a park preserves standing sibling 
 go through `Arrow.Eval`, the park node, and the `Nested` box. `EffectTest`, `EvalTest`, `LoopTest`,
 `StackTest` and `SafepointTest` do not use them and all pass.
 
-So the next place to look is the **park/resume path**, where a boxed value is stored into an
-`Arrow.Eval` node and delivered again on resume: something on that path returns the box rather than
-unwrapping it. `Arrow.Eval`, `SuspendWith` and `Nested` all had their visibility widened from
-`private[proto]` to `private[kyo]` in the move, which should be inert, and that is worth confirming
-before looking further afield.
+**Two more eliminated, both by experiment:**
+
+- **`Arrow.Bind(v, ...)` should be `Bind(res, ...)`** (owner's hypothesis): patched both sites in `map`
+  and `flatMap`, **no change, still 16**. The reason is informative: that branch only runs when the
+  safepoint budget is drained, and these tests are nowhere near draining 512, so the deferred path is
+  not taken at all. The line is also **byte-identical to the proto**, so nothing was lost there.
+- **A lost `unnest` call site**: I claimed one, from a raw grep count of 5 against 4. **False alarm.**
+  The 5th was the `unnest` *definition*, which moved to `Nested.scala` with `Boxed`/`Nested`. All four
+  call sites are present, and `Eval` is 5/5 and `ArrowEffect` 15/15. I announced a conclusion from a
+  count without reading the lines, one message after being corrected for exactly that.
+
+**The contradiction that remains, both halves measured:** `Nested.unnest[Int < Ask](boxed)` called
+directly from the test returns the unwrapped `Arrow`, using `map`'s exact type argument. The identical
+call inside `map` leaves `c` boxed. No explanation yet, and no sixth guess offered.
+
+**In flight:** running the original `kyo.kernel.proto.PendingTest` in a baseline worktree at
+`5b93defa9a~1` to settle whether these 16 ever passed. Every "I broke it" claim so far rests on the
+263/23 baseline, where the 23 were all `LoopTest`/`SafepointConcurrencyTest`, but I have not confirmed
+this suite specifically was green.
+
+**Owner preference, recorded so it is not undone:** the long rationale comment on `Eval.apply` was
+**removed deliberately**, not lost in the move. No large explanatory comment blocks in kernel sources.
+I re-added it as a "regression" and was corrected; reverted.
 
 The 22nd failure is `PendingBytecodeTest`, a size expectation that moved from 8 to 5.
 
