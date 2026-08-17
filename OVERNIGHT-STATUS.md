@@ -11,9 +11,14 @@ unsound.
 
 **Phase 1, repair the instruments.** Committed, 17 oracle checks green.
 **Phase 4, bytecode.** Committed, 13 checks green.
+**The verdict statistic** (the heart of phases 2 and 3). Committed, 21 checks green. Replicate legs,
+pooled spread, t threshold at a stated alpha Bonferroni-corrected over 15 rows, common-mode drift
+measured but not double-charged, and a minimum detectable effect on every flat row. The harness now
+states its own resolution: **flat to within 2.44% at df=3**, which means the open +4.3% regression is
+detectable and anything under ~2.4% is not.
 **Ten candidate optimizations.** Written, with hypotheses, predicted fields, and falsifiers.
 
-Suites: 34 BenchTest, 17 LogCompilationTest (oracle-based), 13 BytecodeTest.
+Suites: 34 BenchTest, 17 LogCompilationTest (oracle-based), 13 BytecodeTest, 21 StatsTest.
 
 ## The results that matter
 
@@ -52,9 +57,10 @@ reintroduced it three times while fixing it once.
 
 ## Not done
 
-- **Phase 2** verdict statistics (per-row error, config-from-json gate, diffstat scope, heap pinning).
-- **Phase 3** the A/A null, respecified: replicate C V C V C, estimate sigma from replicates,
-  threshold at t(df, alpha) with multiplicity stated, detrend, report minimum detectable effect.
+- **Wiring `Stats` into `Bench.compare` and the report.** The statistic is implemented and tested but
+  is not yet what a comparison calls; until it is, it is correct dead code.
+- **Phase 2 remainder**: config-from-json equality gate, diffstat scope, heap pinning.
+- **Phase 3 remainder**: leg orchestration for C V C V C, and the classfile equality guard.
 - **Phase 5** allocation attribution via `output=collapsed`.
 - **Phase 6** the investigator with efficacy-gated flag falsifiers.
 - **Phase 7** guardrails and QA that can fail.
