@@ -221,14 +221,25 @@ object LogCompilation:
         )
     end parse
 
-    /** Inlining decisions per method, keeping every site.
+    /** Inlining decisions per method, keeping every site, **from C2 compilations only**.
       *
-      * Deliberately not folded to one verdict. 11 of 85 kyo methods in a captured run carry both verdicts, and for two of them the refusal
-      * rests on a single site out of six. Folding turns that into a coin flip that reads as a mechanism.
+      * The tier filter is not a refinement, it is the difference between a signal and noise. In a captured run, of 1969 refusals 1920 come
+      * from C1 tier 3 and 40 from C2, and the split by reason is total:
+      *
+      *   - `callee is too large`: 1166 in C1, **0** in C2
+      *   - `no static binding`: 205 in C1, **0** in C2
+      *   - `callee uses too much stack`: 173 in C1, **0** in C2
+      *
+      * C1 runs for roughly the first two warmup iterations (7.59 us/op, then 5.96, against a measured 5.84-5.90), so those refusals are worth
+      * about 29% of one warmup iteration and nothing at all of the reported score. C1 also has no frequency tier, only a 35-byte gate, which
+      * is why a 37-byte method is refused there and inlined hot by C2. Reporting C1 verdicts as a method's inlining behaviour would point
+      * every optimization at code the measured score never executes.
+      *
+      * Deliberately not folded to one verdict either: 11 of 85 kyo methods carry both, and for two the refusal rests on a single site of six.
       */
     def inlining(p: Parsed, prefix: String = "kyo."): Chunk[InlineSites] =
         Chunk.from(
-            p.tasks.flatMap(_.inlines).filter(_.method.startsWith(prefix))
+            p.tasks.filter(_.level >= 4).flatMap(_.inlines).filter(_.method.startsWith(prefix))
                 .groupBy(_.method).toSeq
                 .map { (method, es) =>
                     InlineSites(

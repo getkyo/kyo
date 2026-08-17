@@ -115,6 +115,23 @@ object LogCompilationTest extends KyoApp:
             _ = expect("OSR tasks are counted", metrics.osrTasks.toLong, o.getOrElse("tasks_osr", -1L), "the JMH stub loop folded into the standard counts")
             _ = expect("made-not-entrant is counted", metrics.madeNotEntrant.toLong, o.getOrElse("make_not_entrant", -1L), "the real recompilation signal missing")
 
+            _ = println("\ncompiler tier")
+            // C1 runs for about two warmup iterations and has only a 35-byte gate with no frequency
+            // tier, so it refuses callees C2 inlines hot. Of 1969 refusals here 1929 are C1, and
+            // 'callee is too large' is 1166 in C1 against 0 in C2. Reporting the C1 set as a method's
+            // inlining behaviour aims optimization at code the measured score never runs.
+            _ = expect(
+                "no C2 refusal in this capture is 'callee is too large'",
+                inlines.count(_.reasons.exists(_.contains("too large"))).toLong,
+                o.getOrElse("refusals_c2_too_large", -1L),
+                "1166 warmup-tier refusals presented as inlining behaviour of the measured code"
+            )
+            _ = check(
+                "reported verdicts come only from C2 tasks",
+                inlines.map(_.sites).sum <= tasks.filter(_.level >= 4).map(_.inlines.size).sum,
+                s"reported ${inlines.map(_.sites).sum} sites against ${tasks.filter(_.level >= 4).map(_.inlines.size).sum} available in C2 tasks"
+            )
+
             _ = println("\nmethod resolution")
             // The unloaded form carries no bytes/iicount, so a regex demanding both drops it and
             // leaves ids that no later stage can resolve.
@@ -132,17 +149,28 @@ object LogCompilationTest extends KyoApp:
             // 11 of 85 kyo methods carry both verdicts. Folding to the worst one lets a single
             // warmup-era site decide a method's verdict for the whole leg, which is how two runs
             // of one comparison named disjoint mechanisms.
-            enter = inlines.find(_.method.endsWith("Safepoint::enter"))
+            // `loop$9` is the only kernel-prefixed method with a genuinely mixed C2 verdict here
+            // (3 inlined, 7 refused). Naming a method that C2 never records would make this check
+            // pass by absence, which is the same defect as asserting nonEmpty.
+            mixed = inlines.find(_.method.endsWith("loop$9"))
+            _ = check("the mixed-verdict method is present at all", mixed.isDefined, "nothing to check means nothing was checked")
             _ = check(
                 "a mixed verdict is reported as a fraction, not as refused",
-                enter.forall(v => !v.alwaysRefused),
-                s"Safepoint::enter reports ${enter.map(_.show).getOrElse("nothing")}. " +
-                    "A one-site refusal presented as the method's verdict is a coin flip between legs."
+                mixed.exists(v => !v.alwaysRefused && !v.alwaysInlined),
+                s"loop\\$$9 reports ${mixed.map(_.show).getOrElse("nothing")}"
             )
             _ = check(
                 "the denominator survives into the rendering",
-                enter.forall(v => v.sites > 1 && v.show.contains("/")) || enter.forall(_.alwaysInlined),
-                s"Safepoint::enter renders as '${enter.map(_.show).getOrElse("")}' with ${enter.map(_.sites).getOrElse(0)} sites"
+                mixed.exists(v => v.sites > 1 && v.show.contains("/")),
+                s"loop\\$$9 renders as '${mixed.map(_.show).getOrElse("")}'"
+            )
+            // a real C2 fact worth pinning: the evaluator's drive loop is refused for size at every
+            // site it appears, which is a property of the measured code rather than of warmup
+            driveLoop = inlines.find(_.method == "kyo.kernel.proto.Eval$::loop")
+            _ = check(
+                "the drive loop's C2 size refusal is reported",
+                driveLoop.exists(v => v.alwaysRefused && v.reasons.exists(_.contains("hot method too big"))),
+                s"Eval\\$$::loop reports ${driveLoop.map(_.show).getOrElse("nothing")}"
             )
 
             _ <- Console.printLine(

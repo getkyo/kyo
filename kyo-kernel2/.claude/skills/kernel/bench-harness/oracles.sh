@@ -89,3 +89,31 @@ if [ -f "$alloc" ]; then
     # take the bytes column positionally; extracting digits would split "50.01%" into two numbers
     echo "alloc_flat_bytes=$(awk '/^\[info\] +[0-9]+ +[0-9.]+% +[0-9]+ +[a-zA-Z]/ {s+=$2} END {print s+0}' "$alloc")"
 fi
+
+# --- inlining decisions that can affect a measured score -----------------------------------
+# C1 refusals are warmup-tier decisions: C1 runs for roughly two warmup iterations and has only a
+# 35-byte gate with no frequency tier, so it refuses callees C2 inlines hot. Of 1969 refusals in this
+# capture 1920 are C1 and 40 are C2, and 'callee is too large' is 1166 C1 against 0 C2. Reporting the
+# C1 set as a method's inlining behaviour points optimization at code the score never executes.
+if command -v python3 >/dev/null; then
+python3 - "$logc" <<'PY'
+import re, sys
+raw = open(sys.argv[1], errors='replace').read()
+c2 = c1 = c2_too_large = 0
+for t in re.split(r"(?=<task )", raw):
+    if not t.startswith('<task '):
+        continue
+    head = t[:t.find('>') + 1]
+    is_c2 = re.search(r"level='(\d+)'", head) is None
+    for m in re.finditer(r"<inline_fail reason='([^']+)'", t):
+        if is_c2:
+            c2 += 1
+            if 'too large' in m.group(1):
+                c2_too_large += 1
+        else:
+            c1 += 1
+print(f"refusals_c2={c2}")
+print(f"refusals_c1={c1}")
+print(f"refusals_c2_too_large={c2_too_large}")
+PY
+fi
