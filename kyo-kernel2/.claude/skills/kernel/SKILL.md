@@ -349,6 +349,19 @@ Rules that make this hold:
 - **The board is committed on the working branch**, for the same reason. An untracked board is one stray
   `git checkout` or `git clean` from gone, and this project has already lost uncommitted work exactly that way.
 
+### The harness enforces this; use it
+
+`bench-harness/` beside this file implements the protocol below as a program, so a result that
+violates it cannot be produced. It is an isolated scala-cli project on published kyo artifacts,
+deliberately independent of the repo's sbt build, which does not compile as a whole while the
+kernel migration is in flight. `scala-cli run . --main-class BenchTest` self-checks in seconds
+without running a benchmark.
+
+Prefer it over hand-written bash. Every guard it carries exists because typing the bracket by
+hand got that exact thing wrong and either corrupted a measurement or wasted a run. When a rule
+below changes, change the harness with it; a protocol documented in one place and enforced in
+another drifts apart silently.
+
 ### Reporting a benchmark run
 
 Numbers are reported in one standard table carrying **everything the run produced**, never as
