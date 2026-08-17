@@ -53,6 +53,18 @@ as a verdict. See `bench-results/exp6/RESULT.md`.
 The settling problem moved rather than vanished: `handleLoopFusesContinuation` now reports ±14.55%
 and is flat at -8.8%. One re-measurement does not buy a clean sweep, and the tool is saying so.
 
+## The CLI surface has now been QA'd, and it was the softest part of the tool
+
+Every earlier defect was found by using the tool on a kernel question. Nobody had ever run its
+commands *wrong*. Six probes with a typo, a missing file and a mismatched argument count found three
+defects, one of them the campaign's own failure shape: **a store that does not exist read as a store
+that is empty**, `no runs stored`, exit 0. A mistyped `--store` was indistinguishable from a store
+whose runs were gone.
+
+All three fixed, pinned by six new checks; **193 checks green** across five suites. See defects 14 to
+16 in `tool-defects.md`. One observation about kyo itself came out of it: `KyoAppRunner.onResult`
+prints a failed result and then rethrows it, so every kyo app renders its `Abort` failures twice.
+
 ## Now
 
 **Validating the tool against the manual work.** Procedure: three-way comparison of raw data, tool

@@ -14,28 +14,61 @@ object Store:
         val file = dir(root) / s"${run.id}.json"
         file.write(Json.encode(run)).andThen(file)
 
-    def load(root: Path, id: String)(using Frame): Run < (Sync & Abort[FileReadException | Bench.BracketFailed]) =
+    def load(root: Path, id: String)(using Frame): Run < (Sync & Abort[FileFsException | FileReadException | Bench.BracketFailed]) =
         val file = dir(root) / s"$id.json"
-        file.read.map { raw =>
-            Json.decode[Run](raw) match
-                case Result.Success(r) => r
-                case other             => Abort.fail(Bench.BracketFailed(s"run $id is unreadable: $other"))
+        file.exists.map {
+            case true =>
+                file.read.map { raw =>
+                    Json.decode[Run](raw) match
+                        case Result.Success(r) => r
+                        case other             => Abort.fail(Bench.BracketFailed(s"run $id is unreadable: $other"))
+                }
+            // the raw FileNotFoundException names a path the operator never typed and says nothing
+            // about what they could have typed instead. `bench list` is one command away, so the
+            // failure runs it for them.
+            case false =>
+                ids(root).map { known =>
+                    Abort.fail(Bench.BracketFailed(
+                        s"no run '$id' in store $root" +
+                            (if known.isEmpty then ", which holds no runs"
+                             else s". It holds ${known.size}:\n" + known.map(k => s"  $k").mkString("\n"))
+                    ))
+                }
         }
     end load
 
+    /** The run ids a store holds, without decoding any of them. */
+    def ids(root: Path)(using Frame): Chunk[String] < (Sync & Abort[FileFsException | Bench.BracketFailed]) =
+        requireStore(root).andThen(
+            dir(root).list.map(_.flatMap(f => Chunk.from(f.name.filter(_.endsWith(".json")).map(_.dropRight(5)))).sorted)
+        )
+
+    /** Fails when the store is not there at all.
+      *
+      * A missing store used to read as an empty one: `bench list --store <typo>` printed "no runs
+      * stored" and exited 0, so a mistyped path was indistinguishable from a store whose runs really
+      * were gone. That is the shape of failure this whole harness exists to refuse, arriving through
+      * its own front door.
+      */
+    def requireStore(root: Path)(using Frame): Unit < (Sync & Abort[Bench.BracketFailed]) =
+        dir(root).exists.map { ok =>
+            Abort.when(!ok)(Bench.BracketFailed(
+                s"no store at $root (there is no ${dir(root).name.getOrElse("runs")}/ directory under it). " +
+                    "A store is created by `run` or `bracket`; if you expected runs here, the path is wrong."
+            ))
+        }
+
     def list(root: Path)(using Frame): Chunk[Run] < (Sync & Abort[FileFsException | FileReadException | Bench.BracketFailed]) =
-        dir(root).exists.map {
-            case false => Chunk.empty[Run]: Chunk[Run] < Any
-            case true =>
-                dir(root).list.map { files =>
-                    Kyo.foreach(files.filter(_.name.exists(_.endsWith(".json")))) { f =>
-                        f.read.map { raw =>
-                            Json.decode[Run](raw) match
-                                case Result.Success(r) => r
-                                case other             => Abort.fail(Bench.BracketFailed(s"${f.name} is unreadable: $other"))
-                        }
+        requireStore(root).andThen {
+            dir(root).list.map { files =>
+                Kyo.foreach(files.filter(_.name.exists(_.endsWith(".json")))) { f =>
+                    f.read.map { raw =>
+                        Json.decode[Run](raw) match
+                            case Result.Success(r) => r
+                            case other             => Abort.fail(Bench.BracketFailed(s"${f.name} is unreadable: $other"))
                     }
                 }
+            }
         }
 
     /** Recovers a session from any run that recorded it, so later legs join the same one. */

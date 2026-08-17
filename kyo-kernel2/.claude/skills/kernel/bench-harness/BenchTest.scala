@@ -324,6 +324,44 @@ object BenchTest:
         println("win and loss")
         check("a change that both wins and loses demands two diagnoses", Report.render(cmp).contains("two diagnoses"))
 
+        println("the store answers for what it does not have")
+        // a mistyped --store used to read as an empty one: "no runs stored", exit 0. The tool then
+        // says nothing at all about the only thing that was wrong.
+        locally {
+            import kyo.AllowUnsafe.embrace.danger
+            def sync[E, A](v: Result[E, A] < Sync): Result[E, A] = Sync.Unsafe.evalOrThrow(v)
+
+            val root   = Path(java.lang.System.getProperty("java.io.tmpdir")) / s"bench-store-${java.lang.System.nanoTime()}"
+            val listed = sync(Abort.run(Store.list(root)))
+            check("listing a store that is not there fails", listed.isFailure, listed.toString)
+            check(
+                "and says the path is wrong rather than that it is empty",
+                listed.failure.exists(_.toString.contains("no store at")),
+                listed.toString
+            )
+
+            val stored = leg("c", base)
+            val roundTrip = sync(Abort.run(
+                Store.save(root, stored).andThen(Store.load(root, stored.id).map(r => (r.id, r.rows.size)))
+            ))
+            check("a saved run loads back", roundTrip == Result.succeed((stored.id, base.size)), roundTrip.toString)
+
+            val missing = sync(Abort.run(Store.load(root, "typo")))
+            check("an id that is not there fails", missing.isFailure, missing.toString)
+            check(
+                "naming the id the operator typed, not a file path",
+                missing.failure.exists(f => f.toString.contains("no run 'typo'") && !f.toString.contains(".json")),
+                missing.toString
+            )
+            check(
+                "and listing what the store does hold, so the next command is obvious",
+                missing.failure.exists(_.toString.contains(stored.id)),
+                missing.toString
+            )
+            sync(Abort.run(root.removeAll))
+            ()
+        }
+
         println("\nall checks passed\n")
         println(Report.render(cmp))
     end main

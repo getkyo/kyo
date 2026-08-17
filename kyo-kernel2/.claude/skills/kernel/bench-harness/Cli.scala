@@ -104,10 +104,44 @@ object Cli:
             case "timing" => Evidence.Timing
             case other    => Abort.fail(Bench.BracketFailed(s"unknown evidence '$other'; use full or timing"))
 
+    /** How a failure reaches the operator.
+      *
+      * An expected failure is a diagnosis: one block of text saying what was wrong and what to do,
+      * then exit 1. Left to the default path it arrives instead as `Failure(Bench$BracketFailed: ...)`
+      * followed by the same text again under `Exception in thread "main"`, because the app runner
+      * prints the result and then rethrows any Throwable error. Two renders of one problem, both
+      * wearing an internal class name, is what a reader learns to skim.
+      *
+      * A panic is the opposite case and keeps its stack, because it is a defect in this harness rather
+      * than a mistake at the command line, and the frames are the only thing that locates it.
+      */
+    def guard[A](v: A < (Async & Scope & Abort[Any]))(using Frame): Unit < (Async & Scope) =
+        Abort.run[Any](v).map {
+            case Result.Success(_) => ()
+            case Result.Failure(e) =>
+                val message =
+                    e match
+                        case Bench.BracketFailed(reason) => reason
+                        case t: Throwable                => Maybe(t.getMessage).getOrElse(t.toString)
+                        case other                       => other.toString
+                Console.printLine(s"⛔ $message").andThen(exit(1))
+            case Result.Panic(t) =>
+                Console.printLine("⛔ the harness itself failed, which is a bug in it and not in the command:")
+                    .andThen(Sync.defer(t.printStackTrace()))
+                    .andThen(exit(2))
+        }
+
+    private def exit(code: Int)(using Frame): Nothing < Sync =
+        // Unsafe: an application entrypoint is the one place a process exit is the correct
+        // expression of a failure, and it is what keeps the diagnosis above from being followed by
+        // the runner's own second rendering of the same error.
+        Sync.defer(java.lang.System.exit(code)).andThen(Sync.defer(throw new IllegalStateException("unreachable")))
+
 end Cli
 
 object BenchRun extends KyoCaseApp[RunOpts]:
     run { (opts: RunOpts) =>
+        Cli.guard(
         for
             evidence <- Cli.parseEvidence(opts.evidence)
             // a session carries the machine's measured drift; reusing one keeps legs comparable,
@@ -129,6 +163,7 @@ object BenchRun extends KyoCaseApp[RunOpts]:
             file <- Store.save(Path(opts.store), leg)
             _    <- Console.printLine(s"stored ${leg.id} (${leg.rows.size} rows, ${leg.evidence}) at $file")
         yield ()
+        )
     }
 end BenchRun
 
@@ -140,6 +175,7 @@ end BenchRun
   */
 object BenchBracket extends KyoCaseApp[BracketOpts]:
     run { (opts: BracketOpts) =>
+        Cli.guard(
         for
             evidence <- Cli.parseEvidence(opts.evidence)
             session  <- Bench.openSession(Path(opts.worktree), opts.row.headOption.getOrElse("suspensionBaseline"))
@@ -172,6 +208,7 @@ object BenchBracket extends KyoCaseApp[BracketOpts]:
                 Bench.BracketFailed(s"${Report.blockers(cmp).size} leg(s) did not reach steady state; the verdicts above are not readable")
             )
         yield ()
+        )
     }
 end BenchBracket
 
@@ -183,9 +220,17 @@ end BenchBracket
 object BenchIngest extends KyoCaseApp[IngestOpts]:
     run { (opts: IngestOpts) =>
         val session = Session(opts.session, "ingested", "unknown", 0.0)
+        Cli.guard(
         for
             _ <- Abort.when(opts.json.size != opts.label.size)(
                 Bench.BracketFailed(s"${opts.json.size} json files but ${opts.label.size} labels; they must correspond")
+            )
+            // a third sha for two files means one of the three is going somewhere the operator did
+            // not intend, and the leftover would otherwise be dropped without a word
+            _ <- Abort.when(opts.sha.size != 1 && opts.sha.size != opts.json.size)(
+                Bench.BracketFailed(
+                    s"${opts.json.size} json files but ${opts.sha.size} shas; give one per file, or one for all of them"
+                )
             )
             runs <- Kyo.foreach(Chunk.from(opts.json.zip(opts.label).zipWithIndex)) { case ((j, l), i) =>
                 Ingest.file(
@@ -203,6 +248,7 @@ object BenchIngest extends KyoCaseApp[IngestOpts]:
                     "about how they were produced was under the harness's control."
             )
         yield ()
+        )
     }
 end BenchIngest
 
@@ -214,6 +260,7 @@ end BenchIngest
   */
 object BenchPlan extends KyoCaseApp[PlanOpts]:
     run { (opts: PlanOpts) =>
+        Cli.guard(
         for
             priors <- Kyo.foreach(Chunk.from(opts.from))(id => Store.load(Path(opts.store), id))
             prior = priors.head
@@ -233,11 +280,13 @@ object BenchPlan extends KyoCaseApp[PlanOpts]:
                         "because the variance is between legs rather than within them. More legs, or a quieter machine."
             )
         yield ()
+        )
     }
 end BenchPlan
 
 object BenchCompare extends KyoCaseApp[CompareOpts]:
     run { (opts: CompareOpts) =>
+        Cli.guard(
         for
             control <- Store.load(Path(opts.store), opts.control)
             variant <- Store.load(Path(opts.store), opts.variant)
@@ -250,11 +299,13 @@ object BenchCompare extends KyoCaseApp[CompareOpts]:
                 Bench.BracketFailed(s"${Report.blockers(cmp).size} leg(s) did not reach steady state; the verdicts above are not readable")
             )
         yield ()
+        )
     }
 end BenchCompare
 
 object BenchShow extends KyoCaseApp[ShowOpts]:
     run { (opts: ShowOpts) =>
+        Cli.guard(
         Store.load(Path(opts.store), opts.id).map { r =>
             Console.printLine(
                 s"""|${r.id}
@@ -264,11 +315,13 @@ object BenchShow extends KyoCaseApp[ShowOpts]:
                     |  rows ${r.rows.size}, jit entries ${r.jit.size}, alloc sites ${r.alloc.size}, cpu sites ${r.cpu.size}""".stripMargin
             )
         }
+        )
     }
 end BenchShow
 
 object BenchList extends KyoCaseApp[ListOpts]:
     run { (opts: ListOpts) =>
+        Cli.guard(
         Store.list(Path(opts.store)).map { runs =>
             if runs.isEmpty then Console.printLine("no runs stored")
             else
@@ -276,5 +329,6 @@ object BenchList extends KyoCaseApp[ListOpts]:
                     Console.printLine(f"${r.id}%-44s ${r.label}%-10s ${r.evidence}%-7s ${r.rows.size}%3d rows  ${r.recordedAt}")
                 }
         }
+        )
     }
 end BenchList

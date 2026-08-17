@@ -92,6 +92,33 @@ understanding that wrote the code under it; the A/A is the only check whose inpu
 control. It should run on every session, not on request.
 
 
+## Added by the first QA of the CLI surface
+
+Every defect above was found by using the tool on kernel questions. Nobody had ever run its
+commands *wrong* on purpose, which is the other half of what a tool has to survive. Four of the six
+subcommands were exercised with a typo, a missing file, and a mismatched argument count.
+
+**14, a store that does not exist reads as a store that is empty.** `bench list --store <typo>`
+printed `no runs stored` and exited 0. So a mistyped path, a store on a different branch, and a store
+whose runs really were deleted are three different situations the tool reported identically, and the
+one that is an operator error is the one it is silent about. This is the campaign's own failure shape
+arriving through the front door: a clean-looking result standing in for an unasked question.
+**Fixed**: reading a store requires it to exist. `bench list`, `show`, `compare` and `plan` fail with
+the path and what would have created it.
+
+**15, an unknown run id was answered with a file path and a stack trace.**
+`bench show --id nope` produced `Failure(kyo.FileNotFoundException: ... /runs/nope.json ...)` and then
+the same text again under `Exception in thread "main"`. Two renders of one problem, both naming a
+path the operator never typed, neither naming the ids that do exist. **Fixed**: the failure names the
+id, lists what the store holds, and prints once. The doubling is upstream: `KyoAppRunner.onResult`
+prints the result and then rethrows any `Throwable` error, so every kyo app that fails through
+`Abort` renders its failure twice. The harness now catches its own failures before they reach that
+path; the observation about kyo stands separately.
+
+**16, a leftover argument was dropped without a word.** `bench ingest` with two json files and three
+shas used the first two and discarded the third, so a mis-typed invocation ingested under shas the
+operator did not intend. **Fixed**: the count must be one per file or one for all.
+
 ## Status, reconciled
 
 | # | defect | state |
@@ -109,8 +136,11 @@ control. It should run on every session, not on request.
 | 11 | **no ingest path**: the tool could only compare runs it produced, which is what drove four experiments' verdicts into hand-written python | **fixed** |
 | 12 | no floor at the legs' own error in single-pair comparison | **fixed** |
 | 13 | no steady-state detection from the iteration series | **fixed**, and now a blocker |
+| 14 | a store that does not exist reads as a store that is empty | **fixed**: reading one requires it to exist |
+| 15 | an unknown run id answered with a file path, printed twice | **fixed**: names the id, lists what exists, prints once |
+| 16 | a leftover `--sha` dropped silently | **fixed**: one per file or one for all |
 
-Eleven fixed, one open, one an observation.
+Fourteen fixed, one open, one an observation.
 
 The one that remains, 9, is not fully fixable: every fixture is written by the same understanding
 that wrote the code under it. The mitigation is the A/A null, whose input is not authored, and it has

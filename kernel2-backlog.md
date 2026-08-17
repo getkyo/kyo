@@ -2,7 +2,7 @@
 
 Queues: implementing, designing, awaiting ruling, next up, parked. Each item carries
 its own context so it reads without the linked docs; the docs carry the full designs.
-Done work is removed once acked. Last update: 2026-08-13.
+Done work is removed once acked. Last update: 2026-08-17.
 
 ## Done, awaiting your ack (removed from the file once acked)
 
@@ -11,6 +11,66 @@ Done work is removed once acked. Last update: 2026-08-13.
 ## Implementing now
 
 ## Next up
+
+### bench-harness has outgrown a scratch script; give it a real project shape
+
+Context: `kyo-kernel2/.claude/skills/kernel/bench-harness/` is the program that enforces
+the measurement protocol the kernel skill states. It is now 3,526 lines across 17 files
+(the tool, a JMH parser, a LogCompilation parser, a bytecode reader, a statistics module,
+a store, a six-subcommand CLI) with 193 checks in five suites. It started as the "prefer
+this over hand-written bash" helper the skill points at, and it is past that. Your words:
+"I guess this is becoming a real project and we need a real project structure with sbt,
+tests, etc?"
+
+What it has: a scala-cli project (`project.scala`, three published `io.getkyo` RC6
+dependencies), one flat directory holding sources and tests together, and five test
+entrypoints spelled `object FooTest { def main(args: Array[String]) }` over a hand-written
+`check(name, cond, detail)` that prints a line and throws `AssertionError`.
+
+What that costs, concretely:
+
+- **The first failing check ends the suite.** `check` throws, so a run reports the failure
+  it hit and nothing about the 60 checks after it. Every red run is a partial picture, and
+  a fix-and-rerun loop discovers failures one at a time.
+- **There is no selective run.** No `testOnly`, no tags. The container-ish suites
+  (`QaEndToEnd`, `QaGuards`) need a live worktree and minutes; the four fast ones need
+  neither. They are separated today only by me remembering which is which.
+- **Nothing runs it but me.** No CI, no `sbt test`, no pre-commit hook. The suite is green
+  because I ran it by hand five minutes ago, which is not a property of the repository.
+- **Sources and tests share a directory.** The repo's 1:1 naming rule is satisfied
+  (`Store.scala`/`BenchTest.scala` is the one exception, and it is a real one) but there is
+  no `src/main` / `src/test` split, so a `main` that measures and a `main` that self-checks
+  are peers.
+
+The constraint that shapes every option: **the harness must not depend on the repo's own
+kyo.** It builds against published RC6 artifacts precisely because the repo does not
+compile as a whole while the kernel migration is in flight, and because a measurement tool
+that breaks when the kernel breaks is backwards, it is needed most exactly then. Whatever
+shape it takes must keep that inversion.
+
+Two shapes, both keeping that:
+
+1. **An sbt subproject** (`bench-harness` or under `tools/`), depending on published
+   `io.getkyo` artifacts and on no repo module, with `src/main` / `src/test` and munit or
+   the repo's own `kyo-test`. Buys `sbt bench-harness/test`, CI, and the same tooling the
+   rest of the repo has. Costs: it must move out of the skill payload directory, which
+   breaks SKILL.md's "beside this file" reference and the self-locating `Roots.harness`;
+   and adding a project to a build that does not currently compile as a whole needs care
+   that its aggregate does not drag the kernel in.
+2. **Stay scala-cli, add the missing pieces**: `//> using test.dep` for munit, a
+   `src/main`/`src/test` split, tags separating the fast suites from the worktree-bound QA
+   mains, and a `scripts/` entry so CI or a hook can run it. Keeps the tool inside the
+   skill it belongs to and keeps the fast startup that makes it usable mid-investigation.
+   Does not get it into `sbt test`.
+
+My read: (2) first, because the collect-all-failures reporting and the fast/slow split are
+the two defects actually biting, and both are available without moving anything. (1) is the
+right end state once the kernel migration lands and the build compiles as a whole, at which
+point the "it must not depend on the repo" constraint can be re-examined rather than
+assumed.
+
+Open question, one line: **scala-cli plus a real test framework now, or an sbt subproject
+now, or both in that order?**
 
 ## Parked (your call to revive)
 
