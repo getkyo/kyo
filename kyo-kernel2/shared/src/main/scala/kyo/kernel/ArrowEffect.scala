@@ -1,8 +1,8 @@
 package kyo.kernel
 
+import kyo.Arrow.*
 import kyo.Frame
 import kyo.Tag
-import kyo.Arrow.*
 import kyo.kernel.Loop.Outcome
 import kyo.kernel.Loop.Outcome2
 import scala.annotation.nowarn

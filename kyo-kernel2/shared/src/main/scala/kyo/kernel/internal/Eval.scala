@@ -1,7 +1,7 @@
 package kyo.kernel.internal
 
-import kyo.bug
 import kyo.Arrow.*
+import kyo.bug
 
 // TODO Eval should be private[kernel]. The external apis are <.eval/evalNow and ArrowEffect.*
 object Eval:

@@ -1,6 +1,7 @@
 package kyo.kernel
 
 import kyo.Render
+import kyo.kernel.internal.CanLift
 import scala.language.implicitConversions
 
 trait Implicits:
