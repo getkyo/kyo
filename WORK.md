@@ -207,6 +207,28 @@ is `ProtoKernelBench::run$56` at 379 B refused 10/10. It is the benchmark's own 
 family the FreqInlineSize flag moved for a 17.4% score change that had nothing to do with the kernel.
 Two independent readings now say a material share of these rows is the benchmark's own generated code.
 
+## IN-2 refuted, and more strongly than its own analysis claimed
+
+No run spent; both readings came from evidence already stored. See `bench-results/in2/RESULT.md`.
+
+IN-2 predicted it would change no score, and that prediction is right. Its reasoning is not, on three
+counts. **`Eval.dump` has nothing to fix**: 92 B, inlined at both sites, so its falsifier is satisfied
+before any edit. **"Both already inline hot" is wrong for the other target**: `Stack::truncate` is
+refused at 2 of 4 sites for size. **The method with the strongest refusal is not in the candidate at
+all**: `Stack::grow`, 55 B, refused 4 of 4.
+
+Then the CPU profile settles it in one line: **no `Stack` or `dump` frame is sampled at all**, in 28
+frames. A refusal costs only when the call happens, so a method the profile never reaches cannot be
+worth an inlining verdict however far over budget it sits. The JIT says the same from its side, having
+refused the 7-byte `Stack::apply` at 4 of 5 sites for *low call site frequency* rather than for size.
+
+Limits stated: one row profiled, the log carries no invocation counts for these callees, and a
+28-frame profile is directional only.
+
+**Third independent reading of the same underlying finding**: 29.1% of this row is `boxToInteger` and
+the next three frames, 41.4% more, are the benchmark's own generated methods. 70% of the profile is
+code no kernel change touches.
+
 ## Phase 7 is done, and the dead code was hiding a real one
 
 `MinCpuSamples` was declared and never read. `NoiseShare` was a case class nothing ever constructed.
