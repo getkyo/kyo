@@ -17,14 +17,16 @@ being caught.
 
 ## OPEN, in the order it should be picked up
 
-1. **C4: reproduce, then fix at the root.** Diagnosed but NOT reproduced, so it is a hypothesis. The
-   delivery arms are unguarded by design and guarding them is the wrong fix; the hole is that
-   `Eval.apply`, the root entry, lacks the `save`/`finally restore` boundary guard that `Eval.partial`
-   already has. Owner's direction, verbatim: *"eval should reset it at the root of the execution if it
-   doesn't."* Next step is the failing test, before any edit.
-2. **The remaining candidates.** IN-2's premise is confirmed and its targets ranked, so it is the next
-   one worth an edit. C3, DIS-3, C4, DIS-4 are untouched. IN-3 and C1 are owner-gated, and C1 no
-   longer needs its gate because it is refuted.
+1. **C4's cost measurement, IN FLIGHT.** The bug is reproduced, fixed and committed in the throwaway
+   worktree (`2fc76b9cc6`); see the C4 section below. What is open is whether the added boundary
+   `try`/`finally` costs anything: bracket `9685c9b445` against `2fc76b9cc6`, five legs, timing
+   evidence, store `bench-results/c4-store2`. Legs are saved only after all five complete, so an empty
+   store means it is still running. When it lands, read it with `BenchCompare` over the two run ids
+   rather than re-running anything.
+2. **The remaining candidates.** C3, DIS-3, DIS-4 are untouched and all three are owner-gated (C3
+   wants a conversation, DIS-3 needs a cast, DIS-4 adds a field to every `Arrow`). IN-3 is gated too.
+   C1, IN-1, IN-2, DIS-1 and DIS-2 are closed. **So every remaining candidate needs a ruling before it
+   can be worked**, which is the honest state of that stream rather than a queue I can drain.
 3. **The sweep was never replicated**: one leg per configuration.
 
 Everything else below is finished work, kept for its reasoning.
@@ -248,7 +250,10 @@ The other half of the finding stands from before: **the harness has no path for 
 deliverable is a failing test.** The diagnosis and the fix came from reading and from sbt; the tool
 contributed the guard above and will contribute the cost measurement, and nothing else.
 
-## C4 diagnosed, not yet reproduced
+### How C4 was diagnosed, before the reproduction existed
+
+Superseded by the section above, which carries the outcome. Kept for the reasoning, and read as
+history rather than as state.
 
 The only candidate whose deliverable is a failing test, in the list to see whether the harness can
 handle one. It cannot: every shape it models ends in a Run, a Comparison and a Verdict over benchmark
