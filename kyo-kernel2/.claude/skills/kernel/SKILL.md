@@ -279,7 +279,7 @@ Two corollaries the logs make concrete:
   because the benchmarks thread `Int`s through effect boundaries and the pending union is erased. Kernel deltas
   are therefore diluted in these rows, and an "optimization" that moves boxing is measuring the benchmark.
 
-### Mechanics specific to this module
+### Mechanics specific to this module (performance)
 
 - **Jmh extends Test here.** A bracket that checks out an older commit's `main` sources must check out that
   commit's tests too, or the run fails to compile against the newer suite.
@@ -287,3 +287,57 @@ Two corollaries the logs make concrete:
   configuration error.
 - **Never edit sources while a run is in flight**, and remove the untracked `<Bench>-AverageTime/` directories
   the profiler leaves behind.
+
+## The backlog: how work is queued and answered
+
+Kernel work outruns a single exchange almost immediately: designs get parked, rulings get made, TODOs accumulate
+in the source, and three threads run at once. The backlog file is where that state lives, and it is a working
+board rather than a log. Two shapes have been used and both stay available.
+
+**The collaborative board** is the default whenever the user is present. Sections by state, in this order: done
+awaiting ack, implementing now, next up, and parked awaiting a decision to revive. The board's own header states
+the contract, and it is worth restating verbatim because it is the whole discipline: each item carries its own
+context so it reads without the linked docs, the docs carry the full designs, and done work is removed once
+acked. A board that accumulates finished items has become a log and stops being read.
+
+**The autonomous queue** is for a session the user is away from. A numbered list in execution order with `[x]`
+and `[ ]` markers, each item naming the concrete sites it touches, quoting the user's instruction verbatim where
+one exists, and ending in its acceptance step, which is almost always test and commit. Its header carries the
+standing status (what is done, whether the suite is green, the commit range, whether the tree is clean) and the
+working rules in force for that session. Trailing sections hold what was deferred and why, and the reference
+numbers a later session would otherwise have to re-measure.
+
+### The item contract
+
+An item opens with context that stands alone: what the thing is, what is wrong with it or wanted from it, and
+what it interacts with. Then the analysis or the design, in enough depth to be argued with. Then either the open
+question, stated so it can be answered in one line, or the ruling once it exists. A reader who has not seen the
+conversation must be able to act on the item, because within a week that reader is the author.
+
+Rulings are recorded **in the user's own words, quoted**. "Parked by your call (not sure about this region
+thing)" survives a compaction and a month; "user decided against it" does not, and invites a later session to
+relitigate a settled question from a summary of a summary. The same applies to the reasoning behind a rejected
+alternative: record the failure mode and the number that killed it, so the next attempt starts from the fourth
+design rather than the first.
+
+### How the two sides use it
+
+**The user writes into the file directly**, as new items, as objections inside an existing item, or as TODOs in
+the source that become items. **The agent answers per item, in the file**, not only in chat: analysis, a design,
+or a question, written into the item it belongs to. Chat carries the summary and the ask; the board carries the
+state.
+
+Rules that make this hold:
+
+- **Every item the user wrote gets an explicit response**, including the ones the answer is "nothing to do" for,
+  with the reason. Silence on an item reads as agreement and is how a real objection gets buried.
+- **Never silently reorder, merge, split, or drop an item.** Reordering is a proposal, made in the open. An item
+  that turns out to be two items says so and keeps both.
+- **An item that conflicts with a recorded design decision is raised, not executed.** Bring the recorded
+  rationale and its evidence into the item and ask, because the alternative is a change that reintroduces a
+  failure the project already paid for.
+- **A TODO the user writes in source is an item.** Commit it immediately, because working-tree comments do not
+  survive the A/B brackets, then mirror it into the board with the analysis. The source keeps the marker; the
+  board keeps the reasoning.
+- **The board is committed on the working branch**, for the same reason. An untracked board is one stray
+  `git checkout` or `git clean` from gone, and this project has already lost uncommitted work exactly that way.
