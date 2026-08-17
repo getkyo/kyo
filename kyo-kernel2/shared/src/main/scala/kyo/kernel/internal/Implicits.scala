@@ -79,6 +79,10 @@ object Implicits:
         inline scala.compiletime.erasedValue[A] match
             case _: (Int | Long | Float | Double | Boolean | Byte | Short | Char | Unit | String) =>
                 v.asInstanceOf[A < S]
+            // an Arrow is already a computation and must not be boxed: this import shadows the
+            // companion's fromArrow, so the case fromArrow handled has to be handled here too
+            case _: Arrow[?, ?, ?] =>
+                v.asInstanceOf[A < S]
             case _ =>
                 Nested.nest[A, S](v)
 
