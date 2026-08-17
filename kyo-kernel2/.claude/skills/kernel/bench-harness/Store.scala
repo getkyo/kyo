@@ -220,6 +220,18 @@ object Report:
                 "\nPolymorphic call sites, among the few the JIT profiled a receiver for:\n" +
                     poly.map(m => s"  - ${m.callee} ${m.count} calls, ${m.receiverCount} to the top receiver").mkString("\n")
 
+        // an allocation change is exact and per-operation, so it does not need the timing to resolve.
+        // A row can be flat in time and still allocate 240,000 B/op more, and suppressing the
+        // mechanism on flat rows hid exactly that: the only visible trace was a number in a column.
+        val allocMoved =
+            c.deltas.filter(d => d.verdict != Verdict.Regressed && d.allocDelta.exists(a => Math.abs(a) > 1.0))
+        val allocNote =
+            if allocMoved.isEmpty then ""
+            else
+                "\n\u2139\ufe0f  Allocation moved on rows whose timing did not resolve. Allocation is exact and per-operation, " +
+                    "so this is a real change regardless of what the timing could or could not show:\n" +
+                    allocMoved.map(d => f"  - ${d.row}%s ${d.allocDelta.getOrElse(0.0)}%+.0f B/op, timing ${d.percent}%+.1f%% (${d.verdict})").mkString("\n")
+
         val reds        = c.deltas.filter(_.verdict == Verdict.Regressed)
         val wins        = c.deltas.filter(_.verdict == Verdict.Faster)
         val unexplained = c.deltas.filter(_.unexplained)
@@ -274,7 +286,7 @@ object Report:
                     "mixes warm and cold code is not a measurement of the code. Re-run with more warmup.\n" +
                     bs.map(b => s"  - $b").mkString("\n") + "\n" + "=" * 78 + "\n"
 
-        s"$blockerBanner$sessionWarning$header\n$body$rampNote$resolutionNote$jit$deoptShift$polymorphic$verdictLine$ladder$steadyState$jitTable$bothWays$noiseNote"
+        s"$blockerBanner$sessionWarning$header\n$body$rampNote$resolutionNote$jit$deoptShift$polymorphic$allocNote$verdictLine$ladder$steadyState$jitTable$bothWays$noiseNote"
     end render
 
 end Report

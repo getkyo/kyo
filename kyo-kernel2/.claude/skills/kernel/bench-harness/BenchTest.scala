@@ -251,6 +251,20 @@ object BenchTest:
         check("while still printing the data", blockedOut.contains("| `a` |"))
         check("a settled pair blocks nothing", Report.blockers(Bench.compare(leg("c", base).copy(rows = steadyRows), leg("v", base).copy(rows = steadyRows))).isEmpty)
 
+        println("allocation outlives an unresolved timing")
+        // from the first replicated bracket: a row flat in time at +9.5%, resolution +-22.64%, whose
+        // allocation moved 240,000 B/op. Suppressing the mechanism on flat rows left that visible
+        // only as a number in a column.
+        val quietAlloc = Bench.compare(
+            leg("c", Seq(("noisy", 303.17, 40.0, 640.0))),
+            leg("v", Seq(("noisy", 331.83, 40.0, 880.0)))
+        )
+        check("the row is flat in time", quietAlloc.deltas.head.verdict == Verdict.Flat, s"${quietAlloc.deltas.head.verdict}")
+        val quietOut = Report.render(quietAlloc)
+        check("but the allocation change is still stated", quietOut.contains("Allocation moved on rows whose timing did not resolve"), quietOut)
+        check("with the amount", quietOut.contains("+240 B/op"), quietOut.linesIterator.filter(_.contains("B/op,")).mkString)
+        check("and no allocation note when nothing moved", !Report.render(Bench.compare(leg("c", base), leg("v", base))).contains("Allocation moved on rows"))
+
         println("nothing resolvable")
         // every row below its own error is an unreadable run, not a clean one
         val unreadable = Bench.compare(
