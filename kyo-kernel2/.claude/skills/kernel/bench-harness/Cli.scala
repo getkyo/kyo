@@ -37,6 +37,23 @@ case class CompareOpts(
     store: String = "bench-runs"
 )
 
+case class BracketOpts(
+    @HelpMessage("throwaway worktree to measure in; must not be the primary one")
+    worktree: String,
+    @HelpMessage("commit whose sources the control legs measure")
+    control: String,
+    @HelpMessage("commit whose sources the variant legs measure")
+    variant: String,
+    @HelpMessage("benchmark rows; omit to measure the whole class, which is what a suite-wide claim requires")
+    row: List[String] = Nil,
+    @HelpMessage("JMH forks per leg; 1 is usually right here since the bracket replicates legs instead")
+    forks: Int = 1,
+    @HelpMessage("legs to run; five gives three controls against two variants, and three degrees of freedom")
+    legs: Int = 5,
+    evidence: String = "full",
+    store: String = "bench-runs"
+)
+
 case class ShowOpts(id: String, store: String = "bench-runs")
 case class ListOpts(store: String = "bench-runs")
 
@@ -86,6 +103,45 @@ object BenchRun extends KyoCaseApp[RunOpts]:
         yield ()
     }
 end BenchRun
+
+/** Runs a whole bracket and reports it, which is the only shape that can support a threshold.
+  *
+  * A single pair can be classified against a drift band but cannot say how small an effect it would
+  * have caught, so every flat row it produces is unbounded. This replicates instead, and reports the
+  * A/A null first: if the control legs disagree with each other, nothing below that is readable.
+  */
+object BenchBracket extends KyoCaseApp[BracketOpts]:
+    run { (opts: BracketOpts) =>
+        for
+            evidence <- Cli.parseEvidence(opts.evidence)
+            session  <- Bench.openSession(Path(opts.worktree), opts.row.headOption.getOrElse("suspensionBaseline"))
+            legs <- Bench.bracket(
+                session = session,
+                worktree = Path(opts.worktree),
+                controlSha = opts.control,
+                variantSha = opts.variant,
+                paths = Cli.protoPaths,
+                markerSpecs = Cli.markerSpecs,
+                rows = opts.row,
+                forks = opts.forks,
+                evidence = evidence,
+                legs = opts.legs
+            )
+            (controls, variants) = legs
+            _ <- Kyo.foreachDiscard(controls ++ variants)(r => Store.save(Path(opts.store), r).unit)
+            _ <- Bench.nullComparison(controls) match
+                case Maybe.Present(n) =>
+                    val named = n.deltas.count(_.verdict != Verdict.Flat)
+                    Console.printLine(
+                        if named == 0 then "A/A null: clean, no control row classified against another control leg.\n"
+                        else s"\u274c A/A null: $named row(s) classified comparing controls against each other. " +
+                            "Those verdicts are false by construction, so the comparison below is not readable.\n"
+                    )
+                case _ => Console.printLine("A/A null: not enough control legs to run one.\n")
+            _ <- Console.printLine(Report.render(Bench.compareReplicated(controls, variants)))
+        yield ()
+    }
+end BenchBracket
 
 object BenchCompare extends KyoCaseApp[CompareOpts]:
     run { (opts: CompareOpts) =>

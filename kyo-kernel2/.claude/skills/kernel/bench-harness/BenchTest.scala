@@ -189,6 +189,20 @@ object BenchTest:
             Bench.nullComparison(trending).forall(_.deltas.forall(_.verdict == Verdict.Flat)),
             Bench.nullComparison(trending).map(_.deltas.map(d => s"${d.row}=${d.verdict} ${d.percent}").mkString(",")).getOrElse(""))
 
+        println("bracket ordering")
+        val plan = Bench.bracketPlan("aaa", "bbb")
+        check("five legs", plan.size == 5, s"${plan.size}")
+        check("three controls and two variants", plan.count(_._2 == "aaa") == 3 && plan.count(_._2 == "bbb") == 2, plan.map(_._1).mkString(","))
+        // interleaved, not blocked: measuring all controls then all variants would put every source
+        // of session drift into the design comparison, always with the same sign
+        check("it alternates", plan.map(_._2) == Chunk("aaa", "bbb", "aaa", "bbb", "aaa"), plan.map(_._2).mkString(","))
+        check("it starts and ends on the control", plan.head._2 == "aaa" && plan.last._2 == "aaa")
+        check("labels are unique", plan.map(_._1).distinct.size == 5, plan.map(_._1).mkString(","))
+        check("the controls it yields can run a null", Bench.nullComparison(Chunk(ctlLegs(0), ctlLegs(1), ctlLegs(2))).isDefined)
+        // degrees of freedom the plan buys: (3-1) + (2-1)
+        check("and the shape gives three degrees of freedom",
+            Stats.Replicated("r", Chunk(1.0, 2.0, 3.0), Chunk(1.0, 2.0)).degreesOfFreedom == 3)
+
         println("nothing resolvable")
         // every row below its own error is an unreadable run, not a clean one
         val unreadable = Bench.compare(

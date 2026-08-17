@@ -372,6 +372,48 @@ object Bench:
     /** Family-wise error rate a session is willing to accept across all its rows. */
     val FamilyAlpha = 0.05
 
+    /** Which design each leg of a bracket measures, in order.
+      *
+      * Control, variant, control, variant, control. Interleaved because measuring all the controls
+      * first and all the variants second confounds the design with everything that drifts over the
+      * session: the variant would always run on a hotter machine, and that bias points the same way
+      * every time. Replicated because a threshold needs a spread estimated from more than one pair,
+      * and three controls against two variants gives three degrees of freedom.
+      *
+      * Pure and separately testable: the ordering is the part worth checking, and checking it should
+      * not cost a half-hour run.
+      */
+    def bracketPlan(controlSha: String, variantSha: String, legs: Int = 5): Chunk[(String, String)] =
+        Chunk.from(
+            (0 until Math.max(2, legs)).map { i =>
+                if i % 2 == 0 then (s"control-${i / 2 + 1}", controlSha)
+                else (s"variant-${i / 2 + 1}", variantSha)
+            }
+        )
+
+    /** One bracket: every leg of `bracketPlan`, measured in order, split into controls and variants.
+      *
+      * The legs are run through the same `runLeg` as a single measurement, so every guard applies to
+      * each of them: the suite must be green, markers must not move, sources must not change mid-run.
+      */
+    def bracket(
+        session: Session,
+        worktree: Path,
+        controlSha: String,
+        variantSha: String,
+        paths: Seq[String],
+        markerSpecs: Seq[(String, String, String)],
+        rows: Seq[String],
+        forks: Int,
+        evidence: Evidence,
+        legs: Int = 5
+    )(using Frame): (Chunk[Run], Chunk[Run]) < (Async & Fail) =
+        Kyo.foreach(bracketPlan(controlSha, variantSha, legs)) { (label, sha) =>
+            runLeg(session, worktree, label, sha, paths, markerSpecs, rows, forks, evidence)
+        }.map { legs =>
+            (Chunk.from(legs.filter(_.label.startsWith("control"))), Chunk.from(legs.filter(_.label.startsWith("variant"))))
+        }
+
     /** Compares replicate legs, which is the only shape that can support a threshold.
       *
       * A session measures control, variant, control, variant, control. Pooling the spread across those replicates is what makes a verdict
