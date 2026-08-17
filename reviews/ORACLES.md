@@ -106,6 +106,20 @@ Re-running the C4 comparison reproduced v3's headline defect in a **sharper** fo
 It is not merely withholding evidence it holds. It is directing the operator to an inlining log **this
 run provably does not contain**. Filed as defect 43; item 2's acceptance must cover the Timing case.
 
+## 7. Corpus sweep: every other recorded delta is consistent
+
+Having found one table that contradicted itself, I swept the rest rather than assuming it was isolated.
+Every `RESULT.md` line carrying a control and variant score with a printed delta, recomputed:
+
+    bracket1   28.68  -> 26.72   printed -6.80%  recomputes -6.83%  OK
+    bracket1   303.17 -> 331.83  printed +9.50%  recomputes +9.45%  OK
+    exp2       27.455 -> 25.566  printed -6.88%  recomputes -6.88%  OK
+    exp2       implied baseline 26.260, forced-inline vs baseline -2.64% (printed -2.65%)  OK
+
+**One inconsistency in the corpus, the C4 table, now corrected.** The rest hold. `exp4`'s table prints
+scores without deltas and `exp6`'s figures are JMH-reported per-leg errors rather than derived
+percentages, so neither has a delta to check.
+
 ## The pattern
 
 Five numbers I have published in this campaign have been wrong: a one-arm forecast called
