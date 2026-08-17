@@ -66,8 +66,22 @@ being caught.
    conditions (`dispatch$1` must be **gone**, not smaller; 128 tests green; must not share a bracket
    with DIS-1) and the falsifier.
 
-**Everything remaining is a ruling**, each with a recorded default: the four gated candidates in
+5. **`BenchPlan` is systematically optimistic. OPEN, measured, not fixed.** Validating it against the
+   replicated sweep needed two other defects fixed first (27 and 28), and then it could be checked:
+   it forecasts from **control legs only** while the threshold it predicts pools **both arms**, so it
+   cannot see the variance the variant legs contribute. Forecast against actual: `continuationBodiesFuse`
+   ±1.9% against ±3.6%, `handleLoopAnswersInPlace` ±10.0% against ±14.4%, `suspensionBaseline` ±3.2%
+   against ±3.9%; over-predicting on two others. It gets the *shape* right every time, which is what
+   it is for, and under-predicts more often than not. Left open deliberately: the correction changes
+   what the command claims, and its first version was already wrong once in the other direction.
+
+**Everything else remaining is a ruling**, each with a recorded default: the four gated candidates in
 `RULINGS-NEEDED.md`, the C4 trade, and DIS-3's cast above.
+
+**On DIS-3 specifically**: its recorded default is proceed, but the exception opened for kernel work
+was scoped to C4, and the skill requires sign-off for casts. I surfaced the cast and did not start the
+redesign on my own authority. That is a deliberate stop against the default, and it is the one place
+in this ledger where I have not taken my own recorded default.
 
 Everything else below is finished work, kept for its reasoning.
 
