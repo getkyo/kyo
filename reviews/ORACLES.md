@@ -17,7 +17,44 @@ per-method sizes from HotSpot's own `bytes=` attribute, so capturing them again 
 redundant, and `Bytecode.verifyAgainst` exists precisely to treat javap as the side needing
 verification.
 
-## 2. Row-to-method attribution: mechanism CONFIRMED, fraction WRONG
+## 2. RETRACTED. My "correction" was wrong; the original 8.9% was right
+
+**This section originally claimed the review's 8.9% was wrong and 2.2% was right. That is backwards.**
+A third held-out reviewer caught it and I re-derived it myself:
+
+    all tiers : 6329 verdicts
+    C2 (level>=4, the population Run.jit is actually built from): 1117 verdicts in 109 tasks
+       ProtoKernelBench's own code    625   56.0%
+       JDK/JMH                        236   21.1%
+       kyo kernel                     157   14.1%
+       row-own jmhStub                 99    8.9%
+       -> row-attributable             724   64.8%
+
+`LogCompilation.inlining` filters `p.tasks.filter(_.level >= 4)` (`LogCompilation.scala:272`), and the
+rationale twelve lines above says why: "of 1969 refusals 1929 come from C1 tier 3 and 40 from C2 ...
+Reporting C1 verdicts as a method's inlining behaviour would point every optimization at code the
+measured score never executes."
+
+Checked directly: **837 of 946 tasks carry `level=`, every one of them 1, 2 or 3. The 109 with no
+`level` attribute default to 4** (`LogCompilation.scala:167`), and those 109 are exactly the C2 tasks
+holding 1,117 verdicts. So 1,117 was never "an unstated subset"; it is the population `Run.jit` holds.
+My 2.2% counted 5,212 C1 verdicts the harness deliberately discards, describing a population it never
+stores and never renders.
+
+**And the number that matters is neither.** v3 said "the other 91% are shared methods and belong to no
+row". On the C2 population, **64.8% is row-attributable** (99 stub + 625 the benchmark's own code), or
+74.5% on the further `kyo.`-callee-filtered population the reviewer used. The 602-to-625 verdicts under
+`run$56`, `run$57..67` and `continuationBodiesFuse` are the measured row's own body and its lambdas.
+Both prior documents, mine included, mislabelled them "shared".
+
+**Caveat that survives all of it:** this log is a *single-row* leg, where attribution is trivial. Item 2
+is about a *whole-class* leg, and per defect 30 no whole-class Full log exists. The whole-class ratio is
+**unmeasured by anyone**, and any number quoted for it comes from the case where the question does not
+arise.
+
+### The original section, kept so the error is legible
+
+## 2 (superseded). Row-to-method attribution: mechanism CONFIRMED, fraction WRONG
 
 The review said **99 of 1,117 C2 verdicts (8.9%)** were made compiling the row's own `jmhStub`. On
 `bench-results/exp1/logc-new-default.xml`, splitting on `<task ` boundaries (the blocks are not closed
@@ -146,11 +183,17 @@ percentages, so neither has a delta to check.
 
 ## The pattern
 
-Five numbers I have published in this campaign have been wrong: a one-arm forecast called
+Six numbers I have published in this campaign have been wrong: a one-arm forecast called
 "systematically optimistic" when it errs both ways; "the two largest deltas are flat" when it was
-three; "three of eight selectors wired" when it is one; "70%" when it is 84%; and the C4 table's
-scores, which were leg one's beside a mean-based percentage.
+three; "three of eight selectors wired" when it is one; "70%" when it is 84%, itself now contested; the
+C4 table's scores, which were leg one's beside a mean-based percentage; and the 2.2% above.
 
-Four of the five flattered either the tool or the kernel. **The fifth points the other way, and that is
-the useful one: it made the tool look wrong when the tool was right.** Every one was caught by going
-back to the raw data or re-running the tool, and none by re-reading the writeup.
+**The sixth is the worst, and it is a different kind.** The first five were wrong the first time. The
+sixth was me taking a *correct* number and "correcting" it into a wrong one, with a re-derivation I
+believed was more careful than the source's. Going back to the raw data is necessary and it is not
+sufficient: I went back to the raw data and still got it wrong, because I re-derived over a population
+the tool does not use and never checked my denominator against the code that builds it.
+
+The check that would have caught it is the one the campaign already knows: **read the code that
+produces the number, not just the artifact it came from.** `LogCompilation.scala:272` was eleven lines
+from something I had already quoted twice.
