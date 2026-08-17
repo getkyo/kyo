@@ -38,6 +38,28 @@ So the investigator's deliverable is a hypothesis **plus the discriminating expe
 kill it**, and the automation budget goes to running that experiment. Automate the isolation run,
 not the narrative.
 
+## The QA rule this all failed
+
+Every one of these bugs shipped past a green QA suite. `QaParsers` asserted shape: "sites parsed",
+"entries parsed", `nonEmpty`, `bytes > 0`, "class names look like classes". All of it passed while
+the morphism verdict was inverted, the deopt count measured guards, and the allocation parser was
+throwing away 109,799 lines of the file it was reading. Shape assertions cannot fail this way.
+
+So, cross-cutting and binding on every phase below:
+
+**A parser is tested by independently deriving the same fact from the raw artifact and asserting
+equality.** The oracle is a `grep`/`python` derivation recorded in the test beside the assertion, run
+against the same captured file. "The harness says 12 receiver profiles" is checked against
+`grep -c "receiver='"`, not against `nonEmpty`.
+
+**A rendered claim is tested against the tool output that backs it.** If the report prints
+"measured polymorphic call sites", the test reads the log and confirms those sites carry receiver
+profiles. If it prints a mechanism, the test confirms the mechanism's evidence exists.
+
+**Coverage is part of the assertion.** A parser that reads 664 of 5093 elements, or 4 lines of an
+8 MB file, must state the fraction it consumed and fail when that fraction drops. Silent partial
+parsing is how both the morphism and the allocation bugs stayed invisible.
+
 ## Phases
 
 ### Phase 1: fix the broken instruments
