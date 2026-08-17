@@ -95,10 +95,29 @@ plan calls it the highest ceiling of the allocation set and the only candidate r
 **Decision needed:** the conversation the plan asks for, about changing preemption.
 
 **Default if you say nothing:** *hold, and prepare*. I will not start a preemption redesign on a
-default. What I will do is the reading that makes the conversation concrete: profile the allocation of
-a suspension-heavy row the way C1 was profiled, and report which site actually mints the `Suspend`
-node. C1's premise died to exactly that reading, and C3 deserves the same test before a design
-discussion is spent on it.
+default.
+
+**The probe is done, and it needed no run.** The Phase 5 collapsed profile of
+`nestedPayloadsUnwrapInMaps` already carries the answer, and the second 16 KB/op has a name:
+
+    kyo.kernel.bench.ProtoKernelBench$$anon$95   minted at ProtoKernelBench$.ask
+        3676 samples, ~1.93 GB, 49.1% of the row's allocation
+
+The plan's arithmetic checks out against it: the row is 32,080.04 B/op, the plan splits that into
+`Nested` 16,043 and the suspension node 15,985, and 49.1% of 32,080 is 15,760. So the second 16 KB/op
+is the **suspension node itself, minted at the benchmark's own `ask`**, which is `ArrowEffect.suspend`
+expanding into an anonymous class instance at the suspend site.
+
+That is not obviously something a park-trigger change can remove: a suspension has to be represented
+by a value, and this is that value, allocated where the suspension is created rather than in the
+delivery arm the candidate proposes to change. **I am not calling C3 refuted on that**, because unlike
+C1 it rests on a design claim about preemption that I have not read closely enough to judge, and the
+mechanism might be that fewer suspensions get minted rather than that the node gets cheaper.
+
+What the reading does establish is the question the conversation should start from: *by what mechanism
+does moving the park trigger stop `ask` from minting this node?* If there is no answer to that, the
+candidate's stated field cannot move. Same caveat as C1: one row, and C3 names the suspension and
+handler rows generally.
 
 ---
 
