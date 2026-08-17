@@ -117,8 +117,27 @@ object BenchTest:
 
         println("forks and noise stamps")
         check("a single-fork run is stamped diagnostic", Report.render(Bench.compare(leg("c", base, forks = 1), leg("v", base, forks = 1))).contains("diagnostic and not a claim"))
-        val noisy = leg("v", base, cpu = Chunk(CpuSite("scala.runtime.BoxesRunTime.boxToInteger", 600), CpuSite("kyo.kernel.proto.Eval$.loop", 400)))
-        check("a boxing-dominated run says so", Report.render(Bench.compare(ctl, noisy)).contains("no kernel change can move"))
+        // this fixture must carry a frame the old `KnownNoise` list missed, or it cannot fail. That
+        // list was boxing plus two never-matching strings, so a profile of boxing beside kernel code
+        // scored identically either way, which is exactly why the 54.9-point understatement survived
+        // the whole campaign. The benchmark's own generated code is what it was dropping.
+        val noisy = leg(
+            "v",
+            base,
+            cpu = Chunk(
+                CpuSite("scala.runtime.BoxesRunTime.boxToInteger", 600),
+                CpuSite("kyo.kernel.bench.ProtoKernelBench.loop$9", 500),
+                CpuSite("kyo.kernel.proto.Eval$.loop", 400)
+            )
+        )
+        val noisyOut = Report.render(Bench.compare(ctl, noisy))
+        check("a run dominated by non-kernel frames says so", noisyOut.contains("outside kyo.kernel.proto"))
+        check(
+            "and counts the benchmark's own generated code as non-kernel",
+            Math.abs(Bench.noiseShare(noisy) - 73.33) < 0.1,
+            f"share ${Bench.noiseShare(noisy)}%.2f%%, expected 73.33%% (1100 of 1500); the old list scored this 40%%"
+        )
+        check("and names the frames rather than only the share", noisyOut.contains("ProtoKernelBench.loop$9"))
 
         println("steady state")
         val settled = rows(("a", 10.0, 0.1, 64.0))

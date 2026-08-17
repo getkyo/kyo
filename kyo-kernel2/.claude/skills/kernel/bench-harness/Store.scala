@@ -404,7 +404,11 @@ object Report:
         val noiseNote =
             val n = Bench.noiseShare(variant)
             if n < 25.0 then ""
-            else f"\n\u2139\ufe0f  $n%.0f%% of sampled time is in classes no kernel change can move, so kernel-attributable movement is a fraction of each delta above."
+            else
+                // the bare percentage was an instruction to go and look. The frames are already in
+                // `Run.cpu`, which costs a whole extra JMH invocation and reached no other output.
+                val frames = Bench.noiseFrames(variant).map((m, p) => f"\n      $p%5.1f%%  $m").mkString
+                f"\n\u2139\ufe0f  $n%.0f%% of sampled time is outside ${Bench.KernelPackage.stripSuffix(".")}, so kernel-attributable movement is a fraction of each delta above. Largest contributors:$frames"
 
         val bothWays =
             if wins.isEmpty || reds.isEmpty then ""

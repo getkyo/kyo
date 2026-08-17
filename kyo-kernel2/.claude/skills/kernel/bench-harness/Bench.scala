@@ -19,8 +19,16 @@ object Bench:
     /** Fallback when a session did not measure its own spread. Sessions should always measure it. */
     val DriftBand = 4.0
 
-    /** Classes the benchmark spends time in that no kernel change can move. */
-    val KnownNoise = Seq("BoxesRunTime", "java.lang.Integer", "jmh_generated")
+    /** Package owning the code under test. Sampled time outside it is time no kernel change can move.
+      *
+      * Stated as the kernel rather than as a list of noise classes, and that inversion is the point. The list this replaced was
+      * `Seq("BoxesRunTime", "java.lang.Integer", "jmh_generated")`, which asks which frames are noise, and answering that requires
+      * enumerating everything that is not the kernel: the benchmark's own generated closures, boxing, JDK internals, the allocator,
+      * native scheduler frames. That set is open and grows with every benchmark added, so the list was guaranteed to under-report
+      * forever. On the only real profile in the repository it matched `boxToInteger` and nothing else, reporting 29.07% where the
+      * answer is 83.97%, understated by 54.9 points and in the direction that flatters the kernel. The kernel is the closed set.
+      */
+    val KernelPackage = "kyo.kernel.proto."
 
     /** JIT refusals that are inherent rather than actionable.
       *
@@ -530,11 +538,28 @@ object Bench:
         val measured = Math.max(control.session.driftPercent, variant.session.driftPercent)
         if measured > 0.0 then measured else DriftBand
 
-    /** Fraction of a run's sampled time in classes no kernel change can move. */
-    def noiseShare(run: Run): Double =
-        val total = run.cpu.map(_.nanos).sum
+    /** Fraction of sampled time in classes no kernel change can move.
+      *
+      * Taken over the sites rather than over a `Run` so it can be checked against a real captured profile, which is the only input a
+      * fixture author does not control. The authored fixture it replaced could not fail: two frames, neither of them the benchmark's.
+      */
+    def noiseShare(cpu: Chunk[CpuSite]): Double =
+        val total = cpu.map(_.nanos).sum
         if total == 0L then 0.0
-        else run.cpu.filter(c => KnownNoise.exists(c.method.contains)).map(_.nanos).sum.toDouble / total * 100
+        else cpu.filterNot(_.method.startsWith(KernelPackage)).map(_.nanos).sum.toDouble / total * 100
+
+    def noiseShare(run: Run): Double = noiseShare(run.cpu)
+
+    /** The frames making up that share, largest first. The share alone tells the operator to go and look; these are what it would find. */
+    def noiseFrames(cpu: Chunk[CpuSite], take: Int): Chunk[(String, Double)] =
+        val total = cpu.map(_.nanos).sum
+        if total == 0L then Chunk.empty
+        else
+            cpu.filterNot(_.method.startsWith(KernelPackage))
+                .sortBy(-_.nanos).take(take)
+                .map(c => (c.method, c.nanos.toDouble / total * 100))
+
+    def noiseFrames(run: Run, take: Int = 3): Chunk[(String, Double)] = noiseFrames(run.cpu, take)
 
     /** Rows whose measured window still contained meaningful compilation.
       *

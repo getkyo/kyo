@@ -236,6 +236,23 @@ object LogCompilationTest extends KyoApp:
             cpuRaw <- (artifacts / "qa-cpu.txt").read
             cpuSites = Bench.parseCpu(cpuRaw)
             _ = check("cpu sites parse", cpuSites.nonEmpty && cpuSites.forall(_.nanos > 0), s"${cpuSites.size} sites")
+            // the noise share against the real capture, which is the assertion the authored fixture
+            // could not make. `KnownNoise` matched `boxToInteger` here and nothing else, reporting
+            // 29.07% under the sentence "% of sampled time is in classes no kernel change can move".
+            // The answer is 83.97%: the benchmark's own code is 48.37% of this profile and carries no
+            // `jmh_generated` in its frame names, so the list missed all of it. Only 16.04% is
+            // kernel-owned at all. Derived in reviews/ORACLES.md.
+            realShare = Bench.noiseShare(cpuSites)
+            _ = check(
+                "the noise share on a real profile counts everything outside the kernel",
+                Math.abs(realShare - 83.97) < 0.05,
+                f"$realShare%.2f%% against 83.97%% derived from the capture; the list this replaced scored it 29.07%%"
+            )
+            _ = check(
+                "and its largest contributor is the benchmark's own boxing, not a kernel frame",
+                Bench.noiseFrames(cpuSites, 1).headOption.exists((m, _) => m.contains("BoxesRunTime")),
+                Bench.noiseFrames(cpuSites, 3).map((m, p) => f"$p%.1f%% $m").mkString(", ")
+            )
             // native frames (semaphore_wait_trap, __psynch_cvwait) carry no package and are real
             // entries, so requiring a dot would fail on correct output. "No whitespace in a name"
             // was the previous spelling and it was wrong about real output too: a JVM-internal frame
