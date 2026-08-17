@@ -12,6 +12,7 @@ import org.openjdk.jmh.annotations.*
 @Warmup(iterations = 5, time = 1)
 @Measurement(iterations = 5, time = 1)
 @Fork(value = 2)
+// TODO we're relying on these benchmarks a lot. Let's explore the shapes of comptuations they test and cross against common uses in kyo and in user codebases. 
 class ProtoKernelBench:
 
     import ProtoKernelBench.*
