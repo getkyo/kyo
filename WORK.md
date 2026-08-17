@@ -84,12 +84,27 @@ One piece of coverage was merged back into the **sources**, which is what the me
 design's constraint and its recorded reason: only the head's frame is walked, because a chain can be
 arbitrarily long and walking one from `toString` has broken value-stringifying tools before.
 
-**RED, 22 failures, and 21 are one symptom.** `ClassCastException: Nested cannot be cast to Integer` in
-`PendingTest` (16) and `ArrowEffectTest` (5): a lift box applied without a matching `unnest`. These
-passed in the proto before this work, so **I introduced it**. Leading suspect is the `liftInternal` I
-added, whose `erasedValue` match may not agree with the macro's analysis on every shape (the macro also
-has `isValue`, `isSafeFinalClass` and an `isModule` abort). That is a hypothesis, not a finding.
-The 22nd is `PendingBytecodeTest`, a size expectation that moved from 8 to 5.
+**RED, 22 failures, 21 of them one symptom. Diagnosed to the exact point of failure, cause not yet
+found.** `ClassCastException: Nested cannot be cast to Integer` in `PendingTest` (16) and
+`ArrowEffectTest` (5). These passed in the proto before this work, so **I introduced it**.
+
+Reproduction, `PendingTest` "map receives a pending payload as a value", probed at runtime:
+
+    settled(inner)     = Nested(Arrow.Step(identity))   <- correctly boxed ONCE
+    unnest(that)       = PendingTest$$anon$88           <- unnest works, unwraps correctly
+    c inside map       = Nested(Arrow.Step(identity))   <- map did NOT unnest
+
+So `map`'s `val res = Nested.unnest[A](v)` is not reached, or not applied, on this path. **Eliminated
+by evidence:** double-boxing (it is boxed once), `Nested.unnest` itself (correct when called directly),
+and the `liftInternal` escape (adding it to `Pending`/`ArrowEffect` changed nothing, 22 before and
+after; reverted). The `Nested` class is the same one on both sides, `kyo.kernel.internal.Nested`.
+
+**Live hypothesis, untested:** `<` is opaque but **transparent inside its own defining package**, and
+the test now sits in `kyo.kernel` where `<` is defined while `Arrow` moved to `kyo` and `Nested` to
+`kyo.kernel.internal`. In the proto all four were in one package. Transparency changes what
+`lifted.map(...)` resolves against, so extension resolution is the next thing to check.
+
+The 22nd failure is `PendingBytecodeTest`, a size expectation that moved from 8 to 5.
 
 **Still open in the merge:** the extra cases in the old duplicated tests are not folded in yet. Old
 `ArrowEffectTest` was 1030 lines against the proto's 587, `EvalTest` 634 against 224, `PendingTest` 387
