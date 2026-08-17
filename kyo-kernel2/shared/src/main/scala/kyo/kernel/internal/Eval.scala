@@ -185,7 +185,9 @@ object Eval:
                 end match
             catch
                 case ex: Throwable =>
-                    EffectTrace.attach(ex, s, stack, base)
+                    // `whole` is what was applied and what threw: the suspension with the
+                    // continuation chained onto it, so a throw inside that continuation names its frames
+                    EffectTrace.attach(ex, whole, stack, base)
                     throw ex
             end try
         end dispatchInline
