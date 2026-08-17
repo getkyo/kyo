@@ -2,6 +2,7 @@ package kyo.kernel
 
 import kyo.Arrow
 import kyo.Frame
+import kyo.kernel.internal.Implicits.liftInternal
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.annotation.targetName

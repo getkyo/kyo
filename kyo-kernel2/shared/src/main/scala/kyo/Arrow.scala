@@ -7,6 +7,7 @@ import kyo.kernel.ArrowEffect
 import kyo.kernel.Loop.Outcome
 import kyo.kernel.Loop.Outcome2
 import kyo.kernel.internal.Boxed
+import kyo.kernel.internal.Implicits.liftInternal
 import scala.runtime.AbstractFunction1
 
 sealed abstract class Arrow[-A, +B, -S] extends AbstractFunction1[A, B < S] with Boxed:

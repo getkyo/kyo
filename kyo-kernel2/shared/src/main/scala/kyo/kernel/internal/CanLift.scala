@@ -35,11 +35,6 @@ object CanLift:
 
     inline given derived[A](using inline ng: NotGiven[A <:< (Any < Nothing)]): CanLift[A] = null
 
-    object unsafe:
-        /** Unconditionally provides evidence; the emission's own analysis keeps the representation sound. */
-        inline given bypass[A]: CanLift[A] = null
-    end unsafe
-
     /** The lift's emission, expanded at the site the conversion lands on. */
     private[kyo] inline def lift[A, S](inline v: A): A < S = ${ liftImpl[A, S]('v) }
 

@@ -62,3 +62,24 @@ trait Implicits:
     end given
 
 end Implicits
+
+object Implicits:
+
+    /** The lift the kernel's own sources use, kept separate from the evidence-taking public one.
+      *
+      * `CanLift.lift` is a macro, and expanding it inside the module that defines it makes the compiler refer to symbols entered in an
+      * earlier run, which surfaces as a `StaleSymbolException` during the inlining phase rather than as a type error. An import has
+      * lexical-scope priority over the companion's implicit scope, so files inside kyo-kernel2 import this conversion and the macro never
+      * expands here, while every other module, and this module's own tests, still take the evidence path.
+      *
+      * Not an unconditional `CanLift` given: that would waive the representation check everywhere it was imported, including for types the
+      * evidence exists to reject. This conversion performs the same emission the macro would, so the box is applied where it is needed.
+      */
+    implicit private[kyo] inline def liftInternal[A, S](v: A): A < S =
+        inline scala.compiletime.erasedValue[A] match
+            case _: (Int | Long | Float | Double | Boolean | Byte | Short | Char | Unit | String) =>
+                v.asInstanceOf[A < S]
+            case _ =>
+                Nested.nest[A, S](v)
+
+end Implicits

@@ -3,6 +3,7 @@ package kyo.kernel
 import kyo.Arrow
 import kyo.Arrow.*
 import kyo.Frame
+import kyo.kernel.internal.Implicits.liftInternal
 import scala.annotation.nowarn
 
 object Effect:
