@@ -103,7 +103,18 @@ object Stats:
             (lo + hi) / 2.0
 
     /** One row measured across the replicate legs of one session. */
-    case class Replicated(row: String, control: Chunk[Double], variant: Chunk[Double]) derives Schema:
+    case class Replicated(row: String, control: Chunk[Double], variant: Chunk[Double], legError: Chunk[Double] = Chunk.empty) derives Schema:
+        /** The largest relative error any single leg reported for itself, as a fraction.
+          *
+          * A threshold derived only from between-leg spread can come out tighter than the uncertainty
+          * of the legs it is built from, and then it classifies that uncertainty as a result. A real
+          * A/A bracket did exactly this: five legs of identical sources, each leg reporting +-5.2% of
+          * its own, produced a 2.60% threshold and called a 3.8% difference a regression. The retired
+          * drift estimator had this floor (`max(spread, ownError)`) and the replicate statistic lost
+          * it.
+          */
+        def ownError: Double = if legError.isEmpty then 0.0 else legError.max
+
         def nC: Int             = control.size
         def nV: Int             = variant.size
         def controlMean: Double = if nC == 0 then 0.0 else control.sum / nC
@@ -143,8 +154,10 @@ object Stats:
     def threshold(r: Replicated, familyAlpha: Double, rows: Int): Maybe[Resolution] =
         val alpha = perRowAlpha(familyAlpha, rows)
         r.standardError.map { se =>
-            val t   = tCritical(r.degreesOfFreedom, alpha)
-            val abs = t * se
+            val t = tCritical(r.degreesOfFreedom, alpha)
+            // never tighter than the legs' own reported uncertainty: a threshold below that
+            // classifies the measurement's own error as a result
+            val abs = Math.max(t * se, r.ownError * r.controlMean)
             Resolution(if r.controlMean == 0.0 then 0.0 else abs / r.controlMean * 100, abs, r.degreesOfFreedom, alpha)
         }
 

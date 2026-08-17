@@ -442,7 +442,9 @@ object Bench:
                 Stats.Replicated(
                     name,
                     Chunk.from(controls.flatMap(_.row(name)).map(_.score)),
-                    Chunk.from(variants.flatMap(_.row(name)).map(_.score))
+                    Chunk.from(variants.flatMap(_.row(name)).map(_.score)),
+                    // each leg's own relative error, so the threshold can never sit below it
+                    Chunk.from((controls ++ variants).flatMap(_.row(name)).map(r => if r.score == 0.0 then 0.0 else r.error / r.score))
                 )
             }
         val common = Stats.commonMode(reps)

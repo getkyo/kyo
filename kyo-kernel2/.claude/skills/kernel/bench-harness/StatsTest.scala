@@ -41,6 +41,24 @@ object StatsTest:
         check("a large real regression does classify", lv == Verdict.Regressed, s"$lv, threshold ${lt.map(_.show).getOrElse("none")}")
         check("and in the right direction", Stats.classify(rep("w", Seq(100.0, 100.4, 99.7), Seq(82.0, 82.6)), alpha, rows)._1 == Verdict.Faster)
 
+        println("\nthe threshold never sits below the legs' own error")
+        // from a real A/A bracket: five legs of identical sources, each reporting about 5.2% error of
+        // its own, whose between-leg spread happened to be small. The threshold came out at 2.60% and
+        // a 3.8% difference between two groups of identical sources was called a regression.
+        val tightSpread = rep("real", Seq(6.10, 6.12, 6.14), Seq(6.40, 6.42))
+        val withError   = tightSpread.copy(legError = Chunk(0.052, 0.052, 0.052, 0.052, 0.052))
+        check("without the floor this classifies", Stats.classify(tightSpread, alpha, 2)._1 == Verdict.Regressed,
+            s"${Stats.classify(tightSpread, alpha, 2)._1}")
+        check("with it, the row is flat", Stats.classify(withError, alpha, 2)._1 == Verdict.Flat,
+            s"${Stats.classify(withError, alpha, 2)._1}, threshold ${Stats.threshold(withError, alpha, 2).map(_.show)}")
+        check("and the reported resolution is at least the leg error",
+            Stats.threshold(withError, alpha, 2).exists(_.percent >= 5.19),
+            f"${Stats.threshold(withError, alpha, 2).map(_.percent).getOrElse(0.0)}%.2f%%")
+        // and it must not swallow a real effect: a difference well beyond the leg error still fires
+        val bigWithError = rep("big", Seq(6.10, 6.12, 6.14), Seq(8.40, 8.42)).copy(legError = Chunk(0.052, 0.052, 0.052, 0.052, 0.052))
+        check("a difference beyond the leg error still classifies", Stats.classify(bigWithError, alpha, 2)._1 == Verdict.Regressed,
+            s"${Stats.classify(bigWithError, alpha, 2)._1}")
+
         println("\nthe threshold is answerable")
         check("a flat row still reports what it could have seen", qt.isDefined, "flat with no minimum detectable effect is not a result")
         qt.foreach(t => println(s"       quiet row is flat to within ${f"${t.percent}%.2f"}%, at df=${t.df}"))
