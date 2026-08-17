@@ -99,9 +99,17 @@ being caught.
    A3 (whether per-row attribution is derivable at all, since only one row was ever profiled) and
    B2 (`-f 3` by default trades machine time against a variance that is between-leg, not within-leg).
 
-**The C4 fix is NOT landed.** It exists only in the throwaway worktree at `2fc76b9cc6`, per the
-standing rule. The safepoint depth leak is therefore still live in the proto kernel, and landing it is
-a ruling, not an action I take. It is also the **only** kernel change from this work.
+**The C4 fix is NOT landed, and is now on a branch so it cannot be lost.** It exists only in the
+throwaway worktree, per the standing rule, so the safepoint depth leak is still live in the proto
+kernel and landing it is a ruling rather than an action I take. It is also the **only** kernel change
+from this work.
+
+It was reachable from **nothing but a detached HEAD**, which any `checkout` in that worktree would
+have orphaned and a prune would then have deleted: a reproduced, tested bug fix one command away from
+gone. Now `parked/c4-safepoint-root-guard`, per the skill's own rule that rejected and parked
+experiments become branches rather than floating commits. The same branch also rescues
+`9685c9b445`, DIS-1's tier-split variant 3, which was floating for the same reason. A sweep of every
+`measure-only` commit confirms all three are now on a ref.
 
 **Everything else remaining is a ruling**, each with a recorded default: the four gated candidates in
 `RULINGS-NEEDED.md`, the C4 trade, and DIS-3's cast above.
