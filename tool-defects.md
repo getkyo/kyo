@@ -101,15 +101,18 @@ control. It should run on every session, not on request.
 | 3 | refusals not ranked by proximity to a budget | **fixed** |
 | 4 | no C V C V C orchestration | **fixed** |
 | 5 | (superseded by 4) | - |
-| 6 | a malformed `CompileCommand` produces a normal-looking run | open |
+| 6 | a malformed `CompileCommand` produces a normal-looking run | **fixed**: the leg refuses, with the JVM's own diagnosis |
 | 7 | the efficacy gate earned its place in both directions | observation, not a defect |
-| 8 | resolution reported only after spending the session | open |
+| 8 | resolution reported only after spending the session | **fixed**: `BenchPlan`, forecasting from between-leg spread |
 | 9 | synthetic validation agrees with the code's blind spots | open, mitigated by the A/A |
 | 10 | the report showed leg one beside a mean-based delta | **fixed** |
 | 11 | **no ingest path**: the tool could only compare runs it produced, which is what drove four experiments' verdicts into hand-written python | **fixed** |
 | 12 | no floor at the legs' own error in single-pair comparison | **fixed** |
 | 13 | no steady-state detection from the iteration series | **fixed**, and now a blocker |
 
-Seven fixed, three open, one an observation. The three open ones share a shape: the tool knows
-something after the fact that it could have said beforehand, or fails to assert that an instruction
-it issued was obeyed.
+Eleven fixed, one open, one an observation.
+
+The one that remains, 9, is not fully fixable: every fixture is written by the same understanding
+that wrote the code under it. The mitigation is the A/A null, whose input is not authored, and it has
+earned that keep twice: catching a missing floor that 31 unit tests and a simulation-backed review
+missed, and catching a forecast that would have talked me out of the campaign's best measurement.

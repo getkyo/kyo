@@ -61,6 +61,15 @@ object Bench:
 
     type Fail = Abort[BracketFailed | CommandException | FileReadException]
 
+    /** Lines a JVM prints when it rejected a compile command and ran anyway.
+      *
+      * Exposed rather than buried in the leg runner so it can be tested against the real output that
+      * cost two runs: the JVM prints one line and proceeds, so the measurement looks entirely normal
+      * and tests nothing.
+      */
+    def rejectedCompileCommand(out: String): Chunk[String] =
+        Chunk.from(out.linesIterator.filter(l => l.contains("CompileCommand: An error occurred") || l.contains("Error: Method pattern")).toSeq)
+
     def exec(worktree: Path, command: String*)(using Frame): String < (Async & Fail) =
         Command(command*).cwd(worktree).redirectErrorStream(true).textWithExitCode.map { (out, exit) =>
             if exit == ExitCode.Success then out
@@ -232,7 +241,19 @@ object Bench:
         val wholeClass = rows.isEmpty
         val json       = worktree / s"bench-$label.json"
 
-        def sbt(task: String) = exec(worktree, "sbt", "--client", task)
+        def sbt(task: String) = exec(worktree, "sbt", "--client", task).map { out =>
+            // A JVM that cannot parse a compile command prints one line and runs anyway, producing a
+            // measurement that looks entirely normal and tests nothing. Two runs were spent that way
+            // before a log line revealed `CompileCommand: An error occurred during parsing`, and both
+            // had already been read as results.
+            if rejectedCompileCommand(out).nonEmpty then
+                Abort.fail(BracketFailed(
+                    "the JVM rejected a compile command and ran anyway; the measurement tests nothing. " +
+                        "Use -XX:CompileCommandFile, which does not have to survive shell and sbt quoting:\n" +
+                        rejectedCompileCommand(out).take(3).mkString("\n")
+                ))
+            else out
+        }
 
         // pinned on every leg: these rows allocate megabytes per operation, so ergonomic
         // heap sizing is a live variance source that costs one flag to remove

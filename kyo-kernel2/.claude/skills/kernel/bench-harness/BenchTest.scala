@@ -248,6 +248,19 @@ object BenchTest:
         check("and the shape gives three degrees of freedom",
             Stats.Replicated("r", Chunk(1.0, 2.0, 3.0), Chunk(1.0, 2.0)).degreesOfFreedom == 3)
 
+        println("a rejected compile command is not a run")
+        // the real output that cost two runs: the JVM prints this and proceeds, so the measurement
+        // looks entirely normal and tests nothing
+        val rejected = """[info] # VM options: -Xms4g -XX:CompileCommand=inline,kyo/kernel/proto/Eval$::dispatch$1
+[info] CompileCommand: An error occurred during parsing
+[info] Error: Method pattern uses '/' together with '::'
+[info] # Warmup Iteration   1: 27.455 us/op"""
+        check("the rejection is detected", Bench.rejectedCompileCommand(rejected).nonEmpty, "a malformed flag would test nothing silently")
+        check("and the diagnosis is carried", Bench.rejectedCompileCommand(rejected).exists(_.contains("Method pattern")))
+        check("ordinary output is not flagged", Bench.rejectedCompileCommand("[info] # Warmup Iteration 1: 27.4 us/op").isEmpty)
+        // the file form is the remedy, and it must not be mistaken for a rejection
+        check("a CompileCommandFile line is fine", Bench.rejectedCompileCommand("[info] # VM options: -XX:CompileCommandFile=/tmp/cc.txt").isEmpty)
+
         println("steady state blocks the run")
         // a leg whose first iteration is an outlier against the spread of the rest never settled
         val rampRows = rows(("a", 108.08, 1.0, 640.0)).map(_.copy(iterations = Chunk(140.0, 100.0, 100.5, 99.7, 100.2)))
