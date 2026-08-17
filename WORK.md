@@ -126,7 +126,29 @@ go through `Arrow.Eval`, the park node, and the `Nested` box. `EffectTest`, `Eva
 directly from the test returns the unwrapped `Arrow`, using `map`'s exact type argument. The identical
 call inside `map` leaves `c` boxed. No explanation yet, and no sixth guess offered.
 
-**SETTLED against raw data, and it localises the bug precisely.** The original
+**FOUND AND FIXED. 240 of 246 green on a genuine clean build.** `ArrowEffect.scala` uses bare `Nested`
+at 15 sites and had no import for it. While `Boxed`/`Nested` briefly lived in `Pending.scala` (package
+`kyo.kernel`) none was needed; moving them to `kyo.kernel.internal` made it necessary, and **zinc kept
+resolving the name against the stale `kyo.kernel.Nested` class file instead of failing.** So the box was
+created as `kyo.kernel.internal.Nested` while `map`'s inlined `unnest` tested `instanceof` against
+`kyo.kernel.Nested`; the test never matched and the value came back boxed.
+
+That is why the symptom looked impossible: both `Nested` methods are byte-identical to the baseline,
+and `unnest` unwrapped correctly whenever called directly, because *those* call sites resolved to the
+real class.
+
+**Two process lessons, both mine.** Every "clean compile" I reported was incremental; the first genuine
+`clean` turned the silent mis-resolution into 15 honest `Not found: Nested` errors in one file. And the
+thing that cracked it was **javap on the owner's suggestion**, after reasoning had eliminated every
+hypothesis: the call site read `kyo/kernel/Nested.unnest` where every neighbouring instruction read
+`kyo/Arrow` and `kyo/kernel/internal/Safepoint`.
+
+**Remaining red: 6.** Five in `ArrowEffectTest`, all region and park cases; one in
+`PendingBytecodeTest`, a size expectation that moved from 8 to 5.
+
+### How it was localised, kept because the method worked
+
+**SETTLED against raw data.** The original
 `kyo.kernel.proto.PendingTest`, run in a baseline worktree at `5b93defa9a~1`, passes **32 of 32**.
 Ours is **16 of 32**. So I did break it; that is now evidence, not inference.
 
