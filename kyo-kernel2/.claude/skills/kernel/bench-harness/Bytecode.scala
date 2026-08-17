@@ -42,16 +42,27 @@ object Bytecode:
       * size of 5 bytes. Parameter lists are the only parentheses on these lines, so the first one always opens them.
       */
     private def declaration(line: String): Maybe[(String, String)] =
-        if !line.startsWith("  ") || line.startsWith("   ") || !line.endsWith(");") then Maybe.empty
+        if !line.startsWith("  ") || line.startsWith("   ") || !line.endsWith(";") then Maybe.empty
+        // a static initializer, which javap prints without a parameter list. Requiring the line to
+        // end in `);` skipped these entirely and merged their instructions into the previous
+        // method's stream: 19 of 60 classes in the measured tree carry one, and on Arrow$Identity$
+        // the constructor was reported as 11 bytes against an actual 5.
+        else if line.trim.endsWith("{};") then Maybe(("<clinit>", "()"))
         else
+            // `throws` clauses sit after the parameter list, so the signature ends at the matching
+            // close paren rather than at the end of the line.
             val open = line.indexOf('(')
             if open < 0 then Maybe.empty
             else
-                val name = line.take(open).split("[ .]").lastOption.getOrElse("")
-                if name.isEmpty then Maybe.empty
-                // javap prints a constructor as the fully qualified class name; normalising keeps it
-                // comparable with every other source of method names, which all use <init>
-                else Maybe((if line.take(open).contains(".") && !line.contains(" " + name + "(") then "<init>" else name, line.slice(open, line.length - 1)))
+                val close = line.indexOf(')', open)
+                if close < 0 then Maybe.empty
+                else
+                    val before = line.take(open)
+                    val name   = before.split("[ .]").lastOption.getOrElse("")
+                    if name.isEmpty then Maybe.empty
+                    // javap prints a constructor as the fully qualified class name; normalising keeps
+                    // it comparable with every other source of method names, which all use <init>
+                    else Maybe((if before.contains(".") && !line.contains(" " + name + "(") then "<init>" else name, line.slice(open, close + 1)))
 
     /** Every method of one class, in declaration order. */
     def of(classpath: Path, className: String)(using Frame): Chunk[Method] < (Async & Fail) =

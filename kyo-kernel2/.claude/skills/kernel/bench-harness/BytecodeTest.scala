@@ -45,6 +45,27 @@ object BytecodeTest extends KyoApp:
             _ = check("sizes are positive", methods.filter(_.instructions.nonEmpty).forall(_.size > 0))
             _ = methods.foreach(m => println(s"       ${m.show}"))
 
+            _ = println("\ndeclarations javap prints in other shapes")
+            // 19 of 60 classes in the measured tree carry a static initializer, which was skipped
+            // entirely, merging its instruction stream into the previous method. On this class the
+            // constructor was reported as 11B against an actual 5B.
+            identity <- Bytecode.of(classpath, "kyo.kernel.proto.Arrow$Identity$")
+            ctor = identity.find(_.name == "<init>")
+            _ = check("the static initializer is a method of its own", identity.exists(_.name == "<clinit>"), identity.map(_.name).mkString(","))
+            _ = check("so the constructor keeps only its own instructions", ctor.exists(_.size <= 6), s"ctor is ${ctor.map(_.show).getOrElse("absent")}")
+            _ = identity.foreach(m => println(s"       ${m.show}"))
+            // a throws clause puts the signature's close paren before the end of the line
+            withThrows = Bytecode.parse("""  public void read() throws java.io.IOException;
+    Code:
+       0: return
+  public int size();
+    Code:
+       0: iconst_0
+       1: ireturn
+""")
+            _ = check("a declaration with a throws clause is not skipped", withThrows.exists(_.name == "read"), withThrows.map(_.name).mkString(","))
+            _ = check("and does not absorb the next method", withThrows.find(_.name == "read").exists(_.instructions.size == 1), withThrows.map(_.show).mkString(" | "))
+
             _ = println("\ndiffing")
             // a method that lost an instruction must report it, and one that did not must not appear
             trimmed = methods.map(m =>

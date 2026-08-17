@@ -419,10 +419,20 @@ object Bench:
       * direction that matters, since every other one asks the harness to stay silent and is therefore satisfied by silence.
       */
     def nullComparison(controls: Chunk[Run]): Maybe[Comparison] =
-        if controls.size < 4 then Maybe.empty
+        // three control legs is the documented session (C V C V C), so requiring four made this
+        // unreachable in the harness's own workflow: the one check that can fail in the direction
+        // that matters never ran.
+        if controls.size < 3 then Maybe.empty
         else
-            val (a, b) = controls.splitAt(controls.size / 2)
-            Maybe(compareReplicated(Chunk.from(a), Chunk.from(b)))
+            // split by alternation, not by time. Contiguous halves group adjacent-in-time legs, which
+            // understates leg-to-leg spread and puts any warm-up trend entirely in the numerator: over
+            // six legs carrying a 3% monotone trend, contiguous halves report a regression of +1.79%
+            // where alternating halves correctly report flat. The real comparison interleaves control
+            // and variant legs, so the null has to interleave too or it is not measuring the same thing.
+            val indexed = controls.zipWithIndex
+            val a       = Chunk.from(indexed.filter((_, i) => i % 2 == 0).map((r, _) => r))
+            val b       = Chunk.from(indexed.filter((_, i) => i % 2 == 1).map((r, _) => r))
+            if a.isEmpty || b.isEmpty then Maybe.empty else Maybe(compareReplicated(a, b))
 
     /** Methods whose inlining verdict moved decisively between the two runs.
       *

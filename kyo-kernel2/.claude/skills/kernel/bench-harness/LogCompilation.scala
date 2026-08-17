@@ -102,11 +102,8 @@ object LogCompilation:
         var pending      = Maybe.empty[String]
         var out          = Chunk.empty[Task]
         var notEntrant   = 0
-        var trapsSeen    = 0
         var trapsParsed  = 0
-        var callsSeen    = 0
         var callsParsed  = 0
-        var methodsSeen  = 0
         var methodsKnown = 0
 
         def flush(): Unit =
@@ -125,6 +122,21 @@ object LogCompilation:
 
         def attr(re: scala.util.matching.Regex, s: String): Maybe[String] =
             Maybe.fromOption(re.findFirstMatchIn(s).map(_.group(1)))
+
+        // counted by a deliberately loose scan that shares no pattern with the matchers below.
+        // Incrementing `seen` inside the parse loop made coverage self-referential: narrowing a
+        // matcher shrank numerator and denominator together, so reintroducing the historical
+        // 4456-element drop reported 637/637 and 100% coverage with every check green.
+        def occurrences(needle: String): Int =
+            var n = 0
+            var i = raw.indexOf(needle)
+            while i >= 0 do
+                n += 1
+                i = raw.indexOf(needle, i + needle.length)
+            n
+        val callsSeenLoose   = occurrences("<call ")
+        val methodsSeenLoose = occurrences("<method ")
+        val trapsSeenLoose   = occurrences("<uncommon_trap ")
 
         raw.linesIterator.foreach { line =>
             TaskOpen.findFirstMatchIn(line).map(_.matched).foreach { el =>
@@ -146,7 +158,6 @@ object LogCompilation:
             Klass.findAllMatchIn(line).foreach(m => klasses += m.group(1) -> m.group(2))
 
             Method.findAllMatchIn(line).map(_.matched).foreach { el =>
-                methodsSeen += 1
                 val parsedMethod =
                     for
                         id     <- attr(AttrId, el)
@@ -161,7 +172,6 @@ object LogCompilation:
             }
 
             Trap.findAllMatchIn(line).map(_.matched).foreach { el =>
-                trapsSeen += 1
                 val kind =
                     for
                         reason <- attr(AttrReason, el)
@@ -178,7 +188,6 @@ object LogCompilation:
             notEntrant += NotEntrant.findAllMatchIn(line).size
 
             Call.findAllMatchIn(line).map(_.matched).foreach { el =>
-                callsSeen += 1
                 attr(AttrMethod, el).foreach { id =>
                     callsParsed += 1
                     pending = Maybe(id)
@@ -214,9 +223,9 @@ object LogCompilation:
             runtime,
             notEntrant,
             Chunk(
-                ParseCoverage("call sites", callsSeen, callsParsed),
-                ParseCoverage("method declarations", methodsSeen, methodsKnown),
-                ParseCoverage("uncommon traps", trapsSeen, trapsParsed)
+                ParseCoverage("call sites", callsSeenLoose, callsParsed),
+                ParseCoverage("method declarations", methodsSeenLoose, methodsKnown),
+                ParseCoverage("uncommon traps", trapsSeenLoose, trapsParsed)
             )
         )
     end parse

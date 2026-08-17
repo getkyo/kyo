@@ -167,13 +167,38 @@ object BenchTest:
             quietNull.map(_.deltas.map(d => s"${d.row}=${d.verdict}").mkString(",")).getOrElse(""))
         check("and no mechanism", quietNull.forall(_.deltas.forall(_.mechanism.isEmpty)))
         // must-fire: a null that cannot detect a difference is not a null, it is a rubber stamp
+        // alternating contamination: every other leg is slow, so the two arms genuinely differ.
+        // A mid-session step change is deliberately NOT this case, since alternation puts it in
+        // both arms, where it correctly shows up as poor resolution rather than a false verdict.
         val dirtyNull = Bench.nullComparison(Chunk(
-            legScores("c1", Seq(("a", 100.0))), legScores("c2", Seq(("a", 100.2))),
-            legScores("c3", Seq(("a", 130.0))), legScores("c4", Seq(("a", 130.4)))
+            legScores("c1", Seq(("a", 100.0))), legScores("c2", Seq(("a", 130.0))),
+            legScores("c3", Seq(("a", 100.4))), legScores("c4", Seq(("a", 130.4)))
         ))
         check("a genuinely dirty null is caught", dirtyNull.exists(_.deltas.exists(_.verdict != Verdict.Flat)),
             dirtyNull.map(_.deltas.map(d => s"${d.row}=${d.verdict}").mkString(",")).getOrElse("none"))
-        check("too few legs means no null at all", Bench.nullComparison(Chunk(ctlLegs(0), ctlLegs(1))).isEmpty)
+        check("too few legs means no null at all", Bench.nullComparison(Chunk(ctlLegs(0))).isEmpty)
+        // the documented session has three control legs; requiring four made the null unreachable
+        check("the documented three-control session can run a null", Bench.nullComparison(ctlLegs).isDefined)
+        // alternating, not contiguous: contiguous halves group adjacent-in-time legs and put any
+        // warm-up trend entirely in the numerator
+        val trending = Chunk(
+            legScores("c1", Seq(("a", 100.0))), legScores("c2", Seq(("a", 101.0))), legScores("c3", Seq(("a", 102.0))),
+            legScores("c4", Seq(("a", 103.0))), legScores("c5", Seq(("a", 104.0))), legScores("c6", Seq(("a", 105.0)))
+        )
+        check("a monotone trend does not read as a regression in the null",
+            Bench.nullComparison(trending).forall(_.deltas.forall(_.verdict == Verdict.Flat)),
+            Bench.nullComparison(trending).map(_.deltas.map(d => s"${d.row}=${d.verdict} ${d.percent}").mkString(",")).getOrElse(""))
+
+        println("nothing resolvable")
+        // every row below its own error is an unreadable run, not a clean one
+        val unreadable = Bench.compare(
+            leg("c", Seq(("a", 10.0, 9.0, 64.0), ("b", 20.0, 19.0, 64.0))),
+            leg("v", Seq(("a", 30.0, 9.0, 64.0), ("b", 60.0, 19.0, 64.0)))
+        )
+        val unreadableOut = Report.render(unreadable)
+        check("all rows below resolution", unreadable.deltas.forall(_.verdict == Verdict.BelowResolution))
+        check("and the report refuses to call that clean", !unreadableOut.contains("No row regressed beyond the drift band"), unreadableOut.linesIterator.filter(_.contains("regress")).mkString)
+        check("saying plainly that it is unreadable", unreadableOut.contains("Nothing was resolvable"))
 
         println("win and loss")
         check("a change that both wins and loses demands two diagnoses", Report.render(cmp).contains("two diagnoses"))

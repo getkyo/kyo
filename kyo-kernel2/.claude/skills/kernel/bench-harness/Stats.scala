@@ -14,38 +14,93 @@ import kyo.*
   */
 object Stats:
 
-    /** Two-sided Student t critical values, indexed by degrees of freedom.
+    /** Log of the gamma function, Lanczos approximation. Accurate to about 15 significant digits over the range used here. */
+    private def logGamma(x: Double): Double =
+        val c = Array(
+            76.18009172947146, -86.50532032941677, 24.01409824083091,
+            -1.231739572450155, 0.1208650973866179e-2, -0.5395239384953e-5
+        )
+        val tmp0 = x + 5.5
+        val tmp  = tmp0 - (x + 0.5) * Math.log(tmp0)
+        var ser  = 1.000000000190015
+        var j    = 0
+        while j < 6 do
+            ser += c(j) / (x + j + 1)
+            j += 1
+        -tmp + Math.log(2.5066282746310005 * ser / x)
+    end logGamma
+
+    /** Continued-fraction expansion for the incomplete beta function, evaluated by the modified Lentz method. */
+    private def betaContinuedFraction(a: Double, b: Double, x: Double): Double =
+        val tiny = 1e-30
+        val qab  = a + b
+        val qap  = a + 1.0
+        val qam  = a - 1.0
+        var c    = 1.0
+        var d    = 1.0 - qab * x / qap
+        if Math.abs(d) < tiny then d = tiny
+        d = 1.0 / d
+        var h = d
+        var m = 1
+        while m <= 300 do
+            val m2  = 2 * m
+            val aa1 = m * (b - m) * x / ((qam + m2) * (a + m2))
+            d = 1.0 + aa1 * d
+            if Math.abs(d) < tiny then d = tiny
+            c = 1.0 + aa1 / c
+            if Math.abs(c) < tiny then c = tiny
+            d = 1.0 / d
+            h *= d * c
+            val aa2 = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+            d = 1.0 + aa2 * d
+            if Math.abs(d) < tiny then d = tiny
+            c = 1.0 + aa2 / c
+            if Math.abs(c) < tiny then c = tiny
+            d = 1.0 / d
+            val del = d * c
+            h *= del
+            if Math.abs(del - 1.0) < 3e-16 then m = 301 else m += 1
+        h
+    end betaContinuedFraction
+
+    /** Regularized incomplete beta function I_x(a, b). */
+    private def incompleteBeta(a: Double, b: Double, x: Double): Double =
+        if x <= 0.0 then 0.0
+        else if x >= 1.0 then 1.0
+        else
+            val front = Math.exp(logGamma(a + b) - logGamma(a) - logGamma(b) + a * Math.log(x) + b * Math.log1p(-x))
+            if x < (a + 1.0) / (a + b + 2.0) then front * betaContinuedFraction(a, b, x) / a
+            else 1.0 - front * betaContinuedFraction(b, a, 1.0 - x) / b
+
+    /** Two-sided tail probability of Student's t: P(|T| > t) for the given degrees of freedom. */
+    def tTailTwoSided(df: Int, t: Double): Double =
+        if df <= 0 then 1.0
+        else incompleteBeta(df / 2.0, 0.5, df / (df + t * t))
+
+    /** Two-sided Student t critical value, computed rather than tabulated.
       *
-      * Small tables rather than an incomplete-beta implementation: a session has 5 legs, so df is 3, and the only values ever needed are the
-      * first few rows. Values beyond the table fall back to the normal limit, which is correct in the direction that matters (it never makes
-      * the threshold looser than the table would).
+      * A table was tried first and was wrong in two ways that a table is always liable to be: it returned infinity for any degrees of freedom
+      * it happened to omit (7 and 9, both reachable from ordinary leg counts), which silently classified a 100% regression as *flat* and
+      * printed "detectable at +-Infinity%" under a green all-clear; and its fallback for an untabulated alpha was *looser* than the truth
+      * while its comment claimed the opposite, so tightening the Bonferroni correction from 15 rows to 16 would have loosened the test.
+      *
+      * Bisection on the exact tail probability has neither failure mode and is about as much code as the table was.
       */
-    private val tTable: Map[Int, Map[Double, Double]] = Map(
-        1 -> Map(0.05 -> 12.706, 0.01 -> 63.657, 0.00333 -> 191.18),
-        2 -> Map(0.05 -> 4.303, 0.01 -> 9.925, 0.00333 -> 17.28),
-        3 -> Map(0.05 -> 3.182, 0.01 -> 5.841, 0.00333 -> 8.58),
-        4 -> Map(0.05 -> 2.776, 0.01 -> 4.604, 0.00333 -> 6.25),
-        5 -> Map(0.05 -> 2.571, 0.01 -> 4.032, 0.00333 -> 5.25),
-        6 -> Map(0.05 -> 2.447, 0.01 -> 3.707, 0.00333 -> 4.74),
-        8 -> Map(0.05 -> 2.306, 0.01 -> 3.355, 0.00333 -> 4.15),
-        10 -> Map(0.05 -> 2.228, 0.01 -> 3.169, 0.00333 -> 3.87)
-    )
-
-    private val normal: Map[Double, Double] = Map(0.05 -> 1.960, 0.01 -> 2.576, 0.00333 -> 2.935)
-
     def tCritical(df: Int, alpha: Double): Double =
         if df <= 0 then Double.PositiveInfinity
+        else if alpha <= 0.0 then Double.PositiveInfinity
+        else if alpha >= 1.0 then 0.0
         else
-            val row = tTable.getOrElse(df, tTable.getOrElse(if df > 10 then 10 else df, Map.empty))
-            // nearest tabulated alpha at or below the requested one, so an untabulated alpha is never
-            // rounded to a looser threshold than asked for
-            val exact = row.get(alpha)
-            exact.getOrElse {
-                val candidates = row.filter(_._1 <= alpha)
-                if candidates.nonEmpty then candidates.minBy(_._1)._2
-                else if df > 10 then normal.getOrElse(alpha, 2.935)
-                else row.values.maxOption.getOrElse(Double.PositiveInfinity)
-            }
+            var lo = 0.0
+            var hi = 1.0
+            // expand until the tail at `hi` is below alpha, so the root is bracketed
+            while tTailTwoSided(df, hi) > alpha && hi < 1e12 do hi *= 2.0
+            var i = 0
+            while i < 200 do
+                val mid = (lo + hi) / 2.0
+                if tTailTwoSided(df, mid) > alpha then lo = mid else hi = mid
+                i += 1
+            (lo + hi) / 2.0
 
     /** One row measured across the replicate legs of one session. */
     case class Replicated(row: String, control: Chunk[Double], variant: Chunk[Double]) derives Schema:

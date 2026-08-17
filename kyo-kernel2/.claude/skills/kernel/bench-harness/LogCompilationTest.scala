@@ -72,13 +72,23 @@ object LogCompilationTest extends KyoApp:
                 o.getOrElse("calls_with_receiver", -1L),
                 "receiver profiles invented or dropped"
             )
-            callCoverage = parsed.coverage.find(_.what == "call sites")
-            _ = check(
-                "the parser accounts for every call element",
-                callCoverage.exists(_.complete),
-                s"${callCoverage.map(_.show).getOrElse("no coverage recorded")}, oracle says ${o.getOrElse("calls_total", -1L)} exist. " +
-                    "A silent partial parse looks identical to a complete one."
-            )
+            // the oracle belongs in the condition, not only in the message. With `complete` alone,
+            // coverage was self-referential and reintroducing the historical 4456-element drop
+            // reported 637/637 with every check green.
+            _ = Chunk(
+                ("call sites", "calls_total"),
+                ("method declarations", "methods_total"),
+                ("uncommon traps", "traps_total")
+            ).foreach { (what, oracleKey) =>
+                val cov      = parsed.coverage.find(_.what == what)
+                val expected = o.getOrElse(oracleKey, -1L)
+                check(
+                    s"the parser accounts for every element: $what",
+                    cov.exists(c => c.complete && c.seen.toLong == expected),
+                    s"${cov.map(_.show).getOrElse("no coverage recorded")}, oracle says $expected exist. " +
+                        "A silent partial parse looks identical to a complete one."
+                )
+            }
 
             _ = println("\ndeoptimization")
             // `thread=` is an event that happened at runtime. `bci=` is a guard the compiler

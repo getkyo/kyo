@@ -87,7 +87,7 @@ object Report:
                 ||---|---|---|---|---|---|---|---|---|""".stripMargin
 
         val resolutionNote =
-            val unbounded = c.deltas.count(_.flatButUnbounded)
+            val unbounded = c.deltas.count(d => d.flatButUnbounded || d.verdict == Verdict.BelowResolution)
             val bounded   = c.deltas.flatMap(_.resolution)
             if bounded.nonEmpty then
                 val worst = bounded.map(_.percent).max
@@ -189,8 +189,16 @@ object Report:
                 "\n\u26a0\ufe0f  This change both wins and loses. Those are two diagnoses, not one tradeoff: the loss usually turns out " +
                     "removable, and accepting it early ships a defect the same afternoon's work would have deleted."
 
+        val resolved = c.deltas.count(d => d.verdict != Verdict.BelowResolution)
+
         val verdictLine =
-            if reds.nonEmpty then
+            // every row unresolvable is not a clean result. The branch order previously fell through
+            // to the green all-clear whenever no row regressed, including when no row could be read
+            // at all, and the resolution note stayed silent because it counted only Flat rows.
+            if resolved == 0 && c.deltas.nonEmpty then
+                s"\n\u26a0\ufe0f  Nothing was resolvable: all ${c.deltas.size} rows fell below the measurement's own error. " +
+                    "This is not a clean run, it is an unreadable one; re-measure with more forks before drawing any conclusion."
+            else if reds.nonEmpty then
                 "\n🔴 Regressed, so the work is unfinished until each is diagnosed or ruled on:\n" +
                     reds.map(d => f"  - ${d.row} ${d.percent}%+.1f%%").mkString("\n")
             else if !(control.wholeClass && variant.wholeClass) then

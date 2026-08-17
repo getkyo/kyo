@@ -72,6 +72,20 @@ object StatsTest:
         check("a row not sharing the drift shows a residual", Stats.residual(odd(1), Stats.commonMode(odd).getOrElse(0.0)).exists(_ > 2.0))
 
         println("\nt critical values")
+        // against published two-sided critical values, not against the previous implementation
+        val known = Seq((1, 0.05, 12.706), (2, 0.05, 4.303), (3, 0.05, 3.182), (5, 0.05, 2.571),
+                        (7, 0.05, 2.365), (9, 0.05, 2.262), (10, 0.05, 2.228), (20, 0.05, 2.086),
+                        (3, 0.01, 5.841), (7, 0.00333, 4.355), (9, 0.00333, 3.954))
+        known.foreach { (df, a, expected) =>
+            check(f"t($df, $a%.5f) = $expected%.3f", Math.abs(Stats.tCritical(df, a) - expected) < 0.005,
+                f"got ${Stats.tCritical(df, a)}%.4f")
+        }
+        // the table this replaced returned Infinity for df 7 and 9, which classified a 100%
+        // regression as flat and printed 'detectable at +-Infinity%' under a green all-clear
+        check("no tabulation hole returns infinity", (1 to 30).forall(df => Stats.tCritical(df, 0.00333).isFinite))
+        // and it was non-monotone: tightening 15 rows to 16 loosened the threshold
+        check("a tighter alpha never loosens the threshold",
+            (1 to 30).forall(df => Stats.tCritical(df, 0.05 / 16) >= Stats.tCritical(df, 0.05 / 15)))
         check("df=3 at 5% is the textbook 3.182", Math.abs(Stats.tCritical(3, 0.05) - 3.182) < 0.001)
         check("a tighter alpha gives a larger critical value", Stats.tCritical(3, 0.00333) > Stats.tCritical(3, 0.05))
         check("more degrees of freedom give a smaller one", Stats.tCritical(10, 0.05) < Stats.tCritical(3, 0.05))
