@@ -1,5 +1,15 @@
 # Four gated candidates, each with a recorded default
 
+> **Critical path.** Every probe promised below is now done, and all eight phases of the harness plan
+> are closed. Once the sweep replication in `bench-results/sweep-replicated` reports, **there is no
+> unblocked work left in this campaign**: what remains is DIS-3 (default proceed, needs one
+> `@unchecked` signed off), IN-3, C3 and DIS-4 (default hold, each needs a ruling), and the C4 trade
+> (1.5 ns per eval against a permanent per-thread budget leak, default keep the fix).
+>
+> Three of the four probes weakened their candidate and one strengthened it, so the defaults are not
+> uniform and are not guesses.
+
+
 Every candidate that remains in `optimization-plan.md` is owner-gated. Five are closed (DIS-1 and
 DIS-2 measured, C1, IN-1 and IN-2 refuted from stored evidence), so this is the whole rest of the
 stream. Each entry below states what the gate is, what the evidence now says that the plan did not
