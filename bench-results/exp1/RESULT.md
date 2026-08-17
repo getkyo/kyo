@@ -1,8 +1,11 @@
-# Experiment 1: the continuationBodiesFuse regression is an inlining-budget effect
+# Experiment 1: what the continuationBodiesFuse regression actually is
 
-First measurement of the night, and the first time this regression has been explained with evidence
-rather than argued from source. Run on an otherwise idle machine, no agents, heap and collector
-pinned (`-Xms4g -Xmx4g -XX:+UseG1GC`), `-f 2 -wi 10 -i 5`, 10 measured iterations per cell.
+Run on an idle machine, no agents, heap and collector pinned (`-Xms4g -Xmx4g -XX:+UseG1GC`),
+`-f 2 -wi 10 -i 5`, 10 measured iterations per cell.
+
+**This file was rewritten after its first version attributed the regression to the wrong method.**
+That correction is recorded below rather than quietly fixed, because catching it is the only reason
+the harness's own rules exist.
 
 ## The four numbers
 
@@ -15,55 +18,58 @@ pinned (`-Xms4g -Xmx4g -XX:+UseG1GC`), `-f 2 -wi 10 -i 5`, 10 measured iteration
     freq600:  current is -5.74% against old      (the sign flips)
     raising the budget helps old by -8.39%, current by -17.40%
 
-## What it says
+## What is established
 
-**The regression reproduces**, independently and at the expected size. That alone was worth the run:
-the +4.3% was a stored number from an earlier session, and it is real.
+**The regression reproduces** independently, at the expected size. The +4.3% was a stored number from
+an earlier session; it is real.
 
-**Raising the inlining budget does not merely close the gap, it reverses it.** At 600 the current
-design is faster than the old one. So the current design is not slower; it is slower *only while its
-delivery path cannot inline*.
+**Raising the inlining budget reverses it.** At 600 the current design is faster than the old. So the
+current design is not slower; it is slower only while something on its path cannot inline.
 
-**The budget helps the current design twice as much**, which is the shape you expect when one design
-has a large body sitting just above the threshold and the other does not.
+**The flag took effect**, which licenses reading the above: 57 methods changed C2 verdict between the
+two configurations of the current design, and size-refusal sites fell.
 
-## The mechanism, from the efficacy gate
+**The structural difference between the designs, at the same default budget, is one method.**
+Comparing the two designs' C2 verdicts directly:
 
-The protocol requires proving the flag took effect before reading any of the above, because a flag
-that silently does nothing refutes every hypothesis and passes. Comparing C2 inline verdicts between
-the two configurations of the current design: 57 methods changed, and size-related C2 refusals fell
-from 31 to 20. The flag took.
+    kyo.kernel.proto.Eval$::dispatch$1   607B   old: absent      new: 0 inlined / 2 refused
+                                                                      'hot method too big'
+    kyo.kernel.proto.Arrow$Identity$::apply     old: 30ok/12fail  new: 25ok/0fail  'too big'
 
-The decisive line:
+`dispatch$1` exists only in the current design and cannot inline. This is exactly the out-of-line
+dispatch frame a static analysis named before any measurement (candidate DIS-1): the `Suspend` arm is
+expanded into the drive loop while the `SuspendWith` arm calls a separate 607-byte method.
 
-    ProtoKernelBench::run$56  (379 bytes)
-      default:  0 inlined / 10 refused   'hot method too big'
-      freq600:  4 inlined /  7 refused
+Note the current design is *better* by the crude measures: fewer total C2 refusal sites (50 against
+65) and fewer size refusals (27 against 43), having eliminated twelve `Identity$::apply` refusals. It
+is still slower. Refusal counts are not the mechanism; one refusal on the hot path is.
 
-`run$56` is the fused continuation body, ten chained maps. At **379 bytes** it sits above HotSpot's
-default `FreqInlineSize` of 325 and below 600. So under the default budget it can never inline at a
-hot site, and under 600 it can.
+## The correction
 
-This is exactly what a static analysis predicted before any measurement: this row is the only one of
-the fifteen whose continuation body is itself too big to inline, so it alone cannot repay the cost of
-the delivery frame with downstream inlining. Six other rows moved to the same delivery path and got
-faster.
+The first version of this file said the mechanism was `ProtoKernelBench::run$56`, the benchmark's
+fused continuation body at 379 bytes, refused as `hot method too big` under the default budget and
+inlining at 600.
 
-## What this does NOT establish
+That was measured but not compared. `run$56` is the benchmark's own code, identical in both designs,
+and comparing the designs at the same budget shows it refused in **both**:
 
-- **`FreqInlineSize=600` is a diagnostic, not a fix.** It is global, it changes inlining everywhere,
-  and nobody should ship it. It was used to answer one question and it answered it.
-- **One row, one configuration per cell, no replication.** The effects here (4.55%, 17.40%) are large
-  against their errors (~1-2%), but this session did not run the C V C V C shape, so the harness's own
-  threshold machinery was not applied. Treat the sizes as approximate and the direction as solid.
-- **It does not choose between the fix candidates.** DIS-1 (split dispatch into an inlined degenerate
-  tier and an out-of-line general tier) and DIS-2 (Transform-first delivery, taking the entry under
-  the budget) both aim to make the default budget sufficient. This experiment says the budget is the
-  binding constraint; it does not say which change relieves it. That is Experiment 2.
-- **The other fourteen rows are untouched by this result.**
+    run$56  379B   old: 0 inlined / 15 refused    new: 0 inlined / 10 refused
 
-## What changes because of it
+So it cannot be what separates them. The first version compared the current design against itself at
+two budgets and read a design difference out of it, which the data never contained. The error is the
+one this whole harness exists to prevent, made in the harness's own result file, and it survived
+because the comparison that would have caught it had not been run.
 
-The candidate ranking should shift toward anything that reduces the size of what must inline on this
-path, and away from the frame-cost framing. The frame is real, but at a sufficient budget the current
-design wins outright, which is hard to reconcile with the frame being the dominant cost.
+## What is still not established
+
+- **Why raising the budget helps the current design twice as much.** `dispatch$1` at 607 bytes is
+  still above `FreqInlineSize=600`, so the flag does not inline it. The differential benefit is real
+  and unexplained; it is not the simple story that raising the budget inlines the offending method.
+- **Which fix relieves it.** DIS-1 (split dispatch into an inlined degenerate tier and an out-of-line
+  general tier) and DIS-2 (Transform-first delivery, taking the entry under the budget) both target
+  this. Experiment 2 decides, by adding the frame to the old design and seeing whether +4.55%
+  reproduces.
+- **`FreqInlineSize=600` is a diagnostic, not a fix.** Global, changes inlining everywhere, nobody
+  should ship it.
+- **One row, one configuration per cell, no replication.** The effects are large against their errors
+  but the harness's own threshold machinery was not applied.
