@@ -5,7 +5,7 @@ this first on every wake-up; update it after every step, before reporting anythi
 
 The other documents are subordinate to this one: `bench-harness-plan.md` is the design,
 `review-findings.md` and `tool-defects.md` are per-stream ledgers, `bench-results/*/RESULT.md` are
-measurements, `overnight-procedure.md` is the operating rules. If any of them disagrees with this
+measurements, `PROCEDURE.md` is the operating rules. If any of them disagrees with this
 file about state, this file is wrong and gets fixed.
 
 ## The rule that governs all of it
@@ -73,6 +73,23 @@ demonstrably skips. On the real sweep it fires once, on the true positive, and e
 - **The sweep was never replicated**: one leg per configuration.
 - **Ten tool defects** in `tool-defects.md`, of which two are now fixed (efficacy gate, budget
   ranking) and one is being fixed (ingest). Seven open.
+
+## The kernel result, for a reader arriving cold
+
+`continuationBodiesFuse` was slower under the current design than the old one and nobody knew why.
+The cause is `kyo.kernel.proto.Eval$::dispatch$1`, 607 bytes, refused by HotSpot as `hot method too
+big` and present only in the current design: `ask.map{...}` used to mint a `Suspend`, expanded into
+the drive loop, and now mints a `SuspendWith` whose delivery is that separate method.
+
+Forcing it inline takes the row from +4.5% to -6.9%, with the efficacy gate proving the flag took
+(0 inlined / 2 refused becomes 2 inlined / 0 refused). Across all fifteen rows that crude fix wins on
+four and costs `trailingMapsStayLinear` 23.8% and 239,976 B/op, which a further isolation showed is
+exactly the scalar replacement the enlarged compilation unit destroys: disabling escape analysis on
+the unmodified design reproduces the same allocation to within 24 bytes of 2.5 million.
+
+Two tier-split variants aimed at capturing the win without that cost both regress the handler rows by
+22 to 35%. A third variant, which finds the stack index once so a fast-path miss does not pay for a
+second scan, is written and compiles with 126 tests green but **has never been measured**.
 
 ## Standing constraints
 
