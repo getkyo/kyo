@@ -275,6 +275,14 @@ handler reaches the no-handler branch, so "park or bug" and "S1 or T" should be 
   sbt runs either, since a build reformats the files being edited. The test-merge items below
   (`ContextEffectTest`, `KyoInternalTest`, the fully commented `Kyo*` tests, `ArrowEffectBytecodeTest`,
   the clean full run) are paused on that, not abandoned.
+- Parked branches this ledger did not list, found while checking the repo's stashes against the
+  skill's "branches, never stashes" rule: `parked/partial-eval-armed` (= stash@{1}) and
+  `parked/partial-eval-bare-stop` (= stash@{0}), the two proto variants of `Eval.partial` from
+  2026-08-16 (`armed` landed: the loop polls `stop()` only in a partial drive; `bare-stop`: the loop
+  polls unconditionally; **the poll-cost ruling between them is parked**), and
+  `parked/merge-hoisted-currency` (the currency-hoist isolation experiment). Both `partial` variants
+  `bug` at an operation with no region on the stack; the parking semantics the four red tests assert
+  come from the old kernel2 only. Refs verified identical to the stashes; no working-tree change.
 
 **Third file, third real bug, and the added coverage localised it exactly.** A handler's clause is the
 handler's own code and its effects belong to the handlers *outside* the region. This kernel answers a
