@@ -215,6 +215,12 @@ object Bench:
         rows: Seq[String],
         forks: Int,
         evidence: Evidence,
+        /** Extra JVM arguments for this leg. Without these a configuration probe is inexpressible and
+          * every falsifier that is a JVM flag has to be run by hand, which is how the two experiments
+          * that diagnosed a live regression were actually run: by a shell script the harness knew
+          * nothing about.
+          */
+        jvmArgs: Seq[String] = Nil,
         attempts: Int = 3
     )(using Frame): Run < (Async & Fail) =
         val selector   = if rows.isEmpty then s"$BenchClass.*" else rows.map(r => s"$BenchClass.$r").mkString(" ")
@@ -223,10 +229,15 @@ object Bench:
 
         def sbt(task: String) = exec(worktree, "sbt", "--client", task)
 
+        // pinned on every leg: these rows allocate megabytes per operation, so ergonomic
+        // heap sizing is a live variance source that costs one flag to remove
+        val extraVm = (Seq("-Xms4g", "-Xmx4g", "-XX:+UseG1GC") ++ jvmArgs).mkString(" ")
+
         def measureWith(warmup: Int, n: Int, expected: Int): Chunk[Row] < (Async & Fail) =
             sbt(
                 s"kyo-kernel2JVM/Jmh/run -f $forks -wi $warmup -i $MeasureIterations -r ${IterationSeconds}s " +
-                    s"-w ${IterationSeconds}s -prof gc -prof comp -rf json -rff ${json.toString} $selector"
+                    s"-w ${IterationSeconds}s -prof gc -prof comp -rf json -rff ${json.toString} " +
+                    "-jvmArgsAppend \"" + extraVm + "\" " + selector
             )
                 .andThen(json.read)
                 .map(parseJmh)
