@@ -308,9 +308,25 @@ materially different estimate, and the test asserts that rather than a bias.
 | 41 | the `-f N is diagnostic` note is keyed on fork count, so it fires on every replicated bracket that has a real threshold | **open** |
 | 42 | `Run.alloc` and `Run.cpu` cost one extra JMH invocation each and surface as one integer and one percentage printed only above 25% | **open** |
 | 43 | the unexplained-row line tells the operator to "check the inlining log" on a **Timing** run, whose `jit` is empty by construction: it names evidence the run provably does not contain | **open**, reproduced live |
+| 44 | `mode` and `unit` are captured and never checked, so `Bench.compare:567` calls a negative percentage `Faster` unconditionally: a **`thrpt` row is classified backwards**, and two legs in different time units are off by the unit ratio | **open**, exposed via `bench ingest` |
+| 45 | `Run.coverage` (`Model.scala:307`) has **no schema default**, so defect 17's *original* class is live in the tree right now | **open** |
+| 46 | `StoreSchemaTest` **does not exist**; the check is inline at `BenchTest.scala:498-511` covering `allocByMethod` only, and a stale comment at `Model.scala:323` names the phantom | **open**, and the plan inherited the name unchecked |
+| 47 | `Ingest` fabricates `forks = 1` while the json carries the truth (**three readers**, including `stillCompiling`'s measured-window denominator) and **discards `jvmArgs` entirely**, so an ingested configuration pair calls the difference unrecoverable while holding the file that states it | **open** |
+| 48 | multi-row allocation break: `parseAlloc` reads one flat table per benchmark so `Run.alloc` carries duplicate `cls` rows, and `apportion` takes a last-wins numerator against a denominator summed across all benchmarks | **open**, `allocConservation` is the check that fires on it |
+| 49 | the JIT table mixes scopes: `msInWindow`/`msTotal` summed across all rows from `-prof comp`, task census from the single surviving fork's log, printed as one table headed "a property of the design" | **open**, a consequence of 30 |
+| 50 | "N flat rows carry no resolution" is **reachable** via `bracket --legs 2` and **mislabelled**: it fires on rows that are not flat. I first recorded it as unreachable dead code, which would have deleted a real defect | **open**, my misdiagnosis corrected |
+| 51 | `QaEndToEnd.check` only **prints** (`:17-18`), unlike `BenchTest.check` which throws (`:41-43`), so a QA main's checks cannot fail the run: "fails by construction" means "prints FAIL and exits 0" | **open** |
+| 52 | item 4 as shipped: the note now fires on **every** Full leg (the `n < 25.0` gate became unreachable in the other direction), and its two-way partition classifies `ProtoKernelBench$$anon$95` as immovable although that allocation is candidate C3's entire subject | **open**, rework in flight |
 
-Forty-three entries: **25 fixed**, 15 open (9, 30-43), 1 bounded (23), 1 an observation (7),
+Fifty-two entries: **25 fixed**, 24 open (9, 30-52), 1 bounded (23), 1 an observation (7),
 1 superseded (5).
+
+**44 through 52 came from a held-out review of the plan, not from using the tool.** That is now the
+second time a review round has produced more defects than a campaign of operating the harness did,
+and the shape is consistent: operating it surfaces what it says wrongly, reading it surfaces what it
+never says and what it silently mis-scales. 50 is the sharpest of them, because I had already
+recorded that warning as unreachable dead code, and deleting it on my own diagnosis would have
+removed a live, mislabelled defect.
 Counted from the table rather than tallied by hand, because this line had drifted from it once
 already. Defect 9's mitigation is now wired into every
 bracket rather than available on request; what remains irreducible about 9 is that fixtures are
