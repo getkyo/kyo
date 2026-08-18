@@ -662,6 +662,20 @@ jit and cpu data keyed on the old package names is now stale**.
    classes as a comparison of the two implementations, not as an A/A ("Same sha and no recorded JVM
    arguments" was the note under every kernel-vs-proto report). Machine load 6 to 8 all the while, so
    no bracket launched.
+
+**The owner is rewriting `Eval` (11:00 onward) and has taken it over.** Their sketch: `Eval.apply[A, S](v:
+A < S): A < S` (partial: an evaluation returns currency), a `loop` matching `Defer`/`Suspend`/`Handle`
+with `???`s, `Arrow` a plain trait with `Arrow(f)` as the one factory, `Chain.apply(v, next)` a `Defer`,
+`Stack.scala` commented out. Asked for one level of the `???`s and a minimal Stack inside `Eval.scala`,
+I first produced a two-cast erased loop they called "back with all the unsafety"; then, on "finish the
+minimal Stack the way I'm designing it and nothing else", finished their Stack: one `entries` array of
+`Arrow | Handler`, `states: Array[Any]` beside it, `push(arrow)` flattening a `Chain` and dropping `Id`,
+`push(handler, state)`, `pop()` returning the union, `state`/`setState`/`handler(i)`, `find(tag, base)`,
+`truncate`, `size`; `grow` via `Array.copyOf` (the `java.util.Arrays` overloads reject a union- or
+`Any`-typed array); `Arrow.Chain` made `private[proto]` so the flatten sees it; `import kyo.Tag`. Left
+uncompiled and uncommitted at their "I'm taking over"; `loop` untouched. Standing instruction from
+them: no edits to `kyo-kernel2/shared/src` and no sbt from here until they say. Everything below the
+tree's HEAD (`dd1bae210a`) is theirs and uncommitted: the kernel edits from before, plus `proto/*`.
 2. **The strict `map` allocating its `Transform` before knowing the input is settled** (24 B per map,
    +184,024 to +240,024 B/op on five rows). Default: unchanged, it is the owner's `map` shape; the
    kernel's shape (`Transform` only in the pending arm and the rescue) is the candidate, blocked on
