@@ -485,14 +485,28 @@ object Report:
                 "\u274c These runs are from different sessions, so the deltas below are not comparable. " +
                     "Re-measure the control beside the variant.\n\n"
 
-        val noiseNote =
-            val n = Bench.noiseShare(variant)
-            if n < 25.0 then ""
+        // the three-way split of the variant's sampled time. The retired two-way version called
+        // everything outside the kernel immovable, which lumped the benchmark's own generated closures,
+        // the workload the kernel's dispatch decides, in with genuinely external frames like
+        // boxToInteger. Stated as three shares with the largest frames over ALL of them (not the
+        // non-kernel subset, which ranked a 40% frame under a sentence about a 36% one), so the reader
+        // sees the biggest lever whichever bucket it sits in. The kernel share is a lower bound: inlined
+        // kernel code is credited to the frame it was inlined into.
+        val cpuNote =
+            val cpu = variant.cpu
+            if cpu.isEmpty then ""
             else
-                // the bare percentage was an instruction to go and look. The frames are already in
-                // `Run.cpu`, which costs a whole extra JMH invocation and reached no other output.
-                val frames = Bench.noiseFrames(variant).map((m, p) => f"\n      $p%5.1f%%  $m").mkString
-                f"\n\u2139\ufe0f  $n%.0f%% of sampled time is outside ${Bench.KernelPackage.stripSuffix(".")}, so kernel-attributable movement is a fraction of each delta above. Largest contributors:$frames"
+                val p     = Bench.cpuPartition(cpu)
+                val total = cpu.map(_.nanos).sum.toDouble
+                val frames =
+                    cpu.groupBy(_.method).toSeq
+                        .map((m, sites) => (m, sites.map(_.nanos).sum.toDouble))
+                        .sortBy(-_._2).take(3)
+                        .map((m, n) => f"\n      ${n / total * 100}%5.1f%%  $m")
+                        .mkString
+                f"\n\u2139\ufe0f  Sampled time: kernel ${p.kernel}%.0f%%, benchmark ${p.benchmark}%.0f%%, other ${p.other}%.0f%%. " +
+                    "The kernel share is a lower bound, inlined kernel code is credited to its inlining frame; the benchmark share is " +
+                    "its own generated code, the workload the kernel drives, not fixed overhead. Largest frames:" + frames
 
         // per-row CPU, when both sides carry a row profile: where each row's time went on each side,
         // the kernel/benchmark/other split and the frames behind it, so a delta can be read against the
@@ -559,7 +573,7 @@ object Report:
         // falsifier attached is where "it is slower, so replace it" comes from.
         val investigation = Investigate.render(c)
 
-        s"$blockerBanner$sessionWarning$header\n$body$rampNote$resolutionNote$driftNote$jit$deoptShift$polymorphic$allocSites$allocNote$partition$verdictLine$ladder$steadyState$jitTable$bothWays$noiseNote$cpuByRow$investigation"
+        s"$blockerBanner$sessionWarning$header\n$body$rampNote$resolutionNote$driftNote$jit$deoptShift$polymorphic$allocSites$allocNote$partition$verdictLine$ladder$steadyState$jitTable$bothWays$cpuNote$cpuByRow$investigation"
     end render
 
 end Report

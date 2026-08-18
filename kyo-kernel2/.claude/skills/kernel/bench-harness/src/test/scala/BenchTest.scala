@@ -131,13 +131,17 @@ class BenchTest extends Test[Any]:
         )
     )
     val noisyOut = Report.render(Bench.compare(ctl, noisy))
-    check("a run dominated by non-kernel frames says so", noisyOut.contains("outside kyo.kernel. or kyo.proto"))
+    // Eval.loop 400 (kernel), loop$9 500 (benchmark's own closure), boxToInteger 600 (other): total 1500
+    check("the run-level note splits sampled time three ways", noisyOut.contains("kernel 27%, benchmark 33%, other 40%"), noisyOut)
+    check("the benchmark's own generated code is its own share, not lumped as immovable", noisyOut.contains("benchmark 33%"))
+    check("and the kernel share is stated as a lower bound", noisyOut.contains("lower bound"), noisyOut)
+    check("with the largest frame named whichever bucket it is in", noisyOut.contains("boxToInteger") && noisyOut.contains("ProtoKernelBench.loop$9"))
+    // noiseShare still reads the two-way figure for the QA probe, unchanged
     check(
-        "and counts the benchmark's own generated code as non-kernel",
+        "noiseShare counts the benchmark's own generated code as non-kernel",
         Math.abs(Bench.noiseShare(noisy) - 73.33) < 0.1,
-        f"share ${Bench.noiseShare(noisy)}%.2f%%, expected 73.33%% (1100 of 1500); the old list scored this 40%%"
+        f"share ${Bench.noiseShare(noisy)}%.2f%%, expected 73.33%% (1100 of 1500)"
     )
-    check("and names the frames rather than only the share", noisyOut.contains("ProtoKernelBench.loop$9"))
 
     section("steady state")
     val settled = rows(("a", 10.0, 0.1, 64.0))
