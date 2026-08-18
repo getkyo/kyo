@@ -491,6 +491,38 @@ with `Eval.partial`, `evalNow` and the done-less stateful overload commented; th
 code. `kyo-kernel2JVM/testOnly kyo.proto.*` runs after the bracket with the harness checks; any red
 there is a proto finding to diagnose, not a test to bend.
 
+**What the -wi 20 -prof gc bracket said, read raw at the owner's instruction (2026-08-18 08:25 to 09:10; `2cbbea07e5`).**
+The owner clarified that "cpu" meant the iteration time and "alloc" the B/op, both in that run; the
+CPU profiler pass (`cpu-0818-f3f29d8b4d.log`, 29 rows, itimer) was run anyway and sits on disk
+un-ingested; the harness per-row CPU ingest is written and uncompiled. Time and B/op at
+`f3f29d8b4d` (kernel vs proto, JMH aggregate over 3 forks): 🟢 `evalFixedOverhead` -47% (0 B/op both),
+🟢 `emittingClausesPayRegionRebuild` -15% (304,433 vs 240,368 B/op), 🔴 `fusionAllocatesNothing` +4%,
+`continuationBodiesFuse` +11% (equal alloc), `deepRecursion` +13% (**+239,592 B/op**), `fusionPastBudget`
++29% and `idleHandler` +29% (**+184,024**), `uncachedValues` +37% (**+184,032**), `suspensionFusesContinuation`
++38% (**+240,024**), `nestedPayloads` +39% (**+24,000**), `statefulAnswers` +82% (+1), `suspensionBaseline`
++120% (+1), `handleLoopAnswersInPlace` +143% (+1), and 🔴 **`trailingMapsStayLinear` +2,144×, 2.40 GB/op:
+quadratic again, introduced by the continuation fix** (the interior chained left-deep and applied
+with the one-argument apply, which decomposes the chain and pushes it back entry by entry). Fixed
+at `cca4eb3751` (interior built walking up from the region, right-deep, applied to the remainder
+with the two-argument apply, one Defer, one entry; a left-deep chain had also overflowed the Java
+stack on the 1M-map tower because `Chain.apply` recurses without reaching Transform's budget), and
+the answer path made free again for a settled answer (`s.cont(x)` with the interior left on the stack;
+only a pending answer composes it), since composing on every answer had put `statefulAnswers` at
+561 us. The six +184k/+240k B/op rows are the strict `map` allocating its `Transform` before knowing
+the input is settled (24 B per map): the owner's design call from the gc rung, now visible on every
+map-heavy row. On the owner's instruction the `*With` variants exist (`handleContWith`, `handleLoopWith`,
+`handleLoopStateWith`: the continuation in its own parameter group, fused into the region node,
+which is why `Kyo.Handle` is a trait now, as the owner made `Kyo` and `Suspend` for the fused
+`suspendWith`; the continuation's `[C, S2]` in a later type clause as the kernel had; a bare-value
+answer leaves `B` unpinned under the pure `Loop.continue`, so those tests give the type arguments),
+`9ad929fccc`, `kyo.proto.*` **178/178**. `-f 1 -prof gc` at `9ad929fccc`: `trailingMaps` 493 us /
+2.16 MB (kernel 291 / 2.32), `suspensionFusesContinuation` 43.4 us / **240,096 B/op = kernel** (the
+owner's fused node halved it), `suspensionBaseline` 191, `emittingClauses` 74, but `handleLoopAnswersInPlace`
+**307** and `statefulAnswers` **340** against 216/212 at `f3f29d8b4d` with identical allocation:
+suspected the interface `instanceof` in `lower` (`Kyo` a trait now) and in `Eval.step`; the A/B is
+`Arrow`/`Transform` as the trait side with `Kyo` a class, in the throwaway, on those rows, before
+anything lands. Open, awaiting the owner's go.
+
 **Third file, third real bug, and the added coverage localised it exactly.** A handler's clause is the
 handler's own code and its effects belong to the handlers *outside* the region. This kernel answers a
 clause's effect with handlers the region's *body* installed inside it, so a user's `Say` handler wrapped
