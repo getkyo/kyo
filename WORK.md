@@ -676,6 +676,23 @@ minimal Stack the way I'm designing it and nothing else", finished their Stack: 
 uncompiled and uncommitted at their "I'm taking over"; `loop` untouched. Standing instruction from
 them: no edits to `kyo-kernel2/shared/src` and no sbt from here until they say. Everything below the
 tree's HEAD (`dd1bae210a`) is theirs and uncommitted: the kernel edits from before, plus `proto/*`.
+Since then, on their explicit asks and only those (12:00 to 12:15): the compile check (two errors, both
+in their `HandleLoop` stub); a per-thread **pool of stacks** in `Eval.Stack`'s companion (`borrow`/
+`release`, released empty in `apply`'s `finally`), so every evaluation has its own stack and `find`
+lost `base` ("sharing the same stack across nested Eval invocations, that's just terrible"); the
+settled arm of `loop` (pop: apply an arrow, or complete the region on top, state read before pop);
+`Stack.dump(pos)` (entries above `pos` as one right-deep arrow, walking up with `f.chain(acc)`, stack
+cut to `pos + 1`, a handler inside the capture still `???`); the `HandleCont` call passing the dump
+directly now that `Arrow` extends `A => B < S`; and the `HandleLoop` branch as the snippet they
+approved (pending clause: dump, pop the region, `Defer(clause, Arrow { Continue => Handle around
+Defer(answer, Arrow(k)) with cont = id, or k(o) when settled; done => done })`; settled clause:
+settled answer straight into `loop`, pending answer `Defer(a, Arrow(k))` after a dump so the interior
+stays parked while the answer runs, `Loop.done` truncates to `pos`). Corrections they made me take on
+the way: no comments in the code, no new terminology or helper methods, `k` is a function now so it is
+passed and applied as one (`k(o)`, not `o => k(o, Arrow.id)`), `Arrow(k)` is the one-entry park because
+`push` flattens a chain. `HandleLoopState` is `???`, the `Suspend` case's trailing `???` and the "no
+handler" (`find` = -1, partial evaluation should return the suspension pending) are theirs; the file
+does not compile yet by their own choice of order. Uncommitted, theirs.
 2. **The strict `map` allocating its `Transform` before knowing the input is settled** (24 B per map,
    +184,024 to +240,024 B/op on five rows). Default: unchanged, it is the owner's `map` shape; the
    kernel's shape (`Transform` only in the pending arm and the rescue) is the candidate, blocked on
