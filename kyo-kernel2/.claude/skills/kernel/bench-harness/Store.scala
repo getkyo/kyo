@@ -326,8 +326,11 @@ object Report:
                     f"\nEvery flat row below is flat to within its own resolution, at worst +-${worst}%.2f%% " +
                         f"(alpha ${bounded.head.alpha}%.5f after correcting for ${c.deltas.size} rows, df ${bounded.head.df})."
             else if unbounded > 0 then
-                s"\n⚠️  $unbounded flat rows carry no resolution: these legs were not replicated, so " +
-                    "'flat' here means the harness cannot say how small an effect it would have missed, not that nothing changed."
+                // these rows are not flat: with one leg per arm there is no spread to estimate a
+                // threshold from, so every row is unresolved. The previous text called them "flat rows",
+                // which is what a reader would then believe about them
+                s"\n⚠️  $unbounded rows could not be resolved: one leg per arm gives no spread to estimate a threshold from, so " +
+                    "no row can be called flat or moved. Run at least two legs per arm (three controls for the A/A null)."
             else ""
 
         // the session's common-mode drift, and the rows that did not share it. Reported, never spent:

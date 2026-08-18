@@ -479,7 +479,7 @@ object Bench:
 
     // --- one leg ----------------------------------------------------------------
 
-    def openSession(worktree: Path, driftRow: String)(using Frame): Session < (Async & Fail) =
+    def openSession(worktree: Path)(using Frame): Session < (Async & Fail) =
         for
             _    <- requireThrowaway(worktree)
             // start from a defined tree: a previous bracket leaves its last leg's sources in place

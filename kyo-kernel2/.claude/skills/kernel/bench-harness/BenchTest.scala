@@ -217,6 +217,14 @@ object BenchTest:
         val driftedOut = Report.render(drifted)
         check("the report states the drift", driftedOut.contains("Control legs drifted +"), driftedOut.linesIterator.filter(_.contains("drift")).mkString(" | "))
         check("a single pair says nothing about drift", repFlat.commonMode.isDefined && !Report.render(Bench.compare(ctl, vnt)).contains("Control legs drifted"))
+
+        // `bracket --legs 2`: one leg per arm through the replicated path gives df 0, no threshold, and
+        // every row unresolved. The report used to call them "flat rows" (defect 50)
+        val oneEach    = Bench.compareReplicated(Chunk(ctlLegs.head), Chunk(vntFlat.head))
+        val oneEachOut = Report.render(oneEach)
+        check("one leg per arm resolves nothing", oneEach.deltas.forall(_.verdict == Verdict.BelowResolution), oneEach.deltas.map(_.verdict).mkString(","))
+        check("and the report says unresolved, not flat", oneEachOut.contains("rows could not be resolved") && !oneEachOut.contains("flat rows carry no resolution"),
+            oneEachOut.linesIterator.filter(_.contains("resol")).mkString(" | "))
         check("every flat row carries a resolution", repFlat.deltas.forall(_.resolution.isDefined))
         // the displayed scores must be the ones the displayed percentage is computed from. A real
         // run printed "6.17 -> 6.39 ... +0.0%" because the table carried leg one while the delta

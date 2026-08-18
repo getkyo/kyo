@@ -11,10 +11,8 @@ import kyo.*
 case class RunOpts(
     @HelpMessage("throwaway worktree to measure in; must not be the primary one")
     worktree: String,
-    @HelpMessage("session id from a previous leg; omit to open a new session, which measures this machine's drift first")
+    @HelpMessage("session id from a previous leg; omit to open a new session (a session groups legs; a bracket estimates its spread from its own replicate legs)")
     session: Option[String] = None,
-    @HelpMessage("row used to measure session drift when opening one")
-    driftRow: String = "suspensionBaseline",
     @HelpMessage("label for this leg, e.g. control or variant")
     label: String,
     @HelpMessage("commit whose sources the leg measures")
@@ -170,11 +168,11 @@ object BenchRun extends KyoCaseApp[RunOpts]:
         Cli.guard(
         for
             evidence <- Cli.parseEvidence(opts.evidence)
-            // a session carries the machine's measured drift; reusing one keeps legs comparable,
-            // opening one costs two extra runs and is what makes the band a measurement
+            // a session groups the legs that are compared to each other; the spread comes from the
+            // bracket's own replicate legs, not from anything measured when the session opens
             session <- opts.session match
                 case Some(id) => Store.session(Path(opts.store), id)
-                case None     => Bench.openSession(Path(opts.worktree), opts.driftRow)
+                case None     => Bench.openSession(Path(opts.worktree))
             leg <- Bench.runLeg(
                 session = session,
                 worktree = Path(opts.worktree),
@@ -204,7 +202,7 @@ object BenchBracket extends KyoCaseApp[BracketOpts]:
         Cli.guard(
         for
             evidence <- Cli.parseEvidence(opts.evidence)
-            session  <- Bench.openSession(Path(opts.worktree), opts.row.headOption.getOrElse("suspensionBaseline"))
+            session  <- Bench.openSession(Path(opts.worktree))
             legs <- Bench.bracket(
                 session = session,
                 worktree = Path(opts.worktree),
@@ -338,7 +336,7 @@ object BenchChain extends KyoCaseApp[ChainOpts]:
                 Abort.fail[Bench.BracketFailed](Bench.BracketFailed(w))
             )
             evidence <- Cli.parseEvidence(opts.evidence)
-            session  <- Bench.openSession(Path(opts.worktree), opts.row.headOption.getOrElse("suspensionBaseline"))
+            session  <- Bench.openSession(Path(opts.worktree))
             steps <- Bench.chain(
                 session = session,
                 worktree = Path(opts.worktree),

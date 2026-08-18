@@ -14,17 +14,22 @@ object QaEndToEnd extends KyoApp:
     val variant  = "0f9b4b69f7"
     val row      = "nestedPayloadsUnwrapInMaps"
 
+    // a QA main whose checks only print cannot fail: "FAIL" scrolled past and the process exited 0,
+    // which is the shape of failure the harness exists to refuse. Same contract as BenchTest.check
     def check(name: String, cond: Boolean, detail: String = ""): Unit =
         println(if cond then s"  ok   $name" else s"  FAIL $name${if detail.nonEmpty then s"  <- $detail" else ""}")
+        if !cond then throw new AssertionError(name)
 
     run {
         for
-            _       <- Console.printLine(s"P3.1 opening a session (measures drift on $row)")
-            session <- Bench.openSession(worktree, row)
+            _       <- Console.printLine("P3.1 opening a session")
+            session <- Bench.openSession(worktree)
             _        = check("session id assigned", session.id.nonEmpty, session.id)
             _        = check("machine recorded", session.host.nonEmpty && session.jvm.nonEmpty, s"${session.host} ${session.jvm}")
-            _        = check("drift measured, not assumed", session.driftPercent > 0.0, f"${session.driftPercent}%.2f%%")
-            _       <- Console.printLine(f"       drift ${session.driftPercent}%.2f%% on ${session.host} jvm ${session.jvm}")
+            // the spread comes from a bracket's own replicate legs; a session claims no drift of its
+            // own, and the previous check here ("drift measured, not assumed") was false by construction
+            _        = check("no session-level drift is claimed", session.driftPercent == 0.0, f"${session.driftPercent}%.2f%%")
+            _       <- Console.printLine(s"       on ${session.host} jvm ${session.jvm}")
 
             _   <- Console.printLine(s"P3.2 control leg at $control")
             ctl <- Bench.runLeg(session, worktree, "qa-control", control, Cli.protoPaths, Cli.markerSpecs, Seq(row), 1, Evidence.Full)
