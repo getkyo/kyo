@@ -386,7 +386,9 @@ The `map` candidate was tried in the throwaway (`bench-sweep-proto`, uncommitted
 Defer(self, Transform(f)))`. It fails to typecheck at one nested-currency site, EvalTest:291
 `give.map(c => c)` on `(Int < Ask) < Give` (the inline `self` proxy's singleton type reaches the
 `Defer` argument); the shape needs the value re-typed as `A < S` before `Defer`, which is a design
-question on the owner's `map`, so it stops here. Not measured, not landed.
+question on the owner's `map`, so it stops here. Not measured, not landed. Ascribing `Defer`'s type
+arguments explicitly does not change the failure: with `lower` inlined into `map`, `B`/`S2` infer
+differently for `c => c` over `(Int < Ask) < Give` than with `Arrow.Transform(f)(self, id)`.
 
 **Third file, third real bug, and the added coverage localised it exactly.** A handler's clause is the
 handler's own code and its effects belong to the handlers *outside* the region. This kernel answers a
