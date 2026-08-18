@@ -770,13 +770,23 @@ analysis only, no edits from here:
   family) plus the `ArrowEffect` fused-remainder family pin that behavior. **Open question posed to the
   owner: dropped with state, or folded into the ContextEffect rework?** No default recorded because it
   is the owner's design call and they are mid-edit.
-- In flight, does not compile (owner's): `Stack.scala` fields renamed `head`/`tail` but the body still
-  uses `top`; `find`/`dump(pos)` scan directions inverted; `truncate` arity mismatch; a new no-arg
-  `dump()` ("dump while not a handler", the A8 unhandled-crossing case) is being added. Tests still
-  reference `handleLoopState` (11/23/1) and the parked-answer cases, so they will not compile against
-  the trimmed API until reworked. Fable's held-out review of the earlier Handler-as-Arrow proposal is
-  saved at `reviews/HANDLER-AS-ARROW-REVIEW.md`; its A5/A10/A12 are exactly the parked-clause machinery
-  now absent.
+- Re-read after the owner's next edits (14:20): `Stack.scala` is a coherent circular buffer now
+  (`[head, tail)`, `head` the top, power-of-two `mask`; `find`/`dump(pos)`/`truncate`/`grow` agree on
+  depth 0 = top, forward scan). `dump(pos)` folds depths `0..pos-1` innermost-first and keeps the
+  handler at the new top; `HandlerCont` (`loop(h.run(input, dump(pos)), stack)`) is correct. `loop`
+  now threads the `Safepoint.Slot`.
+  **Bug found, test-pinned: the `Loop.done` branch of `HandlerLoop` applies `done` instead of
+  bypassing it.** `stack.truncate(pos)` drops only the interior above the handler; the handler stays
+  at depth 0, so `loop(v)` pops it and runs `handler.apply(v) = onDone(v) = done(v)`. On
+  `EvalTest.scala:180` ("Loop.done stops the region and bypasses done") the clause returns
+  `Loop.done(-1)`; stack `[Arrow(f)@0, handler@1]`, `pos = 1`; `truncate(1)` leaves `handler@0`;
+  `loop(-1)` pops it and yields `-1 * 10 = -10`, but the test wants `-1` (done bypassed, `reached`
+  false). Wants `truncate(pos + 1)` (drop interior and handler), after which the payload flows below
+  the region. The `Continue` path is correct ("done sees the settled result" -> 420) and normal body
+  completion still applies `done`. Reported to the owner, no edit from here.
+  The `HandlerLoop` suspend-clause case is still only pure-outcome; the no-arg `dump()` is unwired;
+  tests still reference `handleLoopState` (11/23/1) so they will not compile until reworked. Fable's
+  review of the earlier proposal is at `reviews/HANDLER-AS-ARROW-REVIEW.md`.
 
 **The harness is an sbt project now (`752a55dcf5`, 13:30, on the owner's ask "Do the migration to sbt
 w/ RC6 and use kyo-test").** Its own `build.sbt` on the published `1.0.0-RC6` artifacts (`kyo-core`,
