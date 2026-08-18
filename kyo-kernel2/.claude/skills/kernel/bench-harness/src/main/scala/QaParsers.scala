@@ -58,6 +58,17 @@ object QaParsers:
         )
         ok &= check("an array type keeps its brackets", arrays.map(_.cls) == Chunk("java.lang.Object[]", "java.lang.Object"), arrays.map(_.cls).mkString(","))
 
+        // a multi-benchmark alloc dump repeats a class once per section; parseAlloc folds them into one
+        // leg-level row in encounter order, or apportion divides one section's bytes by every section's
+        // samples (defect 48)
+        val multi = Bench.parseAlloc(
+            "# Benchmark: A\n  1000   50.0%   100  kyo.Nested\n   200   10.0%    20  kyo.Boxed\n" +
+                "# Benchmark: B\n   500   50.0%    50  kyo.Nested\n"
+        )
+        ok &= check("a class repeated across benchmark sections is one row", multi.count(_.cls == "kyo.Nested") == 1, multi.map(_.cls).mkString(","))
+        ok &= check("with its bytes and samples summed", multi.find(_.cls == "kyo.Nested").exists(a => a.bytes == 1500L && a.samples == 150L), multi.map(a => s"${a.cls}:${a.bytes}/${a.samples}").mkString(" | "))
+        ok &= check("and encounter order preserved", multi.map(_.cls) == Chunk("kyo.Nested", "kyo.Boxed"), multi.map(_.cls).mkString(","))
+
         println("P1.4 async-profiler itimer")
         val cpu = Bench.parseCpu(read("qa-cpu.txt"))
         ok &= check("sites parsed", cpu.nonEmpty, s"got ${cpu.size}")

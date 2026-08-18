@@ -380,7 +380,20 @@ object Bench:
     private val ProfLine = """(?m)^.*?(\d+)\s+[\d.]+%\s+(\d+)\s+(\S.*?)\s*$""".r
 
     def parseAlloc(raw: String): Chunk[AllocSite] =
-        Chunk.from(ProfLine.findAllMatchIn(raw).map(m => AllocSite(m.group(3), m.group(1).toLong, m.group(2).toLong)).toSeq)
+        val perLine = ProfLine.findAllMatchIn(raw).map(m => AllocSite(m.group(3), m.group(1).toLong, m.group(2).toLong)).toSeq
+        // a multi-benchmark alloc dump repeats each class once per benchmark section, so a class lands
+        // in `Run.alloc` several times; fold the duplicates into one leg-level row, keeping encounter
+        // order. Without this `apportion` divides one section's bytes by a denominator summed across all
+        // of them, and the conservation check compares a single section's flat samples with the whole
+        // leg's collapsed ones (defect 48)
+        val byClass = scala.collection.mutable.LinkedHashMap.empty[String, AllocSite]
+        perLine.foreach { a =>
+            byClass.updateWith(a.cls) {
+                case Some(prev) => Some(AllocSite(a.cls, prev.bytes + a.bytes, prev.samples + a.samples))
+                case None       => Some(a)
+            }
+        }
+        Chunk.from(byClass.values.toSeq)
 
     def parseCpu(raw: String): Chunk[CpuSite] =
         Chunk.from(ProfLine.findAllMatchIn(raw).map(m => CpuSite(m.group(3), m.group(1).toLong)).toSeq)
