@@ -6,12 +6,11 @@ import kyo.Tag
 import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
 
-/** The kernel's `ArrowEffectTest` corpus pointed at this package, section by section. Sections whose surface this package does not have
-  * yet (`handleWith`, `handleLoopWith`, `handleLoopStateWith`, `handlePartial`, `handleFirst`, `dispatchFirst`, `handleCatching`, park)
-  * are kept with their code commented as they are ported, so the corpus is complete and the gap is visible. Ported so far: `handleLoop`,
-  * `handleCont`, `handleLoopState`, `handleWith`, `handleLoopWith`, `handleLoopStateWith`, `suspendWith`, the capture cases,
-  * park, `contracts`, `nested box`, `coverage`; `handleFirst`, `dispatchFirst`, `handleCatching` and `handlePartial` are still to be
-  * transcribed as commented code.
+/** The kernel's `ArrowEffectTest` corpus pointed at this package: `handleLoop`, `handleCont`, `handleLoopState`, `handleWith`,
+  * `handleLoopWith`, `handleLoopStateWith`, `suspendWith`, the capture cases, park, `contracts`, `nested box`, `coverage`, all live.
+  * The kernel corpus itself keeps `handleFirst`, `dispatchFirst`, `handleCatching` and `handlePartial` parked as commented code
+  * (removed there with the IOTask integration design, to return with it); they are not transcribed here until that surface exists in
+  * either package. `Eval.partial`, `evalNow` and the done-less stateful overload are commented in place where a case needs them.
   */
 class ArrowEffectTest extends AnyFreeSpec:
 
