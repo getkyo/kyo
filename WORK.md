@@ -693,6 +693,21 @@ Everything left in the harness stream needs one of two things I cannot supply al
   contents, touches the measurement path); item 4's "name the C3 mechanism" wording; the five rulings
   in task 24 (C4, DIS-3, IN-3, C3, DIS-4) and 0e.
 
+**UPDATE (two Stack fixes applied, owner-directed; measuring).** Owner rejected the done-branch rewrite
+("we need to pass the next for fusion") and directed the fix into Stack. (1) `35c3016849`: no-arg
+`dump()` now folds right-deep (delegates to `dump(pos)` via a handler-boundary scan) so `tail.head` is
+the next leaf and `head(curr, tail)` fuses down the spine under the budget. Measured effect: the tower
+went from quadratic-forever (left-deep) to a `StackOverflowError` after 92s, with the trace showing
+**1034 frames of `Stack.push(Stack.scala:32)`** (the `push(c.b)` line) - fusion now works, but
+re-pushing the budget-deferred right-deep remainder overflows the recursive `push`. (2) `81787bd568`:
+`Stack.push` now flattens a right-deep chain iteratively (count the leaves, `ensure(n)`, `head -= n`,
+fill `c.a` forward down the `c.b` spine; `grow` generalized to `ensure(n)`). Confirmed all chains are
+right-deep with a leaf `c.a` (only `.chain` caller is `dump(pos)`'s `e.chain(acc)`, `e` a popped leaf).
+Now running full `PendingTest` to confirm no regression and whether the tower passes; expectation to
+verify: iterative push stops the overflow, but the dump()->push round-trip (each budget cycle re-dumps
+the remainder into a chain and re-flattens it) may leave O(n^2) + GC pressure - the measurement decides
+whether that is acceptable or the round-trip is the next target.
+
 **CORRECTION (supersedes the two notes below): the long-map-tower is NOT a stack overflow, it is a
 runaway quadratic. My earlier "Stack.push overflow / A7" framing was an inference I never observed and
 the live process refutes it.** Ran a probe (`OverflowProbe.scala`, `tower(loop(Period*4), 1000000).eval`
