@@ -682,6 +682,18 @@ class BenchTest extends Test[Any]:
         check("a complete session lists no absences", !complete.contains("Not evaluated here"), complete.takeRight(300))
     }
 
+    section("the JIT table states its scope on a multi-row leg (defect 49)")
+    locally {
+        // compile time is summed across the leg's rows, but the task census is one fork's (defect 30):
+        // presenting them as one census is the defect. The table now says so when the leg is multi-row
+        val jm         = JitMetrics(msInWindow = 10.0, msTotal = 20.0, tasks = 100, c2Tasks = 80, recompiled = 5, lastCompileAt = 1.0)
+        val multiRow   = Report.render(Bench.compare(leg("c", base).copy(jit_metrics = Maybe(jm)), leg("v", base).copy(jit_metrics = Maybe(jm))))
+        check("a multi-row leg says its task census is one fork's", multiRow.contains("one row's fork only"), multiRow.takeRight(400))
+        val singleRow  = Seq(("a", 10.0, 0.1, 640.0))
+        val singleRep  = Report.render(Bench.compare(leg("c", singleRow).copy(jit_metrics = Maybe(jm)), leg("v", singleRow).copy(jit_metrics = Maybe(jm))))
+        check("a single-row leg needs no scope caveat", singleRep.contains("JIT cost") && !singleRep.contains("one row's fork only"), singleRep.takeRight(300))
+    }
+
     section("what two shas cannot say")
     // the skill's worked example: a node-layout change and a currency hoist shipped together, the
     // bundle was faster, the win was credited first to one and then to the other, and both

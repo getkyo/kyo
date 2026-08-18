@@ -440,7 +440,18 @@ object Report:
                     def row(n: String, a: Double, b: Double, unit: String = "") =
                         val d = if a == 0.0 then "" else f" (${(b - a) / a * 100}%+.0f%%)"
                         f"| $n%-24s | $a%10.0f$unit | $b%10.0f$unit |$d |"
-                    "\n\nJIT cost, which is a property of the design and not only of the run:\n" +
+                    // the two halves of this table are different scopes on a multi-row leg. Compile
+                    // time is summed across the leg's rows (-prof comp reports it per fork), but the
+                    // task census is one row's fork only: a multi-row leg forks one JVM per benchmark
+                    // and each writes the same LogFile, so the last one wins. Saying so stops the table
+                    // reading as a single census until per-row compilation logs land
+                    val rows     = Math.max(control.rows.size, variant.rows.size)
+                    val scopeNote =
+                        if rows > 1 then
+                            s"\n(compile time is summed across the leg's $rows rows; the task census below it is one row's fork only, " +
+                                "until per-row compilation logs land)"
+                        else ""
+                    "\n\nJIT cost, a property of the design more than of the run:" + scopeNote + "\n" +
                         "| metric | control | variant | |\n|---|---|---|---|\n" +
                         Seq(
                             row("compiling in window", c.msInWindow, v.msInWindow, "ms"),
