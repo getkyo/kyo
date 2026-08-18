@@ -737,9 +737,17 @@ object Bench:
       * gets diagnosed.
       */
     def stillCompiling(run: Run): Chunk[(String, Double)] =
-        val measuredMs = run.forks * MeasureIterations * IterationSeconds * 1000.0
         Chunk.from(run.rows.flatMap { r =>
-            r.compilingShare(measuredMs).filter(_ > CompilingShareLimit).map(share => r.name -> share)
+            // the row's own measured window from real data. `r.count` is the total measured iterations
+            // JMH recorded for the row across its forks, so it replaces `forks * MeasureIterations`,
+            // which fabricated the -i the run actually used and was wrong for anything ingested at a
+            // different iteration count. The per-iteration seconds is the one term the json carries no
+            // per-row copy of, so it stays the harness default and is wrong only for a run measured at
+            // a different -r
+            if r.count <= 0 then Maybe.empty
+            else
+                val measuredMs = r.count * IterationSeconds * 1000.0
+                r.compilingShare(measuredMs).filter(_ > CompilingShareLimit).map(share => r.name -> share)
         })
 
     def sameSession(control: Run, variant: Run): Boolean =

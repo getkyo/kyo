@@ -156,6 +156,18 @@ class BenchTest extends Test[Any]:
     )
     check("a window with heavy compilation is flagged", Bench.stillCompiling(hot).nonEmpty, s"${Bench.stillCompiling(hot)}")
     check("a settled window is not flagged", Bench.stillCompiling(ctl).isEmpty)
+    // item 11: the measured window is the row's real iteration count, not forks * the harness -i.
+    // A run ingested at -i 10 has count=30 over 3 forks, so 100ms of compilation is 0.33% of a 30s
+    // window and under the 0.5% limit; the old forks*MeasureIterations (3*5) fabricated a 15s window
+    // and read the same 100ms as 0.67%, falsely flagging it
+    locally {
+        val base3     = leg("x", Seq(("a", 10.0, 0.1, 640.0)))
+        val moreIters = base3.copy(rows = base3.rows.map(_.copy(count = 30, compilerMsProfiled = Maybe(100.0))))
+        check("the window uses the row's real iteration count, not the harness -i", Bench.stillCompiling(moreIters).isEmpty,
+            s"${moreIters.rows.head.count} iterations should give a 30s window; ${Bench.stillCompiling(moreIters)}")
+        val fewIters = base3.copy(rows = base3.rows.map(_.copy(count = 5, compilerMsProfiled = Maybe(100.0))))
+        check("a genuinely compiling short window is still flagged", Bench.stillCompiling(fewIters).nonEmpty, s"${Bench.stillCompiling(fewIters)}")
+    }
     check("the report refuses the deltas", Report.render(Bench.compare(ctl, hot)).contains("NOT STEADY STATE"))
     check("and points at the JIT metrics", Report.render(Bench.compare(ctl, hot)).contains("JIT metrics below"))
 
