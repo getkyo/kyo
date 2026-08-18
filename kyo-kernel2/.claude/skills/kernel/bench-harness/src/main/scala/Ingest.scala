@@ -221,6 +221,45 @@ object Ingest:
             _   <- Store.save(store, out)
         yield out
 
+    /** Attaches the inlining decisions and compilation metrics from a `-XX:+PrintCompilation`/LogCompilation log to a stored run.
+      *
+      * A JMH json carries timing and the gc profiler's numbers, never the inlining decisions: those come from the compilation log, a
+      * separate artifact of the same fork. Without this, a run built by `ingest` from a json alone had an empty `jit`, so every inlining
+      * verdict, the budget selectors, and `jitShift` had nothing to read. This is the compilation-log analogue of `attachCpu`, assembling
+      * `jit`/`jit_metrics`/`deopts`/`morphism`/`coverage` exactly as `runLeg` does, with the compile-time window taken from the run's own
+      * rows since the log does not carry it.
+      */
+    def attachJit(run: Run, log: String, source: String)(using Frame): Run < Bench.Fail =
+        val parsed = LogCompilation.parse(log)
+        val sites  = LogCompilation.inlining(parsed)
+        if sites.isEmpty then
+            Abort.fail(Bench.BracketFailed(
+                s"$source holds no kyo. inlining decisions; a `-XX:+PrintCompilation -XX:+UnlockDiagnosticVMOptions -XX:+PrintInlining` " +
+                    "or LogCompilation log of the same fork is what carries them"
+            ))
+        else
+            run.copy(
+                jit = sites,
+                jit_metrics = Maybe(LogCompilation.metrics(
+                    parsed,
+                    run.rows.flatMap(_.compilerMsProfiled).sum,
+                    run.rows.flatMap(_.compilerMsTotal).sum
+                )),
+                deopts = LogCompilation.deoptSummary(parsed),
+                morphism = LogCompilation.morphism(parsed),
+                coverage = run.coverage ++ parsed.coverage
+            )
+        end if
+    end attachJit
+
+    def attachJitFile(store: Path, id: String, log: Path)(using Frame): Run < (Async & Bench.Fail & Abort[FileWriteException]) =
+        for
+            run <- Store.load(store, id)
+            raw <- log.read
+            out <- attachJit(run, raw, log.name.getOrElse(log.toString))
+            _   <- Store.save(store, out)
+        yield out
+
     /** Reads a JMH text log and stores the run it describes, whole or per fork. */
     def logFile(
         path: Path,

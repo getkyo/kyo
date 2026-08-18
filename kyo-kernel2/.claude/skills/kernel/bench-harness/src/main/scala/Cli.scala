@@ -107,6 +107,13 @@ case class CpuOpts(
     log: String,
     store: String = "bench-runs"
 )
+case class JitOpts(
+    @HelpMessage("stored run whose inlining decisions and compilation metrics are filled from the log")
+    run: String,
+    @HelpMessage("a `-XX:+PrintCompilation ... +PrintInlining` or LogCompilation log of the same fork; a JMH json alone carries no inlining")
+    log: String,
+    store: String = "bench-runs"
+)
 case class ListOpts(store: String = "bench-runs")
 
 object Cli:
@@ -439,6 +446,25 @@ object BenchCpu extends KyoCaseApp[CpuOpts]:
         )
     }
 end BenchCpu
+
+/** Attaches inlining decisions to a stored run from a compilation log.
+  *
+  * The compilation pass is a separate JMH invocation from the timing json, so a run built by `ingest` from a json has no `jit` at all;
+  * this fills it, the compilation metrics, deopts and call morphism from the log of the same fork, the log analogue of `cpu`.
+  */
+object BenchJit extends KyoCaseApp[JitOpts]:
+    run { (opts: JitOpts) =>
+        Cli.guard(
+        Ingest.attachJitFile(Path(opts.store), opts.run, Path(opts.log)).map { r =>
+            val refused = r.jit.count(_.refused > 0)
+            Console.printLine(
+                s"attached jit to ${r.id}: ${r.jit.size} kyo. methods, $refused with a refusal" +
+                    r.jit_metrics.map(m => s"; ${m.tasks} tasks, ${m.c2Tasks} at C2, ${m.runtimeDeopts} runtime deopts").getOrElse("")
+            )
+        }
+        )
+    }
+end BenchJit
 
 object BenchShow extends KyoCaseApp[ShowOpts]:
     run { (opts: ShowOpts) =>

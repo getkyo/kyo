@@ -19,6 +19,7 @@ sbt "runMain BenchChain --worktree ../../../../../bench-sweep \
     --sha <a> --sha <b> --sha <c>"                           # isolate one change per step
 sbt "runMain BenchPlan --from <id> --target 5"
 sbt "runMain BenchIngest --json <f> --label <l> --sha <sha>"
+sbt "runMain BenchJit --run <id> --log <compilation.log>"     # attach inlining/metrics from a compilation log (a json carries none)
 sbt "runMain BenchList"
 sbt "runMain BenchShow --id <id>"
 ```
