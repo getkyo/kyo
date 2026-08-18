@@ -638,6 +638,36 @@ Retrievable at `6d2538ab26`.
 `kyo.kernel.proto.*`, and the harness's `KernelPackage = "kyo.kernel.proto."` constant means **stored
 jit and cpu data keyed on the old package names is now stale**.
 
+## Harness batch this session (2026-08-18 afternoon), and where the stream now stands
+
+Landed, each tested through `sbt test` (316 leaves green) and committed:
+- **sbt migration** (`752a55dcf5`): the harness is its own sbt project on kyo `1.0.0-RC6`, tests are
+  `kyo.test.Test` suites, `sbt test` fails with an exit code (README/SKILL/ledger noise-filter updated).
+- **defect 44 / item 12** (`df844b402d`): verdict direction is the row's mode; a mode/unit mismatch is a
+  blocker; the adjudicator gained the same gate (`841038d8cc`).
+- **item 10** (`ce348805cf`): session common-mode drift reaches the report.
+- **0d/0f/0g** (`2e140e2d79`): dead `driftRow` gone, the QA main can fail, the unresolved-rows text.
+- **item 9** (`564bbf9a56`): `allocConservation` wired into the blockers.
+- **item 4 rework** (`b9446afa89`): the run-level CPU note is three-way, not two-way.
+- **0b** (`c4275e761e`): additive schema fields default; `StoreSchemaTest` decodes the real stored runs.
+- **0c** (`01cbecb712`): `attachJit`/`BenchJit` fill an ingested run's inlining from a compilation log.
+- **item 6** (`9d10e9e2c8`): the binding term drives the resolution/forecast lever advice.
+- **item 5** (`9a2605d55f`): only a session that claims a threshold is required to run the A/A null.
+- **item 11** (`169f16a93e`): the compiling-window denominator is the row's real iteration count.
+- **item 3** (`48b947579d`): near-budget methods are named whatever the verdict.
+- **item 1 jit half** (`6d96a0ed23`): `diffVerdicts` re-typed to the stored sites; partial inlining named.
+- **task 27 core** (`277f385d88`): the report names the checks it could not run and the command for each.
+
+Everything left in the harness stream needs one of two things I cannot supply alone right now:
+- **a measurement** (the machine must be quiet, not shared with the owner's kernel build): 0a's stale-
+  file guard is a one-line fix in `runLeg` but is in the measurement path and unvalidated until a real
+  bracket round-trips it; 0a end-to-end; task 37 (kernel-vs-proto bracket, also needs the kernel green);
+  item 2's content (re-decided by 0a).
+- **an owner decision**: item 8 (adjudication-as-section needs the hypothesis/target stored with the
+  isolation run, a schema+design call); item 1's jvmArgs half (store the forced `CompileCommandFile`
+  contents, touches the measurement path); item 4's "name the C3 mechanism" wording; the five rulings
+  in task 24 (C4, DIS-3, IN-3, C3, DIS-4) and 0e.
+
 ## OPEN
 
 **Rulings the kyo.proto stream is waiting on (2026-08-18), each with its recorded default:**
