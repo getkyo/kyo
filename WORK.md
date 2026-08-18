@@ -693,6 +693,17 @@ Everything left in the harness stream needs one of two things I cannot supply al
   contents, touches the measurement path); item 4's "name the C3 mechanism" wording; the five rulings
   in task 24 (C4, DIS-3, IN-3, C3, DIS-4) and 0e.
 
+**Prepared (not applied, awaiting owner approval) the budget-`???` fix for the 6 deep/budget PendingTest
+failures.** Root cause confirmed: `Eval`'s trampoline `done` branch sets `curr = head(curr, stack.dump())`;
+when `head` is the last entry and its two-arg apply defers at the safepoint budget (a long dumped tail or
+deep construction), it returns a pending `Defer` and empties the stack, so `if !stack.isEmpty then loop()`
+stops with `curr` pending and the terminal `lower(pending = _ => ???)` throws. Recommended fix: make each
+`lower` return a Boolean, the `done` branch `false` only on an empty stack, and re-loop on it, so a
+budget-deferred `Defer` is re-driven (terminal `pending` then becomes an unreachable `bug`). Minimal
+alternative: `if !stack.isEmpty || curr.asInstanceOf[Any].isInstanceOf[Kyo[?, ?]] then loop()`. Does not
+touch the 7th failure (the `Loop.done`-with-a-computation-value ClassCastException, a separate payload
+issue). Ready to apply on the owner's word.
+
 **Applied the Handler.apply fix (owner approved) and ran the uncommented PendingTest.** Fix:
 `Handler.apply(v, next)` now `v.lower(pending = Kyo.Defer(_, this, next), done = b => next.head(apply(b),
 next.tail))` with the safepoint-budget guard, mirroring the `Arrow(f)` factory, so a settled input
