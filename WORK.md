@@ -650,9 +650,9 @@ jit and cpu data keyed on the old package names is now stale**.
 4. **`Eval.partial` / preemption** in the proto: absent; the corpus cases that need it are commented.
 5. **The lift's module lint and function lifts** (`CanLift`, `liftPureFunction1`): absent in the proto;
    two `PendingTest` cases commented.
-6. **`handleLoopFusesContinuation`** row for the proto class (kernel-only today): would be
-   `handleLoopWith` over the same shape now that it exists; not added, awaiting the trait ruling so
-   the bench class is not churned twice.
+6. **`handleLoopFusesContinuation`** row for the proto class: added over `handleLoopWith`
+   (`ad93171e84`, 15 rows now, one per kernel row; compiled after the A/B releases the machine). The
+   `--declared-rows` for the proto class is 15 from that commit on.
 
 **Six things are open.** The numbered stream below is no longer a todo list: 12 of its 18 entries are
 finished work or narrative, and it had drifted into claiming otherwise. It is kept for its reasoning
