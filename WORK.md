@@ -693,7 +693,27 @@ Everything left in the harness stream needs one of two things I cannot supply al
   contents, touches the measurement path); item 4's "name the C3 mechanism" wording; the five rulings
   in task 24 (C4, DIS-3, IN-3, C3, DIS-4) and 0e.
 
-**Explored the long-map-tower hang and proposed two fixes (owner asked; not applied).** The `done`
+**CORRECTION (supersedes the two notes below): the long-map-tower is NOT a stack overflow, it is a
+runaway quadratic. My earlier "Stack.push overflow / A7" framing was an inference I never observed and
+the live process refutes it.** Ran a probe (`OverflowProbe.scala`, `tower(loop(Period*4), 1000000).eval`
+wrapped in try/catch): the test JVM sat at **100% CPU, 3.8 GB RSS, 5+ minutes**, no throwable, no
+progress -> a runaway O(n^2) + allocation blowup (GC-thrash), not an overflow. Killed it. The owner then
+identified the root cause: **`stack.dump()` builds the arrow in the wrong shape.** Confirmed from the
+code: the two dumps fold in opposite order. `dump(pos)` (Eval:45, Suspend path) does `e.chain(acc)` =
+`Chain(e, acc)` -> RIGHT-deep `Chain(e0, Chain(e1, ...))`, so `.head` is a leaf (the next arrow).
+`dump()` (Eval:65, the done branch, its ONLY caller) does `acc.chain(pop())` = `Chain(acc, e)` ->
+LEFT-deep `Chain(Chain(...), e_last)`, so `.head` is a deep `Chain`. The done branch's `head(curr, tail)`
+drives `tail.head(apply(curr), tail.tail)` expecting `tail.head` to be the next leaf so the two-arg
+apply walks the spine ~512 under the budget; with the left-deep shape `tail.head` is a `Chain`, so
+`Chain.apply` (Arrow:86) fires immediately -> `Defer` -> the batch peels ONE arrow and re-defers the
+whole rest, Eval re-pushes it, repeat -> O(n^2) at n=1M ~ 10^12 -> "forever". Note: right-deep is
+necessary but NOT sufficient; even right-deep the done branch re-dumps + re-pushes the remainder every
+budget cycle (consuming 512 not 1), so it is 512x faster but still O(n^2). The clean fix is Fix B: apply
+one arrow per trampoline step, `curr = stack.pop().asInstanceOf[Arrow[A, ?, EX & S]](r)` -> no dump, no
+chain, no re-push -> O(n), stack-safe, and it makes the no-arg `dump()` dead code (single caller).
+Presented to the owner; not applied (kernel changes gated on owner approval).
+
+**[stale, see CORRECTION above] Explored the long-map-tower hang and proposed two fixes (owner asked; not applied).** The `done`
 branch batches: `curr = head(curr, stack.dump())`; on a deep interior it dumps the whole remaining
 stack into one right-deep `Arrow.Chain` and drives it through the two-arg apply, which defers at the
 budget as `Defer(v, this, next)` and re-drives via `push(next)`. Two coupled problems: A7 (`push`
