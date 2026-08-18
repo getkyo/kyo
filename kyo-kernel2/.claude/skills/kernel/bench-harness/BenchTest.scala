@@ -198,6 +198,25 @@ object BenchTest:
         // the must-fire twin: without it, never classifying passes
         check("a real regression is classified", repSlow.deltas.find(_.row == "a").exists(_.verdict == Verdict.Regressed))
         check("and the untouched row is not", repSlow.deltas.find(_.row == "b").exists(_.verdict == Verdict.Flat))
+
+        println("session drift reaches the report")
+        // every row rising together across the control legs is the machine warming; one row that
+        // does not share it is carrying movement of its own. `Stats.commonMode` measured this and
+        // `compareReplicated` threw it away (item 10)
+        val driftCtl = Chunk(
+            legScores("c1", Seq(("a", 100.0), ("b", 50.0), ("odd", 100.0))),
+            legScores("c2", Seq(("a", 103.0), ("b", 51.5), ("odd", 100.1))),
+            legScores("c3", Seq(("a", 106.0), ("b", 53.0), ("odd", 100.2)))
+        )
+        val driftVnt = Chunk(legScores("v1", Seq(("a", 103.0), ("b", 51.5), ("odd", 100.0))), legScores("v2", Seq(("a", 104.5), ("b", 52.2), ("odd", 100.1))))
+        val drifted  = Bench.compareReplicated(driftCtl, driftVnt)
+        check("the comparison carries the common mode", drifted.commonMode.exists(_ > 3.0), s"${drifted.commonMode}")
+        check("a row sharing the drift has a small residual", drifted.deltas.find(_.row == "a").exists(_.driftResidual.exists(_ < 1.0)),
+            drifted.deltas.map(d => s"${d.row}=${d.driftResidual}").mkString(","))
+        check("the row moving on its own has a large one", drifted.deltas.find(_.row == "odd").exists(_.driftResidual.exists(_ > 2.0)))
+        val driftedOut = Report.render(drifted)
+        check("the report states the drift", driftedOut.contains("Control legs drifted +"), driftedOut.linesIterator.filter(_.contains("drift")).mkString(" | "))
+        check("a single pair says nothing about drift", repFlat.commonMode.isDefined && !Report.render(Bench.compare(ctl, vnt)).contains("Control legs drifted"))
         check("every flat row carries a resolution", repFlat.deltas.forall(_.resolution.isDefined))
         // the displayed scores must be the ones the displayed percentage is computed from. A real
         // run printed "6.17 -> 6.39 ... +0.0%" because the table carried leg one while the delta

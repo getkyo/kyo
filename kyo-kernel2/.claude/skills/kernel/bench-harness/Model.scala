@@ -379,9 +379,23 @@ object Model:
         allocDelta: Maybe[Double],
         mechanism: Chunk[String],
         /** Present when the session replicated its legs. Absent means the verdict rests on a single pair, which cannot support a threshold. */
-        resolution: Maybe[Resolution] = Maybe.empty
+        resolution: Maybe[Resolution] = Maybe.empty,
+        /** How far this row's own control trend across the session departs from the session's common-mode drift, in percent of the
+          * control mean. Present only when the legs replicated. A row that shares the drift is the machine warming, which the replicate
+          * design cancels; a row that departs from it is carrying movement of its own, and its resolution is what says whether that
+          * movement was absorbed.
+          */
+        driftResidual: Maybe[Double] = Maybe.empty
     ) derives Schema:
         def unexplained: Boolean = verdict != Verdict.Flat && verdict != Verdict.BelowResolution && mechanism.isEmpty
+
+        /** A row whose own trend across the control legs exceeds what its threshold can absorb: the legs did not merely disagree, they
+          * moved in one direction by more than the resolution, and a verdict on such a row is riding that movement.
+          */
+        def driftsBeyondResolution: Boolean =
+            (driftResidual, resolution) match
+                case (Maybe.Present(d), Maybe.Present(r)) => d > r.percent
+                case _                                    => false
 
         /** A flat row with no resolution is not evidence of no change; it is evidence of nothing. */
         def flatButUnbounded: Boolean = verdict == Verdict.Flat && resolution.isEmpty
@@ -396,7 +410,13 @@ object Model:
           * comparison used to expose only its first leg per arm to `Report.blockers`, so a ramp in leg two was invisible.
           */
         controlLegs: Chunk[Run] = Chunk.empty,
-        variantLegs: Chunk[Run] = Chunk.empty
+        variantLegs: Chunk[Run] = Chunk.empty,
+        /** The session's common-mode drift: the median, over rows, of each row's control trend from its first leg to its last, in percent
+          * of the control mean. Present only when the legs replicated. It is reported, never spent: the replicate design already cancels
+          * a movement every row shares, and charging it to the threshold as well would inflate every threshold by a quantity already
+          * removed.
+          */
+        commonMode: Maybe[Double] = Maybe.empty
     ) derives Schema:
         def allControlLegs: Chunk[Run] = if controlLegs.isEmpty then Chunk(control) else controlLegs
         def allVariantLegs: Chunk[Run] = if variantLegs.isEmpty then Chunk(variant) else variantLegs

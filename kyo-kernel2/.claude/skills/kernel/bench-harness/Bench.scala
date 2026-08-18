@@ -954,9 +954,10 @@ object Bench:
                                 allocDelta.filter(d => Math.abs(d) > 1.0).map(d => f"allocation ${d}%+.0f B/op"),
                                 jitShift(controls.head, variants.head).headMaybe.map(m => s"inlining changed: $m")
                             ).flatMap(_.toOption))
-                    Delta(r.row, c, v, r.deltaPercent, verdict, allocDelta, mechanism, resolution)
+                    Delta(r.row, c, v, r.deltaPercent, verdict, allocDelta, mechanism, resolution,
+                        common.flatMap(m => Stats.residual(r, m)))
             }.sortBy(d => (d.verdict == Verdict.BelowResolution, d.percent))
-        Comparison(controls.head, variants.head, deltas, jitShift(controls.head, variants.head), controls, variants)
+        Comparison(controls.head, variants.head, deltas, jitShift(controls.head, variants.head), controls, variants, common)
     end compareReplicated
 
     /** The A/A null: control legs against each other, through the identical pipeline.

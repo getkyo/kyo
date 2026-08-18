@@ -330,6 +330,24 @@ object Report:
                     "'flat' here means the harness cannot say how small an effect it would have missed, not that nothing changed."
             else ""
 
+        // the session's common-mode drift, and the rows that did not share it. Reported, never spent:
+        // the replicate design cancels a movement every row shares, and the resolution already
+        // carries each row's own spread. What the reader could not see before is which rows moved on
+        // their own across the control legs by more than their threshold absorbs
+        val driftNote =
+            c.commonMode match
+                case Maybe.Present(m) =>
+                    val own = c.deltas.filter(_.driftsBeyondResolution)
+                    f"\nControl legs drifted ${m}%+.1f%% across the session (median row trend, first leg to last), which the replicate " +
+                        "design cancels." +
+                        (if own.isEmpty then " No row's own control trend departs from it by more than its resolution."
+                         else
+                             " Rows whose own control trend departs from it by more than their resolution, so their verdict rides that movement:\n" +
+                                 own.map(d => f"  - ${d.row}: ${d.driftResidual.getOrElse(0.0)}%.1f%% from the common mode against " +
+                                     f"±${d.resolution.map(_.percent).getOrElse(0.0)}%.1f%%; look at that row's control legs before reading its delta")
+                                     .mkString("\n"))
+                case _ => ""
+
         val body = c.deltas.map { d =>
             val delta = if d.verdict == Verdict.BelowResolution then "below resolution" else f"${d.percent}%+.1f%%"
             // this row's OWN threshold, not the worst across the table. The footer reports only the
@@ -521,7 +539,7 @@ object Report:
         // falsifier attached is where "it is slower, so replace it" comes from.
         val investigation = Investigate.render(c)
 
-        s"$blockerBanner$sessionWarning$header\n$body$rampNote$resolutionNote$jit$deoptShift$polymorphic$allocSites$allocNote$partition$verdictLine$ladder$steadyState$jitTable$bothWays$noiseNote$cpuByRow$investigation"
+        s"$blockerBanner$sessionWarning$header\n$body$rampNote$resolutionNote$driftNote$jit$deoptShift$polymorphic$allocSites$allocNote$partition$verdictLine$ladder$steadyState$jitTable$bothWays$noiseNote$cpuByRow$investigation"
     end render
 
 end Report
