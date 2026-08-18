@@ -340,7 +340,7 @@ final private[kyo] class HttpContainerBackend(
     end create
 
     /** Build the HostConfig portion of a create request from configuration values resolved by the caller. */
-    private def buildHostConfig(
+    private[internal] def buildHostConfig(
         config: Config,
         binds: Chunk[String],
         portBindings: Map[String, Seq[PortBindingEntry]],
@@ -358,7 +358,7 @@ final private[kyo] class HttpContainerBackend(
             MemorySwap = config.memorySwap.getOrElse(0L),
             NanoCPUs = config.cpuLimit.map(c => (c * 1e9).toLong).getOrElse(0L),
             CpusetCpus = config.cpuAffinity.getOrElse(""),
-            PidsLimit = config.maxProcesses.getOrElse(0L),
+            PidsLimit = config.maxProcesses,
             Privileged = config.privileged,
             CapAdd = config.addCapabilities.toSeq.map(_.cliName),
             CapDrop = config.dropCapabilities.toSeq.map(_.cliName),
@@ -1200,7 +1200,7 @@ final private[kyo] class HttpContainerBackend(
             MemorySwap = memorySwap.getOrElse(0L),
             NanoCPUs = cpuLimit.map(c => (c * 1e9).toLong).getOrElse(0L),
             CpusetCpus = cpuAffinity.getOrElse(""),
-            PidsLimit = maxProcesses.getOrElse(0L),
+            PidsLimit = maxProcesses,
             RestartPolicy = restartPol.getOrElse(RestartPolicyEntry("", 0))
         )
         val jsonBody = Json.encode(body)
@@ -2231,7 +2231,7 @@ final private[kyo] class HttpContainerBackend(
         Aliases: Seq[String] = Seq.empty
     ) derives Schema
 
-    final private case class HostConfig(
+    final private[internal] case class HostConfig(
         Binds: Seq[String] = Seq.empty,
         PortBindings: Map[String, Seq[PortBindingEntry]] = Map.empty,
         NetworkMode: String = "",
@@ -2241,7 +2241,7 @@ final private[kyo] class HttpContainerBackend(
         MemorySwap: Long = 0,
         NanoCPUs: Long = 0,
         CpusetCpus: String = "",
-        PidsLimit: Long = 0,
+        PidsLimit: Maybe[Long] = Absent,
         Privileged: Boolean = false,
         CapAdd: Seq[String] = Seq.empty,
         CapDrop: Seq[String] = Seq.empty,
@@ -2252,17 +2252,17 @@ final private[kyo] class HttpContainerBackend(
         Tmpfs: Map[String, String] = Map.empty
     ) derives Schema
 
-    final private case class PortBindingEntry(
+    final private[internal] case class PortBindingEntry(
         HostIp: String = "",
         HostPort: String = ""
     ) derives Schema
 
-    final private case class RestartPolicyEntry(
+    final private[internal] case class RestartPolicyEntry(
         Name: String = "",
         MaximumRetryCount: Int = 0
     ) derives Schema
 
-    final private case class MountEntry(
+    final private[internal] case class MountEntry(
         Type: String = "",
         Source: String = "",
         Target: String = ""
@@ -2277,12 +2277,12 @@ final private[kyo] class HttpContainerBackend(
         StatusCode: Int = 0
     ) derives Schema
 
-    final private case class UpdateRequest(
+    final private[internal] case class UpdateRequest(
         Memory: Long = 0,
         MemorySwap: Long = 0,
         NanoCPUs: Long = 0,
         CpusetCpus: String = "",
-        PidsLimit: Long = 0,
+        PidsLimit: Maybe[Long] = Absent,
         RestartPolicy: RestartPolicyEntry = RestartPolicyEntry()
     ) derives Schema
 
