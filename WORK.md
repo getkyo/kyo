@@ -552,7 +552,20 @@ proto sampled time in `BoxesRunTime.boxToInteger` at 51% (`suspensionBaseline`),
 (`handleLoopAnswersInPlace`, kernel 35%) and `Integer.valueOf` 13% plus `Stack.push` 11%
 (`statefulAnswers`), and `trailingMapsStayLinear` quadratic at this sha (fixed since). Run-level: 74%
 of proto sampled time outside the kernel packages, largest `boxToInteger` (the noise-frames list
-repeats it per row: a small report defect, `noiseFrames` should aggregate by method; open).
+repeats it per row: a small report defect, `noiseFrames` should aggregate by method; fixed at
+`57586305a9`, summed by method with a test).
+
+**In flight: the trait A/B as a bracket (started 09:49).** Two arms in the throwaway, proto class only,
+`-f 3 -wi 12 -i 5 -prof gc` (12 warmups: the -wi 20 run had no ramp, the -wi 10 run had one fork at
+13%, so 12 is the proportionate number), json and log both kept and `git add -f`ed without any
+error suppression: arm 1 HEAD `9ad929fccc` (`Kyo` a trait) to
+`reviews/bench/ab-0818-f3-wi12-head-9ad929fccc.*`; arm 2 the candidate (`Arrow`/`Transform` traits,
+`Kyo` a class; `reviews/bench/candidate-arrowtrait-0818.patch`, `a7a8dfc3d9`, applied from the stash
+in the throwaway) to `reviews/bench/ab-0818-f3-wi12-arrowtrait-9ad929fccc.*`. Then per-fork ingest of
+both (session `proto-ab-0818`), `BenchCompare` 3 vs 3 with HEAD as control, report to
+`reviews/bench/ab-0818-f3-wi12-report.md`, ledger. Machine load 3.5 to 4 from other users' processes
+during this; the A/A null within each arm is the guard, drift between arms stays assumed. The
+kernel-vs-proto bracket at HEAD (task #37) follows the ruling this A/B is for.
 
 **Third file, third real bug, and the added coverage localised it exactly.** A handler's clause is the
 handler's own code and its effects belong to the handlers *outside* the region. This kernel answers a
