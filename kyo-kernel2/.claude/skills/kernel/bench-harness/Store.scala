@@ -101,19 +101,22 @@ object Report:
       * another; what changes is that the run cannot be mistaken for a clean one.
       */
     def blockers(c: Comparison): Chunk[String] =
-        val unsettled =
-            c.deltas.flatMap { d =>
-                Chunk.from(Seq(
-                    Option.when(d.control.unsettledStart)(s"${d.row} (control) never settled: iterations ${d.control.iterations.map(x => f"$x%.1f").mkString(", ")}"),
-                    Option.when(d.variant.unsettledStart)(s"${d.row} (variant) never settled: iterations ${d.variant.iterations.map(x => f"$x%.1f").mkString(", ")}")
-                ).flatten)
+        // every leg of each arm, not the first: a replicated comparison carries its legs, and a ramp
+        // in leg two of three is exactly as much a mixture of warm and cold code as one in leg one
+        def arm(name: String, legs: Chunk[Run]): Chunk[String] =
+            val n = legs.size
+            Chunk.from(legs.zipWithIndex).flatMap { (leg, k) =>
+                val where = if n == 1 then name else s"$name leg ${k + 1} of $n"
+                val rows  = c.deltas.map(_.row).toSet
+                val unsettled =
+                    leg.rows.filter(r => rows.contains(r.name) && r.unsettledStart).map { r =>
+                        s"${r.name} ($where) never settled: iterations ${r.iterations.map(x => f"$x%.1f").mkString(", ")}"
+                    }
+                val compiling =
+                    Bench.stillCompiling(leg).map((r, p) => f"$r%s ($where) spent ${p}%.1f%% of its measured window compiling")
+                unsettled ++ compiling
             }
-        val compiling =
-            Chunk.from(
-                (Bench.stillCompiling(c.control).map((r, p) => f"$r%s (control) spent ${p}%.1f%% of its measured window compiling") ++
-                    Bench.stillCompiling(c.variant).map((r, p) => f"$r%s (variant) spent ${p}%.1f%% of its measured window compiling"))
-            )
-        unsettled ++ compiling
+        arm("control", c.allControlLegs) ++ arm("variant", c.allVariantLegs)
     end blockers
 
     /** What the A/A null establishes, and what it refuses.

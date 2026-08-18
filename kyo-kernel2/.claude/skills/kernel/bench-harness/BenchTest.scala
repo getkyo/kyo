@@ -323,6 +323,56 @@ object BenchTest:
         check("while still printing the data", blockedOut.contains("| `a` |"))
         check("a settled pair blocks nothing", Report.blockers(Bench.compare(leg("c", base).copy(rows = steadyRows), leg("v", base).copy(rows = steadyRows))).isEmpty)
 
+        println("ingesting a -f 3 json")
+        // a real entry from a -f 3 -wi 10 -i 5 run (evalFixedOverhead, ProtoKernelBench, 2026-08-18)
+        val threeForks =
+            """[{"jmhVersion":"1.37","benchmark":"kyo.kernel.bench.ProtoKernelBench.evalFixedOverhead","mode":"avgt","threads":1,
+              |"forks":3,"jvmArgs":["-Xmx12G"],"warmupIterations":10,"warmupTime":"1 s","measurementIterations":5,"measurementTime":"1 s",
+              |"primaryMetric":{"score":0.00744296436977839,"scoreError":0.000046412372460644055,"scoreConfidence":[0.0073965520,0.0074893767],
+              |"scoreUnit":"us/op","rawData":[
+              |[0.007387874063514112,0.007428055281156307,0.007405881112952978,0.007433665616359325,0.0074173067817215185],
+              |[0.007445424670087296,0.007524314753466424,0.007532074671223748,0.007444913811529469,0.007409208090961796],
+              |[0.007404996477785638,0.00743015183060406,0.00750321370200856,0.007442552921249445,0.007434831762055182]]},
+              |"secondaryMetrics":{"gc.alloc.rate.norm":{"score":24.0,"scoreError":0.0,"scoreUnit":"B/op","rawData":[[24.0,24.0,24.0,24.0,24.0],[24.0,24.0,24.0,24.0,24.0],[26.0,26.0,26.0,26.0,26.0]]}}}]""".stripMargin
+        val whole = Abort.run(Ingest.run(threeForks, "kernel", "35d4cbdba0", session, "bracket.json", 15)).eval.getOrThrow
+        check("forks come from the json, not a constant", whole.forks == 3, s"forks ${whole.forks}")
+        check("warmup comes from the json", whole.warmup == 10, s"warmup ${whole.warmup}")
+        check("the whole entry keeps JMH's own score and error", whole.rows.head.score == 0.00744296436977839 && whole.rows.head.error == 0.000046412372460644055)
+        check("and every fork's iterations, in order", whole.rows.head.iterations.size == 15 && whole.rows.head.iterations.head == 0.007387874063514112)
+        val legs3 = Abort.run(Ingest.perFork(threeForks, "kernel", "35d4cbdba0", session, "bracket.json", 15)).eval.getOrThrow
+        check("split per fork gives one leg per JVM", legs3.size == 3, s"${legs3.size} legs")
+        check("each leg is one fork", legs3.forall(_.forks == 1) && legs3.map(_.label).toList == List("kernel-f1", "kernel-f2", "kernel-f3"))
+        check("with distinct ids", legs3.map(_.id).distinct.size == 3, legs3.map(_.id).mkString(", "))
+        val f2 = legs3(1).rows.head
+        check("a leg's row holds that fork's iterations", f2.iterations == Chunk(0.007445424670087296, 0.007524314753466424, 0.007532074671223748, 0.007444913811529469, 0.007409208090961796))
+        check("and their mean", Math.abs(f2.score - 0.0074711872) < 1e-9, f"${f2.score}%.10f")
+        check("and that fork's own secondaries", legs3(2).rows.head.allocPerOp == Maybe(26.0) && legs3(0).rows.head.allocPerOp == Maybe(24.0))
+        // the per-fork error is JMH's own quantity: 99.9% over the fork's iterations. Checked against
+        // JMH's scoreError on a real single-fork row (suspensionBaseline, screen-0818-f1-head-kernel.json)
+        val oneFork =
+            """[{"benchmark":"kyo.kernel.bench.ProtoKernelBench.suspensionBaseline","mode":"avgt","forks":1,"warmupIterations":5,"measurementIterations":5,
+              |"primaryMetric":{"score":88.64899573703492,"scoreError":1.7773207012169883,"scoreUnit":"us/op",
+              |"rawData":[[89.09255084371411,88.67756711438855,88.79948689533862,87.86963996501967,88.80573386671355]]},
+              |"secondaryMetrics":{}}]""".stripMargin
+        val one = Abort.run(Ingest.perFork(oneFork, "k", "abc", session, "one.json", 15)).eval.getOrThrow
+        check("a fork's error reproduces JMH's own", Math.abs(one.head.rows.head.error - 1.7773207012169883) < 1e-6, f"${one.head.rows.head.error}%.10f")
+        check("and its mean reproduces JMH's score", Math.abs(one.head.rows.head.score - 88.64899573703492) < 1e-9)
+        // the steady-state check now sees every leg: a ramp in fork 2 alone is a blocker
+        val ramp2 =
+            """[{"benchmark":"kyo.kernel.bench.ProtoKernelBench.a","mode":"avgt","forks":3,"warmupIterations":10,"measurementIterations":5,
+              |"primaryMetric":{"score":102.7,"scoreError":5.0,"scoreUnit":"us/op",
+              |"rawData":[[100.1,100.0,100.5,99.7,100.2],[140.0,100.0,100.5,99.7,100.2],[100.1,100.0,100.5,99.7,100.2]]},
+              |"secondaryMetrics":{}}]""".stripMargin
+        val rampLegs = Abort.run(Ingest.perFork(ramp2, "c", "abc", session, "ramp.json", 15)).eval.getOrThrow
+        val steadyLegs = Abort.run(Ingest.perFork(ramp2.replace("140.0", "100.3"), "v", "abc", session, "steady.json", 15)).eval.getOrThrow
+        val replicatedRamp = Bench.compareReplicated(rampLegs, steadyLegs)
+        check("a ramp in the second control leg blocks the replicated comparison",
+            Report.blockers(replicatedRamp).exists(_.contains("control leg 2 of 3")), Report.blockers(replicatedRamp).mkString("; "))
+        check("and a settled bracket does not", Report.blockers(Bench.compareReplicated(steadyLegs, steadyLegs)).isEmpty)
+        // read whole, the same json hides the ramp behind fork one's clean start
+        val wholeRamp = Abort.run(Ingest.run(ramp2, "c", "abc", session, "ramp.json", 15)).eval.getOrThrow
+        check("which the whole-entry reading could not see", !wholeRamp.rows.head.unsettledStart, s"${wholeRamp.rows.head.iterations}")
+
         println("allocation outlives an unresolved timing")
         // from the first replicated bracket: a row flat in time at +9.5%, resolution +-22.64%, whose
         // allocation moved 240,000 B/op. Suppressing the mechanism on flat rows left that visible

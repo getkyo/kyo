@@ -372,7 +372,15 @@ object Model:
         control: Run,
         variant: Run,
         deltas: Chunk[Delta],
-        jitChanges: Chunk[String]
-    ) derives Schema
+        jitChanges: Chunk[String],
+        /** Every leg behind `control` and `variant` when the comparison replicated. The steady-state check reads these: a replicated
+          * comparison used to expose only its first leg per arm to `Report.blockers`, so a ramp in leg two was invisible.
+          */
+        controlLegs: Chunk[Run] = Chunk.empty,
+        variantLegs: Chunk[Run] = Chunk.empty
+    ) derives Schema:
+        def allControlLegs: Chunk[Run] = if controlLegs.isEmpty then Chunk(control) else controlLegs
+        def allVariantLegs: Chunk[Run] = if variantLegs.isEmpty then Chunk(variant) else variantLegs
+    end Comparison
 
 end Model

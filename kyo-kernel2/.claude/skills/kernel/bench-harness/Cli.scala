@@ -69,6 +69,8 @@ case class IngestOpts(
     session: String = "ingested",
     @HelpMessage("rows the benchmark class declares; a json with fewer is a subset run")
     declaredRows: Int = 15,
+    @HelpMessage("split a -f N json into N legs, one per fork (one per JVM), so BenchCompare can give the replicated verdict and check each JVM's steady state")
+    perFork: Boolean = false,
     store: String = "bench-runs"
 )
 
@@ -249,15 +251,25 @@ object BenchIngest extends KyoCaseApp[IngestOpts]:
                 )
             )
             runs <- Kyo.foreach(Chunk.from(opts.json.zip(opts.label).zipWithIndex)) { case ((j, l), i) =>
-                Ingest.file(
-                    Path(j), l,
-                    opts.sha.lift(i).orElse(opts.sha.headOption).getOrElse("unknown"),
-                    session, Path(opts.store), opts.declaredRows
+                val sha = opts.sha.lift(i).orElse(opts.sha.headOption).getOrElse("unknown")
+                if opts.perFork then Ingest.filePerFork(Path(j), l, sha, session, Path(opts.store), opts.declaredRows)
+                else Ingest.file(Path(j), l, sha, session, Path(opts.store), opts.declaredRows).map(Chunk(_))
+            }
+            _ <- Kyo.foreachDiscard(runs.flatten) { r =>
+                Console.printLine(
+                    f"ingested ${r.id}%-52s ${r.rows.size}%2d rows  -f ${r.forks} -wi ${r.warmup}  ${if r.wholeClass then "whole class" else "SUBSET"}"
                 )
             }
-            _ <- Kyo.foreachDiscard(runs) { r =>
-                Console.printLine(f"ingested ${r.id}%-52s ${r.rows.size}%2d rows  ${if r.wholeClass then "whole class" else "SUBSET"}")
-            }
+            _ <- Console.printLine(
+                if opts.perFork then
+                    "\nSplit per fork: each leg above is one JVM. Pass all of one configuration's legs as --control " +
+                        "and the other's as --variant to BenchCompare for the replicated verdict; forks of one row ran " +
+                        "back to back and not interleaved with the other arm, so drift stays assumed."
+                else if runs.flatten.exists(_.forks > 1) then
+                    "\nThis json holds several forks per row, read here as one leg each. Ingest it again with " +
+                        "--per-fork to get one leg per JVM and the replicated verdict the forks can support."
+                else ""
+            )
             _ <- Console.printLine(
                 "\nThese are timing-only runs: no markers, no tree hash, no evidence ladder. The report will " +
                     "refuse to attribute any movement in them to a mechanism, which is correct, because nothing " +
@@ -365,6 +377,11 @@ object BenchCompare extends KyoCaseApp[CompareOpts]:
             // the weaker claim and not for the stronger one.
             replicated = controls.size > 1 || variants.size > 1
             cmp        = if replicated then Bench.compareReplicated(controls, variants) else Bench.compare(controls.head, variants.head)
+            // the A/A null is a property of the control legs, not of how they were produced, so a
+            // stored bracket (or a -f N json split per fork) gets the same check BenchBracket runs
+            // live. It needs three control legs; with fewer it is not run and not demanded here,
+            // since a single pair never claimed a threshold in the first place.
+            aa = if controls.size >= 3 then Bench.nullComparison(controls) else Maybe.empty
             _ <- Console.printLine(
                 if replicated then
                     s"Replicated over ${controls.size} control and ${variants.size} variant leg(s): the threshold below is " +
@@ -373,12 +390,21 @@ object BenchCompare extends KyoCaseApp[CompareOpts]:
                     "One control leg against one variant, so the bound below is the legs' own error and not a " +
                         "threshold estimated from replicates. Pass every leg of a bracket to get its real verdict.\n"
             )
+            nullBlockers = if controls.size >= 3 then Report.nullBlockers(aa, controls.size) else Chunk.empty
+            blockers     = nullBlockers ++ Report.blockers(cmp)
+            // the steady-state banner is the report's own; only the null's verdict is added here
+            _ <- Console.printLine(
+                if nullBlockers.isEmpty then Report.nullNote(aa)
+                else
+                    "\n" + "=" * 78 + s"\n⛔ NOT A VALID MEASUREMENT: the A/A null is dirty.\n" +
+                        nullBlockers.map(b => s"  - $b").mkString("\n") + "\n" + "=" * 78 + "\n"
+            )
             _ <- Console.printLine(Report.render(cmp))
-            // a non-steady-state leg fails the run rather than warning inside it. A warning is
-            // something a reader skips; an exit code is not, and this tool exists for a reader who
-            // demonstrably skips them.
-            _ <- Abort.when(Report.blockers(cmp).nonEmpty)(
-                Bench.BracketFailed(s"${Report.blockers(cmp).size} leg(s) did not reach steady state; the verdicts above are not readable")
+            // a non-steady-state leg or a dirty null fails the run rather than warning inside it. A
+            // warning is something a reader skips; an exit code is not, and this tool exists for a
+            // reader who demonstrably skips them.
+            _ <- Abort.when(blockers.nonEmpty)(
+                Bench.BracketFailed(s"${blockers.size} reason(s) make these verdicts unreadable; see the banner above")
             )
         yield ()
         )

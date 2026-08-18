@@ -214,33 +214,75 @@ object Bench:
     // --- JMH json ---------------------------------------------------------------
 
     case class JmhScore(score: Double, scoreError: Double, scoreUnit: String, rawData: Chunk[Chunk[Double]]) derives Schema
-    case class JmhSecondary(score: Double) derives Schema
+    // a secondary carries its own per-fork, per-iteration series; that is what lets a per-fork row
+    // report that fork's own allocation and compile time instead of the whole run's aggregate
+    case class JmhSecondary(score: Double, rawData: Maybe[Chunk[Chunk[Double]]] = Maybe.empty) derives Schema
     case class JmhEntry(
         benchmark: String,
         mode: String,
         primaryMetric: JmhScore,
-        secondaryMetrics: Map[String, JmhSecondary]
+        secondaryMetrics: Map[String, JmhSecondary],
+        // JMH writes these on every entry; an ingested run used to ignore them and call itself -f 1
+        forks: Maybe[Int] = Maybe.empty,
+        warmupIterations: Maybe[Int] = Maybe.empty,
+        measurementIterations: Maybe[Int] = Maybe.empty,
+        jvmArgs: Maybe[Chunk[String]] = Maybe.empty
     ) derives Schema
 
-    def parseJmh(raw: String)(using Frame): Chunk[Row] < Fail =
+    def parseJmhEntries(raw: String)(using Frame): Chunk[JmhEntry] < Fail =
         Json.decode[Chunk[JmhEntry]](raw) match
-            case Result.Failure(e) => Abort.fail(BracketFailed(s"could not read JMH json: $e"))
-            case Result.Panic(e)   => Abort.fail(BracketFailed(s"could not read JMH json: $e"))
-            case Result.Success(entries) =>
-                entries.map { e =>
-                Row(
-                    name = e.benchmark.split('.').last,
-                    mode = e.mode,
-                    count = e.primaryMetric.rawData.map(_.size).sum,
-                    iterations = Chunk.from(e.primaryMetric.rawData.flatten),
-                    score = e.primaryMetric.primaryScore,
-                    error = e.primaryMetric.safeError,
-                    unit = e.primaryMetric.scoreUnit,
-                    allocPerOp = Maybe.fromOption(e.secondaryMetrics.get("gc.alloc.rate.norm").map(_.score)),
-                    compilerMsProfiled = Maybe.fromOption(e.secondaryMetrics.get("compiler.time.profiled").map(_.score)),
-                    compilerMsTotal = Maybe.fromOption(e.secondaryMetrics.get("compiler.time.total").map(_.score))
-                )
+            case Result.Failure(e)       => Abort.fail(BracketFailed(s"could not read JMH json: $e"))
+            case Result.Panic(e)         => Abort.fail(BracketFailed(s"could not read JMH json: $e"))
+            case Result.Success(entries) => entries
+
+    def parseJmh(raw: String)(using Frame): Chunk[Row] < Fail =
+        parseJmhEntries(raw).map(_.map(entryRow))
+
+    /** The whole entry as one row: JMH's own score and error over every fork, the iterations of every fork in order. */
+    def entryRow(e: JmhEntry): Row =
+        Row(
+            name = e.benchmark.split('.').last,
+            mode = e.mode,
+            count = e.primaryMetric.rawData.map(_.size).sum,
+            iterations = Chunk.from(e.primaryMetric.rawData.flatten),
+            score = e.primaryMetric.primaryScore,
+            error = e.primaryMetric.safeError,
+            unit = e.primaryMetric.scoreUnit,
+            allocPerOp = Maybe.fromOption(e.secondaryMetrics.get("gc.alloc.rate.norm").map(_.score)),
+            compilerMsProfiled = Maybe.fromOption(e.secondaryMetrics.get("compiler.time.profiled").map(_.score)),
+            compilerMsTotal = Maybe.fromOption(e.secondaryMetrics.get("compiler.time.total").map(_.score))
+        )
+
+    /** JMH reports its error at 99.9% confidence; a per-fork row carries the same quantity over that fork's own iterations. */
+    val JmhConfidenceAlpha = 0.001
+
+    /** One fork of an entry as a row of its own: that fork's iterations, their mean, an error at JMH's confidence over them, and the
+      * fork's own secondaries where the json carries them per fork. A fork is an independent JVM, which is what a leg is.
+      */
+    def forkRow(e: JmhEntry, k: Int): Row =
+        val xs   = e.primaryMetric.rawData(k)
+        val n    = xs.size
+        val mean = if n == 0 then 0.0 else xs.sum / n
+        val sd   = if n < 2 then 0.0 else Math.sqrt(xs.map(x => (x - mean) * (x - mean)).sum / (n - 1))
+        val err  = if n < 2 then 0.0 else Stats.tCritical(n - 1, JmhConfidenceAlpha) * sd / Math.sqrt(n)
+        def forkMetric(name: String)(agg: Chunk[Double] => Double): Maybe[Double] =
+            Maybe.fromOption(e.secondaryMetrics.get(name)).flatMap { m =>
+                m.rawData.flatMap(rd => if k < rd.size && rd(k).nonEmpty then Maybe(agg(rd(k))) else Maybe.empty)
             }
+        Row(
+            name = e.benchmark.split('.').last,
+            mode = e.mode,
+            count = n,
+            iterations = xs,
+            score = mean,
+            error = err,
+            unit = e.primaryMetric.scoreUnit,
+            // a per-op rate: the fork's mean; a duration: the fork's total
+            allocPerOp = forkMetric("gc.alloc.rate.norm")(v => v.sum / v.size),
+            compilerMsProfiled = forkMetric("compiler.time.profiled")(_.sum),
+            compilerMsTotal = forkMetric("compiler.time.total")(_.sum)
+        )
+    end forkRow
 
     extension (s: JmhScore)
         def primaryScore: Double = s.score
@@ -802,7 +844,7 @@ object Bench:
                             ).flatMap(_.toOption))
                     Delta(r.row, c, v, r.deltaPercent, verdict, allocDelta, mechanism, resolution)
             }.sortBy(d => (d.verdict == Verdict.BelowResolution, d.percent))
-        Comparison(controls.head, variants.head, deltas, jitShift(controls.head, variants.head))
+        Comparison(controls.head, variants.head, deltas, jitShift(controls.head, variants.head), controls, variants)
     end compareReplicated
 
     /** The A/A null: control legs against each other, through the identical pipeline.
