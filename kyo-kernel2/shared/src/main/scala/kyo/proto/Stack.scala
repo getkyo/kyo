@@ -1,93 +1,146 @@
 package kyo.proto
 
-import java.util.Arrays
+import kyo.Maybe
+import kyo.Maybe.*
 import kyo.Tag
+import kyo.bug
 import scala.annotation.static
 import scala.annotation.tailrec
 
-/** The evaluator's stack, booking only: continuations, and beside a region's continuation its handler as the marker and its state. */
-final private[proto] class Stack:
+/** A stack of arrows backed by a circular buffer.
+  *
+  * Entries occupy the logical positions `[head, tail)` of the ring: `head` is the top of the stack (the next arrow to pop/run) and
+  * `tail - 1` the bottom. Pushing prepends at `head`, so iterating forward from `head` walks the stack top-down, which keeps `find`
+  * and `dump` as forward scans. The capacity is always a power of two so a logical position maps to a slot with `pos & mask`, which
+  * remains correct for negative positions.
+  *
+  * Positions exposed by `find`, `handler`, and `dump` are depths relative to the top: 0 is the top entry, `size - 1` the bottom.
+  */
+final class Stack:
+    private var entries = new Array[Arrow[?, ?, ?]](16)
+    private var mask    = 15
+    private var head    = 0
+    private var tail    = 0
 
-    private var entries  = new Array[Arrow[?, ?, ?]](32)
-    private var handlers = new Array[Kyo.Handler[?, ?, ?, ?]](32)
-    private var states   = new Array[AnyRef](32)
-    private var top      = 0
+    def isEmpty: Boolean = head == tail
 
-    def isEmpty: Boolean = top == 0
+    def size: Int = tail - head
 
-    def size: Int = top
-
-    def apply(i: Int): Arrow[Any, Any, Any] = entries(i).asInstanceOf[Arrow[Any, Any, Any]]
-
-    def marked(i: Int): Boolean = handlers(i) ne null
-
-    def handler(i: Int): Kyo.Handler[Nothing, Any, Any, Any] = handlers(i).asInstanceOf[Kyo.Handler[Nothing, Any, Any, Any]]
-
-    def state(i: Int): Any = states(i)
-
-    def setState(i: Int, s: Any): Unit = states(i) = s.asInstanceOf[AnyRef]
-
-    // the identity continuation is not stored: applying it is the value itself
     def push(f: Arrow[?, ?, ?]): Unit =
-        if f ne Arrow.Id then
-            if top == entries.length then grow()
-            entries(top) = f
-            top += 1
-    end push
+        f match
+            case c: Arrow.Chain[?, ?, ?, ?] =>
+                push(c.b)
+                push(c.a)
+            case f if f eq Arrow.Id => ()
+            case f =>
+                grow()
+                head -= 1
+                entries(head & mask) = f
 
-    def push(f: Arrow[?, ?, ?], h: Kyo.Handler[?, ?, ?, ?], s: Any): Unit =
-        if top == entries.length then grow()
-        entries(top) = f
-        handlers(top) = h
-        states(top) = s.asInstanceOf[AnyRef]
-        top += 1
-    end push
-
-    def pop(): Arrow[Any, Any, Any] =
-        top -= 1
-        val f = entries(top)
-        entries(top) = null
-        handlers(top) = null
-        states(top) = null
-        f.asInstanceOf[Arrow[Any, Any, Any]]
+    def pop(): Arrow[?, ?, ?] =
+        val i = head & mask
+        val e = entries(i)
+        entries(i) = null
+        head += 1
+        e
     end pop
 
-    def truncate(n: Int): Unit =
-        @tailrec def loop(): Unit =
-            if top > n then
-                top -= 1
-                entries(top) = null
-                handlers(top) = null
-                states(top) = null
-                loop()
-        loop()
-    end truncate
+    def handler(i: Int): Handler[?, ?, ?, ?] =
+        entries((head + i) & mask).asInstanceOf[Handler[?, ?, ?, ?]]
 
-    /** The innermost region at or above `base` answering `t`, or -1: an evaluation never sees the regions of the one it is nested in. */
-    def find(t: Tag[Any], base: Int): Int =
+    // depth of the nearest enclosing handler for the tag, -1 if none
+    def find[A](t: Tag[A]): Int =
+        val n = size
         @tailrec def loop(i: Int): Int =
-            if i < base then -1
+            if i == n then -1
             else
-                val h = handlers(i)
-                if (h ne null) && t <:< h.tag.erased then i
-                else loop(i - 1)
-        loop(top - 1)
+                entries((head + i) & mask) match
+                    case h: Handler[?, ?, ?, ?] if t <:< h.tag => i
+                    case _                                     => loop(i + 1)
+        loop(0)
     end find
 
-    private def grow(): Unit =
-        entries = Arrays.copyOf(entries, top * 2)
-        handlers = Arrays.copyOf(handlers, top * 2)
-        states = Arrays.copyOf(states, top * 2)
-    end grow
+    // dump up to pos but keep pos
+    def dump[A, B, S](pos: Int): Arrow[A, B, S] =
+        @tailrec def loop(i: Int, acc: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
+            if i < 0 then acc
+            else
+                val idx = (head + i) & mask
+                val e   = entries(idx)
+                entries(idx) = null
+                loop(i - 1, e.chain(acc).asInstanceOf[Arrow[Any, Any, Any]])
+        val k = loop(pos - 1, Arrow.id)
+        head += pos
+        k.asInstanceOf[Arrow[A, B, S]]
+    end dump
 
+    // dump while not a handler
+    def dump[A, B, S](): Arrow[A, B, S] =
+        @tailrec def boundary(i: Int): Int =
+            if i == size || entries((head + i) & mask).isInstanceOf[Handler[?, ?, ?, ?]] then i
+            else boundary(i + 1)
+        dump[A, B, S](boundary(0))
+    end dump
+
+    // drop n entries starting from the head
+    def truncate(n: Int): Unit =
+        @tailrec def loop(n: Int): Unit =
+            if n > 0 && head != tail then
+                entries(head & mask) = null
+                head += 1
+                loop(n - 1)
+        loop(n)
+    end truncate
+
+    def clear(): Unit =
+        truncate(size)
+        head = 0
+        tail = 0
+    end clear
+
+    private def grow(): Unit =
+        if size == entries.length then
+            val n   = size
+            val arr = new Array[Arrow[?, ?, ?]](n << 1)
+            var i   = 0
+            while i < n do
+                arr(i) = entries((head + i) & mask)
+                i += 1
+            entries = arr
+            mask = arr.length - 1
+            head = 0
+            tail = n
 end Stack
 
-private[proto] object Stack:
+/** A pool of stacks per thread: an evaluation borrows one and returns it empty, so a nested evaluation gets its own stack and never
+  * sees the entries of the one it runs inside, and no stack is allocated per evaluation once the pool is warm.
+  */
+object Stack:
+    final private class Pool:
+        private var free = new Array[Stack](4)
+        private var size = 0
 
-    @static private val local: ThreadLocal[Stack] =
-        new ThreadLocal[Stack]:
-            override def initialValue() = new Stack
+        def borrow(): Stack =
+            if size == 0 then new Stack
+            else
+                size -= 1
+                val s = free(size)
+                free(size) = null
+                s
 
-    def current(): Stack = local.get()
+        def release(s: Stack): Unit =
+            s.clear()
+            if size == free.length then free = Array.copyOf(free, size * 2)
+            free(size) = s
+            size += 1
+        end release
+    end Pool
 
+    @static private val local: ThreadLocal[Pool] =
+        new ThreadLocal[Pool]:
+            override def initialValue() = new Pool
+
+    def borrow(): Stack = local.get().borrow()
+
+    def release(s: Stack): Unit = local.get().release(s)
 end Stack
