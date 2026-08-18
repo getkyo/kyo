@@ -289,6 +289,34 @@ handler reaches the no-handler branch, so "park or bug" and "S1 or T" should be 
   temporary index: HEAD, index and working tree untouched. Safe to delete once the work is committed
   by its author; it exists so a crash cannot take the only copy.
 
+**The owner started a new kernel proto, `kyo.proto`, and handed it over for the night (2026-08-17
+late).** In their words: "I decided to start yet another kernel proto", "please make sure to focus on
+composition and read the kernel skill again. I'll go to bed, introduce Eval.scala, Safepoint.scala,
+ArrowEffect.scala. Also split YetAnotherProto into their own file names. all in the proto package",
+"keep working autonomously with tests and also check benchmarks. Please please safe typed code as
+much as possible." Standing corrections given while it was written, all applied: "do not change my
+design" (the inline `apply(v, next)` inside `Transform.apply(f)` is what keeps map fusion; `Chain` as
+written); "do not introduce Region nor Segment. These are composition concerns not stack booking";
+"CAN YOU PLEASE USE TYPES" (the stack's arrays are `Array[Kyo.Handler[?, ?, ?, ?]]` and typed
+states, `Park`'s spans likewise); "use @tailrec def loop instead of whiles and vars"; "reintroduce
+the Stack thread local"; "introduce Kyo.Defer for a single allocation"; "could we have only Defer
+taking A < S and remove Continue? Kyo[A, S] is A < S"; "the Id check in Stack" (the identity
+continuation is dropped at `push`). What the model is: the currency is `A | Kyo[A, S] | Nested[A]`,
+arrows are transformations and never in the currency, `lower` is the one elimination form, `Kyo`
+nodes are `Defer`/`Park`/`Suspend`/`Handle`, regions on the stack are `h.cont` with the handler as
+the marker beside it and its state beside that. Eval is a tailrec loop over the currency; a pending
+answer runs under this handler with the interior parked (CONTRIBUTING rule 7), a clause suspending
+before its outcome runs outside the region. Landed at `66248586a1` and `63176f55a3`; `EvalTest`
+40/40 through the public surface. Two findings from the tests: `Id.apply(v, Id)` recursed forever
+(fixed); with an unconditional `lift`, inference nested `Eval(x)` under an expected `B < S2` and
+handed the suspension back as a map result, so `lift` now carries the kernel's
+`NotGiven[A <:< (Any < Nothing)]` lint (the issue-903 class), pinned both ways. Builds run with
+scalafmt disabled so the owner's other in-flight files stay untouched. **Bench: `ProtoKernelBench`
+repointed at `kyo.kernel.*` (its import was the stale `kyo.kernel.proto`), and `YetAnotherProtoBench`
+added over `kyo.proto` with the same rows and depths (`handleLoopFusesContinuation` absent, no
+`handleLoopWith` yet); a `-f 1` screen of both classes in one session is running, JSON to
+`reviews/bench/screen-0818-f1.json`, to be ingested and compared through the harness, never by hand.**
+
 **Third file, third real bug, and the added coverage localised it exactly.** A handler's clause is the
 handler's own code and its effects belong to the handlers *outside* the region. This kernel answers a
 clause's effect with handlers the region's *body* installed inside it, so a user's `Say` handler wrapped

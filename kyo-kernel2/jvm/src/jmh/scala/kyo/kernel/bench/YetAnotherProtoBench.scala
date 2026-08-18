@@ -3,20 +3,21 @@ package kyo.kernel.bench
 import java.util.concurrent.TimeUnit
 import kyo.Frame
 import kyo.Tag
-import kyo.kernel.*
-import kyo.kernel.internal.Eval
+import kyo.proto.*
 import org.openjdk.jmh.annotations.*
 
+/** ProtoKernelBench's rows over the kyo.proto kernel, same shapes and depths, so the two classes compare row by row in one session. Rows
+  * whose surface this kernel does not have yet (handleLoopWith) are absent rather than approximated.
+  */
 @State(Scope.Benchmark)
 @BenchmarkMode(Array(Mode.AverageTime))
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 @Warmup(iterations = 5, time = 1)
 @Measurement(iterations = 5, time = 1)
 @Fork(value = 2)
-// TODO we're relying on these benchmarks a lot. Let's explore the shapes of comptuations they test and cross against common uses in kyo and in user codebases. 
-class ProtoKernelBench:
+class YetAnotherProtoBench:
 
-    import ProtoKernelBench.*
+    import YetAnotherProtoBench.*
 
     private var seed = 1
 
@@ -101,15 +102,6 @@ class ProtoKernelBench:
     end handleLoopAnswersInPlace
 
     @Benchmark
-    def handleLoopFusesContinuation: Int =
-        def loop(i: Int): Int < Ask =
-            if i > Depth then i
-            else ask.map(a => loop(i + a))
-        val r: Int < Any = ArrowEffect.handleLoopWith(Tag[Ask], loop(0))([C] => _ => Loop.continue(1), a => a)(b => b + 1)
-        Eval(r)
-    end handleLoopFusesContinuation
-
-    @Benchmark
     def nestedPayloadsUnwrapInMaps: Int =
         def loop(i: Int): Int < Any =
             if i > NarrowDepth then 0
@@ -183,9 +175,9 @@ class ProtoKernelBench:
         Eval(r)
     end continuationBodiesFuse
 
-end ProtoKernelBench
+end YetAnotherProtoBench
 
-object ProtoKernelBench:
+object YetAnotherProtoBench:
 
     inline def Depth       = 10000
     inline def NarrowDepth = 1000
@@ -204,4 +196,4 @@ object ProtoKernelBench:
 
     def boxed[A](a: A): A < Any = a
 
-end ProtoKernelBench
+end YetAnotherProtoBench
