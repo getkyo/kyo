@@ -856,6 +856,31 @@ project on RC6): `sbt "runMain BenchBracket --worktree ../../../../../bench-swee
 flags per the standing bracket config; keep the json and log with `git add -f`. Precondition gate before
 launch: proto `PendingTest` 38/38 green on a committed sha, `uptime` 1-min < 5, no owner sbt running.
 
+**HandleLoopState is coming back (20:00 onward): the owner is designing its return, state in the
+Stack.** This reverses the 13:51 "encode via ContextEffect later" direction; design thread in chat,
+proposals only, no edits (standing order holds). Arc: my StateCell wrapper (a per-evaluation cell
+pushed instead of the raw handler) rejected as unnecessary; a `var state` on the handler instance
+(fresh instance per evaluation via `def handler`) rejected on principle ("proper safe immutable
+representations"); the owner's direction is their earlier option-2 ruling, state in the Stack beside
+the handler (the `states: Array[Any]` parallel-array layout from their minimal-Stack design, WORK.md
+option-2 entry above). Analysis delivered with the two facts that survive any layout: (a) `dump(pos)`
+capturing a continuation across a state region must reify {handler, state} as one immutable arrow
+node (`Bound`: `apply(v) = handler.apply(state, v)`) and `Stack.push` must rehydrate it into live
+slots, which makes a captured continuation a state snapshot (multi-shot correct, better than either
+mutable design); (b) with the parallel `states` array the adjacent-slot hazards named first (find
+skipping state slots, `pos + 2` arithmetic) do not exist: indices stay 1:1, `truncate(pos + 1)`,
+`find` unchanged. Eval grows three branches (Handle pushes the pair, a Suspend `HandlerLoopState`
+case with `state(pos)`/`setState(pos)` and `Continue2`, the done branch matching a popped
+`HandlerLoopState` and reading its state slot). Awaiting the owner's reply.
+
+**Tick 20:18: no measurement possible, hold continues.** Gate check: kyo-kernel2 sources still
+uncommitted (16 modified + 4 untracked, no stable sha), the owner active mid-design and may build at
+any moment, load 4.27 (under the bracket bar of 5, but the sha gate fails first; the trait rerun
+wants under 2). Both deliverables (trait-side rerun, task-37 kernel-vs-proto bracket) stay gated;
+the staged task-37 command stands unchanged. Defect 30 / task 20 (the LogFile truncation probe)
+stays held too: the owner is active in this session and a probe sharing the machine with their next
+sbt violates the standing rule. Re-armed.
+
 **Rulings the kyo.proto stream is waiting on (2026-08-18), each with its recorded default:**
 
 1. **Which side is the trait** for the fused nodes: `Kyo` (HEAD `9ad929fccc`) or `Arrow`/`Transform`
