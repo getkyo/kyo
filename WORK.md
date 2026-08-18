@@ -825,6 +825,27 @@ one-arg complete). Alternative: special-case a `Handler` pop in `Eval`'s `done` 
 
 ## OPEN
 
+**Bench-harness state (2026-08-18 evening): at its floor, blocked on the proto reaching green + a quiet
+machine. No measurement possible right now.** Tool: 45 fixed, 3 open (9 not-fully-fixable A/A-every-
+session gap; 30 = task 20, a multi-row `-XX:LogFile` truncation probe that needs a quiet machine; 37 =
+ruling 0e, owner's call, default recorded "leave it"). Both live deliverables are measurement-gated:
+(a) the **trait-side A/B bracket rerun** (ruling 1) needs a genuinely quiet machine (`uptime` 1-min < 2;
+it is 4.11 now) and a stable sha (the owner's `kyo/proto` sources are uncommitted and in flux, so there
+is no stable sha to measure); (b) **task 37, the kernel-vs-proto bracket at the new HEAD**, additionally
+needs the proto green. Proto status: the long-map-tower is FIXED (Stack `dump()` right-deep +
+iterative `push`, owner adopted as `count`/`fill`; PendingTest 37/38, tower passes ~47s, still the
+`dump`->`push` round-trip quadratic = an open perf item, not a blocker). The **one remaining proto
+failure** is `"a loop can end its region with a computation result"` (`ClassCastException: Kyo$Defer ->
+Integer`): a `Loop.done(v)` with a computation `v` leaves the completed `HandlerLoop` on the stack
+(`truncate(pos)` drops only the interior), so the done branch re-applies its erased `apply(int)` onDone
+to the `Defer`. Proposed fix (explained to owner, not applied, it is their active Handler-as-Arrow WIP):
+`truncate(pos + 1)` on the Done outcome so the completed handler is dropped and the done value flows out
+unrun. So the bench-harness critical path IS the proto going green; nothing to measure until it is and
+the machine is quiet with a committed sha. **Staged task-37 command** (fire when proto green + `uptime`
+1-min < 5, no owner sbt running): bracket both classes `kyo.proto.*` and `kyo.kernel.*` at
+`-f 3 -wi 12 -prof gc`, per-fork legs + replicated verdict through the harness, json + log kept, in the
+detached throwaway worktree.
+
 **Rulings the kyo.proto stream is waiting on (2026-08-18), each with its recorded default:**
 
 1. **Which side is the trait** for the fused nodes: `Kyo` (HEAD `9ad929fccc`) or `Arrow`/`Transform`
