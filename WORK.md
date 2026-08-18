@@ -351,6 +351,18 @@ kernel's macro emits a bare cast; a pending step allocates a `Defer` where the k
 per dispatch where the kernel passed the arrow itself; `Loop.continue` crosses two representation
 casts.
 
+**First rung climbed, `-prof gc` on four rows (`reviews/bench/gc-0818-f1-head-report.md`, runs
+`kernel-gc-35d4cbdba0-87621fc1` / `proto-gc-35d4cbdba0-f9700c66`, subset legs by the harness's own
+label).** `suspensionBaseline` +81% and `handleLoopAnswersInPlace` +104% with **B/op delta +1**: the
+proto allocates the same as the kernel on the suspension rows, so allocation is ruled out there and
+the loss is path length or code shape; next rung is `PrintInlining` on `dispatch`, `lower`,
+`Transform.apply`, `lift`. `nestedPayloadsUnwrapInMaps` +40% with **+24000 B/op**, 24 bytes per
+iteration, one small object the kernel does not allocate; the harness names the experiment: disable
+escape analysis on the control, and if it reproduces the +24000, the kernel scalar-replaces the box
+that the proto's out-of-line `lift` (a method with a `NotGiven` parameter, where the kernel's macro
+emits inline) keeps alive. `evalFixedOverhead` -46% at equal allocation: a shorter path into `Eval`.
+None of this is a change yet; each is a hypothesis with its test named.
+
 **Third file, third real bug, and the added coverage localised it exactly.** A handler's clause is the
 handler's own code and its effects belong to the handlers *outside* the region. This kernel answers a
 clause's effect with handlers the region's *body* installed inside it, so a user's `Say` handler wrapped
