@@ -390,6 +390,18 @@ question on the owner's `map`, so it stops here. Not measured, not landed. Ascri
 arguments explicitly does not change the failure: with `lower` inlined into `map`, `B`/`S2` infer
 differently for `c => c` over `(Int < Ask) < Give` than with `Arrow.Transform(f)(self, id)`.
 
+**Inlining rung on `suspensionBaseline`, both classes (`reviews/bench/inlining-suspensionBaseline-0818.log`,
+`-XX:+PrintInlining`, throwaway at HEAD with the candidate reverted).** Read as an oracle, verdicts
+quoted: `kyo.proto.Stack::pop (52 bytes) failed to inline: callee is too large` (also `too big`) at
+the loop's settled branch, `kyo.proto.Stack::push (45/57 bytes) failed to inline: callee is too
+large` at several sites, `kyo.proto.Stack::pushAll (24 bytes) failed to inline: callee uses too much
+stack`; `Stack::find (13 bytes) inline (hot)`. Per the skill's reading of these logs, a refusal on a
+small callee means the caller (`Eval$::go`, the tailrec loop with `lower` expanded into it) had
+spent its budget: the suspension rows' extra path length is push/pop calls that stay out of line.
+Named, not fixed; the kernel side of the same log is in the file for the comparison, and the move
+the skill records for this ("make the hot method smaller by moving cold shapes out of line") is the
+owner's design call on `go`/`step`.
+
 **Third file, third real bug, and the added coverage localised it exactly.** A handler's clause is the
 handler's own code and its effects belong to the handlers *outside* the region. This kernel answers a
 clause's effect with handlers the region's *body* installed inside it, so a user's `Say` handler wrapped
