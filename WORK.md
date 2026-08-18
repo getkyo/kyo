@@ -658,6 +658,21 @@ Landed, each tested through `sbt test` (316 leaves green) and committed:
 - **item 1 jit half** (`6d96a0ed23`): `diffVerdicts` re-typed to the stored sites; partial inlining named.
 - **task 27 core** (`277f385d88`): the report names the checks it could not run and the command for each.
 
+Second wave (defect reconciliation + the measurement-free defect fixes the first wave surfaced):
+- **defect 49** (`c2c3451d21`): the JIT table states its scope on a multi-row leg (compile time summed
+  across rows, task census one fork's).
+- **defect 43** (`59c9c2f31f`): the unexplained-row advice names the absent evidence on a Timing run
+  instead of pointing at an inlining log it lacks.
+- **defect 48** (`74d5c1b05b`): `parseAlloc` folds a class repeated across benchmark sections into one
+  leg-level row, so `apportion` and conservation see the whole leg's figure.
+- **defect 41** confirmed fixed (the diagnostic note is keyed on `earnedThreshold`, not fork count),
+  **42** addressed (three-way cpu + rich alloc surfacing).
+- **The defect ledger was reconciled with the whole session's work** (`4f96a65dd5`, `2e14b52c9b`,
+  `e905f7d5a2`, `081b447ece`, `25b2fc2978`): 31/32/33/35/36/38/40/45/46/47/52 were fixed by this
+  session but still read "open"; now **44 of 52 closed**, 39 won't-fix (dead but defensive), 4 open:
+  30 (measurement-path, part of 0a), 34 (Gate-A wire-or-delete, owner), 37 (ruling 0e, owner), 9
+  (mitigated by the A/A, no code fix). `sbt test` green at 321 leaves throughout.
+
 Everything left in the harness stream needs one of two things I cannot supply alone right now:
 - **a measurement** (the machine must be quiet, not shared with the owner's kernel build): 0a's stale-
   file guard is a one-line fix in `runLeg` but is in the measurement path and unvalidated until a real
