@@ -1479,5 +1479,7 @@ sides, delta, resolution, B/op both sides or the delta, verdict icon), whatever 
 on validity, and the verdict stated with it (owner's rule, 2026-08-18). Report files are written
 through the exact scala-cli noise filter (`^Compiling project|^Compiled project|^WARNING:|^\[90m`),
 never a substring that could match report content. A JMH launch always keeps json and log, and every
-`git add -f` of them runs without error suppression. Do not launch a bracket with `uptime`'s
-one-minute load above 2: the 10:04 A/B ran at load 3.5 to 11 and resolved nothing.
+`git add -f` of them runs without error suppression. Do not launch a bracket while any build (the
+owner's sbt included) is running, and not with `uptime`'s one-minute load above 5: this machine's
+idle floor with its other sessions is 3 to 4 (the -wi 20 bracket at about that load gave a clean
+null and resolutions of ±1.6% to ±30%), and the 10:04 A/B at 8 to 11 resolved nothing.
