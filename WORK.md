@@ -770,23 +770,25 @@ analysis only, no edits from here:
   family) plus the `ArrowEffect` fused-remainder family pin that behavior. **Open question posed to the
   owner: dropped with state, or folded into the ContextEffect rework?** No default recorded because it
   is the owner's design call and they are mid-edit.
-- Re-read after the owner's next edits (14:20): `Stack.scala` is a coherent circular buffer now
-  (`[head, tail)`, `head` the top, power-of-two `mask`; `find`/`dump(pos)`/`truncate`/`grow` agree on
-  depth 0 = top, forward scan). `dump(pos)` folds depths `0..pos-1` innermost-first and keeps the
-  handler at the new top; `HandlerCont` (`loop(h.run(input, dump(pos)), stack)`) is correct. `loop`
-  now threads the `Safepoint.Slot`.
-  **Bug found, test-pinned: the `Loop.done` branch of `HandlerLoop` applies `done` instead of
-  bypassing it.** `stack.truncate(pos)` drops only the interior above the handler; the handler stays
-  at depth 0, so `loop(v)` pops it and runs `handler.apply(v) = onDone(v) = done(v)`. On
-  `EvalTest.scala:180` ("Loop.done stops the region and bypasses done") the clause returns
-  `Loop.done(-1)`; stack `[Arrow(f)@0, handler@1]`, `pos = 1`; `truncate(1)` leaves `handler@0`;
-  `loop(-1)` pops it and yields `-1 * 10 = -10`, but the test wants `-1` (done bypassed, `reached`
-  false). Wants `truncate(pos + 1)` (drop interior and handler), after which the payload flows below
-  the region. The `Continue` path is correct ("done sees the settled result" -> 420) and normal body
-  completion still applies `done`. Reported to the owner, no edit from here.
-  The `HandlerLoop` suspend-clause case is still only pure-outcome; the no-arg `dump()` is unwired;
-  tests still reference `handleLoopState` (11/23/1) so they will not compile until reworked. Fable's
-  review of the earlier proposal is at `reviews/HANDLER-AS-ARROW-REVIEW.md`.
+- Numbered code review handed to the owner (14:35), `Eval.scala`/`Stack.scala` re-read fresh:
+  1. `HandlerLoop` `Loop.done` branch: `Eval.scala:56` `truncate(pos)` keeps the handler, so `done`
+     runs; `EvalTest:180` wants `-1`, code yields `-10`. Certain. Fix: `truncate(pos + 1)`.
+  2. `HandlerLoop` returns `h.run(...).map{…}` (`Eval.scala:52`) instead of feeding the outcome back
+     through `loop` as `HandlerCont` does (`:50`, a tail call). (2a) deep sequential `handleLoop`
+     (`EvalTest:201`, 100000) nests Java frames and the safepoint budget yields a partial `Defer`, not
+     the settled `0`; `HandlerCont`'s deep test (`:141`) is fine. (2b) a suspending clause makes `.map`
+     return `Defer(clauseSuspension, matchArrow)` out of `loop`, never driven against the stack, so the
+     outer handler below the region never sees it (`EvalTest:224`, `:236`, remainder family). Fix:
+     `loop(Kyo.Defer(h.run(input), matchArrow), stack, slot)` mirroring `HandlerCont`. The item most
+     worth aligning before more Eval work.
+  3. Unhandled op throws `MatchError`, not "unhandled suspension": `find` = -1 -> `handler(-1)` reads
+     the null slot above the top -> `null match` (`Eval.scala:48`, `EvalTest:540`). The no-arg `dump()`
+     is for this path but isn't wired.
+  4. `Stack.push` recurses per `Chain` node (`Stack.scala:22`); a deep dumped chain re-pushed can
+     overflow (Fable A7). Medium.
+  5. Tests won't compile: `handleLoopState` still referenced 11/23/1, gating verification of 1-4.
+  Circular-buffer stack itself is coherent (`[head, tail)`, depth 0 = top, right-deep `dump(pos)`,
+  `HandlerCont` correct). No edits from here; Fable's review at `reviews/HANDLER-AS-ARROW-REVIEW.md`.
 
 **The harness is an sbt project now (`752a55dcf5`, 13:30, on the owner's ask "Do the migration to sbt
 w/ RC6 and use kyo-test").** Its own `build.sbt` on the published `1.0.0-RC6` artifacts (`kyo-core`,
