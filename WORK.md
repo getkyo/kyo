@@ -402,6 +402,17 @@ Named, not fixed; the kernel side of the same log is in the file for the compari
 the skill records for this ("make the hot method smaller by moving cold shapes out of line") is the
 owner's design call on `go`/`step`.
 
+**A miss the owner caught: the screen's own guard was walked past.** The screen report says, in
+its first block, "NOT A VALID MEASUREMENT: 1 leg(s) did not reach steady state ...
+`handleLoopAnswersInPlace` (variant) never settled ... Re-run with more warmup", and I filed the
+screen as "diagnostic" and went on to the gc rung instead of doing what the tool asked. A warming leg
+is a blocker, not a footnote; the standing rules say so and I restated them in the same session.
+Correction in flight: both classes re-run in the throwaway at HEAD with `-f 3 -wi 10 -i 5` (the
+harness's ask, and enough forks to carry a claim), detached, JSON to
+`reviews/bench/bracket-0818-f3-head.json`, then split, ingested (`declaredRows` 15/14, session
+`proto-bracket-0818`) and compared through the harness; the earlier screen stays in the record as a
+screen only.
+
 **Third file, third real bug, and the added coverage localised it exactly.** A handler's clause is the
 handler's own code and its effects belong to the handlers *outside* the region. This kernel answers a
 clause's effect with handlers the region's *body* installed inside it, so a user's `Say` handler wrapped
