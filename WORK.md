@@ -841,9 +841,12 @@ Integer`): a `Loop.done(v)` with a computation `v` leaves the completed `Handler
 to the `Defer`. Fix APPLIED (owner greenlit "apply the fix", Edit tool): `Eval.scala` HandlerLoop Done arm
 `stack.truncate(pos)` -> `stack.truncate(pos + 1)`, so the completed handler is dropped with the interior
 and its `onDone` is not re-applied to the loop-done value; done value flows out unrun. In the owner's
-working tree (their WIP, not committed by me). Verifying via `PendingTest` (target: the ClassCast test
-green, other 37 hold, 38/38). So the bench-harness critical path IS the proto going green; nothing to
-measure until it is and the machine is quiet with a committed sha. **Staged task-37 command** (fire when proto green + `uptime`
+working tree (their WIP, not committed by me). **VERIFIED: `PendingTest` 38/38, 0 failed** (`pt7`, exit 0):
+the ClassCast test passes (1 ms), no regression, tower 27.8s. So `PendingTest` is now fully green.
+Bench-harness implication: the proto's `PendingTest` is green, which clears the correctness half of task
+37's gate; what remains for task 37 is (a) the OWNER committing a stable sha (sources still uncommitted,
+tests in flux) and the FULL `kyo-kernel2` module green (not just `PendingTest`), and (b) a quiet machine
+(load was 6.32 last check). Nothing to measure until the owner lands a committed green module. **Staged task-37 command** (fire when proto green + `uptime`
 1-min < 5, no owner sbt running): bracket both classes `kyo.proto.*` and `kyo.kernel.*` at
 `-f 3 -wi 12 -prof gc`, per-fork legs + replicated verdict through the harness, json + log kept, in the
 detached throwaway worktree. Invocation (from `kyo-kernel2/.claude/skills/kernel/bench-harness`, sbt
