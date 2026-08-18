@@ -400,6 +400,20 @@ object Report:
             if c.jitChanges.isEmpty then ""
             else "\nInlining changed:\n" + c.jitChanges.map(s => s"  - $s").mkString("\n")
 
+        // `jitChanges` (jitShift) names only the decisive flips, a method inlined at every site on one
+        // side and refused at every site on the other. A method whose site fractions moved without
+        // flipping, six of ten refusals becoming two, is a real change the flip filter drops;
+        // diffVerdicts, now reading the stored per-method sites both runs carry, names those too
+        val partialJit =
+            val flips = c.jitChanges.mkString("\n")
+            val moved = LogCompilation.diffVerdicts(c.control.jit, c.variant.jit)
+                .filterNot(v => flips.contains(v.method))
+                .filter(v => v.before.sites > 0 && v.after.sites > 0)
+            if moved.isEmpty then ""
+            else
+                "\nInlining verdicts shifted without flipping:\n" +
+                    moved.map(v => s"  - ${v.method}: inlined ${v.before.inlined}/${v.before.sites} -> ${v.after.inlined}/${v.after.sites} sites").mkString("\n")
+
         val deoptShift =
             val cd = control.deopts.map(d => d.reason -> d.count).toMap
             val moved = variant.deopts.filter(d => Math.abs(d.count - cd.getOrElse(d.reason, 0)) > cd.getOrElse(d.reason, 0) / 4 + 5)
@@ -596,7 +610,7 @@ object Report:
         // falsifier attached is where "it is slower, so replace it" comes from.
         val investigation = Investigate.render(c)
 
-        s"$blockerBanner$sessionWarning$header\n$body$rampNote$resolutionNote$driftNote$jit$deoptShift$polymorphic$allocSites$allocNote$partition$verdictLine$ladder$steadyState$jitTable$bothWays$cpuNote$cpuByRow$budgetNote$investigation"
+        s"$blockerBanner$sessionWarning$header\n$body$rampNote$resolutionNote$driftNote$jit$partialJit$deoptShift$polymorphic$allocSites$allocNote$partition$verdictLine$ladder$steadyState$jitTable$bothWays$cpuNote$cpuByRow$budgetNote$investigation"
     end render
 
 end Report

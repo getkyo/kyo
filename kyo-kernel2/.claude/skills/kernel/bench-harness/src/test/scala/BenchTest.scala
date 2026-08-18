@@ -652,6 +652,23 @@ class BenchTest extends Test[Any]:
         check("and a report with no near-budget method has no such section", !Report.render(Bench.compare(leg("c", base), leg("v", base))).contains("close to a budget"))
     }
 
+    section("partial inlining moves are named, not only decisive flips (item 1)")
+    locally {
+        // 3/10 -> 7/10 sites inlined: a real shift that never flips all-inlined <-> all-refused, so jitShift (jitChanges) drops it;
+        // diffVerdicts, now reading the per-method sites the runs store, names it
+        val cSites = InlineSites("kyo.kernel.proto.Eval$.step", 200, inlined = 3, refused = 7, Chunk("hot method too big"))
+        val vSites = InlineSites("kyo.kernel.proto.Eval$.step", 200, inlined = 7, refused = 3, Chunk("hot method too big"))
+        val rep    = Report.render(Bench.compare(leg("c", base, jit = Chunk(cSites)), leg("v", base, jit = Chunk(vSites))))
+        check("a site-fraction shift that does not flip is named", rep.contains("shifted without flipping") && rep.contains("3/10 -> 7/10"), rep.takeRight(400))
+        check("diffVerdicts reads the stored per-method sites both runs carry", LogCompilation.diffVerdicts(Chunk(cSites), Chunk(vSites)).exists(_.method.contains("step")))
+        // a decisive flip belongs to jitShift's section and must not be duplicated as a partial shift
+        val flipC   = InlineSites("kyo.kernel.proto.Flip$.m", 300, inlined = 4, refused = 0, Chunk.empty)
+        val flipV   = InlineSites("kyo.kernel.proto.Flip$.m", 300, inlined = 0, refused = 4, Chunk("hot method too big"))
+        val flipRep = Report.render(Bench.compare(leg("c", base, jit = Chunk(flipC)), leg("v", base, jit = Chunk(flipV))))
+        check("a decisive flip stays in Inlining changed", flipRep.contains("Inlining changed") && flipRep.contains("Flip$.m"))
+        check("and is not repeated as a partial shift", !flipRep.contains("shifted without flipping"), flipRep.takeRight(300))
+    }
+
     section("what two shas cannot say")
     // the skill's worked example: a node-layout change and a currency hoist shipped together, the
     // bundle was faster, the win was credited first to one and then to the other, and both

@@ -341,9 +341,11 @@ object LogCompilation:
       * It also names *what* moved, which is how a budget experiment turns into a mechanism: raising `FreqInlineSize` from 325 to 600 moved 57
       * methods, and the one that mattered was a 379-byte continuation body going from refused-at-every-site to inlined.
       */
-    def diffVerdicts(before: Parsed, after: Parsed, prefix: String = "kyo."): Chunk[VerdictChange] =
-        val b = inlining(before, prefix).map(v => v.method -> v).toMap
-        val a = inlining(after, prefix).map(v => v.method -> v).toMap
+    // takes the aggregated per-method sites, which is what a stored `Run` carries in `jit`, rather than the raw `Parsed` a stored run does
+    // not keep. That is the difference between a function reachable only from a fresh parse and one a comparison of two stored runs can call
+    def diffVerdicts(before: Chunk[InlineSites], after: Chunk[InlineSites]): Chunk[VerdictChange] =
+        val b = before.map(v => v.method -> v).toMap
+        val a = after.map(v => v.method -> v).toMap
         Chunk.from(
             (b.keySet ++ a.keySet).toSeq.sorted.flatMap { m =>
                 val bs = b.getOrElse(m, InlineSites(m, 0, 0, 0, Chunk.empty))
@@ -359,7 +361,7 @@ object LogCompilation:
       * is noise, fifty-seven moving with size refusals falling from 31 to 20 is a flag doing its job.
       */
     def efficacy(before: Parsed, after: Parsed, prefix: String = "kyo."): (Int, Int, Int) =
-        val changed = diffVerdicts(before, after, prefix).size
+        val changed = diffVerdicts(inlining(before, prefix), inlining(after, prefix)).size
         // counted per site, not per method: a method that went from ten refusals to six still has
         // some, so a method-level count reports no change where more than a third of the refusals
         // actually went away
