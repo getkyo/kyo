@@ -5,7 +5,7 @@ import kyo.proto.Loop.Outcome
 import kyo.proto.Loop.Outcome2
 import kyo.Tag
 
-sealed abstract class Kyo[+A, -S]
+sealed trait Kyo[+A, -S]
 
 object Kyo:
 
@@ -40,14 +40,14 @@ object Kyo:
                 def contB = _contB
     end Defer
 
-    abstract class Suspend[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Kyo[B, E & S]:
+    trait Suspend[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Kyo[B, E & S]:
         def frame: Frame
         def tag: Tag[E]
         def input: I[A]
         def cont: Arrow[O[A], B, S]
     end Suspend
 
-    abstract class Handle[E <: ArrowEffect[?, ?], A, B, +C, -S] extends Kyo[C, S]:
+    trait Handle[E <: ArrowEffect[?, ?], A, B, +C, -S] extends Kyo[C, S]:
         def v: Kyo[A, E & S]
         def handler: Handler[E, A, B, S]
         def cont: Arrow[B, C, S]

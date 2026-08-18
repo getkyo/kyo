@@ -9,9 +9,9 @@ import scala.annotation.tailrec
 /** The kernel's `ArrowEffectTest` corpus pointed at this package, section by section. Sections whose surface this package does not have
   * yet (`handleWith`, `handleLoopWith`, `handleLoopStateWith`, `handlePartial`, `handleFirst`, `dispatchFirst`, `handleCatching`, park)
   * are kept with their code commented as they are ported, so the corpus is complete and the gap is visible. Ported so far: `handleLoop`,
-  * `handleCont`, `handleLoopState`, `suspendWith`, the capture cases, `contracts`, `nested box`, `coverage`; `handleWith`,
-  * `handleLoopWith`, `handleLoopStateWith` as commented code; park live (it needs only handleCont and a stored continuation);
-  * `handleFirst`, `dispatchFirst`, `handleCatching` and `handlePartial` are still to be transcribed as commented code.
+  * `handleCont`, `handleLoopState`, `handleWith`, `handleLoopWith`, `handleLoopStateWith`, `suspendWith`, the capture cases,
+  * park, `contracts`, `nested box`, `coverage`; `handleFirst`, `dispatchFirst`, `handleCatching` and `handlePartial` are still to be
+  * transcribed as commented code.
   */
 class ArrowEffectTest extends AnyFreeSpec:
 
@@ -609,9 +609,6 @@ class ArrowEffectTest extends AnyFreeSpec:
          */
     }
 
-    // handleContWith, handleLoopWith and handleLoopStateWith (the region with its continuation fused
-    // into one node) are not in this package yet
-    /*
     "handleWith" - {
         "applies the continuation to the region result" in {
             val r: Int < Any = ArrowEffect.handleContWith(Tag[Ask], ask.map(_ + 1))(
@@ -655,7 +652,7 @@ class ArrowEffectTest extends AnyFreeSpec:
 
     "handleLoopWith" - {
         "applies the continuation to the region result" in {
-            val r: Int < Any = ArrowEffect.handleLoopWith(Tag[Ask], ask.map(_ + 1))(
+            val r: Int < Any = ArrowEffect.handleLoopWith[Const[Unit], Const[Int], Ask, Int, Int, Any](Tag[Ask], ask.map(_ + 1))(
                 [C] => _ => Loop.continue(41: Int < Any),
                 a => a * 10
             )(b => b + 1)
@@ -663,7 +660,7 @@ class ArrowEffectTest extends AnyFreeSpec:
         }
 
         "applies the continuation to a settled input" in {
-            val r: Int < Any = ArrowEffect.handleLoopWith(Tag[Ask], 41: Int < Ask)(
+            val r: Int < Any = ArrowEffect.handleLoopWith[Const[Unit], Const[Int], Ask, Int, Int, Any](Tag[Ask], 41: Int < Ask)(
                 [C] => _ => Loop.continue(0: Int < Any),
                 a => a + 1
             )(b => b * 10)
@@ -682,7 +679,7 @@ class ArrowEffectTest extends AnyFreeSpec:
     "handleLoopStateWith" - {
         "applies the continuation with the final state observed" in {
             val v = ask.map(a => ask.map(b => a * 10 + b))
-            val r: Int < Any = ArrowEffect.handleLoopStateWith(Tag[Ask], 1, v)(
+            val r: Int < Any = ArrowEffect.handleLoopStateWith[Const[Unit], Const[Int], Ask, Int, Int, Any, Int](Tag[Ask], 1, v)(
                 [C] => (s, _) => Loop.continue(s + 1, s: Int < Any),
                 (s, a) => s * 100 + a
             )(b => b + 1)
@@ -690,14 +687,13 @@ class ArrowEffectTest extends AnyFreeSpec:
         }
 
         "applies the continuation to a settled input" in {
-            val r: Int < Any = ArrowEffect.handleLoopStateWith(Tag[Ask], 7, 35: Int < Ask)(
+            val r: Int < Any = ArrowEffect.handleLoopStateWith[Const[Unit], Const[Int], Ask, Int, Int, Any, Int](Tag[Ask], 7, 35: Int < Ask)(
                 [C] => (s, _) => Loop.continue(s, 0: Int < Any),
                 (s, a) => s + a
             )(b => b * 2)
             assert(Eval(r) == 84)
         }
     }
-     */
 
     "suspendWith" - {
         "suspends and continues in one node" in {

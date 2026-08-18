@@ -78,7 +78,7 @@ object Eval:
                 hl.run(s.input).lower(
                     pending = clause => outcome(clause, i, s, stack),
                     done = {
-                        case c: Loop.Continue[?] => answer(c._1.asInstanceOf[Any < Any], continuation(s, stack, i))
+                        case c: Loop.Continue[?] => answer(c._1.asInstanceOf[Any < Any], s, stack, i)
                         case done                => finish(done, i, stack)
                     }
                 )
@@ -88,7 +88,7 @@ object Eval:
                     done = {
                         case c: Loop.Continue2[?, ?] =>
                             stack.setState(i, c._1)
-                            answer(c._2.asInstanceOf[Any < Any], continuation(s, stack, i))
+                            answer(c._2.asInstanceOf[Any < Any], s, stack, i)
                         case done => finish(done, i, stack)
                     }
                 )
@@ -145,10 +145,18 @@ object Eval:
             done = a => k(complete(h, st, a), Arrow.id)
         )
 
-    // a settled answer goes into the continuation; a pending answer is region currency: it runs under
-    // this handler with the interior gone from the stack, and the continuation puts the interior back
-    // around the remainder, because it is the remainder's wrapper
-    private def answer(a: Any < Any, k: Arrow[Any, Any, Any]): Any < Any =
+    // a settled answer goes into the operation's own arrow with the interior left on the stack, which
+    // costs nothing; a pending answer is region currency: it runs under this handler with the interior
+    // gone from the stack, and the continuation puts the interior back around the remainder, because
+    // it is the remainder's wrapper
+    private def answer(a: Any < Any, s: Susp, stack: Stack, i: Int): Any < Any =
+        a.lower(
+            pending = kyo => Kyo.Defer(kyo, continuation(s, stack, i)),
+            done = x => s.cont(x)
+        )
+
+    // the same for an answer whose continuation is already a value, as in a parked outcome
+    private def answered(a: Any < Any, k: Arrow[Any, Any, Any]): Any < Any =
         a.lower(pending = Kyo.Defer(_, k), done = k(_))
 
     // a clause that suspends before its outcome runs outside its region: the region and its interior
@@ -162,8 +170,8 @@ object Eval:
         Kyo.Defer(
             clause,
             Arrow.Transform[Any, Any, Any] {
-                case c: Loop.Continue[?]     => inside(h, st, cont)(answer(c._1.asInstanceOf[Any < Any], k))
-                case c: Loop.Continue2[?, ?] => inside(h, c._1, cont)(answer(c._2.asInstanceOf[Any < Any], k))
+                case c: Loop.Continue[?]     => inside(h, st, cont)(answered(c._1.asInstanceOf[Any < Any], k))
+                case c: Loop.Continue2[?, ?] => inside(h, c._1, cont)(answered(c._2.asInstanceOf[Any < Any], k))
                 case done                    => cont(done, Arrow.id)
             }
         )
