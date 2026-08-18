@@ -1,7 +1,6 @@
 package kyo.proto
 
 import kyo.Frame
-import kyo.Loop
 import kyo.Span
 import kyo.bug
 import scala.annotation.tailrec
@@ -27,12 +26,13 @@ object Eval:
     private given Frame = Frame.internal
 
     private def loop[A](v: A < Any): A =
-        val stack = new Stack
+        val stack = Stack.current()
+        val base  = stack.size
         @tailrec def go(cur: Any < Any): Any =
             cur.lower(
-                pending = kyo => go(step(kyo, stack)),
+                pending = kyo => go(step(kyo, stack, base)),
                 done = value =>
-                    if stack.isEmpty then value
+                    if stack.size == base then value
                     else
                         val i = stack.size - 1
                         if stack.marked(i) then
@@ -43,7 +43,8 @@ object Eval:
                             go(cont(complete(handler, state, value), Arrow.id))
                         else go(stack.pop()(value))
             )
-        go(v).asInstanceOf[A]
+        try go(v).asInstanceOf[A]
+        finally stack.truncate(base)
     end loop
 
     private def complete(h: Handler, state: Any, v: Any): Any < Any =
@@ -53,15 +54,11 @@ object Eval:
             case hs: LoopSt @unchecked => hs.complete(state, v)
 
     // Kyo[Any, Nothing] is the computation of any row, the type every node is a subtype of
-    private def step(kyo: Kyo[Any, Nothing], stack: Stack): Any < Any =
+    private def step(kyo: Kyo[Any, Nothing], stack: Stack, base: Int): Any < Any =
         kyo match
-            case c: Kyo.Continue[Any, Any, Any, Any] @unchecked =>
-                if c.contB ne Arrow.Id then stack.push(c.contB)
-                if c.contA ne Arrow.Id then stack.push(c.contA)
-                c.value
             case d: Kyo.Defer[Any, Any, Any, Any] @unchecked =>
-                if d.contB ne Arrow.Id then stack.push(d.contB)
-                if d.contA ne Arrow.Id then stack.push(d.contA)
+                stack.push(d.contB)
+                stack.push(d.contA)
                 d.value
             case p: Kyo.Park[Any, Any, Any] @unchecked =>
                 stack.pushAll(p.entries, p.handlers, p.states)
@@ -73,10 +70,10 @@ object Eval:
                 // erasure: E is Nothing in the pattern, so the row of h.v reads as Nothing
                 h.v.asInstanceOf[Any < Any]
             case s: Susp @unchecked =>
-                dispatch(s, stack)
+                dispatch(s, stack, base)
 
-    private def dispatch(s: Susp, stack: Stack): Any < Any =
-        val i = stack.find(s.tag.erased)
+    private def dispatch(s: Susp, stack: Stack, base: Int): Any < Any =
+        val i = stack.find(s.tag.erased, base)
         if i < 0 then bug(s"unhandled suspension: $s")
         stack.handler(i) match
             case hc: Cont @unchecked =>
@@ -130,13 +127,13 @@ object Eval:
     private def answer(a: Any < Any, i: Int, s: Susp, stack: Stack): Any < Any =
         a.lower(
             pending = k =>
-                if stack.size == i + 1 then Kyo.Continue(k, s.cont)
+                if stack.size == i + 1 then Kyo.Defer(k, s.cont)
                 else
                     val entries  = stack.copyEntries(i + 1)
                     val handlers = stack.copyHandlers(i + 1)
                     val states   = stack.copyStates(i + 1)
                     stack.truncate(i + 1)
-                    Kyo.Continue(k, s.cont, restore(entries, handlers, states))
+                    Kyo.Defer(k, s.cont, restore(entries, handlers, states))
             ,
             done = x => s.cont(x)
         )
@@ -154,10 +151,10 @@ object Eval:
         stack.truncate(i)
         def rebuild(states: States, a: Any < Any): Any < Any =
             a.lower(
-                pending = k => new Kyo.Park(rEntries, rHandlers, states, Kyo.Continue(k, s.cont, restore(iEntries, iHandlers, iStates))),
+                pending = k => new Kyo.Park(rEntries, rHandlers, states, Kyo.Defer(k, s.cont, restore(iEntries, iHandlers, iStates))),
                 done = x => new Kyo.Park(rEntries, rHandlers, states, park(iEntries, iHandlers, iStates, s.cont(x)))
             )
-        Kyo.Continue(
+        Kyo.Defer(
             clause,
             Arrow.Transform[Any, Any, Any] {
                 case c: Loop.Continue[?]     => rebuild(rStates, c._1.asInstanceOf[Any < Any])

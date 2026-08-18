@@ -10,35 +10,9 @@ sealed abstract class Kyo[+A, -S]
 
 object Kyo:
 
-    abstract class Continue[A, B, +C, -S] extends Kyo[C, S]:
-        def value: Kyo[A, S]
-        def contA: Arrow[A, B, S]
-        def contB: Arrow[B, C, S]
-    end Continue
-
-    object Continue:
-
-        def apply[A, B, C, S](
-            _value: Kyo[A, S],
-            _contA: Arrow[A, B, S]
-        ): Kyo[B, S] =
-            new Continue[A, B, B, S]:
-                def value = _value
-                def contA = _contA
-                def contB = Arrow.id[B]
-
-        def apply[A, B, C, S](
-            _value: Kyo[A, S],
-            _contA: Arrow[A, B, S],
-            _contB: Arrow[B, C, S]
-        ): Kyo[C, S] =
-            new Continue[A, B, C, S]:
-                def value = _value
-                def contA = _contA
-                def contB = _contB
-    end Continue
-
-    /** A settled value with its continuations still to run: how a strict step past the safepoint budget is deferred. */
+    /** `value` then `contA` then `contB`. The value is currency, pending or settled: a pending input deferred behind a transform, and a
+      * strict step past the safepoint budget, are the same node.
+      */
     abstract class Defer[A, B, +C, -S] extends Kyo[C, S]:
         def value: A < S
         def contA: Arrow[A, B, S]
@@ -46,6 +20,15 @@ object Kyo:
     end Defer
 
     object Defer:
+
+        def apply[A, B, S](
+            _value: A < S,
+            _contA: Arrow[A, B, S]
+        ): Kyo[B, S] =
+            new Defer[A, B, B, S]:
+                def value = _value
+                def contA = _contA
+                def contB = Arrow.id[B]
 
         def apply[A, B, C, S](
             _value: A < S,

@@ -2,14 +2,18 @@ package kyo.proto
 
 import kyo.Frame
 import language.implicitConversions
+import scala.util.NotGiven
 
 opaque type <[+A, -S] = A | Kyo[A, S] | Nested[A]
 
 object `<`:
     implicit private[proto] def fromKyo[A, S](k: Kyo[A, S]): A < S = k
 
-    // a box lifted again is boxed again, so each level of nesting is one Nested and lower strips one
-    implicit def lift[A](v: A): A < Any =
+    // the one lift. A box lifted again is boxed again, so each level of nesting is one Nested and
+    // lower strips one. A statically pending value never lifts implicitly: inference would nest a
+    // computation where a merged row was meant (issue 903), and a generic function is the way to
+    // hold a computation as a value on purpose
+    implicit def lift[A](v: A)(using NotGiven[A <:< (Any < Nothing)]): A < Any =
         v match
             case v: (Kyo[?, ?] | Nested[?]) => Nested(v)
             case _                          => v

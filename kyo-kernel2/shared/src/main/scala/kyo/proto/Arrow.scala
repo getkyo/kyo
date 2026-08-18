@@ -16,10 +16,12 @@ end Arrow
 object Arrow:
 
     class Id[A] extends Transform[A, A, Any]:
-        def frame                                                   = Frame.internal
-        def apply(v: A): A < Any                                    = v
-        override def apply[C, S2](v: A < S2, next: Arrow[A, C, S2]) = next(v, Arrow.id)
-        override def chain[C, S2](f: Arrow[A, C, S2])               = f
+        def frame                = Frame.internal
+        def apply(v: A): A < Any = v
+        override def apply[C, S2](v: A < S2, next: Arrow[A, C, S2]) =
+            // next eq Id says C = A; the type system cannot carry that
+            if next eq Id then v.asInstanceOf[C < S2] else next(v, Arrow.id)
+        override def chain[C, S2](f: Arrow[A, C, S2]) = f
     end Id
 
     object Id extends Id[Any]
@@ -37,7 +39,7 @@ object Arrow:
                 def apply(v: A) = f(v)
                 def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]) =
                     v.lower(
-                        pending = Kyo.Continue(_, this, next),
+                        pending = Kyo.Defer(_, this, next),
                         done = b =>
                             // the strict arm runs inside the safepoint budget; past it the settled
                             // step is deferred, so deep strict recursion continues on the
@@ -60,7 +62,7 @@ object Arrow:
             b(a(v), Arrow.id)
         def apply[D, S2](v: A < S2, next: Arrow[C, D, S2]) =
             v.lower(
-                pending = Kyo.Continue(_, this, next),
+                pending = Kyo.Defer(_, this, next),
                 done = a(_, b.chain(next))
             )
 
