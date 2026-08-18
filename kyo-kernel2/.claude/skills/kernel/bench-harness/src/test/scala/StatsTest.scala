@@ -62,6 +62,17 @@ class StatsTest extends Test[Any]:
     check("a difference beyond the leg error still classifies", Stats.classify(bigWithError, alpha, 2)._1 == Verdict.Regressed,
         s"${Stats.classify(bigWithError, alpha, 2)._1}")
 
+    section("which lever tightens the threshold (item 6)")
+    // withError's own reported error (5.2%) exceeds the tight between-leg spread, so the floor sets the threshold: more legs cannot move
+    // it, only more iterations per fork. tightSpread carries no leg error, so the between-leg spread sets it and more legs help
+    check("a floor-bound row is marked so", Stats.threshold(withError, alpha, 2).exists(_.floorBound), s"${Stats.threshold(withError, alpha, 2)}")
+    check("and its advice is more iterations per fork",
+        Stats.threshold(withError, alpha, 2).exists(_.lever.contains("iterations per fork")),
+        Stats.threshold(withError, alpha, 2).map(_.lever).getOrElse(""))
+    check("a spread-bound row is not floor-bound", Stats.threshold(tightSpread, alpha, 2).exists(!_.floorBound))
+    check("and its advice is more legs", Stats.threshold(tightSpread, alpha, 2).exists(_.lever.contains("more legs")),
+        Stats.threshold(tightSpread, alpha, 2).map(_.lever).getOrElse(""))
+
     section("which way is down is the row's mode, not the classifier's assumption")
     // the same real series read as throughput: 6.10 -> 6.40 ops per unit of time is more work
     // done, and the classifier called it a regression for as long as `diff < 0` meant faster

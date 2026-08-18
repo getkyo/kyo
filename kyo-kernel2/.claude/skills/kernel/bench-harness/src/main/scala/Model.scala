@@ -372,8 +372,20 @@ object Model:
       * that cannot see anything, and a harness unable to say how small an effect it would have caught is not entitled to call a row
       * unchanged.
       */
-    case class Resolution(percent: Double, absolute: Double, df: Int, alpha: Double) derives Schema:
+    case class Resolution(percent: Double, absolute: Double, df: Int, alpha: Double, floorBound: Boolean = false) derives Schema:
         def show: String = f"detectable at +-${percent}%.2f%% (df=$df, alpha=$alpha%.5f)"
+
+        /** Which lever tightens this threshold, which is the question a flat row actually raises.
+          *
+          * The threshold is `max(t·se, ownError·mean)`. When the legs' own reported error set it (`floorBound`), more legs cannot move it
+          * at all, only more iterations per fork, which lowers each leg's own error; the advice that said "more legs" was backwards for
+          * these rows. When the between-leg spread set it, more legs, or a quieter machine, are what tighten it.
+          */
+        def lever: String =
+            if floorBound then
+                "more iterations per fork: this is bounded by each leg's own reported error, which more legs cannot lower"
+            else
+                "more legs, or a quieter machine: this is bounded by the between-leg spread"
 
     /** A row's movement between two runs, together with whether anything in the evidence moved with it.
       *

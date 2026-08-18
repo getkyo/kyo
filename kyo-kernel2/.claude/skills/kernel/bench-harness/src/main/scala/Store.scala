@@ -340,8 +340,12 @@ object Report:
                         "error. These legs were not replicated, so this bounds the result without estimating the spread; " +
                         "a replicated bracket would give a real threshold and this does not."
                 else
+                    // the worst row's own lever, not a blanket "more legs": a floor-bound row is tightened only by more iterations per
+                    // fork, and telling its reader to add legs is the advice item 6 exists to stop
+                    val worstRes = bounded.maxBy(_.percent)
                     f"\nEvery flat row below is flat to within its own resolution, at worst +-${worst}%.2f%% " +
-                        f"(alpha ${bounded.head.alpha}%.5f after correcting for ${c.deltas.size} rows, df ${bounded.head.df})."
+                        f"(alpha ${bounded.head.alpha}%.5f after correcting for ${c.deltas.size} rows, df ${bounded.head.df}). " +
+                        s"To resolve the widest of them: ${worstRes.lever}."
             else if unbounded > 0 then
                 // these rows are not flat: with one leg per arm there is no spread to estimate a
                 // threshold from, so every row is unresolved. The previous text called them "flat rows",

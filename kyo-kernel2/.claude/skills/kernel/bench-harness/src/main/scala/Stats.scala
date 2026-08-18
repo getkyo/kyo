@@ -166,8 +166,12 @@ object Stats:
             val t = tCritical(r.degreesOfFreedom, alpha)
             // never tighter than the legs' own reported uncertainty: a threshold below that
             // classifies the measurement's own error as a result
-            val abs = Math.max(t * se, r.ownError * r.controlMean)
-            Resolution(if r.controlMean == 0.0 then 0.0 else abs / r.controlMean * 100, abs, r.degreesOfFreedom, alpha)
+            val stat  = t * se
+            val floor = r.ownError * r.controlMean
+            val abs   = Math.max(stat, floor)
+            // which term won decides which lever tightens the threshold, so the report can stop
+            // telling a floor-bound row to add legs, which cannot move it
+            Resolution(if r.controlMean == 0.0 then 0.0 else abs / r.controlMean * 100, abs, r.degreesOfFreedom, alpha, floorBound = floor >= stat)
         }
 
     /** Classifies one row against its own threshold. A row whose spread cannot be estimated is unresolved, never flat. */

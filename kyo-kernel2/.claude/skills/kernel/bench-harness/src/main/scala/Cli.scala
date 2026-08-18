@@ -319,9 +319,7 @@ object BenchPlan extends KyoCaseApp[PlanOpts]:
                 if blind.isEmpty then f"\nEvery row can resolve ±${opts.target}%.1f%% at this configuration."
                 else
                     f"\n\u26a0\ufe0f  ${blind.size} row(s) cannot resolve ±${opts.target}%.1f%% and will report flat whatever happens:\n" +
-                        blind.map(f => s"  - ${f.row}").mkString("\n") +
-                        "\n\nMore forks will not help: calibration showed tripling them moved the resolution by 0.05 points, " +
-                        "because the variance is between legs rather than within them. More legs, or a quieter machine."
+                        blind.map(f => s"  - ${f.row}: ${f.lever}").mkString("\n")
             )
         yield ()
         )

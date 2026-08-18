@@ -33,9 +33,16 @@ object Plan:
         resolvable: Double,
         fromReplicates: Boolean,
         /** True when the spread came from one arm only, which biases the forecast optimistic. */
-        oneArm: Boolean = false
+        oneArm: Boolean = false,
+        /** True when the leg's own reported error, not the between-leg spread, set the resolution: more legs cannot move it, only more
+          * iterations per fork. A row this holds for stays blind to a target below its floor however many legs are planned. */
+        floorBound: Boolean = false
     ) derives Schema:
         def canSee(target: Double): Boolean = target >= resolvable
+
+        def lever: String =
+            if floorBound then "more iterations per fork (bounded by each leg's own error, which more legs cannot lower)"
+            else "more legs, or a quieter machine (bounded by the between-leg spread)"
 
         def show: String =
             val basis =
@@ -111,7 +118,7 @@ object Plan:
                 // uncertainty would classify that uncertainty as a result. Forecasting without it
                 // predicts a resolution the real comparison will never award.
                 val ownError = priors.flatMap(_.row(name)).map(_.relativeError).maxOption.getOrElse(0.0)
-                Forecast(name, rel, legs, Math.max(t * se, ownError), replicated, oneArm)
+                Forecast(name, rel, legs, Math.max(t * se, ownError), replicated, oneArm, floorBound = ownError >= t * se)
             }.sortBy(-_.resolvable)
         )
 

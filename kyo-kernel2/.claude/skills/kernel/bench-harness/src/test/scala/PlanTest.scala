@@ -38,6 +38,17 @@ class PlanTest extends Test[Any]:
             controls = runs.filter(_.label.startsWith("control")).sortBy(_.label)
             variants = runs.filter(_.label.startsWith("variant")).sortBy(_.label)
 
+            // item 6, forecast side: three priors that agree to the digit but each reports a 5% own error. The between-leg spread is
+            // zero, so the leg's own error is the binding term and more legs cannot move it; the forecast must say so
+            tight = Chunk(
+                BenchTest.leg("control", Seq(("r", 100.0, 5.0, 640.0))),
+                BenchTest.leg("control", Seq(("r", 100.0, 5.0, 640.0))),
+                BenchTest.leg("control", Seq(("r", 100.0, 5.0, 640.0)))
+            )
+            fc = Plan.forecast(tight, 5, Bench.FamilyAlpha)
+            _  = check("a tight-spread, high-own-error forecast is floor-bound", fc.exists(f => f.row == "r" && f.floorBound), fc.map(f => s"${f.row}=${f.floorBound}").mkString)
+            _  = check("and its lever is more iterations per fork", fc.find(_.row == "r").exists(_.lever.contains("iterations per fork")), fc.find(_.row == "r").map(_.lever).getOrElse(""))
+
             _ = assert(failed.isEmpty, "claims that did not hold:\n" + failed.mkString("\n"))
         yield ()
     }
