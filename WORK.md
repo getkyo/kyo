@@ -693,6 +693,22 @@ Everything left in the harness stream needs one of two things I cannot supply al
   contents, touches the measurement path); item 4's "name the C3 mechanism" wording; the five rulings
   in task 24 (C4, DIS-3, IN-3, C3, DIS-4) and 0e.
 
+**Diagnosed the failing PendingTest (owner asked, investigate-and-report, no edits).** The one enabled
+case "eval returns a pending payload without running it" fails with `NotImplementedError` at
+`Eval.scala:77` (the terminal `curr.lower(pending = _ => ???, done = ...)`): the trampoline drained the
+stack but `curr` was still pending. Root cause: `Handler.apply[C,S2](v, next) = Kyo.Defer(v,
+this.chain(next))` (`Handler.scala:9`) unconditionally DEFERS and never completes. `Eval`'s `done`
+branch drives a settled value into whatever it pops via the two-arg `head(curr, tail)`; when `head` is
+the region's handler, that calls `Handler`'s two-arg apply, which returns `Defer(value,
+Chain(handler, tail))` instead of `complete(value)`. In the test: after `Arrow(_+1)(41)=42`, the next
+`done` pops the handler, `handler(42, id)` = `Defer(42, handler)`, the stack is now empty so the loop
+ends, and the terminal `lower` hits `???` on the pending Defer. This breaks EVERY region completion,
+not just this test (the old Eval completed via the one-arg `pop()(v)`; the rewrite to `head(curr,
+tail)` exposed that `Handler.apply` has no completing branch). Recommended fix (to the owner): make
+`Handler.apply(v, next)` a proper arrow two-arg apply, `v.lower(pending = Kyo.Defer(_, this, next),
+done = a => next(this.apply(a), Arrow.id))`, so a settled input completes (`this.apply(a)` is the
+one-arg complete). Alternative: special-case a `Handler` pop in `Eval`'s `done` branch. No edits made.
+
 ## OPEN
 
 **Rulings the kyo.proto stream is waiting on (2026-08-18), each with its recorded default:**
