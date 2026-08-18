@@ -651,8 +651,12 @@ jit and cpu data keyed on the old package names is now stale**.
    estimates lean the candidate's way on the three answer rows (`statefulAnswers` 289 → 206,
    `handleLoopAnswersInPlace` 279 → 239, `suspensionFusesContinuation` 51 → 43) and the other way on
    the map rows (+8% to +17%), none of it resolved. Inconclusive is the result; the bracket is to be
-   rerun on a quiet machine (`uptime` under 2 before launching). Default unchanged: not landed until
-   ruled.
+   rerun on a quiet machine (`uptime` under 2 before launching). **Ruled and landed** (`2da854f5aa`,
+   10:23): the owner asked which side should be the trait, took the recommendation (`Kyo` a class,
+   `Arrow`/`Transform` traits) and said "apply the patch"; `kyo.proto.*` 178/178 with it. The
+   quiet-machine bracket of the two trait sides is still owed as the measured proof; the kernel-vs-proto
+   bracket at the new HEAD (task #37) is the next measurement. The owner is editing `kyo/proto` sources
+   now (`Pending.scala` uncommitted, theirs); no sbt and no main-source edits from here until they say.
 2. **The strict `map` allocating its `Transform` before knowing the input is settled** (24 B per map,
    +184,024 to +240,024 B/op on five rows). Default: unchanged, it is the owner's `map` shape; the
    kernel's shape (`Transform` only in the pending arm and the rescue) is the candidate, blocked on
