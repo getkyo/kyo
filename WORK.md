@@ -565,7 +565,14 @@ in the throwaway) to `reviews/bench/ab-0818-f3-wi12-arrowtrait-9ad929fccc.*`. Th
 both (session `proto-ab-0818`), `BenchCompare` 3 vs 3 with HEAD as control, report to
 `reviews/bench/ab-0818-f3-wi12-report.md`, ledger. Machine load 3.5 to 4 from other users' processes
 during this; the A/A null within each arm is the guard, drift between arms stays assumed. The
-kernel-vs-proto bracket at HEAD (task #37) follows the ruling this A/B is for.
+kernel-vs-proto bracket at HEAD (task #37) follows the ruling this A/B is for. Two things seen while
+launching it, both known and both handled by rerunning: after `Jmh/clean` the first invocation runs
+every fork with no iterations and writes `[ ]` (arm 1 relaunched at 09:51, running properly), and a
+class-to-trait flip needs the clean or the stale generated classes throw
+`IncompatibleClassChangeError` (arm 2's script cleans, runs, and reruns if the json is empty). The
+`ArrowEffectTest` port is done as far as the kernel corpus allows (`577ed7635b`): everything live
+except what the kernel keeps parked itself (`handleFirst`, `dispatchFirst`, `handleCatching`,
+`handlePartial`).
 
 **Third file, third real bug, and the added coverage localised it exactly.** A handler's clause is the
 handler's own code and its effects belong to the handlers *outside* the region. This kernel answers a
