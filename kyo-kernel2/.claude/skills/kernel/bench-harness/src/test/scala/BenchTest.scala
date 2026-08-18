@@ -593,6 +593,26 @@ class BenchTest extends Test[Any]:
         check("and legs with no collapsed view say nothing", !Report.render(cmp).contains("Allocation moved at these sites"))
     }
 
+    section("a lossy allocation parse blocks the run")
+    locally {
+        // one recording: the flat table counts 1000 samples of the class, the collapsed view must
+        // account for the same 1000. When it accounts for fewer the parse dropped lines (the failure
+        // this file has had four times), and the per-method byte figures are then built on a partial count
+        def withAlloc(label: String, flat: Long, collapsed: Long) =
+            leg(label, base).copy(
+                alloc = Chunk(AllocSite("kyo.kernel.proto.Nested", 640000L, flat)),
+                allocByMethod = Chunk(AllocByMethod("kyo.kernel.proto.Nested", "kyo.kernel.proto.Eval$.dispatch", collapsed))
+            )
+        val lossy   = Bench.compare(withAlloc("c", 1000L, 1000L), withAlloc("v", 1000L, 700L))
+        val lossyBs = Report.blockers(lossy)
+        check("the disagreement is a blocker", lossyBs.exists(b => b.contains("parse lost") && b.contains("Nested")), lossyBs.mkString(" | "))
+        check("naming the arm", lossyBs.exists(_.contains("variant")), lossyBs.mkString(" | "))
+        val whole  = Bench.compare(withAlloc("c", 1000L, 1000L), withAlloc("v", 1000L, 1000L))
+        check("a conserved parse blocks nothing", !Report.blockers(whole).exists(_.contains("parse lost")), Report.blockers(whole).mkString(" | "))
+        // a timing leg carries neither view; conservation must stay silent rather than see 0 collapsed
+        check("a leg with no allocation views is not flagged", !Report.blockers(cmp).exists(_.contains("parse lost")))
+    }
+
     section("what two shas cannot say")
     // the skill's worked example: a node-layout change and a currency hoist shipped together, the
     // bundle was faster, the win was credited first to one and then to the other, and both

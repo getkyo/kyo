@@ -148,7 +148,24 @@ object Report:
                 s"${d.row}: control measured as ${d.control.mode} in ${d.control.unit}, variant as ${d.variant.mode} in ${d.variant.unit}; " +
                     "the two are not the same measurement and no delta exists between them. Re-run one side in the other's mode and unit."
             }
-        arm("control", c.allControlLegs) ++ arm("variant", c.allVariantLegs) ++ mismatched
+        // the flat allocation table and the collapsed per-method view come from one recording, so
+        // per class they must account for the same samples. When they disagree the parse dropped
+        // lines, which is the failure this file has had four times, and every byte figure the report
+        // attributes to a method is then built on an incomplete count. Gated on both views present so
+        // a timing leg, which has neither, does not false-alarm.
+        val allocLost =
+            def scan(name: String, legs: Chunk[Run]): Chunk[String] =
+                Chunk.from(legs.zipWithIndex).flatMap { (leg, k) =>
+                    if leg.alloc.isEmpty || leg.allocByMethod.isEmpty then Chunk.empty
+                    else
+                        val where = if legs.size == 1 then name else s"$name leg ${k + 1} of ${legs.size}"
+                        Bench.allocConservation(leg.alloc, leg.allocByMethod).map(m =>
+                            s"$m ($where): the flat allocation table and the collapsed view disagree, so the parse lost " +
+                                "samples and the per-method byte figures are unreliable."
+                        )
+                }
+            scan("control", c.allControlLegs) ++ scan("variant", c.allVariantLegs)
+        arm("control", c.allControlLegs) ++ arm("variant", c.allVariantLegs) ++ mismatched ++ allocLost
     end blockers
 
     /** What the A/A null establishes, and what it refuses.
