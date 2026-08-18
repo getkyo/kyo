@@ -97,20 +97,37 @@ object Eval:
 
     // the operation's continuation: its own arrow with the interior above region `i` composed onto
     // it, innermost first. Consecutive continuations chain into one arrow, as they compose; a region
-    // wraps what is above it as a Handle entered at the state it had. The stack is cut back to the
-    // region: the continuation is a value now, and nothing of it stays behind
+    // wraps what is above it as a Handle entered at the state it had. The interior is applied to the
+    // remainder as a computation, with the two-argument apply: a pending remainder is deferred behind
+    // the whole interior in one node, so it goes back on the stack as one entry, and the next capture
+    // above this region folds one entry, not every continuation again (that is what kept
+    // trailingMapsStayLinear linear, and what the one-argument apply, which decomposes a chain,
+    // undid). The stack is cut back to the region: the continuation is a value now, and nothing of
+    // it stays behind
     private def continuation(s: Susp, stack: Stack, i: Int): Arrow[Any, Any, Any] =
-        @tailrec def loop(j: Int, acc: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
-            if j <= i then acc
-            else if stack.marked(j) then
-                val h    = stack.handler(j)
-                val st   = stack.state(j)
-                val cont = stack(j)
-                loop(j - 1, Arrow.Transform[Any, Any, Any](o => inside(h, st, cont)(acc(o))))
-            else loop(j - 1, acc.chain(stack(j)))
-        val k = loop(stack.size - 1, s.cont)
-        stack.truncate(i + 1)
-        k
+        val top = stack.size - 1
+        if top <= i then s.cont
+        else
+            // walking up from the region: `outer` wraps a computation in everything below the
+            // current entry, and `run` gathers consecutive continuations, each prepended so the run
+            // chains right-deep with the innermost first. Right-deep matters: applying it alternates
+            // through Transform's budgeted strict arm, so a long run unwinds onto the evaluator's
+            // stack instead of the Java stack, as fold did before
+            def flush(outer: (Any < Any) => Any < Any, run: Arrow[Any, Any, Any]): (Any < Any) => Any < Any =
+                if run eq Arrow.Id then outer else x => outer(run(x, Arrow.id))
+            @tailrec def loop(j: Int, outer: (Any < Any) => Any < Any, run: Arrow[Any, Any, Any]): (Any < Any) => Any < Any =
+                if j > top then flush(outer, run)
+                else if stack.marked(j) then
+                    val h     = stack.handler(j)
+                    val st    = stack.state(j)
+                    val cont  = stack(j)
+                    val below = flush(outer, run)
+                    loop(j + 1, x => below(inside(h, st, cont)(x)), Arrow.id)
+                else loop(j + 1, outer, stack(j).chain(run))
+            val wrap = loop(i + 1, x => x, Arrow.id)
+            stack.truncate(i + 1)
+            Arrow.Transform[Any, Any, Any](o => wrap(s.cont(o)))
+        end if
     end continuation
 
     // a computation inside a region: pending, it is the region's body; settled, the region completes on it
