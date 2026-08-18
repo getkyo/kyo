@@ -806,12 +806,15 @@ analysis only, no edits from here:
   - 4: `Stack.scala` iterative `push` (`count`/`fill` `@tailrec`, first leaf on top) plus `ensure(n)`
     replacing `grow` (doubles until n fit, re-bases the ring). Assumes right-deep chains (what `dump`
     and `Handler.chain` build).
-  Item 2 restated dump-free: `.map` -> `.lower` so the dispatch inlines into `loop` as a tail call
-  (interior stays on the stack, nothing captured, stack-safe for deep sequential). Open decision put
-  to the owner: the `pending` arm is a clause that suspends before returning its `Outcome`; handling
-  it forces capturing the interior, so the lightweight contract is "a handleLoop clause must not
-  suspend" (`pending = bug`), which drops the ~8 suspend-clause EvalTest cases (move to handleCont or
-  the ContextEffect encoding). Awaiting the owner's ruling on that contract before applying item 2.
+  Item 2 solved by the owner (my `bug`/disallow framing was wrong; suspensions inside a HandlerLoop
+  must work). Their fix in `Eval.scala`: keep `.map`, but let it yield the value (`r._1` for
+  `Loop.Continue`, or the payload after `truncate(pos + 1)` for `Loop.done`) and move `loop(v, stack,
+  slot)` out to the tail. That makes `loop` a tail self-call (deep sequential stack-safe; budget-drain
+  yields a `Defer` the trampoline re-drives) AND drives a suspending `run` against the stack: when
+  `run` suspends, `.map` yields `Defer(suspension, dispatch)` and `loop` drives it, an outer handler
+  answers, the dispatch runs when it settles, the interior stays on the stack with nothing captured.
+  Checked the `truncate(pos + 1)`-at-deferred-time case (Loop.done after a suspension): correct,
+  because the done arm pops the dispatch arrow before applying it, so the handler is back at depth pos.
   Circular-buffer stack itself is coherent (`[head, tail)`, depth 0 = top, right-deep `dump(pos)`,
   `HandlerCont` correct). No edits from here; Fable's review at `reviews/HANDLER-AS-ARROW-REVIEW.md`.
 
