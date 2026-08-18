@@ -314,8 +314,42 @@ handed the suspension back as a map result, so `lift` now carries the kernel's
 scalafmt disabled so the owner's other in-flight files stay untouched. **Bench: `ProtoKernelBench`
 repointed at `kyo.kernel.*` (its import was the stale `kyo.kernel.proto`), and `YetAnotherProtoBench`
 added over `kyo.proto` with the same rows and depths (`handleLoopFusesContinuation` absent, no
-`handleLoopWith` yet); a `-f 1` screen of both classes in one session is running, JSON to
-`reviews/bench/screen-0818-f1.json`, to be ingested and compared through the harness, never by hand.**
+`handleLoopWith` yet).**
+
+The first `-f 1` screen (`reviews/bench/screen-0818-f1.json`, this working tree) ran only the
+`kyo.proto` class: the kernel class threw `NotImplementedError` from `kyo.kernel.internal.Eval.apply`,
+which is `???` in the owner's in-flight edit, so the control cannot be measured in this tree. Its
+raw rows are observations, not verdicts, and one of them named a mechanism on sight:
+`trailingMapsStayLinear` at 209 ms/op against tens of microseconds on the other rows. Every
+`handleCont` capture copied the whole interior into spans and a `Park`, so a growing run of trailing
+continuations made each dispatch O(interior). Fixed by composition (`35d4cbdba0`): an interior with
+no region in it folds into one arrow, innermost first, and the capture is `o => k(s.cont(o), id)`;
+the same at a pending answer's interior; an interior holding a region keeps the Park path, since only
+regions need the stack. EvalTest 40/40 after. The control-and-variant screen is now running in a
+detached throwaway worktree at HEAD `35d4cbdba0` (`.claude/worktrees/bench-sweep-proto`, kernel
+intact there), one JMH invocation over both classes, JSON to `reviews/bench/screen-0818-f1-head.json`,
+to be split per class, ingested (`declaredRows` 15 and 14) and compared through the harness. `-f 1` is
+a screen; any claim needs `-f 3`.
+
+**The screen, through the harness (`reviews/bench/screen-0818-f1-head-report.md`, runs
+`kernel-35d4cbdba0-387a8e31` and `proto-35d4cbdba0-c5580ff6` in session `proto-screen-0818`).** The
+harness's own framing: one control leg against one variant, `-f 1`, no threshold estimated, timing
+only, so diagnostic and not a claim; one leg (`handleLoopAnswersInPlace`, variant) never reached
+steady state, so it says the verdicts are not readable as such. Read as a screen: the `kyo.proto`
+kernel is **slower on 13 of 14 rows**, from `fusionAllocatesNothing` +5.2% through `idleHandler` +31%,
+`uncachedValues` +38%, `nestedPayloads` +42%, `emittingClauses` +42%, `statefulAnswers` +43%,
+`suspensionFusesContinuation` +43%, `trailingMaps` +67% (no longer quadratic, still slow),
+`suspensionBaseline` +80%, `handleLoopAnswersInPlace` +100%; and **faster on one**,
+`evalFixedOverhead` -46%. Every mechanism is "none found": nothing here has been profiled. Per the
+skill this is unfinished work, not a tradeoff, and the next step is the evidence ladder on the two
+extremes and the one win (`-prof gc` for B/op, then `PrintInlining` for `lower`, `Transform.apply`,
+`lift` with its `NotGiven`, `dispatch`, the resume lambda), and only then a change, measured at
+`-f 3` in the throwaway worktree (`.claude/worktrees/bench-sweep-proto`, kept for that). Candidate
+mechanisms to test, not conclusions: `lift` is a runtime method with an `instanceof` where the
+kernel's macro emits a bare cast; a pending step allocates a `Defer` where the kernel fuses into
+`SuspendWith`; `suspendWith` allocates the `Transform` for `f`; the `handleCont` resume is a lambda
+per dispatch where the kernel passed the arrow itself; `Loop.continue` crosses two representation
+casts.
 
 **Third file, third real bug, and the added coverage localised it exactly.** A handler's clause is the
 handler's own code and its effects belong to the handlers *outside* the region. This kernel answers a
