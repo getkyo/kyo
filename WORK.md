@@ -787,6 +787,17 @@ analysis only, no edits from here:
   4. `Stack.push` recurses per `Chain` node (`Stack.scala:22`); a deep dumped chain re-pushed can
      overflow (Fable A7). Medium.
   5. Tests won't compile: `handleLoopState` still referenced 11/23/1, gating verification of 1-4.
+  Owner ruled (14:45): 1 done (`truncate(pos + 1)`), 5 later; asked for snippets on 2/3/4, delivered:
+  - 2: `.map` -> `.lower` in the HandlerLoop branch, dispatch (Continue -> `loop(r._1)`, done ->
+    `truncate(pos+1); loop(v)`) in the `done` arm so both are tail self-calls (fixes deep sequential
+    `EvalTest:201`). The `pending` arm is the suspend-clause piece (2b), entangled with the
+    ContextEffect state rework: either `bug(...)` if dropping those tests, or the old parked
+    construction (`dump(pos)`, drop handler, `Defer(clause, Arrow{ Continue => r._1.lower(pending = a
+    => Kyo.Handle{ value=Defer(a, Arrow(k)); handler=h; cont=id }, done = o => k(o)); done => v })`).
+    Recommended 2a now, 2b with the encoding.
+  - 3: `if pos < 0 then bug(s"unhandled suspension: ${kyo.tag}")` before the handler match (matches
+    `EvalTest:540`); partial-return via `dump()` is the alternative but doesn't fold other-tag handlers.
+  - 4: iterative `push` (count the right-deep spine, `ensure(n)`, `head -= n`, `@tailrec` fill forward).
   Circular-buffer stack itself is coherent (`[head, tail)`, depth 0 = top, right-deep `dump(pos)`,
   `HandlerCont` correct). No edits from here; Fable's review at `reviews/HANDLER-AS-ARROW-REVIEW.md`.
 
