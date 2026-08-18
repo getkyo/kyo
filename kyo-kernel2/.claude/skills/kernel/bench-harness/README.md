@@ -1,23 +1,33 @@
 # bench-harness
 
 The measurement protocol from the kernel skill, as a program rather than as bash typed fresh
-each time. Isolated on purpose: scala-cli with published kyo artifacts, no dependency on the
-repo's sbt build, which does not compile as a whole while the kernel migration is in flight.
+each time. Isolated on purpose: its own sbt build on published kyo artifacts (`1.0.0-RC6`), no
+dependency on the repo's build, so it compiles and runs while the kernel tree is red or mid-edit,
+and its sbt server (keyed on this directory) is never the one the kernel is built through. Tests
+are kyo-test suites (`kyo.test.Test`), run by `sbt test`.
 
 ```sh
-scala-cli run . --main-class BenchTest                       # guards self-check, no benchmark needed
-scala-cli run . --main-class BenchRun -- --worktree ../../../../../bench-sweep \
-    --label control --sha 36b41336fb                         # measure one leg, store it
-scala-cli run . --main-class BenchCompare -- --control <id> --variant <id>
-scala-cli run . --main-class BenchBracket -- --worktree ../../../../../bench-sweep \
-    --control <sha> --variant <sha>                          # C V C V C, with a real threshold
-scala-cli run . --main-class BenchChain -- --worktree ../../../../../bench-sweep \
-    --sha <a> --sha <b> --sha <c>                            # isolate one change per step
-scala-cli run . --main-class BenchPlan -- --from <id> --target 5
-scala-cli run . --main-class BenchIngest -- --json <f> --label <l> --sha <sha>
-scala-cli run . --main-class BenchList
-scala-cli run . --main-class BenchShow -- --id <id>
+cd kyo-kernel2/.claude/skills/kernel/bench-harness
+sbt test                                                     # every guard, statistic and parser self-check, no benchmark needed
+sbt "testOnly BenchTest"                                     # one suite
+sbt "runMain BenchRun --worktree ../../../../../bench-sweep \
+    --label control --sha 36b41336fb"                        # measure one leg, store it
+sbt "runMain BenchCompare --control <id> --variant <id>"
+sbt "runMain BenchBracket --worktree ../../../../../bench-sweep \
+    --control <sha> --variant <sha>"                         # C V C V C, with a real threshold
+sbt "runMain BenchChain --worktree ../../../../../bench-sweep \
+    --sha <a> --sha <b> --sha <c>"                           # isolate one change per step
+sbt "runMain BenchPlan --from <id> --target 5"
+sbt "runMain BenchIngest --json <f> --label <l> --sha <sha>"
+sbt "runMain BenchList"
+sbt "runMain BenchShow --id <id>"
 ```
+
+`sbt --client "..."` keeps a server warm between commands (2 to 5 s per command instead of a
+cold start); the QA mains (`QaGuards`, `QaParsers`, `QaEndToEnd`) run the same way and fail
+with an exit code. Nothing here reads the kernel build's classes except `BytecodeTest`, which
+points at an ordinary sbt output directory through `Roots.classes` (`-Dbench.classes=...` to
+move it).
 
 ## Why it collects more than timing
 

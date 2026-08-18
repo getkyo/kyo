@@ -352,10 +352,12 @@ Rules that make this hold:
 ### The harness enforces this; use it
 
 `bench-harness/` beside this file implements the protocol below as a program, so a result that
-violates it cannot be produced. It is an isolated scala-cli project on published kyo artifacts,
-deliberately independent of the repo's sbt build, which does not compile as a whole while the
-kernel migration is in flight. `scala-cli run . --main-class BenchTest` self-checks in seconds
-without running a benchmark.
+violates it cannot be produced. It is an isolated sbt project on published kyo artifacts (its own
+`build.sbt`, kyo-test suites), deliberately independent of the repo's build, so it compiles and
+runs while the kernel tree is red or mid-edit and never shares the kernel's sbt server. `sbt test`
+in that directory self-checks every guard in seconds without running a benchmark; the commands are
+`sbt "runMain BenchRun ..."`, `BenchBracket`, `BenchCompare`, `BenchIngest` and the rest, listed
+in its README.
 
 Prefer it over hand-written bash. Every guard it carries exists because typing the bracket by
 hand got that exact thing wrong and either corrupted a measurement or wasted a run. When a rule

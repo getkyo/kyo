@@ -1536,7 +1536,8 @@ without approval. No PR interaction. Commits under the owner's identity, no attr
 **After every run, the owner gets the results table in chat, with allocation columns** (time both
 sides, delta, resolution, B/op both sides or the delta, verdict icon), whatever the harness's verdict
 on validity, and the verdict stated with it (owner's rule, 2026-08-18). Report files are written
-through the exact scala-cli noise filter (`^Compiling project|^Compiled project|^WARNING:|^\[90m`),
+through the exact sbt noise filter (`^WARNING:|^\[info\]|^\[success\]`, the harness is an sbt project
+since 13:30; `[error]` lines are kept on purpose so a failed command cannot pass as a report),
 never a substring that could match report content. A JMH launch always keeps json and log, and every
 `git add -f` of them runs without error suppression. Do not launch a bracket while any build (the
 owner's sbt included) is running, and not with `uptime`'s one-minute load above 5: this machine's
