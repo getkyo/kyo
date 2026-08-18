@@ -1,6 +1,7 @@
 package kyo.proto
 
 import kyo.Const
+import kyo.Maybe
 import kyo.Tag
 import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
@@ -9,8 +10,8 @@ import scala.annotation.tailrec
   * yet (`handleWith`, `handleLoopWith`, `handleLoopStateWith`, `handlePartial`, `handleFirst`, `dispatchFirst`, `handleCatching`, park)
   * are kept with their code commented as they are ported, so the corpus is complete and the gap is visible. Ported so far: `handleLoop`,
   * `handleCont`, `handleLoopState`, `suspendWith`, the capture cases, `contracts`, `nested box`, `coverage`; `handleWith`,
-  * `handleLoopWith`, `handleLoopStateWith` as commented code; park, `handleFirst`, `dispatchFirst`, `handleCatching` and
-  * `handlePartial` are still to be transcribed as commented code.
+  * `handleLoopWith`, `handleLoopStateWith` as commented code; park live (it needs only handleCont and a stored continuation);
+  * `handleFirst`, `dispatchFirst`, `handleCatching` and `handlePartial` are still to be transcribed as commented code.
   */
 class ArrowEffectTest extends AnyFreeSpec:
 
@@ -811,6 +812,76 @@ class ArrowEffectTest extends AnyFreeSpec:
             (st, a) => a * 1000 + st
         )
         assert(Eval(r) == 85012)
+    }
+
+    "park" - {
+
+        "a clause parks by returning and resumes by rewrapping the continuation" in {
+            var ready: Maybe[Int]              = Maybe.Absent
+            var stash: Maybe[Int => Int < Ask] = Maybe.Absent
+            var polls                          = 0
+            def boundary(v: Int < Ask): Int < Any =
+                ArrowEffect.handleCont(Tag[Ask], v)(
+                    [C] =>
+                        (_, cont) =>
+                            polls += 1
+                            ready match
+                                case Maybe.Present(r) =>
+                                    ready = Maybe.Absent
+                                    cont(r)
+                                case Maybe.Absent =>
+                                    stash = Maybe(cont)
+                                    -1
+                            end match
+                    ,
+                    a => a
+                )
+            val body = ask.map(a => ask.map(b => ask.map(c => a * 100 + b * 10 + c)))
+
+            ready = Maybe(1)
+            assert(Eval(boundary(body)) == -1)
+            assert(polls == 2)
+
+            assert(Eval(boundary(stash.get.apply(2))) == -1)
+            assert(polls == 3)
+
+            assert(Eval(boundary(stash.get.apply(3))) == 123)
+            assert(polls == 3)
+        }
+
+        "a park preserves standing sibling regions" in {
+            var seen                           = List.empty[String]
+            var stash: Maybe[Int => Int < Ask] = Maybe.Absent
+            def boundary(v: Int < Ask): Int < Any =
+                ArrowEffect.handleCont(Tag[Ask], v)(
+                    [C] =>
+                        (_, cont) =>
+                            stash = Maybe(cont)
+                            -1
+                    ,
+                    a => a
+                )
+            val body: Int < (Ask & Say) = say("before").map(_ => ask.map(a => say("after").map(_ => a + 1)))
+            val inner: Int < Ask = ArrowEffect.handleLoop(Tag[Say], body)(
+                [C] =>
+                    s =>
+                        seen = s :: seen
+                        Loop.continue((): Unit < Any)
+                ,
+                a => a
+            )
+            assert(Eval(boundary(inner)) == -1)
+            assert(seen == List("before"))
+            assert(Eval(boundary(stash.get.apply(41))) == 42)
+            assert(seen == List("after", "before"))
+        }
+
+        "a union tag subsumes both effects the way regions are found" in {
+            assert(Tag[Ask].erased <:< Tag[Ask | Say].erased)
+            assert(Tag[Say].erased <:< Tag[Ask | Say].erased)
+            assert(!(Tag[Ask | Say].erased <:< Tag[Ask].erased))
+            assert(!(Tag[Say].erased <:< Tag[Ask].erased))
+        }
     }
 
     "contracts" - {
