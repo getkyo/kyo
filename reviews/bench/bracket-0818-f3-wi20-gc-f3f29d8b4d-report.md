@@ -48,9 +48,9 @@ Every flat row below is flat to within its own resolution, at worst +-41458.21% 
   - handleLoopAnswersInPlace: check allocation sites and the inlining log before proposing a mechanism
 ⚠️  This change both wins and loses. Those are two diagnoses, not one tradeoff: the loss usually turns out removable, and accepting it early ships a defect the same afternoon's work would have deleted.
 ℹ️  74% of sampled time is outside kyo.kernel. or kyo.proto, so kernel-attributable movement is a fraction of each delta above. Largest contributors:
-        4.8%  scala.runtime.BoxesRunTime.boxToInteger
-        4.3%  scala.runtime.BoxesRunTime.boxToInteger
-        3.6%  scala.runtime.BoxesRunTime.boxToInteger
+       40.9%  scala.runtime.BoxesRunTime.boxToInteger
+        2.7%  kyo.kernel.bench.YetAnotherProtoBench$.ask
+        1.8%  java.lang.Integer.valueOf
 
 🔥 CPU by row (sampled time, top frames each side):
   🟢 `evalFixedOverhead` -46.9%
