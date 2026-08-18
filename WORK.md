@@ -798,6 +798,20 @@ analysis only, no edits from here:
   - 3: `if pos < 0 then bug(s"unhandled suspension: ${kyo.tag}")` before the handler match (matches
     `EvalTest:540`); partial-return via `dump()` is the alternative but doesn't fold other-tag handlers.
   - 4: iterative `push` (count the right-deep spine, `ensure(n)`, `head -= n`, `@tailrec` fill forward).
+  Owner (15:00): item 2 rejected the dump approach ("handle loop is lightweight, no continuation
+  created"); items 3 and 4 to apply, 4 formatted with no semicolons. Applied to the working tree
+  (left uncommitted with the owner's kernel WIP, not committed on their behalf):
+  - 3: `Eval.scala:48` `if pos < 0 then bug(s"unhandled suspension: ${kyo.tag}")` before the handler
+    match.
+  - 4: `Stack.scala` iterative `push` (`count`/`fill` `@tailrec`, first leaf on top) plus `ensure(n)`
+    replacing `grow` (doubles until n fit, re-bases the ring). Assumes right-deep chains (what `dump`
+    and `Handler.chain` build).
+  Item 2 restated dump-free: `.map` -> `.lower` so the dispatch inlines into `loop` as a tail call
+  (interior stays on the stack, nothing captured, stack-safe for deep sequential). Open decision put
+  to the owner: the `pending` arm is a clause that suspends before returning its `Outcome`; handling
+  it forces capturing the interior, so the lightweight contract is "a handleLoop clause must not
+  suspend" (`pending = bug`), which drops the ~8 suspend-clause EvalTest cases (move to handleCont or
+  the ContextEffect encoding). Awaiting the owner's ruling on that contract before applying item 2.
   Circular-buffer stack itself is coherent (`[head, tail)`, depth 0 = top, right-deep `dump(pos)`,
   `HandlerCont` correct). No edits from here; Fable's review at `reviews/HANDLER-AS-ARROW-REVIEW.md`.
 
