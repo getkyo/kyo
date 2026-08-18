@@ -363,6 +363,24 @@ that the proto's out-of-line `lift` (a method with a `NotGiven` parameter, where
 emits inline) keeps alive. `evalFixedOverhead` -46% at equal allocation: a shorter path into `Eval`.
 None of this is a change yet; each is a hypothesis with its test named.
 
+**The escape-analysis experiment (`reviews/bench/gc-noea-0818-f1-head-report.md`, legs
+`kernel-noea-…-3bcd086f` / `proto-noea-…-30ce55f8`, `-XX:-DoEscapeAnalysis`, three harness
+comparisons).** Refuted the scalar-replacement reading: kernel EA-on vs EA-off is **+0 B/op** on
+`nestedPayloadsUnwrapInMaps` and on `evalFixedOverhead`, so the kernel allocates nothing there,
+replaced or not. The proto: `nestedPayloads` **+24000 B/op** with EA on, **+48024** with EA off, two
+real objects per iteration of which EA removes one; `evalFixedOverhead` **+40 B/op** with EA off (a
+24-byte object plus a 16-byte boxed Int; with EA on both vanish and the row is the -46% win, the
+whole `map` inlining away). **Mechanism named, from the source and the sizes:** the proto's `map` is
+`Arrow.Transform(f)(self, Arrow.id)`, so it allocates the anonymous `Transform` (24 bytes) *before*
+knowing the input is settled and applies it strictly afterwards; the kernel's `map` builds its
+`Transform` (`def arrow`) only in the pending arm and the rescue, and its strict arm allocates
+nothing. This is the owner's `map` shape, so the change is theirs to rule on; the candidate is
+`map = self.lower(pending = k => Defer(k, Transform(f)), done = strict f(a) inside the budget)`, the
+kernel's shape, measurable in the throwaway worktree on `nestedPayloads`, `evalFixedOverhead`,
+`fusionAllocatesNothing`, `uncachedValuesPayBoxingOnly` with `-prof gc`. Not landed. The suspension
+rows (`suspensionBaseline` +81%, `handleLoopAnswersInPlace` +104%, equal allocation) still need
+their own rung, `PrintInlining`.
+
 **Third file, third real bug, and the added coverage localised it exactly.** A handler's clause is the
 handler's own code and its effects belong to the handlers *outside* the region. This kernel answers a
 clause's effect with handlers the region's *body* installed inside it, so a user's `Say` handler wrapped
