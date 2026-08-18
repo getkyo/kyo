@@ -635,6 +635,25 @@ jit and cpu data keyed on the old package names is now stale**.
 
 ## OPEN
 
+**Rulings the kyo.proto stream is waiting on (2026-08-18), each with its recorded default:**
+
+1. **Which side is the trait** for the fused nodes: `Kyo` (HEAD `9ad929fccc`) or `Arrow`/`Transform`
+   (`reviews/bench/candidate-arrowtrait-0818.patch`). The A/B bracket is in flight; default: not landed
+   until ruled, recommendation to take the candidate if the bracket confirms the -f 1/-f 2 reads.
+2. **The strict `map` allocating its `Transform` before knowing the input is settled** (24 B per map,
+   +184,024 to +240,024 B/op on five rows). Default: unchanged, it is the owner's `map` shape; the
+   kernel's shape (`Transform` only in the pending arm and the rescue) is the candidate, blocked on
+   the nested-currency typing at `give.map(c => c)` noted earlier.
+3. **`Loop.continue` inference**: with the pure generic `continue`, a bare-value answer into an
+   `O[C] < (E & S)` slot needs `41: Int < Any`, and the `*With` shapes need `B` given by type
+   arguments (nothing else pins it). Default: annotations, per the owner's ruling.
+4. **`Eval.partial` / preemption** in the proto: absent; the corpus cases that need it are commented.
+5. **The lift's module lint and function lifts** (`CanLift`, `liftPureFunction1`): absent in the proto;
+   two `PendingTest` cases commented.
+6. **`handleLoopFusesContinuation`** row for the proto class (kernel-only today): would be
+   `handleLoopWith` over the same shape now that it exists; not added, awaiting the trait ruling so
+   the bench class is not churned twice.
+
 **Six things are open.** The numbered stream below is no longer a todo list: 12 of its 18 entries are
 finished work or narrative, and it had drifted into claiming otherwise. It is kept for its reasoning
 and renamed accordingly.
