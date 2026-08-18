@@ -103,7 +103,16 @@ object Stats:
             (lo + hi) / 2.0
 
     /** One row measured across the replicate legs of one session. */
-    case class Replicated(row: String, control: Chunk[Double], variant: Chunk[Double], legError: Chunk[Double] = Chunk.empty) derives Schema:
+    case class Replicated(
+        row: String,
+        control: Chunk[Double],
+        variant: Chunk[Double],
+        legError: Chunk[Double] = Chunk.empty,
+        /** Which way is down for this row (`Row.lowerIsBetter`): time per operation shrinks when the code gets faster, throughput
+          * grows. The classifier used to read `diff < 0` as faster unconditionally, which is backwards for a `thrpt` row.
+          */
+        lowerIsBetter: Boolean = true
+    ) derives Schema:
         /** The largest relative error any single leg reported for itself, as a fraction.
           *
           * A threshold derived only from between-leg spread can come out tighter than the uncertainty
@@ -167,8 +176,11 @@ object Stats:
         th match
             case Maybe.Present(t) =>
                 val diff = r.variantMean - r.controlMean
+                // the sign of the difference says which way the score moved; which way is better is
+                // the row's mode, not the classifier's assumption
+                val improved = if r.lowerIsBetter then diff < 0 else diff > 0
                 if Math.abs(diff) <= t.absolute then (Verdict.Flat, th)
-                else if diff < 0 then (Verdict.Faster, th)
+                else if improved then (Verdict.Faster, th)
                 else (Verdict.Regressed, th)
             case _ => (Verdict.BelowResolution, th)
     end classify

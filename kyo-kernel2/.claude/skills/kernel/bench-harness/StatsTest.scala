@@ -59,6 +59,20 @@ object StatsTest:
         check("a difference beyond the leg error still classifies", Stats.classify(bigWithError, alpha, 2)._1 == Verdict.Regressed,
             s"${Stats.classify(bigWithError, alpha, 2)._1}")
 
+        println("\nwhich way is down is the row's mode, not the classifier's assumption")
+        // the same real series read as throughput: 6.10 -> 6.40 ops per unit of time is more work
+        // done, and the classifier called it a regression for as long as `diff < 0` meant faster
+        // unconditionally (defect 44). The harness's own benchmark is AverageTime, so this was
+        // latent; anything ingested in thrpt was classified backwards
+        val asThroughput = tightSpread.copy(lowerIsBetter = false)
+        check("in avgt a higher score is a regression", Stats.classify(tightSpread, alpha, 2)._1 == Verdict.Regressed)
+        check("in thrpt the same numbers are a win", Stats.classify(asThroughput, alpha, 2)._1 == Verdict.Faster,
+            s"${Stats.classify(asThroughput, alpha, 2)._1}")
+        check("and a lower throughput is the regression",
+            Stats.classify(rep("t", Seq(6.40, 6.42, 6.44), Seq(6.10, 6.12)).copy(lowerIsBetter = false), alpha, 2)._1 == Verdict.Regressed)
+        // the direction never manufactures a verdict: inside the threshold a row is flat either way
+        check("direction does not move a flat row", Stats.classify(quiet.copy(lowerIsBetter = false), alpha, rows)._1 == Verdict.Flat)
+
         println("\nthe threshold is answerable")
         check("a flat row still reports what it could have seen", qt.isDefined, "flat with no minimum detectable effect is not a result")
         qt.foreach(t => println(s"       quiet row is flat to within ${f"${t.percent}%.2f"}%, at df=${t.df}"))

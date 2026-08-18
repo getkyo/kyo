@@ -46,6 +46,17 @@ object Model:
         /** This row's own relative uncertainty, as a fraction of its score. */
         def relativeError: Double = if score <= 0.0 then 0.0 else error / score
 
+        /** Which way is down for this row. JMH's throughput mode (`thrpt`) counts operations per unit of time, so a higher score is the
+          * better one; every other mode (`avgt`, `sample`, `ss`) measures time per operation. A classifier that reads `diff < 0` as
+          * faster without asking is right for the harness's own `AverageTime` benchmark and backwards for anything ingested in `thrpt`.
+          */
+        def lowerIsBetter: Boolean = mode != "thrpt"
+
+        /** Whether a delta against `other` is a delta at all: the same mode and the same unit, or the percentage compares two different
+          * measurements (`us/op` against `ns/op`, or time against throughput) and means nothing.
+          */
+        def comparableWith(other: Row): Boolean = mode == other.mode && unit == other.unit
+
         /** How far the first measured iteration sits from the median of the rest, as a fraction.
           *
           * A leg still warming up shows it here and nowhere else: the score and the error absorb the

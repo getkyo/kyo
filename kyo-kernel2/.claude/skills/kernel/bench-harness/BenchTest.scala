@@ -6,9 +6,9 @@ import kyo.*
   */
 object BenchTest:
 
-    def jmh(name: String, score: Double, error: Double, alloc: Double, compileMs: Double = 0.0): String =
-        s"""{"benchmark":"kyo.kernel.bench.ProtoKernelBench.$name","mode":"avgt","forks":3,
-           |"primaryMetric":{"score":$score,"scoreError":$error,"scoreUnit":"us/op","rawData":[[1,2,3,4,5]]},
+    def jmh(name: String, score: Double, error: Double, alloc: Double, compileMs: Double = 0.0, mode: String = "avgt", unit: String = "us/op"): String =
+        s"""{"benchmark":"kyo.kernel.bench.ProtoKernelBench.$name","mode":"$mode","forks":3,
+           |"primaryMetric":{"score":$score,"scoreError":$error,"scoreUnit":"$unit","rawData":[[1,2,3,4,5]]},
            |"secondaryMetrics":{"gc.alloc.rate.norm":{"score":$alloc},"gc.count":{"score":9},
            |"compiler.time.profiled":{"score":$compileMs},"compiler.time.total":{"score":150.0}}}""".stripMargin
 
@@ -64,6 +64,32 @@ object BenchTest:
         check("a loss beyond the band reads as a regression", by("slow").verdict == Verdict.Regressed)
         check("a score dominated by its own error is below resolution", by("tiny").verdict == Verdict.BelowResolution)
         check("an artifact never sorts as the headline", cmp.deltas.last.row == "tiny")
+
+        println("direction and comparability (defect 44)")
+        // the same movement in throughput: 100 -> 60 ops/us is fewer operations per unit of time
+        def thrptRows(entries: (String, Double)*): Chunk[Row] =
+            Abort.run(Bench.parseJmh(entries.map((n, s) => jmh(n, s, 1.0, 640.0, mode = "thrpt", unit = "ops/us")).mkString("[", ",", "]"))).eval.getOrThrow
+        val ctlT = ctl.copy(rows = thrptRows(("fast", 100.0), ("slow", 20.0)))
+        val vntT = vnt.copy(rows = thrptRows(("fast", 60.0), ("slow", 22.0)))
+        val byT  = Bench.compare(ctlT, vntT).deltas.map(d => d.row -> d).toMap
+        check("a throughput drop reads as a regression", byT("fast").verdict == Verdict.Regressed, s"${byT("fast").verdict}")
+        check("a throughput gain reads as faster", byT("slow").verdict == Verdict.Faster, s"${byT("slow").verdict}")
+        check("the row knows which way is down", ctlT.rows.forall(!_.lowerIsBetter) && ctl.rows.forall(_.lowerIsBetter))
+        // control in avgt, variant in thrpt: no delta exists, and more legs cannot cure it
+        val mixed   = Bench.compare(ctl.copy(rows = rows(("fast", 100.0, 1.0, 640.0))), vntT.copy(rows = thrptRows(("fast", 60.0))))
+        val mixedBy = mixed.deltas.map(d => d.row -> d).toMap
+        check("a mode mismatch is unresolved, never a verdict", mixedBy("fast").verdict == Verdict.BelowResolution, s"${mixedBy("fast").verdict}")
+        check("and the blocker names both sides", Report.blockers(mixed).exists(b => b.contains("avgt in us/op") && b.contains("thrpt in ops/us")),
+            Report.blockers(mixed).mkString(" | "))
+        check("a matched pair raises no such blocker", !Report.blockers(cmp).exists(_.contains("not the same measurement")))
+        // the replicated path takes its direction from the row too
+        val repT = Bench.compareReplicated(
+            Chunk(ctlT, ctlT.copy(id = "c2", rows = thrptRows(("fast", 100.4), ("slow", 20.1))), ctlT.copy(id = "c3", rows = thrptRows(("fast", 99.7), ("slow", 19.9)))),
+            Chunk(vntT, vntT.copy(id = "v2", rows = thrptRows(("fast", 60.6), ("slow", 22.4))))
+        )
+        check("replicated: a throughput drop is a regression", repT.deltas.find(_.row == "fast").exists(_.verdict == Verdict.Regressed),
+            repT.deltas.map(d => s"${d.row}=${d.verdict}").mkString(","))
+        check("replicated: a throughput gain is a win", repT.deltas.find(_.row == "slow").exists(_.verdict == Verdict.Faster))
 
         println("mechanism")
         check("an allocation change is reported as the mechanism", by("fast").mechanism.exists(_.contains("allocation")))

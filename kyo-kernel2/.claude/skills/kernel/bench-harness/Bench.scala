@@ -756,10 +756,12 @@ object Bench:
                 val ownError = Math.max(c.relativeError, v.relativeError) * 100
                 val drift    = Math.max(band(control, variant), ownError)
                 val verdict =
-                    // a score whose error is a large fraction of itself cannot support a percentage
-                    if c.error > c.score * 0.5 || c.score <= 0.0 then Verdict.BelowResolution
-                    else if percent < -drift then Verdict.Faster
-                    else if percent > drift then Verdict.Regressed
+                    // a score whose error is a large fraction of itself cannot support a percentage,
+                    // and two rows measured in different modes or units are not a pair at all
+                    // (Report.blockers names the mismatch)
+                    if c.error > c.score * 0.5 || c.score <= 0.0 || !c.comparableWith(v) then Verdict.BelowResolution
+                    else if percent < -drift then (if c.lowerIsBetter then Verdict.Faster else Verdict.Regressed)
+                    else if percent > drift then (if c.lowerIsBetter then Verdict.Regressed else Verdict.Faster)
                     else Verdict.Flat
                 val allocDelta =
                     for
@@ -917,7 +919,9 @@ object Bench:
                     Chunk.from(controls.flatMap(_.row(name)).map(_.score)),
                     Chunk.from(variants.flatMap(_.row(name)).map(_.score)),
                     // each leg's own relative error, so the threshold can never sit below it
-                    Chunk.from((controls ++ variants).flatMap(_.row(name)).map(r => if r.score == 0.0 then 0.0 else r.error / r.score))
+                    Chunk.from((controls ++ variants).flatMap(_.row(name)).map(r => if r.score == 0.0 then 0.0 else r.error / r.score)),
+                    // which way is down comes from the row's mode, read off the first control leg
+                    controls.headMaybe.flatMap(_.row(name)).map(_.lowerIsBetter).getOrElse(true)
                 )
             }
         val common = Stats.commonMode(reps)
@@ -933,7 +937,11 @@ object Bench:
                     // +3.6% and the harness is reporting something else entirely.
                     val c = c0.copy(score = r.controlMean, error = r.pooledSd.getOrElse(c0.error))
                     val v = v0.copy(score = r.variantMean, error = r.pooledSd.getOrElse(v0.error))
-                    val (verdict, resolution) = Stats.classify(r, FamilyAlpha, rowNames.size)
+                    // two arms measured in different modes or units are not a pair; the row stays
+                    // unresolved and Report.blockers names the mismatch
+                    val (verdict, resolution) =
+                        if c0.comparableWith(v0) then Stats.classify(r, FamilyAlpha, rowNames.size)
+                        else (Verdict.BelowResolution, Maybe.empty)
                     val allocDelta =
                         for
                             ca <- c.allocPerOp

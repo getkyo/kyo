@@ -139,7 +139,16 @@ object Report:
                 }
             unsettled ++ compiling
         end arm
-        arm("control", c.allControlLegs) ++ arm("variant", c.allVariantLegs)
+        // a row whose two arms were measured in different modes or units has no delta: the
+        // percentage compares us/op with ns/op, or time with throughput. It is left unresolved in the
+        // table and named here, because a reader who sees "below resolution" would otherwise re-run
+        // with more legs, which cannot cure it
+        val mismatched =
+            c.deltas.filter(d => !d.control.comparableWith(d.variant)).map { d =>
+                s"${d.row}: control measured as ${d.control.mode} in ${d.control.unit}, variant as ${d.variant.mode} in ${d.variant.unit}; " +
+                    "the two are not the same measurement and no delta exists between them. Re-run one side in the other's mode and unit."
+            }
+        arm("control", c.allControlLegs) ++ arm("variant", c.allVariantLegs) ++ mismatched
     end blockers
 
     /** What the A/A null establishes, and what it refuses.
@@ -333,7 +342,7 @@ object Report:
                 if d.mechanism.nonEmpty then d.mechanism.mkString("; ")
                 else if d.unexplained then "**none found**"
                 else "-"
-            f"| ${icon(d.verdict)} | `${d.row}` | ${d.control.mode} | ${d.variant.count} | " +
+            f"| ${icon(d.verdict)} | `${d.row}` | ${d.control.mode} ${d.control.unit} | ${d.variant.count} | " +
                 s"${score(d.control.score)} ± ${score(d.control.error)} | ${score(d.variant.score)} ± ${score(d.variant.error)} | $delta | $res | $alloc | $mech |"
         }.mkString("\n")
 
