@@ -474,7 +474,22 @@ and top frames each side), `Bench.isKernel` over both `kyo.kernel.` and `kyo.pro
 package (the old `KernelPackage = "kyo.kernel.proto."` matched nothing any more), and the steady-state
 blocker now says which row, which leg of which arm, whether the row's other legs settled, and the cure
 for that reading. After the bracket: the CPU pass (`-f 1 -wi 20 -i 1 -prof async:event=itimer` over
-both classes, ~6 min), attach to the head leg of each arm, compare, report with B/op and CPU.
+both classes, ~6 min), attach to the head leg of each arm, compare, report with B/op and CPU. The
+harness changes are written with tests (`BenchTest`: the real ramp's message, `parseCpuByBenchmark`
+on a synthetic JMH log, `attachCpu`, the per-row partition, the report section) and **not yet
+compiled**; `scala-cli run . --main-class BenchTest` runs first thing after the bracket, then the
+prepared `scratchpad/after-bracket.sh` steps (cpu pass, per-fork ingest into session
+`proto-bracket-0818-wi20`, `BenchCpu` on `kernel-f1`/`proto-f1`, `BenchCompare` 3 vs 3, report to
+`reviews/bench/bracket-0818-f3-wi20-gc-f3f29d8b4d-report.md`).
+
+Also written while the machine was the measurement's, and equally uncompiled: `kyo/proto/ArrowEffectTest.scala`
+(`4d3a306f3f`), the kernel `ArrowEffectTest` corpus pointed at kyo.proto, 79 live cases over
+handleLoop / handleCont / handleLoopState / suspendWith / captures / contracts / nested box / coverage,
+with `Eval.partial`, `evalNow` and the done-less stateful overload commented; the unsupported sections
+(`handleWith`, `handleLoopWith`, `handleLoopStateWith`, park, `handleFirst`, `dispatchFirst`,
+`handleCatching`, `handlePartial`) are named in its header and still to be transcribed as commented
+code. `kyo-kernel2JVM/testOnly kyo.proto.*` runs after the bracket with the harness checks; any red
+there is a proto finding to diagnose, not a test to bend.
 
 **Third file, third real bug, and the added coverage localised it exactly.** A handler's clause is the
 handler's own code and its effects belong to the handlers *outside* the region. This kernel answers a
