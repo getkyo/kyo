@@ -692,7 +692,16 @@ the way: no comments in the code, no new terminology or helper methods, `k` is a
 passed and applied as one (`k(o)`, not `o => k(o, Arrow.id)`), `Arrow(k)` is the one-entry park because
 `push` flattens a chain. `HandleLoopState` is `???`, the `Suspend` case's trailing `???` and the "no
 handler" (`find` = -1, partial evaluation should return the suspension pending) are theirs; the file
-does not compile yet by their own choice of order. Uncommitted, theirs.
+does not compile yet by their own choice of order. Uncommitted, theirs. **Then: the owner asked whether
+`Handler` should be an `Arrow` so `dump` needs no handler case; answer given (yes for the stateless
+handlers, uniform dump and settled arm, the region re-installed by the flatten; the state of
+`HandleLoopState` is the one thing it does not carry, two options), owner ruled **option 2** (state
+stays in the `states` array, `dump` keeps one case for `HandleLoopState`) and asked for a report and a
+held-out Fable review: `reviews/HANDLER-AS-ARROW.md` (`b59d2a1296`; design as it stands, the proposal,
+the ruling, checklist A1 to A11 each with its pinning test, four open questions; found on the way:
+the current settled arm reads the `HandleLoopState` state after `pop`, the slot below the popped one)
+and the Fable reviewer `handler-arrow-review` launched, analysis only, its output to be saved under
+`reviews/` and its verdicts posted.**
 2. **The strict `map` allocating its `Transform` before knowing the input is settled** (24 B per map,
    +184,024 to +240,024 B/op on five rows). Default: unchanged, it is the owner's `map` shape; the
    kernel's shape (`Transform` only in the pending arm and the rescue) is the candidate, blocked on
