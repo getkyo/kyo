@@ -657,6 +657,11 @@ jit and cpu data keyed on the old package names is now stale**.
    quiet-machine bracket of the two trait sides is still owed as the measured proof; the kernel-vs-proto
    bracket at the new HEAD (task #37) is the next measurement. The owner is editing `kyo/proto` sources
    now (`Pending.scala` uncommitted, theirs); no sbt and no main-source edits from here until they say.
+   Harness while holding (`dbe0850c9e`): an ingested run records its benchmark class and JVM
+   arguments (`Run.benchmarkClass`, `jvmArgs` from the json), and the report reads one sha over two
+   classes as a comparison of the two implementations, not as an A/A ("Same sha and no recorded JVM
+   arguments" was the note under every kernel-vs-proto report). Machine load 6 to 8 all the while, so
+   no bracket launched.
 2. **The strict `map` allocating its `Transform` before knowing the input is settled** (24 B per map,
    +184,024 to +240,024 B/op on five rows). Default: unchanged, it is the owner's `map` shape; the
    kernel's shape (`Transform` only in the pending arm and the rescue) is the candidate, blocked on
