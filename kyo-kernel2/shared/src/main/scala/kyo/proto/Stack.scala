@@ -28,12 +28,32 @@ final class Stack:
 
     def push(f: Arrow[?, ?, ?]): Unit =
         f match
-            case c: Arrow.Chain[?, ?, ?, ?] =>
-                push(c.b)
-                push(c.a)
+            case _: Arrow.Chain[?, ?, ?, ?] =>
+                // a dumped chain is right-deep with a leaf `a` at every level, so flatten it by
+                // walking the `b` spine iteratively instead of recursing (which overflows on deep chains)
+                var n = 0
+                var g = f
+                while g.isInstanceOf[Arrow.Chain[?, ?, ?, ?]] do
+                    val c = g.asInstanceOf[Arrow.Chain[?, ?, ?, ?]]
+                    if !(c.a eq Arrow.Id) then n += 1
+                    g = c.b
+                end while
+                if !(g eq Arrow.Id) then n += 1
+                ensure(n)
+                head -= n
+                var i = 0
+                g = f
+                while g.isInstanceOf[Arrow.Chain[?, ?, ?, ?]] do
+                    val c = g.asInstanceOf[Arrow.Chain[?, ?, ?, ?]]
+                    if !(c.a eq Arrow.Id) then
+                        entries((head + i) & mask) = c.a
+                        i += 1
+                    g = c.b
+                end while
+                if !(g eq Arrow.Id) then entries((head + i) & mask) = g
             case f if f eq Arrow.Id => ()
             case f =>
-                grow()
+                ensure(1)
                 head -= 1
                 entries(head & mask) = f
 
@@ -98,18 +118,20 @@ final class Stack:
         tail = 0
     end clear
 
-    private def grow(): Unit =
-        if size == entries.length then
-            val n   = size
-            val arr = new Array[Arrow[?, ?, ?]](n << 1)
+    private def ensure(n: Int): Unit =
+        if size + n > entries.length then
+            val s   = size
+            var cap = entries.length
+            while s + n > cap do cap <<= 1
+            val arr = new Array[Arrow[?, ?, ?]](cap)
             var i   = 0
-            while i < n do
+            while i < s do
                 arr(i) = entries((head + i) & mask)
                 i += 1
             entries = arr
-            mask = arr.length - 1
+            mask = cap - 1
             head = 0
-            tail = n
+            tail = s
 end Stack
 
 /** A pool of stacks per thread: an evaluation borrows one and returns it empty, so a nested evaluation gets its own stack and never
