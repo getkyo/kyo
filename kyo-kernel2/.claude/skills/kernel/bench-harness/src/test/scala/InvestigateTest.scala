@@ -57,6 +57,13 @@ class InvestigateTest extends Test[Any]:
     val quiet = Bench.compare(leg("c", ctlRows, Chunk(inlined)), leg("v", ctlRows, Chunk(inlined)))
     check("a comparison with no movement earns no experiments", Investigate.falsifiers(quiet).isEmpty, Investigate.falsifiers(quiet).map(_.hypothesis.show).mkString)
 
+    // a refusal a force-inline flag cannot act on earns no experiment: force-inlining a megamorphic
+    // site (no static binding) does nothing, so proposing it spends a session to learn nothing (defect 34)
+    val megamorphic = InlineSites(hot, 607, inlined = 0, refused = 4, Chunk("no static binding"))
+    val megaFs      = Investigate.falsifiers(Bench.compare(leg("c", ctlRows, Chunk(inlined)), leg("v", vntRows, Chunk(megamorphic))))
+    check("a megamorphic stopped-inlining earns no force-inline experiment", !megaFs.exists(_.hypothesis == Investigate.Hypothesis.StoppedInlining(hot)), megaFs.map(_.hypothesis.show).mkString("; "))
+    check("but an actionable size refusal still does", fs.exists(_.hypothesis == Investigate.Hypothesis.StoppedInlining(hot)))
+
     // the cheap direction: contradict the win on the control before redesigning around it
     val winCmp = Bench.compare(leg("c", Seq(("fused", 130.0, 1.0, 640.0)), Chunk(refused)), leg("v", Seq(("fused", 100.0, 1.0, 640.0)), Chunk(inlined)))
     val winFs  = Investigate.falsifiers(winCmp)

@@ -95,11 +95,14 @@ object Investigate:
         val wins      = c.deltas.filter(_.verdict == Verdict.Faster)
 
         // a method the control inlined everywhere and the variant refuses everywhere is the
-        // strongest form of this hypothesis, and the only one a single flag can address
+        // strongest form of this hypothesis, and the only one a single flag can address. Only when the
+        // refusal is actionable: a force-inline flag cannot take on a site refused for `no static
+        // binding` (megamorphic) or `klass not linked` (a warmup artifact), so proposing that
+        // experiment spends a session to learn nothing (Bench.actionableJit)
         val stopped =
             val before = c.control.jit.map(v => v.method -> v).toMap
             c.variant.jit.filter { v =>
-                v.alwaysRefused && before.get(v.method).exists(_.alwaysInlined)
+                v.alwaysRefused && Bench.actionableJit(v) && before.get(v.method).exists(_.alwaysInlined)
             }
         val stoppedFalsifiers =
             if regressed.isEmpty then Chunk.empty
