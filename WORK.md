@@ -693,6 +693,21 @@ Everything left in the harness stream needs one of two things I cannot supply al
   contents, touches the measurement path); item 4's "name the C3 mechanism" wording; the five rulings
   in task 24 (C4, DIS-3, IN-3, C3, DIS-4) and 0e.
 
+**Applied the owner's `evalNow` loop fix; condition is correct, 5 of 6 budget failures fixed, the 6th
+(long map tower) hangs on a Java-stack overflow.** Added `evalNow = self.lower(pending = _ =>
+Maybe.empty, done = a => Maybe(a))` to `Pending.scala` and changed the loop to `if !stack.isEmpty ||
+curr.evalNow.isEmpty then loop()`. The condition is NOT flipped: `evalNow.isEmpty` is true exactly when
+`curr` is a pending `Kyo`, so the loop continues while there is work; the owner's suggested
+`|| !curr.evalNow.isEmpty` would loop while `curr` is settled and never terminate. Evidence: "deep
+nested computations evaluate" and "construction past the safepoint budget rescues" (both `???` before)
+now pass. But "a long map tower on a rescued computation evaluates in bounded stack" (1M `.map(_+1)`
+over a budget-rescued computation) now HANGS where it fast-failed with `???` before: the re-drive
+re-pushes the budget-deferred ~1M-deep `Arrow` chain, and `Stack.push` recurses per `Chain` node
+(Fable A7), overflowing the Java stack, so the test worker dies and the run wedges (jstack: no kyo
+threads, main parked on `ExecutorCompletionService.take`, 0% CPU). So the fix is right; the long-map
+tower exposes that `Stack.push` needs to be iterative to survive re-driving a deep chain (A7), a
+separate fix. Killed the wedged run. Handler/Eval/Pending edits on disk, uncommitted with the owner's WIP.
+
 **ClassCast (7th PendingTest failure) pinned by stack trace, not yet mechanism-diagnosed.** Trace:
 `unboxToInt` at `PendingTest.scala:148` (an inlined handler anon) <- `Handler.apply$$anonfun$2`
 (`Handler.scala:17`, the fix's `next.head(apply(b), next.tail)`) <- `Handler.apply` (`:10`, two-arg)
