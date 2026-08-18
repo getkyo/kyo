@@ -669,6 +669,19 @@ class BenchTest extends Test[Any]:
         check("and is not repeated as a partial shift", !flipRep.contains("shifted without flipping"), flipRep.takeRight(300))
     }
 
+    section("the report names the checks it could not run (absence names its remedy)")
+    locally {
+        val timing = Report.render(Bench.compare(leg("c", base, evidence = Evidence.Timing), leg("v", base, evidence = Evidence.Timing)))
+        check("a timing pair says no mechanism evidence and the command for it", timing.contains("evidence timing") && timing.contains("--evidence full"), timing.takeRight(300))
+        val subset = Report.render(Bench.compare(leg("c", base, whole = false), leg("v", base, whole = false)))
+        check("a subset run says it made no whole-class statement", subset.contains("whole class") && subset.contains("without --row"), subset.takeRight(300))
+        val singlePair = Report.render(Bench.compare(leg("c", base), leg("v", base)))
+        check("a single pair says it ran no A/A null and how to", singlePair.contains("no A/A null") && singlePair.contains("--legs 5"), singlePair.takeRight(300))
+        // a full, whole-class, three-control replicated comparison ran every check, so the section stays silent
+        val complete = Report.render(Bench.compareReplicated(ctlLegs, vntFlat))
+        check("a complete session lists no absences", !complete.contains("Not evaluated here"), complete.takeRight(300))
+    }
+
     section("what two shas cannot say")
     // the skill's worked example: a node-layout change and a currency hoist shipped together, the
     // bundle was faster, the win was credited first to one and then to the other, and both

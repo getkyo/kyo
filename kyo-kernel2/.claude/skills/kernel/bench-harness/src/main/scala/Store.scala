@@ -595,6 +595,25 @@ object Report:
                 "\n⚠️  Moved with nothing in the evidence behind it, so the cause is not known yet:\n" +
                     unexplained.map(d => s"  - ${d.row}: check allocation sites and the inlining log before proposing a mechanism").mkString("\n")
 
+        // absence is a result, and it names its remedy. The operator this tool exists for forgets to go
+        // looking, so the report enumerates the checks that did not run, why, and the exact command that
+        // would run them, converting silence into a checklist. Everything here is computable from the two
+        // runs and the leg count the comparison carries
+        val notEvaluated =
+            val items = Chunk.from(Seq(
+                Option.when(control.evidence == Evidence.Timing || variant.evidence == Evidence.Timing)(
+                    "no inlining, allocation or CPU evidence: this pair was measured with --evidence timing. " +
+                        "To get it, re-run: bench bracket --evidence full"),
+                Option.when(!(control.wholeClass && variant.wholeClass))(
+                    "no statement about the whole class: this was a subset run of selected rows. " +
+                        "To get it, re-run without --row"),
+                Option.when(c.allControlLegs.size < 3)(
+                    s"no A/A null, so the session did not check itself: ${c.allControlLegs.size} control leg(s), fewer than the three a " +
+                        "self-check needs. To get it, re-run: bench bracket --legs 5")
+            ).flatten)
+            if items.isEmpty then ""
+            else "\n\nNot evaluated here, and how to evaluate it:\n" + items.map(s => s"  - $s").mkString("\n")
+
         val blockerBanner =
             val bs = blockers(c)
             if bs.isEmpty then ""
@@ -610,7 +629,7 @@ object Report:
         // falsifier attached is where "it is slower, so replace it" comes from.
         val investigation = Investigate.render(c)
 
-        s"$blockerBanner$sessionWarning$header\n$body$rampNote$resolutionNote$driftNote$jit$partialJit$deoptShift$polymorphic$allocSites$allocNote$partition$verdictLine$ladder$steadyState$jitTable$bothWays$cpuNote$cpuByRow$budgetNote$investigation"
+        s"$blockerBanner$sessionWarning$header\n$body$rampNote$resolutionNote$driftNote$jit$partialJit$deoptShift$polymorphic$allocSites$allocNote$partition$verdictLine$ladder$steadyState$jitTable$bothWays$cpuNote$cpuByRow$budgetNote$investigation$notEvaluated"
     end render
 
 end Report
