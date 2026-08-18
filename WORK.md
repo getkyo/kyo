@@ -838,10 +838,12 @@ iterative `push`, owner adopted as `count`/`fill`; PendingTest 37/38, tower pass
 failure** is `"a loop can end its region with a computation result"` (`ClassCastException: Kyo$Defer ->
 Integer`): a `Loop.done(v)` with a computation `v` leaves the completed `HandlerLoop` on the stack
 (`truncate(pos)` drops only the interior), so the done branch re-applies its erased `apply(int)` onDone
-to the `Defer`. Proposed fix (explained to owner, not applied, it is their active Handler-as-Arrow WIP):
-`truncate(pos + 1)` on the Done outcome so the completed handler is dropped and the done value flows out
-unrun. So the bench-harness critical path IS the proto going green; nothing to measure until it is and
-the machine is quiet with a committed sha. **Staged task-37 command** (fire when proto green + `uptime`
+to the `Defer`. Fix APPLIED (owner greenlit "apply the fix", Edit tool): `Eval.scala` HandlerLoop Done arm
+`stack.truncate(pos)` -> `stack.truncate(pos + 1)`, so the completed handler is dropped with the interior
+and its `onDone` is not re-applied to the loop-done value; done value flows out unrun. In the owner's
+working tree (their WIP, not committed by me). Verifying via `PendingTest` (target: the ClassCast test
+green, other 37 hold, 38/38). So the bench-harness critical path IS the proto going green; nothing to
+measure until it is and the machine is quiet with a committed sha. **Staged task-37 command** (fire when proto green + `uptime`
 1-min < 5, no owner sbt running): bracket both classes `kyo.proto.*` and `kyo.kernel.*` at
 `-f 3 -wi 12 -prof gc`, per-fork legs + replicated verdict through the harness, json + log kept, in the
 detached throwaway worktree. Invocation (from `kyo-kernel2/.claude/skills/kernel/bench-harness`, sbt
