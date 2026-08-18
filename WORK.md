@@ -381,6 +381,13 @@ kernel's shape, measurable in the throwaway worktree on `nestedPayloads`, `evalF
 rows (`suspensionBaseline` +81%, `handleLoopAnswersInPlace` +104%, equal allocation) still need
 their own rung, `PrintInlining`.
 
+The `map` candidate was tried in the throwaway (`bench-sweep-proto`, uncommitted diff left there):
+`map = self.lower(pending = k => Defer(k, Transform(f)), done = strict f(a) in the budget, rescue
+Defer(self, Transform(f)))`. It fails to typecheck at one nested-currency site, EvalTest:291
+`give.map(c => c)` on `(Int < Ask) < Give` (the inline `self` proxy's singleton type reaches the
+`Defer` argument); the shape needs the value re-typed as `A < S` before `Defer`, which is a design
+question on the owner's `map`, so it stops here. Not measured, not landed.
+
 **Third file, third real bug, and the added coverage localised it exactly.** A handler's clause is the
 handler's own code and its effects belong to the handlers *outside* the region. This kernel answers a
 clause's effect with handlers the region's *body* installed inside it, so a user's `Say` handler wrapped
