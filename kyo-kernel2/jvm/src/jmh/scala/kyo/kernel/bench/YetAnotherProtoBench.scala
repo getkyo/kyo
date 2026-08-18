@@ -6,9 +6,7 @@ import kyo.Tag
 import kyo.proto.*
 import org.openjdk.jmh.annotations.*
 
-/** ProtoKernelBench's rows over the kyo.proto kernel, same shapes and depths, so the two classes compare row by row in one session. Rows
-  * whose surface this kernel does not have yet (handleLoopWith) are absent rather than approximated.
-  */
+/** ProtoKernelBench's rows over the kyo.proto kernel, same shapes and depths, so the two classes compare row by row in one session. */
 @State(Scope.Benchmark)
 @BenchmarkMode(Array(Mode.AverageTime))
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
@@ -100,6 +98,18 @@ class YetAnotherProtoBench:
         val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], loop(0))([C] => _ => Loop.continue(1: Int < Any), a => a)
         Eval(r)
     end handleLoopAnswersInPlace
+
+    @Benchmark
+    def handleLoopFusesContinuation: Int =
+        def loop(i: Int): Int < Ask =
+            if i > Depth then i
+            else ask.map(a => loop(i + a))
+        val r: Int < Any = ArrowEffect.handleLoopWith[[B] =>> Unit, [B] =>> Int, Ask, Int, Int, Any](Tag[Ask], loop(0))(
+            [C] => _ => Loop.continue(1: Int < Any),
+            a => a
+        )(b => b + 1)
+        Eval(r)
+    end handleLoopFusesContinuation
 
     @Benchmark
     def nestedPayloadsUnwrapInMaps: Int =
