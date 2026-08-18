@@ -844,7 +844,12 @@ unrun. So the bench-harness critical path IS the proto going green; nothing to m
 the machine is quiet with a committed sha. **Staged task-37 command** (fire when proto green + `uptime`
 1-min < 5, no owner sbt running): bracket both classes `kyo.proto.*` and `kyo.kernel.*` at
 `-f 3 -wi 12 -prof gc`, per-fork legs + replicated verdict through the harness, json + log kept, in the
-detached throwaway worktree.
+detached throwaway worktree. Invocation (from `kyo-kernel2/.claude/skills/kernel/bench-harness`, sbt
+project on RC6): `sbt "runMain BenchBracket --worktree ../../../../../bench-sweep --control <sha>
+--variant <sha>"` reads one green HEAD sha over the two benchmark classes as the impl comparison
+(ruling 1, `dbe0850c9e`: one sha + two classes is read as proto-vs-kernel, not an A/A); fork/warmup/gc
+flags per the standing bracket config; keep the json and log with `git add -f`. Precondition gate before
+launch: proto `PendingTest` 38/38 green on a committed sha, `uptime` 1-min < 5, no owner sbt running.
 
 **Rulings the kyo.proto stream is waiting on (2026-08-18), each with its recorded default:**
 
