@@ -486,6 +486,17 @@ object Report:
                     "allocation. An inlining change relocates it with nothing about the allocation changing, so this " +
                     "is never independent of the inlining verdicts above."
 
+        // methods the variant refuses for size while sitting close enough to a budget that one shrink
+        // could inline them. The investigator only proposes raising the budget when a row regressed, so
+        // on a flat or winning report a method sitting 379B against a 325B budget was invisible; it is a
+        // standing lever whatever this comparison's verdict, so it is named here unconditionally
+        val budgetNote =
+            val near = c.variant.jit.flatMap(v => v.nearBudget.map(b => s"  - ${v.method}: $b"))
+            if near.isEmpty then ""
+            else
+                "\n\n📏 Refused for size but close to a budget, one shrink from inlining whatever the verdict above:\n" +
+                    near.mkString("\n")
+
         val reds        = c.deltas.filter(_.verdict == Verdict.Regressed)
         val wins        = c.deltas.filter(_.verdict == Verdict.Faster)
         val unexplained = c.deltas.filter(_.unexplained)
@@ -585,7 +596,7 @@ object Report:
         // falsifier attached is where "it is slower, so replace it" comes from.
         val investigation = Investigate.render(c)
 
-        s"$blockerBanner$sessionWarning$header\n$body$rampNote$resolutionNote$driftNote$jit$deoptShift$polymorphic$allocSites$allocNote$partition$verdictLine$ladder$steadyState$jitTable$bothWays$cpuNote$cpuByRow$investigation"
+        s"$blockerBanner$sessionWarning$header\n$body$rampNote$resolutionNote$driftNote$jit$deoptShift$polymorphic$allocSites$allocNote$partition$verdictLine$ladder$steadyState$jitTable$bothWays$cpuNote$cpuByRow$budgetNote$investigation"
     end render
 
 end Report

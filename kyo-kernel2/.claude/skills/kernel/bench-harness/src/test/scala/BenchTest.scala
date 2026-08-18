@@ -639,6 +639,19 @@ class BenchTest extends Test[Any]:
         check("a leg with no allocation views is not flagged", !Report.blockers(cmp).exists(_.contains("parse lost")))
     }
 
+    section("a near-budget method is surfaced whatever the verdict (item 3)")
+    locally {
+        // 379B refused against the 325B FreqInlineSize budget: one shrink from inlining. The investigator only proposes raising a budget
+        // when a row regressed, so on this flat comparison it says nothing; the standing note names it anyway
+        val nearV = InlineSites("kyo.kernel.proto.Eval$.loop", 379, inlined = 0, refused = 1, Chunk("hot method too big"))
+        val overV = InlineSites("kyo.kernel.proto.Big$.huge", 2000, inlined = 0, refused = 1, Chunk("hot method too big"))
+        val flatReport = Report.render(Bench.compare(leg("c", base), leg("v", base, jit = Chunk(nearV, overV))))
+        check("a near-budget method is named on a flat report", flatReport.contains("close to a budget") && flatReport.contains("Eval$.loop"), flatReport.takeRight(300))
+        check("with how far over it sits", flatReport.contains("FreqInlineSize"), flatReport.takeRight(300))
+        check("a method well over the budget is not named", !flatReport.contains("Big$.huge"))
+        check("and a report with no near-budget method has no such section", !Report.render(Bench.compare(leg("c", base), leg("v", base))).contains("close to a budget"))
+    }
+
     section("what two shas cannot say")
     // the skill's worked example: a node-layout change and a currency hoist shipped together, the
     // bundle was faster, the win was credited first to one and then to the other, and both
