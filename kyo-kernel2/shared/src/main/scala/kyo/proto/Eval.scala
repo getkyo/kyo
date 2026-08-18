@@ -77,10 +77,14 @@ object Eval:
         if i < 0 then bug(s"unhandled suspension: $s")
         stack.handler(i) match
             case hc: Cont @unchecked =>
-                // the clause receives the operation's continuation as a value: the interior parked
-                // around the suspension's own continuation; the region stays for the clause's result
+                // the clause receives the operation's continuation as a value; the region stays for
+                // the clause's result. A plain interior composes with the suspension's own
+                // continuation into one arrow; an interior holding a region is parked around it
                 val resume: Any => Any < Any =
                     if stack.size == i + 1 then s.cont(_)
+                    else if !stack.regionAbove(i) then
+                        val k = fold(stack, i + 1)
+                        o => k(s.cont(o), Arrow.id)
                     else
                         val entries  = stack.copyEntries(i + 1)
                         val handlers = stack.copyHandlers(i + 1)
@@ -128,6 +132,7 @@ object Eval:
         a.lower(
             pending = k =>
                 if stack.size == i + 1 then Kyo.Defer(k, s.cont)
+                else if !stack.regionAbove(i) then Kyo.Defer(k, s.cont, fold(stack, i + 1))
                 else
                     val entries  = stack.copyEntries(i + 1)
                     val handlers = stack.copyHandlers(i + 1)
@@ -137,6 +142,17 @@ object Eval:
             ,
             done = x => s.cont(x)
         )
+
+    // the plain continuations from `from` to the top, innermost first, as one composed arrow, and
+    // the stack cut back to `from`: continuations compose, so a plain interior needs no park
+    private def fold(stack: Stack, from: Int): Arrow[Any, Any, Any] =
+        @tailrec def loop(j: Int, acc: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
+            if j >= stack.size then acc
+            else loop(j + 1, stack(j).chain(acc))
+        val k = loop(from + 1, stack(from))
+        stack.truncate(from)
+        k
+    end fold
 
     // a clause that suspends before its outcome runs with the region and its interior parked; its
     // outcome rebuilds them around the answer, or drops them on done

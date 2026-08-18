@@ -75,6 +75,15 @@ final private[proto] class Stack:
         loop(top - 1)
     end find
 
+    /** Is any entry above `i` a region. A plain interior needs no stack: its continuations compose. */
+    def regionAbove(i: Int): Boolean =
+        @tailrec def loop(j: Int): Boolean =
+            if j >= top then false
+            else if handlers(j) ne null then true
+            else loop(j + 1)
+        loop(i + 1)
+    end regionAbove
+
     def copyEntries(from: Int): Span[Arrow[?, ?, ?]] =
         Span.fromUnsafe(Arrays.copyOfRange(entries, from, top))
 
