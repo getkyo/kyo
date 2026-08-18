@@ -603,8 +603,16 @@ object Report:
         val ladder =
             if unexplained.isEmpty then ""
             else
+                // do not send the operator to an inlining log that does not exist. On a Timing pair the
+                // jit and allocation evidence was never collected, so "check the inlining log" is
+                // homework pointing at empty data (defect 43); name the absent evidence and its command
+                // instead. On a Full pair the evidence is above, so point at it
+                val timing = control.evidence == Evidence.Timing || variant.evidence == Evidence.Timing
+                val advice =
+                    if timing then "no mechanism evidence was collected (this pair is --evidence timing); re-run --evidence full for inlining and allocation data"
+                    else "check this row's allocation sites and inlining verdicts above before proposing a mechanism"
                 "\n⚠️  Moved with nothing in the evidence behind it, so the cause is not known yet:\n" +
-                    unexplained.map(d => s"  - ${d.row}: check allocation sites and the inlining log before proposing a mechanism").mkString("\n")
+                    unexplained.map(d => s"  - ${d.row}: $advice").mkString("\n")
 
         // absence is a result, and it names its remedy. The operator this tool exists for forgets to go
         // looking, so the report enumerates the checks that did not run, why, and the exact command that

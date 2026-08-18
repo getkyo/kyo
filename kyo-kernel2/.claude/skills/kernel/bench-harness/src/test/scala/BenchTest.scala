@@ -682,6 +682,18 @@ class BenchTest extends Test[Any]:
         check("a complete session lists no absences", !complete.contains("Not evaluated here"), complete.takeRight(300))
     }
 
+    section("the unexplained-row advice does not point at evidence a timing run lacks (defect 43)")
+    locally {
+        val timingRep = Report.render(Bench.compare(
+            leg("c", Seq(("a", 100.0, 1.0, 640.0)), evidence = Evidence.Timing),
+            leg("v", Seq(("a", 130.0, 1.0, 640.0)), evidence = Evidence.Timing)))
+        check("a timing run's unexplained row names the absent evidence and its command",
+            timingRep.contains("no mechanism evidence") && timingRep.contains("--evidence full"), timingRep.takeRight(400))
+        check("and does not send the operator to an inlining log that was never collected", !timingRep.contains("inlining log"), timingRep.takeRight(400))
+        val fullRep = Report.render(Bench.compare(leg("c", Seq(("a", 100.0, 1.0, 640.0))), leg("v", Seq(("a", 130.0, 1.0, 640.0)))))
+        check("a full run's unexplained row points at the evidence above it", fullRep.contains("inlining verdicts above"), fullRep.takeRight(400))
+    }
+
     section("the JIT table states its scope on a multi-row leg (defect 49)")
     locally {
         // compile time is summed across the leg's rows, but the task census is one fork's (defect 30):
