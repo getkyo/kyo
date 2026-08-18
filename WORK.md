@@ -749,6 +749,21 @@ their order.
    (`ad93171e84`, 15 rows now, one per kernel row; compiled after the A/B releases the machine). The
    `--declared-rows` for the proto class is 15 from that commit on.
 
+**The harness is an sbt project now (`752a55dcf5`, 13:30, on the owner's ask "Do the migration to sbt
+w/ RC6 and use kyo-test").** Its own `build.sbt` on the published `1.0.0-RC6` artifacts (`kyo-core`,
+`kyo-schema-json`, `kyo-case-app`, `kyo-test-api` and `kyo-test-runner` in Test), sbt 1.12.13, Scala
+3.8.4, `src/main` and `src/test`. Isolation unchanged: no dependency on the repo's build, its own sbt
+server keyed on the harness directory, compiles and runs while the kernel tree is red or being
+edited. The seven test mains are `kyo.test.Test[Any]` suites: the three synchronous ones register
+every `check` as one leaf named by section and claim (predicate evaluated inside the leaf, fixtures
+built in the class body; `BenchTest`'s synthetic-run builders in its companion for the other suites),
+the four artifact-reading ones are one leaf each collecting every failed claim. `sbt test`: 284
+leaves, 284 pass, 2 s warm; `QaParsers`/`QaGuards` run as `runMain`s and pass. Commands are
+`sbt "runMain BenchRun ..."` and friends (README, SKILL.md updated), `sbt --client` for a warm
+server. The report noise filter is now the sbt one (standing constraints). Not yet: a CI guard that
+compiles and tests the harness (the second infra item), to be added as a `scripts/` check or workflow
+step when the owner rules where it lives.
+
 **Six things are open.** The numbered stream below is no longer a todo list: 12 of its 18 entries are
 finished work or narrative, and it had drifted into claiming otherwise. It is kept for its reasoning
 and renamed accordingly.
