@@ -1450,3 +1450,11 @@ quoting. Without this, Phase 6's Tier A would silently test nothing while report
 
 No kernel source landed. Candidates measured in the detached throwaway worktree only. No `inline`
 without approval. No PR interaction. Commits under the owner's identity, no attribution.
+
+**After every run, the owner gets the results table in chat, with allocation columns** (time both
+sides, delta, resolution, B/op both sides or the delta, verdict icon), whatever the harness's verdict
+on validity, and the verdict stated with it (owner's rule, 2026-08-18). Report files are written
+through the exact scala-cli noise filter (`^Compiling project|^Compiled project|^WARNING:|^\[90m`),
+never a substring that could match report content. A JMH launch always keeps json and log, and every
+`git add -f` of them runs without error suppression. Do not launch a bracket with `uptime`'s
+one-minute load above 2: the 10:04 A/B ran at load 3.5 to 11 and resolved nothing.
