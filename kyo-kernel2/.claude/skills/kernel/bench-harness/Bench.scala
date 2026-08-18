@@ -28,7 +28,14 @@ object Bench:
       * forever. On the only real profile in the repository it matched `boxToInteger` and nothing else, reporting 29.07% where the
       * answer is 83.97%, understated by 54.9 points and in the direction that flatters the kernel. The kernel is the closed set.
       */
-    val KernelPackage = "kyo.kernel.proto."
+    val KernelPackages = Seq("kyo.kernel.", "kyo.proto.")
+    val KernelPackage  = KernelPackages.mkString(" or ")
+
+    /** A frame in one of the kernel implementations under measurement: kyo-kernel2's `kyo.kernel` or `kyo.proto`. The benchmark package
+      * sits under `kyo.kernel.` and is the workload, not the kernel, so it is excluded here and classified on its own.
+      */
+    def isKernel(method: String): Boolean =
+        !method.startsWith(BenchmarkPackage) && KernelPackages.exists(method.startsWith)
 
     /** JIT refusals that are inherent rather than actionable.
       *
@@ -256,6 +263,82 @@ object Bench:
     /** JMH reports its error at 99.9% confidence; a per-fork row carries the same quantity over that fork's own iterations. */
     val JmhConfidenceAlpha = 0.001
 
+    /** JMH's own aggregate over a series: the mean, and the 99.9% error over all of it, which is what its json `score`/`scoreError` are. */
+    def jmhAggregate(xs: Chunk[Double]): (Double, Double) =
+        val n    = xs.size
+        val mean = if n == 0 then 0.0 else xs.sum / n
+        val sd   = if n < 2 then 0.0 else Math.sqrt(xs.map(x => (x - mean) * (x - mean)).sum / (n - 1))
+        (mean, if n < 2 then 0.0 else Stats.tCritical(n - 1, JmhConfidenceAlpha) * sd / Math.sqrt(n))
+
+    private val LogBenchmark = """^\s*(?:\[info\]\s*)?# Benchmark: (\S+)\s*$""".r
+    private val LogFork      = """^\s*(?:\[info\]\s*)?# Fork: (\d+) of (\d+)\s*$""".r
+    private val LogWarmup    = """^\s*(?:\[info\]\s*)?# Warmup: (\d+) iterations.*$""".r
+    private val LogMeasure   = """^\s*(?:\[info\]\s*)?# Measurement: (\d+) iterations.*$""".r
+    private val LogIteration = """^\s*(?:\[info\]\s*)?Iteration\s+\d+: ([\d.]+) (\S+)\s*$""".r
+    private val LogSecondary = """^\s*(?:\[info\]\s*)?([\w.]+): ([\d.]+) (\S+)\s*$""".r
+
+    /** The same entries a JMH json would carry, read from the text log JMH prints while it runs: per benchmark, per fork, every measured
+      * iteration and the secondaries printed under it (`gc.alloc.rate.norm` and the rest of `-prof gc`).
+      *
+      * The log is the one artifact of a run that is written as it happens, so it survives when the json does not (a bracket's json vanished
+      * from the tree the morning this was written, its log committed and complete). Warmup iterations are skipped: they are not data. The
+      * score and error of an entry are recomputed exactly as JMH computes them, the mean and 99.9% error over every measured iteration of
+      * every fork, which the tests check against the summary table JMH printed at the end of the same log.
+      */
+    def parseJmhLog(raw: String): Chunk[JmhEntry] =
+        var warmup: Maybe[Int]  = Maybe.empty
+        var measure: Maybe[Int] = Maybe.empty
+        // benchmark -> (fork index -> iterations, secondary name -> fork index -> values), in encounter order
+        val order      = scala.collection.mutable.ArrayBuffer.empty[String]
+        val forks      = scala.collection.mutable.Map.empty[String, Int]
+        val units      = scala.collection.mutable.Map.empty[String, String]
+        val iterations = scala.collection.mutable.Map.empty[(String, Int), scala.collection.mutable.ArrayBuffer[Double]]
+        val secondary  = scala.collection.mutable.Map.empty[(String, String, Int), scala.collection.mutable.ArrayBuffer[Double]]
+        var bench      = ""
+        var fork       = 0
+        var inWarmup   = true
+        raw.linesIterator.foreach {
+            case LogWarmup(n)  => warmup = Maybe(n.toInt)
+            case LogMeasure(n) => measure = Maybe(n.toInt)
+            case LogBenchmark(name) =>
+                bench = name
+                if !order.contains(name) then order += name
+            case LogFork(k, n) =>
+                fork = k.toInt - 1
+                forks(bench) = n.toInt
+                inWarmup = true
+            case LogIteration(v, unit) =>
+                inWarmup = false
+                units(bench) = unit
+                iterations.getOrElseUpdate((bench, fork), scala.collection.mutable.ArrayBuffer.empty) += v.toDouble
+            case LogSecondary(name, v, _) if !inWarmup && bench.nonEmpty && name.contains(".") =>
+                secondary.getOrElseUpdate((bench, name, fork), scala.collection.mutable.ArrayBuffer.empty) += v.toDouble
+            case line if line.contains("# Warmup Iteration") => inWarmup = true
+            case _ => ()
+        }
+        Chunk.from(order.toSeq).map { name =>
+            val n     = forks.getOrElse(name, 1)
+            val raw   = Chunk.from((0 until n).map(k => Chunk.from(iterations.getOrElse((name, k), Nil).toSeq)))
+            val all   = raw.flatten
+            val (score, err) = jmhAggregate(all)
+            val names = secondary.keys.collect { case (b, s, _) if b == name => s }.toSeq.distinct.sorted
+            val secs =
+                names.map { s =>
+                    val perFork = Chunk.from((0 until n).map(k => Chunk.from(secondary.getOrElse((name, s, k), Nil).toSeq)))
+                    s -> JmhSecondary(jmhAggregate(perFork.flatten)._1, Maybe(perFork))
+                }.toMap
+            JmhEntry(
+                benchmark = name,
+                mode = "avgt",
+                primaryMetric = JmhScore(score, err, units.getOrElse(name, "us/op"), raw),
+                secondaryMetrics = secs,
+                forks = Maybe(n),
+                warmupIterations = warmup,
+                measurementIterations = measure
+            )
+        }
+    end parseJmhLog
+
     /** One fork of an entry as a row of its own: that fork's iterations, their mean, an error at JMH's confidence over them, and the
       * fork's own secondaries where the json carries them per fork. A fork is an independent JVM, which is what a leg is.
       */
@@ -301,6 +384,20 @@ object Bench:
 
     def parseCpu(raw: String): Chunk[CpuSite] =
         Chunk.from(ProfLine.findAllMatchIn(raw).map(m => CpuSite(m.group(3), m.group(1).toLong)).toSeq)
+
+    private val BenchmarkHeader = """(?m)^.*# Benchmark: (\S+)\s*$""".r
+
+    /** A JMH log's profiler tables keyed by the benchmark that produced each: JMH prints one `# Benchmark:` header per row and the
+      * profiler's flat table after that row's iterations, so a split at the headers attributes every frame to its row. Merged, as
+      * `parseCpu` over the whole log does, the frames of 29 rows are one table and no row can be asked where its time went.
+      */
+    def parseCpuByBenchmark(raw: String): Map[String, Chunk[CpuSite]] =
+        val headers = BenchmarkHeader.findAllMatchIn(raw).toSeq
+        headers.zipWithIndex.map { (m, i) =>
+            val end   = if i + 1 < headers.size then headers(i + 1).start else raw.length
+            val block = raw.substring(m.end, end)
+            m.group(1).split('.').last -> parseCpu(block)
+        }.filter((_, sites) => sites.nonEmpty).toMap
 
     /** The collapsed (FlameGraph folded) allocation view: `frame;frame;...;Class_[i] value`.
       *
@@ -588,7 +685,7 @@ object Bench:
     def noiseShare(cpu: Chunk[CpuSite]): Double =
         val total = cpu.map(_.nanos).sum
         if total == 0L then 0.0
-        else cpu.filterNot(_.method.startsWith(KernelPackage)).map(_.nanos).sum.toDouble / total * 100
+        else cpu.filterNot(c => isKernel(c.method)).map(_.nanos).sum.toDouble / total * 100
 
     def noiseShare(run: Run): Double = noiseShare(run.cpu)
 
@@ -610,9 +707,9 @@ object Bench:
         else
             def share(p: CpuSite => Boolean) = cpu.filter(p).map(_.nanos).sum.toDouble / total * 100
             CpuPartition(
-                kernel = share(_.method.startsWith(KernelPackage)),
+                kernel = share(c => isKernel(c.method)),
                 benchmark = share(_.method.startsWith(BenchmarkPackage)),
-                other = share(c => !c.method.startsWith(KernelPackage) && !c.method.startsWith(BenchmarkPackage))
+                other = share(c => !isKernel(c.method) && !c.method.startsWith(BenchmarkPackage))
             )
 
     /** The frames making up that share, largest first. The share alone tells the operator to go and look; these are what it would find. */
@@ -620,7 +717,7 @@ object Bench:
         val total = cpu.map(_.nanos).sum
         if total == 0L then Chunk.empty
         else
-            cpu.filterNot(_.method.startsWith(KernelPackage))
+            cpu.filterNot(c => isKernel(c.method))
                 .sortBy(-_.nanos).take(take)
                 .map(c => (c.method, c.nanos.toDouble / total * 100))
 

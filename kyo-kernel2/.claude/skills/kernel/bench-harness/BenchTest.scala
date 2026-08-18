@@ -131,7 +131,7 @@ object BenchTest:
             )
         )
         val noisyOut = Report.render(Bench.compare(ctl, noisy))
-        check("a run dominated by non-kernel frames says so", noisyOut.contains("outside kyo.kernel.proto"))
+        check("a run dominated by non-kernel frames says so", noisyOut.contains("outside kyo.kernel. or kyo.proto"))
         check(
             "and counts the benchmark's own generated code as non-kernel",
             Math.abs(Bench.noiseShare(noisy) - 73.33) < 0.1,
@@ -372,6 +372,132 @@ object BenchTest:
         // read whole, the same json hides the ramp behind fork one's clean start
         val wholeRamp = Abort.run(Ingest.run(ramp2, "c", "abc", session, "ramp.json", 15)).eval.getOrThrow
         check("which the whole-entry reading could not see", !wholeRamp.rows.head.unsettledStart, s"${wholeRamp.rows.head.iterations}")
+
+        println("a steady-state blocker says which row, which leg, and what the other legs did")
+        // the real case (uncachedValuesPayBoxingOnly, proto fork 1 of 3, 2026-08-18): the owner asked whether it was
+        // the tool being unclear or one benchmark being noisy, and the message could not answer either
+        val realRampJson =
+            """[{"benchmark":"kyo.kernel.bench.YetAnotherProtoBench.uncachedValuesPayBoxingOnly","mode":"avgt","forks":3,"warmupIterations":10,"measurementIterations":5,
+              |"primaryMetric":{"score":48.16,"scoreError":2.458,"scoreUnit":"us/op",
+              |"rawData":[[55.2,48.5,48.9,49.6,48.5],[47.9,47.7,48.0,47.6,47.9],[47.4,47.6,47.5,47.3,47.6]]},
+              |"secondaryMetrics":{}}]""".stripMargin
+        val realRampLegs = Abort.run(Ingest.perFork(realRampJson, "proto", "35d4cbdba0", session, "real.json", 14)).eval.getOrThrow
+        val steadyCtl    = Abort.run(Ingest.perFork(realRampJson.replace("55.2", "48.4"), "kernel", "35d4cbdba0", session, "ctl.json", 14)).eval.getOrThrow
+        val realBlockers = Report.blockers(Bench.compareReplicated(steadyCtl, realRampLegs))
+        check("one blocker", realBlockers.size == 1, realBlockers.mkString("; "))
+        check("naming the row and the leg", realBlockers.head.contains("uncachedValuesPayBoxingOnly (variant leg 1 of 3)"), realBlockers.head)
+        check("the first iteration against the rest", realBlockers.head.contains("first iteration 55.2 then 48.5, 48.9, 49.6, 48.5"), realBlockers.head)
+        check("that the other legs of the row settled", realBlockers.head.contains("other 2 variant leg(s) of this row settled"), realBlockers.head)
+        check("and the cure for that reading", realBlockers.head.contains("one JVM warmed late"), realBlockers.head)
+        val allRamp = Abort.run(Ingest.perFork(realRampJson.replace("[47.9,47.7", "[57.9,47.7").replace("[47.4,47.6", "[57.4,47.6"), "proto", "35d4cbdba0", session, "all.json", 14)).eval.getOrThrow
+        val allBlockers = Report.blockers(Bench.compareReplicated(steadyCtl, allRamp))
+        check("every leg ramping is the other reading", allBlockers.size == 3 && allBlockers.forall(_.contains("every variant leg of this row ramps")), allBlockers.mkString("; "))
+
+        println("a JMH text log ingests like its json")
+        // a real slice of the committed -f 3 -wi 20 -prof gc log (handleLoopAnswersInPlace, kernel side, 2026-08-18): JMH's own
+        // summary line for it reads `avgt 15 88.626 ± 0.365 us/op`, and the log ingest must reproduce that from the iterations
+        val jmhLog =
+            """[info] # Warmup: 20 iterations, 1 s each
+              |[info] # Measurement: 5 iterations, 1 s each
+              |[info] # Benchmark: kyo.kernel.bench.ProtoKernelBench.handleLoopAnswersInPlace
+              |[info] # Run progress: 34.48% complete, ETA 00:24:20
+              |[info] # Fork: 1 of 3
+              |[info] # Warmup Iteration   1: 120.312 us/op
+              |[info] # Warmup Iteration  20: 88.702 us/op
+              |[info] Iteration   1: 88.294 us/op
+              |[info]                  gc.alloc.rate.norm: 640136.636 B/op
+              |[info] Iteration   2: 89.468 us/op
+              |[info]                  gc.alloc.rate.norm: 640136.623 B/op
+              |[info] Iteration   3: 88.241 us/op
+              |[info]                  gc.alloc.rate.norm: 640136.612 B/op
+              |[info] Iteration   4: 88.917 us/op
+              |[info]                  gc.alloc.rate.norm: 640136.619 B/op
+              |[info] Iteration   5: 88.894 us/op
+              |[info]                  gc.alloc.rate.norm: 640136.619 B/op
+              |[info] # Fork: 2 of 3
+              |[info] # Warmup Iteration   1: 118.900 us/op
+              |[info] Iteration   1: 88.269 us/op
+              |[info]                  gc.alloc.rate.norm: 640136.615 B/op
+              |[info] Iteration   2: 88.417 us/op
+              |[info]                  gc.alloc.rate.norm: 640136.617 B/op
+              |[info] Iteration   3: 88.912 us/op
+              |[info]                  gc.alloc.rate.norm: 640136.622 B/op
+              |[info] Iteration   4: 88.825 us/op
+              |[info]                  gc.alloc.rate.norm: 640136.618 B/op
+              |[info] Iteration   5: 88.503 us/op
+              |[info]                  gc.alloc.rate.norm: 640136.616 B/op
+              |[info] # Fork: 3 of 3
+              |[info] # Warmup Iteration   1: 119.001 us/op
+              |[info] Iteration   1: 88.858 us/op
+              |[info]                  gc.alloc.rate.norm: 640136.649 B/op
+              |[info] Iteration   2: 88.429 us/op
+              |[info]                  gc.alloc.rate.norm: 640136.616 B/op
+              |[info] Iteration   3: 88.567 us/op
+              |[info]                  gc.alloc.rate.norm: 640136.617 B/op
+              |[info] Iteration   4: 88.401 us/op
+              |[info]                  gc.alloc.rate.norm: 640136.616 B/op
+              |[info] Iteration   5: 88.386 us/op
+              |[info]                  gc.alloc.rate.norm: 640136.616 B/op
+              |[info] Result "kyo.kernel.bench.ProtoKernelBench.handleLoopAnswersInPlace":
+              |[info]   88.626 ±(99.9%) 0.365 us/op [Average]
+              |[info]   640136.621 ±(99.9%) 0.010 B/op [Average]
+              |[info] Benchmark                                   Mode  Cnt   Score   Error  Units
+              |[info] ProtoKernelBench.handleLoopAnswersInPlace   avgt   15  88.626 ± 0.365  us/op""".stripMargin
+        val logEntries = Bench.parseJmhLog(jmhLog)
+        check("one entry per benchmark header", logEntries.size == 1 && logEntries.head.benchmark.endsWith("handleLoopAnswersInPlace"))
+        check("forks and iterations come from the log", logEntries.head.forks == Maybe(3) && logEntries.head.primaryMetric.rawData.map(_.size) == Chunk(5, 5, 5))
+        check("warmup iterations are not data", !logEntries.head.primaryMetric.rawData.flatten.contains(120.312))
+        // the log prints iterations to three decimals, so the recomputed aggregate can differ from JMH's full-precision one by that much
+        check("the score is JMH's own aggregate", Math.abs(logEntries.head.primaryMetric.score - 88.626) < 0.002, f"${logEntries.head.primaryMetric.score}%.4f")
+        check("and so is its error", Math.abs(logEntries.head.primaryMetric.scoreError - 0.365) < 0.005, f"${logEntries.head.primaryMetric.scoreError}%.4f")
+        check("the gc secondary rides along per fork", logEntries.head.secondaryMetrics("gc.alloc.rate.norm").rawData.map(_.map(_.size)) == Maybe(Chunk(5, 5, 5)))
+        val logLegs = Abort.run(Ingest.perForkLog(jmhLog, "kernel", "f3f29d8b4d", session, "bracket.log", 15)).eval.getOrThrow
+        check("and the log splits per fork like the json", logLegs.size == 3 && logLegs(1).rows.head.iterations == Chunk(88.269, 88.417, 88.912, 88.825, 88.503))
+        check("with each fork's own B/op", logLegs(2).rows.head.allocPerOp.exists(a => Math.abs(a - 640136.6228) < 0.001))
+        check("and the whole entry's B/op is JMH's", Math.abs(logEntries.head.secondaryMetrics("gc.alloc.rate.norm").score - 640136.621) < 0.001)
+
+        println("cpu per row")
+        val cpuLog =
+            """[info] # Benchmark: kyo.kernel.bench.ProtoKernelBench.suspensionBaseline
+              |[info] # Run progress: 0.00% complete, ETA 00:00:30
+              |[info] Iteration   1: 88.5 us/op
+              |[info] Secondary result "kyo.kernel.bench.ProtoKernelBench.suspensionBaseline:async":
+              |[info] --- Execution profile ---
+              |[info]           ns  percent  samples  top
+              |[info]   ----------  -------  -------  ---
+              |[info]    600000000   60.00%      600  kyo.kernel.internal.Eval$.go
+              |[info]    300000000   30.00%      300  kyo.kernel.bench.ProtoKernelBench$$Lambda.apply
+              |[info]    100000000   10.00%      100  java.lang.Integer.valueOf
+              |[info] # Benchmark: kyo.kernel.bench.ProtoKernelBench.evalFixedOverhead
+              |[info] Iteration   1: 0.007 us/op
+              |[info] --- Execution profile ---
+              |[info]           ns  percent  samples  top
+              |[info]   ----------  -------  -------  ---
+              |[info]    900000000   90.00%      900  kyo.kernel.internal.Eval$.apply
+              |[info]    100000000   10.00%      100  kyo.kernel.bench.ProtoKernelBench.evalFixedOverhead
+              |[info] Benchmark                                Mode  Cnt   Score   Error  Units
+              |[info] ProtoKernelBench.evalFixedOverhead       avgt    1   0.007          us/op""".stripMargin
+        val byRow = Bench.parseCpuByBenchmark(cpuLog)
+        check("one table per benchmark header", byRow.keySet == Set("suspensionBaseline", "evalFixedOverhead"), byRow.keySet.toString)
+        check("with that row's frames only", byRow("suspensionBaseline").size == 3 && byRow("evalFixedOverhead").size == 2)
+        check("the summary table is not a frame", byRow.values.forall(_.forall(s => !s.method.contains("us/op"))))
+        check("the benchmark package is not the kernel", !Bench.isKernel("kyo.kernel.bench.ProtoKernelBench$$Lambda.apply") && Bench.isKernel("kyo.kernel.internal.Eval$.go") && Bench.isKernel("kyo.proto.Eval$.go"))
+        val kernelRun = leg("kernel", Seq(("suspensionBaseline", 88.5, 1.0, 640.0), ("evalFixedOverhead", 0.007, 0.0001, 8.0)))
+        val withCpu   = Abort.run(Ingest.attachCpu(kernelRun, cpuLog, "cpu.log")).eval.getOrThrow
+        check("every row carries its own profile", withCpu.rows.forall(_.cpu.nonEmpty))
+        check("and the run's cpu is their merge", withCpu.cpu.size == 5)
+        val part = Bench.cpuPartition(withCpu.rows.find(_.name == "suspensionBaseline").get.cpu)
+        check("a row's partition reads from its own frames", Math.abs(part.kernel - 60.0) < 1e-9 && Math.abs(part.benchmark - 30.0) < 1e-9 && Math.abs(part.other - 10.0) < 1e-9, s"$part")
+        val missingRow = Abort.run(Ingest.attachCpu(kernelRun, cpuLog.replace("evalFixedOverhead", "somethingElse"), "cpu.log")).eval
+        check("a log missing a row's profile is refused", missingRow.isFailure, s"$missingRow")
+        val variantWithCpu = Abort.run(Ingest.attachCpu(
+            leg("variant", Seq(("suspensionBaseline", 160.0, 1.0, 640.0), ("evalFixedOverhead", 0.004, 0.0001, 8.0))),
+            cpuLog.replace("kyo.kernel.internal.Eval$.go", "kyo.proto.Eval$.go").replace("600000000   60.00%", "800000000   80.00%"), "cpu.log"
+        )).eval.getOrThrow
+        val cpuReport = Report.render(Bench.compare(withCpu, variantWithCpu))
+        check("the report has a CPU-by-row section", cpuReport.contains("CPU by row"), cpuReport.takeRight(600))
+        check("with each side's frames", cpuReport.contains("kyo.kernel.internal.Eval$.go") && cpuReport.contains("kyo.proto.Eval$.go"))
+        check("and no section without row profiles", !Report.render(Bench.compare(kernelRun, kernelRun)).contains("CPU by row"))
 
         println("allocation outlives an unresolved timing")
         // from the first replicated bracket: a row flat in time at +9.5%, resolution +-22.64%, whose

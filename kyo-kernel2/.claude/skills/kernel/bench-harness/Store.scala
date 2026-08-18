@@ -102,20 +102,43 @@ object Report:
       */
     def blockers(c: Comparison): Chunk[String] =
         // every leg of each arm, not the first: a replicated comparison carries its legs, and a ramp
-        // in leg two of three is exactly as much a mixture of warm and cold code as one in leg one
+        // in leg two of three is exactly as much a mixture of warm and cold code as one in leg one.
+        // The message says which row, which leg of which arm, and whether that row's other legs
+        // settled, because the two readings have different cures: one JVM warming late is a re-run
+        // with more warmup or a look at what compiles late in it; every leg ramping is a row that
+        // needs more warmup than it was given; and a row whose legs merely disagree is noise the
+        // resolution column already carries, which more warmup will not change
         def arm(name: String, legs: Chunk[Run]): Chunk[String] =
-            val n = legs.size
-            Chunk.from(legs.zipWithIndex).flatMap { (leg, k) =>
-                val where = if n == 1 then name else s"$name leg ${k + 1} of $n"
-                val rows  = c.deltas.map(_.row).toSet
-                val unsettled =
+            val n    = legs.size
+            val rows = c.deltas.map(_.row).toSet
+            val unsettled =
+                Chunk.from(legs.zipWithIndex).flatMap { (leg, k) =>
                     leg.rows.filter(r => rows.contains(r.name) && r.unsettledStart).map { r =>
-                        s"${r.name} ($where) never settled: iterations ${r.iterations.map(x => f"$x%.1f").mkString(", ")}"
+                        val others   = legs.zipWithIndex.filter(_._2 != k).flatMap((l, _) => l.row(r.name))
+                        val settled  = others.count(!_.unsettledStart)
+                        val first    = f"${r.iterations.head}%.1f"
+                        val rest     = r.iterations.tail.map(x => f"$x%.1f").mkString(", ")
+                        val ramp     = r.warmupRamp.map(x => f"${x * 100}%.0f%%").getOrElse("?")
+                        val where    = if n == 1 then s"$name" else s"$name leg ${k + 1} of $n"
+                        val reading =
+                            if n == 1 then "re-run with more warmup"
+                            else if settled == others.size then
+                                s"the other $settled $name leg(s) of this row settled, so one JVM warmed late: re-run with more warmup, " +
+                                    "or look at what compiles late in it (-prof comp, LogCompilation)"
+                            else if settled == 0 then
+                                s"every $name leg of this row ramps, so the row needs more warmup than it was given"
+                            else
+                                s"$settled of ${others.size} other $name leg(s) settled: re-run with more warmup"
+                        s"${r.name} ($where) never settled: first iteration $first then $rest ($ramp ramp); $reading"
                     }
-                val compiling =
+                }
+            val compiling =
+                Chunk.from(legs.zipWithIndex).flatMap { (leg, k) =>
+                    val where = if n == 1 then name else s"$name leg ${k + 1} of $n"
                     Bench.stillCompiling(leg).map((r, p) => f"$r%s ($where) spent ${p}%.1f%% of its measured window compiling")
-                unsettled ++ compiling
-            }
+                }
+            unsettled ++ compiling
+        end arm
         arm("control", c.allControlLegs) ++ arm("variant", c.allVariantLegs)
     end blockers
 
@@ -219,6 +242,9 @@ object Report:
             case Verdict.Flat            => "⚪"
             case Verdict.Regressed       => "🔴"
             case Verdict.BelowResolution => "🔵"
+
+    /** Frames shown per side in the per-row CPU section. */
+    val CpuFramesPerRow = 6
 
     def render(c: Comparison, chainLength: Int = 2): String =
         val control = c.control
@@ -413,6 +439,27 @@ object Report:
                 val frames = Bench.noiseFrames(variant).map((m, p) => f"\n      $p%5.1f%%  $m").mkString
                 f"\n\u2139\ufe0f  $n%.0f%% of sampled time is outside ${Bench.KernelPackage.stripSuffix(".")}, so kernel-attributable movement is a fraction of each delta above. Largest contributors:$frames"
 
+        // per-row CPU, when both sides carry a row profile: where each row's time went on each side,
+        // the kernel/benchmark/other split and the frames behind it, so a delta can be read against the
+        // code that spent it rather than against a run-level share
+        val cpuByRow =
+            val rows = c.deltas.filter(d => d.control.cpu.nonEmpty && d.variant.cpu.nonEmpty)
+            if rows.isEmpty then ""
+            else
+                def side(name: String, cpu: Chunk[CpuSite]): String =
+                    val p     = Bench.cpuPartition(cpu)
+                    val total = cpu.map(_.nanos).sum.toDouble
+                    val top =
+                        cpu.sortBy(-_.nanos).take(CpuFramesPerRow)
+                            .map(s => f"${s.nanos / total * 100}%5.1f%% ${s.method}")
+                            .mkString("\n        ", "\n        ", "")
+                    f"    $name%-8s kernel ${p.kernel}%5.1f%%  benchmark ${p.benchmark}%5.1f%%  other ${p.other}%5.1f%%$top"
+                "\n\n\uD83D\uDD25 CPU by row (sampled time, top frames each side):\n" +
+                    rows.map { d =>
+                        s"  ${icon(d.verdict)} `${d.row}` ${f"${d.percent}%+.1f%%"}\n" +
+                            side("control", d.control.cpu) + "\n" + side("variant", d.variant.cpu)
+                    }.mkString("\n")
+
         val bothWays =
             if wins.isEmpty || reds.isEmpty then ""
             else
@@ -457,7 +504,7 @@ object Report:
         // falsifier attached is where "it is slower, so replace it" comes from.
         val investigation = Investigate.render(c)
 
-        s"$blockerBanner$sessionWarning$header\n$body$rampNote$resolutionNote$jit$deoptShift$polymorphic$allocSites$allocNote$partition$verdictLine$ladder$steadyState$jitTable$bothWays$noiseNote$investigation"
+        s"$blockerBanner$sessionWarning$header\n$body$rampNote$resolutionNote$jit$deoptShift$polymorphic$allocSites$allocNote$partition$verdictLine$ladder$steadyState$jitTable$bothWays$noiseNote$cpuByRow$investigation"
     end render
 
 end Report

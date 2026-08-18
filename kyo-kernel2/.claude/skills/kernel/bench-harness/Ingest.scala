@@ -77,7 +77,21 @@ object Ingest:
         source: String,
         declaredRows: Int
     )(using Frame): Run < Bench.Fail =
-        Bench.parseJmhEntries(raw).map { entries =>
+        Bench.parseJmhEntries(raw).map(entries => runEntries(entries, label, sha, session, source, declaredRows))
+
+    /** The same from the text log JMH printed while it ran; see `Bench.parseJmhLog` for why that is worth having. */
+    def runLog(raw: String, label: String, sha: String, session: Session, source: String, declaredRows: Int)(using Frame): Run < Bench.Fail =
+        runEntries(Bench.parseJmhLog(raw), label, sha, session, source, declaredRows)
+
+    def runEntries(
+        entries: Chunk[Bench.JmhEntry],
+        label: String,
+        sha: String,
+        session: Session,
+        source: String,
+        declaredRows: Int
+    )(using Frame): Run < Bench.Fail =
+        {
             if entries.isEmpty then Abort.fail(Bench.BracketFailed(s"$source holds no benchmark rows"))
             else
                 build(
@@ -112,7 +126,20 @@ object Ingest:
         source: String,
         declaredRows: Int
     )(using Frame): Chunk[Run] < Bench.Fail =
-        Bench.parseJmhEntries(raw).map { entries =>
+        Bench.parseJmhEntries(raw).map(entries => perForkEntries(entries, label, sha, session, source, declaredRows))
+
+    def perForkLog(raw: String, label: String, sha: String, session: Session, source: String, declaredRows: Int)(using Frame): Chunk[Run] < Bench.Fail =
+        perForkEntries(Bench.parseJmhLog(raw), label, sha, session, source, declaredRows)
+
+    def perForkEntries(
+        entries: Chunk[Bench.JmhEntry],
+        label: String,
+        sha: String,
+        session: Session,
+        source: String,
+        declaredRows: Int
+    )(using Frame): Chunk[Run] < Bench.Fail =
+        {
             if entries.isEmpty then Abort.fail(Bench.BracketFailed(s"$source holds no benchmark rows"))
             else
                 val forks = entries.map(_.primaryMetric.rawData.size).min
@@ -148,6 +175,53 @@ object Ingest:
             run(raw, label, sha, session, path.name.getOrElse(path.toString), declaredRows).map { r =>
                 Store.save(store, r).andThen(r)
             }
+        }
+
+    /** Attaches a JMH profiler log's per-benchmark CPU tables to a stored run's rows, and stores it back.
+      *
+      * The CPU pass is its own JMH invocation (`-prof async:event=itimer`, one iteration after warmup), so its timing is not a
+      * measurement and only its profile is taken: each row of the run gets the flat table the profiler printed under that row's
+      * `# Benchmark:` header, and the run's own `cpu` becomes their merge, which is what the run-level partition reads.
+      */
+    def attachCpu(run: Run, log: String, source: String)(using Frame): Run < Bench.Fail =
+        val byRow = Bench.parseCpuByBenchmark(log)
+        if byRow.isEmpty then Abort.fail(Bench.BracketFailed(s"$source holds no profiler tables under any '# Benchmark:' header"))
+        else
+            val missing = run.rows.map(_.name).filterNot(byRow.contains)
+            if missing.nonEmpty then
+                Abort.fail(Bench.BracketFailed(
+                    s"$source has no profile for ${missing.size} of ${run.rows.size} rows of ${run.id}: ${missing.mkString(", ")}"
+                ))
+            else
+                val rows = run.rows.map(r => r.copy(cpu = byRow(r.name)))
+                run.copy(rows = rows, cpu = rows.flatMap(_.cpu))
+        end if
+    end attachCpu
+
+    def attachCpuFile(store: Path, id: String, log: Path)(using Frame): Run < (Async & Bench.Fail & Abort[FileWriteException]) =
+        for
+            run <- Store.load(store, id)
+            raw <- log.read
+            out <- attachCpu(run, raw, log.name.getOrElse(log.toString))
+            _   <- Store.save(store, out)
+        yield out
+
+    /** Reads a JMH text log and stores the run it describes, whole or per fork. */
+    def logFile(
+        path: Path,
+        label: String,
+        sha: String,
+        session: Session,
+        store: Path,
+        declaredRows: Int,
+        perFork: Boolean
+    )(using Frame): Chunk[Run] < (Async & Bench.Fail & Abort[FileWriteException]) =
+        path.read.map { raw =>
+            val source = path.name.getOrElse(path.toString)
+            val runs =
+                if perFork then perForkLog(raw, label, sha, session, source, declaredRows)
+                else runLog(raw, label, sha, session, source, declaredRows).map(Chunk(_))
+            runs.map(rs => Kyo.foreachDiscard(rs)(r => Store.save(store, r).unit).andThen(rs))
         }
 
     /** Reads a json file, splits it per fork, and stores every leg. */

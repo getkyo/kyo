@@ -34,7 +34,11 @@ object Model:
           * and the score describes a mixture of compiled and compiling code.
           */
         compilerMsProfiled: Maybe[Double],
-        compilerMsTotal: Maybe[Double]
+        compilerMsTotal: Maybe[Double],
+        /** This row's own CPU profile, the flat table the profiler printed for this benchmark, so a hot frame is attributed to the row
+          * that spent the time. The run-level `Run.cpu` merges every row and cannot say which row a frame belongs to.
+          */
+        cpu: Chunk[CpuSite] = Chunk.empty
     ) derives Schema:
         /** Compilation during measurement as a fraction of the measured wall time. */
         def compilingShare(measuredMs: Double): Maybe[Double] = compilerMsProfiled.map(_ / measuredMs * 100)

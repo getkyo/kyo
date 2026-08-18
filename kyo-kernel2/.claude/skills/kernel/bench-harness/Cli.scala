@@ -71,6 +71,8 @@ case class IngestOpts(
     declaredRows: Int = 15,
     @HelpMessage("split a -f N json into N legs, one per fork (one per JVM), so BenchCompare can give the replicated verdict and check each JVM's steady state")
     perFork: Boolean = false,
+    @HelpMessage("the --json files are JMH text logs (sbt output of a Jmh/run), read for their measured iterations and -prof gc secondaries; the log survives when a json does not")
+    log: Boolean = false,
     store: String = "bench-runs"
 )
 
@@ -99,6 +101,14 @@ case class ChainOpts(
 )
 
 case class ShowOpts(id: String, store: String = "bench-runs")
+
+case class CpuOpts(
+    @HelpMessage("stored run whose rows receive the profile; for a per-fork bracket, the head leg of each arm is what the report shows")
+    run: String,
+    @HelpMessage("JMH log of a `-prof async:event=itimer` invocation over the same rows; one flat table per `# Benchmark:` header")
+    log: String,
+    store: String = "bench-runs"
+)
 case class ListOpts(store: String = "bench-runs")
 
 object Cli:
@@ -252,7 +262,8 @@ object BenchIngest extends KyoCaseApp[IngestOpts]:
             )
             runs <- Kyo.foreach(Chunk.from(opts.json.zip(opts.label).zipWithIndex)) { case ((j, l), i) =>
                 val sha = opts.sha.lift(i).orElse(opts.sha.headOption).getOrElse("unknown")
-                if opts.perFork then Ingest.filePerFork(Path(j), l, sha, session, Path(opts.store), opts.declaredRows)
+                if opts.log then Ingest.logFile(Path(j), l, sha, session, Path(opts.store), opts.declaredRows, opts.perFork)
+                else if opts.perFork then Ingest.filePerFork(Path(j), l, sha, session, Path(opts.store), opts.declaredRows)
                 else Ingest.file(Path(j), l, sha, session, Path(opts.store), opts.declaredRows).map(Chunk(_))
             }
             _ <- Kyo.foreachDiscard(runs.flatten) { r =>
@@ -410,6 +421,26 @@ object BenchCompare extends KyoCaseApp[CompareOpts]:
         )
     }
 end BenchCompare
+
+/** Attaches a CPU profile to a stored run, row by row.
+  *
+  * The CPU pass is a separate JMH invocation, so it cannot ride in the timing json; without this the
+  * only CPU evidence the harness could hold was what its own ladder collected for the one class it
+  * knows, and a comparison of two benchmark classes had none.
+  */
+object BenchCpu extends KyoCaseApp[CpuOpts]:
+    run { (opts: CpuOpts) =>
+        Cli.guard(
+        Ingest.attachCpuFile(Path(opts.store), opts.run, Path(opts.log)).map { r =>
+            val p = Bench.cpuPartition(r.cpu)
+            Console.printLine(
+                f"attached cpu to ${r.id}: ${r.rows.count(_.cpu.nonEmpty)} rows profiled, " +
+                    f"kernel ${p.kernel}%.1f%% benchmark ${p.benchmark}%.1f%% other ${p.other}%.1f%% of sampled time"
+            )
+        }
+        )
+    }
+end BenchCpu
 
 object BenchShow extends KyoCaseApp[ShowOpts]:
     run { (opts: ShowOpts) =>
