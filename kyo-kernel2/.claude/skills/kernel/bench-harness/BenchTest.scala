@@ -498,6 +498,13 @@ object BenchTest:
         check("the report has a CPU-by-row section", cpuReport.contains("CPU by row"), cpuReport.takeRight(600))
         check("with each side's frames", cpuReport.contains("kyo.kernel.internal.Eval$.go") && cpuReport.contains("kyo.proto.Eval$.go"))
         check("and no section without row profiles", !Report.render(Bench.compare(kernelRun, kernelRun)).contains("CPU by row"))
+        // the run-level noise frames come from the rows' merged profiles, where one method appears once per
+        // row: the -wi 20 report listed boxToInteger three times as its three largest contributors
+        val merged = Chunk(CpuSite("scala.runtime.BoxesRunTime.boxToInteger", 400), CpuSite("kyo.proto.Eval$.go$1", 300),
+            CpuSite("scala.runtime.BoxesRunTime.boxToInteger", 200), CpuSite("java.lang.Integer.valueOf", 100))
+        val frames = Bench.noiseFrames(merged, 3)
+        check("noise frames are summed by method", frames.map(_._1) == Chunk("scala.runtime.BoxesRunTime.boxToInteger", "java.lang.Integer.valueOf"), frames.toString)
+        check("with the summed share", frames.head._2 == 60.0, frames.head._2.toString)
 
         println("allocation outlives an unresolved timing")
         // from the first replicated bracket: a row flat in time at +9.5%, resolution +-22.64%, whose

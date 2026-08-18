@@ -717,9 +717,15 @@ object Bench:
         val total = cpu.map(_.nanos).sum
         if total == 0L then Chunk.empty
         else
-            cpu.filterNot(c => isKernel(c.method))
-                .sortBy(-_.nanos).take(take)
-                .map(c => (c.method, c.nanos.toDouble / total * 100))
+            // by method: a run's cpu is the merge of its rows' profiles, so one method appears once per
+            // row it was sampled in, and listing the same frame three times says less than summing it
+            Chunk.from(
+                cpu.filterNot(c => isKernel(c.method))
+                    .groupBy(_.method).toSeq
+                    .map((m, sites) => (m, sites.map(_.nanos).sum))
+                    .sortBy(-_._2).take(take)
+                    .map((m, n) => (m, n.toDouble / total * 100))
+            )
 
     def noiseFrames(run: Run, take: Int = 3): Chunk[(String, Double)] = noiseFrames(run.cpu, take)
 
