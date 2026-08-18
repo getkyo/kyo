@@ -653,6 +653,7 @@ object Bench:
             jit = LogCompilation.inlining(logc),
             coverage = logc.coverage,
             jvmArgs = Chunk.from(jvmArgs),
+            benchmarkClass = BenchClass,
             alloc = allocSites,
             allocByMethod = byMethod,
             cpu = cpuSites,

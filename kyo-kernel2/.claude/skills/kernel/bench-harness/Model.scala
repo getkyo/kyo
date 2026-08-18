@@ -318,6 +318,10 @@ object Model:
           * reader could say what it had measured.
           */
         jvmArgs: Chunk[String] = Chunk.empty,
+        /** The benchmark class whose rows these are, when known. Two runs at one sha over two classes are a comparison of the two
+          * implementations those classes exercise, and the report has to say so instead of reading the equal sha as an A/A.
+          */
+        benchmarkClass: String = "",
         alloc: Chunk[AllocSite],
         /** Who allocated each class, from the collapsed view of the same recording.
           *

@@ -192,7 +192,15 @@ object Report:
       * and gets no note.
       */
     def partitionNote(control: Run, variant: Run, chainLength: Int): String =
-        if control.sha == variant.sha then
+        if control.sha == variant.sha && control.benchmarkClass.nonEmpty && variant.benchmarkClass.nonEmpty
+            && control.benchmarkClass != variant.benchmarkClass
+        then
+            // one sha, two benchmark classes: two implementations measured by their own classes, so no
+            // source-level mechanism is attributable between them here, and it is not an A/A
+            s"\nSame sha, two benchmark classes (`${control.benchmarkClass}` against `${variant.benchmarkClass}`): this compares the " +
+                "implementations those classes exercise, row by row as they are named. Nothing between them is attributed by " +
+                "source; the ladder on each side is what says where the time and the bytes went."
+        else if control.sha == variant.sha then
             // a configuration comparison varies nothing but the JVM arguments, so those ARE the
             // change under test and the report is the only place a reader can see them. The
             // campaign's headline was stored without them and could be re-read forever without

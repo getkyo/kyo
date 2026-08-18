@@ -36,7 +36,9 @@ object Ingest:
         source: String,
         declaredRows: Int,
         forks: Int,
-        warmup: Int
+        warmup: Int,
+        jvmArgs: Chunk[String],
+        benchmarkClass: String
     ): Run =
         Run(
             id = id,
@@ -60,8 +62,17 @@ object Ingest:
             cpu = Chunk.empty,
             deopts = Chunk.empty,
             morphism = Chunk.empty,
-            recordedAt = source
+            recordedAt = source,
+            jvmArgs = jvmArgs,
+            benchmarkClass = benchmarkClass
         )
+
+    /** The class every entry names, or the classes joined when a json holds more than one. */
+    private def classOf(entries: Chunk[Bench.JmhEntry]): String =
+        entries.map(_.benchmark.split('.').dropRight(1).mkString(".")).distinct.mkString(" + ")
+
+    private def jvmArgsOf(entries: Chunk[Bench.JmhEntry]): Chunk[String] =
+        entries.headMaybe.flatMap(_.jvmArgs).getOrElse(Chunk.empty)
 
     /** Build a `Run` from a JMH json document.
       *
@@ -103,7 +114,9 @@ object Ingest:
                     source = source,
                     declaredRows = declaredRows,
                     forks = entries.flatMap(_.forks).maxOption.getOrElse(1),
-                    warmup = entries.headMaybe.flatMap(_.warmupIterations).getOrElse(Bench.WarmupIterations)
+                    warmup = entries.headMaybe.flatMap(_.warmupIterations).getOrElse(Bench.WarmupIterations),
+                    jvmArgs = jvmArgsOf(entries),
+                    benchmarkClass = classOf(entries)
                 )
         }
 
@@ -156,7 +169,9 @@ object Ingest:
                             source = source,
                             declaredRows = declaredRows,
                             forks = 1,
-                            warmup = warmup
+                            warmup = warmup,
+                            jvmArgs = jvmArgsOf(entries),
+                            benchmarkClass = classOf(entries)
                         )
                     }
                 end if

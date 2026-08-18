@@ -456,6 +456,19 @@ object BenchTest:
         check("with each fork's own B/op", logLegs(2).rows.head.allocPerOp.exists(a => Math.abs(a - 640136.6228) < 0.001))
         check("and the whole entry's B/op is JMH's", Math.abs(logEntries.head.secondaryMetrics("gc.alloc.rate.norm").score - 640136.621) < 0.001)
 
+        println("one sha, two benchmark classes")
+        // the kernel-vs-proto brackets ingest two classes at one sha, and the report read the equal sha as an A/A
+        val kernelJson = threeForks
+        val protoJson  = threeForks.replace("ProtoKernelBench.evalFixedOverhead", "YetAnotherProtoBench.evalFixedOverhead")
+        val kRun = Abort.run(Ingest.run(kernelJson, "kernel", "f3f29d8b4d", session, "k.json", 15)).eval.getOrThrow
+        val pRun = Abort.run(Ingest.run(protoJson, "proto", "f3f29d8b4d", session, "p.json", 14)).eval.getOrThrow
+        check("an ingested run knows its benchmark class", kRun.benchmarkClass == "kyo.kernel.bench.ProtoKernelBench" && pRun.benchmarkClass == "kyo.kernel.bench.YetAnotherProtoBench", s"${kRun.benchmarkClass} / ${pRun.benchmarkClass}")
+        check("and its jvm arguments", kRun.jvmArgs == Chunk("-Xmx12G"), kRun.jvmArgs.toString)
+        val twoClasses = Report.render(Bench.compare(kRun, pRun))
+        check("two classes at one sha are named as such", twoClasses.contains("two benchmark classes") && twoClasses.contains("YetAnotherProtoBench"), twoClasses.takeRight(400))
+        check("and not read as an A/A", !twoClasses.contains("Either this is an A/A"))
+        check("one class at one sha still reads as before", Report.render(Bench.compare(kRun, kRun)).contains("Same sha and no recorded JVM arguments") || Report.render(Bench.compare(kRun, kRun)).contains("configuration comparison") || !Report.render(Bench.compare(kRun, kRun)).contains("two benchmark classes"))
+
         println("cpu per row")
         val cpuLog =
             """[info] # Benchmark: kyo.kernel.bench.ProtoKernelBench.suspensionBaseline
