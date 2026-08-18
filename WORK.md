@@ -693,6 +693,18 @@ Everything left in the harness stream needs one of two things I cannot supply al
   contents, touches the measurement path); item 4's "name the C3 mechanism" wording; the five rulings
   in task 24 (C4, DIS-3, IN-3, C3, DIS-4) and 0e.
 
+**Explored the long-map-tower hang and proposed two fixes (owner asked; not applied).** The `done`
+branch batches: `curr = head(curr, stack.dump())`; on a deep interior it dumps the whole remaining
+stack into one right-deep `Arrow.Chain` and drives it through the two-arg apply, which defers at the
+budget as `Defer(v, this, next)` and re-drives via `push(next)`. Two coupled problems: A7 (`push`
+recurses `push(c.b); push(c.a)` down the spine -> a 1M-deep re-push overflows the Java stack, the crash)
+and A6 (each budget cycle dumps+re-pushes the remaining -> O(N^2)). Fix A: iterative `push` (count,
+`ensure(n)`, `head -= n`, `@tailrec` fill forward) -> stops the overflow but leaves the quadratic, so
+the tower runs but likely too slow. Fix B (recommended): one arrow per trampoline step,
+`curr = stack.pop().asInstanceOf[Arrow[A, ?, EX & S]](r)` (the earlier evaluator's form) -> linear,
+stack-safe, no dump/re-flatten, kills both; costs the batch micro-opt on shallow interiors. Awaiting
+the owner's pick.
+
 **Applied the owner's `evalNow` loop fix; condition is correct, 5 of 6 budget failures fixed, the 6th
 (long map tower) hangs on a Java-stack overflow.** Added `evalNow = self.lower(pending = _ =>
 Maybe.empty, done = a => Maybe(a))` to `Pending.scala` and changed the loop to `if !stack.isEmpty ||
