@@ -1,9 +1,8 @@
 package kyo.proto
 
 import kyo.Frame
-import kyo.Loop.Outcome
-import kyo.Loop.Outcome2
-import kyo.Span
+import kyo.proto.Loop.Outcome
+import kyo.proto.Loop.Outcome2
 import kyo.Tag
 
 sealed abstract class Kyo[+A, -S]
@@ -41,16 +40,6 @@ object Kyo:
                 def contB = _contB
     end Defer
 
-    /** A parked stack segment, in stack order, and the computation to run once it is back: beside a region's continuation its handler,
-      * and beside that its state; both null for a plain continuation.
-      */
-    class Park[+A, +B, -S](
-        val entries: Span[Arrow[?, ?, ?]],
-        val handlers: Span[Handler[?, ?, ?, ?]],
-        val states: Span[Any],
-        val value: A < S
-    ) extends Kyo[B, S]
-
     abstract class Suspend[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Kyo[B, E & S]:
         def frame: Frame
         def tag: Tag[E]
@@ -81,6 +70,19 @@ object Kyo:
             def initialState: State
             def run[X](state: State, input: I[X]): Outcome2[State, O[X] < (E & S), B] < S
             def complete(state: State, v: A): B < S
+        end HandleLoopState
+
+        object HandleLoopState:
+            /** The same handler entered at `state`: a region re-wrapped with the state it had when its interior was captured. */
+            def resumed[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State](
+                h: HandleLoopState[I, O, E, A, B, S, State],
+                state: State
+            ): HandleLoopState[I, O, E, A, B, S, State] =
+                new HandleLoopState[I, O, E, A, B, S, State]:
+                    def tag                            = h.tag
+                    def initialState                   = state
+                    def run[X](st: State, input: I[X]) = h.run(st, input)
+                    def complete(st: State, v: A)      = h.complete(st, v)
         end HandleLoopState
 
     end Handler

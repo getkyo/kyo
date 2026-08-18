@@ -1,7 +1,6 @@
 package kyo.proto
 
 import kyo.Frame
-import kyo.Span
 import kyo.bug
 import scala.annotation.tailrec
 
@@ -14,14 +13,11 @@ object Eval:
         finally Safepoint.restore(slot, saved)
     end apply
 
-    private type Susp     = Kyo.Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any]
-    private type Handler  = Kyo.Handler[Nothing, Any, Any, Any]
-    private type Cont     = Kyo.Handler.HandleCont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any]
-    private type Loop_    = Kyo.Handler.HandleLoop[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any]
-    private type LoopSt   = Kyo.Handler.HandleLoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any]
-    private type Entries  = Span[Arrow[?, ?, ?]]
-    private type Handlers = Span[Kyo.Handler[?, ?, ?, ?]]
-    private type States   = Span[Any]
+    private type Susp    = Kyo.Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any]
+    private type Handler = Kyo.Handler[Nothing, Any, Any, Any]
+    private type Cont    = Kyo.Handler.HandleCont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any]
+    private type Loop_   = Kyo.Handler.HandleLoop[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any]
+    private type LoopSt  = Kyo.Handler.HandleLoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any]
 
     private given Frame = Frame.internal
 
@@ -60,9 +56,6 @@ object Eval:
                 stack.push(d.contB)
                 stack.push(d.contA)
                 d.value
-            case p: Kyo.Park[Any, Any, Any] @unchecked =>
-                stack.pushAll(p.entries, p.handlers, p.states)
-                p.value
             case h: Kyo.Handle[Nothing, Any, Any, Any, Any] @unchecked =>
                 h.handler match
                     case hs: LoopSt @unchecked => stack.push(h.cont, h.handler, hs.initialState)
@@ -78,114 +71,92 @@ object Eval:
         stack.handler(i) match
             case hc: Cont @unchecked =>
                 // the clause receives the operation's continuation as a value; the region stays for
-                // the clause's result. A plain interior composes with the suspension's own
-                // continuation into one arrow; an interior holding a region is parked around it
-                val resume: Any => Any < Any =
-                    if stack.size == i + 1 then s.cont(_)
-                    else if !stack.regionAbove(i) then
-                        val k = fold(stack, i + 1)
-                        o => k(s.cont(o), Arrow.id)
-                    else
-                        val entries  = stack.copyEntries(i + 1)
-                        val handlers = stack.copyHandlers(i + 1)
-                        val states   = stack.copyStates(i + 1)
-                        stack.truncate(i + 1)
-                        o => new Kyo.Park(entries, handlers, states, s.cont(o))
-                // erasure: E is Nothing in the pattern, so the row reads as Nothing
-                hc.run(s.input, resume).asInstanceOf[Any < Any]
+                // the clause's result. Erasure: E is Nothing in the pattern, so the row reads as Nothing
+                val k = continuation(s, stack, i)
+                hc.run(s.input, k(_)).asInstanceOf[Any < Any]
             case hl: Loop_ @unchecked =>
-                val out = hl.run(s.input)
-                out.lower(
-                    pending = clause => parkedOutcome(clause, i, s, stack),
+                hl.run(s.input).lower(
+                    pending = clause => outcome(clause, i, s, stack),
                     done = {
-                        case c: Loop.Continue[?] =>
-                            answer(c._1.asInstanceOf[Any < Any], i, s, stack)
-                        case _ =>
-                            // Loop.done: the region ends, complete is bypassed, the payload flows
-                            // into the region's continuation as it came
-                            val cont = stack(i)
-                            stack.truncate(i)
-                            cont(out, Arrow.id)
+                        case c: Loop.Continue[?] => answer(c._1.asInstanceOf[Any < Any], continuation(s, stack, i))
+                        case done                => finish(done, i, stack)
                     }
                 )
             case hs: LoopSt @unchecked =>
-                val out = hs.run(stack.state(i), s.input)
-                out.lower(
-                    pending = clause => parkedOutcome(clause, i, s, stack),
+                hs.run(stack.state(i), s.input).lower(
+                    pending = clause => outcome(clause, i, s, stack),
                     done = {
                         case c: Loop.Continue2[?, ?] =>
                             stack.setState(i, c._1)
-                            answer(c._2.asInstanceOf[Any < Any], i, s, stack)
-                        case _ =>
-                            val cont = stack(i)
-                            stack.truncate(i)
-                            cont(out, Arrow.id)
+                            answer(c._2.asInstanceOf[Any < Any], continuation(s, stack, i))
+                        case done => finish(done, i, stack)
                     }
                 )
         end match
     end dispatch
 
-    // a settled answer goes into the operation's continuation with the interior in place; a pending
-    // answer is region currency: it runs under this handler with the interior parked, and the
-    // interior receives its value
-    private def answer(a: Any < Any, i: Int, s: Susp, stack: Stack): Any < Any =
-        a.lower(
-            pending = k =>
-                if stack.size == i + 1 then Kyo.Defer(k, s.cont)
-                else if !stack.regionAbove(i) then Kyo.Defer(k, s.cont, fold(stack, i + 1))
-                else
-                    val entries  = stack.copyEntries(i + 1)
-                    val handlers = stack.copyHandlers(i + 1)
-                    val states   = stack.copyStates(i + 1)
-                    stack.truncate(i + 1)
-                    Kyo.Defer(k, s.cont, restore(entries, handlers, states))
+    // the operation's continuation: its own arrow with the interior above region `i` composed onto
+    // it, innermost first. Consecutive continuations chain into one arrow, as they compose; a region
+    // wraps what is above it as a Handle entered at the state it had. The stack is cut back to the
+    // region: the continuation is a value now, and nothing of it stays behind
+    private def continuation(s: Susp, stack: Stack, i: Int): Arrow[Any, Any, Any] =
+        @tailrec def loop(j: Int, acc: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
+            if j <= i then acc
+            else if stack.marked(j) then
+                val h    = stack.handler(j)
+                val st   = stack.state(j)
+                val cont = stack(j)
+                loop(j - 1, Arrow.Transform[Any, Any, Any](o => inside(h, st, cont)(acc(o))))
+            else loop(j - 1, acc.chain(stack(j)))
+        val k = loop(stack.size - 1, s.cont)
+        stack.truncate(i + 1)
+        k
+    end continuation
+
+    // a computation inside a region: pending, it is the region's body; settled, the region completes on it
+    private def inside(h: Handler, st: Any, k: Arrow[Any, Any, Any])(x: Any < Any): Any < Any =
+        x.lower(
+            pending = body =>
+                new Kyo.Handle[Nothing, Any, Any, Any, Any]:
+                    def v = body
+                    val handler =
+                        h match
+                            case hs: LoopSt @unchecked => Kyo.Handler.HandleLoopState.resumed(hs, st)
+                            case _                     => h
+                    def cont = k
             ,
-            done = x => s.cont(x)
+            done = a => k(complete(h, st, a), Arrow.id)
         )
 
-    // the plain continuations from `from` to the top, innermost first, as one composed arrow, and
-    // the stack cut back to `from`: continuations compose, so a plain interior needs no park
-    private def fold(stack: Stack, from: Int): Arrow[Any, Any, Any] =
-        @tailrec def loop(j: Int, acc: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
-            if j >= stack.size then acc
-            else loop(j + 1, stack(j).chain(acc))
-        val k = loop(from + 1, stack(from))
-        stack.truncate(from)
-        k
-    end fold
+    // a settled answer goes into the continuation; a pending answer is region currency: it runs under
+    // this handler with the interior gone from the stack, and the continuation puts the interior back
+    // around the remainder, because it is the remainder's wrapper
+    private def answer(a: Any < Any, k: Arrow[Any, Any, Any]): Any < Any =
+        a.lower(pending = Kyo.Defer(_, k), done = k(_))
 
-    // a clause that suspends before its outcome runs with the region and its interior parked; its
-    // outcome rebuilds them around the answer, or drops them on done
-    private def parkedOutcome(clause: Kyo[Any, Any], i: Int, s: Susp, stack: Stack): Any < Any =
-        val iEntries  = stack.copyEntries(i + 1)
-        val iHandlers = stack.copyHandlers(i + 1)
-        val iStates   = stack.copyStates(i + 1)
-        stack.truncate(i + 1)
-        val rEntries  = stack.copyEntries(i)
-        val rHandlers = stack.copyHandlers(i)
-        val rStates   = stack.copyStates(i)
+    // a clause that suspends before its outcome runs outside its region: the region and its interior
+    // leave the stack, and the outcome re-wraps the region around the answer, or drops it on done
+    private def outcome(clause: Kyo[Any, Any], i: Int, s: Susp, stack: Stack): Any < Any =
+        val k    = continuation(s, stack, i)
+        val h    = stack.handler(i)
+        val st   = stack.state(i)
+        val cont = stack(i)
         stack.truncate(i)
-        def rebuild(states: States, a: Any < Any): Any < Any =
-            a.lower(
-                pending = k => new Kyo.Park(rEntries, rHandlers, states, Kyo.Defer(k, s.cont, restore(iEntries, iHandlers, iStates))),
-                done = x => new Kyo.Park(rEntries, rHandlers, states, park(iEntries, iHandlers, iStates, s.cont(x)))
-            )
         Kyo.Defer(
             clause,
             Arrow.Transform[Any, Any, Any] {
-                case c: Loop.Continue[?]     => rebuild(rStates, c._1.asInstanceOf[Any < Any])
-                case c: Loop.Continue2[?, ?] => rebuild(Span.fromUnsafe(Array[Any](c._1)), c._2.asInstanceOf[Any < Any])
-                case done                    => rEntries(0).asInstanceOf[Arrow[Any, Any, Any]](done, Arrow.id)
+                case c: Loop.Continue[?]     => inside(h, st, cont)(answer(c._1.asInstanceOf[Any < Any], k))
+                case c: Loop.Continue2[?, ?] => inside(h, c._1, cont)(answer(c._2.asInstanceOf[Any < Any], k))
+                case done                    => cont(done, Arrow.id)
             }
         )
-    end parkedOutcome
+    end outcome
 
-    private def park(entries: Entries, handlers: Handlers, states: States, value: Any < Any): Any < Any =
-        if entries.isEmpty then value
-        else new Kyo.Park(entries, handlers, states, value)
-
-    // the arrow that puts a parked interior back and delivers its input into it
-    private def restore(entries: Entries, handlers: Handlers, states: States): Arrow[Any, Any, Any] =
-        Arrow.Transform[Any, Any, Any](y => new Kyo.Park(entries, handlers, states, y))
+    // Loop.done: the region ends, complete is bypassed, the payload flows into the region's continuation as it came
+    private def finish(done: Any, i: Int, stack: Stack): Any < Any =
+        val cont = stack(i)
+        stack.truncate(i)
+        cont(done, Arrow.id)
+    end finish
 
 end Eval

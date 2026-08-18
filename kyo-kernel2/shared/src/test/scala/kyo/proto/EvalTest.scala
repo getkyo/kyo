@@ -1,6 +1,7 @@
 package kyo.proto
 
 import kyo.Const
+import kyo.Maybe
 import kyo.Tag
 import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
@@ -10,18 +11,22 @@ class EvalTest extends AnyFreeSpec:
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
+    // the operation with its continuation fused into the node: the remainder is the node's own
+    // arrow, not entries on the evaluator's stack
+    inline def askWith[B, S](inline f: Int => B < S): B < (Ask & S) = ArrowEffect.suspendWith[Any](Tag[Ask], ())(f)
+
     sealed trait Say extends ArrowEffect[Const[String], Const[Unit]]
     def say(s: String): Unit < Say = ArrowEffect.suspend[Any](Tag[Say], s)
 
     def answerAsk[A, S](value: Int)(v: A < (Ask & S)): A < S =
-        ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value), a => a)
+        ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value: Int < Any), a => a)
 
     def recordSay[A, S](name: String, log: collection.mutable.ListBuffer[String])(v: A < (Say & S)): A < S =
         ArrowEffect.handleLoop(Tag[Say], v)(
             [C] =>
                 _ =>
                     log += name
-                    Loop.continue(())
+                    Loop.continue((): Unit < Any)
             ,
             a => a
         )
@@ -156,7 +161,7 @@ class EvalTest extends AnyFreeSpec:
                 Tag[Ask],
                 0,
                 ask.map(a => say("x").map(_ => ask.map(b => a * 10 + b)))
-            )([C] => (s, _) => Loop.continue(s + 1, s), (_, a) => a)
+            )([C] => (s, _) => Loop.continue(s + 1, s: Int < Any), (_, a) => a)
             val r: Int < Any = ArrowEffect.handleCont(Tag[Say], inner)(
                 [C] => (_, cont) => cont(()).map(r1 => cont(()).map(r2 => r1 * 100 + r2)),
                 a => a
@@ -184,12 +189,12 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "done sees the settled result" in {
-            val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([C] => _ => Loop.continue(41), a => a * 10)
+            val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([C] => _ => Loop.continue(41: Int < Any), a => a * 10)
             assert(Eval(r) == 420)
         }
 
         "a settled input applies done strictly" in {
-            val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], 41: Int < Ask)([C] => _ => Loop.continue(0), a => a + 1)
+            val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], 41: Int < Ask)([C] => _ => Loop.continue(0: Int < Any), a => a + 1)
             assert(Eval(r) == 42)
         }
 
@@ -221,7 +226,7 @@ class EvalTest extends AnyFreeSpec:
             val program: Int < (Ask & Say) = say("m").map(_ => ask).map(_ + 1)
             val sayInner: Int < Ask = recordSay("inner", log)(program)
             val askScope: Int < Say = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
-                [C] => _ => say("c").map(_ => Loop.continue(41)),
+                [C] => _ => say("c").map(_ => Loop.continue(41: Int < Any)),
                 a => a
             )
             assert(Eval(recordSay("outer", log)(askScope)) == 42)
@@ -266,17 +271,98 @@ class EvalTest extends AnyFreeSpec:
             assert(log.toList == List("inner", "outer", "outer"))
         }
 
+        // the operation was raised from inside the interior region, so its remainder belongs inside
+        // that region: an effectful answer runs under this handler with the interior parked, and the
+        // interior comes back around the remainder, not after it
+        "an effectful answer's remainder runs inside the interior region" in {
+            val log = collection.mutable.ListBuffer[String]()
+            val program: Int < (Ask & Say) = ask.map(a => say("after").map(_ => a + 1))
+            val sayInner: Int < Ask = recordSay("inner", log)(program)
+            val askScope: Int < Say = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
+                [C] => _ => Loop.continue(say("c").map(_ => 41)),
+                a => a
+            )
+            assert(Eval(recordSay("outer", log)(askScope)) == 42)
+            assert(log.toList == List("outer", "inner"))
+        }
+
+        "an effectful answer's remainder raises the interior's effect with no outer handler for it" in {
+            val log = collection.mutable.ListBuffer[String]()
+            val program: Int < (Ask & Say) = ask.map(a => say("after").map(_ => a + 1))
+            val sayInner: Int < Ask = recordSay("inner", log)(program)
+            // a pending answer with nothing left in its row: a handled region is pending currency
+            val pendingAnswer: Int < Any = answerAsk(0)(ask.map(_ => 41))
+            val askScope: Int < Any = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
+                [C] => _ => Loop.continue(pendingAnswer),
+                a => a
+            )
+            assert(Eval(askScope) == 42)
+            assert(log.toList == List("inner"))
+        }
+
+        "a clause suspending and then answering effectfully keeps the remainder inside the interior region" in {
+            val log = collection.mutable.ListBuffer[String]()
+            val program: Int < (Ask & Say) = ask.map(a => say("after").map(_ => a + 1))
+            val sayInner: Int < Ask = recordSay("inner", log)(program)
+            val askScope: Int < Say = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
+                [C] => _ => say("pre").map(_ => Loop.continue(say("c").map(_ => 41))),
+                a => a
+            )
+            assert(Eval(recordSay("outer", log)(askScope)) == 42)
+            assert(log.toList == List("outer", "outer", "inner"))
+        }
+
+        // the same three shapes with the remainder fused into the operation's node: the interior is
+        // parked around the answer either way, and it must come back around the remainder, whether
+        // the remainder lives on the stack or in the node
+        "an effectful answer's fused remainder runs inside the interior region" in {
+            val log = collection.mutable.ListBuffer[String]()
+            val program: Int < (Ask & Say) = askWith(a => say("after").map(_ => a + 1))
+            val sayInner: Int < Ask = recordSay("inner", log)(program)
+            val askScope: Int < Say = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
+                [C] => _ => Loop.continue(say("c").map(_ => 41)),
+                a => a
+            )
+            assert(Eval(recordSay("outer", log)(askScope)) == 42)
+            assert(log.toList == List("outer", "inner"))
+        }
+
+        "an effectful answer's fused remainder raises the interior's effect with no outer handler for it" in {
+            val log = collection.mutable.ListBuffer[String]()
+            val program: Int < (Ask & Say) = askWith(a => say("after").map(_ => a + 1))
+            val sayInner: Int < Ask = recordSay("inner", log)(program)
+            val pendingAnswer: Int < Any = answerAsk(0)(ask.map(_ => 41))
+            val askScope: Int < Any = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
+                [C] => _ => Loop.continue(pendingAnswer),
+                a => a
+            )
+            assert(Eval(askScope) == 42)
+            assert(log.toList == List("inner"))
+        }
+
+        "a clause suspending and then answering effectfully keeps the fused remainder inside the interior region" in {
+            val log = collection.mutable.ListBuffer[String]()
+            val program: Int < (Ask & Say) = askWith(a => say("after").map(_ => a + 1))
+            val sayInner: Int < Ask = recordSay("inner", log)(program)
+            val askScope: Int < Say = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
+                [C] => _ => say("pre").map(_ => Loop.continue(say("c").map(_ => 41))),
+                a => a
+            )
+            assert(Eval(recordSay("outer", log)(askScope)) == 42)
+            assert(log.toList == List("outer", "outer", "inner"))
+        }
+
         "a computation held as a value crosses a handler as a value" in {
             val payload: Int < Say   = say("p").map(_ => 7)
             val v: (Int < Say) < Ask = ask.map(_ => box(payload))
             val handled: (Int < Say) < Any =
-                ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(0), a => box(a))
+                ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(0: Int < Any), a => box(a))
             var seen = ""
             val r: Int < Any = ArrowEffect.handleLoop(Tag[Say], Eval(handled))(
                 [C] =>
                     s =>
                         seen = s
-                        Loop.continue(())
+                        Loop.continue((): Unit < Any)
                 ,
                 a => a
             )
@@ -300,7 +386,7 @@ class EvalTest extends AnyFreeSpec:
         "threads state through operations" in {
             val v = ask.map(a => ask.map(b => a * 10 + b))
             val r: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 1, v)(
-                [C] => (s, _) => Loop.continue(s + 1, s),
+                [C] => (s, _) => Loop.continue(s + 1, s: Int < Any),
                 (_, a) => a
             )
             assert(Eval(r) == 12)
@@ -309,7 +395,7 @@ class EvalTest extends AnyFreeSpec:
         "done observes the final state" in {
             val v = ask.map(a => ask.map(b => a + b))
             val r: (Int, Int) < Any = ArrowEffect.handleLoopState(Tag[Ask], 10, v)(
-                [C] => (s, _) => Loop.continue(s + 1, s),
+                [C] => (s, _) => Loop.continue(s + 1, s: Int < Any),
                 (s, a) => (s, a)
             )
             assert(Eval(r) == (12, 21))
@@ -318,7 +404,7 @@ class EvalTest extends AnyFreeSpec:
         "Loop.done bypasses done" in {
             val v = ask.map(a => ask.map(b => a + b))
             val r: String < Any = ArrowEffect.handleLoopState(Tag[Ask], 0, v)(
-                [C] => (s, _) => if s == 1 then Loop.done("stopped") else Loop.continue(s + 1, 1),
+                [C] => (s, _) => if s == 1 then Loop.done("stopped") else Loop.continue(s + 1, 1: Int < Any),
                 (s, a) => s"done $a"
             )
             assert(Eval(r) == "stopped")
@@ -327,10 +413,10 @@ class EvalTest extends AnyFreeSpec:
         "state survives a foreign crossing" in {
             val body: Int < (Ask & Say) = ask.map(a => say("x").map(_ => ask.map(b => a * 10 + b)))
             val inner: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], 1, body)(
-                [C] => (s, _) => Loop.continue(s + 1, s),
+                [C] => (s, _) => Loop.continue(s + 1, s: Int < Any),
                 (_, a) => a
             )
-            val r: Int < Any = ArrowEffect.handleLoop(Tag[Say], inner)([C] => _ => Loop.continue(()), a => a)
+            val r: Int < Any = ArrowEffect.handleLoop(Tag[Say], inner)([C] => _ => Loop.continue((): Unit < Any), a => a)
             assert(Eval(r) == 12)
         }
 
@@ -338,11 +424,112 @@ class EvalTest extends AnyFreeSpec:
             val log = collection.mutable.ListBuffer[String]()
             val v   = ask.map(a => ask.map(b => a * 10 + b))
             val handled: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], 1, v)(
-                [C] => (s, _) => say(s"state $s").map(_ => Loop.continue(s + 1, s)),
+                [C] => (s, _) => say(s"state $s").map(_ => Loop.continue(s + 1, s: Int < Any)),
                 (_, a) => a
             )
             assert(Eval(recordSay("outer", log)(handled)) == 12)
             assert(log.size == 2)
+        }
+
+        "a stateful effectful answer's remainder runs inside the interior region" in {
+            val log = collection.mutable.ListBuffer[String]()
+            val program: Int < (Ask & Say) = ask.map(a => say("after").map(_ => a + 1))
+            val sayInner: Int < Ask = recordSay("inner", log)(program)
+            val askScope: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], 40, sayInner)(
+                [C] => (s, _) => Loop.continue(s + 1, say("c").map(_ => s + 1)),
+                (_, a) => a
+            )
+            assert(Eval(recordSay("outer", log)(askScope)) == 42)
+            assert(log.toList == List("outer", "inner"))
+        }
+
+        "a stateful effectful answer's fused remainder runs inside the interior region" in {
+            val log = collection.mutable.ListBuffer[String]()
+            val program: Int < (Ask & Say) = askWith(a => say("after").map(_ => a + 1))
+            val sayInner: Int < Ask = recordSay("inner", log)(program)
+            val askScope: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], 40, sayInner)(
+                [C] => (s, _) => Loop.continue(s + 1, say("c").map(_ => s + 1)),
+                (_, a) => a
+            )
+            assert(Eval(recordSay("outer", log)(askScope)) == 42)
+            assert(log.toList == List("outer", "inner"))
+        }
+    }
+
+    // a continuation handed to a clause is a value the kernel produced: it carries no live stack, so
+    // it means the same thing wherever and whenever it is applied, and applying it never disturbs
+    // the evaluation that produced it
+    "a captured continuation is a value" - {
+        def stateful(body: Int < (Ask & Say)): Int < Say =
+            ArrowEffect.handleLoopState(Tag[Ask], 0, body)([C] => (s, _) => Loop.continue(s + 1, s: Int < Any), (_, a) => a)
+
+        "resumes after its region completed, in a fresh evaluation, each shot from capture-time state" in {
+            var stored: Maybe[Unit => Int < Say] = Maybe.empty
+            val inner: Int < Say = stateful(ask.map(a => say("x").map(_ => ask.map(b => a * 10 + b))))
+            val r: Int < Any = ArrowEffect.handleCont(Tag[Say], inner)(
+                [C] =>
+                    (_, cont) =>
+                        stored = Maybe(cont)
+                        -1
+                ,
+                a => a
+            )
+            assert(Eval(r) == -1)
+            val k = stored.get
+            def resume(): Int = Eval(ArrowEffect.handleCont(Tag[Say], k(()))([C] => (_, cont) => cont(()), a => a))
+            assert(resume() == 1)
+            assert(resume() == 1)
+        }
+
+        "resumes on another thread" in {
+            var stored: Maybe[Unit => Int < Say] = Maybe.empty
+            val inner: Int < Say = stateful(ask.map(a => say("x").map(_ => ask.map(b => a * 10 + b))))
+            val r: Int < Any = ArrowEffect.handleCont(Tag[Say], inner)(
+                [C] =>
+                    (_, cont) =>
+                        stored = Maybe(cont)
+                        -1
+                ,
+                a => a
+            )
+            assert(Eval(r) == -1)
+            val k = stored.get
+            def resume(): Int = Eval(ArrowEffect.handleCont(Tag[Say], k(()))([C] => (_, cont) => cont(()), a => a))
+            val results = new java.util.concurrent.ConcurrentLinkedQueue[Int]()
+            val threads = (1 to 4).map(_ => new Thread(() => { results.add(resume()); () }))
+            threads.foreach(_.start())
+            threads.foreach(_.join())
+            assert(results.toArray.map(_.asInstanceOf[Int]).toList == List(1, 1, 1, 1))
+        }
+
+        "resumes under a later region of the same tag, which answers the remainder" in {
+            var stored: Maybe[Int => Int < Ask] = Maybe.empty
+            val body: Int < Ask = ask.map(a => ask.map(b => a * 10 + b))
+            val first: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
+                [C] =>
+                    (_, cont) =>
+                        stored = Maybe(cont)
+                        -1
+                ,
+                a => a
+            )
+            assert(Eval(first) == -1)
+            val k = stored.get
+            assert(Eval(answerAsk(7)(k(1))) == 17)
+            assert(Eval(answerAsk(8)(k(2))) == 28)
+        }
+
+        "a shot evaluated inside the clause leaves the region intact for the next" in {
+            val inner: Int < Say = stateful(ask.map(a => say("x").map(_ => ask.map(b => a * 10 + b))))
+            val r: Int < Any = ArrowEffect.handleCont(Tag[Say], inner)(
+                [C] =>
+                    (_, cont) =>
+                        val now = Eval(ArrowEffect.handleCont(Tag[Say], cont(()))([C] => (_, c2) => c2(()), a => a))
+                        cont(()).map(later => now * 100 + later)
+                ,
+                a => a
+            )
+            assert(Eval(r) == 101)
         }
     }
 

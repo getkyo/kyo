@@ -97,7 +97,7 @@ class YetAnotherProtoBench:
         def loop(i: Int): Int < Ask =
             if i > Depth then i
             else ask.map(a => loop(i + a))
-        val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], loop(0))([C] => _ => Loop.continue(1), a => a)
+        val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], loop(0))([C] => _ => Loop.continue(1: Int < Any), a => a)
         Eval(r)
     end handleLoopAnswersInPlace
 
@@ -115,7 +115,7 @@ class YetAnotherProtoBench:
             if i > Depth then i
             else ask.map(a => loop(i + a))
         val r: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 0, loop(0))(
-            [C] => (state, _) => Loop.continue(state + 1, 1),
+            [C] => (state, _) => Loop.continue(state + 1, 1: Int < Any),
             (_, a) => a
         )
         Eval(r)
@@ -151,10 +151,10 @@ class YetAnotherProtoBench:
             if i > NarrowDepth then i
             else ask.map(a => loop(i + a))
         val emitted: Int < Tick = ArrowEffect.handleLoop(Tag[Ask], loop(0))(
-            [C] => _ => tick.map(t => Loop.continue(t)),
+            [C] => _ => tick.map(t => Loop.continue(t: Int < Any)),
             a => a
         )
-        val r: Int < Any = ArrowEffect.handleLoop(Tag[Tick], emitted)([C] => _ => Loop.continue(1), a => a)
+        val r: Int < Any = ArrowEffect.handleLoop(Tag[Tick], emitted)([C] => _ => Loop.continue(1: Int < Any), a => a)
         Eval(r)
     end emittingClausesPayRegionRebuild
 

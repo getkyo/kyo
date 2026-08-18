@@ -1,7 +1,6 @@
 package kyo.proto
 
 import java.util.Arrays
-import kyo.Span
 import kyo.Tag
 import scala.annotation.static
 import scala.annotation.tailrec
@@ -74,37 +73,6 @@ final private[proto] class Stack:
                 else loop(i - 1)
         loop(top - 1)
     end find
-
-    /** Is any entry above `i` a region. A plain interior needs no stack: its continuations compose. */
-    def regionAbove(i: Int): Boolean =
-        @tailrec def loop(j: Int): Boolean =
-            if j >= top then false
-            else if handlers(j) ne null then true
-            else loop(j + 1)
-        loop(i + 1)
-    end regionAbove
-
-    def copyEntries(from: Int): Span[Arrow[?, ?, ?]] =
-        Span.fromUnsafe(Arrays.copyOfRange(entries, from, top))
-
-    def copyHandlers(from: Int): Span[Kyo.Handler[?, ?, ?, ?]] =
-        Span.fromUnsafe(Arrays.copyOfRange(handlers, from, top))
-
-    def copyStates(from: Int): Span[Any] =
-        Span.fromUnsafe(Arrays.copyOfRange(states, from, top))
-
-    def pushAll(entries2: Span[Arrow[?, ?, ?]], handlers2: Span[Kyo.Handler[?, ?, ?, ?]], states2: Span[Any]): Unit =
-        val n = entries2.size
-        @tailrec def loop(i: Int): Unit =
-            if i < n then
-                if top == entries.length then grow()
-                entries(top) = entries2(i)
-                handlers(top) = handlers2(i)
-                states(top) = states2(i).asInstanceOf[AnyRef]
-                top += 1
-                loop(i + 1)
-        loop(0)
-    end pushAll
 
     private def grow(): Unit =
         entries = Arrays.copyOf(entries, top * 2)
