@@ -521,7 +521,38 @@ owner's fused node halved it), `suspensionBaseline` 191, `emittingClauses` 74, b
 **307** and `statefulAnswers` **340** against 216/212 at `f3f29d8b4d` with identical allocation:
 suspected the interface `instanceof` in `lower` (`Kyo` a trait now) and in `Eval.step`; the A/B is
 `Arrow`/`Transform` as the trait side with `Kyo` a class, in the throwaway, on those rows, before
-anything lands. Open, awaiting the owner's go.
+anything lands. **A/B run (throwaway only, candidate diff left there, 3 files 7 lines plus
+`@unchecked` on `Eval.step`'s match): the candidate reads `handleLoopAnswersInPlace` 203 ±18 (-f 1) and
+158 ±23 (-f 2) against 307 at HEAD, `statefulAnswers` 194 ±34 (-f 2) against 340, `suspensionBaseline`
+203 ±5 against 191, `suspensionFusesContinuation` 43.9 against 43.4, all at equal B/op; the machine
+carried a load average of 6.5 from other processes, so these are directional reads, not a bracket
+(`reviews/bench/check-0818-f{1,2}-arrowtrait-candidate.*`).** Recorded default: the candidate is not
+landed (kernel candidates never land from here); flagged for the owner's ruling with the recommendation
+to take it and bracket it at `-f 3` on a quiet machine.
+
+**The -wi 20 bracket through the harness, from its log (`8499cdbbbb`, `1b16c09147`).** The bracket's
+json (`bracket-0818-f3-wi20-gc-f3f29d8b4d.json`, 228 KB at 08:25, read by jq at 08:37) was gone from
+the tree by 09:20; it was never in git because the `git add -f` that should have taken it had a
+`2>/dev/null` on it and aborted on one bad pathspec without a word (lesson recorded: never silence
+`git add`). Its log was committed and complete, so the harness now ingests JMH text logs
+(`Bench.parseJmhLog` into the same `JmhEntry` the json path uses, per benchmark and per fork, measured
+iterations only, `-prof gc` secondaries under them; `BenchIngest --log`; the recomputed score and error
+reproduce JMH's own summary line from the same log to the log's print precision). Also landed: per-row
+CPU (`Row.cpu`, `parseCpuByBenchmark`, `BenchCpu`, the "CPU by row" report section, `isKernel` over
+both packages), and the steady-state blocker naming row, leg, the other legs and the cure. Ingested per
+fork (`kernel-f{1,2,3}-f3f29d8b4d-fd15c0a7`, `proto-f{1,2,3}-f3f29d8b4d-3cd2b12a`, session
+`proto-bracket-0818-wi20`), the itimer pass attached to the head legs, `BenchCompare` 3 vs 3
+(`reviews/bench/bracket-0818-f3-wi20-gc-f3f29d8b4d-report.md`): **no fork ramped at -wi 20, A/A null
+clean, df 4**; 🟢 `evalFixedOverhead` -46.9%; ⚪ `emittingClauses` -14.8% with -64,064 B/op and
+`deepRecursion` +13.0% with +239,592 B/op (allocation moved where timing did not resolve); 🔴 eleven
+rows, five with allocation named as the mechanism (`fusionPastBudget`/`idleHandler` +184,024,
+`uncachedValues` +184,032, `suspensionFusesContinuation` +240,024, `nestedPayloads` +24,000: the strict
+`map`'s Transform), the three suspension rows at equal allocation with the CPU-by-row section showing
+proto sampled time in `BoxesRunTime.boxToInteger` at 51% (`suspensionBaseline`), 71%
+(`handleLoopAnswersInPlace`, kernel 35%) and `Integer.valueOf` 13% plus `Stack.push` 11%
+(`statefulAnswers`), and `trailingMapsStayLinear` quadratic at this sha (fixed since). Run-level: 74%
+of proto sampled time outside the kernel packages, largest `boxToInteger` (the noise-frames list
+repeats it per row: a small report defect, `noiseFrames` should aggregate by method; open).
 
 **Third file, third real bug, and the added coverage localised it exactly.** A handler's clause is the
 handler's own code and its effects belong to the handlers *outside* the region. This kernel answers a
