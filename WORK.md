@@ -873,6 +873,34 @@ skipping state slots, `pos + 2` arithmetic) do not exist: indices stay 1:1, `tru
 case with `state(pos)`/`setState(pos)` and `Continue2`, the done branch matching a popped
 `HandlerLoopState` and reading its state slot). Awaiting the owner's reply.
 
+**The owner implemented HandleLoopState themselves (20:30 onward), the simple slot-keyed way, and
+asked for a check.** Their shape: `states: Array[Maybe[Any]]` parallel to `entries` (no Bound, no
+cell), `put(idx, f)` as the entry-write funnel that eagerly initializes a `HandlerLoopState`'s slot,
+Eval's Suspend branch reading `state(pos).getOrElse(h.initialState)` and writing `putState(pos,
+r._1)` per `Continue2` turn; `Handler.HandlerLoopState` uncommented (`initialState`/`run(state,
+input)`/`apply(state, v)`); `ArrowEffect.handleLoopState` still commented, so nothing constructs one
+yet (first pinning test is the commented `PendingTest:194`). Static review delivered: five defects,
+two gaps. Owner greenlit applying them one at a time, elaboration in chat before each edit. Applied:
+(1) `Eval` Continue2 arm resumed with `r._1` (the state) instead of `r._2` (the answer); (2) fresh
+`states` slots were `null`, which is not a valid `Maybe` (`isEmpty` is `isInstanceOf[Absent]`, so
+null falls to `get` and `MatchError`s): pre-filled with `Absent`; (3) `state`/`putState` indexed
+`states(i)` raw while every other accessor masks: now `(head + i) & mask`; (4) `ensure` re-based
+`entries` but abandoned `states` (AIOOBE past the old length, misalignment below it): states now
+carried in lockstep, new slots Absent; (5) vacate-clears: `pop` and `dump(pos)` reset `states(idx)`
+to Absent (the owner had already added `truncate`'s); my follow-on deletion of `put` was INTERRUPTED
+and reverted, owner: "you can't remove put! it's the central place to ensure tracking of state";
+`put` restored and completed as the funnel instead: all three write sites route through it,
+including `fill`'s terminal leaf, which had bypassed it (the actual defect); with vacated slots
+always Absent its `getOrElse` can only initialize, never adopt stale state; (6) the done branch
+never read the accumulated state (inherited `Handler.apply` completes through the state-less
+one-arg `apply`): it now reads `state(0)` before the pop (pop clears the slot) and completes a
+popped `HandlerLoopState` via `apply(state, r)` directly, skipping the fused walk for that one
+boundary. Open gap, flagged not fixed: capture across a stateful region (`dump(pos)` chains the raw
+handler into the continuation, the slot-keyed state stays behind, re-push falls back to
+initialState); the Bound reification is the known fix when something exercises it. Verification:
+`PendingTest` running in background (`b88lva8d7`) to confirm the shared-path edits (pop/dump/done
+branch) hold 38/38.
+
 **Tick 20:18: no measurement possible, hold continues.** Gate check: kyo-kernel2 sources still
 uncommitted (16 modified + 4 untracked, no stable sha), the owner active mid-design and may build at
 any moment, load 4.27 (under the bracket bar of 5, but the sha gate fails first; the trait rerun
