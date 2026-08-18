@@ -670,8 +670,18 @@ Second wave (defect reconciliation + the measurement-free defect fixes the first
 - **The defect ledger was reconciled with the whole session's work** (`4f96a65dd5`, `2e14b52c9b`,
   `e905f7d5a2`, `081b447ece`, `25b2fc2978`): 31/32/33/35/36/38/40/45/46/47/52 were fixed by this
   session but still read "open"; now **44 of 52 closed**, 39 won't-fix (dead but defensive), 4 open:
-  30 (measurement-path, part of 0a), 34 (Gate-A wire-or-delete, owner), 37 (ruling 0e, owner), 9
-  (mitigated by the A/A, no code fix). `sbt test` green at 321 leaves throughout.
+  30 (measurement-path, part of 0a), 37 (ruling 0e, owner), 9 (mitigated by the A/A, no code fix).
+  **defect 34** (`1c34a79c15`): `actionableJit` wired into the stopped-inlining falsifier filter, so a
+  megamorphic regression earns no futile force-inline experiment; **45 of 52 closed** now. `sbt test`
+  green at 323 leaves.
+
+**Floor reached, verified by an exhaustive defect sweep.** Every remaining harness item needs a quiet
+machine (a measurement, blocked by the owner's two 12 GB kernel builds at load ~6) or an owner
+decision. The only code-fixable open defect is 30 (the per-fork `LogFile` collection), which is in
+`runLeg` and cannot be validated without a real multi-benchmark bracket; its pure-merge half would be
+a stranded selector without the measurement-path wiring, so it is held whole. 37 is ruling 0e, 9 is
+structural (the A/A is the mitigation, already always-on). Owner decisions still pending: item 8
+(hypothesis storage), item 1 jvmArgs half, the task-24 rulings, 0e/37.
 
 Everything left in the harness stream needs one of two things I cannot supply alone right now:
 - **a measurement** (the machine must be quiet, not shared with the owner's kernel build): 0a's stale-
