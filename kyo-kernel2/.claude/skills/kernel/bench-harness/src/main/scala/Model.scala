@@ -27,8 +27,11 @@ object Model:
           * `[86.4, 80.8, 81.4, 78.5, 78.6]`: a warmup ramp whose first iteration inflated both the
           * mean and the error, and which the harness could not see at all because it kept only the
           * count. That leg then carried a -9.8% "win" that was substantially its own unsettled start.
+          *
+          * Defaulted: the field was added after runs were stored, and the two Full runs in the qa store carry rows without it. A row
+          * recorded before the series was kept reads as having no series rather than blocking the whole run's decode.
           */
-        iterations: Chunk[Double],
+        iterations: Chunk[Double] = Chunk.empty,
         allocPerOp: Maybe[Double],
         /** Milliseconds the JIT spent compiling *during the measured window*. Non-trivial values mean the JVM had not reached steady state
           * and the score describes a mixture of compiled and compiling code.
@@ -246,18 +249,21 @@ object Model:
         /** Tasks compiling a loop that was already running. The JMH stub loop is one of these, and it is where the measured code actually
           * runs, so folding them into `tasks` hides the compilation that matters most.
           */
-        osrTasks: Int,
+        osrTasks: Int = 0,
         recompiled: Int,
         /** Deoptimizations that actually happened: `<uncommon_trap thread=...>`, emitted when a running method falls back to the
           * interpreter. In a captured run there were 6 of these.
+          *
+          * Defaulted because it, `plantedTraps`, `osrTasks` and `madeNotEntrant` were added after the two Full runs were recorded; those
+          * runs carry the pre-rename shape (a single `deopts` key, no OSR or not-entrant counts), and the record must stay decodable.
           */
-        runtimeDeopts: Int,
+        runtimeDeopts: Int = 0,
         /** Guards the compiler planted while compiling (`bci=`), a property of the code shape rather than an event. There were 633 in the
           * same run, and summing them with the above produced a "deoptimizations 642 vs 645" row that compared guard censuses.
           */
-        plantedTraps: Int,
+        plantedTraps: Int = 0,
         /** Compiled methods invalidated and scheduled for recompilation. The real recompilation signal, and previously unparsed. */
-        madeNotEntrant: Int,
+        madeNotEntrant: Int = 0,
         /** Seconds from JVM start to the last compilation. Compare against when measurement began. */
         lastCompileAt: Double
     ) derives Schema
@@ -317,9 +323,14 @@ object Model:
         /** Inlining decisions per method, with every site kept. Sourced from the compilation log, which supersedes `PrintInlining`
           * entirely: that tool interleaves output across compiler threads and reports no denominator.
           */
-        jit: Chunk[InlineSites],
-        /** How much of each parsed artifact was actually consumed, so a silent partial parse is visible in the record. */
-        coverage: Chunk[ParseCoverage],
+        jit: Chunk[InlineSites] = Chunk.empty,
+        /** How much of each parsed artifact was actually consumed, so a silent partial parse is visible in the record.
+          *
+          * Defaulted like the other evidence chunks: this field was added after runs were already stored, and without a default the two
+          * Full runs recorded before it became undecodable (the store is the durable record, a schema addition must leave the old ones
+          * readable). `StoreSchemaTest` decodes those real runs to keep it true.
+          */
+        coverage: Chunk[ParseCoverage] = Chunk.empty,
         /** The extra JVM arguments this leg was measured under.
           *
           * A configuration comparison varies nothing but these, so a stored pair with the same `sha`
@@ -333,7 +344,7 @@ object Model:
           * implementations those classes exercise, and the report has to say so instead of reading the equal sha as an A/A.
           */
         benchmarkClass: String = "",
-        alloc: Chunk[AllocSite],
+        alloc: Chunk[AllocSite] = Chunk.empty,
         /** Who allocated each class, from the collapsed view of the same recording.
           *
           * Defaulted, and that default is load-bearing rather than a convenience: adding this field
@@ -343,9 +354,9 @@ object Model:
           * this field existed to keep that true.
           */
         allocByMethod: Chunk[AllocByMethod] = Chunk.empty,
-        cpu: Chunk[CpuSite],
-        deopts: Chunk[Deopt],
-        morphism: Chunk[CallMorphism],
+        cpu: Chunk[CpuSite] = Chunk.empty,
+        deopts: Chunk[Deopt] = Chunk.empty,
+        morphism: Chunk[CallMorphism] = Chunk.empty,
         recordedAt: String
     ) derives Schema:
         def row(name: String): Maybe[Row]              = Maybe.fromOption(rows.find(_.name == name))
