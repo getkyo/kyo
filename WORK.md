@@ -413,6 +413,69 @@ harness's ask, and enough forks to carry a claim), detached, JSON to
 `proto-bracket-0818`) and compared through the harness; the earlier screen stays in the record as a
 screen only.
 
+**The -f 3 -wi 10 bracket, through the harness (2026-08-18 morning; `953229243b`).** Before ingesting
+it, the ingest gap it exposed was closed (`f3f29d8b4d`): an ingested run called itself `-f 1` with the
+harness's default warmup whatever the json said, and read as one leg a `-f N` json hid the spread
+between its JVMs and let the steady-state check see only fork one's start. Now `JmhEntry` carries
+`forks`/`warmupIterations`/`jvmArgs` and each secondary's per-fork series, `Ingest.perFork`
+(`BenchIngest --per-fork`) makes one leg per fork with that fork's iterations, mean, an error at JMH's
+99.9% from `Stats.tCritical` (checked against JMH's own `scoreError` on a real row to 1e-6), and that
+fork's own secondaries; `Comparison` carries every leg and `Report.blockers` checks each; `BenchCompare`
+runs the A/A null with three or more control legs. Then `bracket-0818-f3-head.json` split per class,
+ingested per fork (`kernel-f{1,2,3}-35d4cbdba0-122461b3`, `proto-f{1,2,3}-35d4cbdba0-6944c434`, session
+`proto-bracket-0818`), `BenchCompare` 3 vs 3: A/A null clean, df 4, and **⛔ not a valid measurement**
+by the harness's own guard, one proto fork ramped on `uncachedValuesPayBoxingOnly` (first iteration
+55.2 against 48.5, 48.9, 49.6, 48.5). Readable as a replicated screen
+(`reviews/bench/bracket-0818-f3-head-report.md`): 🟢 `evalFixedOverhead` -45.8% (±2.8%), ⚪
+`deepRecursion` +11.7% (±37%), 🔴 twelve rows from `fusionAllocatesNothing` +4.8% (±4.0%) through
+`suspensionFusesContinuation` +41.7% (±1.7%), `statefulAnswers` +48.8%, `trailingMaps` +75.5% (±54%),
+`suspensionBaseline` +84.2% (±15%), `handleLoopAnswersInPlace` +108.3% (±30%). Timing only: the run
+carried no profiler, so no B/op or CPU beyond the four-row `-f 1 -prof gc` rung. The owner asked why
+there were no cpu and alloc numbers, and for the tables; the answer is that the ingest path had no
+way to carry CPU at all and the ladder that collects it (`runLeg`) knows one class and the stale
+`kyo.kernel.proto` paths.
+
+**The proto's captured continuation is now a composition (`d4e59ffa56`), on the owner's call.** The
+owner flagged `dispatch`'s handleCont `resume` as unsafe ("we can NOT leak ANY mutability in values
+produced by the kernel like this continuation") and asked for failing tests first. Tests written:
+a "captured continuation is a value" group for handleCont (resumed after its region completed in fresh
+evaluations, on four other threads, under a later same-tag region, a shot evaluated inside the clause
+via a nested Eval), all green on the old code, since the copies were copies; and four cases on the
+neighbouring paths that went **red**: with a fused remainder (`suspendWith`) the pending answer of a
+`handleLoop`/`handleLoopState` and the parked outcome restored the interior *after* `s.cont(o)` ran
+instead of around it, so a remainder raised inside an interior region was answered by an outer handler
+(`outer, outer` for `outer, inner`) or by nobody (`BUG unhandled suspension`). Fix, applied after the
+owner reviewed the snippets: one `Eval.continuation(s, stack, i)` per dispatch, the operation's own
+arrow with the interior above the region composed onto it, plain entries chained, a region re-wrapped
+as a `Kyo.Handle` entered at the state it had (`Handler.HandleLoopState.resumed`); handleCont hands
+that arrow to the clause, `answer` defers a pending answer behind it, `outcome` re-wraps the region
+around it. `Kyo.Park`, `Stack.copyEntries/copyHandlers/copyStates/pushAll/regionAbove`,
+`Eval.fold/park/restore/parkedOutcome` are gone; nothing the evaluator produces carries a stack segment.
+One bug on the way: `hc.run(s.input, continuation(s, stack, i)(_))` eta-expanded lazily, so the stack
+was cut inside the clause's first call rather than before it (7 red, `can end without resuming` gave 0
+for -1); `val k = continuation(...)` first. On the owner's further ruling, `kyo.proto.Loop` is its own
+(`Continue`, `Continue2`, `Outcome`, `Outcome2`, `continue`, `done`), generic and pure, no `< Any` on
+`continue` and no export of the kernel's; a bare-value answer into an `O[C] < (E & S)` slot is
+ascribed at the call site (`Loop.continue(41: Int < Any)`), since inference cannot see the slot type
+through the clause's `< S` and a pure `Outcome[A, O]` cannot unify with it. `PendingTest` (the kernel
+corpus pointed at kyo.proto, unported surface kept commented) added. `kyo.proto.*` **91/91**. Other
+leaks audited: none beyond the two `Park` sites; `Loop.continue`'s representation cast is gone with the
+own `Loop`.
+
+**In flight: the `-f 3 -wi 20 -i 5 -prof gc` bracket at HEAD `f3f29d8b4d`** (kernel unchanged, proto
+with the continuation fix), detached in the throwaway (`.claude/worktrees/bench-sweep-proto`, checked
+out at that sha, its leftover candidate diff discarded), JSON to
+`reviews/bench/bracket-0818-f3-wi20-gc-f3f29d8b4d.json`, started 07:47. It carries B/op for every row
+and fork; -wi 20 because the -wi 10 run still ramped one fork. **Being built while it runs (compile and
+test only after it ends, the machine is the measurement's):** per-row CPU in the harness, `Row.cpu`,
+`Bench.parseCpuByBenchmark` (a JMH profiler log split at its `# Benchmark:` headers), `Ingest.attachCpu`
+/ `BenchCpu --run <id> --log <file>`, a "CPU by row" section in the report (kernel/benchmark/other split
+and top frames each side), `Bench.isKernel` over both `kyo.kernel.` and `kyo.proto.` minus the bench
+package (the old `KernelPackage = "kyo.kernel.proto."` matched nothing any more), and the steady-state
+blocker now says which row, which leg of which arm, whether the row's other legs settled, and the cure
+for that reading. After the bracket: the CPU pass (`-f 1 -wi 20 -i 1 -prof async:event=itimer` over
+both classes, ~6 min), attach to the head leg of each arm, compare, report with B/op and CPU.
+
 **Third file, third real bug, and the added coverage localised it exactly.** A handler's clause is the
 handler's own code and its effects belong to the handlers *outside* the region. This kernel answers a
 clause's effect with handlers the region's *body* installed inside it, so a user's `Say` handler wrapped
