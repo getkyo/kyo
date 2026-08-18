@@ -3,7 +3,7 @@ package kyo.proto
 import kyo.Frame
 import scala.annotation.nowarn
 
-sealed abstract class Arrow[-A, +B, -S]:
+sealed trait Arrow[-A, +B, -S]:
     self =>
 
     def apply(v: A): B < S
@@ -28,7 +28,7 @@ object Arrow:
 
     def id[A]: Arrow.Id[A] = Id.asInstanceOf[Id[A]]
 
-    abstract class Transform[-A, B, -S] extends Arrow[A, B, S]:
+    trait Transform[-A, B, -S] extends Arrow[A, B, S]:
         def frame: Frame
 
     object Transform:
@@ -50,6 +50,7 @@ object Arrow:
                                 val out = next(apply(b), Arrow.id)
                                 Safepoint.exit(slot)
                                 out
+                            end if
                     )
 
     end Transform

@@ -1,18 +1,19 @@
 package kyo.proto
 
 import kyo.Frame
+import kyo.Tag
 import kyo.proto.Loop.Outcome
 import kyo.proto.Loop.Outcome2
-import kyo.Tag
+import scala.annotation.static
 
-sealed trait Kyo[+A, -S]
+sealed abstract class Kyo[+A, -S]
 
 object Kyo:
 
     /** `value` then `contA` then `contB`. The value is currency, pending or settled: a pending input deferred behind a transform, and a
       * strict step past the safepoint budget, are the same node.
       */
-    abstract class Defer[A, B, +C, -S] extends Kyo[C, S]:
+    sealed abstract class Defer[A, B, +C, -S] extends Kyo[C, S]:
         def value: A < S
         def contA: Arrow[A, B, S]
         def contB: Arrow[B, C, S]
@@ -20,7 +21,7 @@ object Kyo:
 
     object Defer:
 
-        def apply[A, B, S](
+        @static def apply[A, B, S](
             _value: A < S,
             _contA: Arrow[A, B, S]
         ): Kyo[B, S] =
@@ -29,7 +30,7 @@ object Kyo:
                 def contA = _contA
                 def contB = Arrow.id[B]
 
-        def apply[A, B, C, S](
+        @static def apply[A, B, C, S](
             _value: A < S,
             _contA: Arrow[A, B, S],
             _contB: Arrow[B, C, S]

@@ -38,6 +38,7 @@ object Eval:
                             val cont    = stack.pop()
                             go(cont(complete(handler, state, value), Arrow.id))
                         else go(stack.pop()(value))
+                        end if
             )
         try go(v).asInstanceOf[A]
         finally stack.truncate(base)
@@ -51,7 +52,7 @@ object Eval:
 
     // Kyo[Any, Nothing] is the computation of any row, the type every node is a subtype of
     private def step(kyo: Kyo[Any, Nothing], stack: Stack, base: Int): Any < Any =
-        kyo match
+        (kyo: @unchecked) match
             case d: Kyo.Defer[Any, Any, Any, Any] @unchecked =>
                 stack.push(d.contB)
                 stack.push(d.contA)
@@ -140,7 +141,8 @@ object Eval:
                         h match
                             case hs: LoopSt @unchecked => Kyo.Handler.HandleLoopState.resumed(hs, st)
                             case _                     => h
-                    def cont = k
+                    def cont =
+                        k
             ,
             done = a => k(complete(h, st, a), Arrow.id)
         )

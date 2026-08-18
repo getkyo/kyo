@@ -30,7 +30,7 @@ object ArrowEffect:
     )(
         inline f: O[C] => B < S
     ): B < (E & S) =
-        new Arrow.Transform[O[C], B, S] with Kyo.Suspend[I, O, E, C, B, S]:
+        new Kyo.Suspend[I, O, E, C, B, S] with Arrow.Transform[O[C], B, S]:
             def frame          = _frame
             def tag            = effectTag
             def input          = effectInput
@@ -137,7 +137,7 @@ object ArrowEffect:
         def onDone(v: A) = done(v)
         v.lower[C < (S & S2)](
             pending = body =>
-                new Arrow.Transform[B, C, S & S2] with Kyo.Handle[E, A, B, C, S & S2]:
+                new Kyo.Handle[E, A, B, C, S & S2] with Arrow.Transform[B, C, S & S2]:
                     def frame = _frame
                     def v     = body
                     val handler =
@@ -172,7 +172,7 @@ object ArrowEffect:
         def onDone(v: A) = done(v)
         v.lower[C < (S & S2)](
             pending = body =>
-                new Arrow.Transform[B, C, S & S2] with Kyo.Handle[E, A, B, C, S & S2]:
+                new Kyo.Handle[E, A, B, C, S & S2] with Arrow.Transform[B, C, S & S2]:
                     def frame = _frame
                     def v     = body
                     val handler =
@@ -208,7 +208,7 @@ object ArrowEffect:
         def onDone(s: State, v: A) = done(s, v)
         v.lower[C < (S & S2)](
             pending = body =>
-                new Arrow.Transform[B, C, S & S2] with Kyo.Handle[E, A, B, C, S & S2]:
+                new Kyo.Handle[E, A, B, C, S & S2] with Arrow.Transform[B, C, S & S2]:
                     def frame = _frame
                     def v     = body
                     val handler =
