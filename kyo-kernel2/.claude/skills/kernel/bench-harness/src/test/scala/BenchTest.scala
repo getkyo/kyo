@@ -258,6 +258,16 @@ class BenchTest extends Test[Any]:
         Bench.nullComparison(trending).forall(_.deltas.forall(_.verdict == Verdict.Flat)),
         Bench.nullComparison(trending).map(_.deltas.map(d => s"${d.row}=${d.verdict} ${d.percent}").mkString(",")).getOrElse(""))
 
+    section("only a session that claims a threshold is required to run a null (item 5)")
+    // a bracket claims a replicated threshold, so a session too small to run a null cannot check itself and blocks; an ad-hoc single-pair
+    // compare never claimed one, so the same absent null must not fail it, which the old unconditional wiring did to every compare and chain
+    check("a bracket with too few legs to run a null is blocked", Report.nullBlockers(Maybe.empty, 1, required = true).nonEmpty)
+    check("a single-pair compare is not demanded to self-check", Report.nullBlockers(Maybe.empty, 1, required = false).isEmpty)
+    // a dirty null is a blocker either way: its verdicts are false by construction
+    check("a dirty null blocks a bracket", Report.nullBlockers(dirtyNull, 4, required = true).nonEmpty, dirtyNull.toString)
+    check("and a dirty null blocks a compare too", Report.nullBlockers(dirtyNull, 4, required = false).nonEmpty)
+    check("a clean null blocks neither", Report.nullBlockers(quietNull, 4, required = true).isEmpty && Report.nullBlockers(quietNull, 4, required = false).isEmpty)
+
     section("forecasting what a session can resolve")
     // from the real bracket: trailingMapsStayLinear resolves to +-22.64%, so three runs were spent
     // reporting a 25% regression on a row that cannot support a verdict of that size
@@ -662,7 +672,7 @@ class BenchTest extends Test[Any]:
     // the session is unreadable, and it was the one statement the tool made in passing.
     locally {
         val clean = Bench.nullComparison(ctlLegs)
-        check("a clean null blocks nothing", Report.nullBlockers(clean, ctlLegs.size).isEmpty, Report.nullBlockers(clean, ctlLegs.size).mkString)
+        check("a clean null blocks nothing", Report.nullBlockers(clean, ctlLegs.size, required = true).isEmpty, Report.nullBlockers(clean, ctlLegs.size, required = true).mkString)
         check("and says so once", Report.nullNote(clean).contains("clean"), Report.nullNote(clean))
 
         // the same alternating contamination the null's own must-fire fixture uses: every other
@@ -671,7 +681,7 @@ class BenchTest extends Test[Any]:
             legScores("c1", Seq(("a", 100.0))), legScores("c2", Seq(("a", 130.0))),
             legScores("c3", Seq(("a", 100.4))), legScores("c4", Seq(("a", 130.4)))
         ))
-        val dirtyBlockers = Report.nullBlockers(dirty, 4)
+        val dirtyBlockers = Report.nullBlockers(dirty, 4, required = true)
         check("a dirty null is a blocker", dirtyBlockers.nonEmpty, dirty.map(_.deltas.map(d => s"${d.row}=${d.verdict}").mkString(",")).getOrElse("no null"))
         check("naming the rows it falsely classified", dirtyBlockers.exists(_.contains("a +")), dirtyBlockers.mkString)
         check("and saying why they are false", dirtyBlockers.exists(_.contains("false by construction")), dirtyBlockers.mkString)
@@ -679,7 +689,7 @@ class BenchTest extends Test[Any]:
 
         // a session that cannot run a null at all is worse than one whose null failed: it cannot
         // check itself, and that used to print "not enough control legs" and carry on
-        val tooFew = Report.nullBlockers(Bench.nullComparison(Chunk(ctlLegs(0))), 1)
+        val tooFew = Report.nullBlockers(Bench.nullComparison(Chunk(ctlLegs(0))), 1, required = true)
         check("a session that cannot run a null is blocked too", tooFew.nonEmpty, tooFew.mkString)
         check("and told what it would take", tooFew.exists(_.contains("Five legs")), tooFew.mkString)
     }

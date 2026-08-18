@@ -179,7 +179,14 @@ object Report:
       * A session with too few control legs to run a null at all is also a blocker, and for a stronger
       * reason: it is not that the check failed, it is that the session cannot check itself.
       */
-    def nullBlockers(null_ : Maybe[Comparison], controlLegs: Int): Chunk[String] =
+    /** Blockers the A/A null raises. `required` says whether a session that could not run a null at all is a failure.
+      *
+      * A dirty null is always a blocker: its verdicts are false by construction, so nothing below it is readable. The absence of a null is
+      * a blocker only for a session that claims a replicated threshold, a bracket. An ad-hoc single-pair `compare` never claimed one and
+      * so is not demanded to self-check; wiring the "too few legs" message to it unconditionally, as an earlier design did, failed every
+      * single-pair compare and every default two-leg chain.
+      */
+    def nullBlockers(null_ : Maybe[Comparison], controlLegs: Int, required: Boolean): Chunk[String] =
         null_ match
             case Maybe.Present(n) =>
                 val named = n.deltas.filter(_.verdict != Verdict.Flat)
@@ -190,11 +197,12 @@ object Report:
                             named.map(d => f"${d.row} ${d.percent}%+.1f%% (${d.verdict})").mkString(", ") +
                             ". Those verdicts are false by construction, so nothing below is readable."
                     )
-            case _ =>
+            case _ if required =>
                 Chunk(
                     s"$controlLegs control leg(s) is too few to run an A/A null, so this session cannot check itself. " +
                         "Five legs gives three controls and is what the threshold below assumes."
                 )
+            case _ => Chunk.empty
 
     def nullNote(null_ : Maybe[Comparison]): String =
         null_ match

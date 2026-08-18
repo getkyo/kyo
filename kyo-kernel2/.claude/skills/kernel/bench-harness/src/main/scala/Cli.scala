@@ -229,7 +229,7 @@ object BenchBracket extends KyoCaseApp[BracketOpts]:
             // the null's verdict and the steady-state verdict are the same kind of statement, that
             // the numbers below cannot be read, so they are one banner and one exit code. Reporting
             // a dirty null as a line of text and exiting 0 is the failure this tool exists to refuse.
-            blockers = Report.nullBlockers(aa, controls.size) ++ Report.blockers(cmp)
+            blockers = Report.nullBlockers(aa, controls.size, required = true) ++ Report.blockers(cmp)
             _ <- Console.printLine(
                 if blockers.isEmpty then Report.nullNote(aa)
                 else
@@ -395,7 +395,7 @@ object BenchCompare extends KyoCaseApp[CompareOpts]:
             // stored bracket (or a -f N json split per fork) gets the same check BenchBracket runs
             // live. It needs three control legs; with fewer it is not run and not demanded here,
             // since a single pair never claimed a threshold in the first place.
-            aa = if controls.size >= 3 then Bench.nullComparison(controls) else Maybe.empty
+            aa = Bench.nullComparison(controls)
             _ <- Console.printLine(
                 if replicated then
                     s"Replicated over ${controls.size} control and ${variants.size} variant leg(s): the threshold below is " +
@@ -404,7 +404,9 @@ object BenchCompare extends KyoCaseApp[CompareOpts]:
                     "One control leg against one variant, so the bound below is the legs' own error and not a " +
                         "threshold estimated from replicates. Pass every leg of a bracket to get its real verdict.\n"
             )
-            nullBlockers = if controls.size >= 3 then Report.nullBlockers(aa, controls.size) else Chunk.empty
+            // an ad-hoc compare is not required to run a null: a single pair, or fewer than three
+            // controls, never claimed a threshold to self-check. A dirty null is still a blocker
+            nullBlockers = Report.nullBlockers(aa, controls.size, required = false)
             blockers     = nullBlockers ++ Report.blockers(cmp)
             // the steady-state banner is the report's own; only the null's verdict is added here
             _ <- Console.printLine(
