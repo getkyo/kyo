@@ -785,7 +785,7 @@ by someone other than its author. v4 corrects **seven** v3 claims, three of whic
 
 | task | open work | blocked on |
 |---|---|---|
-| 25 | **free-standing**: item 4's three-way rework, item 12 (`mode`/`unit`), 9, 10, ingest `forks`/`jvmArgs` | nothing, start here |
+| 25 | **free-standing**: item 4's three-way rework, 9, 10. **Done**: item 12 (`mode`/`unit`, defect 44, `df844b402d`: `Row.lowerIsBetter` drives both classifiers, `Row.comparableWith` leaves a mode/unit mismatch `BelowResolution` and `Report.blockers` names both sides, the table prints the unit; tests from the real A/A series read as thrpt), ingest `forks`/`jvmArgs` (earlier) | nothing, start here |
 | 20 | Step 0a: multi-row `LogFile`, plus its two output consequences (F13, F14) | a quiet machine |
 | 21 | Step 0b/0c: **two** schema classes, not one; `StoreSchemaTest` does not exist | nothing, ready |
 | 26 | Step 0d-0g, including a QA main whose checks cannot fail | nothing, ready |
