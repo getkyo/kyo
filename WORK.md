@@ -572,7 +572,12 @@ class-to-trait flip needs the clean or the stale generated classes throw
 `IncompatibleClassChangeError` (arm 2's script cleans, runs, and reruns if the json is empty). The
 `ArrowEffectTest` port is done as far as the kernel corpus allows (`577ed7635b`): everything live
 except what the kernel keeps parked itself (`handleFirst`, `dispatchFirst`, `handleCatching`,
-`handlePartial`).
+`handlePartial`). **The A/B landed at 10:17 and is inconclusive** (see OPEN, ruling 1): load average
+11 during it, nothing resolved. Two process defects caught on the way and fixed: the report files were
+being written through `grep -v "Compil"`, which ate every line containing that string, including the
+steady-state blocker line whose cure mentions `LogCompilation` (the filter is now the exact scala-cli
+lines, both reports re-rendered, `0d2004d12e`); and the -wi 20 report's noise frames now sum by method
+(40.9% `boxToInteger`, not three separate 4% lines).
 
 **Third file, third real bug, and the added coverage localised it exactly.** A handler's clause is the
 handler's own code and its effects belong to the handlers *outside* the region. This kernel answers a
@@ -638,8 +643,16 @@ jit and cpu data keyed on the old package names is now stale**.
 **Rulings the kyo.proto stream is waiting on (2026-08-18), each with its recorded default:**
 
 1. **Which side is the trait** for the fused nodes: `Kyo` (HEAD `9ad929fccc`) or `Arrow`/`Transform`
-   (`reviews/bench/candidate-arrowtrait-0818.patch`). The A/B bracket is in flight; default: not landed
-   until ruled, recommendation to take the candidate if the bracket confirms the -f 1/-f 2 reads.
+   (`reviews/bench/candidate-arrowtrait-0818.patch`). **The A/B bracket ran (10:04 to 10:17, `12dd8f83f3`,
+   `0d2004d12e`) and is inconclusive**: the machine's load average went from 3.5 to 11 during it (other
+   users' processes), the harness flags one variant fork on `emittingClauses` as unsettled (368 then
+   150, 130, 84, 103: not a warmup, a fork torn by load) and every row lands ⚪ with resolutions of ±28%
+   (`fusionPastBudget`) to ±267%, A/A null clean only because both arms are equally noisy. Point
+   estimates lean the candidate's way on the three answer rows (`statefulAnswers` 289 → 206,
+   `handleLoopAnswersInPlace` 279 → 239, `suspensionFusesContinuation` 51 → 43) and the other way on
+   the map rows (+8% to +17%), none of it resolved. Inconclusive is the result; the bracket is to be
+   rerun on a quiet machine (`uptime` under 2 before launching). Default unchanged: not landed until
+   ruled.
 2. **The strict `map` allocating its `Transform` before knowing the input is settled** (24 B per map,
    +184,024 to +240,024 B/op on five rows). Default: unchanged, it is the owner's `map` shape; the
    kernel's shape (`Transform` only in the pending arm and the rescue) is the candidate, blocked on
