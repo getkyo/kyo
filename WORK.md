@@ -693,7 +693,21 @@ Everything left in the harness stream needs one of two things I cannot supply al
   contents, touches the measurement path); item 4's "name the C3 mechanism" wording; the five rulings
   in task 24 (C4, DIS-3, IN-3, C3, DIS-4) and 0e.
 
-**UPDATE (two Stack fixes applied, owner-directed; measuring).** Owner rejected the done-branch rewrite
+**RESULT (the two Stack fixes fix the tower; owner adopted and refined the push).** Full `PendingTest`
+on my committed state (`81787bd568`): **37 passed, 1 failed**. The long-map-tower now PASSES
+("evaluates in bounded stack", 42.7s) - the dump-right-deep + iterative-push pair fixed it. The lone
+remaining failure is the separate `"a loop can end its region with a computation result"` (the ClassCast
+/ `Loop.done`-with-a-computation-value case), NOT the tower. The 42.7s is the dump()->push round-trip
+quadratic (passing, not fast) I flagged; still O(n^2), unaddressed, an open perf item, not a
+correctness blocker. Owner then (uncommitted WIP) (a) refactored my inline `push` loops into `count`/`fill`
+`@tailrec` helpers - semantically identical (walk `c.b`, count non-Id leaves, `ensure(n)`, `head -= n`,
+fill `c.a` forward, first leaf on top), cleaner; my push approach validated; and (b) restored the
+Safepoint preemption fix they had reverted (`Armed` bit, `Stop`, `stop`/`consumeStopped`/`arm`/`reset`,
+`drained` preserves `Armed`) - their work, untouched. Their own `OverflowProbe` run passes (1000000,
+36s). Re-validating the full current working tree (their Safepoint + Stack + the broader WIP) via
+`pt6` to confirm the tower still passes and whether the ClassCast persists under their changes.
+
+**[measuring -> resolved above] UPDATE (two Stack fixes applied, owner-directed; measuring).** Owner rejected the done-branch rewrite
 ("we need to pass the next for fusion") and directed the fix into Stack. (1) `35c3016849`: no-arg
 `dump()` now folds right-deep (delegates to `dump(pos)` via a handler-boundary scan) so `tail.head` is
 the next leaf and `head(curr, tail)` fuses down the spine under the budget. Measured effect: the tower
