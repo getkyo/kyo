@@ -693,6 +693,23 @@ Everything left in the harness stream needs one of two things I cannot supply al
   contents, touches the measurement path); item 4's "name the C3 mechanism" wording; the five rulings
   in task 24 (C4, DIS-3, IN-3, C3, DIS-4) and 0e.
 
+**Applied the Handler.apply fix (owner approved) and ran the uncommented PendingTest.** Fix:
+`Handler.apply(v, next)` now `v.lower(pending = Kyo.Defer(_, this, next), done = b => next.head(apply(b),
+next.tail))` with the safepoint-budget guard, mirroring the `Arrow(f)` factory, so a settled input
+completes via the one-arg `apply` (complete) instead of always deferring. PendingTest's one enabled case
+passes; the `kyo.proto.*` run's ArrowEffect handleLoop cases mostly pass now (2 fail: `:121` Loop.done
+`0 != -1`, `:171` suspend-clause `List("clause") was not empty`, both the `truncate(pos)`/suspend-clause
+issues in the owner's Eval). Then uncommented the rest of PendingTest (mechanical, leaving the missing-
+surface blocks commented: handleLoopState/handleLoopWith/flatMap/andThen/unit/evalNow/flatten/handle):
+**31 of 38 pass, 7 fail**, no hang (the earlier stall was the full-package run). The 7 are pre-existing
+Eval bugs the Handler fix does not address: six hit the terminal `???` (`Eval.scala:77`) on
+budget/deep-recursion cases (the trampoline continues only `if !stack.isEmpty`, but a `head(curr, tail)`
+that defers at the budget on a long dumped tail leaves `curr` a pending Defer with an empty stack, and
+the terminal `pending = _ => ???` throws instead of re-driving it); one is a ClassCastException in "a loop
+can end its region with a computation result" (`Loop.done(inner)` with a computation-as-value payload,
+a Defer cast to Integer). No further changes made pending the owner's call. Handler.scala + the
+uncommented PendingTest are on disk, uncommitted with the owner's kernel WIP.
+
 **Diagnosed the failing PendingTest (owner asked, investigate-and-report, no edits).** The one enabled
 case "eval returns a pending payload without running it" fails with `NotImplementedError` at
 `Eval.scala:77` (the terminal `curr.lower(pending = _ => ???, done = ...)`): the trampoline drained the
