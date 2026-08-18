@@ -693,6 +693,16 @@ Everything left in the harness stream needs one of two things I cannot supply al
   contents, touches the measurement path); item 4's "name the C3 mechanism" wording; the five rulings
   in task 24 (C4, DIS-3, IN-3, C3, DIS-4) and 0e.
 
+**ClassCast (7th PendingTest failure) pinned by stack trace, not yet mechanism-diagnosed.** Trace:
+`unboxToInt` at `PendingTest.scala:148` (an inlined handler anon) <- `Handler.apply$$anonfun$2`
+(`Handler.scala:17`, the fix's `next.head(apply(b), next.tail)`) <- `Handler.apply` (`:10`, two-arg)
+<- `Eval.loop` (`:66`, `curr = head(curr, stack.dump())`) <- the first `Eval(r)` (`PendingTest:152`).
+Fact: on `Loop.done(inner)` with `inner` a computation-as-value, the `Give` region completes through
+the two-arg `Handler.apply` and the continuation it completes into unboxes a `Kyo.Defer` as `Int`.
+Static traces of the exact path diverge from the trace, so no guessed mechanism recorded (per the
+don't-guess rule); pinning it needs a debug print in `Handler.apply`/the `Loop.done` path, which
+touches the owner's active files, so held for approval. Independent of the 6 budget `???` failures.
+
 **Prepared (not applied, awaiting owner approval) the budget-`???` fix for the 6 deep/budget PendingTest
 failures.** Root cause confirmed: `Eval`'s trampoline `done` branch sets `curr = head(curr, stack.dump())`;
 when `head` is the last entry and its two-arg apply defers at the safepoint budget (a long dumped tail or
