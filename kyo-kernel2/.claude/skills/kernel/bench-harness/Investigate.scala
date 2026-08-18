@@ -268,6 +268,14 @@ object Investigate:
             case Maybe.Present(why) => Outcome.Inconclusive(why)
             case Maybe.Absent =>
                 (baseline.rows.find(_.name == row), isolation.rows.find(_.name == row)) match
+                    // the distance tests below are direction-free, so a thrpt row adjudicates the
+                    // same way as an avgt one; what they cannot survive is two legs measured in
+                    // different modes or units, where the distance compares nothing with nothing
+                    case (Some(bb), Some(ii)) if !bb.comparableWith(ii) =>
+                        Outcome.Inconclusive(
+                            s"$row was measured as ${bb.mode} in ${bb.unit} on the baseline and as ${ii.mode} in ${ii.unit} on the isolation, " +
+                                "so the two numbers are not the same quantity; re-run the isolation in the baseline's mode and unit"
+                        )
                     case (Some(bb), Some(ii)) =>
                         (q.of(bb), q.of(ii)) match
                             case (Maybe.Present(b), Maybe.Present(i)) =>

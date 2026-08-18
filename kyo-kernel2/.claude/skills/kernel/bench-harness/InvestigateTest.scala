@@ -122,6 +122,19 @@ object InvestigateTest:
         )
         check("an experiment with no power to separate says so", cannotSeparate.show.contains("could not have separated"), cannotSeparate.show)
 
+        // the distance test is direction-free: the same planted TRUE outcome adjudicates the same in
+        // throughput, where the numbers mean more work per unit of time rather than less time per op
+        def thrptLeg(label: String, score: Double, jit: Chunk[InlineSites]): Run =
+            leg(label, Seq(("fused", score, 1.0, 640.0)), jit).copy(rows =
+                Abort.run(Bench.parseJmh("[" + BenchTest.jmh("fused", score, 1.0, 640.0, mode = "thrpt", unit = "ops/us") + "]")).eval.getOrThrow
+            )
+        val thrptTrue = Investigate.adjudicate(f, "fused", thrptLeg("v", 130.0, Chunk(refused)), thrptLeg("iso", 100.5, Chunk(inlined)), target = 100.0)
+        check("a throughput row adjudicates by distance, not by direction", thrptTrue.isInstanceOf[Investigate.Outcome.Confirmed], thrptTrue.show)
+        // but a baseline in avgt against an isolation in thrpt compares nothing with nothing
+        val mixed = Investigate.adjudicate(f, "fused", baseline, thrptLeg("iso", 100.5, Chunk(inlined)), target = 100.0)
+        check("a mode mismatch between the legs is inconclusive", mixed.isInstanceOf[Investigate.Outcome.Inconclusive], mixed.show)
+        check("and says which side was measured how", mixed.show.contains("avgt in us/op") && mixed.show.contains("thrpt in ops/us"), mixed.show)
+
         println("\nthe quantity a hypothesis is about")
         // found by running the rule table against the campaign's own sweep: the escape-analysis
         // hypothesis is a claim about bytes per operation, and adjudicating it against wall clock

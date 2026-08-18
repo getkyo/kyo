@@ -58,10 +58,14 @@ cannot produce a jit-bearing run at all.
   (`Model.scala:371`) carries one control `Run`, not the leg count. That same model change is needed by
   items 6 and 10, so **all three land together**.
 
-**Step 3, correctness.** Item 12: `mode`/`unit` unchecked in **both** classifiers (`Bench.scala:615`,
+**Step 3, correctness. DONE (`df844b402d`, and the adjudicator's gate after it).** Item 12: `mode`/`unit` unchecked in **both** classifiers (`Bench.scala:615`,
 `Stats.classify` `Stats.scala:171`), so a `thrpt` row is classified backwards including on the
-replicated path, **and `Investigate.Quantity.Time` reads `r.score` raw, so adjudication is backwards
-too**. Refuse mismatched units; invert for `thrpt`.
+replicated path. Landed as `Row.lowerIsBetter` driving both classifiers and `Row.comparableWith`
+leaving a mismatched row `BelowResolution` with a blocker naming both sides. The claim that
+**`Investigate.adjudicate` was backwards too was checked and is not so**: its tests are distances
+(`|i - target|`, `|i - b|` against the legs' resolution), direction-free, and a planted-true thrpt
+case now proves it; what it lacked was the mismatch gate, which it now has (inconclusive, naming
+both sides).
 
 **Step 4, the threshold advice, which is currently backwards for half the rows.** The threshold is
 `max(t·se, ownError·mean)`; more legs shrink only `t·se`. On the **7 of 15 floor-bound rows more legs
