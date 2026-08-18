@@ -107,18 +107,22 @@ runs:
       if: ${{ contains(inputs.os, 'linux') }}
       shell: bash
       run: |
-        bash scripts/apt-install.sh podman uidmap
-        # Install runc separately, and only when the runner has none. Ubuntu's runc package Conflicts
-        # with Docker's containerd.io, so `apt-get install runc` resolves the conflict by REMOVING
-        # containerd.io and docker-ce. That leaves no Docker daemon, which fails the `docker version`
-        # probe below and costs the kyo-pod suite the half of its container cases that run against
-        # docker. The runners already carry a runc binary alongside containerd.io, so this normally
-        # installs nothing.
-        if command -v runc >/dev/null 2>&1; then
-          echo "runc already present at $(command -v runc)"
-        else
-          bash scripts/apt-install.sh runc
-        fi
+        # --if-missing keeps the runner image's podman when it ships one. Since image 20260810.x
+        # the runners carry podman under /usr/local with matching helpers (conmon, netavark) in
+        # /usr/local/lib/podman, and installing Ubuntu's podman package ON TOP of that breaks
+        # every container start: the package's containers.conf selects the journald log driver,
+        # the image's conmon is built without journald support, conmon exits 1, the container
+        # never leaves the "created" state, and each exec then fails with HTTP 500 "container
+        # state improper" across the kyo-pod suites. See #1881. The apt stack is only coherent
+        # on its own, so it is installed only when the image provides no podman at all.
+        bash scripts/apt-install.sh --if-missing podman uidmap
+        # runc goes in a separate call because Ubuntu's runc package Conflicts with Docker's
+        # containerd.io: a plain `apt-get install runc` resolves the conflict by REMOVING
+        # containerd.io and docker-ce, which leaves no Docker daemon, fails the `docker version`
+        # probe below, and costs the kyo-pod suite the half of its container cases that run
+        # against docker. The runners already carry a runc binary alongside containerd.io, so
+        # --if-missing normally installs nothing.
+        bash scripts/apt-install.sh --if-missing runc
 
     - name: Start podman (Linux)
       if: ${{ contains(inputs.os, 'linux') }}
@@ -135,10 +139,11 @@ runs:
           exit 1
         fi
         export XDG_RUNTIME_DIR="/run/user/$uid"
-        # Force the runc OCI runtime. The crun shipped on the runners fails to start containers with
-        # "crun: unknown version specified" (an OCI config version it rejects), which fails every
-        # kyo-pod container integration test. runc accepts the config podman writes, so the service and
-        # every container it starts use runc instead.
+        # Force the runc OCI runtime. The crun shipped on the pre-20260810 runner images fails to
+        # start containers with "crun: unknown version specified" (an OCI config version it
+        # rejects), which fails every kyo-pod container integration test; runc accepts the config
+        # podman writes. The image podman on the 20260810.x images works with runc too (verified
+        # by the #1881 probe on both architectures), so the pin is safe in both worlds.
         mkdir -p "$HOME/.config/containers"
         printf '[engine]\nruntime = "runc"\n' > "$HOME/.config/containers/containers.conf"
         mkdir -p "$XDG_RUNTIME_DIR/podman"
@@ -163,20 +168,11 @@ runs:
           exit 1
         fi
         echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
-        podman info | grep -iE 'cgroup|rootless' || true
-        podman version
-        # Which OCI runtime podman resolved. Printed rather than asserted on: containers.conf above
-        # pins runc, and a silent fall back to crun shows up downstream as "crun: unknown version
-        # specified" on every kyo-pod container test, which this line attributes.
-        podman info | grep -iE 'ociRuntime|runc|crun' || true
-        # docker is load-bearing too, and it has been removed out from under this step before, so name
-        # what broke rather than letting `set -e` end the step on a bare exit code.
-        if ! docker version; then
-          echo "docker daemon unreachable. The kyo-pod suite runs its container cases against docker as" >&2
-          echo "well as podman, so this is fatal. Check the apt output in the podman install step: the" >&2
-          echo "ubuntu runc package Conflicts with containerd.io, and installing it removes docker-ce." >&2
-          exit 1
-        fi
+        # Health gate: exercises the full podman cycle (create, start, exec) and the docker
+        # daemon, with per-component diagnostics, so a broken container stack fails here with a
+        # named cause instead of surfacing two hours later across the kyo-pod suites (#1881).
+        # Pass --warn-only to degrade the gate to a loud warning annotation.
+        bash scripts/container-check.sh
 
     - name: Configure build environment (Windows)
       if: ${{ contains(inputs.os, 'windows') }}
@@ -297,10 +293,9 @@ runs:
           *) echo "libaeron not staged for ${{ inputs.os }} (unsupported os-arch); skipping" && exit 0 ;;
         esac
         if [[ "${{ inputs.os }}" == linux-* ]]; then
-          command -v cmake >/dev/null 2>&1 || bash scripts/apt-install.sh cmake
           # The Aeron driver links -luuid on Linux, and the package providing the libuuid.so link
           # target is not preinstalled. macOS gets uuid from libSystem.
-          dpkg -s uuid-dev >/dev/null 2>&1 || bash scripts/apt-install.sh uuid-dev
+          bash scripts/apt-install.sh --if-missing cmake uuid-dev
         elif [[ "${{ inputs.os }}" == windows-* ]]; then
           # cmake and MSVC are preinstalled on the Windows runner; build-aeron.sh selects the
           # Visual Studio generator for this os-arch (aeron supports Windows only under MSVC).
