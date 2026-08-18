@@ -749,6 +749,35 @@ their order.
    (`ad93171e84`, 15 rows now, one per kernel row; compiled after the A/B releases the machine). The
    `--declared-rows` for the proto class is 15 from that commit on.
 
+**The owner simplified `Eval` and is dropping `HandleLoopState`, to re-encode state via `ContextEffect`
+later (their instruction, 13:51: "I'm removing the handle loop with state and will encode it a
+different way via ContextEffect later"; bench-harness paused meanwhile).** Read of the new sources,
+analysis only, no edits from here:
+- `Handler` is a top-level `kyo.proto.Handler` extending `Arrow` (the Handler-as-Arrow proposal
+  landed): `apply(v)` completes the region, `apply(v, next) = Kyo.Defer(v, this.chain(next))`;
+  `HandlerCont`/`HandlerLoop` only, `HandlerLoopState` commented out. `Kyo.Handle.v` renamed `value`;
+  `Kyo.Handler` moved out of `Kyo`.
+- `Eval.loop`: settled arm uniform (`loop(stack.pop().asInstanceOf[Arrow[A, ?, EX & S]](v), stack)`, a
+  handler completes through the same `apply` as a transform); `HandlerCont` = `loop(h.run(input,
+  stack.dump(pos)), stack)`; `HandlerLoop` = `h.run(input).map { Continue => loop(r._1, stack); done =>
+  stack.truncate(pos); loop(v, stack) }`.
+- Covered by the new `HandlerLoop`: a pure `continue` (answer in place, region kept) and `done`
+  (truncate, bypass `done`). NOT covered: a clause that suspends before its outcome. `h.run(input).map`
+  on a suspending clause is a `Defer` returned from `loop` and not re-driven against the stack, which is
+  released in `apply`'s finally, so the outer handler below the region never sees the clause's effect.
+  About 8 `EvalTest` cases ("a clause that suspends before its outcome runs outside its region",
+  "an effectful answer runs under this handler with the interior parked", the remainder-inside-interior
+  family) plus the `ArrowEffect` fused-remainder family pin that behavior. **Open question posed to the
+  owner: dropped with state, or folded into the ContextEffect rework?** No default recorded because it
+  is the owner's design call and they are mid-edit.
+- In flight, does not compile (owner's): `Stack.scala` fields renamed `head`/`tail` but the body still
+  uses `top`; `find`/`dump(pos)` scan directions inverted; `truncate` arity mismatch; a new no-arg
+  `dump()` ("dump while not a handler", the A8 unhandled-crossing case) is being added. Tests still
+  reference `handleLoopState` (11/23/1) and the parked-answer cases, so they will not compile against
+  the trimmed API until reworked. Fable's held-out review of the earlier Handler-as-Arrow proposal is
+  saved at `reviews/HANDLER-AS-ARROW-REVIEW.md`; its A5/A10/A12 are exactly the parked-clause machinery
+  now absent.
+
 **The harness is an sbt project now (`752a55dcf5`, 13:30, on the owner's ask "Do the migration to sbt
 w/ RC6 and use kyo-test").** Its own `build.sbt` on the published `1.0.0-RC6` artifacts (`kyo-core`,
 `kyo-schema-json`, `kyo-case-app`, `kyo-test-api` and `kyo-test-runner` in Test), sbt 1.12.13, Scala
