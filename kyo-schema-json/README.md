@@ -195,7 +195,7 @@ Both strict and recoverable forms use the same depth, collection, and line-size 
 When framing is managed separately, `decodeRecord` preserves the record's index and byte offset in a `RecordDecodeException`:
 
 ```scala
-val record = Json.Lines.Record(
+val record = Json.Lines.Line(
     utf8("{\"name\":\"opened\",\"count\":1}"),
     index = 3L,
     byteOffset = 72L
@@ -208,15 +208,17 @@ assert(record.text == "{\"name\":\"opened\",\"count\":1}")
 
 > **Note:** Blank lines do not consume record indexes, while oversized lines skipped after a known terminator do consume them. Byte offsets count every original byte, including blanks and a leading byte order mark.
 
-> **Caution:** Do not compare `Json.Lines.Record` values with `==`. Their `Span` bytes use reference equality, so compare `record.text` or `record.bytes.is(other.bytes)` instead.
+> **Note:** `RecordDecodeException` reports where the record sat and never what it held. A record is application payload, so a copy of it on an exception would reach every log line and error page that renders the failure; `index` and `byteOffset` locate it for anyone who still holds the input.
 
-## Framing arbitrary byte chunks
+`Json.Lines.Line` compares structurally over its bytes, index, and offset, so two lines framed from the same input at different chunk sizes are equal.
 
-When network or file reads split JSONL at arbitrary byte positions, carry a `Json.Lines.Framer` between chunks. It frames at the byte level, so a UTF-8 character split across chunks remains intact.
+## Framing arbitrary byte spans
+
+When network or file reads split JSONL at arbitrary byte positions, carry a `Json.Lines.Framer` between spans. It frames at the byte level, so a UTF-8 character split across spans remains intact.
 
 ### Feeding and finishing a framer
 
-Create a framer with `Framer.init`, feed each arriving `Span[Byte]`, then call `finish` only when the input is known to be finite:
+Create a framer with `Framer.init`, feed each arriving `Span[Byte]`, then call `finishLine` only when the input is known to be finite. `finishLine` resolves at most the one line the residual holds, which is all an end of input can add:
 
 ```scala
 val initial = Json.Lines.Framer.init()
@@ -232,27 +234,27 @@ val completed = advanced.feed(utf8("ned\",\"count\":1}\n"))
 assert(completed.isInstanceOf[Json.Lines.Framed.Continued])
 ```
 
-`feed` returns a new immutable framer. The receiver remains reusable, and chunk boundaries do not affect records, indexes, or offsets.
+`feed` returns a new immutable framer. The receiver remains reusable, and span boundaries do not affect records, indexes, or offsets.
 
 ### Handling framing outcomes
 
-`Line.Kept` carries a `Record`; `Line.Skipped` carries the size-limit failure occupying that record position. `Framed.Continued` carries resolved lines plus the next framer, while `Framed.Halted` carries resolved lines plus the terminal breach:
+Each resolved line is a `Result`: a success carries a `Json.Lines.Line`, and a failure carries the size-limit breach occupying that record position. `Framed.Continued` carries resolved lines plus the next framer, while `Framed.Halted` carries resolved lines plus the terminal breach:
 
 ```scala
 val outcome = Json.Lines.Framer.init(maxLineBytes = 8).feed(utf8("123456789\n12345678\n"))
 val texts = outcome match
     case Json.Lines.Framed.Continued(_, lines) =>
-        lines.collect { case Json.Lines.Line.Kept(record) => record.text }
+        lines.collect { case Result.Success(record) => record.text }
     case Json.Lines.Framed.Halted(_, breach) => throw breach
 
 assert(texts == Chunk("12345678"))
 ```
 
-> **Unlike** a terminated oversized line, which becomes `Line.Skipped` inside `Framed.Continued` and lets framing resume after its newline, an oversized unterminated residual produces `Framed.Halted` because no record boundary exists to resume from.
+> **Unlike** a terminated oversized line, which becomes a failure element inside `Framed.Continued` and lets framing resume after its newline, an oversized unterminated residual produces `Framed.Halted` because no record boundary exists to resume from.
 
 `Json.Lines.DefaultMaxLineBytes` is the default bound for both a pending residual and a complete record. Supply a lower value to `Framer.init` and the decoding APIs when the application accepts smaller records.
 
-## Reading and following streams
+## Reading and watching streams
 
 When input arrives incrementally or lives in a file, use `Jsonl`. It composes pure framing and decoding with `Stream`, `Scope`, and `Path` without accumulating the whole source.
 
@@ -286,23 +288,23 @@ def inspect(path: Path): Chunk[Result[DecodeException, Event]] < (Async & Abort[
 
 The exact inferred row for `load` is `Async & Abort[FileReadException | DecodeException]`: `Scope.run` closes the file, `Async` drives the scoped resource lifecycle, and the strict decoder adds its typed failure.
 
-### Following live files
+### Watching live files
 
-Use `Jsonl.follow` to replay a file and continue waiting for appended records. The default `Path.Origin.Start` replays existing data; `Path.Origin.End` waits for new records; `Path.Origin.Offset` resumes from a recorded byte position. `followResults` keeps decode failures in the element type:
+Use `Jsonl.watch` to replay a file and continue waiting for appended records. The default `Path.Origin.Start` replays existing data; `Path.Origin.End` waits for new records; `Path.Origin.Offset` resumes from a recorded byte position. `watchResults` keeps decode failures in the element type:
 
 ```scala
 def live(path: Path): Stream[Event, Scope & Async & Abort[FileReadException | DecodeException]] =
-    Jsonl.follow[Event](path, from = Path.Origin.End)
+    Jsonl.watch[Event](path, from = Path.Origin.End)
 
 def liveResults(path: Path): Stream[Result[DecodeException, Event], Scope & Async & Abort[FileReadException]] =
-    Jsonl.followResults[Event](path)
+    Jsonl.watchResults[Event](path)
 ```
 
-Followers run until interrupted, the scope ends, or framing reaches an oversized residual with no boundary. Bound a consumer with operations such as `take` when it expects a finite number of records.
+Watchers run until interrupted, the scope ends, or framing reaches an oversized residual with no boundary. Bound a consumer with operations such as `take` when it expects a finite number of records.
 
-> **Unlike** a finite `Jsonl.pipe` or `Jsonl.read`, which emits an unterminated final record when end-of-input proves it complete, `Jsonl.follow` and `Jsonl.followResults` hold an unterminated record until a newline arrives because a live source has no end-of-input signal.
+> **Unlike** a finite `Jsonl.pipe` or `Jsonl.read`, which emits an unterminated final record when end-of-input proves it complete, `Jsonl.watch` and `Jsonl.watchResults` hold an unterminated record until a newline arrives because a live source has no end-of-input signal.
 
-> **Note:** Following tracks the open file rather than its path name. Rename-based rotation keeps reading the original open file and does not switch to a replacement created at the old path.
+> **Note:** Watching tracks the open file rather than its path name. Rename-based rotation keeps reading the original open file and does not switch to a replacement created at the old path.
 
 ## Writing record streams
 

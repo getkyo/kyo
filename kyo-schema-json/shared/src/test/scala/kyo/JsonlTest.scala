@@ -330,7 +330,7 @@ class JsonlTest extends kyo.test.Test[Any]:
         }
 
         "readResults skips a terminated oversized record and keeps decoding the records after it" in {
-            // The file-backed lenient surface must agree with `pipeResults` and `followResults`: one
+            // The file-backed lenient surface must agree with `pipeResults` and `watchResults`: one
             // failure element for the over-long record, and the records behind it still delivered.
             val in = "{\"name\":\"a\",\"count\":1}\n" + oversizedLine + "\n{\"name\":\"c\",\"count\":3}\n"
             for
@@ -499,14 +499,14 @@ class JsonlTest extends kyo.test.Test[Any]:
         }
     }
 
-    "follow" - {
+    "watch" - {
 
         val pollDelay = 50.millis
 
-        /** Repeats `write` until `fiber` completes, waking the follower between writes.
+        /** Repeats `write` until `fiber` completes, waking the watcher between writes.
           *
           * Ordering never depends on how quickly the forked fiber reaches its first poll: every caller below appends a payload whose
-          * repetition leaves the assertion unchanged, so a follower that starts late simply observes a later copy of the same records.
+          * repetition leaves the assertion unchanged, so a watcher that starts late simply observes a later copy of the same records.
           */
         def writeUntilDone[A, S](
             fiber: Fiber[A, S],
@@ -535,8 +535,8 @@ class JsonlTest extends kyo.test.Test[Any]:
 
         /** `condition`, but already satisfied once `fiber` has finished.
           *
-          * The driver loops above wait for something the follower must produce. A follower that instead stops early, by aborting, never
-          * produces it, and the loop would spin forever. Treating "the follower finished" as an exit releases the loop so that the
+          * The driver loops above wait for something the watcher must produce. A watcher that instead stops early, by aborting, never
+          * produces it, and the loop would spin forever. Treating "the watcher finished" as an exit releases the loop so that the
           * assertion afterwards reports the abort rather than the test hanging on it.
           */
         def doneOr[A, S](fiber: Fiber[A, S])(condition: Boolean < Async)(using Frame): Boolean < Async =
@@ -545,14 +545,14 @@ class JsonlTest extends kyo.test.Test[Any]:
         "replays existing records then emits appended ones" in {
             Clock.withTimeControl { control =>
                 for
-                    dir <- Path.tempDir("kyo-jsonl-follow")
+                    dir <- Path.tempDir("kyo-jsonl-watch")
                     file = dir / "t.jsonl"
                     _ <- file.write("{\"name\":\"a\",\"count\":1}\n")
                     fiber <- Fiber.initUnscoped(
-                        Scope.run(Jsonl.follow[Event](file, pollDelay = pollDelay).take(2).run)
+                        Scope.run(Jsonl.watch[Event](file, pollDelay = pollDelay).take(2).run)
                     )
                     // Each append writes one complete record, so any number of them leaves the first
-                    // two records of the file unchanged and the assertion holds whenever the follower starts.
+                    // two records of the file unchanged and the assertion holds whenever the watcher starts.
                     _   <- writeUntilDone(fiber, control, file.append("{\"name\":\"b\",\"count\":2}\n"))
                     got <- fiber.get
                     _   <- dir.removeAll
@@ -564,11 +564,11 @@ class JsonlTest extends kyo.test.Test[Any]:
         "Origin.End skips existing records" in {
             Clock.withTimeControl { control =>
                 for
-                    dir <- Path.tempDir("kyo-jsonl-follow-end")
+                    dir <- Path.tempDir("kyo-jsonl-watch-end")
                     file = dir / "t.jsonl"
                     _ <- file.write("{\"name\":\"old\",\"count\":0}\n")
                     fiber <- Fiber.initUnscoped(
-                        Scope.run(Jsonl.follow[Event](file, Path.Origin.End, pollDelay).take(1).run)
+                        Scope.run(Jsonl.watch[Event](file, Path.Origin.End, pollDelay).take(1).run)
                     )
                     // The file at rest is always a whole number of records, so wherever Origin.End
                     // lands it lands on a record boundary and the next record read is a "new" one.
@@ -583,11 +583,11 @@ class JsonlTest extends kyo.test.Test[Any]:
         "Origin.Offset resumes at a recorded byte offset" in {
             val first = "{\"name\":\"a\",\"count\":1}\n"
             for
-                dir <- Path.tempDir("kyo-jsonl-follow-offset")
+                dir <- Path.tempDir("kyo-jsonl-watch-offset")
                 file = dir / "t.jsonl"
                 _ <- file.write(first + "{\"name\":\"b\",\"count\":2}\n")
                 got <- Scope.run(
-                    Jsonl.follow[Event](file, Path.Origin.Offset(first.length.toLong), pollDelay).take(1).run
+                    Jsonl.watch[Event](file, Path.Origin.Offset(first.length.toLong), pollDelay).take(1).run
                 )
                 _ <- dir.removeAll
             yield assert(got == Chunk(Event("b", 2)))
@@ -595,17 +595,17 @@ class JsonlTest extends kyo.test.Test[Any]:
         }
 
         "emits the records before a bad one and then aborts" in {
-            // Every record is already on disk, so the first read carries all three and the follower reaches
+            // Every record is already on disk, so the first read carries all three and the watcher reaches
             // the abort without ever polling: no wakeup is needed and none is offered.
             val in = "{\"name\":\"a\",\"count\":1}\n{\"nope\":true}\n{\"name\":\"c\",\"count\":3}\n"
             for
-                dir <- Path.tempDir("kyo-jsonl-follow-bad")
+                dir <- Path.tempDir("kyo-jsonl-watch-bad")
                 file = dir / "t.jsonl"
                 _    <- file.write(in)
                 seen <- AtomicRef.init(Chunk.empty[Event])
                 r <- Abort.run[DecodeException](
                     Scope.run(
-                        Jsonl.follow[Event](file, pollDelay = pollDelay)
+                        Jsonl.watch[Event](file, pollDelay = pollDelay)
                             .take(3)
                             .foreach(e => seen.updateAndGet(_ :+ e))
                     )
@@ -620,13 +620,13 @@ class JsonlTest extends kyo.test.Test[Any]:
             end for
         }
 
-        "followResults reports a bad record as one failure and carries on" in {
+        "watchResults reports a bad record as one failure and carries on" in {
             val in = "{\"name\":\"a\",\"count\":1}\n{\"nope\":true}\n{\"name\":\"c\",\"count\":3}\n"
             for
-                dir <- Path.tempDir("kyo-jsonl-follow-results-bad")
+                dir <- Path.tempDir("kyo-jsonl-watch-results-bad")
                 file = dir / "t.jsonl"
                 _  <- file.write(in)
-                rs <- Scope.run(Jsonl.followResults[Event](file, pollDelay = pollDelay).take(3).run)
+                rs <- Scope.run(Jsonl.watchResults[Event](file, pollDelay = pollDelay).take(3).run)
                 _  <- dir.removeAll
             yield
                 assert(rs.size == 3)
@@ -638,24 +638,24 @@ class JsonlTest extends kyo.test.Test[Any]:
 
         "emits a record written in two partial appends exactly once, whole" in {
             Clock.withTimeControl { control =>
-                // One complete record plus the first half of a second, written before the follower starts:
-                // reading from Origin.Start makes the follower's start time irrelevant, and the single
+                // One complete record plus the first half of a second, written before the watcher starts:
+                // reading from Origin.Start makes the watcher's start time irrelevant, and the single
                 // write means the read that frames the first record necessarily also buffers the partial.
                 //
                 // The assumption this test's discriminating power rests on: these 37 bytes sit far below
-                // the follower's 8192-byte read buffer, so one read delivers the complete first record and
+                // the watcher's 8192-byte read buffer, so one read delivers the complete first record and
                 // the partial second one together. The partial is therefore state the framer has to carry
                 // between reads, not an artifact of how the bytes happened to be chunked.
                 val existing   = "{\"name\":\"a\",\"count\":1}\n{\"name\":\"split"
                 val completion = "\",\"count\":7}\n{\"name\":\"split"
                 for
-                    dir <- Path.tempDir("kyo-jsonl-follow-split")
+                    dir <- Path.tempDir("kyo-jsonl-watch-split")
                     file = dir / "t.jsonl"
                     _    <- file.write(existing)
                     seen <- AtomicRef.init(Chunk.empty[Event])
                     fiber <- Fiber.initUnscoped(
                         Scope.run(
-                            Jsonl.follow[Event](file, pollDelay = pollDelay)
+                            Jsonl.watch[Event](file, pollDelay = pollDelay)
                                 .take(2)
                                 .foreach(e => seen.updateAndGet(_ :+ e))
                         )
@@ -676,34 +676,34 @@ class JsonlTest extends kyo.test.Test[Any]:
             }
         }
 
-        "followResults replays a truncation that cut a record in half without splicing it" in {
+        "watchResults replays a truncation that cut a record in half without splicing it" in {
             Clock.withTimeControl { control =>
                 // 28 bytes: one complete record and the opening of a second one.
                 val existing = "{\"name\":\"a\",\"count\":1}\n{\"nam"
-                // 23 bytes, below the follower's position, so the rewind fires on the next poll.
+                // 23 bytes, below the watcher's position, so the rewind fires on the next poll.
                 val replaced = "{\"name\":\"b\",\"count\":2}\n"
                 for
-                    dir <- Path.tempDir("kyo-jsonl-follow-truncate")
+                    dir <- Path.tempDir("kyo-jsonl-watch-truncate")
                     file = dir / "t.jsonl"
                     _    <- file.write(existing)
                     seen <- AtomicRef.init(Chunk.empty[Result[DecodeException, Event]])
                     fiber <- Fiber.initUnscoped(
                         Scope.run(
-                            Jsonl.followResults[Event](file, pollDelay = pollDelay)
+                            Jsonl.watchResults[Event](file, pollDelay = pollDelay)
                                 .take(2)
                                 .foreach(r => seen.updateAndGet(_ :+ r))
                         )
                     )
                     // The first result proves the read that framed it also buffered `{"nam`.
                     _ <- advanceUntil(control)(doneOr(fiber)(seen.get.map(_.nonEmpty)))
-                    // A single truncating write: the file never grows back past the follower's position.
+                    // A single truncating write: the file never grows back past the watcher's position.
                     _   <- file.write(replaced)
                     _   <- advanceUntil(control)(fiber.done)
                     _   <- fiber.get
                     got <- seen.get
                     _   <- dir.removeAll
                 yield
-                    // The rewind carries no marker in the byte stream, so nothing downstream of the follow
+                    // The rewind carries no marker in the byte stream, so nothing downstream of the watch
                     // loop could tell that `{"nam` went stale. The framer is rebuilt at the rewind instead,
                     // which makes the splice impossible rather than merely unlikely.
                     assert(got.size == 2)
@@ -713,21 +713,21 @@ class JsonlTest extends kyo.test.Test[Any]:
             }
         }
 
-        "follow does not abort when a truncation cuts a record in half" in {
+        "watch does not abort when a truncation cuts a record in half" in {
             Clock.withTimeControl { control =>
                 // 28 bytes: one complete record and the opening of a second one.
                 val existing = "{\"name\":\"a\",\"count\":1}\n{\"nam"
-                // 23 bytes, below the follower's position, so the rewind fires on the next poll.
+                // 23 bytes, below the watcher's position, so the rewind fires on the next poll.
                 val replaced = "{\"name\":\"b\",\"count\":2}\n"
                 for
-                    dir <- Path.tempDir("kyo-jsonl-follow-truncate-strict")
+                    dir <- Path.tempDir("kyo-jsonl-watch-truncate-strict")
                     file = dir / "t.jsonl"
                     _    <- file.write(existing)
                     seen <- AtomicRef.init(Chunk.empty[Event])
                     fiber <- Fiber.initUnscoped(
                         Abort.run[DecodeException](
                             Scope.run(
-                                Jsonl.follow[Event](file, pollDelay = pollDelay)
+                                Jsonl.watch[Event](file, pollDelay = pollDelay)
                                     .take(2)
                                     .foreach(e => seen.updateAndGet(_ :+ e))
                             )
@@ -749,25 +749,25 @@ class JsonlTest extends kyo.test.Test[Any]:
             }
         }
 
-        "follow replays a truncation that fell on a record boundary" in {
+        "watch replays a truncation that fell on a record boundary" in {
             Clock.withTimeControl { control =>
-                // 46 bytes: two complete records, so the follower's residual is empty when the file shrinks.
+                // 46 bytes: two complete records, so the watcher's residual is empty when the file shrinks.
                 val existing = "{\"name\":\"a\",\"count\":1}\n{\"name\":\"b\",\"count\":2}\n"
-                // 23 bytes, below the follower's position, so the rewind fires on the next poll.
+                // 23 bytes, below the watcher's position, so the rewind fires on the next poll.
                 val replaced = "{\"name\":\"c\",\"count\":3}\n"
                 for
-                    dir <- Path.tempDir("kyo-jsonl-follow-truncate-boundary")
+                    dir <- Path.tempDir("kyo-jsonl-watch-truncate-boundary")
                     file = dir / "t.jsonl"
                     _    <- file.write(existing)
                     seen <- AtomicRef.init(Chunk.empty[Event])
                     fiber <- Fiber.initUnscoped(
                         Scope.run(
-                            Jsonl.follow[Event](file, pollDelay = pollDelay)
+                            Jsonl.watch[Event](file, pollDelay = pollDelay)
                                 .take(3)
                                 .foreach(e => seen.updateAndGet(_ :+ e))
                         )
                     )
-                    // Both existing records emitted, so the follower's cursor sits at the end of the file.
+                    // Both existing records emitted, so the watcher's cursor sits at the end of the file.
                     _   <- advanceUntil(control)(doneOr(fiber)(seen.get.map(_.size >= 2)))
                     _   <- file.write(replaced)
                     _   <- advanceUntil(control)(fiber.done)
@@ -781,27 +781,27 @@ class JsonlTest extends kyo.test.Test[Any]:
             }
         }
 
-        "followResults skips a terminated oversized record and keeps following" in {
+        "watchResults skips a terminated oversized record and keeps watching" in {
             Clock.withTimeControl { control =>
-                // The record and the oversized line are both on disk before the follower starts, so the
+                // The record and the oversized line are both on disk before the watcher starts, so the
                 // first read carries the skip. The third element can then only come from a later poll,
-                // which is the point: a follower that ended at the breach never reaches it, and one
+                // which is the point: a watcher that ended at the breach never reaches it, and one
                 // bad line would end a live log's reader permanently.
                 val existing = "{\"name\":\"a\",\"count\":1}\n" + oversizedLine + "\n"
                 for
-                    dir <- Path.tempDir("kyo-jsonl-follow-skip")
+                    dir <- Path.tempDir("kyo-jsonl-watch-skip")
                     file = dir / "t.jsonl"
                     _    <- file.write(existing)
                     seen <- AtomicRef.init(Chunk.empty[Result[DecodeException, Event]])
                     fiber <- Fiber.initUnscoped(
                         Scope.run(
-                            Jsonl.followResults[Event](file, pollDelay = pollDelay, maxLineBytes = 30)
+                            Jsonl.watchResults[Event](file, pollDelay = pollDelay, maxLineBytes = 30)
                                 .take(3)
                                 .foreach(r => seen.updateAndGet(_ :+ r))
                         )
                     )
                     // Each append adds one complete record, so any number of them leaves the third
-                    // element Event("c", 3) and the assertion holds whenever the follower gets there.
+                    // element Event("c", 3) and the assertion holds whenever the watcher gets there.
                     _   <- writeUntilDone(fiber, control, file.append("{\"name\":\"c\",\"count\":3}\n"))
                     _   <- fiber.get
                     got <- seen.get
@@ -821,20 +821,20 @@ class JsonlTest extends kyo.test.Test[Any]:
             }
         }
 
-        "follow aborts on a terminated oversized record after emitting the prefix" in {
-            // Everything is on disk before the follower starts, so the first read frames the record,
+        "watch aborts on a terminated oversized record after emitting the prefix" in {
+            // Everything is on disk before the watcher starts, so the first read frames the record,
             // skips the oversized line, and reaches the abort without polling. The record after the
-            // breach is on disk too, and `take(2)` is what a follower that skipped the breach would
+            // breach is on disk too, and `take(2)` is what a watcher that skipped the breach would
             // satisfy with it: the assertion then reports the wrong prefix rather than waiting forever.
             val in = "{\"name\":\"a\",\"count\":1}\n" + oversizedLine + "\n{\"name\":\"c\",\"count\":3}\n"
             for
-                dir <- Path.tempDir("kyo-jsonl-follow-skip-strict")
+                dir <- Path.tempDir("kyo-jsonl-watch-skip-strict")
                 file = dir / "t.jsonl"
                 _    <- file.write(in)
                 seen <- AtomicRef.init(Chunk.empty[Event])
                 r <- Abort.run[DecodeException](
                     Scope.run(
-                        Jsonl.follow[Event](file, pollDelay = pollDelay, maxLineBytes = 30)
+                        Jsonl.watch[Event](file, pollDelay = pollDelay, maxLineBytes = 30)
                             .take(2)
                             .foreach(e => seen.updateAndGet(_ :+ e))
                     )
@@ -853,22 +853,22 @@ class JsonlTest extends kyo.test.Test[Any]:
             end for
         }
 
-        "followResults keeps the records framed before a limit breach, then ends" in {
+        "watchResults keeps the records framed before a limit breach, then ends" in {
             Clock.withTimeControl { control =>
                 // One record of 22 bytes, then 49 bytes with no terminator: no record boundary can be found
                 // for the pending bytes, which is the one framing failure that has nothing to skip to.
                 val existing = "{\"name\":\"a\",\"count\":1}\n" + "{\"name\":\"" + ("b" * 40)
-                // 23 bytes, below the follower's position, so a rewind would fire on the next poll if the
-                // follower were still reading. It is written precisely to prove that it is not.
+                // 23 bytes, below the watcher's position, so a rewind would fire on the next poll if the
+                // watcher were still reading. It is written precisely to prove that it is not.
                 val replaced = "{\"name\":\"c\",\"count\":3}\n"
                 for
-                    dir <- Path.tempDir("kyo-jsonl-follow-breach")
+                    dir <- Path.tempDir("kyo-jsonl-watch-breach")
                     file = dir / "t.jsonl"
                     _    <- file.write(existing)
                     seen <- AtomicRef.init(Chunk.empty[Result[DecodeException, Event]])
                     fiber <- Fiber.initUnscoped(
                         Scope.run(
-                            Jsonl.followResults[Event](file, pollDelay = pollDelay, maxLineBytes = 30)
+                            Jsonl.watchResults[Event](file, pollDelay = pollDelay, maxLineBytes = 30)
                                 .take(3)
                                 .foreach(r => seen.updateAndGet(_ :+ r))
                         )
@@ -897,19 +897,19 @@ class JsonlTest extends kyo.test.Test[Any]:
             }
         }
 
-        "follow keeps the records framed before a limit breach, then aborts" in {
-            // One record of 22 bytes, then 49 bytes with no terminator, all on disk before the follower
+        "watch keeps the records framed before a limit breach, then aborts" in {
+            // One record of 22 bytes, then 49 bytes with no terminator, all on disk before the watcher
             // starts: one read frames the record and hits the breach, so the abort is reached without
             // polling and no wakeup is needed.
             val in = "{\"name\":\"a\",\"count\":1}\n" + "{\"name\":\"" + ("b" * 40)
             for
-                dir <- Path.tempDir("kyo-jsonl-follow-breach-strict")
+                dir <- Path.tempDir("kyo-jsonl-watch-breach-strict")
                 file = dir / "t.jsonl"
                 _    <- file.write(in)
                 seen <- AtomicRef.init(Chunk.empty[Event])
                 r <- Abort.run[DecodeException](
                     Scope.run(
-                        Jsonl.follow[Event](file, pollDelay = pollDelay, maxLineBytes = 30)
+                        Jsonl.watch[Event](file, pollDelay = pollDelay, maxLineBytes = 30)
                             .take(2)
                             .foreach(e => seen.updateAndGet(_ :+ e))
                     )
@@ -917,7 +917,7 @@ class JsonlTest extends kyo.test.Test[Any]:
                 emitted <- seen.get
                 _       <- dir.removeAll
             yield
-                // The framing route into the abort, which "follow emits the records before a bad one and then
+                // The framing route into the abort, which "watch emits the records before a bad one and then
                 // aborts" does not reach: that one covers the decode route. The breach arrives at the strict
                 // variant as a failure element, and the record framed before it is still delivered.
                 assert(emitted == Chunk(Event("a", 1)))
@@ -931,21 +931,21 @@ class JsonlTest extends kyo.test.Test[Any]:
             end for
         }
 
-        "follow applies maxDepth and maxCollectionSize" in {
-            // The whole record is on disk before the follower starts, so the first read reaches the decode
+        "watch applies maxDepth and maxCollectionSize" in {
+            // The whole record is on disk before the watcher starts, so the first read reaches the decode
             // without ever polling and no wakeup is needed.
             for
-                dir <- Path.tempDir("kyo-jsonl-follow-limits")
+                dir <- Path.tempDir("kyo-jsonl-watch-limits")
                 file = dir / "bag.jsonl"
                 _ <- file.write(bagLine + "\n")
                 depth <- Abort.run[DecodeException](
-                    Scope.run(Jsonl.follow[Bag](file, pollDelay = pollDelay, maxDepth = 1, maxCollectionSize = 50).take(1).run)
+                    Scope.run(Jsonl.watch[Bag](file, pollDelay = pollDelay, maxDepth = 1, maxCollectionSize = 50).take(1).run)
                 )
                 collection <- Abort.run[DecodeException](
-                    Scope.run(Jsonl.follow[Bag](file, pollDelay = pollDelay, maxDepth = 8, maxCollectionSize = 4).take(1).run)
+                    Scope.run(Jsonl.watch[Bag](file, pollDelay = pollDelay, maxDepth = 8, maxCollectionSize = 4).take(1).run)
                 )
                 within <- Scope.run(
-                    Jsonl.follow[Bag](file, pollDelay = pollDelay, maxDepth = 8, maxCollectionSize = 50).take(1).run
+                    Jsonl.watch[Bag](file, pollDelay = pollDelay, maxDepth = 8, maxCollectionSize = 50).take(1).run
                 )
                 _ <- dir.removeAll
             yield
@@ -955,19 +955,19 @@ class JsonlTest extends kyo.test.Test[Any]:
             end for
         }
 
-        "followResults applies maxDepth and maxCollectionSize" in {
+        "watchResults applies maxDepth and maxCollectionSize" in {
             for
-                dir <- Path.tempDir("kyo-jsonl-follow-results-limits")
+                dir <- Path.tempDir("kyo-jsonl-watch-results-limits")
                 file = dir / "bag.jsonl"
                 _ <- file.write(bagLine + "\n")
                 depth <- Scope.run(
-                    Jsonl.followResults[Bag](file, pollDelay = pollDelay, maxDepth = 1, maxCollectionSize = 50).take(1).run
+                    Jsonl.watchResults[Bag](file, pollDelay = pollDelay, maxDepth = 1, maxCollectionSize = 50).take(1).run
                 )
                 collection <- Scope.run(
-                    Jsonl.followResults[Bag](file, pollDelay = pollDelay, maxDepth = 8, maxCollectionSize = 4).take(1).run
+                    Jsonl.watchResults[Bag](file, pollDelay = pollDelay, maxDepth = 8, maxCollectionSize = 4).take(1).run
                 )
                 within <- Scope.run(
-                    Jsonl.followResults[Bag](file, pollDelay = pollDelay, maxDepth = 8, maxCollectionSize = 50).take(1).run
+                    Jsonl.watchResults[Bag](file, pollDelay = pollDelay, maxDepth = 8, maxCollectionSize = 50).take(1).run
                 )
                 _ <- dir.removeAll
             yield

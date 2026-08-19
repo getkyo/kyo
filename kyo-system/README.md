@@ -100,7 +100,7 @@ def parseEvent(line: String): Event = ???
 def process(e: Event): Unit < Sync  = ???
 ```
 
-For typed JSONL/NDJSON decoding, including per-record error recovery and follow mode, use `Jsonl` from [kyo-schema-json](../kyo-schema-json/README.md).
+For typed JSONL/NDJSON decoding, including per-record error recovery and watch mode, use `Jsonl` from [kyo-schema-json](../kyo-schema-json/README.md).
 
 `tailBytes` follows a file without text decoding or line splitting. `Path.Origin` controls where reading begins:
 

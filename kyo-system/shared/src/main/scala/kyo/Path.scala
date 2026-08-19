@@ -374,9 +374,9 @@ object Path extends PathPlatformSpecific:
           */
         def tail(pollDelay: Duration, bufferSize: Int)(using Frame): Stream[String, Async & Scope & Abort[FileReadException]] =
             // State carried between reads: leftover bytes from an incomplete UTF-8 sequence, plus the pending incomplete line text.
-            // `follow` restores this initial state when the file is truncated, so neither survives a rewind.
+            // `watch` restores this initial state when the file is truncated, so neither survives a rewind.
             val emptyBytes = new Array[Byte](0)
-            follow[String, (Array[Byte], String)](self, Origin.End, pollDelay, bufferSize, (emptyBytes, "")) {
+            watch[String, (Array[Byte], String)](self, Origin.End, pollDelay, bufferSize, (emptyBytes, "")) {
                 case ((leftover, pending), buf, n) =>
                     // Combine leftover bytes from previous read with new bytes
                     val allBytes =
@@ -403,7 +403,7 @@ object Path extends PathPlatformSpecific:
 
         /** Streams the file's bytes, continuing to emit as content is appended.
           *
-          * The byte-level view of a followed file: it polls for new content and does no text decoding or line splitting. [[tail]] is its
+          * The byte-level view of a watched file: it polls for new content and does no text decoding or line splitting. [[tail]] is its
           * sibling rather than its caller, since both are step functions over one private polling loop, so this is the one to reach for
           * when the content is not text lines. On end of file it sleeps `pollDelay` and retries; if the file has shrunk below the current
           * position it rewinds to offset 0 and replays the file from there. The rewind sleeps one `pollDelay` of its own before replaying,
@@ -441,7 +441,7 @@ object Path extends PathPlatformSpecific:
             pollDelay: Duration = 100.millis,
             bufferSize: Int = 8192
         )(using Frame): Stream[Byte, Async & Scope & Abort[FileReadException]] =
-            follow[Byte, Unit](self, from, pollDelay, bufferSize, ()) { (_, buf, n) =>
+            watch[Byte, Unit](self, from, pollDelay, bufferSize, ()) { (_, buf, n) =>
                 // The loop reuses `buf`, so each emitted chunk gets its own copy
                 Step.Continue(Chunk.fromNoCopy(java.util.Arrays.copyOf(buf, n)), ())
             }
@@ -624,12 +624,12 @@ object Path extends PathPlatformSpecific:
         runtime: Path
     ) derives CanEqual
 
-    /** What one poll of a followed file observed.
+    /** What one poll of a watched file observed.
       *
       * Naming the outcomes keeps the loop that drives them a total match: each state's handling is a visible decision, and a state added
       * later is a compile error at the driver rather than a silent fallthrough.
       */
-    private enum Poll derives CanEqual:
+    private enum Observed derives CanEqual:
         /** New bytes were read into the buffer. */
         case Data(bytesRead: Int)
 
@@ -641,9 +641,9 @@ object Path extends PathPlatformSpecific:
 
         /** The open file can no longer be measured. */
         case Unreadable(error: Result.Error[FileReadException])
-    end Poll
+    end Observed
 
-    /** What one [[Path.follow]] step produced from a block of bytes.
+    /** What one [[Path.watch]] step produced from a block of bytes.
       *
       * `Stop` carries no state, which is what keeps a step that has finished from handing back state nothing will ever read. A step that
       * knows its own consumer is done says so here rather than leaving the loop polling a file whose bytes can no longer be used.
@@ -662,16 +662,16 @@ object Path extends PathPlatformSpecific:
       * taken by path would be a measurement of whatever the name resolves to now, which is a different file the moment the name is renamed,
       * replaced, or unlinked.
       */
-    private def poll(handle: ReadHandle, buffer: Array[Byte], pos: Long)(using AllowUnsafe, Frame): Poll =
+    private def poll(handle: ReadHandle, buffer: Array[Byte], pos: Long)(using AllowUnsafe, Frame): Observed =
         // ReadResult is opaque, and this is its defining scope, so its accessors have to be imported by name.
         import ReadResult.bytesRead
         import ReadResult.isEof
         val result = handle.readChunk(buffer)
-        if !result.isEof then Poll.Data(result.bytesRead)
+        if !result.isEof then Observed.Data(result.bytesRead)
         else
             handle.size().foldError(
-                size => if size < pos then Poll.Rewound else Poll.Idle,
-                error => Poll.Unreadable(error)
+                size => if size < pos then Observed.Rewound else Observed.Idle,
+                error => Observed.Unreadable(error)
             )
         end if
     end poll
@@ -694,7 +694,7 @@ object Path extends PathPlatformSpecific:
       *
       * `step` receives the read buffer itself, which the loop reuses across iterations: it must copy any bytes it retains.
       */
-    private[kyo] def follow[V, St](
+    private[kyo] def watch[V, St](
         self: Path,
         from: Origin,
         pollDelay: Duration,
@@ -726,7 +726,7 @@ object Path extends PathPlatformSpecific:
                             Loop(start, initialState) { (pos, state) =>
                                 Sync.Unsafe.defer {
                                     poll(handle, buf, pos) match
-                                        case Poll.Data(n) =>
+                                        case Observed.Data(n) =>
                                             step(state, buf, n) match
                                                 case Step.Continue(values, next) =>
                                                     if values.isEmpty then Loop.continue(pos + n, next)
@@ -734,14 +734,14 @@ object Path extends PathPlatformSpecific:
                                                 case Step.Stop(values) =>
                                                     if values.isEmpty then Loop.done(())
                                                     else Emit.valueWith(values)(Loop.done(()))
-                                        case Poll.Rewound =>
+                                        case Observed.Rewound =>
                                             Sync.Unsafe.defer(handle.position(0L))
                                                 .andThen(Async.sleep(pollDelay))
                                                 .andThen(Loop.continue(0L, initialState))
-                                        case Poll.Idle =>
+                                        case Observed.Idle =>
                                             Async.sleep(pollDelay)
                                                 .andThen(Loop.continue(pos, state))
-                                        case Poll.Unreadable(error) =>
+                                        case Observed.Unreadable(error) =>
                                             Abort.error(error)
                                 }
                             }
@@ -750,7 +750,7 @@ object Path extends PathPlatformSpecific:
                 }
             }
         }
-    end follow
+    end watch
 
     /** Returns the number of trailing bytes that form an incomplete UTF-8 sequence. */
     private def incompleteUtf8Tail(bytes: Array[Byte], len: Int): Int =

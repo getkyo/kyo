@@ -41,14 +41,14 @@ handling, no CRLF handling, no blank-line skipping, and no JSON parsing.
 Exactly one function in `Jsonl` feeds the framer, the private `frameChunk`.
 Every public `Jsonl` entry point routes its bytes through it. The only other
 framer calls in `Jsonl` are `Framer.init` at the top of each driver and
-`Framer.finish` at end of input in `pipe` and `pipeResults`, which the follow
-drivers cannot make because a follow stream has no end of input.
+`Framer.finishLine` at end of input in `pipe` and `pipeResults`, which the watch
+drivers cannot make because a watch stream has no end of input.
 
 - `pipe` and `pipeResults` drive it from a `Poll[Chunk[Byte]]` loop, carrying the
   framer as the loop's state.
-- `follow` and `followResults` drive it as the step function of
-  `Path.follow`, carrying the framer as that loop's state.
-- `follow` is `followResults` plus a `flatMapChunk` that splits at the first
+- `watch` and `watchResults` drive it as the step function of
+  `Path.watch`, carrying the framer as that loop's state.
+- `watch` is `watchResults` plus a `flatMapChunk` that splits at the first
   failure; it has no framing of its own.
 - `read` and `readResults` are `path.readBytesStream.into(pipe...)`.
 - `encode`, `write`, and `append` all reduce to `Json.Lines.encodeAllBytes` per
@@ -65,8 +65,8 @@ framing rule needs to change, change it in `JsonLines.scala` and let both
 surfaces inherit it.
 
 The same rule applies in the other direction. `frameChunk` is pure, and that is
-what lets the follow drivers use it as `Path.follow`'s step function at all: the
-framer becomes state the follow loop owns and can discard on a rewind, rather
+what lets the watch drivers use it as `Path.watch`'s step function at all: the
+framer becomes state the watch loop owns and can discard on a rewind, rather
 than state a downstream pipe holds and knows nothing about. Do not make
 `frameChunk` effectful.
 
@@ -105,30 +105,30 @@ Two related properties follow from the same reasoning and are also tested:
 
 ---
 
-## `follow` defaults to `Origin.Start`; `tailBytes` defaults to `Origin.End`
+## `watch` defaults to `Origin.Start`; `tailBytes` defaults to `Origin.End`
 
 Both defaults are deliberate and they must not be made to agree.
 
-`Path.tailBytes` is the byte-level view of a followed file, and follow-only is
-what a byte-level tail means: it emits bytes appended after the stream attached,
+`Path.tailBytes` is the byte-level view of a watched file, and new-content-only
+is what a byte-level tail means: it emits bytes appended after the stream attached,
 and nothing that was already in the file. `Path.tail` is its sibling over one
 private polling loop, not its caller, and passes `Origin.End` explicitly, so
 `tailBytes`'s default answers only for `tailBytes`.
 
-`Jsonl.follow` defaults to `Origin.Start`. Reading a live agent transcript or an
+`Jsonl.watch` defaults to `Origin.Start`. Reading a live agent transcript or an
 application log wants every record, not only those written after the reader
 attached, and a JSONL consumer that silently skipped the existing file would be
 surprising in a way a `tail` command is not. `Origin.End` remains available for
-the follow-only case, and `Origin.Offset` for a consumer resuming from a
+the new-content-only case, and `Origin.Offset` for a consumer resuming from a
 recorded position.
 
-`Jsonl.follow` is a sibling driver over `Path.follow`, not a layer on top of
+`Jsonl.watch` is a sibling driver over `Path.watch`, not a layer on top of
 `Path.tailBytes`, so the two defaults are independent choices rather than one
 overriding the other.
 
-### What "following" means here
+### What "watching" means here
 
-Following tracks the OPEN FILE, not the name. This is `tail -f`, never
+Watching tracks the OPEN FILE, not the name. This is `tail -f`, never
 `tail -F`. The file is opened once and every later decision comes from that open
 handle, so the name it was opened under can afterwards be renamed, replaced, or
 deleted with no effect on the stream:
@@ -152,13 +152,13 @@ A consumer that needs to pick up a rotated-in replacement closes the stream and
 opens a new one against the path. Do not add name-watching to this module; it
 belongs in `kyo-system` if it belongs anywhere, and it is a different contract.
 
-The rewind is the case that constrains this module's design. `Path.follow`
+The rewind is the case that constrains this module's design. `Path.watch`
 restores the step's INITIAL state at a rewind, and the framer is that state, so a
 record left half written when the truncation happened is dropped along with the
 rest of the old content and can never be spliced onto the first replayed record.
-This is why the framer is the follow loop's carried state and not a pipe
+This is why the framer is the watch loop's carried state and not a pipe
 downstream of it: a downstream pipe would keep its residual across a rewind it
-cannot see. **If you refactor `followResults`, the framer must stay inside the
+cannot see. **If you refactor `watchResults`, the framer must stay inside the
 loop.**
 
 ---
@@ -169,12 +169,12 @@ loop.**
 a byte stream containing no newline would otherwise grow the framer's residual
 without bound. `maxDepth` and `maxCollectionSize` do not cover this: both
 operate inside a single document, and a stream with no record boundary never
-produces a document to apply them to. A follow stream on an attacker-influenced
+produces a document to apply them to. A watch stream on an attacker-influenced
 or malfunctioning writer is exactly the shape that hits it.
 
 A breach means one of two different things, and the framer's own type says
 which. A terminated line over the ceiling has a known boundary, so framing skips
-it and resumes after its newline: that is a `Json.Lines.Line.Skipped` inside a
+it and resumes after its newline: that is a `Result.Failure` among the lines of a
 `Json.Lines.Framed.Continued`, and it reaches this module as one failure element
 sitting where the record sat. Pending bytes that outgrow the ceiling with no
 newline among them have nothing to skip to: that is `Json.Lines.Framed.Halted`,
@@ -183,17 +183,17 @@ drives the error contract on both tiers, and the asymmetry is intentional:
 
 | Surface | Undecodable record | Terminated over-long record | Oversized residual |
 |---|---|---|---|
-| `pipe`, `read`, `follow` (strict) | emit every value decoded before it, then abort | emit every value framed before it, then abort | emit every value framed before it, then abort |
-| `pipeResults`, `readResults`, `followResults` (lenient) | one failure element, stream carries on | one failure element, stream carries on | emit the records framed before it, then the failure element, then END the stream |
+| `pipe`, `read`, `watch` (strict) | emit every value decoded before it, then abort | emit every value framed before it, then abort | emit every value framed before it, then abort |
+| `pipeResults`, `readResults`, `watchResults` (lenient) | one failure element, stream carries on | one failure element, stream carries on | emit the records framed before it, then the failure element, then END the stream |
 
 The lenient surfaces recover wherever there is a next record to resume at, which
 covers a bad record and a terminated over-long one alike. That equivalence is
-the point on a follow stream: ending on a skippable breach would let one
+the point on a watch stream: ending on a skippable breach would let one
 over-long line stop a live log's reader permanently. They cannot recover from an
 oversized residual, and staying open would leave a consumer waiting on a stream
 that can never emit again, so they end instead.
 
-`followResults` ends by returning `Path.Step.Stop` from its follow step. `Stop`
+`watchResults` ends by returning `Path.Step.Stop` from its watch step. `Stop`
 carries no state, so the framer a halt leaves behind has nowhere to go, and the
 loop stops rather than polling bytes no framer can consume. `Framing.Halted`
 carries no framer for the same reason. Keep both that way.
@@ -314,7 +314,7 @@ them:
   of an abort prefix, or of encoding output should run at more than one chunk
   size, for the reason given above.
 
-Follow-mode tests must be deterministic: drive them with latches and controlled
+Watch-mode tests must be deterministic: drive them with latches and controlled
 `Clock` advances rather than sleeps, per the root guide.
 
 ---

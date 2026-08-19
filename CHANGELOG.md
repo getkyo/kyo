@@ -15,9 +15,9 @@ All breaking API changes to this project will be documented in this file.
 - [kyo-system] `Path.tailBytes`: follow a file at the byte level, starting from the beginning, the end, or a recorded offset
 - [kyo-system] `Path.Origin`: where a byte-level read begins (`Start`, `End`, `Offset`)
 - [kyo-core] `Stream.fromInputStream`: stream a `java.io.InputStream`'s bytes, closed with the enclosing `Scope`
-- [kyo-schema] `RecordDecodeException`: decode failure for one record in a multi-record input, carrying its index, byte offset, and text
-- [kyo-schema-json] `Json.Lines`: pure JSONL/NDJSON framing (`Framer`, `Record`, `Line`, `Framed`) plus `decodeAll`, `decodeAllBytes`, `decodeAllBytesResults`, `encodeAll`, `encodeAllBytes`, `encodeLine`
-- [kyo-schema-json] `Jsonl`: streaming JSONL/NDJSON over files and byte streams with `read`, `follow`, `pipe`, `encode`, `write`, `append`, and per-record error recovery through the `Results` variants
+- [kyo-schema] `RecordDecodeException`: decode failure for one record in a multi-record input, carrying its index and byte offset
+- [kyo-schema-json] `Json.Lines`: pure JSONL/NDJSON framing (`Framer`, `Pending`, `Line`, `Framed`) plus `decodeAll`, `decodeAllBytes`, `decodeAllBytesResults`, `encodeAll`, `encodeAllBytes`, `encodeLine`
+- [kyo-schema-json] `Jsonl`: streaming JSONL/NDJSON over files and byte streams with `read`, `watch`, `pipe`, `encode`, `write`, `append`, and per-record error recovery through the `Results` variants
 - [kyo-combinators] `.forkUsing`: apply `Fiber.use`
 - [kyo-logging-jpl] `kyo.JavaLog`: bridge `Log` to Java platform logging a.k.a. `System.Logger`
 - [kyo-logging-slf4j] `kyo.SLF4JLog`: bridge `Log` to SLF4J 2.0 API

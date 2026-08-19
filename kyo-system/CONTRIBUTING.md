@@ -54,10 +54,10 @@ content, `End` skips existing content, and `Offset(bytes)` resumes at a recorded
 position. A negative `Offset` is clamped to 0 on every platform.
 
 `tailBytes` defaults to `Origin.End` because it is the byte-level view of a
-followed file. `path.tail` passes `Origin.End` explicitly because the two are
+watched file. `path.tail` passes `Origin.End` explicitly because the two are
 siblings over one polling loop. Other drivers over the loop choose their own
-default. `Jsonl.follow` in `kyo-schema-json` defaults to `Origin.Start` so it
-replays existing records before following new ones.
+default. `Jsonl.watch` in `kyo-schema-json` defaults to `Origin.Start` so it
+replays existing records before emitting new ones.
 
 #### Key design points
 
@@ -68,14 +68,16 @@ replays existing records before following new ones.
 - Streaming methods carry `Scope` so the underlying OS handle is closed when the
   enclosing scope exits, regardless of whether it completes normally or aborts.
 - `path.tail` and `path.tailBytes` add `Async` because they sleep between polls.
-  Both drive one `private[kyo] follow` loop, which owns the open handle, polling,
+  Both drive one `private[kyo] watch` loop, which owns the open handle, polling,
   and truncation rewind. `tail` threads UTF-8 and line-buffer state through that
   loop.
-- A `follow` step returns `Path.Step`: `Continue(values, state)` reads again,
+- A `watch` step returns `Path.Step`: `Continue(values, state)` reads again,
   while `Stop(values)` emits those values and completes. `Stop` carries no state
-  because no later iteration can consume it. `Jsonl.followResults` uses this to
-  stop when its framer can no longer frame another record.
-- Following tracks the open file, not the name. A rename or deletion is invisible
+  because no later iteration can consume it. `Jsonl.watchResults` uses this to
+  stop when its framer can no longer frame another record. `Path.Step` is not
+  `Loop.Outcome2`: an `Outcome` is opaque and only `Loop.apply` can destructure
+  one, while this step's result is read by the watch loop itself.
+- Watching tracks the open file, not the name. A rename or deletion is invisible
   to a running stream. Truncation rewinds to byte 0 and restores the step's
   initial state so buffered bytes from before the rewind cannot be spliced onto
   the replayed content.

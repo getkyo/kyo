@@ -14,7 +14,7 @@ import scala.annotation.tailrec
   * Strict entry points abort on the first undecodable record. The `Results` variants emit one `Result` per record instead, which is what
   * heterogeneous or partially-written logs need.
   *
-  * `read` covers a file that is complete; `follow` covers one still being written, replaying what is already there and then emitting each
+  * `read` covers a file that is complete; `watch` covers one still being written, replaying what is already there and then emitting each
   * record as it is appended.
   *
   * `encode`, `write`, and `append` go the other way, turning a stream of values into JSONL bytes or into a file. They are bounded in the
@@ -61,7 +61,7 @@ object Jsonl:
             Loop(Json.Lines.Framer.init(maxLineBytes)) { framer =>
                 Poll.andMap[Chunk[Byte]] {
                     case Absent =>
-                        framer.finish match
+                        framer.finishLine match
                             case Absent => Loop.done
                             case Present(record) =>
                                 Abort.get(Json.Lines.decodeRecord[A](record, maxDepth, maxCollectionSize)).map { value =>
@@ -117,7 +117,7 @@ object Jsonl:
             Loop(Json.Lines.Framer.init(maxLineBytes)) { framer =>
                 Poll.andMap[Chunk[Byte]] {
                     case Absent =>
-                        framer.finish match
+                        framer.finishLine match
                             case Absent => Loop.done
                             case Present(record) =>
                                 Emit.valueWith(Chunk(Json.Lines.decodeRecord[A](record, maxDepth, maxCollectionSize)))(Loop.done)
@@ -192,16 +192,16 @@ object Jsonl:
       * with the enclosing `Scope` and closed when that scope ends.
       *
       * Two things end the stream on their own, and neither is the file running out of records: the first undecodable record aborts it, and
-      * so does the first record-size breach, including the oversized trailing residual that ends [[followResults]]. Short of those it runs
+      * so does the first record-size breach, including the oversized trailing residual that ends [[watchResults]]. Short of those it runs
       * until the scope ends, so a consumer reading a well-formed log bounds it with `take`, `takeWhile`, or an interrupt.
       *
       * An unterminated trailing record is where this differs from [[read]], and it is the only place the two differ. [[pipe]] runs on a
-      * finite input, so it finishes its framer at end of input and emits a final record that carries no newline. A follow stream never
+      * finite input, so it finishes its framer at end of input and emits a final record that carries no newline. A watch stream never
       * reaches an end of input, so it holds those bytes as a pending partial and emits the record only once its newline arrives.
       *
-      * `from` defaults to [[Path.Origin.Start]], which replays the file and then follows, because reading a live agent transcript wants
+      * `from` defaults to [[Path.Origin.Start]], which replays the file and then watches, because reading a live agent transcript wants
       * every record rather than only those written after the reader attached. [[Path.tailBytes]] defaults to [[Path.Origin.End]] instead,
-      * because it is the byte-level view of a followed file and follow-only is what a byte-level tail means. The two are sibling drivers
+      * because it is the byte-level view of a watched file and new-content-only is what a byte-level tail means. The two are sibling drivers
       * over one polling loop, so neither default constrains the other.
       *
       * A file truncated below the read position is replayed from its first byte, and the framer is rebuilt at that rewind. A record left
@@ -209,7 +209,7 @@ object Jsonl:
       * first replayed record. That holds wherever the truncation fell, so a log rotated in place replays as a clean read of its new
       * content whether or not the cut landed on a record boundary.
       *
-      * Following tracks the open file and not the name, which is what `tail -f` does and `tail -F` does not. The file is opened once, so
+      * Watching tracks the open file and not the name, which is what `tail -f` does and `tail -F` does not. The file is opened once, so
       * the name it was opened under can afterwards be renamed, replaced, or deleted with no effect on what this stream reads. Rotation by
       * rename therefore keeps the stream on the original file: it emits whatever is still appended through that file's new name, and
       * nothing written to the new file created under the old name. Deleting the file yields no further records and no failure, because an
@@ -218,7 +218,7 @@ object Jsonl:
       * is a sibling driver over the same polling loop rather than a layer beneath this one.
       *
       * @param path
-      *   the file to follow
+      *   the file to watch
       * @param from
       *   where reading begins; [[Path.Origin.Start]] replays, [[Path.Origin.End]] emits only records appended afterwards, and
       *   [[Path.Origin.Offset]] resumes from a recorded byte position
@@ -233,7 +233,7 @@ object Jsonl:
       * @return
       *   a stream of decoded values that runs until interrupted, aborting with the first decode or framing failure
       */
-    def follow[A](
+    def watch[A](
         path: Path,
         from: Path.Origin = Path.Origin.Start,
         pollDelay: Duration = 100.millis,
@@ -247,7 +247,7 @@ object Jsonl:
         Tag[Emit[Chunk[A]]],
         Frame
     ): Stream[A, Scope & Async & Abort[FileReadException | DecodeException]] =
-        followResults[A](path, from, pollDelay, maxDepth, maxCollectionSize, maxLineBytes).flatMapChunk { results =>
+        watchResults[A](path, from, pollDelay, maxDepth, maxCollectionSize, maxLineBytes).flatMapChunk { results =>
             val (values, failure) = splitAtFailure(results)
             failure match
                 case Absent => Stream[A, Any](emitNonEmpty(values)(()))
@@ -260,12 +260,12 @@ object Jsonl:
     /** Streams a JSONL file's records as per-record `Result`s, continuing to emit as records are appended.
       *
       * The variant for heterogeneous or partially written logs: an undecodable record yields one failure element and the stream carries
-      * on. Every other property of [[follow]] holds unchanged, including the `Path.Origin.Start` default, the framer rebuilt across a
+      * on. Every other property of [[watch]] holds unchanged, including the `Path.Origin.Start` default, the framer rebuilt across a
       * truncation, and the behavior under rotation by rename.
       *
       * A record exceeding `maxLineBytes` yields one failure element and the stream carries on, as long as its terminator arrived: the
-      * boundary is known, so framing skips the record and keeps following. That matters most here, because ending instead would let one
-      * over-long line stop a follower on a live log permanently.
+      * boundary is known, so framing skips the record and keeps watching. That matters most here, because ending instead would let one
+      * over-long line stop a watcher on a live log permanently.
       *
       * The one framing failure with nothing to skip to is an oversized trailing residual, where no record boundary was found for the
       * pending bytes. It surfaces as a single failure element after every record framed before it, and then the stream ends, exactly as it
@@ -273,7 +273,7 @@ object Jsonl:
       * stream that can never emit again.
       *
       * @param path
-      *   the file to follow
+      *   the file to watch
       * @param from
       *   where reading begins; [[Path.Origin.Start]] replays, [[Path.Origin.End]] emits only records appended afterwards, and
       *   [[Path.Origin.Offset]] resumes from a recorded byte position
@@ -288,7 +288,7 @@ object Jsonl:
       * @return
       *   a stream of per-record results that runs until interrupted, or until the pending bytes outgrow `maxLineBytes`
       */
-    def followResults[A](
+    def watchResults[A](
         path: Path,
         from: Path.Origin = Path.Origin.Start,
         pollDelay: Duration = 100.millis,
@@ -301,17 +301,17 @@ object Jsonl:
         Tag[Emit[Chunk[Result[DecodeException, A]]]],
         Frame
     ): Stream[Result[DecodeException, A], Scope & Async & Abort[FileReadException]] =
-        // The framer is the follow loop's carried state rather than a pipe downstream of it, which is what
+        // The framer is the watch loop's carried state rather than a pipe downstream of it, which is what
         // ties its lifetime to the file's: a rewind restores this initial state, so bytes framed before a
         // truncation cannot reach a record replayed after one.
-        Path.follow[Result[DecodeException, A], Json.Lines.Framer](
+        Path.watch[Result[DecodeException, A], Json.Lines.Framer](
             path,
             from,
             pollDelay,
-            FollowBufferSize,
+            WatchBufferSize,
             Json.Lines.Framer.init(maxLineBytes)
         ) { (framer, buffer, bytesRead) =>
-            // The follow loop reuses `buffer` across reads, so the framer, which retains what it
+            // The watch loop reuses `buffer` across reads, so the framer, which retains what it
             // cannot yet frame, is handed an array nothing else holds.
             val chunk = Span.fromUnsafe(java.util.Arrays.copyOf(buffer, bytesRead))
             frameChunk[A](framer, chunk, maxDepth, maxCollectionSize) match
@@ -323,7 +323,7 @@ object Jsonl:
                     Path.Step.Stop(results :+ Result.fail[DecodeException, A](breach))
             end match
         }
-    end followResults
+    end watchResults
 
     /** Encodes a stream of values as JSONL bytes, one newline-terminated record per value.
       *
@@ -446,13 +446,13 @@ object Jsonl:
         }.map(outcome => Abort.get(outcome.asInstanceOf[Result[Nothing, Unit]]))
     end writeAll
 
-    /** Read buffer size for the follow drivers.
+    /** Read buffer size for the watch drivers.
       *
       * 8 KB, so a record of any ordinary size arrives whole in one read and the framer seldom carries a partial across polls. This is
-      * passed to the shared follow loop explicitly rather than inherited from [[Path.tailBytes]]'s own default, so the two are free to
+      * passed to the shared watch loop explicitly rather than inherited from [[Path.tailBytes]]'s own default, so the two are free to
       * differ and neither has to track the other.
       */
-    private inline def FollowBufferSize: Int = 8192
+    private inline def WatchBufferSize: Int = 8192
 
     /** What framing and decoding one chunk of JSONL bytes produced.
       *
@@ -471,9 +471,9 @@ object Jsonl:
 
     /** Frames one chunk of bytes and decodes every record it completed.
       *
-      * The one framing implementation the module has. [[pipe]] and [[pipeResults]] drive it from their `Stream[Byte]` poll loop, [[follow]]
-      * and [[followResults]] drive it as `Path.follow`'s step, so neither driver can grow framing rules the other does not have. It stays
-      * pure, which is what lets the follow drivers use it as that step at all: the framer becomes state the follow loop carries and
+      * The one framing implementation the module has. [[pipe]] and [[pipeResults]] drive it from their `Stream[Byte]` poll loop, [[watch]]
+      * and [[watchResults]] drive it as `Path.watch`'s step, so neither driver can grow framing rules the other does not have. It stays
+      * pure, which is what lets the watch drivers use it as that step at all: the framer becomes state the watch loop carries and
       * discards on a rewind, instead of state a downstream pipe holds and knows nothing about.
       *
       * @param framer
@@ -503,13 +503,14 @@ object Jsonl:
       * failure, and it is what the strict drivers' `splitAtFailure` reads to find the prefix before a failure of either kind.
       */
     private def decodeLines[A](
-        lines: Chunk[Json.Lines.Line],
+        lines: Chunk[Result[LimitExceededException, Json.Lines.Line]],
         maxDepth: Int,
         maxCollectionSize: Int
     )(using Json, Schema[A], Frame): Chunk[Result[DecodeException, A]] =
         lines.map {
-            case Json.Lines.Line.Kept(record)    => Json.Lines.decodeRecord[A](record, maxDepth, maxCollectionSize)
-            case Json.Lines.Line.Skipped(breach) => Result.fail(breach)
+            case Result.Success(record) => Json.Lines.decodeRecord[A](record, maxDepth, maxCollectionSize)
+            case Result.Failure(breach) => Result.fail(breach)
+            case Result.Panic(ex)       => Result.panic(ex)
         }
     end decodeLines
 
