@@ -271,6 +271,37 @@ class EvalTest extends AnyFreeSpec:
             assert(log.toList == List("inner", "outer", "outer"))
         }
 
+        "an effectful answer's own-tag re-raise is answered by this handler" in {
+            var clauseRuns = 0
+            val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))(
+                [C] =>
+                    _ =>
+                        clauseRuns += 1
+                        if clauseRuns == 1 then Loop.continue(ask.map(_ + 100)) else Loop.continue(1: Int < Any)
+                ,
+                a => a
+            )
+            assert(Eval(r) == 102)
+            assert(clauseRuns == 2)
+        }
+
+        "a clause suspending and then answering with an own-tag re-raise is answered by this handler" in {
+            var clauseRuns = 0
+            val log        = collection.mutable.ListBuffer[String]()
+            val handled: Int < Say = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))(
+                [C] =>
+                    _ =>
+                        clauseRuns += 1
+                        if clauseRuns == 1 then say("pre").map(_ => Loop.continue(ask.map(_ + 100)))
+                        else Loop.continue(1: Int < Any)
+                ,
+                a => a
+            )
+            assert(Eval(recordSay("outer", log)(handled)) == 102)
+            assert(clauseRuns == 2)
+            assert(log.toList == List("outer"))
+        }
+
         // the operation was raised from inside the interior region, so its remainder belongs inside
         // that region: an effectful answer runs under this handler with the interior parked, and the
         // interior comes back around the remainder, not after it
