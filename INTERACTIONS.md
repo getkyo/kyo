@@ -401,6 +401,35 @@ along the way (each correction is also corpus data on my failure modes):
   persona"; "why don't I see you doing any homework at all?" (fixed by reading raio-x + docs
   corpus before speaking again).
 
+## Field research folded into the design thread (2026-08-19, owner-directed)
+
+- **ARC-AGI positioning (owner's own results)**: ren on v2, mostly haiku with a little sonnet,
+  beats opus on accuracy AND cost by a lot, ~90% on 3 hard questions (n=3 held honestly). The
+  ladder thesis confirmed on the one benchmark designed to resist memorization. Tool-authoring
+  mutations proposed for v3; ARC dominates SWE/terminal-bench as the machinery arena (perfect
+  oracle, contamination-resistant, prize efficiency axis suits the cheap-substrate economics);
+  SWE/terminal-bench as volume supplement (contamination + static-suite farming hazards noted);
+  perf skill keeps the recital-proof owned oracle (a JMH run is a fresh physical event).
+- **Prime Agent (Prime Intellect, Aug 5)**: 95.54% ARC-AGI-3 with Opus 5 (30.2% same model in
+  native harness; human baseline 95.4%; launch-reported, no independent traces). Self-improving
+  RLM harness: context-as-variable, programmatic tool calling, /refine self-edits judged by
+  self-assessment. Analysis recorded: it confirms structure-dominance at headline scale; its
+  self-assessment mechanism works only in dense-oracle environments (ARC grades every level);
+  the owner's selection design is the sparse-oracle answer; no sandbox by default ("generated
+  code inherits the user's OS permissions") vs the effect-leash/VFS constitution designed here
+  from the start; "ren can likely generalize better": selection validates on unseen cases,
+  self-modification validates on the case it is inside; containment is asymmetric (selection can
+  evolve guarded self-modification; the reverse cannot exist).
+- **DeepSeek Harness + Cordis paper (Aug 13-14)**: "A Programming Paradigm for Spatiotemporal
+  Composability": revertible effects (caller-supplied inverses, runtime-tracked) + reactive
+  coeffects (declare needs, runtime re-resolves) for safe live self-modification of harnesses.
+  Related work engages ZIO/Effect-TS (monadic embedding critique; withdrawal leaves effects in
+  place) and Effekt (closest relative); kyo not cited. The owner's stack is a third position the
+  survey lacks: static effect rows (kyo) + substrate-level reversion (VFS/CoW/CRIU snapshots,
+  which the paper itself concedes as the alternative) + selection-driven change instead of live
+  self-modification. Field convergence signal: two harness-layer releases in two weeks, neither
+  with selection; possible response-paper opportunity for kyo (their sec. 6.7 nearly invites it).
+
 ## Corpus integration log
 
 - 2026-08-18: file created; all three miner reports integrated (code-style, ledger, transcripts);

@@ -922,6 +922,13 @@ Fable judge found the corpus strong but the chat prep not ready (four covert-def
 capability section, reframe not operationalized, owner-value model missing, fork dodged, staged
 work enacting the banned execution reflex); all findings applied to INTERACTIONS.md; chat opened.
 
+**Tick 00:19: hold continues.** Eighteen uncommitted kyo-kernel2 paths, owner's sbt running, load
+4.16. Design thread extended with field research (owner-directed): ARC-AGI arena positioning,
+Prime Agent analysis (95.5% ARC-AGI-3, self-assessment vs selection, no-sandbox contrast), and
+the DeepSeek Harness / Cordis spatiotemporal-composability paper (ZIO/Effekt engaged, kyo
+uncited, the owner's stack a third design point). All recorded in INTERACTIONS.md. Bench
+deliverables unchanged and gated. Re-armed 1800s.
+
 **Tick 23:48: hold continues.** Nineteen uncommitted kyo-kernel2 paths, owner's sbt running, load
 6.87 (above the bracket bar). Design thread converged to a ruled architecture (skills-scoped
 evolution machine, snapshot-swap-evaluate backtests, perf-optimization first skill with the bench
