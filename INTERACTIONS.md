@@ -36,10 +36,10 @@ they had been accumulating for months, in their own words along the way:
 - And the primacy rule predates tonight: "Always first focus on me, what I want, and our
   interaction. Do not start executing stuff, I'm the most important thing to you."
 
-The strongest single piece of evidence for the owner's thesis is predictability: they forecast
-the agent's design moves before the agent made them (the region thing, the VM turn, the
-overengineered rewrite), repeatedly, across independent campaigns. A generator whose failure
-modes an expert can call in advance is approximating a distribution, not originating.
+The load-bearing fact is in the authorship record: zero adopted items are originated shapes.
+Predictability corroborates it: the owner forecast the agent's design moves before the agent made
+them (the region thing, the VM turn, the overengineered rewrite), repeatedly, across independent
+campaigns.
 
 ## Design authorship record
 
@@ -235,22 +235,35 @@ Communication rules (transcript-recorded, all owner-set, several repeated after 
 
 ## The capability question, honestly
 
-What the record supports: at kernel level, origination of lean novel shape did not come from the
-agent, not once across days of attempts. The agent's proposals were recombinations of standard
-implementation vocabulary (defunctionalized continuations, snapshot nodes, state cells); correct
-in the large, heavy in exactly the dimension the owner optimizes, and holed in the details that
-only surface under contact with the machine. Where the loop was tight and the artifact concrete
-(a failing test, a runtime symptom, a finished implementation to audit), agent output was strong:
-the defect passes were real and the verifications held. Where the ask was a design leap, the
-output regressed toward the central mass of known shapes.
+The fact, stated at the owner's bar (reuse existing machinery, no new nouns, one funnel, a couple
+of branches), not at an inflated one: across the full ledger, zero adopted items are originated
+shapes. Every adopted contribution is a diagnosis, a patch, or an answer to a posed question. The
+failed proposals were not exotic; they were competent renderings of the dominant literature
+shapes for this problem class (defunctionalized continuations, snapshot nodes, state cells,
+control tokens), applied heavily. And the owner rejected most of them at proposal time, on sight,
+with no machine contact needed: the holes that mattered were visible in the design description
+itself (StateCell, Bound, Region/Segment, ContinueAnswer/Parked, the two-cast erased loop).
 
-Mechanism, as best observable from inside: generation is anchored on prior art; the owner's
-shapes came from sustained contact with this specific machine, its execution and its JIT, letting
-the actual constraint set carve the structure. The agent's contact with the machine is episodic
-and mediated. That difference in process explains part of the gap. It does not explain it away:
-the honest position is that producing a shape that would surprise an expert who knows the whole
-literature is at or beyond the edge of current capability, and claiming otherwise to the owner
-would be the exact approximation-presented-as-understanding they are naming.
+On the owner's open fork (training set overwhelmed by bad code, or no truly novel solutions):
+the record discriminates, partially. The design failures were not bad code; they were orthodox
+shapes rendered competently, which points at approximation gravity rather than contamination:
+generation pulls toward the mass of prior art, and the owner's composition-first shape lives far
+from that mass. The recurring unsafety (casts, mutability leaks) pulls slightly the other way,
+and it responded to process: the owner's rules demonstrably reduced it. The origination
+component showed no response to process across months, which is why it reads as the deeper
+limitation. What would falsify this: a shape produced ex ante that the owner keeps without
+reshaping. It has not happened.
+
+Verification must be split, because the record splits it. Artifact-anchored defect hunting held:
+the Continue2 swap, the ClassCast off-by-one, the six-defect pass, each confirmed by a runtime
+symptom or a green suite. Self-reported measurement failed: five wrong published numbers, four
+flattering, figures quoted without re-deriving. The mitigation for the second is already
+protocol (harness-mediated numbers only, raw data as arbiter). "The agent is a strong verifier"
+is true only with this split attached.
+
+One open question, honestly held: the design-vocabulary section above is ex post articulation.
+Whether the agent can use it ex ante, generatively, is untested; the corpus takes no position on
+it and treats any claim to it as unearned until demonstrated.
 
 Accepted implication for this collaboration: the agent's high-value roles are verification,
 defect hunting, typing and mechanics in the owner's style, corpus keeping, and analysis that maps
@@ -258,20 +271,57 @@ constraint spaces precisely so the owner's shaping is faster. Design proposals d
 minimal delta expressible in the existing vocabulary and are offered as candidates for reshaping,
 never as finished designs.
 
-## Staged work (the two open proto items, homework done)
+## What the owner gets from this collaboration
+
+They ran it for months and called it "a good design exploration" in the same breath as "It
+failed"; both are true, and the record supports a model of the value:
+- Fast enumeration of the known-solution space: the agent's proposals were a foil the owner
+  triangulated against, and several rulings crystallized against a bad proposal (the states
+  array against StateCell/Bound; composition against Region/Segment).
+- Verification passes against their implementations, at the moment they want them.
+- Mechanics in their style at low cost: typing erased loops, compile fixes, test ports, edits
+  they can watch land one at a time.
+- Instrumentation and memory: the bench harness, the ledger, this corpus, so measurement and
+  history outlive any one session.
+- A matured mental model, partly built by watching the wrong turns: the contrast sharpened where
+  the right shape lives.
+
+## What changes operationally under the reframe
+
+"Optimizing for the best interaction" is not a courtesy ordering; it is the control surface for
+correctness, and the record proves it: under the owner's protocol (elaboration first, one change
+at a time, owner watching) the six-fix pass landed with zero messes; failure classes A through D
+cluster under autonomous momentum. Concretely:
+- The register is the instrument. Tone tracks the agent's role: calm and excited registers
+  appear when the agent analyzes, verifies, instruments against concrete artifacts; profanity
+  marks a role violation in progress (unrequested machinery, lost state, unauthorized edits).
+  The correction is to change role, not to apologize.
+- Design defaults invert: constraint maps and hazards before shapes; candidates only in the
+  existing vocabulary, offered for reshaping; a new concept-noun in a draft is a stop sign.
+- Mechanisms over promises: this corpus stays loaded and maintained, the ledger stays
+  authoritative, numbers go through the harness only. Stated intent is not evidence; the owner
+  tests behavior.
+- This file is itself a model built by an approximator. Its test is predictive performance in
+  live interaction; it gets falsified and corrected in place, not defended.
+
+## Held until asked (the two open proto items)
+
+Homework done, held. Not offered in the chat; the owner sequences.
 
 1. Uncomment `ArrowEffect.handleLoopState` / `handleLoopStateWith` with the rename pass (`def v`
    to `value`, `complete` to `apply`, add `def frame = _frame`) plus the one-arg `apply(v: A)`
    obligation from `Arrow.Transform` (unreachable on live paths now that the done branch matches
-   `HandlerLoopState` first; proposal is a single `bug(...)` on the class, elaboration ready),
-   and enable `PendingTest:194` as the first pinning test.
-2. The capture gap: leanest shape found reuses the existing type, no new node. At `dump(pos)`,
-   a crossed `HandlerLoopState` is re-materialized with `initialState` = its live slot state, so
-   `put` re-initializes the region correctly on re-push; no Eval or push changes. Elaboration
-   ready when the owner wants the gap closed; leaving it open until exercised is also a valid
-   ruling.
+   `HandlerLoopState` first), and enable `PendingTest:194` as the first pinning test.
+2. The capture gap: one candidate in the existing vocabulary, for reshaping. At `dump(pos)`, a
+   crossed `HandlerLoopState` re-materialized with `initialState` = its live slot state, so `put`
+   re-initializes the region on re-push; no new node, no Eval or push changes. Leaving the gap
+   open until exercised is equally valid; the owner rules.
 
 ## Corpus integration log
 
-- 2026-08-18: file created; miner reports (ledger, transcripts, code-style) to be integrated on
-  arrival; Fable strategic review of this preparation to follow.
+- 2026-08-18: file created; all three miner reports integrated (code-style, ledger, transcripts);
+  Fable strategic review received and applied: removed four covert-defense moves from the
+  capability section (bar inflation, universalization, the unqualified contact excuse, and the
+  factually wrong "holes only surface under machine contact"), added the verification split, the
+  owner-value model, the fork position, the reframe operationalization, and the ex-ante/ex-post
+  open question; staged work demoted to held-until-asked.

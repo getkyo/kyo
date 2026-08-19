@@ -916,8 +916,11 @@ staged proto items); three sonnet miners launched (ledger corpus, session-transc
 style); Fable strategic review of the preparation to follow; integration then the chat opening.
 The two open proto items (handleLoopState uncomment + rename + one-arg apply obligation +
 PendingTest:194; capture-gap fix via re-materialized initialState, no new node) are staged with
-homework done, to be elaborated one at a time on the owner's go. Bench gates unchanged (no
-committed sha, owner active); wakeup stays armed.
+homework done, held until the owner asks. Bench gates unchanged (no committed sha, owner active);
+wakeup stays armed. **Preparation completed:** all three miners delivered and integrated; the
+Fable judge found the corpus strong but the chat prep not ready (four covert-defense moves in the
+capability section, reframe not operationalized, owner-value model missing, fork dodged, staged
+work enacting the banned execution reflex); all findings applied to INTERACTIONS.md; chat opened.
 
 **Tick 20:18: no measurement possible, hold continues.** Gate check: kyo-kernel2 sources still
 uncommitted (16 modified + 4 untracked, no stable sha), the owner active mid-design and may build at
