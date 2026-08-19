@@ -825,6 +825,32 @@ one-arg complete). Alternative: special-case a `Handler` pop in `Eval`'s `done` 
 
 ## OPEN
 
+**KERNEL RESUME ANCHOR (2026-08-19, written for a fresh session; supersedes chat-only state).**
+The owner's kernel WIP is UNCOMMITTED in this worktree (16 modified + Handler.scala,
+KyoInternal.scala untracked). First act of any resuming session: verify `git config user.email`
+is fwbrasil, then preserve per the owner's instruction (they may commit it themselves).
+Verified state: proto PendingTest 38/38 green (tower ~42s, bounded); the six HandleLoopState
+fixes are applied in the working tree (Eval Continue2 r._2; states pre-filled Absent; masked
+state/putState indexing; ensure carries states; vacate-clears in pop/dump with put kept as the
+entry-write funnel; done-branch reads state(0) before pop). Held items with homework done:
+(1) uncomment ArrowEffect.handleLoopState/With: rename def v->value, complete->apply, add
+frame; the one-arg apply(v:A) obligation (proposal: bug(...) on the class, unreachable live);
+enable PendingTest:194. (2) capture gap: dump(pos) across a stateful region loses slot state;
+candidate = re-materialize the crossed HandlerLoopState with initialState = live slot state at
+capture; owner may rule leave-open. Open non-blockers: dump->push round-trip quadratic under
+budget exhaustion (~42s tower); Outcome/Outcome2 unboxed-union misclassify edge; no
+Eval.partial/preemption in proto (corpus cases commented); Safepoint.scala:8 TODO; delete
+OverflowProbe.scala orphan before done; full kyo-kernel2 suite UNVERIFIED since the rewrite
+(only PendingTest run; ArrowEffectTest/EvalTest state unknown); module corpus work per tasks
+(ContextEffectTest restore, KyoTest/KyoForeach enablement, ArrowEffectBytecodeTest, clean full
+run). Bench stream: parked by owner stop-order 00:20; gates for task-37 bracket unchanged
+(committed green sha + quiet machine); staged command in this file above. Bonus resource: the
+kyo-substrate repo (~/workspace/kyo-substrate/harness-design/ledger/merged.md Part 3) holds
+1,130 verbatim kernel-campaign rulings mined from the full transcript, greppable by topic.
+The harness design program runs in THIS session against ~/workspace/kyo-substrate; do not touch
+it from the kernel session.
+
+
 **Bench-harness state (2026-08-18 evening): at its floor, blocked on the proto reaching green + a quiet
 machine. No measurement possible right now.** Tool: 45 fixed, 3 open (9 not-fully-fixable A/A-every-
 session gap; 30 = task 20, a multi-row `-XX:LogFile` truncation probe that needs a quiet machine; 37 =
