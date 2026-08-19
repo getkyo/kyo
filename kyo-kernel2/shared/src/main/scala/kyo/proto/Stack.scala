@@ -109,8 +109,9 @@ final class Stack:
     end dump
 
     def dump[A, B, S](): Arrow[A, B, S] =
+        val max = Safepoint.period()
         @tailrec def boundary(i: Int): Int =
-            if i == size || entries((head + i) & mask).isInstanceOf[Handler[?, ?, ?, ?]] then i
+            if i == size || i == max || entries((head + i) & mask).isInstanceOf[Handler[?, ?, ?, ?]] then i
             else boundary(i + 1)
         dump[A, B, S](boundary(0))
     end dump
