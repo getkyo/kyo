@@ -15,6 +15,7 @@ All breaking API changes to this project will be documented in this file.
 - [kyo-combinators] `.forkUsing`: apply `Fiber.use`
 - [kyo-logging-jpl] `kyo.JavaLog`: bridge `Log` to Java platform logging a.k.a. `System.Logger`
 - [kyo-logging-slf4j] `kyo.SLF4JLog`: bridge `Log` to SLF4J 2.0 API
+- [kyo-system] `Stream.writeTo` and `Stream.writeLinesTo`: `append` and `createFolders` parameters, matching the `Path` write methods. `append = true` adds to the end of an existing file and leaves that file in place when the stream fails.
 
 ### Removed
 
@@ -29,3 +30,5 @@ All breaking API changes to this project will be documented in this file.
 - [kyo-combinators] `.fork`: apply `Fiber.init` (formerly `.forkScoped`)
 - [kyo-prelude] The `Parse` effect has been moved to a new `kyo-parse` module
 - [kyo-core] `Log.live`: defaulting to `Unsafe.ConsoleLogger` for all platforms
+- [kyo-core] `Path`, `System`, `Process`, `Command`, `CommandException`, `FileException`, and the `Stream` `writeTo` and `writeLinesTo` sinks have moved to a new `kyo-system` module. Add `"io.getkyo" %% "kyo-system"` to keep using them. No import or signature changes are needed, since the package is still `kyo`.
+- [kyo-core] `Async.defaultConcurrency` now resolves through `StaticFlag`, which adds an environment-variable channel (`KYO_ASYNC_CONCURRENCY_DEFAULT`, checked after the `kyo.async.concurrency.default` system property) and changes the exception type thrown on a malformed value.

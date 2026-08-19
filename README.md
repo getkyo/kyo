@@ -296,11 +296,12 @@ Every module ships its own README. Open the linked README for the full surface, 
 
 ### Core
 
-What every Kyo program uses. `kyo-core` and `kyo-prelude` carry the effects you touch most, `kyo-data` the value types they return. `kyo-kernel` defines `A < S` itself and is where effect authors look. `kyo-scheduler` is the engine fibers run on, also usable as a standalone jar (see [the drop-in scheduler](#drop-in-scheduler-for-zio-pekko-finagle)). `kyo-data` also works standalone: `Maybe`, `Result`, and `Chunk` without the effect system.
+What every Kyo program uses. `kyo-core` and `kyo-prelude` carry the effects you touch most, `kyo-data` the value types they return. `kyo-system` layers file system, OS process, and environment access on top of `kyo-core`. `kyo-kernel` defines `A < S` itself and is where effect authors look. `kyo-scheduler` is the engine fibers run on, also usable as a standalone jar (see [the drop-in scheduler](#drop-in-scheduler-for-zio-pekko-finagle)). `kyo-data` also works standalone: `Maybe`, `Result`, and `Chunk` without the effect system.
 
 | Module                                       | JVM | JS  | Native | WASM | Identity                                                                                                   |
 | -------------------------------------------- | --- | --- | ------ | ---- | ---------------------------------------------------------------------------------------------------------- |
-| [kyo-core](kyo-core/README.md)†              | ✅  | ✅  | ✅     | ✅   | I/O and concurrency: `Sync`, `Async`, `Scope`, `Fiber`, `Channel`, `Hub`, `Queue`, `Clock`, `Log`, `Path`  |
+| [kyo-core](kyo-core/README.md)†              | ✅  | ✅  | ✅     | ✅   | I/O and concurrency: `Sync`, `Async`, `Scope`, `Fiber`, `Channel`, `Hub`, `Queue`, `Clock`, `Log`          |
+| [kyo-system](kyo-system/README.md)           | ✅  | ✅  | ✅     | ✅   | File system, OS processes, and environment: `Path`, `Command`, `Process`, `System`, `FileException`        |
 | [kyo-prelude](kyo-prelude/README.md)         | ✅  | ✅  | ✅     | ✅   | Strictly-pure effect layer: `Abort`, `Env`, `Var`, `Memo`, `Choice`, `Emit`, `Poll`, `Stream`, `Layer`     |
 | [kyo-data](kyo-data/README.md)               | ✅  | ✅  | ✅     | ✅   | Low-allocation data types: `Maybe`, `Result`, `Chunk`, `Span`, `Duration`, `Instant`, `Schedule`, `TypeMap`|
 | [kyo-kernel](kyo-kernel/README.md)           | ✅  | ✅  | ✅     | ✅   | Algebraic-effects substrate; defines `A < S`, `ArrowEffect`, `ContextEffect`, multi-shot continuations     |
