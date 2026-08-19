@@ -31,11 +31,11 @@ object ArrowEffect:
         inline f: O[C] => B < S
     ): B < (E & S) =
         new Kyo.Suspend[I, O, E, C, B, S] with Arrow.Transform[O[C], B, S]:
-            def frame          = _frame
-            def tag            = effectTag
-            def input          = effectInput
-            def cont           = this
-            def apply(v: O[C]) = f(v)
+            def frame                   = _frame
+            def tag                     = effectTag
+            def input                   = effectInput
+            def cont                    = this
+            override def apply(v: O[C]) = f(v)
             def apply[D, S2](v: O[C] < S2, next: Arrow[B, D, S2]): D < (S & S2) =
                 v.lower(
                     pending = Kyo.Defer(_, this, next),
@@ -61,7 +61,7 @@ object ArrowEffect:
                             def frame                                          = _frame
                             def tag                                            = effectTag
                             def run[C](input: I[C], cont: O[C] => A < (E & S)) = handle[C](input, cont)
-                            def apply(a: A)                                    = onDone(a)
+                            override def apply(a: A)                           = onDone(a)
                     def cont = Arrow.id[B]
             ,
             done = a => onDone(a)
@@ -83,10 +83,10 @@ object ArrowEffect:
                     def value = body
                     val handler =
                         new Handler.HandlerLoop[I, O, E, A, B, S]:
-                            def frame               = _frame
-                            def tag                 = effectTag
-                            def run[C](input: I[C]) = handle[C](input)
-                            def apply(a: A)         = onDone(a)
+                            def frame                = _frame
+                            def tag                  = effectTag
+                            def run[C](input: I[C])  = handle[C](input)
+                            override def apply(a: A) = onDone(a)
                     def cont = Arrow.id[B]
             ,
             done = a => onDone(a)
@@ -148,9 +148,9 @@ object ArrowEffect:
                             def frame                                          = _frame
                             def tag                                            = effectTag
                             def run[X](input: I[X], cont: O[X] => A < (E & S)) = handle[X](input, cont)
-                            def apply(a: A)                                    = onDone(a)
-                    def cont        = this
-                    def apply(b: B) = f(b)
+                            override def apply(a: A)                           = onDone(a)
+                    def cont                 = this
+                    override def apply(b: B) = f(b)
                     def apply[D, S3](b: B < S3, next: Arrow[C, D, S3]): D < (S & S2 & S3) =
                         b.lower(
                             pending = Kyo.Defer(_, this, next),
@@ -181,12 +181,12 @@ object ArrowEffect:
                     def value = body
                     val handler =
                         new Handler.HandlerLoop[I, O, E, A, B, S]:
-                            def frame               = _frame
-                            def tag                 = effectTag
-                            def run[X](input: I[X]) = handle[X](input)
-                            def apply(a: A)         = onDone(a)
-                    def cont        = this
-                    def apply(b: B) = f(b)
+                            def frame                = _frame
+                            def tag                  = effectTag
+                            def run[X](input: I[X])  = handle[X](input)
+                            override def apply(a: A) = onDone(a)
+                    def cont                 = this
+                    override def apply(b: B) = f(b)
                     def apply[D, S3](b: B < S3, next: Arrow[C, D, S3]): D < (S & S2 & S3) =
                         b.lower(
                             pending = Kyo.Defer(_, this, next),
@@ -223,8 +223,8 @@ object ArrowEffect:
                             def initialState                   = state
                             def run[X](st: State, input: I[X]) = handle[X](st, input)
                             def apply(st: State, a: A)         = onDone(st, a)
-                    def cont        = this
-                    def apply(b: B) = f(b)
+                    def cont                 = this
+                    override def apply(b: B) = f(b)
                     def apply[D, S3](b: B < S3, next: Arrow[C, D, S3]): D < (S & S2 & S3) =
                         b.lower(
                             pending = Kyo.Defer(_, this, next),

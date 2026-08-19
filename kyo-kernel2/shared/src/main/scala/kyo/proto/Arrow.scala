@@ -30,8 +30,8 @@ object Arrow:
     @nowarn
     inline def apply[A, B, S](inline f: A => B < S)(using _frame: Frame): Arrow[A, B, S] =
         new Transform[A, B, S]:
-            def frame       = _frame
-            def apply(v: A) = f(v)
+            def frame                = _frame
+            override def apply(v: A) = f(v)
             def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]) =
                 v.lower(
                     pending = Kyo.Defer(_, this, next),
@@ -49,8 +49,8 @@ object Arrow:
     @nowarn
     inline def recursive[A, B, S](inline f: (Arrow[A, B, S], A) => B < S)(using _frame: Frame): Arrow[A, B, S] =
         new Transform[A, B, S]:
-            def frame       = _frame
-            def apply(v: A) = f(this, v)
+            def frame                = _frame
+            override def apply(v: A) = f(this, v)
             def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]) =
                 v.lower(
                     pending = Kyo.Defer(_, this, next),
@@ -69,6 +69,8 @@ object Arrow:
         type X = B
         def head = this
         def tail = Arrow.id[B]
+
+        def apply(v: A) = this(v, Arrow.id[B])
     end Transform
 
     // the evaluator flattens a chain onto its stack, so it sees the two halves

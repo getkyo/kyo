@@ -56,7 +56,7 @@ object Eval:
                                                     def value = clause
                                                     def contA = this
                                                     def contB = Arrow.id[BX]
-                                                    def apply(o: Loop.Outcome[OX[CX] < (EX & S), BX]) =
+                                                    override def apply(o: Loop.Outcome[OX[CX] < (EX & S), BX]) =
                                                         o match
                                                             case r: Loop.Continue[OX[CX] < (EX & S)] @unchecked =>
                                                                 Kyo.Defer(r._1.map(k(_)), h)
@@ -95,7 +95,7 @@ object Eval:
                                                     def value = clause
                                                     def contA = this
                                                     def contB = Arrow.id[BX]
-                                                    def apply(o: Loop.Outcome2[StateX, OX[CX] < (EX & S), BX]) =
+                                                    override def apply(o: Loop.Outcome2[StateX, OX[CX] < (EX & S), BX]) =
                                                         o match
                                                             case r: Loop.Continue2[StateX, OX[CX] < (EX & S)] @unchecked =>
                                                                 Kyo.Defer(r._2.map(k(_)), HandlerLoopState(h, r._1))

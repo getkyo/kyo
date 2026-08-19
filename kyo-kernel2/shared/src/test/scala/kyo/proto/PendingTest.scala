@@ -7,8 +7,8 @@ import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
 import scala.compiletime.testing.typeCheckErrors
 
-/** The kernel's `PendingTest` corpus pointed at this package. Cases whose surface this package does not have yet (`flatMap`, `andThen`,
-  * `unit`, `flatten`, `handle`) are kept with their code commented, so the corpus is complete and the gap is visible.
+/** The kernel's `PendingTest` corpus pointed at this package. Cases whose surface this package does not have yet (the lift of a bare
+  * function, the module lint) are kept with their code commented, so the corpus is complete and the gap is visible.
   */
 class PendingTest extends AnyFreeSpec:
 
@@ -223,8 +223,6 @@ class PendingTest extends AnyFreeSpec:
         assert(Eval(answerAsk(41)(got)) == 42)
     }
 
-    // flatMap, andThen and unit are not in this package yet
-    /*
     "flatMap chains a settled value into an effectful computation" in {
         val r: Int < Ask = (5: Int < Ask).flatMap(a => ask.map(_ + a))
         assert(Eval(answerAsk(1)(r)) == 6)
@@ -261,7 +259,6 @@ class PendingTest extends AnyFreeSpec:
         assert(Eval((42: Int < Any).unit) == ())
         assert(Eval(answerAsk(1)(ask.unit)) == ())
     }
-     */
 
     "eval returns the settled result" in {
         assert((42: Int < Any).eval == 42)
@@ -282,8 +279,6 @@ class PendingTest extends AnyFreeSpec:
         assert(Eval(answerAsk(41)(payload)) == 42)
     }
 
-    // flatten and handle are not in this package yet
-    /*
     "flatten runs a nested payload" in {
         val inner: Int < Ask = ask.map(_ + 1)
         assert(Eval(answerAsk(41)(settled(inner).flatten)) == 42)
@@ -312,7 +307,6 @@ class PendingTest extends AnyFreeSpec:
         )
         assert(ten == 9)
     }
-     */
 
     "map on a settled value runs eagerly" in {
         var ran = false
@@ -329,12 +323,10 @@ class PendingTest extends AnyFreeSpec:
         assert(v.eval == 20)
     }
 
-    /*
     "flatMap and andThen compose" in {
         val v = (1: Int < Any).flatMap(n => (n + 1: Int < Any)).andThen(10: Int < Any)
         assert(v.eval == 10)
     }
-     */
 
     "a computation as a value round-trips through the nested box" in {
         def box[A](v: A): A < Any    = v
@@ -356,9 +348,8 @@ class PendingTest extends AnyFreeSpec:
         assert(nested.map(c => c).eval == 41)
         assert(nested.map(c => c.map(_ + 1)).eval == 42)
         assert(nested.evalNow.isDefined)
-        // flatten and unit are not in this package yet
-        // assert(nested.flatten.eval == 41)
-        // assert(nested.unit.eval == ())
+        assert(nested.flatten.eval == 41)
+        assert(nested.unit.eval == ())
     }
 
     "a pending value does not lift into a nested computation implicitly" in {
@@ -474,7 +465,6 @@ class PendingTest extends AnyFreeSpec:
             assert(deferred.eval == "hello".length + 10)
         }
 
-        /*
         "flatMap over a nested value denied by the budget defers the wrapped value" in {
             val nested: Int < TestEffect2 < Any = lifted(TestEffect2("hello"))
             val deferred                        = drainedBudget(nested.flatMap(_.handle(TestEffect2.run)))
@@ -500,7 +490,6 @@ class PendingTest extends AnyFreeSpec:
             val deferred                        = drainedBudget(nested.unit)
             assert(deferred.eval == ())
         }
-         */
 
         "a doubly nested value denied by the budget strips exactly one level under map" in {
             val inner: Int < TestEffect2              = TestEffect2("hello")
@@ -523,7 +512,6 @@ class PendingTest extends AnyFreeSpec:
             assert(mapped3.eval.eval == "Effect1:50".length)
         }
 
-        /*
         "unit on nested" in {
             val comp = lifted(TestEffect1(60)).map(_.unit).handle(TestEffect1.run)
             assert(comp.eval == ())
@@ -562,7 +550,6 @@ class PendingTest extends AnyFreeSpec:
             )
             assert(result2 == "Effect1:80".length)
         }
-         */
 
         "method returning nested computation" in {
             def compute(x: Int): String < TestEffect1 < TestEffect2 =
@@ -630,6 +617,7 @@ class PendingTest extends AnyFreeSpec:
             val result2 = TestEffect1.run(TestEffect2.run(nested.flatten))
             assert(result2.eval == 11)
         }
+         */
 
         "evalNow accepts nested computations" in {
             sealed trait Bump extends ArrowEffect[Const[Int], Const[Int]]
@@ -638,13 +626,12 @@ class PendingTest extends AnyFreeSpec:
                 ArrowEffect.handleCont(Tag[Bump], v)([C] => (input, cont) => cont(input + 1), a => a)
 
             lifted(bump(1)).evalNow match
-                case Maybe.Absent     => fail()
+                case Maybe.Absent => fail()
                 case Maybe.Present(v) =>
                     assert(run(v).evalNow == Maybe.Absent)
                     assert(run(v).eval == 2)
             end match
         }
-         */
     }
 
     "depth leaked by throwing maps resets at the eval loop" in {

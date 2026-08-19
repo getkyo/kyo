@@ -25,17 +25,15 @@ object Handler:
 
     abstract class HandlerCont[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Handler[E, A, B, S]:
         def run[X](input: I[X], cont: O[X] => A < (E & S)): A < (E & S)
-        def apply(v: A): B < S
 
     abstract class HandlerLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Handler[E, A, B, S]:
         def run[X](input: I[X]): Outcome[O[X] < (E & S), B] < S
-        def apply(v: A): B < S
 
     abstract class HandlerLoopState[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State] extends Handler[E, A, B, S]:
         def initialState: State
         def run[X](state: State, input: I[X]): Outcome2[State, O[X] < (E & S), B] < S
         def apply(state: State, v: A): B < S
-        final def apply(v: A): B < S = apply(initialState, v)
+        final override def apply(v: A): B < S = apply(initialState, v)
     end HandlerLoopState
 
     object HandlerLoopState:

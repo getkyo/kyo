@@ -18,7 +18,7 @@ class ArrowEffectTest extends AnyFreeSpec:
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
     sealed trait AskSub extends Ask
-    def askSub: Int < Ask = ArrowEffect.suspend[Any](Tag[AskSub].asInstanceOf[Tag[Ask]], ())
+    def askSub: Int < AskSub = ArrowEffect.suspend[Any](Tag[AskSub], ())
 
     sealed trait Say extends ArrowEffect[Const[String], Const[Unit]]
     def say(s: String): Unit < Say = ArrowEffect.suspend[Any](Tag[Say], s)
@@ -439,8 +439,8 @@ class ArrowEffectTest extends AnyFreeSpec:
         }
 
         "answers operations of a subtype effect" in {
-            val v: Int < Ask = askSub.map(_ + 1)
-            val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, cont) => cont(41), a => a)
+            val v: Int < AskSub = askSub.map(_ + 1)
+            val r: Int < AskSub = ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, cont) => cont(41), a => a)
             assert(Eval(r) == 42)
         }
 
