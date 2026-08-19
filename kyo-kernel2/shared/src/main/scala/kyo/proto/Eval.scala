@@ -27,15 +27,14 @@ object Eval:
 
     def apply[A, S](v: A < S): A =
         val stack = Stack.borrow()
-        var curr  = v.asInstanceOf[Any < Nothing]
 
-        @tailrec def loop(): Unit =
+        @tailrec def loop(curr: Any < Nothing): Any =
             curr.lower(
                 pending =
                     case kyo: Kyo.Defer[?, ?, A, S] @unchecked =>
                         stack.push(kyo.contB)
                         stack.push(kyo.contA)
-                        curr = kyo.value
+                        loop(kyo.value)
                     case kyo: Kyo.Suspend[IX, OX, EX, CX, A, S] @unchecked =>
                         stack.push(kyo.cont)
                         val pos = stack.find(kyo.tag)
@@ -43,9 +42,9 @@ object Eval:
                         else
                             stack.handler(pos) match
                                 case h: HandlerCont[IX, OX, EX, AX, ?, S] @unchecked =>
-                                    curr = h.run(kyo.input, stack.dump(pos))
+                                    loop(h.run(kyo.input, stack.dump(pos)))
                                 case h: HandlerLoop[IX, OX, EX, AX, BX, S] @unchecked =>
-                                    curr =
+                                    loop(
                                         h.run(kyo.input).lower(
                                             pending = clause =>
                                                 val k = stack.dump[OX[CX], AX, EX & S](pos)
@@ -82,9 +81,10 @@ object Eval:
                                                     stack.truncate(pos + 1)
                                                     v
                                         )
+                                    )
                                 case h: HandlerLoopState[IX, OX, EX, AX, BX, S, StateX] @unchecked =>
                                     val s = stack.state(pos).getOrElse(h.initialState)
-                                    curr =
+                                    loop(
                                         h.run(s, kyo.input).lower(
                                             pending = clause =>
                                                 val k = stack.dump[OX[CX], AX, EX & S](pos)
@@ -124,36 +124,32 @@ object Eval:
                                                     stack.truncate(pos + 1)
                                                     v
                                         )
+                                    )
                             end match
                         end if
                     case kyo: Kyo.Handle[EX, ?, ?, A, S] @unchecked =>
                         stack.push(kyo.cont)
                         stack.push(kyo.handler)
-                        curr = kyo.value
+                        loop(kyo.value)
                 ,
                 done = r =>
                     if !stack.isEmpty then
                         val s = stack.state[StateX](0)
                         stack.pop() match
                             case h: HandlerLoopState[IX, OX, EX, AX, BX, S, StateX] @unchecked =>
-                                curr = h.apply(s.getOrElse(h.initialState), r.asInstanceOf[AX])
+                                loop(h.apply(s.getOrElse(h.initialState), r.asInstanceOf[AX]))
                             case head =>
                                 val tail = stack.dump()
-                                curr = head.asInstanceOf[Arrow[Any, ?, EX & S]](curr, tail)
+                                loop(head.asInstanceOf[Arrow[Any, ?, EX & S]](curr, tail))
                         end match
+                    else r
             )
-            if !stack.isEmpty || curr.evalNow.isEmpty then
-                loop()
         end loop
 
         val slot  = Safepoint.get()
         val saved = Safepoint.save(slot)
         try
-            loop()
-            curr.lower(
-                pending = kyo => bug(s"unhandled suspension: ${kyo}"),
-                done = _.asInstanceOf[A]
-            )
+            loop(v.asInstanceOf[Any < Nothing]).asInstanceOf[A]
         finally
             Stack.release(stack)
             Safepoint.restore(slot, saved)
