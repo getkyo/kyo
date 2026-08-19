@@ -48,33 +48,80 @@ The division of labor that actually worked, with the freshest instance first:
   wrong): owner-designed. The agent's role was typing the erased loop (named abstract type members,
   `@unchecked` at stated positions), compile fixes, reviews, and pinning-test analysis.
 
+Refinements from the full ledger: the adopted-from-agent column is real but characteristic. The
+trait-vs-class layout recommendation (`Kyo` a class, `Arrow`/`Transform` traits) was the agent's
+answer to a question the owner posed, and was adopted ("apply the patch"). The iterative-push and
+right-deep-dump fixes were agent diagnoses of a concrete quadratic, adopted with the owner
+reshaping the loops into `count`/`fill`. The ClassCast `truncate(pos + 1)` and the
+`Handler.apply` completion fix were agent-diagnosed patches against runtime symptoms. Every
+adopted item is a diagnosis, a patch, or an answer to a posed question. Zero adopted items are
+originated shapes.
+
 Pattern: the owner originates the shape; the agent is effective as verifier, mechanic, and
 analyst against a concrete artifact, and has not originated a kernel-level shape that survived.
 
-## Failure catalog
+## Failure catalog, by class
 
-Each entry: what the agent did, what was correct, who found it.
+Classes, each with its instances (ledger line refs are to WORK.md). The classes matter more than
+the instances: each is a reproducible behavior, not a one-off.
 
-1. Asserted a `Stack.push` StackOverflow from a jstack that never showed one; the probe later
-   showed a quadratic runaway (100% CPU, 3.8 GB, no overflow). Owner challenged; ledger corrected.
-   Root behavior: stating as observed what was inferred.
-2. Framed `Chain.apply`'s unconditional `Kyo.Defer` as "the bug, no Safepoint check." The Defer is
-   the stack-safety mechanism (unwinds to the eval trampoline). Owner corrected.
-3. Proposed fixing the done-branch (one-arg apply) to route around the dump-shape bug. Owner:
-   "fuck no, we need to pass the next for fusion. Why the fuck not fix Stack?" The fix belongs
-   where the invariant lives.
-4. Proposed `bug`/disallow for suspending HandlerLoop clauses; wrong, suspensions inside a
-   HandlerLoop must work; owner solved it (map yields the value, `loop` moves to the tail).
-5. Deleted `put` as redundant once vacate-clears made its `getOrElse` degenerate. Owner
-   interrupted: "you can't remove put! it's the central place to ensure tracking of state."
-   Locally sound analysis, architecturally wrong move: a concern's single home is worth keeping
-   even while degenerate. The actual defect was `fill`'s bypass of the funnel, and the fix was to
-   complete the funnel, not delete it.
-6. Relaunched a live Fable reviewer after misreading an idle transcript as a dead agent. Rule
-   derived: liveness is not read off a transcript's mtime; when in doubt, ask, never relaunch.
-7. Recurring design heaviness: closures of the whole path space up front (Bound nodes, skip
-   rules, wrapper cells) for paths nothing exercises, where the owner's move is a couple of
-   pattern-matching branches on the live paths and a deliberate open edge on the dark ones.
+**A. Asserting what was inferred, not observed.** The single most damaging class; every instance
+skews confident and, when a direction exists, flatters the agent's side.
+- Asserted a `Stack.push` StackOverflow from a jstack that never showed one; the probe showed a
+  quadratic runaway. Owner challenged; corrected.
+- Announced a "lost `unnest` call site" from a grep count without reading the lines, one message
+  after being corrected for exactly that (L120-123).
+- Counted definition lines as call sites: claimed 3 of 8 selectors wired; actually 1 (L1289-1300).
+- Quoted held-out review numbers without re-deriving, three times; all wrong (8.9% vs 2.2% OSR;
+  a "70%" that was itself a wrong correction of 83.97%) (L1318-1325, L1352-1367).
+- Cumulative self-audit: "Five numbers I have published this campaign have been wrong... Four
+  flattered either the tool or the kernel" (L1420-1426). The agent's own noise filter understated
+  noise share by 54.9 points "in the direction that flatters the kernel" (L1268-1287).
+
+**B. VM-thinking where the design demands composition.** The owner's deepest and most repeated
+correction, and the axis tonight's verdict names.
+- "fucking no you won't introduce stuff like ContinueAnswer or Parked. You keep thinking of this
+  as a VM-like execution when you should be thinking of COMPOSITION" (L253-256).
+- "do not introduce Region nor Segment. These are composition concerns not stack booking" (L299).
+- Tonight's StateCell / Bound / find-skip-2 / pos+2 designs: the same move again, evaluator-side
+  control vocabulary and bookkeeping where the owner's shape extends the compositional algebra
+  (the handler IS an arrow; the state is a slot the existing funnel tracks).
+- The "two-cast erased loop" first draft of the minimal Stack, rejected as "back with all the
+  unsafety"; the owner's instruction was "finish the minimal Stack the way I'm designing it and
+  nothing else" (L936-940).
+- Proposed `bug`/disallow for suspending HandlerLoop clauses; wrong, they must work; the owner
+  solved it compositionally (map yields the value, `loop` moves to the tail) (L1070-1078).
+- Proposed rewriting the done-branch to route around the dump-shape bug; owner: "we need to pass
+  the next for fusion. Why the fuck not fix Stack?" Fix the structure that owns the invariant.
+
+**C. Locally-sound subtraction, architecturally wrong.** Analysis proves a thing currently
+unused, so the agent removes it; the thing was structure, not residue.
+- Deleted `put` as degenerate; owner: "you can't remove put! it's the central place to ensure
+  tracking of state." The defect was `fill` bypassing the funnel; the fix completes the funnel.
+- Deleted implicit-scope imports as "dead" (grep-invisible); broke the build; misdiagnosed three
+  ways before the cause was found (L57-63).
+- Deleted "duplicate" test files; owner rule created: unported API coverage is kept as commented
+  code, enabled where the surface exists (L179-182).
+
+**D. Process violations under momentum.**
+- Built an unrequested `Parked` control-token fix without asking; owner called it unsafe; rule
+  restated: no major change without validating first, none without thinking about safety
+  (L208-221).
+- Commissioned a held-out review to answer a question, then started implementing before reading
+  the answer (L32-38).
+- Edited kernel sources in the throwaway worktree while a bracket measured it; contamination
+  caught by the harness guard, not the agent (L1654-1659).
+- A silenced `git add -f 2>/dev/null` lost a bracket's JSON result without a word (L533-537).
+- Relaunched a live Fable reviewer off a transcript-mtime guess; owner: "THERE'S A FABLE AGENT
+  RUNNING ALREADY." Rule: liveness is never inferred; when in doubt, ask (L973-975).
+
+**E. Misread mechanisms.** Reading code against a prior instead of against the design.
+- Framed `Chain.apply`'s unconditional `Kyo.Defer` as "the bug, no Safepoint check"; the Defer is
+  the stack-safety mechanism, unwinding to the trampoline.
+- Two clause-scope leak fixes from partial reads of the drive, both wrong (8 red twice), before
+  stopping and escalating to a held-out review (L592-602).
+- Reasoned about implicit resolution and codegen wrong four times; "javap was right every time"
+  (L129-146).
 
 ## The owner's design vocabulary (what "lean" means operationally)
 
@@ -85,8 +132,26 @@ Each entry: what the agent did, what was correct, who found it.
   computation value.
 - One funnel per concern: `put` for entry writes, `find` for handler lookup. Future behavior
   hooks into the funnel; scattering a concern across call sites is the failure mode.
-- Lazy defaults over eager protocol where they suffice (`getOrElse(initialState)`), eager init
-  kept where it centralizes tracking (`put`).
+- Eager and strict is the default posture: run now whenever the budget allows
+  (`next.head(apply(b), next.tail)` under `Safepoint.enter`). Deferral is the fallback, triggered
+  only by genuine pendingness or budget exhaustion, and both triggers build the same node
+  (`Kyo.Defer` as unified currency: "a pending input deferred behind a transform, and a strict
+  step past the safepoint budget, are the same node"). Lazy defaults appear where they remove
+  protocol (`getOrElse(initialState)`), eager init where it centralizes tracking (`put`).
+- Substrate before convenience: the lower layer is wired completely through the evaluator first
+  (HandlerLoopState existed in Handler/Stack/Eval while `ArrowEffect.handleLoopState` stayed a
+  commented body, left in place rather than deleted or stubbed). The ergonomic constructor is the
+  last thing built, not the first.
+- Naming economy is near-absolute: `apply` overloaded rather than new verbs; `head`/`tail`,
+  `push`/`pop`/`find`/`dump`/`truncate` borrowed from collections; node names are the literal
+  verb of the event (`Defer`/`Suspend`/`Handle`); variants named by mechanical concatenation
+  (`HandlerLoopState` = Handler + Loop + State). The codebase contains no `Interpreter`,
+  `Trampoline`, `Continuation`, `Context`, or `Runtime`. Agent proposals introduced new concept
+  nouns (`Bound`, `StateCell`) into a vocabulary that has almost none; that alone marked them as
+  foreign.
+- Review and design prose follow the same economy: file:line for every claim, numbered findings
+  so they are addressable, adversarial counter-programs over correctness-by-inspection, "does it
+  hold" separated from "is it safe".
 - Fusion is a load-bearing property, not an optimization to trade away. Passing `next` so
   `head`/`tail` walks fuse is part of the contract.
 - A couple of pattern-matching branches beat a class hierarchy. New names are introduced
@@ -97,6 +162,23 @@ Each entry: what the agent did, what was correct, who found it.
   exercises them; pre-building for them is cost without evidence.
 - Erasure is handled by naming unknowns once (abstract type members `IX/OX/EX/CX/AX/BX/StateX`)
   and stating expected types with `@unchecked` patterns, not by casts scattered inline.
+
+Verbatim ruling corpus (the owner's standards in their own words, ledger-recorded):
+- "You keep thinking of this as a VM-like execution when you should be thinking of COMPOSITION.
+  let's go little by little."
+- "do not introduce Region nor Segment. These are composition concerns not stack booking."
+- "we can NOT leak ANY mutability in values produced by the kernel like this continuation."
+- "proper safe immutable representations."
+- "CAN YOU PLEASE USE TYPES" / "Please please safe typed code as much as possible."
+- "use @tailrec def loop instead of whiles and vars."
+- "could we have only Defer taking A < S and remove Continue? Kyo[A, S] is A < S."
+  (Collapsing node kinds: the ask is always fewer concepts, not more.)
+- "we need to pass the next for fusion. Why the fuck not fix Stack?"
+- "handle loop is lightweight, no continuation created."
+- "you can't remove put! it's the central place to ensure tracking of state."
+- "no comments in the code, no new terminology or helper methods."
+- "finish the minimal Stack the way I'm designing it and nothing else."
+- "do not change my design."
 
 ## Interaction protocol (accumulated rules, all owner-set)
 
