@@ -412,11 +412,11 @@ Json.Lines.decodeAllBytesResults[Row](mixed)
 // Chunk(Result.Success(Row(1)), Result.Failure(RecordDecodeException(...)), Result.Success(Row(3)))
 ```
 
-A failure carries `RecordDecodeException`, which names the record it came from: `recordIndex` (counting only non-blank records), `byteOffset` into the original input, the record's text, and the underlying `DecodeException` as `cause`. That is what lets a consumer report "record 41 at byte 9302 is malformed" rather than "the file is malformed".
+A failure carries `RecordDecodeException`, which names the record it came from: `recordIndex` (counting only non-blank records), `byteOffset` into the original input, and the underlying `DecodeException` as `cause`. That is what lets a consumer report "record 41 at byte 9302 is malformed" rather than "the file is malformed". The record's own bytes are deliberately absent: a record is application payload, and a copy of it on an exception reaches every log line and error page that renders the failure.
 
 Framing splits on `'\n'` and is exact rather than approximate: JSON requires control characters inside strings to be escaped, so a valid record cannot contain an unescaped newline. Blank and whitespace-only lines are skipped without consuming a record index, a leading byte order mark is stripped, `\r\n` terminators are accepted, and a final record with no trailing newline is still emitted.
 
-Framing works on bytes rather than text because a UTF-8 multibyte character can straddle a chunk boundary. Splitting bytes first and decoding each complete record afterwards removes that hazard with no incremental text decoder. `Json.Lines.Framer` exposes that as a value, so a caller with its own read loop can frame across chunk boundaries itself:
+Framing works on bytes rather than text because a UTF-8 multibyte character can straddle a span boundary. Splitting bytes first and decoding each complete record afterwards removes that hazard with no incremental text decoder. `Json.Lines.Framer` exposes that as a value, so a caller with its own read loop can frame across span boundaries itself:
 
 ```scala
 val chunk = """{"id":1}
@@ -430,8 +430,8 @@ val framed: Json.Lines.Framed =
 
 framed match
     case Json.Lines.Framed.Continued(next, lines) =>
-        // `lines` holds Line.Kept(Record) for `{"id":1}` and `{"id":2}`. The unterminated `{"id"` is
-        // inside `next`, which frames the following chunk; `next.finish` closes it at end of input.
+        // `lines` holds Result.Success(Line) for `{"id":1}` and `{"id":2}`. The unterminated `{"id"`
+        // is inside `next`, which frames the next span; `next.finishLine` closes it at end of input.
         lines.size
     case Json.Lines.Framed.Halted(lines, breach) =>
         // Only when the pending bytes outgrew maxLineBytes with no newline among them. There is no
@@ -440,11 +440,11 @@ framed match
 end match
 ```
 
-Feeding a framer never mutates it: `feed` returns the advanced framer inside `Framed.Continued` and the receiver stays usable. Each `Record` carries `bytes` (its own UTF-8 encoding, terminator removed), `index`, and `byteOffset`, and `text` decodes those bytes. Do not compare two records with `==`: `Span` has no structural equality, so the derived `equals` compares `bytes` by reference; compare `text` or `bytes.is(other.bytes)` instead.
+Feeding a framer never mutates it: `feed` returns the advanced framer inside `Framed.Continued` and the receiver stays usable. Each `Json.Lines.Line` carries `bytes` (its own UTF-8 encoding, terminator removed), `index`, and `byteOffset`, and `text` decodes those bytes. Equality is structural over all three, so two lines framed from the same input at different span sizes compare equal.
 
-`maxLineBytes` (default `Json.Lines.DefaultMaxLineBytes`, 16 MiB) bounds a single record. Without it a byte stream that never contains a newline would grow the framer's residual without bound, and neither `maxDepth` nor `maxCollectionSize` covers that, since both operate inside one document. What a breach costs depends on whether the offending line was terminated. A terminated one has a known boundary, so it arrives as a `Line.Skipped` among the lines, framing resumes after its newline, and `decodeAllBytesResults` reports one `LimitExceededException` failure in its place and decodes the records after it. An oversized residual has no boundary to skip to, so `feed` returns `Framed.Halted` and `decodeAllBytesResults` appends that breach as its last element.
+`maxLineBytes` (default `Json.Lines.DefaultMaxLineBytes`, 16 MiB) bounds a single record. Without it a byte stream that never contains a newline would grow the framer's residual without bound, and neither `maxDepth` nor `maxCollectionSize` covers that, since both operate inside one document. What a breach costs depends on whether the offending line was terminated. A terminated one has a known boundary, so it arrives as a failure element among the lines, framing resumes after its newline, and `decodeAllBytesResults` reports one `LimitExceededException` failure in its place and decodes the records after it. An oversized residual has no boundary to skip to, so `feed` returns `Framed.Halted` and `decodeAllBytesResults` appends that breach as its last element.
 
-All of the above is pure and takes whole inputs. The same `kyo-schema-json` artifact also provides `Jsonl`, which drives this framer over arbitrary byte streams and files under `Sync` and `Async`. See the [kyo-schema-json README](../kyo-schema-json/README.md) for `pipe`, `read`, `follow`, `encode`, `write`, and `append` examples.
+All of the above is pure and takes whole inputs. The same `kyo-schema-json` artifact also provides `Jsonl`, which drives this framer over arbitrary byte streams and files under `Sync` and `Async`. See the [kyo-schema-json README](../kyo-schema-json/README.md) for `pipe`, `read`, `watch`, `encode`, `write`, and `append` examples.
 
 ### Ion
 
