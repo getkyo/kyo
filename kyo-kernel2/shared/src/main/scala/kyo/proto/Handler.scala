@@ -35,6 +35,7 @@ object Handler:
         def initialState: State
         def run[X](state: State, input: I[X]): Outcome2[State, O[X] < (E & S), B] < S
         def apply(state: State, v: A): B < S
+        final def apply(v: A): B < S = apply(initialState, v)
     end HandlerLoopState
 
 end Handler

@@ -93,31 +93,32 @@ object ArrowEffect:
         )
     end handleLoop
 
-    // @nowarn("msg=anonymous")
-    // inline def handleLoopState[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State](
-    //     inline effectTag: Tag[E],
-    //     inline state: State,
-    //     v: A < (E & S)
-    // )(
-    //     inline handle: [C] => (State, I[C]) => Loop.Outcome2[State, O[C] < (E & S), B] < S,
-    //     inline done: (State, A) => B < S
-    // ): B < S =
-    //     def onDone(s: State, v: A) = done(s, v)
-    //     v.lower[B < S](
-    //         pending = body =>
-    //             new Kyo.Handle[E, A, B, B, S]:
-    //                 def v = body
-    //                 val handler =
-    //                     new Handler.HandlerLoopState[I, O, E, A, B, S, State]:
-    //                         def tag                            = effectTag
-    //                         def initialState                   = state
-    //                         def run[C](st: State, input: I[C]) = handle[C](st, input)
-    //                         def complete(st: State, a: A)      = onDone(st, a)
-    //                 def cont = Arrow.id[B]
-    //         ,
-    //         done = a => onDone(state, a)
-    //     )
-    // end handleLoopState
+    @nowarn("msg=anonymous")
+    inline def handleLoopState[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State](
+        inline effectTag: Tag[E],
+        state: State,
+        v: A < (E & S)
+    )(
+        inline handle: [C] => (State, I[C]) => Loop.Outcome2[State, O[C] < (E & S), B] < S,
+        inline done: (State, A) => B < S
+    )(using inline _frame: Frame): B < S =
+        def onDone(s: State, v: A) = done(s, v)
+        v.lower[B < S](
+            pending = body =>
+                new Kyo.Handle[E, A, B, B, S]:
+                    def value = body
+                    val handler =
+                        new Handler.HandlerLoopState[I, O, E, A, B, S, State]:
+                            def frame                          = _frame
+                            def tag                            = effectTag
+                            def initialState                   = state
+                            def run[C](st: State, input: I[C]) = handle[C](st, input)
+                            def apply(st: State, a: A)         = onDone(st, a)
+                    def cont = Arrow.id[B]
+            ,
+            done = a => onDone(state, a)
+        )
+    end handleLoopState
 
     // the *With variants take the region's continuation as a separate parameter group and fuse it
     // into the region node: the node is the arrow the region's result flows into, as suspendWith's
@@ -196,41 +197,42 @@ object ArrowEffect:
         )
     end handleLoopWith
 
-    // @nowarn("msg=anonymous")
-    // inline def handleLoopStateWith[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State](
-    //     using inline _frame: Frame
-    // )(
-    //     inline effectTag: Tag[E],
-    //     inline state: State,
-    //     v: A < (E & S)
-    // )(
-    //     inline handle: [X] => (State, I[X]) => Loop.Outcome2[State, O[X] < (E & S), B] < S,
-    //     inline done: (State, A) => B < S
-    // )[C, S2](
-    //     inline f: B => C < S2
-    // ): C < (S & S2) =
-    //     def onDone(s: State, v: A) = done(s, v)
-    //     v.lower[C < (S & S2)](
-    //         pending = body =>
-    //             new Kyo.Handle[E, A, B, C, S & S2] with Arrow[B, C, S & S2]:
-    //                 def frame = _frame
-    //                 def v     = body
-    //                 val handler =
-    //                     new Handler.HandlerLoopState[I, O, E, A, B, S, State]:
-    //                         def tag                            = effectTag
-    //                         def initialState                   = state
-    //                         def run[X](st: State, input: I[X]) = handle[X](st, input)
-    //                         def complete(st: State, a: A)      = onDone(st, a)
-    //                 def cont        = this
-    //                 def apply(b: B) = f(b)
-    //                 def apply[D, S3](b: B < S3, next: Arrow[C, D, S3]): D < (S & S2 & S3) =
-    //                     b.lower(
-    //                         pending = Kyo.Defer(_, this, next),
-    //                         done = b => next(apply(b), Arrow.id)
-    //                     )
-    //         ,
-    //         done = a => onDone(state, a).map(f)
-    //     )
-    // end handleLoopStateWith
+    @nowarn("msg=anonymous")
+    inline def handleLoopStateWith[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State](
+        using inline _frame: Frame
+    )(
+        inline effectTag: Tag[E],
+        state: State,
+        v: A < (E & S)
+    )(
+        inline handle: [X] => (State, I[X]) => Loop.Outcome2[State, O[X] < (E & S), B] < S,
+        inline done: (State, A) => B < S
+    )[C, S2](
+        inline f: B => C < S2
+    ): C < (S & S2) =
+        def onDone(s: State, v: A) = done(s, v)
+        v.lower[C < (S & S2)](
+            pending = body =>
+                new Kyo.Handle[E, A, B, C, S & S2] with Arrow.Transform[B, C, S & S2]:
+                    def frame = _frame
+                    def value = body
+                    val handler =
+                        new Handler.HandlerLoopState[I, O, E, A, B, S, State]:
+                            def frame                          = _frame
+                            def tag                            = effectTag
+                            def initialState                   = state
+                            def run[X](st: State, input: I[X]) = handle[X](st, input)
+                            def apply(st: State, a: A)         = onDone(st, a)
+                    def cont        = this
+                    def apply(b: B) = f(b)
+                    def apply[D, S3](b: B < S3, next: Arrow[C, D, S3]): D < (S & S2 & S3) =
+                        b.lower(
+                            pending = Kyo.Defer(_, this, next),
+                            done = b => next(apply(b), Arrow.id)
+                        )
+            ,
+            done = a => onDone(state, a).map(f)
+        )
+    end handleLoopStateWith
 
 end ArrowEffect
