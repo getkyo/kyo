@@ -26,7 +26,7 @@ class EvalCaptureTowerTest extends AnyFreeSpec:
         assert(Eval(r) == 20001)
     }
 
-    "a capture across an inner region keeps the region reachable past the cut" in {
+    "a capture across an inner region keeps the region as an entry" in {
         @tailrec def tower(v: Int < (Ask & Say), n: Int): Int < (Ask & Say) =
             if n == 0 then v else tower(v.map(_ + 1), n - 1)
         var seen = List.empty[String]
@@ -43,7 +43,7 @@ class EvalCaptureTowerTest extends AnyFreeSpec:
         assert(seen == List("x"))
     }
 
-    "a capture past the cut is multi-shot" in {
+    "a deep capture is multi-shot" in {
         @tailrec def tower(v: Int < Ask, n: Int): Int < Ask =
             if n == 0 then v else tower(v.map(_ + 1), n - 1)
         val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], tower(ask, Reach + 8))(

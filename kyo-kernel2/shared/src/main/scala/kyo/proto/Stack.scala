@@ -91,7 +91,9 @@ final class Stack:
         loop(0)
     end find
 
-    def dump[A, B, S](pos: Int): Arrow[A, B, S] =
+    def dump[A, B, S](pos: Int): Arrow[A, B, S] = dump(pos, true)
+
+    private def dump[A, B, S](pos: Int, wrap: Boolean): Arrow[A, B, S] =
         @tailrec def loop(i: Int, acc: Arrow[Any, Any, Any], handlers: Boolean): Arrow[Any, Any, Any] =
             if i < 0 then acc
             else
@@ -104,8 +106,9 @@ final class Stack:
                 entries(idx) = null
                 states(idx) = Absent
                 val below =
-                    if i == reach - 1 && !handlers && acc.isInstanceOf[Arrow.Chain[?, ?, ?, ?]] then new Arrow.Chain(acc, Arrow.id)
-                    else acc
+                    acc match
+                        case c: Arrow.Chain[?, ?, ?, ?] if wrap && !handlers && !(c.b eq Arrow.Id) => new Arrow.Chain(c, Arrow.id)
+                        case _                                                                     => acc
                 val link =
                     e match
                         case c: Arrow.Chain[?, ?, ?, ?] if below eq Arrow.Id => new Arrow.Chain(c, Arrow.id)
@@ -120,7 +123,7 @@ final class Stack:
         @tailrec def boundary(i: Int): Int =
             if i == size || i == reach || entries((head + i) & mask).isInstanceOf[Handler[?, ?, ?, ?]] then i
             else boundary(i + 1)
-        dump[A, B, S](boundary(0))
+        dump[A, B, S](boundary(0), false)
     end dump
 
     def truncate(n: Int): Unit =
