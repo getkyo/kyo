@@ -95,7 +95,11 @@ final class Stack:
             if i < 0 then acc
             else
                 val idx = (head + i) & mask
-                val e   = entries(idx)
+                val e =
+                    entries(idx) match
+                        case h: Handler.HandlerLoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
+                            states(idx).fold(h)(Handler.HandlerLoopState(h, _))
+                        case e => e
                 entries(idx) = null
                 states(idx) = Absent
                 loop(i - 1, e.chain(acc).asInstanceOf[Arrow[Any, Any, Any]])
