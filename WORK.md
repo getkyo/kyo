@@ -825,6 +825,25 @@ one-arg complete). Alternative: special-case a `Handler` pop in `Eval`'s `done` 
 
 ## OPEN
 
+**KERNEL RESUME ANCHOR (2026-08-19, session 2, late night; supersedes the anchors below).** HEAD
+`195994d2aa`, `kyo.proto.*` 205/205, working tree carries the owner's uncommitted WIP in Arrow.scala and
+Kyo.scala (Defer 3-arg collapsing contB eq Id; theirs, not committed by me; tests green over it).
+Landed since the previous anchor: `dfe15e18f4` (the done branch peels its delivery by class: the
+recorded receiver profile was 73%/misses under the speculation threshold; Handler.apply and Chain.apply
+now CHA-inline and the residual site bimorphic-inlines: confirmed in the tree, wall clock FLAT, kept as
+structure, no perf claim), `47193f7df7` + revert `195994d2aa` (the HandlerLoop arm's outcome
+match-lambdas materialize as closures instead of beta-reducing, confirmed in the inlining tree, but EA
+already eliminates them: raw-match respelling measured flat and was reverted; the first raw spelling
+also taught the boundary rule: a done payload re-enters through the LIFT, which is what keeps a
+computation-valued payload a value; the pin caught the cast that bypassed it). Suspension-family status
+after the full ladder (alloc sites, JIT trees, dispatch peel, closure probe, cross-kernel CPU profiles
+in bench-results/threeway-0819/susp-cpu*): 2.0-2.5x vs kernel2-best remains, distributed across the
+per-turn path, no dominating site; boxToInteger leaf frames are attribution of surrounding per-turn
+stores, not boxing (both designs box the same cached constant); closing the gap is a per-turn protocol
+design question, owner's territory. trailingMaps at 1.9x of best (was 715x this morning); its own
+residual is the per-level constant (~6 chains + 3 defers). Uncommitted: the profile evidence dirs in
+bench-results/threeway-0819 (susp-cpu, susp-cpu-best, trail-alloc, trail-logc.xml, jsons).
+
 **KERNEL RESUME ANCHOR (2026-08-19, session 2, night; supersedes the anchors below).** HEAD
 `1e93ad59d3`, `kyo.proto.*` 205/205, tree clean except bench-results jsons. Landed since the previous
 anchor: `cb2676c480` (Pending: map expanded in the previous kyo-kernel2's run/arrow shape, transform
