@@ -13,6 +13,7 @@ final class Stack:
     private var mask    = 15
     private var head    = 0
     private var tail    = 0
+    private val reach   = Safepoint.period() / 2
 
     def isEmpty: Boolean = head == tail
 
@@ -91,7 +92,7 @@ final class Stack:
     end find
 
     def dump[A, B, S](pos: Int): Arrow[A, B, S] =
-        @tailrec def loop(i: Int, acc: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
+        @tailrec def loop(i: Int, acc: Arrow[Any, Any, Any], handlers: Boolean): Arrow[Any, Any, Any] =
             if i < 0 then acc
             else
                 val idx = (head + i) & mask
@@ -102,16 +103,22 @@ final class Stack:
                         case e => e
                 entries(idx) = null
                 states(idx) = Absent
-                loop(i - 1, e.chain(acc).asInstanceOf[Arrow[Any, Any, Any]])
-        val k = loop(pos - 1, Arrow.id)
+                val below =
+                    if i == reach - 1 && !handlers && acc.isInstanceOf[Arrow.Chain[?, ?, ?, ?]] then new Arrow.Chain(acc, Arrow.id)
+                    else acc
+                val link =
+                    e match
+                        case c: Arrow.Chain[?, ?, ?, ?] if below eq Arrow.Id => new Arrow.Chain(c, Arrow.id)
+                        case _                                               => e.chain(below)
+                loop(i - 1, link.asInstanceOf[Arrow[Any, Any, Any]], handlers || e.isInstanceOf[Handler[?, ?, ?, ?]])
+        val k = loop(pos - 1, Arrow.id, false)
         head += pos
         k.asInstanceOf[Arrow[A, B, S]]
     end dump
 
     def dump[A, B, S](): Arrow[A, B, S] =
-        val max = Safepoint.period()
         @tailrec def boundary(i: Int): Int =
-            if i == size || i == max || entries((head + i) & mask).isInstanceOf[Handler[?, ?, ?, ?]] then i
+            if i == size || i == reach || entries((head + i) & mask).isInstanceOf[Handler[?, ?, ?, ?]] then i
             else boundary(i + 1)
         dump[A, B, S](boundary(0))
     end dump
