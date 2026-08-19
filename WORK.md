@@ -825,6 +825,25 @@ one-arg complete). Alternative: special-case a `Handler` pop in `Eval`'s `done` 
 
 ## OPEN
 
+**KERNEL RESUME ANCHOR (2026-08-19, session 2, later; supersedes the anchors below).** Working branch
+HEAD `d966dbb3a1`, `kyo.proto.*` 185/185 green, tree clean. Landed since the previous anchor:
+`1be210e66e` (V2 answer scoping in the HandlerLoop arm; two own-tag re-raise pins), `7d3ffdbb24`
+(handleLoopState corpus uncommented, 36 tests; Pending receiver back to `inline` with `case self =>`
+in `lower`, because the by-value receiver broke inference for a doubly nested receiver), `7c118880ba`
+(done branch reads the state slot before the pop), `c47bda9496` (`HandlerLoopState(h, state)` on the
+companion; the state arm mirrors the stateless arm), `d966dbb3a1` (`Stack.dump(pos)` chains a crossed
+stateful region in at its live slot state: the capture gap is closed). Both held items from the
+handoff are done. Still open: `kyo.kernel.internal.Eval.apply = ???` in kernel2 (ProtoKernelBench dead);
+the full `kyo-kernel2` module beyond `kyo.proto.*` (ContextEffectTest etc., module corpus tasks); the
+quadratic (`trailingMapsStayLinear` ~1 s/op, the tower; analysis in
+`proto-answer-scoping-experiments.md`); V4 (the `*With` nodes walking `next.head(apply(v),
+next.tail)`, parked branch `parked/answer-scoping-v4`, neutral on the probe bench, owner's call); the
+remaining commented PendingTest blocks need absent surface (flatMap, andThen, unit, flatten, handle,
+Eval.partial, the macro lint); pre-existing casts in tests (`ask.asInstanceOf[Int < Any]` in
+EvalTest:87,88,572,580 for the unhandled-suspension pins, `Tag[AskSub].asInstanceOf[Tag[Ask]]`
+ArrowEffectTest:21), owner's call; experiment worktrees `exp-v1..v3`, `exp-base` still attached
+(branches `parked/answer-scoping-v1..v4`), removable.
+
 **KERNEL RESUME ANCHOR (2026-08-19, session 2; supersedes the anchor below).** Commits this session on
 the working branch: `65a14ba6e8` (owner WIP checkpoint), `5d12766c62` (handleLoopState/With live; one-arg
 `apply(v) = apply(initialState, v)` on HandlerLoopState; PendingTest 39/39), `461cf8e9ea` (pending loop
