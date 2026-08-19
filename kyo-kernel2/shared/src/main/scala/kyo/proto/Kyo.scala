@@ -10,9 +10,6 @@ sealed abstract class Kyo[+A, -S]
 
 object Kyo:
 
-    /** `value` then `contA` then `contB`. The value is currency, pending or settled: a pending input deferred behind a transform, and a
-      * strict step past the safepoint budget, are the same node.
-      */
     abstract class Defer[A, B, +C, -S] extends Kyo[C, S]:
         def value: A < S
         def contA: Arrow[A, B, S]
@@ -35,10 +32,13 @@ object Kyo:
             _contA: Arrow[A, B, S],
             _contB: Arrow[B, C, S]
         ): Kyo[C, S] =
-            new Defer[A, B, C, S]:
-                def value = _value
-                def contA = _contA
-                def contB = _contB
+            if _contB eq Arrow.Id then
+                apply(_value, _contA.asInstanceOf[Arrow[A, C, S]])
+            else
+                new Defer[A, B, C, S]:
+                    def value = _value
+                    def contA = _contA
+                    def contB = _contB
     end Defer
 
     abstract class Suspend[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Kyo[B, E & S]:

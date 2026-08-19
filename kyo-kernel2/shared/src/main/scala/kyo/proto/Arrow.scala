@@ -4,7 +4,7 @@ import kyo.Frame
 import scala.annotation.nowarn
 import scala.annotation.static
 
-trait Arrow[-A, +B, -S] extends (A => B < S):
+sealed trait Arrow[-A, +B, -S] extends (A => B < S):
     self =>
 
     def frame: Frame
