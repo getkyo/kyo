@@ -44,11 +44,11 @@ object Eval:
                                 case h: HandlerCont[IX, OX, EX, AX, ?, S] @unchecked =>
                                     loop(h.run(kyo.input, stack.dump(pos)))
                                 case h: HandlerLoop[IX, OX, EX, AX, BX, S] @unchecked =>
-                                    loop(
-                                        h.run(kyo.input).lower(
-                                            pending = clause =>
-                                                val k = stack.dump[OX[CX], AX, EX & S](pos)
-                                                discard(stack.pop())
+                                    (h.run(kyo.input): Any) match
+                                        case clause: Kyo[Loop.Outcome[OX[CX] < (EX & S), BX], S] @unchecked =>
+                                            val k = stack.dump[OX[CX], AX, EX & S](pos)
+                                            discard(stack.pop())
+                                            loop(
                                                 new Kyo.Defer[Loop.Outcome[OX[CX] < (EX & S), BX], BX, BX, EX & S]
                                                     with Arrow.Transform[Loop.Outcome[OX[CX] < (EX & S), BX], BX, EX & S]:
                                                     def frame = Frame.internal
@@ -66,22 +66,25 @@ object Eval:
                                                             pending = Kyo.Defer(_, this, next),
                                                             done = o => next(apply(o), Arrow.id)
                                                         )
-                                                end new
-                                            ,
-                                            done =
+                                            )
+                                        case o =>
+                                            val r =
+                                                o match
+                                                    case o: Nested[Loop.Outcome[OX[CX] < (EX & S), BX]] @unchecked => o.value
+                                                    case o => o.asInstanceOf[Loop.Outcome[OX[CX] < (EX & S), BX]]
+                                            r match
                                                 case r: Loop.Continue[OX[CX] < (EX & S)] @unchecked =>
-                                                    r._1.lower(
-                                                        pending = _ =>
+                                                    (r._1: Any) match
+                                                        case _: Kyo[?, ?] =>
                                                             val k = stack.dump[OX[CX], AX, EX & S](pos)
-                                                            r._1.map(k(_))
-                                                        ,
-                                                        done = _ => r._1
-                                                    )
+                                                            loop(r._1.map(k(_)))
+                                                        case _ =>
+                                                            loop(r._1)
                                                 case v =>
                                                     stack.truncate(pos + 1)
-                                                    v
-                                        )
-                                    )
+                                                    loop(v.asInstanceOf[BX]: BX < Any)
+                                            end match
+                                    end match
                                 case h: HandlerLoopState[IX, OX, EX, AX, BX, S, StateX] @unchecked =>
                                     val s = stack.state(pos).getOrElse(h.initialState)
                                     loop(
