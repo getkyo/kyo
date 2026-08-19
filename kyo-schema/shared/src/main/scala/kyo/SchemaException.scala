@@ -159,26 +159,25 @@ case class TrailingInputException(format: Codec, detail: String)(using Frame)
   *
   * The name is format-agnostic because this type lives in the format-agnostic core.
   *
+  * The record's own bytes are deliberately absent. A record of an application log or an agent
+  * transcript is the payload, and a payload placed on an exception reaches every log line, crash
+  * report, and error page that renders it. The index and the offset locate the record for anyone
+  * holding the input, without copying it anywhere the input is not already.
+  *
   * @param recordIndex
   *   zero-based position of the record among the non-blank records of the framed input
   * @param byteOffset
   *   offset of the record's first byte within the framed input
-  * @param record
-  *   the raw record text, truncated in the rendered message but complete on the field
   * @param cause
   *   the underlying decode failure
   */
 case class RecordDecodeException(
     recordIndex: Long,
     byteOffset: Long,
-    record: String,
     cause: DecodeException
 )(using Frame)
-    extends SchemaException(
-        s"Failed to decode record $recordIndex at byte $byteOffset: " +
-            (if record.length > 50 then record.take(50) + "..." else record),
-        cause
-    ) with DecodeException
+    extends SchemaException(s"Failed to decode record $recordIndex at byte $byteOffset", cause)
+    with DecodeException
 
 /** Thrown when a configured safety limit is exceeded during decoding. */
 case class LimitExceededException(limit: String, actual: Int, maximum: Int)(using Frame)
