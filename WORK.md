@@ -825,6 +825,26 @@ one-arg complete). Alternative: special-case a `Handler` pop in `Eval`'s `done` 
 
 ## OPEN
 
+**KERNEL RESUME ANCHOR (2026-08-19, session 2, evening; supersedes the anchors below).** HEAD
+`b6915379cb`, `kyo.proto.*` 186/186 in 2 s, tree clean. Since the previous anchor: `ac9cc4c03e` (owner's
+cap on the done branch's `dump()`: the towers 46-53 s -> ~100 ms; its message says `period / 2` but the
+committed cap was `Safepoint.period()`), `16c6680dad` (EvalCaptureTowerTest, the capture-per-level map
+tower in its own file, 2.3 s at depth 20000), `b6915379cb` (the capture keeps its remainder as one link:
+`dump(pos)` folds the top `reach` entries individually and wraps a handler-free remainder as the
+denormalized link `Chain(rest, Id)`, the shape `chain` never builds, which `fill` puts back whole and the
+walk expands once; a whole-chain entry at the bottom of any fold is wrapped the same way; a remainder
+holding a handler folds as before; `reach = period / 2` shared by both dumps; EvalCaptureTowerTest 2.18 s
+-> 184 ms at the same reach; two pins, one checked to fail without the handlers guard;
+trailingMapsStayLinear probe 974 ms/op -> 55 ms/op, linear with a per-level constant of `reach`, a knob
+the owner may tune). The design came from the owner (a limit like the dump() cap plus a denormalized
+Chain to break the execution chain while keeping the tail optimized for resumption); the agent's flag-on-
+Chain variant was dropped. Open: the capture cut constant (a smaller cut lowers the per-level constant);
+V4 (`*With` walk) recommended dropped, branch `parked/answer-scoping-v4` keeps it; pre-existing casts in
+the unhandled-suspension pins (EvalTest:87,88,572,580, ArrowEffectTest:21), owner's call; experiment
+worktrees `exp-v1..v3`, `exp-base` clean and removable; the remaining commented PendingTest blocks need
+absent surface (flatMap, andThen, unit, flatten, handle, Eval.partial, the macro lint). Do not mention
+the old kyo.kernel implementation in this work; the proto is the subject.
+
 **KERNEL RESUME ANCHOR (2026-08-19, session 2, later; supersedes the anchors below).** Working branch
 HEAD `d966dbb3a1`, `kyo.proto.*` 185/185 green, tree clean. Landed since the previous anchor:
 `1be210e66e` (V2 answer scoping in the HandlerLoop arm; two own-tag re-raise pins), `7d3ffdbb24`
