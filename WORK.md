@@ -901,6 +901,24 @@ initialState); the Bound reification is the known fix when something exercises i
 `PendingTest` running in background (`b88lva8d7`) to confirm the shared-path edits (pop/dump/done
 branch) hold 38/38.
 
+**Stream pivot (2026-08-18, ~20:50, owner directive): interaction-optimization is now the primary
+goal.** After the six HandleLoopState fixes verified green (PendingTest 38/38, `b88lva8d7`), the
+owner interrupted the bench cron with a directive that reframes the collaboration: the multi-day
+kernel effort was, among other things, an experiment testing the agent's design-origination limits;
+their verdict is that the agent never once produced kernel-level lean design, only "kinda working
+solutions with big holes"; the agent's primary goal is now optimizing the interaction itself, with
+correct and complete solutions downstream of that. Ordered preparation: take a break, mine the
+interaction record (sonnet miners), report (opus), Fable as strategic advisor/judge only, capture
+comprehensive interaction data as a durable meta-task, then intentionally open a chat fully
+prepared to be challenged on understanding the owner's expectations. In flight: `INTERACTIONS.md`
+created at the worktree root (corpus + working model + failure catalog + owner design vocabulary +
+staged proto items); three sonnet miners launched (ledger corpus, session-transcript corpus, code
+style); Fable strategic review of the preparation to follow; integration then the chat opening.
+The two open proto items (handleLoopState uncomment + rename + one-arg apply obligation +
+PendingTest:194; capture-gap fix via re-materialized initialState, no new node) are staged with
+homework done, to be elaborated one at a time on the owner's go. Bench gates unchanged (no
+committed sha, owner active); wakeup stays armed.
+
 **Tick 20:18: no measurement possible, hold continues.** Gate check: kyo-kernel2 sources still
 uncommitted (16 modified + 4 untracked, no stable sha), the owner active mid-design and may build at
 any moment, load 4.27 (under the bracket bar of 5, but the sha gate fails first; the trait rerun
