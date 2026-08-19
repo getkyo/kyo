@@ -553,7 +553,7 @@ object Bench:
             // the retry below exists for) would otherwise leave the *previous* attempt's json in
             // place, and this leg would silently adopt the previous leg's numbers with a row count
             // that passes every check.
-            json.removeExisting
+            json.remove
                 .andThen(sbt(
                     s"kyo-kernel2JVM/Jmh/run -f $forks -wi $warmup -i $MeasureIterations -r ${IterationSeconds}s " +
                         s"-w ${IterationSeconds}s -prof gc -prof comp -rf json -rff ${json.toString} " +
