@@ -385,8 +385,11 @@ along the way (each correction is also corpus data on my failure modes):
   grading, genome speaks capability grades not model names, privacy: the user model can stay
   on-device). Fine-tuning distills verified traces into the lower (open-weight) rungs;
   recall-vs-inference audit (their llm-weights methodology) is standing QA for tuned rungs.
-- **Deployment**: backtest, then shadow (dark canary reproducing live inputs), then incremental
-  load. Four widening gates, each earned by the previous constraint.
+- **Deployment**: backtest, then incremental takeover. (Corrected 2026-08-19: this bullet
+  originally recorded the four-gate pipeline with a shadow/dark-canary tier from turn 8938; the
+  owner dropped the shadow tier at turn 9001, "with mind + container checkpointing + backtests we
+  don't need a shaddow deploy. Backtests seem enough", LEDGER.md L-064 superseding L-037. The
+  kyo-substrate spine carries the ruled two-gate shape.)
 - **Scope**: constrained to SKILLS (mind + container per task), not a general agent. First skill:
   performance optimization, because the oracle is the bench harness this campaign built ("the
   experience was terrible... but we have the tool"), fixtures exist with reference lines (the
