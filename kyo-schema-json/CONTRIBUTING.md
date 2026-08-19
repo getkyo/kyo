@@ -105,6 +105,28 @@ Two related properties follow from the same reasoning and are also tested:
 
 ---
 
+## The byte order mark is consumed, not framed
+
+Several Windows editors and export tools write the UTF-8 byte order mark,
+`EF BB BF`, at the head of a text file to declare its encoding. It belongs to no
+record, so the framer consumes it before framing begins. Left in place it would
+prefix the first record, and the mark is not JSON whitespace, so that record
+would fail to parse.
+
+Consuming it does not hide it from the positions the framer reports: a record's
+`byteOffset` counts every byte of the input, the mark included, so an offset
+still addresses the record in the original source.
+
+The mark is recognized ACROSS SPAN BOUNDARIES, which is the part a refactor can
+break. A framer starts in a start state, and while the bytes seen so far are
+still a proper prefix of the mark it holds them and stays in that state rather
+than guessing. A proper prefix holds no newline, so nothing is withheld by
+waiting. That is what makes a one-byte-at-a-time feed strip the mark exactly as
+a whole-input feed does, and it is why `Framer.atStart` exists at all rather
+than the mark being stripped once at the head of the first span.
+
+---
+
 ## `watch` defaults to `Origin.Start`; `tailBytes` defaults to `Origin.End`
 
 Both defaults are deliberate and they must not be made to agree.

@@ -14,7 +14,7 @@ def utf8(value: String): Span[Byte] =
 ```
 -->
 
-```scala
+```scala doctest:expect=runs
 val events  = Seq(Event("opened", 1), Event("closed", 2))
 val jsonl   = Json.Lines.encodeAll(events)
 val decoded = Json.Lines.decodeAll[Event](jsonl)
@@ -39,19 +39,23 @@ Start here when one Scala value corresponds to one complete JSON document. A sin
 
 Derive `Schema` on a case class to make its field names and types available to every operation in this module:
 
-```scala
-val event                 = Event("opened", 1)
+```scala doctest:expect=runs
 val schema: Schema[Event] = summon[Schema[Event]]
-assert(schema != null)
+
+val fieldNames = schema.structure match
+    case product: Structure.Type.Product => product.fields.map(_.name)
+    case _                               => Chunk.empty
+
+assert(fieldNames == Chunk("name", "count"))
 ```
 
-The schema is the contract. Encoding and decoding do not require a second JSON-specific derivation.
+The schema is the contract: the field names above are the ones every operation in this module reads and writes. Encoding and decoding do not require a second JSON-specific derivation.
 
 ### Encoding text and bytes
 
 When the destination is text, use `Json.encode`. When the destination already accepts UTF-8 bytes, use `Json.encodeBytes` and avoid an intermediate `String`:
 
-```scala
+```scala doctest:expect=runs
 val event = Event("opened", 1)
 val text  = Json.encode(event)
 val bytes = Json.encodeBytes(event)
@@ -66,7 +70,7 @@ assert(new String(bytes.toArray, StandardCharsets.UTF_8) == text)
 
 When all input bytes represent one document, use `Json.decode` for text or `Json.decodeBytes` for bytes. Both return `Result[DecodeException, A]` and reject malformed input, a mismatched shape, and trailing content:
 
-```scala
+```scala doctest:expect=runs
 val textResult = Json.decode[Event]("{\"name\":\"opened\",\"count\":1}")
 val byteResult = Json.decodeBytes[Event](utf8("{\"name\":\"closed\",\"count\":2}"))
 
@@ -76,7 +80,7 @@ assert(byteResult.getOrThrow == Event("closed", 2))
 
 Depth and collection limits bound work performed by untrusted documents. Override them per call when a domain needs tighter limits:
 
-```scala
+```scala doctest:expect=runs
 val rejected = Json.decode[Event](
     "{\"name\":\"opened\",\"count\":1}",
     maxDepth = 0,
@@ -89,7 +93,7 @@ assert(rejected.isFailure)
 
 A failure remains a value until the caller chooses how to handle it:
 
-```scala
+```scala doctest:expect=runs
 val invalid = Json.decode[Event]("{\"name\":7}")
 invalid match
     case Result.Failure(error) => assert(error.isInstanceOf[DecodeException])
@@ -108,7 +112,7 @@ When another system needs a machine-readable contract, derive JSON Schema from t
 
 Use `Json.jsonSchema[A]` to obtain a Draft 2020-12-compatible value. Documentation, field descriptions, deprecation markers, examples, constraints, dropped fields, and renamed fields registered on the runtime schema enrich the result:
 
-```scala
+```scala doctest:expect=runs
 val description: Json.JsonSchema = Json.jsonSchema[Event]
 assert(description.isInstanceOf[Json.JsonSchema.Obj])
 ```
@@ -117,7 +121,7 @@ assert(description.isInstanceOf[Json.JsonSchema.Obj])
 
 The returned `Json.JsonSchema` enum represents object, array, string, numeric, integer, boolean, null, nullable, and `oneOf` shapes. Pattern matching lets tooling inspect the result without parsing generated JSON:
 
-```scala
+```scala doctest:expect=runs
 val propertyNames = Json.jsonSchema[Event] match
     case Json.JsonSchema.Obj(properties, _, _, _, _, _) =>
         properties.map(_._1)
@@ -130,7 +134,7 @@ assert(propertyNames == List("name", "count"))
 
 Use `Json.encode(Json.jsonSchema[A])` when the contract must cross a wire or be written to a file:
 
-```scala
+```scala doctest:expect=runs
 val document = Json.encode(Json.jsonSchema[Event])
 assert(document.contains("\"properties\""))
 ```
@@ -143,7 +147,7 @@ When a complete JSONL value is already in memory, use the pure `Json.Lines` surf
 
 Use `encodeLine` for one newline-terminated record, `encodeAll` for a text batch, and `encodeAllBytes` for its UTF-8 byte representation:
 
-```scala
+```scala doctest:expect=runs
 val first  = Event("opened", 1)
 val events = Seq(first, Event("closed", 2))
 
@@ -161,7 +165,7 @@ Every encoded record ends with a newline, including the last one. An empty seque
 
 Use `decodeAll` or `decodeAllBytes` when one bad record should fail the whole input:
 
-```scala
+```scala doctest:expect=runs
 val input =
     "{\"name\":\"opened\",\"count\":1}\n" +
         "{\"name\":\"closed\",\"count\":2}\n"
@@ -175,7 +179,7 @@ assert(fromBytes.getOrThrow == fromText.getOrThrow)
 
 Use `decodeAllBytesResults` when each record needs an independent outcome. A bad record occupies its original position and later records can still succeed:
 
-```scala
+```scala doctest:expect=runs
 val input =
     "{\"name\":\"opened\",\"count\":1}\n" +
         "{\"name\":7}\n" +
@@ -194,7 +198,7 @@ Both strict and recoverable forms use the same depth, collection, and line-size 
 
 When framing is managed separately, `decodeRecord` preserves the record's index and byte offset in a `RecordDecodeException`:
 
-```scala
+```scala doctest:expect=runs
 val record = Json.Lines.Line(
     utf8("{\"name\":\"opened\",\"count\":1}"),
     index = 3L,
@@ -220,7 +224,7 @@ When network or file reads split JSONL at arbitrary byte positions, carry a `Jso
 
 Create a framer with `Framer.init`, feed each arriving `Span[Byte]`, then call `finishLine` only when the input is known to be finite. `finishLine` resolves at most the one line the residual holds, which is all an end of input can add:
 
-```scala
+```scala doctest:expect=runs
 val initial = Json.Lines.Framer.init()
 val framed  = initial.feed(utf8("{\"name\":\"ope"))
 
@@ -240,7 +244,7 @@ assert(completed.isInstanceOf[Json.Lines.Framed.Continued])
 
 Each resolved line is a `Result`: a success carries a `Json.Lines.Line`, and a failure carries the size-limit breach occupying that record position. `Framed.Continued` carries resolved lines plus the next framer, while `Framed.Halted` carries resolved lines plus the terminal breach:
 
-```scala
+```scala doctest:expect=runs
 val outcome = Json.Lines.Framer.init(maxLineBytes = 8).feed(utf8("123456789\n12345678\n"))
 val texts = outcome match
     case Json.Lines.Framed.Continued(_, lines) =>
@@ -359,7 +363,7 @@ When implementing a schema or codec extension, use the concrete JSON factories r
 
 Use `Json.newWriter` to obtain the `Codec.Writer` that schema serialization uses. Custom codec integrations can call its public writer methods directly, then take the result in the required representation:
 
-```scala
+```scala doctest:expect=runs
 val writer: Codec.Writer = Json().newWriter()
 writer.string("opened")
 
@@ -370,7 +374,7 @@ assert(writer.resultString == "\"opened\"")
 
 Use `Json.newReader` when custom integration code already owns the UTF-8 bytes and needs the same concrete `Codec.Reader` as `Json.decodeBytes`. Its public reader methods decode individual JSON values:
 
-```scala
+```scala doctest:expect=runs
 val reader: Codec.Reader = Json().newReader(utf8("\"opened\""))
 val value                = reader.string()
 
