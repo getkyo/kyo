@@ -349,6 +349,58 @@ from diagnostics rather than a judge. Key rulings and corrections in the thread:
   fields scored worse than no profiles at all; segment tilting inherently lossy at the model
   prior; the statistician-first ruling.
 
+## The harness design, as ruled by the owner (2026-08-18/19 late thread)
+
+The design conversation converged; the owner's rulings, in order, with the corrections they made
+along the way (each correction is also corpus data on my failure modes):
+
+- **Pure evolution.** No hand-seeded proxy, no transcript-derived genomes. Whether a user-proxy
+  structure even exists in a mind is for evolution to find or discard. My repeated "seed it from
+  this session" framing was the probe they ran: chasing an idea because they voiced it. Sessions
+  are answer-laden, so they live scorer-side only.
+- **This session is a backtest, not a seed.** Fresh start ruled: minimal gen-0 (single neuron +
+  gate, two completions), no archaeology on old transcripts (lossy, leak-prone); the distilled
+  failure classes are kept as day-one detectors (class-level, scorer-side, leak-free). New
+  interactions accrete as backtests via snapshot markers, at a baseline rate (routine coverage,
+  regression tier) plus triggers (interrupts, divergences, verdicts: frontier fixtures).
+- **The backtest mechanism is snapshot-swap-evaluate.** Podman/CRIU live checkpoints of mind +
+  env; load a snapshot, replace the mind (a value, swappable at the boundary), run against live
+  oracles, compare with the recorded execution. Temporal sealing: a snapshot cannot contain its
+  own label. Incumbent replay from its own snapshot gives the per-fixture noise floor; candidate
+  vs incumbent-replay is exactly paired. Two checkpoint levels: mind-as-value (semantic, small,
+  diffable) and CRIU (opaque residue: browsers, JVM heaps).
+- **VFS behind kyo's file APIs**: mediation without tool cooperation, recording by construction,
+  archive append-only and UNMAPPED for evolved tools (capability security by non-naming). Effect
+  rows as the leash on mutation-authored tools (kyo covers browsers, files, async, containers:
+  "any software"; the population never authors its own exams; an opposed factory lineage may,
+  under discrimination + predictive-validity fitness, Hillis-style).
+- **Fitness**: deterministic detector core informing a judge mind (x-ray containment: computed
+  facts anchor, judgment bounded, confidence-as-weight, abstention first-class). The judge is
+  continuously calibrated for free by blind-scoring incumbent actions that carry real verdicts;
+  its measured calibration is its trust weight on divergent cases. Judgment share falling over
+  time is a system health metric.
+- **The model ladder**: capture capability expensive first (no cost pressure), then degrade and
+  let evolution recover (externalization into structure); quality becomes a floor, not a weight,
+  when cost enters. Local-model rungs extend the ladder (always-on tier, per-machine empirical
+  grading, genome speaks capability grades not model names, privacy: the user model can stay
+  on-device). Fine-tuning distills verified traces into the lower (open-weight) rungs;
+  recall-vs-inference audit (their llm-weights methodology) is standing QA for tuned rungs.
+- **Deployment**: backtest, then shadow (dark canary reproducing live inputs), then incremental
+  load. Four widening gates, each earned by the previous constraint.
+- **Scope**: constrained to SKILLS (mind + container per task), not a general agent. First skill:
+  performance optimization, because the oracle is the bench harness this campaign built ("the
+  experience was terrible... but we have the tool"), fixtures exist with reference lines (the
+  kernel campaign's own A/Bs and hand optimizations), and the skill-founding rule generalizes:
+  build skills where a campaign already forged the oracle. Gamified live tests / surveys loop the
+  user in as the top promotion gate. Premium token cost accepted at breeding time (introspective
+  operators: fable reads executions well); ROI framing: interaction cost converted to selection
+  cost, the asset appreciates and belongs to the user.
+- Owner appraisals during the thread: "ok, I'm proud of you now! I was probing to see if you'd
+  chase something because I'm telling you to"; corrections: "you've been phrasing like we'd
+  design how the execution happens. No, we'd let evolution do that"; "lol no, a mind is not a
+  persona"; "why don't I see you doing any homework at all?" (fixed by reading raio-x + docs
+  corpus before speaking again).
+
 ## Corpus integration log
 
 - 2026-08-18: file created; all three miner reports integrated (code-style, ledger, transcripts);
