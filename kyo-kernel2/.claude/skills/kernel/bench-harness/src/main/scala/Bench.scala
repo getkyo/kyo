@@ -84,8 +84,8 @@ object Bench:
       */
     val CompilingShareLimit = 0.5
 
-    val BenchClass  = "kyo.kernel.bench.ProtoKernelBench"
-    val BenchSource = "kyo-kernel2/jvm/src/jmh/scala/kyo/kernel/bench/ProtoKernelBench.scala"
+    val BenchClass  = "kyo.kernel.bench.YetAnotherProtoBench"
+    val BenchSource = "kyo-kernel2/jvm/src/jmh/scala/kyo/kernel/bench/YetAnotherProtoBench.scala"
     val AsyncProf   = "/opt/homebrew/opt/async-profiler/lib/libasyncProfiler.dylib"
 
     case class BracketFailed(reason: String) extends Exception(reason) with NoStackTrace
@@ -622,7 +622,7 @@ object Bench:
             // a faster variant whose suite is red is not a result; gate before spending the runs.
             // this also settles the sources: the build formats on compile, so the baseline below
             // must be taken after it or the leg invalidates itself on its own formatting
-            _          <- requireGreenSuite(worktree, "kyo-kernel2JVM/testOnly kyo.kernel.proto.*")
+            _          <- requireGreenSuite(worktree, "kyo-kernel2JVM/testOnly kyo.proto.*")
             before     <- readMarkers(worktree, markerSpecs)
             hashBefore <- treeHash(worktree, paths)
             measured   <- measureWith(WarmupIterations, 1, declared)

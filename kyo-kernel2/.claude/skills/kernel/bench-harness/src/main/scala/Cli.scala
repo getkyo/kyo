@@ -119,14 +119,15 @@ case class ListOpts(store: String = "bench-runs")
 object Cli:
 
     val markerSpecs = Seq(
-        ("SuspendWith", "SuspendWith", "kyo-kernel2/shared/src/main/scala/kyo/kernel/proto/Arrow.scala"),
-        ("applyFolded", "applyFolded", "kyo-kernel2/shared/src/main/scala/kyo/kernel/proto/Arrow.scala"),
-        ("partial", "def partial", "kyo-kernel2/shared/src/main/scala/kyo/kernel/proto/Eval.scala")
+        ("withWalk", "next.head(apply(v), next.tail)", "kyo-kernel2/shared/src/main/scala/kyo/proto/ArrowEffect.scala"),
+        ("reach", "reach", "kyo-kernel2/shared/src/main/scala/kyo/proto/Stack.scala"),
+        ("loopState", "HandlerLoopState", "kyo-kernel2/shared/src/main/scala/kyo/proto/Handler.scala")
     )
 
     val protoPaths = Seq(
-        "kyo-kernel2/shared/src/main/scala/kyo/kernel/proto",
-        "kyo-kernel2/shared/src/test/scala/kyo/kernel/proto"
+        "kyo-kernel2/shared/src/main/scala/kyo/proto",
+        "kyo-kernel2/shared/src/test/scala/kyo/proto",
+        "kyo-kernel2/jvm/src/jmh/scala/kyo/kernel/bench"
     )
 
     def parseEvidence(s: String)(using Frame): Evidence < Abort[Bench.BracketFailed] =
