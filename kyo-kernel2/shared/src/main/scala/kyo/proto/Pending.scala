@@ -31,11 +31,11 @@ object `<`:
                     def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]) = run(v, next)
             def run[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S2 & S3) =
                 v.lower(
-                    pending = kyo => fromKyo(Kyo.Defer(kyo, arrow, next)),
+                    pending = kyo => Effect.defer(kyo, arrow, next),
                     done = b =>
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
-                            fromKyo(Kyo.Defer(v, arrow, next))
+                            Effect.defer(v, arrow, next)
                         else
                             val out = next.head(f(b), next.tail)
                             Safepoint.exit(slot)
@@ -53,11 +53,11 @@ object `<`:
                     def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]) = run(v, next)
             def run[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S2 & S3) =
                 v.lower(
-                    pending = kyo => fromKyo(Kyo.Defer(kyo, arrow, next)),
+                    pending = kyo => Effect.defer(kyo, arrow, next),
                     done = b =>
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
-                            fromKyo(Kyo.Defer(v, arrow, next))
+                            Effect.defer(v, arrow, next)
                         else
                             val out = next.head(f(b), next.tail)
                             Safepoint.exit(slot)
@@ -75,11 +75,11 @@ object `<`:
                     def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]) = run(v, next)
             def run[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S2 & S3) =
                 v.lower(
-                    pending = kyo => fromKyo(Kyo.Defer(kyo, arrow, next)),
+                    pending = kyo => Effect.defer(kyo, arrow, next),
                     done = _ =>
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
-                            fromKyo(Kyo.Defer(v, arrow, next))
+                            Effect.defer(v, arrow, next)
                         else
                             val out = next.head(f, next.tail)
                             Safepoint.exit(slot)
@@ -97,11 +97,11 @@ object `<`:
                     def apply[C, S3](v: A < S3, next: Arrow[Unit, C, S3]) = run(v, next)
             def run[C, S3](v: A < S3, next: Arrow[Unit, C, S3]): C < S3 =
                 v.lower(
-                    pending = kyo => fromKyo(Kyo.Defer(kyo, arrow, next)),
+                    pending = kyo => Effect.defer(kyo, arrow, next),
                     done = _ =>
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
-                            fromKyo(Kyo.Defer(v, arrow, next))
+                            Effect.defer(v, arrow, next)
                         else
                             val out = next.head((), next.tail)
                             Safepoint.exit(slot)
@@ -119,11 +119,11 @@ object `<`:
                     def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]) = run(v, next)
             def run[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S2 & S3) =
                 v.lower(
-                    pending = kyo => fromKyo(Kyo.Defer(kyo, arrow, next)),
+                    pending = kyo => Effect.defer(kyo, arrow, next),
                     done = b =>
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
-                            fromKyo(Kyo.Defer(v, arrow, next))
+                            Effect.defer(v, arrow, next)
                         else
                             val out = next.head(ev(b), next.tail)
                             Safepoint.exit(slot)
