@@ -922,6 +922,13 @@ Fable judge found the corpus strong but the chat prep not ready (four covert-def
 capability section, reframe not operationalized, owner-value model missing, fork dodged, staged
 work enacting the banned execution reflex); all findings applied to INTERACTIONS.md; chat opened.
 
+**STOPPED by owner order (00:20, "I'll go to bed. Cancel periodic wake ups and fully stop").**
+Both crons deleted (58f0774c recurring, 5cd96138 one-shot), dynamic wakeup canceled, no monitors
+or background tasks running. All streams parked, not finished: bench deliverables still gated on
+a committed green sha + quiet machine (staged task-37 command stands); the two proto items held
+with homework done; the design thread recorded through INTERACTIONS.md. Resume by re-arming the
+bench loop or picking any parked item; the ledger above is current.
+
 **Tick 00:19: hold continues.** Eighteen uncommitted kyo-kernel2 paths, owner's sbt running, load
 4.16. Design thread extended with field research (owner-directed): ARC-AGI arena positioning,
 Prime Agent analysis (95.5% ARC-AGI-3, self-assessment vs selection, no-sandbox contrast), and
