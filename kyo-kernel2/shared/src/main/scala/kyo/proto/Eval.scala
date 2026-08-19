@@ -102,9 +102,9 @@ object Eval:
                 ,
                 done = r =>
                     if !stack.isEmpty then
+                        val s = stack.state[StateX](0)
                         stack.pop() match
                             case h: HandlerLoopState[IX, OX, EX, AX, BX, S, StateX] @unchecked =>
-                                val s = stack.state[StateX](0)
                                 curr = h.apply(s.getOrElse(h.initialState), r.asInstanceOf[AX])
                             case head =>
                                 val tail = stack.dump()
