@@ -825,6 +825,26 @@ one-arg complete). Alternative: special-case a `Handler` pop in `Eval`'s `done` 
 
 ## OPEN
 
+**KERNEL RESUME ANCHOR (2026-08-19, session 2, night; supersedes the anchors below).** HEAD
+`1e93ad59d3`, `kyo.proto.*` 205/205, tree clean except bench-results jsons. Landed since the previous
+anchor: `cb2676c480` (Pending: map expanded in the previous kyo-kernel2's run/arrow shape, transform
+built only in the deferring arms with explicit fromKyo widening (inline bodies typed in the companion
+never insert the conversion); flatMap/andThen/unit/flatten each with their own body; handle at ten
+arities; Transform's default one-arg apply; the strict/rescue rows went from 179-264x kernel2-best's
+allocation to parity-or-less), `fa1e746897` (Eval.loop carries curr as a parameter; the per-Eval
+ObjectRef is gone, both constant rows at 0 B/op), `1e93ad59d3` (a handler-free capture chains every
+folded level behind the denormalized marker, dump(pos, wrap) split so the done-branch tail never wraps;
+trailingMapsStayLinear 55.2 ms -> 1.35 ms/op, 124.6 -> 4.0 MB/op, capture tower 184 -> 39 ms; two
+refuted shapes recorded in the commit). Three-way boards (kyo-kernel / best kyo-kernel2 `2e8d8ac31b` /
+proto), -f 3, in `bench-results/threeway-0819/` with the harness pointed at YetAnotherProtoBench
+(`eaf8fc9890`, `45a048ed32`). Red beyond the band vs kernel2-best after all of it: the suspension
+family (handleLoopAnswersInPlace 2.5x, suspensionBaseline 2.0x, suspensionFusesContinuation 3.6x, plus
+their +80 KB/op per-deferral arrow), statefulAnswersPaySuccessor 2.4x, continuationBodiesFuse 1.4x,
+trailingMaps residual 1.9x, evalFixedOverhead 11 vs 2 ns (Safepoint.get()/lift per step are the named,
+unconfirmed candidates). Parked by owner: Eval.partial (c), the lift lint (d). Owner rules on:
+suspension-family diagnosis next (PrintInlining + alloc sites on handleLoopAnswersInPlace) or another
+order. Uncommitted: the new jsons in bench-results/threeway-0819.
+
 **KERNEL RESUME ANCHOR (2026-08-19, session 2, evening; supersedes the anchors below).** HEAD
 `b6915379cb`, `kyo.proto.*` 186/186 in 2 s, tree clean. Since the previous anchor: `ac9cc4c03e` (owner's
 cap on the done branch's `dump()`: the towers 46-53 s -> ~100 ms; its message says `period / 2` but the
