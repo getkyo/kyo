@@ -317,6 +317,38 @@ Homework done, held. Not offered in the chat; the owner sequences.
    re-initializes the region on re-push; no new node, no Eval or push changes. Leaving the gap
    open until exercised is equally valid; the owner rules.
 
+## The harness design thread (2026-08-18 late evening, owner-led)
+
+The chat moved from the verdict to design: an evolution machine (ren-shaped) that optimizes the
+interaction itself, "a harness you raise", fed by live interaction data under no-leakage, fitness
+from diagnostics rather than a judge. Key rulings and corrections in the thread:
+- The owner corrected a persona conflation: a mind is not a persona; the x-ray
+  (docs/raio-x-execucao.html) shows an evolved neuro-symbolic estimator: independent narrow
+  lenses, typed partial outputs, temperature falling as work moves from imagining to calculating,
+  arithmetic evaluated outside the model, self-declared confidence read downstream as weight, the
+  persona panel one contained lens at bounded weight (25%). The two-execution anchor-divergence
+  is the free abstention diagnostic.
+- "Do your homework" correction landed mid-thread: riffing from ambient understanding instead of
+  reading the pointed-at doc; the class-A/E pattern in conversational form. Fixed by reading the
+  x-ray fully and mining the docs corpus (mine-ren report, integrated below).
+- ren transfers to the harness, per the docs corpus: the advisor lineage is the proxy's measured
+  ancestor (generic tips NEUTRAL, echo 0, "the tip contract forbids heritability by
+  construction"; steering works only as targeted delivery + schema-forced consideration, and
+  heritability lives in the component that owns edits); action-space representability ("the
+  locally rational answer to an action space in which the joint move is unrepresentable", the
+  maxRecursions dead gene) means every failure class needs a one-unit preventing move expressible
+  in the genome; anchoring ("reasons well FROM a real number and poorly TOWARD one", "a wrong
+  anchor is worse than no anchor... the empty result is a first-class answer") maps to
+  retrieval-grounded, abstaining proxy prediction; phenotypic monoculture invisible to genotype
+  diversity metrics warns the harness fitness to measure behavioral method, not rule-set shape.
+- mind-optimization-failures.md mirrors the failure classes from this collaboration nearly
+  verbatim across a different project and different agents: the taxonomy is agent-generic, which
+  is what gives an evolved constraint genome transfer value.
+- Persona-domain findings (for calibration of any user-model claims): "precision rises with
+  grounding and falls with generation"; grounded census fields helped, LLM-generated psychometric
+  fields scored worse than no profiles at all; segment tilting inherently lossy at the model
+  prior; the statistician-first ruling.
+
 ## Corpus integration log
 
 - 2026-08-18: file created; all three miner reports integrated (code-style, ledger, transcripts);
