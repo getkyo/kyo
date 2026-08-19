@@ -138,9 +138,12 @@ object Eval:
                         stack.pop() match
                             case h: HandlerLoopState[IX, OX, EX, AX, BX, S, StateX] @unchecked =>
                                 loop(h.apply(s.getOrElse(h.initialState), r.asInstanceOf[AX]))
+                            case h: Handler[EX, AX, BX, S] @unchecked =>
+                                loop(h(curr.asInstanceOf[AX < (EX & S)], stack.dump()))
+                            case c: Arrow.Chain[Any, ?, Any, EX & S] @unchecked =>
+                                loop(c(curr, stack.dump()))
                             case head =>
-                                val tail = stack.dump()
-                                loop(head.asInstanceOf[Arrow[Any, ?, EX & S]](curr, tail))
+                                loop(head.asInstanceOf[Arrow[Any, ?, EX & S]](curr, stack.dump()))
                         end match
                     else r
             )
