@@ -1,6 +1,7 @@
 package kyo.kernel
 
 import kyo.Arrow
+import kyo.Arrow.Suspend
 import kyo.Frame
 import kyo.Maybe
 import kyo.kernel.internal.Eval
@@ -127,7 +128,9 @@ object `<` extends Implicits:
         end unit
 
         inline def eval(using S =:= Any): A =
-            Eval((self: A < S).asInstanceOf[A < Any])
+            Eval(self: A < S) match
+                case v: Arrow[?, ?, ?] => kyo.bug("unhandled effect " + v)
+                case v                 => Nested.unnest(v)
 
         private[kyo] inline def evalNow: Maybe[A] =
             (self: A < S) match

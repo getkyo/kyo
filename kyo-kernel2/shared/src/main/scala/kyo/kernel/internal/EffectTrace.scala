@@ -226,9 +226,7 @@ private[kyo] object EffectTrace:
                         push(c.a)
                     case s: Arrow.Suspend[?, ?, ?, ?, ?, ?] =>
                         frame(s.frame)
-                    case m: Arrow.SuspendWith[?, ?, ?, ?, ?, ?, ?, ?] =>
-                        push(m.cont)
-                        frame(m.susp.frame)
+                        push(s.cont)
                     case h: Arrow.Handle[?, ?, ?, ?, ?] =>
                         region(h.handler.tag)
                     case b: Arrow.Bind[?, ?, ?] =>
@@ -236,7 +234,7 @@ private[kyo] object EffectTrace:
                         b.value match
                             case v: Arrow[?, ?, ?] => push(v)
                             case _                 => ()
-                    case e: Arrow.Eval[?, ?, ?] =>
+                    case e: Arrow.Park[?, ?, ?] =>
                         var i = 0
                         while i < e.entries.size do
                             push(e.entries(i))

@@ -5,9 +5,7 @@ import kyo.StaticFlag
 import scala.annotation.static
 import scala.annotation.tailrec
 
-/** The strict-recursion budget. A thread owns a slot holding its remaining depth; every strict step enters and exits, and a step that
-  * finds the budget drained is deferred instead of applied. Preemption is not here yet.
-  */
+// TODO this should be private[kernel]
 class Safepoint
 
 object Safepoint:
@@ -18,6 +16,8 @@ object Safepoint:
 
     private inline def LineStride = 8
 
+    final private class Stop(val thread: Thread)
+
     @static private val Slots      = slotCount()
     @static private val Overflowed = Slots
     @static private val depths =
@@ -25,12 +25,12 @@ object Safepoint:
         a(Slots) = State.init
         a
     end depths
-    @static private val slots = new AtomicReferenceArray[Thread](Slots + 1)
+    @static private val slots = new AtomicReferenceArray[Thread | Stop](Slots + 1)
     @static private val local = new ThreadLocal[Integer]
 
-    private[proto] object period extends StaticFlag[Int](512, n => Right(Math.min(Math.max(1, n), 0x7fff)))
+    private[kyo] object period extends StaticFlag[Int](512, n => Right(Math.min(Math.max(1, n), 0x7fff)))
 
-    private[proto] object slotCount extends StaticFlag[Int](
+    private[kyo] object slotCount extends StaticFlag[Int](
             65536,
             n =>
                 if Integer.bitCount(n) == 1 then Right(n)
@@ -39,6 +39,7 @@ object Safepoint:
 
     object State:
         private inline def DepthGuard = 1 << 15
+        private inline def Armed      = 1 << 30
 
         private val Initial: State = DepthGuard | period()
 
@@ -50,14 +51,16 @@ object Safepoint:
                 if (s2 & DepthGuard) == DepthGuard then
                     depths(slot) = s2
                     true
-                else enterDrained(slot)
+                else enterPark(slot, self)
                 end if
             end enterInto
 
             private[Safepoint] inline def decrementDepth: State = self + 1
+            private[Safepoint] inline def drained: State        = (self & Armed) | DepthGuard
+            private[Safepoint] inline def reset: State          = (self & Armed) | Initial
+            private[Safepoint] inline def armed: State          = self | Armed
+            private[Safepoint] inline def isArmed: Boolean      = (self & Armed) != 0
         end extension
-
-        private[Safepoint] def drained: State = DepthGuard
     end State
 
     import State.*
@@ -77,10 +80,15 @@ object Safepoint:
             if probes == Slots then Overflowed
             else
                 val idx   = i & (Slots - 1)
-                val owner = slots.get(idx)
-                val free  = (owner eq null) || !owner.isAlive
+                val entry = slots.get(idx)
+                val free =
+                    (entry eq null) || {
+                        entry match
+                            case owner: Thread => !owner.isAlive
+                            case pending: Stop => !pending.thread.isAlive
+                    }
                 if !free then claim(i + 1, probes + 1)
-                else if slots.compareAndSet(idx, owner, thread) then
+                else if slots.compareAndSet(idx, entry, thread) then
                     depths(idx) = State.init
                     idx
                 else claim(i, probes)
@@ -88,7 +96,11 @@ object Safepoint:
         end claim
 
         val cached = local.get()
-        if cached ne null then cached.intValue()
+        if cached ne null then
+            val slot = cached.intValue()
+            if depths(slot).isArmed && slots.get(slot).isInstanceOf[Stop] then
+                depths(slot) = depths(slot).drained
+            slot
         else
             val slot = claim(h, 0)
             local.set(Integer.valueOf(slot))
@@ -99,10 +111,10 @@ object Safepoint:
     @static def enter(slot: Slot): Boolean =
         depths(slot).enterInto(slot)
 
-    @static private def enterDrained(slot: Slot): Boolean =
-        depths(slot) = State.drained
+    @static private def enterPark(slot: Slot, s: State): Boolean =
+        depths(slot) = s.drained
         false
-    end enterDrained
+    end enterPark
 
     @static def exit(slot: Slot): Unit =
         depths(slot) = depths(slot).decrementDepth
@@ -115,5 +127,43 @@ object Safepoint:
 
     @static def restore(slot: Slot, saved: State): Unit =
         depths(slot) = saved
+
+    @static def reset(slot: Slot): Unit =
+        depths(slot) = depths(slot).reset
+
+    @static def arm(slot: Slot): Unit =
+        depths(slot) = depths(slot).armed
+
+    @static def stop(thread: Thread): Boolean =
+        @tailrec def loop(i: Int, probes: Int): Boolean =
+            if probes == Slots then false
+            else
+                val idx   = i & (Slots - 1)
+                val entry = slots.get(idx)
+                // an unclaimed cell ends the probe: a claim walks forward from
+                // this same home and stops at the first free cell, and no site
+                // writes a cell back to null once claimed, so a thread holding
+                // one would have been found before here
+                if entry eq null then false
+                else
+                    entry match
+                        case owner: Thread if owner eq thread =>
+                            slots.compareAndSet(idx, owner, new Stop(thread)) || loop(i, probes)
+                        case pending: Stop if pending.thread eq thread =>
+                            true
+                        case _ =>
+                            loop(i + 1, probes + 1)
+                    end match
+                end if
+        thread.isAlive() && loop(home(thread), 0)
+    end stop
+
+    @static def consumeStopped(slot: Slot): Boolean =
+        slots.get(slot) match
+            case pending: Stop =>
+                slots.set(slot, pending.thread)
+                true
+            case _ =>
+                false
 
 end Safepoint

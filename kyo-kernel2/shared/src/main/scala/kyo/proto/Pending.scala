@@ -1,7 +1,9 @@
 package kyo.proto
 
 import kyo.Frame
+import kyo.Maybe
 import language.implicitConversions
+import scala.annotation.targetName
 import scala.util.NotGiven
 
 opaque type <[+A, -S] = A | Kyo[A, S] | Nested[A]
@@ -18,13 +20,16 @@ object `<`:
             case v: (Kyo[?, ?] | Nested[?]) => Nested(v)
             case _                          => v
 
-    extension [A, S](self: A < S)
+    extension [A, S](inline self: A < S)
 
         inline def map[B, S2](inline f: A => B < S2)(using inline frame: Frame): B < (S & S2) =
-            Arrow.Transform(f)(self, Arrow.id)
+            Arrow(f)(self, Arrow.id)
 
         inline def eval(using S =:= Any): A =
-            Eval(self.asInstanceOf[A < Any])
+            Eval(self.asInstanceOf[A < Any]).asInstanceOf[A]
+
+        inline def evalNow: Maybe[A] =
+            self.lower(pending = _ => Maybe.empty, done = a => Maybe(a))
 
         inline def lower[B](
             inline pending: Kyo[A, S] => B,

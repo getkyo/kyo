@@ -17,8 +17,7 @@ sealed abstract class Arrow[-A, +B, -S] extends AbstractFunction1[A, B < S] with
     def step: Arrow.Step[A, B, S]
 
     def chain[C, S2](f: Arrow[B, C, S2]): Arrow[A, C, S & S2] =
-        if f.isInstanceOf[Arrow.Identity]
-        then // TODO I've made Identity a class to use here. Check if this helps perf, convert other uses and measure
+        if f.isInstanceOf[Arrow.Identity] then
             this.asInstanceOf[Arrow[A, C, S & S2]]
         else
             Arrow.Chain(this, f)
@@ -34,8 +33,6 @@ object Arrow:
         def tail: Arrow[X, B, S]
         final def step = this
 
-        // only the head's frame: a chain can be arbitrarily long, and walking one from `toString` has
-        // broken tools that stringify values, kyo-test among them
         override def toString: String = s"Arrow.Step(${head.frameInfo})"
     end Step
 
@@ -96,9 +93,9 @@ object Arrow:
         def apply(v: A) = Bind(v, this)
     end Defer
 
-    final class Chain[A, XX, +B, -S](
-        val a: Arrow[A, XX, S],
-        val b: Arrow[XX, B, S]
+    final class Chain[A, X, +B, -S](
+        val a: Arrow[A, X, S],
+        val b: Arrow[X, B, S]
     ) extends Defer[A, B, S]:
         override def toString: String = s"Arrow.Chain($a, $b)"
     end Chain
@@ -108,57 +105,20 @@ object Arrow:
         val cont: Arrow[A, B, S]
     ) extends Defer[Any, B, S]
 
-    // TODO rename to Park and rename related methods to keep the "park" theme cosnistent
-    final private[kyo] class Eval[+A, +B, -S](
+    final private[kyo] class Park[+A, +B, -S](
         val entries: Span[Arrow[?, ?, ?]],
         val tags: Span[AnyRef],
         val states: Span[AnyRef],
         val value: A < S
     ) extends Defer[Any, B, S]
 
-    // TODO could these be type members instead of params? There's too much noise in the Eval code due to these params. I[_], O[_], E <: ArrowEffect[I, O], A, X
-    abstract class Suspend[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Defer[Any, B, E & S]:
-
+    abstract private[kyo] class Suspend[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Defer[Any, B, E & S]:
         def frame: Frame
         def tag: Tag[E]
         def input: I[A]
-        def cont(v: O[A]): B < S
-
-        final override def apply(v: Any) = cont(v.asInstanceOf[O[A]])
-
-        override def chain[C, S2](f: Arrow[B, C, S2]): Arrow[Any, C, E & S & S2] =
-            if f eq Identity then this.asInstanceOf[Arrow[Any, C, E & S & S2]]
-            else SuspendWith(this, f)
+        def cont: Arrow[O[A], B, S]
     end Suspend
 
-    final private[kyo] class SuspendWith[I[_], O[_], E <: ArrowEffect[I, O], A, X, B, S, S2](
-        val susp: Suspend[I, O, E, A, X, S],
-        val cont: Arrow[X, B, S2]
-    ) extends Defer[Any, B, E & S & S2]:
-
-        final override def apply(v: Any) =
-            cont match
-                case c: Chain[X, Any, B, S2] @unchecked =>
-                    applyFolded(v, c)
-                case cont =>
-                    val st = cont.step
-                    st.head(susp(v), st.tail)
-
-        // a cont the evaluator folded pending entries into is a Chain, whose step heads
-        // with Identity and defers the answer through a Bind; stepping the Chain's left
-        // arm instead delivers into the composed tail directly. Kept out of apply so the
-        // shape that needs no folding stays the smaller body.
-        private def applyFolded(v: Any, c: Chain[X, Any, B, S2]): B < (E & S & S2) =
-            val st = c.a.step
-            st.head(susp(v), st.tail.chain(c.b))
-
-        override def chain[C, S3](f: Arrow[B, C, S3]): Arrow[Any, C, E & S & S2 & S3] =
-            if f eq Identity then this.asInstanceOf[Arrow[Any, C, E & S & S2 & S3]]
-            else SuspendWith(susp, cont.chain(f))
-    end SuspendWith
-
-    // TODO could these be type members instead of params? There's too much noise in the Eval code due to these params. E <: ArrowEffect[?, ?], A, B,
-    // this is also valid for the Handler subclasses
     abstract class Handle[E <: ArrowEffect[?, ?], A, B, +C, -S] extends Defer[Any, C, S]:
         def v: Arrow[Any, A, E & S]
         def handler: Handler[E, A, B, S]

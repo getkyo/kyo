@@ -24,10 +24,10 @@ object ArrowEffect:
         inline effectInput: I[C]
     ): O[C] < E =
         new Suspend[I, O, E, C, O[C], Any]:
-            def frame         = _frame
-            def tag           = effectTag
-            def input         = effectInput
-            def cont(v: O[C]) = v
+            def frame = _frame
+            def tag   = effectTag
+            def input = effectInput
+            def cont  = Arrow[O[C]]
 
     @nowarn("msg=anonymous")
     inline def suspendWith[C](
@@ -39,10 +39,10 @@ object ArrowEffect:
         inline f: O[C] => B < S
     ): B < (E & S) =
         new Suspend[I, O, E, C, B, S]:
-            def frame         = _frame
-            def tag           = effectTag
-            def input         = effectInput
-            def cont(v: O[C]) = f(v)
+            def frame = _frame
+            def tag   = effectTag
+            def input = effectInput
+            def cont  = ???
     end suspendWith
 
     @nowarn("msg=anonymous")
@@ -62,7 +62,7 @@ object ArrowEffect:
                         new Handler.HandleCont[I, O, E, A, B, S]:
                             def tag                                            = effectTag
                             def run[C](input: I[C], cont: O[C] => A < (E & S)) = handle[C](input, cont)
-                            def complete(a: A)                                 = onDone(Nested.unnest[A](a))
+                            def complete(a: A)                                 = onDone(a)
                     def cont = Arrow[B]
             case a =>
                 onDone(Nested.unnest[A](a))
@@ -108,7 +108,7 @@ object ArrowEffect:
                         new Handler.HandleCont[I, O, E, A, B, S]:
                             def tag                                            = effectTag
                             def run[C](input: I[C], cont: O[C] => A < (E & S)) = handle[C](input, cont)
-                            def complete(a: A)                                 = onDone(Nested.unnest[A](a))
+                            def complete(a: A)                                 = onDone(a)
                     def cont = arrow
             case a =>
                 arrow(onDone(Nested.unnest[A](a)), Arrow[C2])
@@ -132,7 +132,7 @@ object ArrowEffect:
                         new Handler.HandleLoop[I, O, E, A, B, S]:
                             def tag                 = effectTag
                             def run[C](input: I[C]) = handle[C](input)
-                            def complete(a: A)      = onDone(Nested.unnest[A](a))
+                            def complete(a: A)      = onDone(a)
                     def cont = Arrow[B]
             case a =>
                 onDone(Nested.unnest[A](a))
@@ -178,7 +178,7 @@ object ArrowEffect:
                         new Handler.HandleLoop[I, O, E, A, B, S]:
                             def tag                 = effectTag
                             def run[C](input: I[C]) = f[C](input)
-                            def complete(a: A)      = onDone(Nested.unnest[A](a))
+                            def complete(a: A)      = onDone(a)
                     def cont = arrow
             case a =>
                 arrow(onDone(Nested.unnest[A](a)), Arrow[C2])
@@ -204,7 +204,7 @@ object ArrowEffect:
                             def tag                            = effectTag
                             def initialState                   = state
                             def run[C](st: State, input: I[C]) = handle[C](st, input)
-                            def complete(st: State, a: A)      = onDone(st, Nested.unnest[A](a))
+                            def complete(st: State, a: A)      = onDone(st, a)
                     def cont = Arrow[B]
             case a =>
                 onDone(state, Nested.unnest[A](a))
@@ -252,7 +252,7 @@ object ArrowEffect:
                             def tag                            = effectTag
                             def initialState                   = state
                             def run[C](st: State, input: I[C]) = handle[C](st, input)
-                            def complete(st: State, a: A)      = onDone(st, Nested.unnest[A](a))
+                            def complete(st: State, a: A)      = onDone(st, a)
                     def cont = arrow
             case a =>
                 arrow(onDone(state, Nested.unnest[A](a)), Arrow[C2])

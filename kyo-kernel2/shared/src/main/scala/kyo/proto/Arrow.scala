@@ -2,81 +2,105 @@ package kyo.proto
 
 import kyo.Frame
 import scala.annotation.nowarn
+import scala.annotation.static
 
-sealed trait Arrow[-A, +B, -S]:
+trait Arrow[-A, +B, -S] extends (A => B < S):
     self =>
+
+    def frame: Frame
 
     def apply(v: A): B < S
 
     def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]): C < (S & S2)
 
-    def chain[C, S2](f: Arrow[B, C, S2]): Arrow[A, C, S & S2] = Arrow.Chain(this, f)
+    final def chain[C, S2](f: Arrow[B, C, S2]): Arrow[A, C, S & S2] =
+        if f eq Arrow.Id then this.asInstanceOf[Arrow[A, C, S]]
+        else new Arrow.Chain(this, f)
+
+    type X
+    def head: Arrow[A, X, S]
+    def tail: Arrow[X, B, S]
+
 end Arrow
 
 object Arrow:
 
-    class Id[A] extends Transform[A, A, Any]:
-        def frame                = Frame.internal
-        def apply(v: A): A < Any = v
-        override def apply[C, S2](v: A < S2, next: Arrow[A, C, S2]) =
-            // next eq Id says C = A; the type system cannot carry that
-            if next eq Id then v.asInstanceOf[C < S2] else next(v, Arrow.id)
-        override def chain[C, S2](f: Arrow[A, C, S2]) = f
-    end Id
-
-    object Id extends Id[Any]
-
     def id[A]: Arrow.Id[A] = Id.asInstanceOf[Id[A]]
 
-    trait Transform[-A, B, -S] extends Arrow[A, B, S]:
-        def frame: Frame
+    @nowarn
+    inline def apply[A, B, S](inline f: A => B < S)(using _frame: Frame): Arrow[A, B, S] =
+        new Transform[A, B, S]:
+            def frame       = _frame
+            def apply(v: A) = f(v)
+            def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]) =
+                v.lower(
+                    pending = Kyo.Defer(_, this, next),
+                    done = b =>
+                        val slot = Safepoint.get()
+                        if !Safepoint.enter(slot) then
+                            Kyo.Defer(v, this, next)
+                        else
+                            val out = next.head(apply(b), next.tail)
+                            Safepoint.exit(slot)
+                            out
+                        end if
+                )
 
-    object Transform:
-        @nowarn
-        inline def apply[A, B, S](inline f: A => B < S)(using _frame: Frame): Transform[A, B, S] =
-            new Transform[A, B, S]:
-                def frame       = _frame
-                def apply(v: A) = f(v)
-                def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]) =
-                    v.lower(
-                        pending = Kyo.Defer(_, this, next),
-                        done = b =>
-                            // the strict arm runs inside the safepoint budget; past it the settled
-                            // step is deferred, so deep strict recursion continues on the
-                            // evaluator's stack instead of the Java stack
-                            val slot = Safepoint.get()
-                            if !Safepoint.enter(slot) then Kyo.Defer(v, this, next)
-                            else
-                                val out = next(apply(b), Arrow.id)
-                                Safepoint.exit(slot)
-                                out
-                            end if
-                    )
+    @nowarn
+    inline def recursive[A, B, S](inline f: (Arrow[A, B, S], A) => B < S)(using _frame: Frame): Arrow[A, B, S] =
+        new Transform[A, B, S]:
+            def frame       = _frame
+            def apply(v: A) = f(this, v)
+            def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]) =
+                v.lower(
+                    pending = Kyo.Defer(_, this, next),
+                    done = b =>
+                        val slot = Safepoint.get()
+                        if !Safepoint.enter(slot) then
+                            Kyo.Defer(v, this, next)
+                        else
+                            val out = next.head(apply(b), next.tail)
+                            Safepoint.exit(slot)
+                            out
+                        end if
+                )
 
+    private[kyo] trait Transform[-A, B, -S] extends Arrow[A, B, S]:
+        type X = B
+        def head = this
+        def tail = Arrow.id[B]
     end Transform
 
-    class Chain[-A, B, +C, -S](
+    // the evaluator flattens a chain onto its stack, so it sees the two halves
+    private[proto] class Chain[-A, B, +C, -S](
         val a: Arrow[A, B, S],
         val b: Arrow[B, C, S]
     ) extends Arrow[A, C, S]:
+        type X = B
+        def head = a
+        def tail = b
+
+        def frame = Frame.internal
         def apply(v: A) =
-            b(a(v), Arrow.id)
+            Kyo.Defer(v, a, b)
         def apply[D, S2](v: A < S2, next: Arrow[C, D, S2]) =
-            v.lower(
-                pending = Kyo.Defer(_, this, next),
-                done = a(_, b.chain(next))
-            )
+            Kyo.Defer(v, this, next)
 
     end Chain
 
-    object Chain:
-        def apply[A, B, C, S](
-            a: Arrow[A, B, S],
-            b: Arrow[B, C, S]
-        ): Arrow[A, C, S] =
-            if a eq Id then b.asInstanceOf[Arrow[A, C, S]]
-            else if b eq Id then a.asInstanceOf[Arrow[A, C, S]]
-            else new Chain(a, b)
-    end Chain
+    private[Arrow] class Id[A] extends Arrow[A, A, Any]:
+        type X = A
+        def head                 = this
+        def tail                 = this
+        def frame                = Frame.internal
+        def apply(v: A): A < Any = v
+        override def apply[C, S2](v: A < S2, next: Arrow[A, C, S2]) =
+            if next eq Id then
+                v.asInstanceOf[C < S2]
+            else
+                next(v, Arrow.id)
+    end Id
+
+    private[kyo] object Id extends Id[Any]
 
 end Arrow

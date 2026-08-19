@@ -7,17 +7,9 @@ import kyo.bug
 import scala.annotation.static
 import scala.annotation.tailrec
 
-/** A stack of arrows backed by a circular buffer.
-  *
-  * Entries occupy the logical positions `[head, tail)` of the ring: `head` is the top of the stack (the next arrow to pop/run) and
-  * `tail - 1` the bottom. Pushing prepends at `head`, so iterating forward from `head` walks the stack top-down, which keeps `find`
-  * and `dump` as forward scans. The capacity is always a power of two so a logical position maps to a slot with `pos & mask`, which
-  * remains correct for negative positions.
-  *
-  * Positions exposed by `find`, `handler`, and `dump` are depths relative to the top: 0 is the top entry, `size - 1` the bottom.
-  */
 final class Stack:
     private var entries = new Array[Arrow[?, ?, ?]](16)
+    private var states  = Array.fill[Maybe[Any]](16)(Absent)
     private var mask    = 15
     private var head    = 0
     private var tail    = 0
@@ -26,49 +18,67 @@ final class Stack:
 
     def size: Int = tail - head
 
+    private def put(idx: Int, f: Arrow[?, ?, ?]): Unit =
+        entries(idx) = f
+        f match
+            case f: Handler.HandlerLoopState[?, ?, ?, ?, ?, ?, ?] =>
+                states(idx) = Present(states(idx).getOrElse(f.initialState))
+            case _ =>
+                ()
+        end match
+    end put
+
     def push(f: Arrow[?, ?, ?]): Unit =
         f match
-            case _: Arrow.Chain[?, ?, ?, ?] =>
-                // a dumped chain is right-deep with a leaf `a` at every level, so flatten it by
-                // walking the `b` spine iteratively instead of recursing (which overflows on deep chains)
-                var n = 0
-                var g = f
-                while g.isInstanceOf[Arrow.Chain[?, ?, ?, ?]] do
-                    val c = g.asInstanceOf[Arrow.Chain[?, ?, ?, ?]]
-                    if !(c.a eq Arrow.Id) then n += 1
-                    g = c.b
-                end while
-                if !(g eq Arrow.Id) then n += 1
+            case f if f eq Arrow.Id =>
+                ()
+            case f: Arrow.Chain[?, ?, ?, ?] =>
+                val n = count(f, 0)
                 ensure(n)
                 head -= n
-                var i = 0
-                g = f
-                while g.isInstanceOf[Arrow.Chain[?, ?, ?, ?]] do
-                    val c = g.asInstanceOf[Arrow.Chain[?, ?, ?, ?]]
-                    if !(c.a eq Arrow.Id) then
-                        entries((head + i) & mask) = c.a
-                        i += 1
-                    g = c.b
-                end while
-                if !(g eq Arrow.Id) then entries((head + i) & mask) = g
-            case f if f eq Arrow.Id => ()
+                fill(f, 0)
             case f =>
                 ensure(1)
                 head -= 1
-                entries(head & mask) = f
+                put(head & mask, f)
+
+    @tailrec private def count(f: Arrow[?, ?, ?], n: Int): Int =
+        f match
+            case c: Arrow.Chain[?, ?, ?, ?] => count(c.b, if c.a eq Arrow.Id then n else n + 1)
+            case f if f eq Arrow.Id         => n
+            case _                          => n + 1
+
+    @tailrec private def fill(f: Arrow[?, ?, ?], i: Int): Unit =
+        f match
+            case c: Arrow.Chain[?, ?, ?, ?] =>
+                if c.a eq Arrow.Id then
+                    fill(c.b, i)
+                else
+                    put((head + i) & mask, c.a)
+                    fill(c.b, i + 1)
+            case f if f eq Arrow.Id =>
+                ()
+            case f =>
+                put((head + i) & mask, f)
 
     def pop(): Arrow[?, ?, ?] =
         val i = head & mask
         val e = entries(i)
         entries(i) = null
+        states(i) = Absent
         head += 1
         e
     end pop
 
+    def state[A](i: Int): Maybe[A] =
+        states((head + i) & mask).asInstanceOf[Maybe[A]]
+
+    def putState[A](i: Int, value: A): Unit =
+        states((head + i) & mask) = Present(value)
+
     def handler(i: Int): Handler[?, ?, ?, ?] =
         entries((head + i) & mask).asInstanceOf[Handler[?, ?, ?, ?]]
 
-    // depth of the nearest enclosing handler for the tag, -1 if none
     def find[A](t: Tag[A]): Int =
         val n = size
         @tailrec def loop(i: Int): Int =
@@ -80,7 +90,6 @@ final class Stack:
         loop(0)
     end find
 
-    // dump up to pos but keep pos
     def dump[A, B, S](pos: Int): Arrow[A, B, S] =
         @tailrec def loop(i: Int, acc: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
             if i < 0 then acc
@@ -88,13 +97,13 @@ final class Stack:
                 val idx = (head + i) & mask
                 val e   = entries(idx)
                 entries(idx) = null
+                states(idx) = Absent
                 loop(i - 1, e.chain(acc).asInstanceOf[Arrow[Any, Any, Any]])
         val k = loop(pos - 1, Arrow.id)
         head += pos
         k.asInstanceOf[Arrow[A, B, S]]
     end dump
 
-    // dump while not a handler
     def dump[A, B, S](): Arrow[A, B, S] =
         @tailrec def boundary(i: Int): Int =
             if i == size || entries((head + i) & mask).isInstanceOf[Handler[?, ?, ?, ?]] then i
@@ -102,11 +111,11 @@ final class Stack:
         dump[A, B, S](boundary(0))
     end dump
 
-    // drop n entries starting from the head
     def truncate(n: Int): Unit =
         @tailrec def loop(n: Int): Unit =
             if n > 0 && head != tail then
                 entries(head & mask) = null
+                states(head & mask) = Absent
                 head += 1
                 loop(n - 1)
         loop(n)
@@ -124,19 +133,21 @@ final class Stack:
             var cap = entries.length
             while s + n > cap do cap <<= 1
             val arr = new Array[Arrow[?, ?, ?]](cap)
+            val sts = Array.fill[Maybe[Any]](cap)(Absent)
             var i   = 0
             while i < s do
-                arr(i) = entries((head + i) & mask)
+                val idx = (head + i) & mask
+                arr(i) = entries(idx)
+                sts(i) = states(idx)
                 i += 1
+            end while
             entries = arr
+            states = sts
             mask = cap - 1
             head = 0
             tail = s
 end Stack
 
-/** A pool of stacks per thread: an evaluation borrows one and returns it empty, so a nested evaluation gets its own stack and never
-  * sees the entries of the one it runs inside, and no stack is allocated per evaluation once the pool is warm.
-  */
 object Stack:
     final private class Pool:
         private var free = new Array[Stack](4)
