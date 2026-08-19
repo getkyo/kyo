@@ -825,6 +825,33 @@ one-arg complete). Alternative: special-case a `Handler` pop in `Eval`'s `done` 
 
 ## OPEN
 
+**KERNEL RESUME ANCHOR (2026-08-19, session 2; supersedes the anchor below).** Commits this session on
+the working branch: `65a14ba6e8` (owner WIP checkpoint), `5d12766c62` (handleLoopState/With live; one-arg
+`apply(v) = apply(initialState, v)` on HandlerLoopState; PendingTest 39/39), `461cf8e9ea` (pending loop
+clause evaluates with its region off the stack: `lower` split, `dump(pos + 1)`, fused `Defer with Transform`
+outcome node, `Defer` unsealed; Pending extension receiver by-value, which closed a latent double-evaluation
+of impure `lower` receivers; ArrowEffectTest 71/71, PendingTest 39/39). State at `461cf8e9ea`: `kyo.proto.*`
+149 ran, 143 green, 6 red, all six the answer-scoping law in EvalTest:236-352 (a pending `continue`
+payload must evaluate under this handler with the interior parked; at base the interior stays on the
+stack or is flattened under the answer). Owner asked for isolated experiments: four variants built in
+detached worktrees and run (`proto-answer-scoping-experiments.md`, committed): V1 (parking in
+`Chain.apply`), V2 (answer sites `r._1.map(k(_))`, Eval only), V3 (Defer arm pushes contA whole when the
+value is pending), V4 (V2 + the five `next(apply(v), Arrow.id)` sites walk `next.head(apply(v),
+next.tail)` under the budget). All four 151/151 on `kyo.proto.*` + 2 probes; probe bench base vs V4 all
+rows inside the drift band. Parked branches: `parked/answer-scoping-v1..v4` (worktrees
+`.claude/worktrees/exp-v1`, `exp-v2` (holds v4), `exp-v3`, `exp-base` (holds v2)). Nothing applied to the
+working branch; the owner rules which, if any. Owner's open question answered in the report: why
+`chain(value, next)` is called (the `*With` nodes and the outcome node apply whole tails; `Id`'s fallback;
+the arm's `k(r._1, Arrow.id)`), and its relation to the quadratic (`trailingMapsStayLinear` 0.97 s/op in
+the probe; the done branch's eager `dump()` plus the walk's re-push under budget exhaustion; the old
+evaluator kept that row linear by re-pushing a captured interior as one entry; any new-design fix must
+flatten the prefix through the last handler). Still open: HandlerLoopState arm for pending stateful
+clauses (needs the re-entry spelling, same as the capture gap); the done branch reads `state(0)` after
+`pop` (owner edit; as `Stack.pop` stands it reads the next slot; unpinned; raised); `kyo.kernel` in
+kernel2 has `Eval.apply = ???` (ProtoKernelBench all rows NotImplementedError); the handleLoopState corpus
+blocks in ArrowEffectTest/EvalTest still commented; full `kyo-kernel2` module still unverified beyond
+`kyo.proto.*`.
+
 **KERNEL RESUME ANCHOR (2026-08-19, written for a fresh session; supersedes chat-only state).**
 The owner's kernel WIP is UNCOMMITTED in this worktree (16 modified + Handler.scala,
 KyoInternal.scala untracked). First act of any resuming session: verify `git config user.email`
