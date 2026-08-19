@@ -1,14 +1,14 @@
 package kyo.proto
 
 import kyo.Const
+import kyo.Maybe
 import kyo.Tag
 import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
 import scala.compiletime.testing.typeCheckErrors
 
 /** The kernel's `PendingTest` corpus pointed at this package. Cases whose surface this package does not have yet (`flatMap`, `andThen`,
-  * `unit`, `evalNow`, `flatten`, `handle`, `handleLoopWith`) are kept with their code commented, so the corpus is complete and the gap
-  * is visible.
+  * `unit`, `flatten`, `handle`) are kept with their code commented, so the corpus is complete and the gap is visible.
   */
 class PendingTest extends AnyFreeSpec:
 
@@ -209,12 +209,10 @@ class PendingTest extends AnyFreeSpec:
         assert(Eval(answerAsk(41)(payload)) == 42)
     }
 
-    // handleLoopWith is not in this package yet
-    /*
     "a fused handler continuation receives a payload as a value" in {
         val inner: Int < Ask = ask.map(_ + 1)
         var got: Int < Ask   = 0
-        val r: Int < Any = ArrowEffect.handleLoopWith(Tag[Give], give)(
+        val r: Int < Any = ArrowEffect.handleLoopWith[Const[Unit], Const[Int < Ask], Give, Int < Ask, Int < Ask, Any](Tag[Give], give)(
             [C] => _ => Loop.continue(settled(inner)),
             a => settled(a)
         ) { b =>
@@ -224,9 +222,8 @@ class PendingTest extends AnyFreeSpec:
         assert(Eval(r) == 9)
         assert(Eval(answerAsk(41)(got)) == 42)
     }
-     */
 
-    // flatMap, andThen, unit, evalNow, flatten and handle are not in this package yet
+    // flatMap, andThen and unit are not in this package yet
     /*
     "flatMap chains a settled value into an effectful computation" in {
         val r: Int < Ask = (5: Int < Ask).flatMap(a => ask.map(_ + a))
@@ -271,7 +268,6 @@ class PendingTest extends AnyFreeSpec:
         assert((1: Int < Any).map(_ + 1).eval == 2)
     }
 
-    /*
     "evalNow returns a settled value" in {
         assert((42: Int < Any).evalNow == Maybe(42))
     }
@@ -286,6 +282,8 @@ class PendingTest extends AnyFreeSpec:
         assert(Eval(answerAsk(41)(payload)) == 42)
     }
 
+    // flatten and handle are not in this package yet
+    /*
     "flatten runs a nested payload" in {
         val inner: Int < Ask = ask.map(_ + 1)
         assert(Eval(answerAsk(41)(settled(inner).flatten)) == 42)
@@ -357,10 +355,10 @@ class PendingTest extends AnyFreeSpec:
         val nested: (Int < Any) < Any = box(box(41))
         assert(nested.map(c => c).eval == 41)
         assert(nested.map(c => c.map(_ + 1)).eval == 42)
-        // flatten, unit and evalNow are not in this package yet
+        assert(nested.evalNow.isDefined)
+        // flatten and unit are not in this package yet
         // assert(nested.flatten.eval == 41)
         // assert(nested.unit.eval == ())
-        // assert(nested.evalNow.isDefined)
     }
 
     "a pending value does not lift into a nested computation implicitly" in {

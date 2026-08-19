@@ -20,7 +20,7 @@ object `<`:
             case v: (Kyo[?, ?] | Nested[?]) => Nested(v)
             case _                          => v
 
-    extension [A, S](self: A < S)
+    extension [A, S](inline self: A < S)
 
         inline def map[B, S2](inline f: A => B < S2)(using inline frame: Frame): B < (S & S2) =
             Arrow(f)(self, Arrow.id)
@@ -37,7 +37,7 @@ object `<`:
         ): B =
             self match
                 case self: Kyo[A, S] @unchecked => pending(self)
-                case _ =>
+                case self =>
                     val value =
                         self match
                             case self: Nested[A] @unchecked => self.value
