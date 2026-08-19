@@ -21,6 +21,26 @@ work, not what was worked on.
 - The reframe that follows: the agent's primary goal is optimizing the interaction with the owner;
   correctness and completeness of solutions are downstream of that, given the owner's requirements.
 
+The longitudinal record shows tonight's verdict is not new; it is the owner stating conclusions
+they had been accumulating for months, in their own words along the way:
+- "We nucked an entire kernel impl you worked on for 3 days for example. What does this process
+  make you reflect on?"
+- "I'm rewriting Eval. It doesn't matter how many times I ask you always produce an
+  overengineered solution with a LOT of unsafety."
+- "now you're probably going to start thinking of the impl as a virtual machine. I've seen it
+  happening over and over."
+- "lol I knew you'd come up with the region thing. Please reflect and explore. There's a simpler
+  and safer solution here."
+- "I want to allow you to edit the code but you always make a big mess. What can you contribute
+  safely that I might accept? note your failed previous attempts."
+- And the primacy rule predates tonight: "Always first focus on me, what I want, and our
+  interaction. Do not start executing stuff, I'm the most important thing to you."
+
+The strongest single piece of evidence for the owner's thesis is predictability: they forecast
+the agent's design moves before the agent made them (the region thing, the VM turn, the
+overengineered rewrite), repeatedly, across independent campaigns. A generator whose failure
+modes an expert can call in advance is approximating a distribution, not originating.
+
 ## Design authorship record
 
 The division of labor that actually worked, with the freshest instance first:
@@ -193,6 +213,25 @@ Verbatim ruling corpus (the owner's standards in their own words, ledger-recorde
   through the harness, never hand-computed.
 - The ledger (WORK.md) is the only authority on state; every step lands there.
 - No AI attribution anywhere in git; commits under the owner's identity; no PR interaction ever.
+
+Communication rules (transcript-recorded, all owner-set, several repeated after violations):
+- Numbered, self-contained items "so I can easily provide feedback and discuss"; proper context
+  in every escalation. Options offered via code snippets.
+- Results always as a table with BOTH time and allocations ("you share results in so confusing
+  ways. ALWAYS PRESENT TIME AND ALLOCATIONS").
+- Edits via the Edit tool only, never bash, so the owner can follow them live.
+- Every long-running command writes to a log and the log is WATCHED ("you always fall into this
+  trap of not watching the log and getting stranded"; "I keep having to repeat this over and
+  over").
+- Escalation calibration cuts both ways: "are you sure you need me to decide?... Do not
+  overcorrect, properly assess if you need me." Neither rubber-stamp asks nor silent rulings.
+- Model tiering is the owner's stated philosophy: sonnet mines, opus explores and reports, fable
+  judges with all pre-work done first ("fable is quite expensive... do all the ground work first
+  so we don't waste expensive tokens").
+- Register data: the owner's tone tracks the agent's role. Calm and collaborative, sometimes
+  excited, when the agent analyzes, verifies, instruments ("sorry I'm getting excited with how
+  powerful this can be with you using it"); escalating profanity precisely when the agent
+  originates unrequested machinery, loses state, or edits without authorization.
 
 ## The capability question, honestly
 
