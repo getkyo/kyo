@@ -13,7 +13,7 @@ object Kyo:
     /** `value` then `contA` then `contB`. The value is currency, pending or settled: a pending input deferred behind a transform, and a
       * strict step past the safepoint budget, are the same node.
       */
-    sealed abstract class Defer[A, B, +C, -S] extends Kyo[C, S]:
+    abstract class Defer[A, B, +C, -S] extends Kyo[C, S]:
         def value: A < S
         def contA: Arrow[A, B, S]
         def contB: Arrow[B, C, S]

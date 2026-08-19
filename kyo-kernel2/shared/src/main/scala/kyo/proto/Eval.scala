@@ -46,13 +46,34 @@ object Eval:
                                     curr = h.run(kyo.input, stack.dump(pos))
                                 case h: HandlerLoop[IX, OX, EX, AX, BX, S] @unchecked =>
                                     curr =
-                                        h.run(kyo.input).map {
-                                            case r: Loop.Continue[OX[CX] < (EX & S)] @unchecked =>
-                                                r._1
-                                            case v =>
-                                                stack.truncate(pos + 1)
-                                                v
-                                        }
+                                        h.run(kyo.input).lower(
+                                            pending = clause =>
+                                                val k = stack.dump[OX[CX], BX, EX & S](pos + 1)
+                                                new Kyo.Defer[Loop.Outcome[OX[CX] < (EX & S), BX], BX, BX, EX & S]
+                                                    with Arrow.Transform[Loop.Outcome[OX[CX] < (EX & S), BX], BX, EX & S]:
+                                                    def frame = Frame.internal
+                                                    def value = clause
+                                                    def contA = this
+                                                    def contB = Arrow.id[BX]
+                                                    def apply(o: Loop.Outcome[OX[CX] < (EX & S), BX]) =
+                                                        o match
+                                                            case r: Loop.Continue[OX[CX] < (EX & S)] @unchecked => k(r._1, Arrow.id)
+                                                            case v                                              => v.asInstanceOf[BX]
+                                                    def apply[D, S2](o: Loop.Outcome[OX[CX] < (EX & S), BX] < S2, next: Arrow[BX, D, S2])
+                                                        : D < (EX & S & S2) =
+                                                        o.lower(
+                                                            pending = Kyo.Defer(_, this, next),
+                                                            done = o => next(apply(o), Arrow.id)
+                                                        )
+                                                end new
+                                            ,
+                                            done =
+                                                case r: Loop.Continue[OX[CX] < (EX & S)] @unchecked =>
+                                                    r._1
+                                                case v =>
+                                                    stack.truncate(pos + 1)
+                                                    v
+                                        )
                                 case h: HandlerLoopState[IX, OX, EX, AX, BX, S, StateX] @unchecked =>
                                     val s = stack.state(pos).getOrElse(h.initialState)
                                     curr =
@@ -73,9 +94,9 @@ object Eval:
                 ,
                 done = r =>
                     if !stack.isEmpty then
-                        val s = stack.state[StateX](0)
                         stack.pop() match
                             case h: HandlerLoopState[IX, OX, EX, AX, BX, S, StateX] @unchecked =>
+                                val s = stack.state[StateX](0)
                                 curr = h.apply(s.getOrElse(h.initialState), r.asInstanceOf[AX])
                             case head =>
                                 val tail = stack.dump()
