@@ -38,4 +38,17 @@ object Handler:
         final def apply(v: A): B < S = apply(initialState, v)
     end HandlerLoopState
 
+    object HandlerLoopState:
+        def apply[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State](
+            h: HandlerLoopState[I, O, E, A, B, S, State],
+            state: State
+        ): HandlerLoopState[I, O, E, A, B, S, State] =
+            new HandlerLoopState[I, O, E, A, B, S, State]:
+                def frame                             = h.frame
+                def tag                               = h.tag
+                def initialState                      = state
+                def run[X](state: State, input: I[X]) = h.run(state, input)
+                def apply(state: State, v: A)         = h.apply(state, v)
+    end HandlerLoopState
+
 end Handler
