@@ -35,8 +35,16 @@ object Eval:
 
     private inline given Frame = Frame.internal
 
+    // not inline: the drive is ~555 instructions and HotSpot refuses to inline it at any call site, so an
+    // inline definition bought nothing at runtime and emitted a private copy of the whole interpreter per
+    // call site. PendingTest alone carried 132 of them.
+    //
+    // not @static either, though the rest of the boundary primitives are. Scala.js cannot emit a static
+    // method that contains a lambda: genSJSIR fails with "Cannot resolve delambdafy target method $anonfun"
+    // on the eta-expansion below. The other @static methods in this package hold local defs and anonymous
+    // classes, never lambdas, which is why they compile. The module load this costs is one getstatic
     @nowarn("msg=anonymous")
-    inline def apply[A, S](v: A < S): A =
+    def apply[A, S](v: A < S): A =
         val stack = Stack.borrow()
 
         @tailrec def loop(curr: Any < Nothing): Any =
