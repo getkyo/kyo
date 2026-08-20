@@ -19,6 +19,7 @@ object `<` extends Implicits:
 
         @nowarn("msg=anonymous")
         inline def map[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
+            // TODO check if this expanded code uses other nested `inline` methods and report
             def arrow =
                 new Arrow.Transform[A, B, S2]:
                     def frame                                          = _frame
