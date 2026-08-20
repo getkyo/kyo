@@ -121,194 +121,208 @@ class EffectTest extends AnyFreeSpec:
         }
     }
 
-    // Effect.catching is not in this kernel yet. These are the previous kernel's cases, kept
-    // as the specification for the port; they use TestEffect1/TestEffect2 and the helpers
-    // below, and Period/burn to drive past the safepoint budget.
-    //
-    // sealed trait TestEffect1 extends ArrowEffect[Const[Int], Const[String]]
-    //
-    // def testEffect1(i: Int): String < TestEffect1 =
-    //     ArrowEffect.suspend[Any](Tag[TestEffect1], i)
-    //
-    // sealed trait TestEffect2 extends ArrowEffect[Const[String], Const[Unit]]
-    //
-    // def testEffect2(s: String): Unit < TestEffect2 =
-    //     ArrowEffect.suspend[Any](Tag[TestEffect2], s)
-    //
-    // def box[A](v: A): A < Any = v
-    //
-    // private val Period = 512
-    //
-    // def burn(n: Int): Int < Any =
-    //     if n == 0 then 0 else (0: Int < Any).map(_ => burn(n - 1))
-    //
-    //
-    // "catching" - {
-    //     "match" in {
-    //         val effect = Effect.catching {
-    //             throw new RuntimeException("Test exception")
-    //         } {
-    //             case _: RuntimeException => 42
-    //         }
-    //
-    //         assert(effect.eval == 42)
-    //     }
-    //
-    //     "no match" in {
-    //         intercept[Exception] {
-    //             Effect.catching {
-    //                 throw new Exception("Test exception")
-    //             } {
-    //                 case _: RuntimeException => 42
-    //             }.eval
-    //         }
-    //     }
-    //
-    //     "failure in map" in {
-    //         val effect = Effect.catching {
-    //             testEffect1(42).map(_ => (throw new RuntimeException("Test exception")): String)
-    //         } {
-    //             case _: RuntimeException => "caught"
-    //         }
-    //
-    //         val result = ArrowEffect.handle(Tag[TestEffect1], effect)(
-    //             [C] => (input, cont) => cont(input.toString)
-    //         )
-    //
-    //         assert(result.eval == "caught")
-    //     }
-    //
-    //     "multiple exception types" in {
-    //         def testCatching(ex: Throwable) = Effect.catching {
-    //             throw ex
-    //         } {
-    //             case _: IllegalArgumentException => "Illegal Argument"
-    //             case _: RuntimeException         => "Runtime"
-    //             case _                           => "Other"
-    //         }
-    //
-    //         assert(testCatching(new RuntimeException()).eval == "Runtime")
-    //         assert(testCatching(new IllegalArgumentException()).eval == "Illegal Argument")
-    //         assert(testCatching(new Exception()).eval == "Other")
-    //     }
-    //
-    //     "failure in a map after a region" in {
-    //         val region = ArrowEffect.handleLoop(Tag[TestEffect1], testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
-    //             [C] => input => Loop.continue(input.toString)
-    //         )
-    //         val effect = Effect.catching {
-    //             region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s)
-    //         } {
-    //             case _: RuntimeException => "caught"
-    //         }
-    //         assert(effect.eval == "caught")
-    //     }
-    //
-    //     "failure in a map after a first region" in {
-    //         // a first-operation region is the stateful handleLoop with Loop.done
-    //         // carrying the resumed remainder out
-    //         val region =
-    //             ArrowEffect.handleLoop(Tag[TestEffect1], (), testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
-    //                 done = (_, a) => (a: String < TestEffect1),
-    //                 handle = [C] => (input, _, cont) => cont(input.toString).map(Loop.done(_))
-    //             )
-    //         val effect = Effect.catching {
-    //             region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s)
-    //         } {
-    //             case _: RuntimeException => "caught"
-    //         }
-    //         val result = ArrowEffect.handle(Tag[TestEffect1], effect)([C] => (input, cont) => cont(input.toString))
-    //         assert(result.eval == "caught")
-    //     }
-    //
-    //     "failure in a map after a stateful region" in {
-    //         val region = ArrowEffect.handleLoop(Tag[TestEffect1], 7, testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
-    //             [C] => (input, state, cont) => Loop.continue(state + 1, cont((input * state).toString))
-    //         )
-    //         val effect = Effect.catching {
-    //             region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s)
-    //         } {
-    //             case _: RuntimeException => "caught"
-    //         }
-    //         assert(effect.eval == "caught")
-    //     }
-    //
-    //     "failure after a stateful region reached through a continuation" in {
-    //         val effect = Effect.catching {
-    //             testEffect1(3).map { prefix =>
-    //                 val region = ArrowEffect.handleLoop(Tag[TestEffect1], 7, testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
-    //                     [C] => (input, state, cont) => Loop.continue(state + 1, cont((input * state).toString))
-    //                 )
-    //                 region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else prefix + s)
-    //             }
-    //         } {
-    //             case _: RuntimeException => "caught"
-    //         }
-    //         val result = ArrowEffect.handle(Tag[TestEffect1], effect)(
-    //             [C] => (input, cont) => cont(input.toString)
-    //         )
-    //         assert(result.eval == "caught")
-    //     }
-    //
-    //     "catching catches past the budget rescue" in {
-    //         val effect = Effect.catching {
-    //             burn(Period * 2).map(_ => (throw new RuntimeException("Test exception")): Int)
-    //         } {
-    //             case _: RuntimeException => -1
-    //         }
-    //         assert(effect.eval == -1)
-    //     }
-    //
-    //     "catching catches past the budget inside a stateful region" in {
-    //         val body = testEffect1(1).map(a => burn(Period * 2).map(_ => testEffect1(2).map(b => a + b)))
-    //         val region = ArrowEffect.handleLoop(Tag[TestEffect1], 7, body)(
-    //             [C] => (input, state, cont) => Loop.continue(state + 1, cont((input * state).toString))
-    //         )
-    //         val effect = Effect.catching {
-    //             region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s)
-    //         } {
-    //             case _: RuntimeException => "caught"
-    //         }
-    //         assert(effect.eval == "caught")
-    //     }
-    //
-    //     "catching does not reach into a boxed computation" in {
-    //         val fallback: String < TestEffect1 = "caught"
-    //         val boxed = Effect.catching {
-    //             box(testEffect1(1).map(s => (throw new RuntimeException("Test exception")): String))
-    //         } {
-    //             case _: RuntimeException => box(fallback)
-    //         }
-    //         val inner   = boxed.eval
-    //         val handled = ArrowEffect.handle(Tag[TestEffect1], inner)([C] => (input, cont) => cont(input.toString))
-    //         intercept[RuntimeException](handled.eval)
-    //     }
-    //
-    //     "catching guards a stateful region across a park" in {
-    //         val body = testEffect1(1).map(a => testEffect2("park").map(_ => testEffect1(2).map(b => a + b)))
-    //         val region = ArrowEffect.handleLoop(Tag[TestEffect1], 7, body)(
-    //             [C] => (input, state, cont) => Loop.continue(state + 1, cont((input * state).toString))
-    //         )
-    //         val effect = Effect.catching {
-    //             region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s)
-    //         } {
-    //             case _: RuntimeException => "caught"
-    //         }
-    //         val parked = Eval.partial(effect)
-    //         assert(parked.evalNow.isEmpty)
-    //         assert(ArrowEffect.handle(Tag[TestEffect2], parked)([C] => (_, cont) => cont(())).eval == "caught")
-    //     }
-    //
-    //     "a stateful region threads state under catching" in {
-    //         val region = ArrowEffect.handleLoop(Tag[TestEffect1], 7, testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
-    //             [C] => (input, state, cont) => Loop.continue(state + 1, cont((input * state).toString))
-    //         )
-    //         val effect = Effect.catching(region) {
-    //             case _: RuntimeException => "caught"
-    //         }
-    //         assert(effect.eval == "716")
-    //     }
-    // }
+    sealed trait TestEffect1 extends ArrowEffect[Const[Int], Const[String]]
+
+    def testEffect1(i: Int): String < TestEffect1 =
+        ArrowEffect.suspend[Any](Tag[TestEffect1], i)
+
+    sealed trait TestEffect2 extends ArrowEffect[Const[String], Const[Unit]]
+
+    def testEffect2(s: String): Unit < TestEffect2 =
+        ArrowEffect.suspend[Any](Tag[TestEffect2], s)
+
+    def box[A](v: A): A < Any = v
+
+    private val Period = 512
+
+    def burn(n: Int): Int < Any =
+        if n == 0 then 0 else (0: Int < Any).map(_ => burn(n - 1))
+
+    "catching" - {
+        "match" in {
+            val effect = Effect.catching {
+                throw new RuntimeException("Test exception")
+            } {
+                case _: RuntimeException => 42
+            }
+
+            assert(effect.eval == 42)
+        }
+
+        "no match" in {
+            intercept[Exception] {
+                Effect.catching {
+                    throw new Exception("Test exception")
+                } {
+                    case _: RuntimeException => 42
+                }.eval
+            }
+        }
+
+        "failure in map" in {
+            val effect = Effect.catching {
+                testEffect1(42).map(_ => (throw new RuntimeException("Test exception")): String)
+            } {
+                case _: RuntimeException => "caught"
+            }
+
+            val result = ArrowEffect.handleCont(Tag[TestEffect1], effect)([C] => (input, cont) => cont(input.toString), a => a)
+
+            assert(result.eval == "caught")
+        }
+
+        "multiple exception types" in {
+            def testCatching(ex: Throwable) = Effect.catching {
+                throw ex
+            } {
+                case _: IllegalArgumentException => "Illegal Argument"
+                case _: RuntimeException         => "Runtime"
+                case _                           => "Other"
+            }
+
+            assert(testCatching(new RuntimeException()).eval == "Runtime")
+            assert(testCatching(new IllegalArgumentException()).eval == "Illegal Argument")
+            assert(testCatching(new Exception()).eval == "Other")
+        }
+
+        "failure in a map after a region" in {
+            val region = ArrowEffect.handleLoop(Tag[TestEffect1], testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
+                [C] => input => Loop.continue(input.toString: String < Any),
+                a => a
+            )
+            val effect = Effect.catching {
+                region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s)
+            } {
+                case _: RuntimeException => "caught"
+            }
+            assert(effect.eval == "caught")
+        }
+
+        // A first-operation region answers once and carries the resumed remainder out through Loop.done, so
+        // its clause needs the continuation in hand. That is handleFirst, which this kernel does not have:
+        // handleCont keeps the region installed and handleLoopState answers with a value, and neither
+        // substitutes. Parked with the rest of that family.
+        //
+        // "failure in a map after a first region" in {
+        //     val region =
+        //         ArrowEffect.handleLoop(Tag[TestEffect1], (), testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
+        //             done = (_, a) => (a: String < TestEffect1),
+        //             handle = [C] => (input, _, cont) => cont(input.toString).map(Loop.done(_))
+        //         )
+        //     val effect = Effect.catching {
+        //         region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s)
+        //     } {
+        //         case _: RuntimeException => "caught"
+        //     }
+        //     val result = ArrowEffect.handleCont(Tag[TestEffect1], effect)([C] => (input, cont) => cont(input.toString), a => a)
+        //     assert(result.eval == "caught")
+        // }
+
+        "failure in a map after a stateful region" in {
+            val region = ArrowEffect.handleLoopState(Tag[TestEffect1], 7, testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
+                // the old stateful clause applied a continuation it was handed; this one hands the answer
+                // back in the outcome and the region resumes with it
+                [C] => (state, input) => Loop.continue(state + 1, (input * state).toString: String < Any),
+                (_, a) => a
+            )
+            val effect = Effect.catching {
+                region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s)
+            } {
+                case _: RuntimeException => "caught"
+            }
+            assert(effect.eval == "caught")
+        }
+
+        "failure after a stateful region reached through a continuation" in {
+            val effect = Effect.catching {
+                testEffect1(3).map { prefix =>
+                    val region = ArrowEffect.handleLoopState(Tag[TestEffect1], 7, testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
+                        [C] => (state, input) => Loop.continue(state + 1, (input * state).toString: String < Any),
+                        (_, a) => a
+                    )
+                    region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else prefix + s)
+                }
+            } {
+                case _: RuntimeException => "caught"
+            }
+            val result = ArrowEffect.handleCont(Tag[TestEffect1], effect)([C] => (input, cont) => cont(input.toString), a => a)
+            assert(result.eval == "caught")
+        }
+
+        "catching catches past the budget rescue" in {
+            val effect = Effect.catching {
+                burn(Period * 2).map(_ => (throw new RuntimeException("Test exception")): Int)
+            } {
+                case _: RuntimeException => -1
+            }
+            assert(effect.eval == -1)
+        }
+
+        "catching catches past the budget inside a stateful region" in {
+            val body = testEffect1(1).map(a => burn(Period * 2).map(_ => testEffect1(2).map(b => a + b)))
+            val region = ArrowEffect.handleLoopState(Tag[TestEffect1], 7, body)(
+                // the old stateful clause applied a continuation it was handed; this one hands the answer
+                // back in the outcome and the region resumes with it
+                [C] => (state, input) => Loop.continue(state + 1, (input * state).toString: String < Any),
+                (_, a) => a
+            )
+            val effect = Effect.catching {
+                region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s)
+            } {
+                case _: RuntimeException => "caught"
+            }
+            assert(effect.eval == "caught")
+        }
+
+        "catching does not reach into a boxed computation" in {
+            val fallback: String < TestEffect1 = "caught"
+            val boxed = Effect.catching {
+                box(testEffect1(1).map(s => (throw new RuntimeException("Test exception")): String))
+            } {
+                case _: RuntimeException => box(fallback)
+            }
+            val inner   = boxed.eval
+            val handled = ArrowEffect.handleCont(Tag[TestEffect1], inner)([C] => (input, cont) => cont(input.toString), a => a)
+            intercept[RuntimeException](handled.eval)
+        }
+
+        // the original parked here by suspending an effect no handler answered, which a slice used to be
+        // allowed to do. It takes `A < Any` now, so the park comes from a stop instead, which tests the same
+        // thing more directly: the recovery is a stack entry, so it has to survive the snapshot and come back
+        "catching guards a stateful region across a park" in {
+            val body = testEffect1(1).map(a => testEffect1(2).map(b => a + b))
+            val region = ArrowEffect.handleLoopState(Tag[TestEffect1], 7, body)(
+                [C] => (state, input) => Loop.continue(state + 1, (input * state).toString: String < Any),
+                (_, a) => a
+            )
+            val effect = Effect.catching {
+                region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s)
+            } {
+                case _: RuntimeException => "caught"
+            }
+            var steps = 0
+            val parked = Eval.partial(
+                effect,
+                () =>
+                    steps += 1; steps == 1
+            )
+            assert(parked.evalNow.isEmpty)
+            assert(Eval(parked) == "caught")
+        }
+
+        "a stateful region threads state under catching" in {
+            val region = ArrowEffect.handleLoopState(Tag[TestEffect1], 7, testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
+                // the old stateful clause applied a continuation it was handed; this one hands the answer
+                // back in the outcome and the region resumes with it
+                [C] => (state, input) => Loop.continue(state + 1, (input * state).toString: String < Any),
+                (_, a) => a
+            )
+            val effect = Effect.catching(region) {
+                case _: RuntimeException => "caught"
+            }
+            assert(effect.eval == "716")
+        }
+    }
     //
     //
     // "defer with catching" in {

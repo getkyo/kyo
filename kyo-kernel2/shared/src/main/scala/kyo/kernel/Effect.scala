@@ -6,6 +6,7 @@ import kyo.Arrow
 import kyo.Arrow.Bracket
 import kyo.Frame
 import kyo.kernel.internal.*
+import kyo.kernel.internal.Kyo.Catching
 import kyo.kernel.internal.Kyo.Defer
 import scala.annotation.nowarn
 import scala.annotation.static
@@ -61,17 +62,13 @@ object Effect:
       * boundary, which assumes an exception is observed only there. This handler is a second observation point, so it has to attach and
       * splice before calling `f`, or the handler sees frames in the carrier that are not in the stack trace.
       */
-    // Parked: it cannot be implemented without other changes. CPS makes the continuation be the
-    // rest of the computation, so the old kernel could wrap it in a try and guard everything
-    // downstream. Here the eval owns a stack and the rest is spread across its entries, so a try
-    // inside one arrow's apply guards building the next deferral, not running it. A self-
-    // reinstalling guard arrow and a structural rewrite of every continuation were both
-    // considered; the first does not guard the eval's own work and the second pays an
-    // allocation per eval step. What it needs is a stack entry the eval consults while
-    // unwinding, which is the mechanism the Bracket work introduces, so this rides on that.
-    // private[kyo] inline def catching[A, S, B >: A, S2](inline v: => A < S)(
-    //     inline f: Throwable => B < S2
-    // )(using inline _frame: Frame): B < (S & S2)
+    @nowarn("msg=anonymous")
+    inline def catching[A, S, B >: A, S2](inline v: => A < S)(
+        inline f: Throwable => B < S2
+    )(using inline _frame: Frame): B < (S & S2) =
+        new Catching[B, S & S2]:
+            def value   = v
+            val recover = Arrow(f)
 
     /** Detaches a computation from the bindings standing at this point, so the child carries them and can be evaluated elsewhere.
       *
@@ -90,11 +87,13 @@ object Effect:
       * which is what an eval that is ending can offer.
       */
     @nowarn("msg=anonymous")
-    inline def bracket[A, B, S](inline acquire: A < S)(inline release: A => Any < Any)(
-        inline use: A => B < S
+    inline def bracket[A, B, S](inline acquire: A < S)(inline _release: A => Any < Any)(
+        inline _use: A => B < S
     )(using inline _frame: Frame): B < S =
-        val _release = release
-        val _use     = use
+        // the parameters are named apart from the members below rather than bound to locals first: `Arrow`
+        // takes its function inline, so handing it a local would cost a call through the lambda at every
+        // application instead of expanding the body into the arrow
+        //
         // the deferral of the acquire and the arrow that consumes it are one object, as a suspension and its
         // continuation are in suspendWith: the node's own first continuation is the bracket
         new Defer[A, B, B, S] with Bracket[A, B, S]:
@@ -102,8 +101,8 @@ object Effect:
             def value   = acquire
             def contA   = this
             def contB   = Arrow.id[B]
-            val use     = Arrow(_use)(using _frame)
-            val release = Arrow(_release)(using _frame)
+            val use     = Arrow(_use)
+            val release = Arrow(_release)
         end new
     end bracket
 

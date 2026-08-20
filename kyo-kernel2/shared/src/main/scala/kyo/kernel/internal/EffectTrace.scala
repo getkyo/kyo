@@ -279,6 +279,11 @@ object EffectTrace:
                                 push(d.contB)
                                 push(d.contA)
                                 pushValue(d.value)
+                            case c: Kyo.Catching[?, ?] =>
+                                // the recovery carries no site of its own, and it is only reached by a
+                                // failure that this walk is already describing, so only the guarded body
+                                // contributes frames
+                                pushValue(c.value)
                             case p: Kyo.Park[?, ?] =>
                                 // mirrors the eval's Park arm: the parked entries stand above the value, so
                                 // they drain after it, and they go on innermost first the way the stack held

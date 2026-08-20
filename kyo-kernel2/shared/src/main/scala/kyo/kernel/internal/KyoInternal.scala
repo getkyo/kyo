@@ -60,6 +60,21 @@ object Kyo:
         override def toString: String = render(value)
     end Park
 
+    /** A scope that answers its own failure.
+      *
+      * A node rather than an arrow, which is where it parts company with `Bracket`: a bracket's arrow exists
+      * so the acquire settles before anything is owed, and that is what answers "did the acquire complete"
+      * by construction. Nothing has to settle before a recovery is owed, so it is installed on the way in.
+      */
+    abstract private[kyo] class Catching[A, S] extends Kyo[A, S]:
+        // a method, for the reason a deferral's payload is one: the guarded body has to run when the
+        // evaluator reads it and not when the node is built, or `catching { throw ... }` throws before
+        // anything guards it. Abstract rather than a by-name constructor parameter, which would store the
+        // thunk in a field and read it through a pointer at every use
+        def value: A < S
+        def recover: Arrow[Throwable, A, S]
+    end Catching
+
     abstract private[kyo] class Handle[E <: ArrowEffect[?, ?], A, B, +C, -S] extends Kyo[C, S]:
         def value: Kyo[A, E & S]
         def handler: Handler[E, A, B, S]
@@ -81,6 +96,7 @@ object Kyo:
                     case k: Defer[?, ?, ?, ?]         => loop(k.value, fuel - 1)
                     case k: Handle[?, ?, ?, ?, ?]     => loop(k.value, fuel - 1)
                     case k: Park[?, ?]                => loop(k.value, fuel - 1)
+                    case k: Catching[?, ?]            => loop(k.value, fuel - 1)
                     case n: Nested[?]                 => loop(n.value, fuel - 1)
                     case settled                      => s"Kyo($settled)"
         loop(v, 64)

@@ -137,8 +137,13 @@ final private[kyo] class Stack:
 
     def dump[A, B, S](): Arrow[A, B, S] =
         @tailrec def boundary(i: Int): Int =
-            if i == size || i == reach || entries((head + i) & mask).isInstanceOf[Handler[?, ?, ?, ?]] then i
+            val e = entries((head + i) & mask)
+            // a recovery bounds a fold as a region does. Folded in, it leaves the stack, and the failure it
+            // guards against happens while the folded continuation's own argument is being evaluated, before
+            // anything applies it: the scope would be off the stack exactly when it is needed
+            if i == size || i == reach || e.isInstanceOf[Handler[?, ?, ?, ?]] || e.isInstanceOf[Recover] then i
             else boundary(i + 1)
+        end boundary
         dump[A, B, S](boundary(0), false)
     end dump
 
@@ -213,6 +218,28 @@ final private[kyo] class Stack:
             pushFinalizer(fins(i))
             i += 1
     end restore
+
+    /** Unwinds to the innermost recovery that answers, releasing everything it passes on the way.
+      *
+      * One walk over the entries is what orders the two: a bracket opened inside a guarded scope sits above
+      * the recovery, so it releases before the recovery runs. Nothing records a depth and nothing goes stale
+      * when `dump` and `restore` move `head`, because the order is the stack's own.
+      *
+      * Everything above the answering recovery is discarded, which is what makes the recovery the
+      * continuation: the value it produces flows into the entries that were below it.
+      */
+    // the answer is a pending computation, typed here as `Any` so the stack keeps knowing nothing about the
+    // pending type: every other member is about arrows and slots, and the caller casts anyway
+    def unwind(ex: Throwable): Maybe[Any] =
+        var out = Maybe.empty[Any]
+        while out.isEmpty && !isEmpty do
+            pop() match
+                case f: Finalizer[?] => f.run()
+                case r: Recover      => out = r.panic(ex)
+                case _               => ()
+        end while
+        out
+    end unwind
 
     def pushFinalizer(f: Finalizer[?]): Unit =
         // drop the run of releases on top that have already run, so an eval that brackets many resources one
