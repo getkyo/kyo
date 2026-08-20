@@ -277,6 +277,19 @@ class PendingTest extends AnyFreeSpec:
         assert(ask.evalNow == Maybe.Absent)
     }
 
+    // the receiver of an extension marked `inline self` is substituted at each occurrence, so an
+    // occurrence per branch means the whole expression to the left of the dot is built once per branch.
+    // A settled receiver runs its lambda while it is built, which makes the duplication observable
+    "evalNow builds its receiver once" in {
+        var runs = 0
+        val r = (1: Int < Any).map { a =>
+            runs += 1
+            a + 1
+        }.evalNow
+        assert(r == Maybe(2))
+        assert(runs == 1)
+    }
+
     "evalNow returns a payload unwrapped" in {
         val inner: Int < Ask   = ask.map(_ + 1)
         val payload: Int < Ask = settled(inner).evalNow.getOrElse(0)

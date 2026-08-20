@@ -541,20 +541,24 @@ object Loop:
       * @return
       *   Unit after completing all iterations
       */
+    // the count is checked before `run` is reached rather than after, so the body is evaluated exactly n
+    // times. Carrying the previous iteration's value into the check instead evaluates `run` once more than
+    // that: harmless for a deferred body, where the extra evaluation only builds a node that is then
+    // discarded unexecuted, and one extra execution for a settled one
     inline def repeat[S](n: Int)(inline run: Any < S)(using inline _frame: Frame): Unit < S =
         def suspended(i: Int)(v: Any < S): Unit < S =
-            v.map(_ => loop(i + 1)(run))
-        @tailrec def loop(i: Int)(v: Any < S): Unit < S =
-            if i > n then ()
+            v.map(_ => loop(i))
+        @tailrec def loop(i: Int): Unit < S =
+            if i >= n then ()
             else
-                v match
-                    case _: Kyo[?, ?] =>
-                        suspended(i)(v)
+                run match
+                    case v: Kyo[?, ?] =>
+                        suspended(i + 1)(v)
                     case _ =>
-                        loop(i + 1)(run)
+                        loop(i + 1)
             end if
         end loop
-        loop(0)(())
+        loop(0)
     end repeat
 
     /** Executes a loop indefinitely until explicitly terminated.

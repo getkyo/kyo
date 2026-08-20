@@ -7,48 +7,59 @@ set aside, what is finished.
 
 ## 🔴 Blocked on the owner
 
-An item lands here only when it is finished and waiting on you, not while it is still being worked.
+### B1. Bracket and Park: review 2 came back REWORK
 
-Nothing right now. E1 moves here when its review lands.
+`reviews/BRACKET-PARK-REVIEW-2.md`. It closes six of the first review's seven blocking findings, including the
+minting rule, and confirms the value half of the subclass split is real and load-bearing. Two findings are open,
+both of the shape "release never runs", neither "release runs twice":
+
+1. **The arrow half of the split does not hold.** Once a `Finalizer` is a stack entry it is an `Arrow` like any
+   other, and `Stack.dump(pos)`'s `wrap` guard merges runs of entries into one chain-valued slot. After a region
+   fold or a park-and-resume the finalizer can sit inside an `Arrow.Chain`, where the new `Barrier` boundary check
+   does not see it. That is the first review's B3 in a new location, and the section that would have caught it
+   asserts a round-trip property that is false and pins it with a test that passes anyway.
+2. **A park with a consumed acquire owes its release.** The design answers "what does a park owe when the bracket
+   has not been consumed" with "nothing", which is right when `acquire` has not run and wrong when it has and its
+   trailing continuations are still on the stack. Its own test asserts the leak as correct, contradicting
+   `Effect.bracket`'s scaladoc in the same document.
+
+It also flags that the design puts two `private[kernel]` symbols inside `Eval.apply`, which is `inline`. That one
+is now settled by evidence rather than by the rule: see D2 below for what an inline body may and may not name.
+
+**Nothing here is implemented, per your standing instruction.** What I need from you is whether to send the design
+back for a third pass, or park Bracket and move on.
+
+### B2. `Loop.repeat` runs a settled body n+1 times, in kyo-kernel too
+
+Found by the new expansion-site guard. `repeat` carried the previous iteration's value into the bound check, so it
+evaluated `run` once more than `n`. For a deferred body the extra evaluation only builds a node that is then
+discarded unexecuted, which is why the existing test never saw it: it uses `defer`. For a settled body the
+evaluation *is* the execution, so `Loop.repeat(3)` ran the body four times.
+
+Fixed in kernel2, with a settled-body case added to `LoopTest`. **`kyo-kernel` has the identical shape**
+(`kyo-kernel/shared/src/main/scala/kyo/kernel/Loop.scala:568-583`: `loop(0)(())`, and `loop(i + 1)(run)` on the
+settled arm), so the bug is there too and inherited rather than introduced. I have not touched that module: it is
+the one being replaced and it has its own suite. Say the word and it is a one-line fix plus a test.
 
 ---
 
 ## 🟡 Executing
 
-### E1. Bracket and Park
+### E1. P1, the inline sweep, unparked per your note
 
-Design written (`reviews/BRACKET-PARK-DESIGN.md`), held-out review running. Moves to blocked when the review lands
-and it is ready for your approval. **Implementation will not start without that approval.**
+Your directive: optimize compilation time without regressing runtime performance. Two things landed under it so far
+and both were correctness fixes as much as performance ones.
 
-Two decisions it will bring you:
+**`evalNow` built its receiver twice.** `self` is `inline` on the extension, so every occurrence re-expands the
+receiver expression, and `evalNow` had one per branch. `v.map(f).evalNow` therefore built the map twice and ran `f`
+twice on the settled path. Bound once now, with a reproducing test in `PendingTest`.
 
-1. **Is `Effect.bracket` `inline`?** Design ships it non-inline; prior art was `inline`
-   (`3a95636fa8:Effect.scala:56`). Not a free choice: an inline `bracket` mints `new Kyo.Bracket` at the call site,
-   so `Kyo.Bracket` must be nameable from an expansion site outside package `kyo`, the same constraint that produced
-   the unqualified `Arrow.Transform` imports. That makes it a requirement on `KyoInternal.scala`.
-2. **`finalizeResources` visibility.** Design ships `private[kyo]` per prior art; the brief called it a public
-   extension on the pending type.
+**The measurement harness no longer needs sbt.** `dotty.tools.dotc.Main` runs directly off the coursier cache, so
+a fixture can be compiled and its tree dumped while a suite is running. Note for anyone repeating it: at 3.8.4
+`scala3-library_3` is an empty forwarder jar and the classes are in `scala-library` 3.8.4.
 
-One limitation it reports rather than hides: a `handleCont` clause that receives the interior fold and neither
-applies it nor throws leaks the resource. Inherent to a continuation delivered as a `Function1`. Pinned as a
-specification, with `Scope` named as the correct home.
-
-### E2. Visibility reduction
-
-`Kyo`, `Stack`, `Safepoint`, `Handler` and `Nested` narrowed to `private[kyo]`. `EffectTrace` stays public by your
-decision, since it becomes `KyoException`.
-
-kernel2 compiles and all 13 fixtures compile from outside package `kyo`. The unqualified imports added for
-`Arrow.Transform` already cover the reference sites, so no further reference pass was needed.
-
-`private[kernel]` is not reachable for `Kyo` or `Safepoint`: `Arrow.scala` is `package kyo`, not `kyo.kernel`, and
-names both directly. `private[kyo]` is the floor for those two.
-
-**One cost surfaced, and it is a signal rather than a nuisance.** The narrowing pushed `KyoTest`'s
-`assert(widen(TypeMap(1, true)).eval.get[Boolean])` past the JVM's 64KB string-constant limit: `eval` expands the
-whole drive inline, and scalatest's `assert` renders its argument into a constant. Binding the value before the
-assert fixes it and is the better test regardless, but the underlying fact stands: the drive expansion is large
-enough that adding accessor indirection to it crosses a hard JVM limit. That belongs to P1.
+Still open under this heading: `Kyo.lift` and `Kyo.unit` to `@static`, dropping `inline` from `self`, and the
+per-shape expansion sizes (was R2, folded in here since it is the measurement this work is keyed to).
 
 ---
 
@@ -56,104 +67,63 @@ enough that adding accessor indirection to it crosses a hard JVM limit. That bel
 
 ### R1. Re-run the runtime benchmark board
 
-**The board I gave you this morning is stale.** It predates the unqualify change, which touched `Pending.scala`,
-`Eval.scala` and `ArrowEffect.scala`, all hot path. Same rows, `-f 2`, `-prof gc`.
-
-### R2. `map` expansion tree dump
-
-Does not need the machine, so it fills time while runs are in flight.
-
-Static answer is in hand: `f`, `unsafeGet`, `self` and **`lift`** expand; `Effect.defer`, `Safepoint.*`, `Arrow.id`,
-`next.head/tail` do not. What is left is size, on three lambda shapes: bare value, bare singleton (which reaches the
-`CanLift` splice macro), already-pending.
+Stale, and now more so: it predates the unqualify change, the visibility work, and the `evalNow` fix. Same rows,
+`-f 2`, `-prof gc`.
 
 ### R3. Recursion benchmarks and the `Loop`-on-`Arrow.recursive` question
 
-Six rows, `Arrow.recursive` vs `Loop` vs plain recursive `def`, pure and effectful, then the design question in the
-same breath since the numbers are the argument. Allocation is the discriminator: `Loop.continue` mints a `Continue`
-per iteration, `Arrow.recursive` mints one arrow total. Ends in a proposal, not a change: `Loop.continue`/`done` at
-four state values is public surface.
+Six rows, `Arrow.recursive` vs `Loop` vs plain recursive `def`, pure and effectful. Allocation is the
+discriminator: `Loop.continue` mints a `Continue` per iteration, `Arrow.recursive` mints one arrow total. Ends in a
+proposal, not a change, since `Loop.continue`/`done` at four state values is public surface.
 
 ---
 
 ## ⚪ Parked
 
-### P1. The inline sweep
-FB unpark this. I'll step out please work autonomously and focus on optimizing compilation time without regressing runtime performance
-`CanLift` givens · `Kyo.lift` and `Kyo.unit` to `@static` · `inline self` on the pending extension ·
-`evalNow`/`unsafeGet` binding `self` once. One experiment at four sites, all asking the same question: what does
-dropping `inline` from a kernel primitive cost at runtime and buy at compile time. Bytecode pins first, since if the
-settled-path fold disappears the sizes answer it before JMH runs.
-
-Two findings already established and worth keeping when this restarts. `derivedSingleton` must stay inline
-regardless: as a plain given its macro would expand against an abstract type, `checkImpl`'s two guards would both
-evaluate false, and the module lint would silently become a no-op rather than failing loudly. And `Kyo.unit` is the
-weakest candidate of the four, since its body is a literal `()` and `@static` would add an `invokestatic` where
-today there is nothing at all.
-
-`evalNow`/`unsafeGet` binding `self` once is also a latent correctness fix, not only a perf question: `inline self`
-substitutes the receiver expression at each use, and both methods use it twice, so `v.map(...).evalNow` re-expands
-the whole chain.
-
 ### P2. `EffectTrace` becomes `KyoException`
 
-`EffectTrace` is an `Exception`, but it is not the exception that gets thrown. Today it is a **carrier**: the drive
-attaches it to whatever crossed, via `addSuppressed`, and rewrites that exception's own trace with the effect
-frames. A user's `RuntimeException` keeps propagating as itself.
+Parked at your instruction. `EffectTrace` is an `Exception` but not the one that gets thrown: today it is a
+carrier the drive attaches via `addSuppressed`, rewriting the crossing exception's own trace with the effect
+frames. Your proposal is to wrap instead, with the original as `cause`; `KyoException` already takes
+`cause: String | Throwable`, so it needs no new surface, and it is genuinely one mechanism rather than two.
 
-The owner's proposal is to wrap instead: a throwable crossing a drive becomes a `KyoException` carrying the effect
-frames, with the original as its `cause`. `KyoException` already takes `cause: String | Throwable`
-(`KyoException.scala:26`), so this needs no new surface, and it is genuinely one mechanism rather than two. That is
-a better answer than the two-mechanism framing I first gave.
-
-The cost to weigh when this restarts: **wrapping changes what user code catches at every drive boundary.**
+The cost to weigh when this restarts: wrapping changes what user code catches at every drive boundary.
 
 ```scala
 try Eval(computation)
 catch case e: MyDomainException => recover(e)   // matches today, would not after wrapping
 ```
 
-The case to check hardest is `Abort[E]` with a user exception type as `E`. If recovery matches on the exception
-type and the drive has wrapped it, recovery silently stops firing.
-
-Other blockers identified but not yet verified: `KyoException` extends `NoStackTrace` and `splice` deliberately
-skips exactly that class; the `getMessage` change reaches 32 subclasses across 20 modules, including a standing
-warning in `kyo-test`'s `Assertion.scala` where this already bit someone; `KyoException` lives in kyo-data, below
-the kernel that would fill it; a fatal error must not be swallowed into a wrapper, which `EffectTraceTest` pins;
-and an exception crossing three nested drives must not be wrapped three times.
+The case to check hardest is `Abort[E]` with a user exception type as `E`. Other blockers identified but not
+verified: `KyoException` extends `NoStackTrace` and `splice` deliberately skips exactly that class; the
+`getMessage` change reaches 32 subclasses across 20 modules; `KyoException` lives in kyo-data, below the kernel
+that would fill it; a fatal error must not be swallowed into a wrapper, which `EffectTraceTest` pins; and an
+exception crossing three nested drives must not be wrapped three times. Notes in
+`reviews/EFFECTTRACE-KYOEXCEPTION.md`.
 
 ### P3. `Effect.catching`
 
 Needs a stack entry the drive consults while unwinding. CPS let the old kernel wrap the continuation and thereby
-guard everything downstream, because in CPS the continuation *is* the rest of the computation. Here the drive owns a
-stack and the rest is spread across its entries, so a `try` inside one arrow's `apply` guards building the next
-deferral rather than running it. Two workarounds were traced and both fail: a self-reinstalling guard arrow does not
-guard the drive's own evaluation, and a structural rewrite of every continuation pays an allocation per drive step.
+guard everything downstream, because in CPS the continuation *is* the rest of the computation. Here the drive owns
+a stack and the rest is spread across its entries, so a `try` inside one arrow's `apply` guards building the next
+deferral rather than running it. Two workarounds were traced and both fail. Same mechanism as Bracket's
+release-on-throw, so it rides on that work. Signature recorded commented in `Effect.scala`.
 
-Same mechanism as Bracket's release-on-throw, so it rides on that work rather than duplicating it. Signature is
-recorded commented in `Effect.scala` with this reasoning.
-
-It also owes a tracing contract, established during the EffectTrace port: `splice` currently runs only at the drive
-boundary, which assumes an exception is observed only there. A catching handler is a second observation point, so it
-must attach and splice before calling `f`, or the handler sees frames in the carrier that are absent from the stack
-trace.
+It also owes a tracing contract: `splice` currently runs only at the drive boundary, which assumes an exception is
+observed only there. A catching handler is a second observation point, so it must attach and splice before calling
+`f`.
 
 ### P4. `Eval.partial`
 
-Lands with Bracket and Park, since a park is what a partial drive hands back. Consumers already written and waiting:
-the commented partial-evaluation group in `EvalTest`, two cases in `ArrowEffectTest`, and the stop-observability
-case in `SafepointConcurrencyTest`.
+Lands with Bracket and Park, since a park is what a partial drive hands back. Consumers already written and
+waiting: the commented partial-evaluation group in `EvalTest`, two cases in `ArrowEffectTest`, and the
+stop-observability case in `SafepointConcurrencyTest`.
 
 ### P5. `handleFirst`, `dispatchFirst`, `handleCatching`, `handlePartial`
 
-Signatures recorded commented in `ArrowEffect.scala`, marked `private[kyo]`.
-
-Each waits on something different. `handleFirst` has no primitive to stand on: the previous kernel built it on a
-stateful `handleLoop` whose clause received the continuation and used `Loop.done` to carry the resumed remainder
-out, and neither `handleCont` (which keeps the region installed) nor `handleLoopState` (which answers with a value)
-substitutes. `dispatchFirst` and `handlePartial` wait on the IOTask integration design, and `handlePartial`
-additionally needs partial evaluation to hand back a resumable value. `handleCatching` wants the same unwind
-mechanism as P2.
+Signatures recorded commented in `ArrowEffect.scala`, marked `private[kyo]`. `handleFirst` has no primitive to
+stand on. `dispatchFirst` and `handlePartial` wait on the IOTask integration design, and `handlePartial`
+additionally needs partial evaluation. `handleCatching` wants the same unwind mechanism as P3.
 
 ### P6. `ContextEffect` and `Effect.detach`
 
@@ -162,22 +132,20 @@ A whole feature absent from this kernel, not a gap in an existing one. Parked te
 
 ### P7. Bench coverage audit
 
-Mapping the 17 benchmark rows to the computation shapes they exercise, then surveying what `kyo-core`,
-`kyo-prelude`, `kyo-http`, `kyo-actor` and `kyo-stm` actually build on the kernel, and producing the gap list:
-shapes common in practice with no row, and rows measuring shapes nobody writes. Matters because every performance
-decision in this campaign is keyed to those 17 rows.
+Mapping the 17 benchmark rows to the computation shapes they exercise, surveying what the modules above actually
+build on the kernel, and producing the gap list. Matters because every performance decision in this campaign is
+keyed to those 17 rows.
 
 ### P8. The deferred block's own frame in a trace
 
 A throw from the body of `Effect.defer` happens while the drive reads the node's payload, the one path into user
-code the eight attach sites do not cover. Guarding it would put a `try` region on the deferral arm, the hottest arm
-of the drive, to describe a failure on a surface that carries no frame of its own, since `Kyo.Defer` declares none.
-The exception propagates correctly; it simply arrives without effect frames.
+code the eight attach sites do not cover. Guarding it would put a `try` on the hottest arm of the drive to describe
+a failure on a surface that carries no frame of its own. The exception propagates correctly; it simply arrives
+without effect frames.
 
 ### P9. `Arrow.step`
 
-Dropped for good, not deferred. `head` and `tail` are on `Arrow` itself and say the same thing, so the case was
-deleted rather than parked.
+Dropped for good, not deferred. `head` and `tail` are on `Arrow` itself and say the same thing.
 
 ---
 
@@ -186,27 +154,77 @@ deleted rather than parked.
 | what | evidence |
 |---|---|
 | Proto adopted as the kernel; test corpora merged from proto, previous kernel2, and kyo-kernel | **789 tests green**, clean batch build, JS and Native compile |
-| `Loop` dispatched on the old node type | All 13 combinators detected pending with `case arrow: Arrow`, dead in this kernel. `Loop.apply` returned a suspended outcome as the result; `whileTrue` span forever. Found by a hang in a test that had never run. |
+| `Loop` dispatched on the old node type | All 13 combinators detected pending with `case arrow: Arrow`, dead in this kernel. Found by a hang in a test that had never run. |
 | `Effect.defer` by-name restored | Lost in the move; re-expressed over `Kyo.Defer` whose payload is a method |
 | `EffectTrace` ported | Value position vs arrow position is what makes the six self-referential continuation slots terminate; eight attach sites, boundary splice |
-| `map` and `Eval` did not compile from outside package `kyo` | Caught only by the compile-bench fixtures, the sole code outside `kyo`. Fixed by unqualified imports, **not** by widening visibility. |
-| Compile-bench harness repaired | `fixtures-proto` pointed at a removed package. Now one shared corpus against both classpaths, with an override only where the surface genuinely differs. |
-| Trivial surfaces restored | `handleLoopState` overload without `done`, `toString` on nodes and arrows, `Render` for the pending type, `ArrowEffectBytecodeTest` revived with measured sizes |
-| Commented signatures for missing surface | `Effect.scala`, `ArrowEffect.scala` (marked `private[kyo]`), `Eval.scala` |
-| Compile-time board against kyo-kernel | 13 fixtures, both kernels, 8 warmup, `-prof gc`. kernel2 faster on 6 of 13, materially on 4 (`SuspendSites` 0.68x, `TagDerivation` 0.71x, `ForCompDeep25` 0.81x, `NestedMaps` 0.83x). Raw JSON in `bench-results/compile-0820/` |
+| `map` and `Eval` did not compile from outside package `kyo` | Caught only by the compile-bench fixtures. Fixed by unqualified imports, **not** by widening visibility. |
+| Compile-bench harness repaired | One shared corpus against both classpaths, with an override only where the surface genuinely differs |
+| Trivial surfaces restored | `handleLoopState` overload without `done`, `toString` on nodes and arrows, `Render` for the pending type, `ArrowEffectBytecodeTest` revived |
+| Compile-time board against kyo-kernel | 13 fixtures, both kernels, 8 warmup, `-prof gc`. kernel2 faster on 6 of 13, materially on 4. Raw JSON in `bench-results/compile-0820/` |
+| D2. Visibility reduction, with the rule the compiler actually enforces | below |
+| The expansion-site guard | below |
+| `Loop.repeat` off-by-one on a settled body | B2 above; fixed in kernel2 with a settled-body test |
+
+### D2. Visibility reduction, and the rule that came out of it
+
+Narrowing `Kyo`, `Stack`, `Safepoint`, `Handler` and `Nested` to `private[kyo]` broke the build in two ways, and
+both are worth keeping written down because neither is guessable from the source.
+
+**A `private[kyo]` top-level object in `kyo.kernel.internal` that an inline body in another package names** makes
+dotty emit an accessor whose receiver is the *package*: `inline$Safepoint$i1(kyo.kernel.internal)`. The call site
+loads it as `getstatic kyo/kernel/internal.MODULE$`, and no such class exists, so every drive died with
+`NoClassDefFoundError: kyo/kernel/internal` across 13 suites. Same-package references are unaffected, which is why
+`Eval`'s own accessors are nullary and work.
+
+**A `private[kyo]` member gets a well formed accessor, but the accessor is a second call the expansion pays for.**
+Narrowing `Nested.lift` and the `Safepoint` depth guard took the value lift from 5 bytes to 20.
+`PendingBytecodeTest` caught it, which is what those pins are for.
+
+So the rule, now stated in the source at `Safepoint.scala` and referenced from `Handler.scala` and
+`KyoInternal.scala`: **what an inline body reaches stays public; the narrowing lives on everything else.** What
+that leaves:
+
+- `private[kyo]`: `class Kyo`, `Kyo.Defer`, `Kyo.Suspend`, `Kyo.Handle`, `class Handler`, `Handler.HandlerCont`,
+  `Handler.HandlerLoop`, `Handler.HandlerLoopState`, `class Nested`, `class Safepoint`, `Stack`, and Safepoint's
+  `reset`, `arm`, `stop`, `consumeStopped`, `period`, `slotCount`, `object State`.
+- public: the objects `Kyo`, `Handler`, `Safepoint`, `Nested`, plus `Nested.lift` and Safepoint's `get`, `enter`,
+  `exit`, `save`, `restore` and its two opaque types.
+
+No node type and no handler type a user could hold is nameable outside `kyo`, which is the property that was
+actually wanted. `private[kernel]` remains unreachable for `Kyo` and `Safepoint`: `Arrow.scala` is `package kyo`
+and names both directly.
+
+One cost surfaced and it is a signal rather than a nuisance. The narrowing pushed `KyoTest`'s
+`assert(widen(TypeMap(1, true)).eval.get[Boolean])` past the JVM's 64KB string-constant limit, because `eval`
+expands the whole drive inline and scalatest renders its argument into a constant. Binding the value before the
+assert fixes it and is the better test regardless, but the underlying fact stands: the drive expansion is large
+enough that adding one accessor indirection to it crosses a hard JVM limit. That belongs to E1.
+
+### The expansion-site guard
+
+`outsidekyo/PendingExpansionSiteTest` exercises the whole public inline surface from outside package `kyo` and
+asserts on the results: 74 cases covering the pending combinators, `handle` at all ten arities, both arrow
+constructors, all nine `ArrowEffect` entry points, all 23 `Loop` entry points, the lifts including the pure
+function conversions at every arity, and the 18 collection combinators.
+
+Both halves of this failure mode need it. Compiling proves the names resolve at an expansion site; running proves
+the accessor the compiler emitted is well formed. Until now the only code outside package `kyo` was the
+compile-bench fixtures, which is why both failures above reached a full suite run before anything noticed.
+
+Two things it turned up immediately beyond what it was written for: `kyo.discard` is `private[kyo]` and so not
+available to user code, and `Loop.repeat` was miscounting (B2).
 
 ---
 
 ## Open questions carried forward
 
 1. `suspensionBaseline` is red against the last proto board and **not accepted**. Same-session isolation attributed
-   2.8 of 9.6 points to the EffectTrace wiring; the residual is unexplained and the comparison is cross-session,
-   which cannot support a claim at that size. R1 re-measures.
-4. `HandleSites` compiles 1.49x slower on kernel2 and allocates 1.26x more. It is the one fixture with a per-kernel
-   override, so the delta carries a source difference (`handle` with one clause and `.eval` versus `handleCont` with
-   a done clause under `Eval`). Together with `handleCont`'s 87-byte call site, three signals point at region
-   construction being more expensive. Wants its own look.
+   2.8 of 9.6 points to the EffectTrace wiring; the residual is unexplained and the comparison is cross-session.
+   R1 re-measures.
 2. `handleCont` compiles to 87 bytes against the old kernel's 33 for `handle`. Not the same expansion, but the size
    says the call site allocates twice, the region node and the handler it holds, where the old region was one node.
-3. The concrete-class lift moved from 2 bytes to 5. This lift has no emission analysis to prove a final class admits
-   no payload, so a concrete class pays one union `instanceof`.
+3. `HandleSites` compiles 1.49x slower on kernel2 and allocates 1.26x more. It is the one fixture with a per-kernel
+   override, so the delta carries a source difference. Together with the 87 bytes, two signals point at region
+   construction being more expensive.
+4. The concrete-class lift moved from 2 bytes to 5. This lift has no emission analysis to prove a final class
+   admits no payload, so a concrete class pays one union `instanceof`.

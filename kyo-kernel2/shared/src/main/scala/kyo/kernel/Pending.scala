@@ -289,10 +289,14 @@ object `<` extends Implicits:
         inline def eval(using S =:= Any): A =
             Eval(self.asInstanceOf[A < Any]).asInstanceOf[A]
 
+        // bound once: `self` is inline, so every occurrence re-expands the receiver expression, and two
+        // occurrences here would build `v.map(f)` twice and run `f` twice on the settled path
         inline def evalNow: Maybe[A] =
-            self match
+            val v = self
+            v match
                 case _: Kyo[?, ?] => Maybe.empty
-                case _            => Maybe(self.unsafeGet)
+                case _            => Maybe(v.unsafeGet)
+        end evalNow
 
         /** The settled value, one nesting level stripped. Only valid where the pending case is already excluded. */
         inline def unsafeGet: A =

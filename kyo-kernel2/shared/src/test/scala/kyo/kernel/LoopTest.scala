@@ -656,6 +656,28 @@ class LoopTest extends AnyFreeSpec:
         assert(count == 10000)
     }
 
+    // a deferred body hides a miscount: an extra evaluation of `run` only builds a node, and if the loop
+    // then stops it is discarded unexecuted. A settled body is executed by the evaluation itself, so it is
+    // the case that reports the count honestly
+    "repeat with a settled body runs it exactly n times" in {
+        var count = 0
+
+        Loop.repeat(0)(({ count += 1 }: Unit < Any)).eval
+        assert(count == 0)
+
+        count = 0
+        Loop.repeat(1)(({ count += 1 }: Unit < Any)).eval
+        assert(count == 1)
+
+        count = 0
+        Loop.repeat(3)(({ count += 1 }: Unit < Any)).eval
+        assert(count == 3)
+
+        count = 0
+        Loop.repeat(100)(({ count += 1 }: Unit < Any)).eval
+        assert(count == 100)
+    }
+
     "whileTrue" - {
         "continues while condition is true" in {
             var counter = 0

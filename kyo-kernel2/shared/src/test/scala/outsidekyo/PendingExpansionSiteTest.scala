@@ -20,6 +20,10 @@ import org.scalatest.freespec.AnyFreeSpec
   *
   * A new public inline entry point belongs here. `Implicits.abortCastUnit` is the one deliberate omission: it exists to fail compilation,
   * so exercising it would fail this file.
+  *
+  * Two spellings here differ from the rest of the corpus for the same reason the file exists. `kyo.discard` is `private[kyo]`, so a
+  * discarded result is bound to `val _`. And a `Loop` clause under a region ascribes its resumed value (`1: Int < Any`), because the
+  * clause answers at the region's row rather than the successor's.
   */
 class PendingExpansionSiteTest extends AnyFreeSpec:
 
@@ -52,8 +56,10 @@ class PendingExpansionSiteTest extends AnyFreeSpec:
 
         "unit" in {
             var seen = 0
-            val v    = ask.map { a => seen = a; a }.unit
-            discard(Eval(answer(v)))
+            val v = ask.map { a =>
+                seen = a; a
+            }.unit
+            val _ = Eval(answer(v))
             assert(seen == 1)
         }
 
@@ -218,7 +224,7 @@ class PendingExpansionSiteTest extends AnyFreeSpec:
         }
 
         "handleLoop" in {
-            val v = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([C] => _ => Loop.continue(3), a => a)
+            val v = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([C] => _ => Loop.continue(3: Int < Any), a => a)
             assert(Eval(v) == 4)
         }
 
@@ -229,7 +235,7 @@ class PendingExpansionSiteTest extends AnyFreeSpec:
 
         "handleLoopState" in {
             val v = ArrowEffect.handleLoopState(Tag[Ask], 7, ask.map(_ + 1))(
-                [C] => (state, _) => Loop.continue(state + 1, state),
+                [C] => (state, _) => Loop.continue(state + 1, state: Int < Any),
                 (state, a) => a * 100 + state
             )
             assert(Eval(v) == 808)
@@ -237,7 +243,7 @@ class PendingExpansionSiteTest extends AnyFreeSpec:
 
         "handleLoopState without a done clause" in {
             val v = ArrowEffect.handleLoopState(Tag[Ask], 7, ask.map(_ + 1))(
-                [C] => (state, _) => Loop.continue(state + 1, state)
+                [C] => (state, _) => Loop.continue(state + 1, state: Int < Any)
             )
             assert(Eval(v) == 8)
         }
@@ -252,7 +258,7 @@ class PendingExpansionSiteTest extends AnyFreeSpec:
 
         "handleLoopWith" in {
             val v = ArrowEffect.handleLoopWith(Tag[Ask], ask.map(_ + 1))(
-                [C] => _ => Loop.continue(3),
+                [C] => _ => Loop.continue(3: Int < Any),
                 a => a
             )(b => b * 10)
             assert(Eval(v) == 40)
@@ -260,20 +266,23 @@ class PendingExpansionSiteTest extends AnyFreeSpec:
 
         "handleLoopStateWith" in {
             val v = ArrowEffect.handleLoopStateWith(Tag[Ask], 7, ask.map(_ + 1))(
-                [C] => (state, _) => Loop.continue(state + 1, state),
+                [C] => (state, _) => Loop.continue(state + 1, state: Int < Any),
                 (state, a) => a + state
             )(b => b * 10)
-            assert(Eval(v) == 150)
+            // the clause answers 7 and advances the state to 8, so the body settles at 8 and the done
+            // clause adds the final state, not the initial one
+            assert(Eval(v) == 160)
         }
 
         "a region nested under another effect" in {
             var said = List.empty[String]
             val body = ask.map(a => say("a" + a).map(_ => a))
-            val v    = ArrowEffect.handleCont(Tag[Say], answer(body))(
+            val v = ArrowEffect.handleCont(Tag[Say], answer(body))(
                 [C] =>
                     (input, cont) =>
                         said = said :+ input
-                        cont(()),
+                        cont(())
+                ,
                 a => a
             )
             assert(Eval(v) == 1)
@@ -350,13 +359,13 @@ class PendingExpansionSiteTest extends AnyFreeSpec:
 
         "repeat" in {
             var n = 0
-            discard(Eval(Loop.repeat(3)(Kyo.lift[Unit, Any] { n += 1 })))
+            val _ = Eval(Loop.repeat(3)(Kyo.lift[Unit, Any] { n += 1 }))
             assert(n == 3)
         }
 
         "whileTrue" in {
             var n = 0
-            discard(Eval(Loop.whileTrue(Kyo.lift[Boolean, Any](n < 3))(Kyo.lift[Unit, Any] { n += 1 })))
+            val _ = Eval(Loop.whileTrue(Kyo.lift[Boolean, Any](n < 3))(Kyo.lift[Unit, Any] { n += 1 }))
             assert(n == 3)
         }
 
@@ -368,7 +377,7 @@ class PendingExpansionSiteTest extends AnyFreeSpec:
             })
             val stopped =
                 try
-                    discard(Eval(answer(v)))
+                    val _ = Eval(answer(v))
                     false
                 catch case _: IllegalStateException => true
             assert(stopped)
@@ -385,7 +394,7 @@ class PendingExpansionSiteTest extends AnyFreeSpec:
 
         "Kyo.unit" in {
             var ran = false
-            discard(Eval(Kyo.unit.map(_ => ran = true)))
+            val _   = Eval(Kyo.unit.map(_ => ran = true))
             assert(ran)
         }
 
@@ -446,7 +455,7 @@ class PendingExpansionSiteTest extends AnyFreeSpec:
 
         "foreachDiscard" in {
             var seen = List.empty[Int]
-            discard(Eval(answer(Kyo.foreachDiscard(Seq(1, 2))(x => ask.map(a => seen = seen :+ (x + a))))))
+            val _    = Eval(answer(Kyo.foreachDiscard(Seq(1, 2))(x => ask.map(a => seen = seen :+ (x + a)))))
             assert(seen == List(2, 3))
         }
 
@@ -468,7 +477,7 @@ class PendingExpansionSiteTest extends AnyFreeSpec:
 
         "collectAllDiscard" in {
             var n = 0
-            discard(Eval(answer(Kyo.collectAllDiscard(Seq(ask.map(a => n += a), ask.map(a => n += a))))))
+            val _ = Eval(answer(Kyo.collectAllDiscard(Seq(ask.map(a => n += a), ask.map(a => n += a)))))
             assert(n == 2)
         }
 
