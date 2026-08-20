@@ -34,11 +34,11 @@ object Arrow:
             override def apply(v: A) = f(v)
             def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]) =
                 v.lower(
-                    pending = Kyo.Defer(_, this, next),
+                    pending = Effect.defer(_, this, next),
                     done = b =>
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
-                            Kyo.Defer(v, this, next)
+                            Effect.defer(v, this, next)
                         else
                             val out = next.head(apply(b), next.tail)
                             Safepoint.exit(slot)
@@ -53,11 +53,11 @@ object Arrow:
             override def apply(v: A) = f(this, v)
             def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]) =
                 v.lower(
-                    pending = Kyo.Defer(_, this, next),
+                    pending = Effect.defer(_, this, next),
                     done = b =>
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
-                            Kyo.Defer(v, this, next)
+                            Effect.defer(v, this, next)
                         else
                             val out = next.head(apply(b), next.tail)
                             Safepoint.exit(slot)
@@ -84,9 +84,9 @@ object Arrow:
 
         def frame = Frame.internal
         def apply(v: A) =
-            Kyo.Defer(v, a, b)
+            Effect.defer(v, a, b)
         def apply[D, S2](v: A < S2, next: Arrow[C, D, S2]) =
-            Kyo.Defer(v, this, next)
+            Effect.defer(v, this, next)
 
     end Chain
 

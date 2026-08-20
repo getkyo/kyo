@@ -4,7 +4,7 @@ import kyo.Frame
 import kyo.Tag
 import scala.annotation.nowarn
 
-abstract class ArrowEffect[I[_], O[_]]
+abstract class ArrowEffect[I[_], O[_]] extends Effect
 
 object ArrowEffect:
 
@@ -38,7 +38,7 @@ object ArrowEffect:
             override def apply(v: O[C]) = f(v)
             def apply[D, S2](v: O[C] < S2, next: Arrow[B, D, S2]): D < (S & S2) =
                 v.lower(
-                    pending = Kyo.Defer(_, this, next),
+                    pending = Effect.defer(_, this, next),
                     done = v => next(apply(v), Arrow.id)
                 )
     end suspendWith
@@ -153,7 +153,7 @@ object ArrowEffect:
                     override def apply(b: B) = f(b)
                     def apply[D, S3](b: B < S3, next: Arrow[C, D, S3]): D < (S & S2 & S3) =
                         b.lower(
-                            pending = Kyo.Defer(_, this, next),
+                            pending = Effect.defer(_, this, next),
                             done = b => next(apply(b), Arrow.id)
                         )
             ,
@@ -189,7 +189,7 @@ object ArrowEffect:
                     override def apply(b: B) = f(b)
                     def apply[D, S3](b: B < S3, next: Arrow[C, D, S3]): D < (S & S2 & S3) =
                         b.lower(
-                            pending = Kyo.Defer(_, this, next),
+                            pending = Effect.defer(_, this, next),
                             done = b => next(apply(b), Arrow.id)
                         )
             ,
@@ -227,7 +227,7 @@ object ArrowEffect:
                     override def apply(b: B) = f(b)
                     def apply[D, S3](b: B < S3, next: Arrow[C, D, S3]): D < (S & S2 & S3) =
                         b.lower(
-                            pending = Kyo.Defer(_, this, next),
+                            pending = Effect.defer(_, this, next),
                             done = b => next(apply(b), Arrow.id)
                         )
             ,

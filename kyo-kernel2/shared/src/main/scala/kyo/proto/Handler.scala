@@ -8,11 +8,11 @@ sealed abstract class Handler[E <: ArrowEffect[?, ?], A, B, -S] extends Arrow.Tr
     def tag: Tag[E]
     def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]): C < (S & S2) =
         v.lower(
-            pending = Kyo.Defer(_, this, next),
+            pending = Effect.defer(_, this, next),
             done = b =>
                 val slot = Safepoint.get()
                 if !Safepoint.enter(slot) then
-                    Kyo.Defer(v, this, next)
+                    Effect.defer(v, this, next)
                 else
                     val out = next.head(apply(b), next.tail)
                     Safepoint.exit(slot)
