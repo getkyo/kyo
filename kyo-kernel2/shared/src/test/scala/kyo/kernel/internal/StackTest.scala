@@ -5,6 +5,7 @@ import kyo.Const
 import kyo.Frame
 import kyo.Maybe
 import kyo.Tag
+import kyo.discard
 import kyo.kernel.*
 import org.scalatest.freespec.AnyFreeSpec
 
@@ -50,7 +51,7 @@ class StackTest extends AnyFreeSpec:
             def tag                             = Tag[Ask]
             def initialState                    = init
             def run[X](state: Int, input: Unit) = Loop.continue(state + 1, 1: Int < Any)
-            def apply(state: Int, a: Int): Int  = a + state
+            def apply(state: Int, a: Int)       = a + state
     end statefulHandler
 
     "starts empty" in {

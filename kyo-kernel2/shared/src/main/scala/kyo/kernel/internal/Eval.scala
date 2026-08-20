@@ -41,13 +41,31 @@ object Eval:
                 case kyo: Kyo.Suspend[IX, OX, EX, CX, A, S] @unchecked =>
                     stack.push(kyo.cont)
                     val pos = stack.find(kyo.tag)
-                    if pos < 0 then bug(s"unhandled suspension: ${kyo.tag}")
+                    if pos < 0 then
+                        try bug(s"unhandled suspension: ${kyo.tag}")
+                        catch
+                            case ex: Throwable =>
+                                EffectTrace.attach(ex, kyo, Arrow.id[Any], stack)
+                                throw ex
                     else
                         stack.handler(pos) match
                             case h: HandlerCont[IX, OX, EX, AX, ?, S] @unchecked =>
-                                loop(h.run(kyo.input, stack.dump[OX[CX], AX, EX & S](pos)(_)))
+                                val k = stack.dump[OX[CX], AX, EX & S](pos)
+                                val next =
+                                    try h.run(kyo.input, k(_))
+                                    catch
+                                        case ex: Throwable =>
+                                            EffectTrace.attach(ex, kyo, k, stack)
+                                            throw ex
+                                loop(next)
                             case h: HandlerLoop[IX, OX, EX, AX, BX, S] @unchecked =>
-                                h.run(kyo.input) match
+                                val ran =
+                                    try h.run(kyo.input)
+                                    catch
+                                        case ex: Throwable =>
+                                            EffectTrace.attach(ex, kyo, Arrow.id[Any], stack)
+                                            throw ex
+                                ran match
                                     case clause: Kyo[Loop.Outcome[OX[CX] < (EX & S), BX], S] @unchecked =>
                                         val k = stack.dump(pos)
                                         discard(stack.pop())
@@ -81,9 +99,16 @@ object Eval:
                                             case _ =>
                                                 stack.truncate(pos + 1)
                                                 loop(o)
+                                end match
                             case h: HandlerLoopState[IX, OX, EX, AX, BX, S, StateX] @unchecked =>
                                 val s = stack.state(pos).getOrElse(h.initialState)
-                                h.run(s, kyo.input) match
+                                val ran =
+                                    try h.run(s, kyo.input)
+                                    catch
+                                        case ex: Throwable =>
+                                            EffectTrace.attach(ex, kyo, Arrow.id[Any], stack)
+                                            throw ex
+                                ran match
                                     case clause: Kyo[Loop.Outcome2[StateX, OX[CX] < (EX & S), BX], S] @unchecked =>
                                         val k = stack.dump(pos)
                                         discard(stack.pop())
@@ -134,13 +159,40 @@ object Eval:
                         val s = stack.state[StateX](0)
                         stack.pop() match
                             case h: HandlerLoopState[IX, OX, EX, AX, BX, S, StateX] @unchecked =>
-                                loop(h.apply(s.getOrElse(h.initialState), r.asInstanceOf[AX]))
+                                val next =
+                                    try h.apply(s.getOrElse(h.initialState), r.asInstanceOf[AX])
+                                    catch
+                                        case ex: Throwable =>
+                                            EffectTrace.attach(ex, h, Arrow.id[Any], stack)
+                                            throw ex
+                                loop(next)
                             case h: Handler[EX, AX, BX, S] @unchecked =>
-                                loop(h(curr.asInstanceOf[AX < (EX & S)], stack.dump()))
+                                val tail = stack.dump[BX, Any, EX & S]()
+                                val next =
+                                    try h(curr.asInstanceOf[AX < (EX & S)], tail)
+                                    catch
+                                        case ex: Throwable =>
+                                            EffectTrace.attach(ex, h, tail, stack)
+                                            throw ex
+                                loop(next)
                             case c: Arrow.Chain[Any, ?, Any, EX & S] @unchecked =>
-                                loop(c(curr, stack.dump()))
+                                val tail = stack.dump[Any, Any, EX & S]()
+                                val next =
+                                    try c(curr, tail)
+                                    catch
+                                        case ex: Throwable =>
+                                            EffectTrace.attach(ex, c, tail, stack)
+                                            throw ex
+                                loop(next)
                             case head =>
-                                loop(head.asInstanceOf[Arrow[Any, ?, EX & S]](curr, stack.dump()))
+                                val tail = stack.dump[Any, Any, EX & S]()
+                                val next =
+                                    try head.asInstanceOf[Arrow[Any, ?, EX & S]](curr, tail)
+                                    catch
+                                        case ex: Throwable =>
+                                            EffectTrace.attach(ex, head, tail, stack)
+                                            throw ex
+                                loop(next)
                         end match
                     else r
                     end if
@@ -150,6 +202,12 @@ object Eval:
         val saved = Safepoint.save(slot)
         try
             loop(v.asInstanceOf[Any < Nothing]).asInstanceOf[A]
+        catch
+            case ex: Throwable =>
+                // every throw that carries frames has already had them reconstructed at the site that
+                // ran the user code, so the boundary only rewrites the exception's own trace
+                EffectTrace.splice(ex)
+                throw ex
         finally
             Stack.release(stack)
             Safepoint.restore(slot, saved)

@@ -81,6 +81,11 @@ final class Stack:
     def handler(i: Int): Handler[?, ?, ?, ?] =
         entries((head + i) & mask).asInstanceOf[Handler[?, ?, ?, ?]]
 
+    // an indexed read of a slot without knowing its kind, which the trace sweep needs and neither
+    // handler(i) nor state(i) can serve. The indexing is copied from both so a change to the ring
+    // buffer breaks or fixes the three together
+    private[kernel] def entry(i: Int): Arrow[?, ?, ?] = entries((head + i) & mask)
+
     def find[A](t: Tag[A]): Int =
         val n = size
         @tailrec def loop(i: Int): Int =
