@@ -15,7 +15,7 @@ opaque type <[+A, -S] = A | Kyo[A, S] | Nested[A]
 object `<` extends Implicits:
     implicit private[kernel] inline def fromKyo[A, S](inline k: Kyo[A, S]): A < S = k
 
-    extension [A, S](inline self: A < S)
+    extension [A, S](inline self: A < S) // TODO check the impact in compile and runtime perf of marking self as inline here
 
         @nowarn("msg=anonymous")
         inline def map[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
