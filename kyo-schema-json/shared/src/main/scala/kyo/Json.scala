@@ -26,28 +26,48 @@ object Json:
 
     given Json = Json()
 
+    /** Line-delimited JSON (JSONL, also called NDJSON) support: one JSON value per line.
+      *
+      * Alias for [[kyo.JsonLines]], whose body lives in its own file. Reach it as `Json.Lines.Framer`,
+      * `Json.Lines.Line`, `Json.Lines.Pending`, `Json.Lines.Framed`, and `Json.Lines.DefaultMaxLineBytes`.
+      */
+    export kyo.JsonLines as Lines
+
     /** Encodes a value of type A to a JSON string.
+      *
+      * Takes `Json` as an explicit parameter, like [[decode]] does, rather than summoning it inside the body: a plain `summon[Json]`
+      * written inside an `inline def`'s body is resolved once, when this method is type-checked, not fresh at each call site after
+      * inlining. An explicit `using` parameter is resolved per call, so a caller-scoped `Json` given is honored the same way `decode`
+      * already honors one.
+      *
+      * `json` is the last parameter, after `schema` and `frame`, rather than the first: call sites across the codebase already supply
+      * `schema` explicitly as `Json.encode(v)(using someSchema)`, relying on Scala's using-clause rule that unsupplied parameters must
+      * be a trailing suffix. Putting the new parameter first would have shifted that existing explicit argument onto it and broken
+      * every such call site with a type mismatch; putting it last keeps every existing call site's argument list a valid prefix, with
+      * `frame` and `json` both still resolved implicitly when left unsupplied.
       *
       * @param value
       *   the value to encode
       * @return
       *   the JSON string representation
       */
-    inline def encode[A](value: A)(using schema: Schema[A], frame: Frame): String =
-        val w = summon[Json].newWriter()
+    inline def encode[A](value: A)(using schema: Schema[A], frame: Frame, json: Json): String =
+        val w = json.newWriter()
         schema.writeTo(value, w)
         new String(w.result().toArray, java.nio.charset.StandardCharsets.UTF_8)
     end encode
 
     /** Encodes a value of type A to raw UTF-8 JSON bytes.
       *
+      * Takes `Json` as an explicit trailing parameter for the same reason [[encode]] does.
+      *
       * @param value
       *   the value to encode
       * @return
       *   the JSON bytes
       */
-    inline def encodeBytes[A](value: A)(using schema: Schema[A], frame: Frame): Span[Byte] =
-        val w = summon[Json].newWriter()
+    inline def encodeBytes[A](value: A)(using schema: Schema[A], frame: Frame, json: Json): Span[Byte] =
+        val w = json.newWriter()
         schema.writeTo(value, w)
         w.result()
     end encodeBytes

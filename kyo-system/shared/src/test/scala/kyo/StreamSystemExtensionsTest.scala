@@ -245,11 +245,11 @@ class StreamSystemExtensionsTest extends kyo.test.Test[Any]:
             _      <- dir.removeAll
         yield
             assert(result.isFailure)
-            // The file should either not exist or be empty — not contain partial data.
+            // The file should either not exist or be empty, never contain partial data.
             // If this assertion fails it means partial data was written and left behind.
             bytes match
                 case Result.Success(b) => assert(b.isEmpty, s"Partial data left in file: ${b.size} bytes")
-                case Result.Failure(_) => () // file doesn't exist — also acceptable
+                case Result.Failure(_) => () // file doesn't exist, also acceptable
         end for
     }
 

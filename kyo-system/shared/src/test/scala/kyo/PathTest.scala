@@ -14,7 +14,7 @@ class PathTest extends kyo.test.Test[Any]:
         assert(p.parts == Chunk("a", "b"))
     }
 
-    // Unix-style absolute paths (/usr/...) have no Windows equivalent — drive letter required
+    // Unix-style absolute paths (/usr/...) have no Windows equivalent, which requires a drive letter
     "absolute path with dot and dotdot normalizes" in {
         assume(!Platform.isWindows, "Unix absolute path syntax")
         val p = Path / "/usr" / "local" / "." / "bin" / ".." / "lib"
@@ -820,12 +820,12 @@ class PathTest extends kyo.test.Test[Any]:
             file = dir / "mixed-encoding.bin"
             // Write raw ISO-8859-1 bytes: "héllo\n" where é = 0xE9 in ISO-8859-1
             _ <- file.writeBytes(Span.from(Array[Byte](0x68, 0xe9.toByte, 0x6c, 0x6c, 0x6f, 0x0a)))
-            // appendLines writes UTF-8 — "wörld" where ö is 2 bytes in UTF-8
+            // appendLines writes UTF-8, so "wörld" holds ö as 2 bytes
             _     <- file.appendLines(Chunk("wörld"))
             bytes <- file.readBytes
             _     <- dir.removeAll
         yield
-            // The file now has mixed encodings — ISO-8859-1 then UTF-8
+            // The file now has mixed encodings: ISO-8859-1 then UTF-8
             // This documents that appendLines has no charset parameter
             assert(bytes.size > 0)
         end for
@@ -1321,7 +1321,7 @@ class PathTest extends kyo.test.Test[Any]:
     }
 
     "copy on non-empty directory does not copy children" in {
-        // Files.copy creates an empty dir at destination — children are silently lost
+        // Files.copy creates an empty dir at destination, so children are silently lost
         for
             dir <- Path.tempDir("kyo-path-dir-test")
             src = dir / "copy-dir-src"
@@ -1594,6 +1594,485 @@ class PathTest extends kyo.test.Test[Any]:
     }
 
     // =========================================================================
+    // tailBytes
+    // =========================================================================
+
+    /** Repeats `write` until `condition` holds, waking the follower between writes.
+      *
+      * Each iteration performs the write and then advances the controlled clock, so a follower
+      * sleeping between polls is woken again and again until the condition is observed. Ordering
+      * never depends on how quickly the forked fiber reaches its first poll: a follower that starts
+      * late simply observes a later copy of the same bytes, and every caller below writes a byte
+      * sequence whose repetition leaves the assertion unchanged.
+      */
+    private def writeUntil(
+        control: Clock.TimeControl,
+        step: Duration,
+        write: Unit < (Async & Abort[FileWriteException])
+    )(condition: Boolean < Async)(using Frame): Unit < (Async & Abort[FileWriteException]) =
+        Loop.foreach {
+            condition.map { done =>
+                if done then Loop.done
+                else write.andThen(control.advance(step)).andThen(Loop.continue)
+            }
+        }
+
+    /** Repeats `write` until `fiber` completes, waking the follower between writes. */
+    private def writeUntilDone[A, S](
+        fiber: Fiber[A, S],
+        control: Clock.TimeControl,
+        step: Duration,
+        write: Unit < (Async & Abort[FileWriteException])
+    )(using Frame): Unit < (Async & Abort[FileWriteException]) =
+        writeUntil(control, step, write)(fiber.done)
+
+    /** Advances the controlled clock until `condition` holds, writing nothing.
+      *
+      * Each advance ticks the virtual clock and then settles for the same duration of wall-clock
+      * time, so a follower woken by the tick gets a chance to run before the condition is checked
+      * again. The exit condition is an observed fact rather than a fixed number of advances, so
+      * the loop cannot run out of wakeups on a loaded machine.
+      */
+    private def advanceUntil(
+        control: Clock.TimeControl,
+        step: Duration
+    )(condition: Boolean < Async)(using Frame): Unit < Async =
+        Loop.foreach {
+            condition.map { done =>
+                if done then Loop.done
+                else control.advance(step).andThen(Loop.continue)
+            }
+        }
+
+    /** Advances the controlled clock a fixed number of times, writing nothing.
+      *
+      * Used where the assertion is that a follower stays parked: the count bounds how many wakeups
+      * it is offered, and the paired `take` bounds how many values it could emit, so the check is a
+      * count of wakeups against a count of emissions rather than an amount of elapsed wall-clock
+      * time. A follower that replays without ever sleeping needs no wakeup at all and so blows the
+      * emission bound however slowly the machine runs.
+      */
+    private def advanceTimes(
+        control: Clock.TimeControl,
+        step: Duration,
+        times: Int
+    )(using Frame): Unit < Async =
+        Loop.repeat(times)(control.advance(step))
+
+    /** Gives a forked follower real time to run while offering it no wakeup at all.
+      *
+      * Advancing the controlled clock by nothing still settles for `wallClock` of real time, so this
+      * hands out CPU without handing out virtual time. A follower parked on a controlled `Async.sleep`
+      * therefore cannot progress here however long the settle lasts, while a follower that loops
+      * without sleeping progresses freely. That difference is what an assertion after a settle reads.
+      */
+    private def settle(control: Clock.TimeControl, wallClock: Duration)(using Frame): Unit < Async =
+        control.advance(Duration.Zero, wallClock)
+
+    /** `condition`, but already satisfied once `fiber` has finished.
+      *
+      * The driver loops below wait for something the follower must produce. A follower that instead
+      * stops early, by aborting, never produces it, and the loop would spin forever. Treating "the
+      * follower finished" as an exit releases the loop so that the assertion afterwards reports the
+      * abort rather than the test hanging on it.
+      */
+    private def doneOr[A, S](fiber: Fiber[A, S])(condition: Boolean < Async)(using Frame): Boolean < Async =
+        fiber.done.map(done => if done then true else condition)
+
+    "tailBytes with Origin.Start replays existing content then follows" in {
+        Clock.withTimeControl { control =>
+            for
+                dir <- Path.tempDir("kyo-tailbytes")
+                file = dir / "log.txt"
+                _ <- file.write("one\ntwo\n")
+                fiber <- Fiber.initUnscoped(
+                    Scope.run(file.tailBytes(Path.Origin.Start, 50.millis).take(12).run)
+                )
+                _     <- writeUntilDone(fiber, control, 50.millis, file.append("three\n"))
+                bytes <- fiber.get
+                _     <- dir.removeAll
+            yield assert(new String(bytes.toArray, StandardCharsets.UTF_8) == "one\ntwo\nthre")
+            end for
+        }
+    }
+
+    "tailBytes with Origin.End skips existing content" in {
+        Clock.withTimeControl { control =>
+            for
+                dir <- Path.tempDir("kyo-tailbytes")
+                file = dir / "log.txt"
+                _ <- file.write("old\n")
+                fiber <- Fiber.initUnscoped(
+                    Scope.run(file.tailBytes(Path.Origin.End, 50.millis).take(4).run)
+                )
+                _     <- writeUntilDone(fiber, control, 50.millis, file.append("new\n"))
+                bytes <- fiber.get
+                _     <- dir.removeAll
+            yield assert(new String(bytes.toArray, StandardCharsets.UTF_8) == "new\n")
+            end for
+        }
+    }
+
+    "tailBytes with Origin.Offset resumes at the given byte" in {
+        for
+            dir <- Path.tempDir("kyo-tailbytes")
+            file = dir / "log.txt"
+            _     <- file.write("aaaabbbb")
+            bytes <- Scope.run(file.tailBytes(Path.Origin.Offset(4L), 50.millis).take(4).run)
+            _     <- dir.removeAll
+        yield assert(new String(bytes.toArray, StandardCharsets.UTF_8) == "bbbb")
+        end for
+    }
+
+    "tailBytes with a negative Origin.Offset reads from the first byte" in {
+        // The offset is clamped to 0 rather than reaching the platform handle, where a negative
+        // position raises IllegalArgumentException on JVM and Native and is read as "current
+        // position" by Node. This case runs on every platform because the divergence is the defect.
+        for
+            dir <- Path.tempDir("kyo-tailbytes")
+            file = dir / "log.txt"
+            _     <- file.write("aaaabbbb")
+            bytes <- Scope.run(file.tailBytes(Path.Origin.Offset(-4L), 50.millis).take(4).run)
+            _     <- dir.removeAll
+        yield assert(new String(bytes.toArray, StandardCharsets.UTF_8) == "aaaa")
+        end for
+    }
+
+    "tailBytes with an Origin.Offset past the end of the file replays the whole file" in {
+        // Reading past the end is indistinguishable from a truncation, so the follower rewinds to 0.
+        // The rewind costs one poll delay before the replay, which is what bounds a size under-report
+        // that would otherwise re-arm the rewind on every poll.
+        for
+            dir <- Path.tempDir("kyo-tailbytes")
+            file = dir / "log.txt"
+            _     <- file.write("aaaabbbb")
+            bytes <- Scope.run(file.tailBytes(Path.Origin.Offset(1024L), 50.millis).take(8).run)
+            _     <- dir.removeAll
+        yield assert(new String(bytes.toArray, StandardCharsets.UTF_8) == "aaaabbbb")
+        end for
+    }
+
+    "tailBytes sleeps one poll delay before replaying a rewind" in {
+        // A rewind is the one branch that can re-enter the read loop without new bytes having arrived,
+        // so it is the one branch still structurally able to replay a file without bound. The sleep is
+        // what bounds it, and what bounds a platform that under-reports a size instead of raising.
+        Clock.withTimeControl { control =>
+            val content = "0123456789"
+            for
+                dir <- Path.tempDir("kyo-tailbytes-rewind-sleep")
+                file = dir / "log.txt"
+                _    <- file.write(content)
+                seen <- AtomicRef.init(Chunk.empty[Byte])
+                // Starting past the end reads as a shrunk file, so the first poll rewinds to 0.
+                fiber <- Fiber.initUnscoped(
+                    Scope.run(
+                        file.tailBytes(Path.Origin.Offset(1024L), 50.millis)
+                            .take(content.length)
+                            .foreach(b => seen.updateAndGet(_.append(b)))
+                    )
+                )
+                // Real time to reach and take the rewind, but not one instant of virtual time.
+                _        <- settle(control, 100.millis)
+                _        <- settle(control, 100.millis)
+                _        <- settle(control, 100.millis)
+                parked   <- seen.get
+                _        <- advanceUntil(control, 50.millis)(fiber.done)
+                _        <- fiber.get
+                replayed <- seen.get
+                _        <- dir.removeAll
+            yield
+                // Zero wakeups offered, so zero bytes may be replayed. A rewind that continues the loop
+                // directly needs no wakeup and would have replayed the whole file during the settles.
+                assert(parked.isEmpty, s"Expected nothing replayed before a wakeup, got: ${parked.size} bytes")
+                // The rewind still replays, one poll delay later.
+                assert(new String(replayed.toArray, StandardCharsets.UTF_8) == content)
+            end for
+        }
+    }
+
+    "tailBytes rewinds to the first byte and replays after the file is truncated" in {
+        Clock.withTimeControl { control =>
+            val original = "0123456789"
+            val replaced = "abcd"
+            for
+                dir <- Path.tempDir("kyo-tailbytes-truncate")
+                file = dir / "log.txt"
+                _    <- file.write(original)
+                seen <- AtomicRef.init(Chunk.empty[Byte])
+                fiber <- Fiber.initUnscoped(
+                    Scope.run(
+                        file.tailBytes(Path.Origin.Start, 50.millis)
+                            .take(original.length + replaced.length)
+                            .foreach(b => seen.updateAndGet(_.append(b)))
+                    )
+                )
+                // Wait until the original content has been replayed, so the truncation below is
+                // guaranteed to leave the follower's position past the new end of the file.
+                _ <- advanceUntil(control, 50.millis)(seen.get.map(_.size >= original.length))
+                _ <- file.truncate(0L)
+                // A single truncating write: the file never grows back past the follower's
+                // position, so the rewind fires on whichever poll comes next.
+                _     <- file.write(replaced)
+                _     <- advanceUntil(control, 50.millis)(fiber.done)
+                _     <- fiber.get
+                bytes <- seen.get
+                _     <- dir.removeAll
+            yield
+                // The replayed bytes follow the pre-truncation bytes with nothing in between: the
+                // rewind is invisible at the byte level, which is the contract a framer must know.
+                assert(new String(bytes.toArray, StandardCharsets.UTF_8) == original + replaced)
+            end for
+        }
+    }
+
+    "tail behavior is unchanged after the tailBytes refactor" in {
+        Clock.withTimeControl { control =>
+            for
+                dir <- Path.tempDir("kyo-tail-regression")
+                file = dir / "log.txt"
+                _     <- file.write("existing\n")
+                fiber <- Fiber.initUnscoped(Scope.run(file.tail(50.millis).take(2).run))
+                _     <- writeUntilDone(fiber, control, 50.millis, file.append("first\r\nsecond\n"))
+                lines <- fiber.get
+                _     <- dir.removeAll
+            yield assert(lines == Chunk("first", "second"))
+            end for
+        }
+    }
+
+    "tail discards a pending partial line when the file is truncated" in {
+        Clock.withTimeControl { control =>
+            for
+                dir <- Path.tempDir("kyo-tail-truncate-pending")
+                file = dir / "log.txt"
+                _     <- file.mkFile
+                lines <- AtomicRef.init(Chunk.empty[String])
+                tailFiber <- Fiber.initUnscoped(
+                    Scope.run(file.tail(50.millis).take(2).foreach(line => lines.updateAndGet(_.append(line))))
+                )
+                _ <- control.advance(50.millis) // let the follower open the empty file and park on its first poll
+                // One complete line plus text with no newline, written in a single call so that the
+                // read which produces "seen" necessarily also buffers "partial" as pending text.
+                _ <- file.write("seen\npartial")
+                // Emitting "seen" is the observable proof that the follower read past the newline,
+                // so the truncation below cannot silently land before the pending text exists.
+                _ <- advanceUntil(control, 50.millis)(lines.get.map(_.nonEmpty))
+                // A truncating write, and the only one: the file stays at 6 bytes, below the
+                // follower's position of 12, so the reset fires no matter how it is scheduled.
+                _       <- file.write("clean\n")
+                _       <- advanceUntil(control, 50.millis)(tailFiber.done)
+                _       <- tailFiber.get
+                emitted <- lines.get
+                _       <- dir.removeAll
+            // "partialclean" here would mean the pending text survived the rewind.
+            yield assert(emitted == Chunk("seen", "clean"))
+            end for
+        }
+    }
+
+    // =========================================================================
+    // tailBytes: file identity
+    //
+    // A follower follows an open file, not a name. Every quantity the poll loop compares therefore
+    // has to come from the handle, which is the only value that denotes the followed inode. The
+    // five tests below drive the ways a name can stop denoting that inode.
+    //
+    // Renaming and unlinking a file that is currently open is POSIX descriptor behavior. Windows
+    // keeps the directory entry alive until the last handle closes and refuses the operation
+    // outright for some open modes, so the outcome under test is not defined there.
+    // =========================================================================
+
+    "tailBytes does not replay the original file after the name is rotated and recreated" in {
+        assume(!Platform.isWindows, "renaming an open file is POSIX descriptor behavior")
+        Clock.withTimeControl { control =>
+            val original = "0123456789"
+            for
+                dir <- Path.tempDir("kyo-tailbytes-rotate-recreate")
+                file    = dir / "log.txt"
+                rotated = dir / "log.txt.1"
+                _    <- file.write(original)
+                seen <- AtomicRef.init(Chunk.empty[Byte])
+                fiber <- Fiber.initUnscoped(
+                    Scope.run(
+                        file.tailBytes(Path.Origin.Start, 50.millis)
+                            .take(original.length + 1)
+                            .foreach(b => seen.updateAndGet(_.append(b)))
+                    )
+                )
+                // The whole file has been replayed, so the follower's cursor sits at the end of the
+                // inode it holds and the rotation below cannot land before the handle exists.
+                _ <- advanceUntil(control, 50.millis)(doneOr(fiber)(seen.get.map(_.size >= original.length)))
+                _ <- file.move(rotated)
+                // The rotation's replacement: a fresh, empty inode under the original name. A size
+                // read by path now reports 0 against a cursor of 10 and calls that a truncation on
+                // every poll, which replays the handle's ten bytes without ever sleeping.
+                _     <- file.mkFile
+                _     <- advanceTimes(control, 50.millis, 10)
+                done  <- fiber.done
+                bytes <- seen.get
+                _     <- fiber.interrupt
+                _     <- dir.removeAll
+            yield
+                // An eleventh byte can only be a replay: nothing was ever appended to the followed
+                // inode. Ten wakeups could not produce it, and a loop that does not sleep needs none.
+                assert(!done)
+                assert(new String(bytes.toArray, StandardCharsets.UTF_8) == original)
+            end for
+        }
+    }
+
+    "tailBytes keeps following the original file after it is renamed away" in {
+        assume(!Platform.isWindows, "renaming an open file is POSIX descriptor behavior")
+        Clock.withTimeControl { control =>
+            val original = "0123456789"
+            val appended = "abc"
+            for
+                dir <- Path.tempDir("kyo-tailbytes-rename")
+                file    = dir / "log.txt"
+                rotated = dir / "log.txt.1"
+                _    <- file.write(original)
+                seen <- AtomicRef.init(Chunk.empty[Byte])
+                fiber <- Fiber.initUnscoped(
+                    Abort.run[FileReadException](
+                        Scope.run(
+                            file.tailBytes(Path.Origin.Start, 50.millis)
+                                .take(original.length + appended.length)
+                                .foreach(b => seen.updateAndGet(_.append(b)))
+                        )
+                    )
+                )
+                _ <- advanceUntil(control, 50.millis)(doneOr(fiber)(seen.get.map(_.size >= original.length)))
+                _ <- file.move(rotated)
+                // Polls against a name that resolves to nothing, with no new bytes to distract the
+                // loop from reaching the branch that measures the file.
+                _       <- advanceTimes(control, 50.millis, 5)
+                stopped <- fiber.done
+                // Written through the new name, which is the same inode the handle holds.
+                _       <- rotated.append(appended)
+                _       <- advanceUntil(control, 50.millis)(fiber.done)
+                outcome <- fiber.get
+                bytes   <- seen.get
+                _       <- dir.removeAll
+            yield
+                // A size read by path raises on each of those polls, because the old name is gone.
+                assert(!stopped)
+                assert(outcome == Result.succeed(()))
+                assert(new String(bytes.toArray, StandardCharsets.UTF_8) == original + appended)
+            end for
+        }
+    }
+
+    "tailBytes keeps following the original file after the name is replaced by another file" in {
+        assume(!Platform.isWindows, "replacing an open file is POSIX descriptor behavior")
+        Clock.withTimeControl { control =>
+            val original = "0123456789"
+            // Shorter than the follower's cursor, which is where a size read by path reads as a
+            // truncation and replays the handle's content instead of doing nothing.
+            val replacement = "new\n"
+            for
+                dir <- Path.tempDir("kyo-tailbytes-replace")
+                file     = dir / "log.txt"
+                incoming = dir / "log.txt.incoming"
+                _    <- file.write(original)
+                _    <- incoming.write(replacement)
+                seen <- AtomicRef.init(Chunk.empty[Byte])
+                fiber <- Fiber.initUnscoped(
+                    Scope.run(
+                        file.tailBytes(Path.Origin.Start, 50.millis)
+                            .take(original.length + 1)
+                            .foreach(b => seen.updateAndGet(_.append(b)))
+                    )
+                )
+                _     <- advanceUntil(control, 50.millis)(doneOr(fiber)(seen.get.map(_.size >= original.length)))
+                _     <- incoming.move(file, replaceExisting = true)
+                _     <- advanceTimes(control, 50.millis, 10)
+                done  <- fiber.done
+                bytes <- seen.get
+                _     <- fiber.interrupt
+                _     <- dir.removeAll
+            yield
+                // Neither the replacement's content nor a replay of the original: the handle holds an
+                // inode that no longer has a name and that never grows again.
+                assert(!done)
+                assert(new String(bytes.toArray, StandardCharsets.UTF_8) == original)
+            end for
+        }
+    }
+
+    "tailBytes waits rather than aborting after the followed file is deleted" in {
+        assume(!Platform.isWindows, "unlinking an open file is POSIX descriptor behavior")
+        Clock.withTimeControl { control =>
+            val original = "0123456789"
+            for
+                dir <- Path.tempDir("kyo-tailbytes-delete")
+                file = dir / "log.txt"
+                _    <- file.write(original)
+                seen <- AtomicRef.init(Chunk.empty[Byte])
+                fiber <- Fiber.initUnscoped(
+                    Scope.run(
+                        file.tailBytes(Path.Origin.Start, 50.millis)
+                            .take(original.length + 1)
+                            .foreach(b => seen.updateAndGet(_.append(b)))
+                    )
+                )
+                _     <- advanceUntil(control, 50.millis)(doneOr(fiber)(seen.get.map(_.size >= original.length)))
+                _     <- file.removeExisting
+                _     <- advanceTimes(control, 50.millis, 10)
+                done  <- fiber.done
+                bytes <- seen.get
+                _     <- fiber.interrupt
+                _     <- dir.removeAll
+            yield
+                // An unlinked inode still measures, so the follower polls an empty file forever. A
+                // finished fiber here would mean either an abort or an emission, and there is neither.
+                assert(!done)
+                assert(new String(bytes.toArray, StandardCharsets.UTF_8) == original)
+            end for
+        }
+    }
+
+    "tailBytes with Origin.End starts at the end of the handle's file and follows it across a rename" in {
+        assume(!Platform.isWindows, "renaming an open file is POSIX descriptor behavior")
+        Clock.withTimeControl { control =>
+            for
+                dir <- Path.tempDir("kyo-tailbytes-end-handle")
+                file    = dir / "log.txt"
+                rotated = dir / "log.txt.1"
+                // Digits, so that any byte of the pre-existing content is recognisable in the output.
+                _    <- file.write("0123456789")
+                seen <- AtomicRef.init(Chunk.empty[Byte])
+                fiber <- Fiber.initUnscoped(
+                    Abort.run[FileReadException](
+                        Scope.run(
+                            file.tailBytes(Path.Origin.End, 50.millis)
+                                .foreach(b => seen.updateAndGet(_.append(b)))
+                        )
+                    )
+                )
+                // One emission proves the handle is open and its start position already fixed, so the
+                // rename below cannot land before the handle exists.
+                _ <- writeUntil(control, 50.millis, file.append("a"))(doneOr(fiber)(seen.get.map(_.nonEmpty)))
+                _ <- file.move(rotated)
+                _ <- writeUntil(control, 50.millis, rotated.append("b"))(
+                    doneOr(fiber)(seen.get.map(_.exists(_ == 'b'.toByte)))
+                )
+                done  <- fiber.done
+                bytes <- seen.get
+                _     <- fiber.interrupt
+                _     <- dir.removeAll
+            yield
+                val text = new String(bytes.toArray, StandardCharsets.UTF_8)
+                // Still running: the rename did not raise, because nothing resolved the old name.
+                assert(!done)
+                // No digit: the start position was the end of the inode the handle holds.
+                assert(text.forall(c => c == 'a' || c == 'b'), s"Expected only appended bytes, got: $text")
+                // A 'b' arrived through the new name, so the follower stayed with the same inode.
+                assert(text.contains('b'))
+            end for
+        }
+    }
+
+    // =========================================================================
     // Streaming delegation (guards against infinite-recursion in safe API)
     // =========================================================================
 
@@ -1751,7 +2230,7 @@ class PathTest extends kyo.test.Test[Any]:
 
     "parent of absolute single-component path represents root" in {
         assume(!Platform.isWindows, "Unix absolute path syntax")
-        // Path("", "etc") represents /etc — its parent should be "/"
+        // Path("", "etc") represents /etc, so its parent should be "/"
         val p = Path("", "etc")
         p.parent match
             case Present(root) =>
@@ -1804,11 +2283,11 @@ class PathTest extends kyo.test.Test[Any]:
     }
 
     "Path with mid-segment absolute string documents actual behavior" in {
-        // Path("a", "/b") — the second segment starts with "/" which may be treated
+        // Path("a", "/b"): the second segment starts with "/" which may be treated
         // as absolute. Document what actually happens.
         val p = Path("a", "/b")
         // On JVM/native, java.nio.Path.resolve("/b") discards the left side and
-        // returns an absolute path. Parts become ("", "b") — absolute.
+        // returns an absolute path. Parts become ("", "b"), which is absolute.
         // The test captures the real platform behavior without prescribing a fix.
         val partsStr = p.parts.toList
         // Either the path is relative ["a", "b"] or absolute ["", "b"] depending on platform.
@@ -1825,7 +2304,7 @@ class PathTest extends kyo.test.Test[Any]:
 
     "Path('..') single-dotdot segment normalises or is preserved" in {
         val p = Path("..")
-        // ".." with no parent to resolve against — document whether it is kept or dropped.
+        // ".." with no parent to resolve against. Document whether it is kept or dropped.
         assert(p.parts.nonEmpty || p.parts.isEmpty)
         // At minimum the string representation must not throw.
         assert(p.toString != null)
@@ -1914,7 +2393,7 @@ class PathTest extends kyo.test.Test[Any]:
         // The question is whether tail picks up the new content or gets confused after
         // truncation (the file position may be beyond EOF).
         // If tail does NOT recover the test will hang and the framework timeout will
-        // kill it — that itself documents the issue.
+        // kill it, and that itself documents the issue.
         Clock.withTimeControl { control =>
             for
                 dir <- Path.tempDir("kyo-test")
@@ -1923,7 +2402,7 @@ class PathTest extends kyo.test.Test[Any]:
                 tailFiber <- Fiber.initUnscoped(
                     Scope.run(file.tail(50.millis).take(1).run)
                 )
-                _     <- control.advance(50.millis) // wake up tail's first poll (sees nothing new — initial content is skipped)
+                _     <- control.advance(50.millis) // wake up tail's first poll (sees nothing new, initial content is skipped)
                 _     <- file.truncate(0L)          // truncate to empty
                 _     <- control.advance(50.millis) // wake up tail's second poll (position reset after truncation)
                 _     <- file.appendLines(Chunk("after-truncate"))
@@ -1963,13 +2442,13 @@ class PathTest extends kyo.test.Test[Any]:
     }
 
     // =========================================================================
-    // Regression tests — inspired by known issues in fs2, os-lib, and zio-process
+    // Regression tests, inspired by known issues in fs2, os-lib, and zio-process
     // =========================================================================
 
     // Inspired by fs2 #1005: buffer reuse corruption after rechunking.
     // Each chunk read from readBytesStream must be an independent copy, not aliased
     // to the same mutable read buffer.
-    "readBytesStream chunks are independent copies — buffer not reused" in {
+    "readBytesStream chunks are independent copies, with no reuse of the read buffer" in {
         // Write a pattern where the value at offset i is (i % 256).toByte
         val size = 20000
         val data = Span.from((0 until size).map(i => (i % 256).toByte).toArray)
@@ -2004,7 +2483,7 @@ class PathTest extends kyo.test.Test[Any]:
             file = dir / "interrupt.bin"
             // Write enough data so the file cannot be read in a single chunk
             _ <- file.write("x" * 100000)
-            // Read the stream but stop after the first chunk — this interrupts the rest
+            // Read the stream but stop after the first chunk, which interrupts the rest
             firstChunks <- Scope.run(file.readBytesStream.take(1).run)
             // If the file handle was leaked, attempting to write here would either
             // fail (Windows) or eventually exhaust file descriptors (Unix).
@@ -2065,13 +2544,13 @@ class PathTest extends kyo.test.Test[Any]:
             result <- file.readLines
             _      <- dir.removeAll
         yield
-            assert(result.contains("first"), s"'first' was lost — appendLines may have overwritten from position 0")
+            assert(result.contains("first"), s"'first' was lost; appendLines may have overwritten from position 0")
             assert(result.contains("second"), s"'second' was not written")
         end for
     }
 
     // =========================================================================
-    // System directories — all userPaths fields
+    // System directories: all userPaths fields
     // =========================================================================
 
     "userPaths all fields are populated" in {
@@ -2355,6 +2834,229 @@ class PathTest extends kyo.test.Test[Any]:
                 assert(value == Path.ReadHandle.AbsentLong)
             finally handle.close()
             end try
+        end for
+    }
+
+    // =========================================================================
+    // Unsafe.openWrite: the streaming write handle
+    //
+    // Every promise openWrite's scaladoc makes is pinned here: that the handle
+    // streams bytes and strings, that `append = true` adds to what the file
+    // already holds, that `append = false` starts it empty, and that
+    // `createFolders` decides whether a missing parent is created or is an error.
+    //
+    // The multi-write cases carry the weight. A handle that writes every chunk at
+    // a position it never advances, or that advances one it started at zero over a
+    // file opened to append, still produces the right bytes for a single write to
+    // an empty file, so only a second write or existing content tells the two
+    // apart. Whether an operating system honors an explicit write position on a
+    // descriptor opened to append also varies (macOS honors it, Linux appends
+    // regardless), so a handle that carries its own position is right on one
+    // platform and destroys data on another.
+    // =========================================================================
+
+    private def utf8(s: String): Chunk[Byte] = Chunk.from(s.getBytes(StandardCharsets.UTF_8))
+
+    "openWrite with append true adds to content the file already holds, across several writes" in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-openwrite-append")
+            file = dir / "log.txt"
+            _ <- file.write("AAAAAAAAAA")
+            _ =
+                val handle = file.unsafe.openWrite(append = true, createFolders = false).getOrThrow
+                try
+                    assert(handle.writeBytes(utf8("BB")).isSuccess)
+                    assert(handle.writeBytes(utf8("CC")).isSuccess)
+                    assert(handle.writeString("DD", StandardCharsets.UTF_8).isSuccess)
+                finally handle.close()
+                end try
+            content <- file.read
+            _       <- dir.removeAll
+        yield assert(content == "AAAAAAAAAABBCCDD")
+        end for
+    }
+
+    "openWrite with append true creates a missing file and accumulates across writes" in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-openwrite-append-create")
+            file = dir / "created.txt"
+            existedBefore <- file.exists
+            _ =
+                val handle = file.unsafe.openWrite(append = true, createFolders = false).getOrThrow
+                try
+                    assert(handle.writeBytes(utf8("one")).isSuccess)
+                    assert(handle.writeBytes(utf8("two")).isSuccess)
+                    assert(handle.writeBytes(utf8("three")).isSuccess)
+                finally handle.close()
+                end try
+            content <- file.read
+            _       <- dir.removeAll
+        yield
+            assert(!existedBefore)
+            assert(content == "onetwothree")
+        end for
+    }
+
+    "openWrite with append true resumes at the end after the file is reopened" in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-openwrite-append-reopen")
+            file = dir / "rounds.txt"
+            _ =
+                (0 until 4).foreach { round =>
+                    val handle = file.unsafe.openWrite(append = true, createFolders = false).getOrThrow
+                    try
+                        assert(handle.writeBytes(utf8(s"r$round-")).isSuccess)
+                        assert(handle.writeBytes(utf8(s"$round;")).isSuccess)
+                    finally handle.close()
+                    end try
+                }
+            content <- file.read
+            _       <- dir.removeAll
+        yield assert(content == "r0-0;r1-1;r2-2;r3-3;")
+        end for
+    }
+
+    "openWrite with append false empties the file before the first write" in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-openwrite-truncate")
+            file = dir / "replaced.txt"
+            _ <- file.write("original content that is much longer than the replacement")
+            _ =
+                val handle = file.unsafe.openWrite(append = false, createFolders = false).getOrThrow
+                try assert(handle.writeBytes(utf8("new")).isSuccess)
+                finally handle.close()
+                end try
+            content <- file.read
+            _       <- dir.removeAll
+        yield assert(content == "new")
+        end for
+    }
+
+    "openWrite with append false writes successive chunks in order rather than over each other" in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-openwrite-order")
+            file = dir / "ordered.txt"
+            _ <- file.write("zzzzzzzzzzzzzzzzzzzz")
+            _ =
+                val handle = file.unsafe.openWrite(append = false, createFolders = false).getOrThrow
+                try
+                    assert(handle.writeBytes(utf8("ab")).isSuccess)
+                    assert(handle.writeBytes(utf8("cd")).isSuccess)
+                    assert(handle.writeString("ef", StandardCharsets.UTF_8).isSuccess)
+                finally handle.close()
+                end try
+            content <- file.read
+            _       <- dir.removeAll
+        yield assert(content == "abcdef")
+        end for
+    }
+
+    "openWrite keeps its position accounting exact over many chunks" in {
+        import AllowUnsafe.embrace.danger
+        val chunks   = 128
+        val chunkLen = 64
+        val expected = (0 until chunks).map(i => (0 until chunkLen).map(_ => ('a' + (i % 26)).toChar).mkString).mkString
+        for
+            dir <- Path.tempDir("kyo-openwrite-chunks")
+            file = dir / "chunks.bin"
+            // Existing content the appending handle must land after, so a position that starts at
+            // zero shows up as a shortfall in `size` as well as in the bytes.
+            preamble = "PREAMBLE"
+            _ <- file.write(preamble)
+            _ =
+                val handle = file.unsafe.openWrite(append = true, createFolders = false).getOrThrow
+                try
+                    (0 until chunks).foreach { i =>
+                        val text = (0 until chunkLen).map(_ => ('a' + (i % 26)).toChar).mkString
+                        assert(handle.writeBytes(utf8(text)).isSuccess)
+                    }
+                finally handle.close()
+                end try
+            size    <- file.size
+            content <- file.read
+            _       <- dir.removeAll
+        yield
+            assert(size == (preamble.length + chunks * chunkLen).toLong)
+            assert(content == preamble + expected)
+        end for
+    }
+
+    "openWrite writing an empty chunk leaves the file unchanged and the handle usable" in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-openwrite-empty")
+            file = dir / "empty-write.txt"
+            _ <- file.write("head")
+            _ =
+                val handle = file.unsafe.openWrite(append = true, createFolders = false).getOrThrow
+                try
+                    assert(handle.writeBytes(Chunk.empty[Byte]).isSuccess)
+                    assert(handle.writeBytes(utf8("tail")).isSuccess)
+                finally handle.close()
+                end try
+            content <- file.read
+            _       <- dir.removeAll
+        yield assert(content == "headtail")
+        end for
+    }
+
+    "openWrite writes a string in the charset it is given" in {
+        import AllowUnsafe.embrace.danger
+        val text = "café"
+        for
+            dir <- Path.tempDir("kyo-openwrite-charset")
+            latin = dir / "latin1.txt"
+            _ =
+                val handle = latin.unsafe.openWrite(append = false, createFolders = false).getOrThrow
+                try assert(handle.writeString(text, StandardCharsets.ISO_8859_1).isSuccess)
+                finally handle.close()
+                end try
+            bytes <- latin.readBytes
+            _     <- dir.removeAll
+        yield
+            // ISO-8859-1 encodes é as one byte; UTF-8 would have produced five bytes, not four.
+            assert(bytes.toArray.toSeq == text.getBytes(StandardCharsets.ISO_8859_1).toSeq)
+            assert(bytes.size == 4)
+        end for
+    }
+
+    "openWrite with createFolders true creates the missing parent directories" in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-openwrite-create-folders")
+            file = dir / "a" / "b" / "deep.txt"
+            _ =
+                val handle = file.unsafe.openWrite(append = true, createFolders = true).getOrThrow
+                try
+                    assert(handle.writeBytes(utf8("deep")).isSuccess)
+                    assert(handle.writeBytes(utf8("-file")).isSuccess)
+                finally handle.close()
+                end try
+            content <- file.read
+            _       <- dir.removeAll
+        yield assert(content == "deep-file")
+        end for
+    }
+
+    "openWrite with createFolders false fails with FileNotFoundException when the parent is missing" in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-openwrite-no-folders")
+            file   = dir / "missing" / "unreachable.txt"
+            result = file.unsafe.openWrite(append = true, createFolders = false)
+            exists <- file.exists
+            _      <- dir.removeAll
+        yield
+            assert(!exists)
+            result match
+                case Result.Failure(_: FileNotFoundException) => succeed("expected exception type")
+                case other                                    => fail(s"Expected FileNotFoundException, got $other")
+            end match
         end for
     }
 

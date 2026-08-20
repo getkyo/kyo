@@ -792,7 +792,7 @@ lazy val `kyo-schema-json` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-schema` % "test->test;compile->compile")
-        .dependsOn(`kyo-core` % "test->compile")
+        .dependsOn(`kyo-system`)
         .in(file("kyo-schema-json"))
         .withKyoTest
         .settings(`kyo-settings`)

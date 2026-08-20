@@ -13,34 +13,37 @@ import scala.scalajs.js.typedarray.Uint8Array
 @js.native
 @JSImport("node:fs", JSImport.Namespace)
 private[kyo] object NodeFs extends js.Object:
-    def existsSync(path: String): Boolean                                                       = js.native
-    def realpathSync(path: String): String                                                      = js.native
-    def statSync(path: String): NodeStats                                                       = js.native
-    def lstatSync(path: String): NodeStats                                                      = js.native
-    def readFileSync(path: String, encoding: String): String                                    = js.native
-    def readFileSync(path: String): Uint8Array                                                  = js.native
-    def writeFileSync(path: String, data: String, options: js.Dynamic): Unit                    = js.native
-    def writeFileSync(path: String, data: Uint8Array): Unit                                     = js.native
-    def appendFileSync(path: String, data: String, options: js.Dynamic): Unit                   = js.native
-    def appendFileSync(path: String, data: Uint8Array): Unit                                    = js.native
-    def mkdirSync(path: String, options: js.Dynamic): Unit                                      = js.native
-    def readdirSync(path: String): js.Array[String]                                             = js.native
-    def renameSync(oldPath: String, newPath: String): Unit                                      = js.native
-    def copyFileSync(src: String, dest: String, flags: Int): Unit                               = js.native
-    def unlinkSync(path: String): Unit                                                          = js.native
-    def rmSync(path: String, options: js.Dynamic): Unit                                         = js.native
-    def rmdirSync(path: String): Unit                                                           = js.native
-    def truncateSync(path: String, len: Double): Unit                                           = js.native
-    def openSync(path: String, flags: String): Int                                              = js.native
-    def readSync(fd: Int, buffer: Uint8Array, offset: Int, length: Int, position: Double): Int  = js.native
-    def writeSync(fd: Int, buffer: Uint8Array, offset: Int, length: Int, position: Double): Int = js.native
-    def writeSync(fd: Int, data: String, position: Double, encoding: String): Int               = js.native
-    def closeSync(fd: Int): Unit                                                                = js.native
-    def fstatSync(fd: Int): NodeStats                                                           = js.native
-    def symlinkSync(target: String, path: String): Unit                                         = js.native
-    def mkdtempSync(prefix: String): String                                                     = js.native
-    def writeFileSync(path: String, data: String): Unit                                         = js.native
-    def utimesSync(path: String, atime: Double, mtime: Double): Unit                            = js.native
+    def existsSync(path: String): Boolean                                                      = js.native
+    def realpathSync(path: String): String                                                     = js.native
+    def statSync(path: String): NodeStats                                                      = js.native
+    def lstatSync(path: String): NodeStats                                                     = js.native
+    def readFileSync(path: String, encoding: String): String                                   = js.native
+    def readFileSync(path: String): Uint8Array                                                 = js.native
+    def writeFileSync(path: String, data: String, options: js.Dynamic): Unit                   = js.native
+    def writeFileSync(path: String, data: Uint8Array): Unit                                    = js.native
+    def appendFileSync(path: String, data: String, options: js.Dynamic): Unit                  = js.native
+    def appendFileSync(path: String, data: Uint8Array): Unit                                   = js.native
+    def mkdirSync(path: String, options: js.Dynamic): Unit                                     = js.native
+    def readdirSync(path: String): js.Array[String]                                            = js.native
+    def renameSync(oldPath: String, newPath: String): Unit                                     = js.native
+    def copyFileSync(src: String, dest: String, flags: Int): Unit                              = js.native
+    def unlinkSync(path: String): Unit                                                         = js.native
+    def rmSync(path: String, options: js.Dynamic): Unit                                        = js.native
+    def rmdirSync(path: String): Unit                                                          = js.native
+    def truncateSync(path: String, len: Double): Unit                                          = js.native
+    def openSync(path: String, flags: String): Int                                             = js.native
+    def readSync(fd: Int, buffer: Uint8Array, offset: Int, length: Int, position: Double): Int = js.native
+    // Declared without the trailing position argument, which is the whole point: Node then writes at the
+    // file description's own cursor, the only offset `O_APPEND` acts on. A positioned overload would make
+    // that a per-call-site decision, and getting it wrong is silent data loss on a descriptor opened to
+    // append, so the positioned form is deliberately absent.
+    def writeSync(fd: Int, buffer: Uint8Array, offset: Int, length: Int): Int = js.native
+    def closeSync(fd: Int): Unit                                              = js.native
+    def fstatSync(fd: Int): NodeStats                                         = js.native
+    def symlinkSync(target: String, path: String): Unit                       = js.native
+    def mkdtempSync(prefix: String): String                                   = js.native
+    def writeFileSync(path: String, data: String): Unit                       = js.native
+    def utimesSync(path: String, atime: Double, mtime: Double): Unit          = js.native
 end NodeFs
 
 @js.native
@@ -223,7 +226,7 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
     def openRead()(using AllowUnsafe, Frame): Result[FileReadException, Path.ReadHandle] =
         catchRead {
             val fd = NodeFs.openSync(pathStr, "r")
-            new NodeReadHandle(fd)
+            new NodeReadHandle(fd, safe)
         }
 
     def openReadLines(charset: Charset)(using AllowUnsafe, Frame): Result[FileReadException, Path.LineReadHandle] =
@@ -467,7 +470,12 @@ end NodePathUnsafe
 
 // --- NodeReadHandle ---
 
-final private[kyo] class NodeReadHandle(fd: Int) extends Path.ReadHandle:
+/** Concrete read handle backed by a Node file descriptor.
+  *
+  * Carries the `Path` it was opened under only to name the file in a `FileReadException`, the same reason `NodeWriteHandle` carries one.
+  * Nothing here re-resolves it: every measurement goes through the descriptor.
+  */
+final private[kyo] class NodeReadHandle(fd: Int, path: Path) extends Path.ReadHandle:
 
     // Current read position (Node.js readSync with explicit position)
     private var pos: Long = 0L
@@ -523,6 +531,14 @@ final private[kyo] class NodeReadHandle(fd: Int) extends Path.ReadHandle:
 
     def position(offset: Long)(using AllowUnsafe): Unit =
         pos = offset
+
+    def size()(using AllowUnsafe, Frame): Result[FileReadException, Long] =
+        // fstat on the descriptor, not stat on the path: it answers for the file this handle holds
+        // even once the name has been renamed away or unlinked. Same translation catchRead applies.
+        try Result.succeed(NodeFs.fstatSync(fd).size.toLong)
+        catch
+            case e: js.JavaScriptException => Result.fail(NodeError.translateRead(path, e))
+            case e: Throwable              => Result.panic(e)
 
     def close()(using AllowUnsafe): Unit =
         NodeFs.closeSync(fd)
@@ -589,16 +605,34 @@ end NodeWalkHandle
 
 // --- NodeWriteHandle ---
 
+/** Concrete write handle backed by a Node file descriptor.
+  *
+  * Every write goes at the descriptor's own cursor: `writeSync` is called without a position, which is what makes the `"a"` flag
+  * `openWrite(append = true)` opens with mean what it says. A position passed explicitly turns the call into a positioned write, and POSIX
+  * leaves `O_APPEND` without effect on those, so a handle tracking its own offset appends on Linux (which appends regardless, against the
+  * standard) and overwrites the file from that offset on macOS. Letting the descriptor carry the offset also keeps the append atomic
+  * against another writer growing the file, which sampling the size once at open cannot.
+  *
+  * The truncating open needs no offset either: `"w"` starts the cursor at zero and each write advances it by what it wrote, which is
+  * exactly what a hand-kept counter would have recomputed. This matches `NioWriteHandle`, which writes through the channel's own position
+  * on JVM and Native.
+  *
+  * Carries the `Path` it was opened under only to name the file in a `FileWriteException`.
+  */
 final private[kyo] class NodeWriteHandle(fd: Int, path: Path) extends Path.WriteHandle:
-
-    private var pos: Long = 0L
 
     def writeBytes(chunk: Chunk[Byte])(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
         try
             val arr   = chunk.toArray
             val uint8 = bytesToUint8Array(arr)
-            val n     = NodeFs.writeSync(fd, uint8, 0, arr.length, pos.toDouble)
-            pos += n
+            // A short write leaves the tail of the buffer unwritten, so what is left is retried from where
+            // it stopped. This is the loop NioWriteHandle runs against the channel, written against the
+            // buffer offset because the file offset belongs to the descriptor.
+            @scala.annotation.tailrec
+            def loop(offset: Int): Unit =
+                if offset < arr.length then
+                    loop(offset + NodeFs.writeSync(fd, uint8, offset, arr.length - offset))
+            loop(0)
             Result.unit
         catch
             case e: js.JavaScriptException =>
