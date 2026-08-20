@@ -356,13 +356,9 @@ class PendingTest extends AnyFreeSpec:
         assertTypeError("val x: (Int < Any) < Any = (1: Int < Any).map(_ + 1)")
     }
 
-    // the kernel's lift is a macro that rejects a kyo module (`CanLift`); this package's lift is a
-    // method with only the pending-value lint, so the module lint is not here yet
-    /*
     "a kyo module does not lift into a computation" in {
         assertTypeError("val x: ArrowEffect.type < Any = ArrowEffect")
     }
-     */
 
     "deep map chains evaluate" in {
         def chain(n: Int, v: Int < Any): Int < Any =

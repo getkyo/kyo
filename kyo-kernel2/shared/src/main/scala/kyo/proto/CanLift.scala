@@ -1,0 +1,79 @@
+package kyo.proto
+
+import scala.annotation.implicitNotFound
+import scala.quoted.*
+import scala.util.NotGiven
+
+@implicitNotFound("""
+Type '${A}' may contain a nested effect computation.
+This usually means you have a value of type `X < S1 < S2` (i.e. `(X < S1) < S2`) where a plain value `X < S` is expected.
+
+This often happens due to *type inference*: some effect computations are nested when chaining operations, and Scala infers a value with nested effects instead of merging them.
+
+To fix this, you can:
+
+1. Call `.flatten` to merge the nested effects:
+    val x: (Int < S1) < S2 = ...
+    val y: Int < (S1 & S2) = x.flatten
+
+2. Split the computation into multiple statements:
+   Breaking the code into smaller expressions helps Scala infer the correct types incrementally, avoiding nested effects.
+    val x: Int < S1 = computeFirst()
+    val y: Int < S2 = useResult(x)
+""")
+opaque type CanLift[A] = Null
+
+object CanLift:
+
+    inline given derived[A](using inline ng: NotGiven[A <:< (Any < Nothing)], inline ns: NotGiven[A <:< Singleton]): CanLift[A] = null
+
+    // case objects are products, so data constructors like Absent lift
+    // without touching the macro and never suspend units of this module
+    inline given derivedCaseObject[A <: Singleton & Product](using inline ng: NotGiven[A <:< (Any < Nothing)]): CanLift[A] = null
+
+    // the remaining singleton types are module objects and rare non-case
+    // singletons; they resolve through the macro, which rejects lifting kyo
+    // module objects and nested computations and passes everything else.
+    // Keeping the macro on this narrow path means ordinary lifts never
+    // expand a macro, so units of this module do not suspend compilation
+    // waiting for the macro classes
+    inline given derivedSingleton[A <: Singleton]: CanLift[A] = CanLiftMacro.checkSingleton[A]
+
+    inline given nothing: CanLift[Nothing] = null
+
+end CanLift
+
+object CanLiftMacro:
+
+    inline def checkSingleton[A]: CanLift[A] = ${ checkImpl[A] }
+
+    private[proto] def checkImpl[A: Type](using Quotes): Expr[CanLift[A]] =
+        import quotes.reflect.*
+        val tpe = TypeRepr.of[A]
+        val sym = tpe.typeSymbol
+
+        if sym.fullName.startsWith("kyo.") && sym.flags.is(Flags.Module) && !sym.flags.is(Flags.Case) then
+            report.errorAndAbort(s"Cannot lift '${sym.fullName}' to a '${sym.name} < S'", Position.ofMacroExpansion)
+
+        if tpe <:< TypeRepr.of[Any < Nothing] then
+            report.errorAndAbort(s"Type '${tpe.show}' may contain a nested effect computation.", Position.ofMacroExpansion)
+
+        '{ null.asInstanceOf[CanLift[A]] }
+    end checkImpl
+
+end CanLiftMacro
+
+object LiftMacro:
+
+    def abortCastUnitMacro[S1: Type, S2: Type](v: Expr[Unit < S1])(using Quotes): Expr[Unit < S2] =
+        import quotes.reflect.*
+        val source = TypeRepr.of[S1].show
+        report.errorAndAbort(
+            s"""Cannot lift `Unit < ${source}` to the expected type (`Unit < ?`).
+               |This may be due to an effect type mismatch.
+               |Consider removing or adjusting the type constraint on the left-hand side.
+               |More info : https://github.com/getkyo/kyo/issues/903""".stripMargin
+        )
+    end abortCastUnitMacro
+
+end LiftMacro
