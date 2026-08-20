@@ -47,18 +47,18 @@ object Jsonl:
       *   maximum nesting depth for objects/arrays (default `Json.DefaultMaxDepth`)
       * @param maxCollectionSize
       *   maximum number of entries in maps, sets, or arrays (default `Json.DefaultMaxCollectionSize`)
-      * @param maxLineBytes
-      *   the largest record the framer will accept, in bytes (default `Json.Lines.DefaultMaxLineBytes`)
+      * @param maxLineSize
+      *   the largest record the framer will accept (default `Json.Lines.DefaultMaxLineSize`)
       * @return
       *   a pipe emitting one value per record, aborting with the first decode or framing failure
       */
     def pipe[A](
         maxDepth: Int = Json.DefaultMaxDepth,
         maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
-        maxLineBytes: Int = Json.Lines.DefaultMaxLineBytes
+        maxLineSize: ByteSize = Json.Lines.DefaultMaxLineSize
     )(using Json, Schema[A], Tag[Emit[Chunk[A]]], Frame): Pipe[Byte, A, Abort[DecodeException]] =
         Pipe:
-            Loop(Json.Lines.Framer.init(maxLineBytes)) { framer =>
+            Loop(Json.Lines.Framer.init(maxLineSize)) { framer =>
                 Poll.andMap[Chunk[Byte]] {
                     case Absent =>
                         framer.finishLine match
@@ -94,7 +94,7 @@ object Jsonl:
       * The variant for heterogeneous or partially-written logs: a truncated tail or an unrecognized record type yields one failure element
       * rather than ending the stream.
       *
-      * A record exceeding `maxLineBytes` is one failure element too when its terminator arrived: the boundary is known, so framing skips
+      * A record exceeding `maxLineSize` is one failure element too when its terminator arrived: the boundary is known, so framing skips
       * the record and the records after it are emitted normally. The one failure this cannot recover from is an oversized trailing
       * residual, which found no record boundary and has nothing to skip to. It surfaces as a final failure element after every record
       * framed before it, and then the stream ends.
@@ -103,18 +103,18 @@ object Jsonl:
       *   maximum nesting depth for objects/arrays (default `Json.DefaultMaxDepth`)
       * @param maxCollectionSize
       *   maximum number of entries in maps, sets, or arrays (default `Json.DefaultMaxCollectionSize`)
-      * @param maxLineBytes
-      *   the largest record the framer will accept, in bytes (default `Json.Lines.DefaultMaxLineBytes`)
+      * @param maxLineSize
+      *   the largest record the framer will accept (default `Json.Lines.DefaultMaxLineSize`)
       * @return
       *   a pipe emitting one result per record
       */
     def pipeResults[A](
         maxDepth: Int = Json.DefaultMaxDepth,
         maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
-        maxLineBytes: Int = Json.Lines.DefaultMaxLineBytes
+        maxLineSize: ByteSize = Json.Lines.DefaultMaxLineSize
     )(using Json, Schema[A], Tag[Emit[Chunk[Result[DecodeException, A]]]], Frame): Pipe[Byte, Result[DecodeException, A], Any] =
         Pipe:
-            Loop(Json.Lines.Framer.init(maxLineBytes)) { framer =>
+            Loop(Json.Lines.Framer.init(maxLineSize)) { framer =>
                 Poll.andMap[Chunk[Byte]] {
                     case Absent =>
                         framer.finishLine match
@@ -144,8 +144,8 @@ object Jsonl:
       *   maximum nesting depth for objects/arrays (default `Json.DefaultMaxDepth`)
       * @param maxCollectionSize
       *   maximum number of entries in maps, sets, or arrays (default `Json.DefaultMaxCollectionSize`)
-      * @param maxLineBytes
-      *   the largest record the framer will accept, in bytes (default `Json.Lines.DefaultMaxLineBytes`)
+      * @param maxLineSize
+      *   the largest record the framer will accept (default `Json.Lines.DefaultMaxLineSize`)
       * @return
       *   a stream of decoded values, aborting with the first decode or framing failure
       */
@@ -153,9 +153,9 @@ object Jsonl:
         path: Path,
         maxDepth: Int = Json.DefaultMaxDepth,
         maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
-        maxLineBytes: Int = Json.Lines.DefaultMaxLineBytes
+        maxLineSize: ByteSize = Json.Lines.DefaultMaxLineSize
     )(using Json, Schema[A], Tag[Emit[Chunk[A]]], Frame): Stream[A, Scope & Sync & Abort[FileReadException | DecodeException]] =
-        path.readBytesStream.into(pipe[A](maxDepth, maxCollectionSize, maxLineBytes))
+        path.readBytesStream.into(pipe[A](maxDepth, maxCollectionSize, maxLineSize))
 
     /** Reads a JSONL file as a stream of per-record `Result`s, surviving undecodable records.
       *
@@ -167,8 +167,8 @@ object Jsonl:
       *   maximum nesting depth for objects/arrays (default `Json.DefaultMaxDepth`)
       * @param maxCollectionSize
       *   maximum number of entries in maps, sets, or arrays (default `Json.DefaultMaxCollectionSize`)
-      * @param maxLineBytes
-      *   the largest record the framer will accept, in bytes (default `Json.Lines.DefaultMaxLineBytes`)
+      * @param maxLineSize
+      *   the largest record the framer will accept (default `Json.Lines.DefaultMaxLineSize`)
       * @return
       *   a stream of per-record results
       */
@@ -176,14 +176,14 @@ object Jsonl:
         path: Path,
         maxDepth: Int = Json.DefaultMaxDepth,
         maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
-        maxLineBytes: Int = Json.Lines.DefaultMaxLineBytes
+        maxLineSize: ByteSize = Json.Lines.DefaultMaxLineSize
     )(using
         Json,
         Schema[A],
         Tag[Emit[Chunk[Result[DecodeException, A]]]],
         Frame
     ): Stream[Result[DecodeException, A], Scope & Sync & Abort[FileReadException]] =
-        path.readBytesStream.into(pipeResults[A](maxDepth, maxCollectionSize, maxLineBytes))
+        path.readBytesStream.into(pipeResults[A](maxDepth, maxCollectionSize, maxLineSize))
 
     /** Streams a JSONL file's records, continuing to emit as records are appended.
       *
@@ -228,8 +228,8 @@ object Jsonl:
       *   maximum nesting depth for objects/arrays (default `Json.DefaultMaxDepth`)
       * @param maxCollectionSize
       *   maximum number of entries in maps, sets, or arrays (default `Json.DefaultMaxCollectionSize`)
-      * @param maxLineBytes
-      *   the largest record the framer will accept, in bytes (default `Json.Lines.DefaultMaxLineBytes`)
+      * @param maxLineSize
+      *   the largest record the framer will accept (default `Json.Lines.DefaultMaxLineSize`)
       * @return
       *   a stream of decoded values that runs until interrupted, aborting with the first decode or framing failure
       */
@@ -239,7 +239,7 @@ object Jsonl:
         pollDelay: Duration = 100.millis,
         maxDepth: Int = Json.DefaultMaxDepth,
         maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
-        maxLineBytes: Int = Json.Lines.DefaultMaxLineBytes
+        maxLineSize: ByteSize = Json.Lines.DefaultMaxLineSize
     )(using
         Json,
         Schema[A],
@@ -247,7 +247,7 @@ object Jsonl:
         Tag[Emit[Chunk[A]]],
         Frame
     ): Stream[A, Scope & Async & Abort[FileReadException | DecodeException]] =
-        watchResults[A](path, from, pollDelay, maxDepth, maxCollectionSize, maxLineBytes).flatMapChunk { results =>
+        watchResults[A](path, from, pollDelay, maxDepth, maxCollectionSize, maxLineSize).flatMapChunk { results =>
             val (values, failure) = splitAtFailure(results)
             failure match
                 case Absent => Stream[A, Any](emitNonEmpty(values)(()))
@@ -263,7 +263,7 @@ object Jsonl:
       * on. Every other property of [[watch]] holds unchanged, including the `Path.Origin.Start` default, the framer rebuilt across a
       * truncation, and the behavior under rotation by rename.
       *
-      * A record exceeding `maxLineBytes` yields one failure element and the stream carries on, as long as its terminator arrived: the
+      * A record exceeding `maxLineSize` yields one failure element and the stream carries on, as long as its terminator arrived: the
       * boundary is known, so framing skips the record and keeps watching. That matters most here, because ending instead would let one
       * over-long line stop a watcher on a live log permanently.
       *
@@ -283,10 +283,10 @@ object Jsonl:
       *   maximum nesting depth for objects/arrays (default `Json.DefaultMaxDepth`)
       * @param maxCollectionSize
       *   maximum number of entries in maps, sets, or arrays (default `Json.DefaultMaxCollectionSize`)
-      * @param maxLineBytes
-      *   the largest record the framer will accept, in bytes (default `Json.Lines.DefaultMaxLineBytes`)
+      * @param maxLineSize
+      *   the largest record the framer will accept (default `Json.Lines.DefaultMaxLineSize`)
       * @return
-      *   a stream of per-record results that runs until interrupted, or until the pending bytes outgrow `maxLineBytes`
+      *   a stream of per-record results that runs until interrupted, or until the pending bytes outgrow `maxLineSize`
       */
     def watchResults[A](
         path: Path,
@@ -294,7 +294,7 @@ object Jsonl:
         pollDelay: Duration = 100.millis,
         maxDepth: Int = Json.DefaultMaxDepth,
         maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
-        maxLineBytes: Int = Json.Lines.DefaultMaxLineBytes
+        maxLineSize: ByteSize = Json.Lines.DefaultMaxLineSize
     )(using
         Json,
         Schema[A],
@@ -309,7 +309,7 @@ object Jsonl:
             from,
             pollDelay,
             WatchBufferSize,
-            Json.Lines.Framer.init(maxLineBytes)
+            Json.Lines.Framer.init(maxLineSize)
         ) { (framer, buffer, bytesRead) =>
             // The watch loop reuses `buffer` across reads, so the framer, which retains what it
             // cannot yet frame, is handed an array nothing else holds.
@@ -448,24 +448,24 @@ object Jsonl:
 
     /** Read buffer size for the watch drivers.
       *
-      * 8 KB, so a record of any ordinary size arrives whole in one read and the framer seldom carries a partial across polls. This is
+      * 8 KiB, so a record of any ordinary size arrives whole in one read and the framer seldom carries a partial across polls. This is
       * passed to the shared watch loop explicitly rather than inherited from [[Path.tailBytes]]'s own default, so the two are free to
       * differ and neither has to track the other.
       */
-    private inline def WatchBufferSize: Int = 8192
+    private inline def WatchBufferSize: ByteSize = 8.kib
 
     /** What framing and decoding one chunk of JSONL bytes produced.
       *
       * The two cases of `Json.Lines.Framed`, with each framed record decoded. Naming them keeps each driver's handling of them a visible
       * decision, and keeps the framer that a halt leaves behind out of reach: the case that carries a halting breach carries no framer, so
-      * there is no value to feed again by mistake. A record skipped for exceeding `maxLineBytes` is not a halt and does not appear as one:
+      * there is no value to feed again by mistake. A record skipped for exceeding `maxLineSize` is not a halt and does not appear as one:
       * it is one failure inside `results`, sitting where the record sat, and framing carried on past it.
       */
     private enum Framing[A]:
         /** Every record the chunk resolved, and the framer that frames the next chunk. */
         case Continued[A](results: Chunk[Result[DecodeException, A]], framer: Json.Lines.Framer) extends Framing[A]
 
-        /** Every record resolved before the pending bytes outgrew `maxLineBytes`, and that breach. */
+        /** Every record resolved before the pending bytes outgrew `maxLineSize`, and that breach. */
         case Halted[A](results: Chunk[Result[DecodeException, A]], breach: LimitExceededException) extends Framing[A]
     end Framing
 
@@ -482,7 +482,7 @@ object Jsonl:
       *   the next bytes of the input, of any size including empty
       * @return
       *   [[Framing.Continued]] with the chunk's results and the advanced framer, or [[Framing.Halted]] when the pending bytes outgrew
-      *   `maxLineBytes` with no boundary to skip to, carrying the records resolved before the breach
+      *   `maxLineSize` with no boundary to skip to, carrying the records resolved before the breach
       */
     private def frameChunk[A](
         framer: Json.Lines.Framer,
