@@ -40,7 +40,12 @@ class KyoTest extends org.scalatest.freespec.AnyFreeSpec:
     "eval" in {
         assert(TestEffect1.run(TestEffect1(1).map(_ + 1)).eval == 3)
         assertTypeError("TestEffect1(1).eval")
-        assert(widen(TypeMap(1, true)).eval.get[Boolean])
+        // bound before the assert: `eval` expands the whole drive inline, and scalatest's assert
+        // renders its argument into a string constant, which overran the JVM's 64KB limit once the
+        // kernel internals became private[kyo]. The diagram for a drive expansion is unreadable
+        // anyway, so the binding is the better test as well as the compiling one
+        val typeMap = widen(TypeMap(1, true)).eval
+        assert(typeMap.get[Boolean])
     }
 
     "eval widened" in {

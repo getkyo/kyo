@@ -9,7 +9,7 @@ import kyo.kernel.Loop.Outcome2
 import scala.annotation.static
 import scala.annotation.tailrec
 
-private[kyo] sealed abstract class Kyo[+A, -S]
+sealed abstract private[kyo] class Kyo[+A, -S]
 
 private[kyo] object Kyo:
 

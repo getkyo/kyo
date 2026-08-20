@@ -6,7 +6,7 @@ import kyo.Loop.Outcome2
 import kyo.Tag
 import kyo.kernel.*
 
-private[kyo] sealed abstract class Handler[E <: ArrowEffect[?, ?], A, B, -S] extends Arrow.Transform[A, B, S]:
+sealed abstract private[kyo] class Handler[E <: ArrowEffect[?, ?], A, B, -S] extends Arrow.Transform[A, B, S]:
     def tag: Tag[E]
     def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]): C < (S & S2) =
         v match
