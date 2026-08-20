@@ -940,8 +940,12 @@ import kyo.*
 def source: java.io.InputStream = ???
 
 val bytes: Stream[Byte, Sync & Scope] =
-    Stream.fromInputStream(source, bufferSize = 8192)
+    Stream.fromInputStream(source, bufferSize = 8.kib)
 ```
+
+`bufferSize` is a `ByteSize`, so a read buffer reads as `8.kib` rather than as a bare number. It is clamped to the range an array can
+address: `ByteSize.Zero` reads one byte at a time rather than spinning on a buffer that holds nothing, and anything above `Int.MaxValue`
+bytes reads through the largest buffer there is.
 
 ### `StreamCompression` (JVM only)
 

@@ -121,6 +121,8 @@ val fromOffset: Stream[Byte, Async & Scope & Abort[FileReadException]] =
 
 `tailBytes` defaults to `Origin.End`, so it emits only bytes appended after the stream attaches. `Origin.Start` replays the file before following it, and `Origin.Offset` resumes from a recorded byte position.
 
+Read buffer sizes are `ByteSize` values, so `readStream`, `readBytesStream`, `tail`, and `tailBytes` take a buffer as `8.kib` rather than as a bare number. A buffer is clamped to the range an array can address: `ByteSize.Zero` reads one byte at a time rather than spinning on a buffer that holds nothing, and anything above `Int.MaxValue` bytes reads through the largest buffer there is. `Path.Origin.Offset` stays a numeric byte position, because it names a place in a file rather than an amount of storage.
+
 Following tracks the open file, not the path name. Rename-based rotation keeps reading the original file, deletion produces no further bytes and no failure while the open handle remains valid, and truncation in place rewinds to byte 0. Rename and deletion follow POSIX descriptor behavior; Windows may refuse those operations for an open file. A consumer that needs a replacement rotated into the original name must close the stream and open a new one.
 
 `readStream`, `readBytesStream`, `readLinesStream`, `walk` (directory tree), `tail` (follow text lines), and `tailBytes` (follow raw bytes) all return `Scope`-managed streams. `Path.ReadResult` is the typed wrapper around the raw byte count returned by low-level read operations: `ReadResult.Eof` signals end-of-file, and a positive value is the number of bytes read.

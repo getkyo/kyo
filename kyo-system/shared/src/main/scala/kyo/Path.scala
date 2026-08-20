@@ -268,20 +268,25 @@ object Path extends PathPlatformSpecific:
 
         /** Streams the file contents as decoded strings using the given charset. */
         def readStream(charset: Charset)(using Frame): Stream[String, Scope & Sync & Abort[FileReadException]] =
-            readStream(charset, 8192)
+            readStream(charset, 8.kib)
 
-        /** Streams the file contents as decoded strings using the given charset and read buffer size. */
-        def readStream(charset: Charset, bufferSize: Int)(using Frame): Stream[String, Scope & Sync & Abort[FileReadException]] =
+        /** Streams the file contents as decoded strings using the given charset and read buffer size.
+          *
+          * `bufferSize` is clamped to the range an array can address: `ByteSize.Zero` reads one byte at a time rather than spinning on a
+          * buffer that holds nothing, and anything above `Int.MaxValue` bytes reads through the largest buffer there is.
+          */
+        def readStream(charset: Charset, bufferSize: ByteSize)(using Frame): Stream[String, Scope & Sync & Abort[FileReadException]] =
+            val capacity = readBufferCapacity(bufferSize)
             Stream {
                 Scope.acquireRelease(
                     Sync.Unsafe.defer(Abort.get(self.unsafe.openRead()))
                 )(handle => Sync.Unsafe.defer(handle.close())).map { handle =>
-                    val rawBuf      = new Array[Byte](bufferSize)
+                    val rawBuf      = new Array[Byte](capacity)
                     val decoder     = charset.newDecoder()
                     val maxTrailing = math.ceil(charset.newEncoder().maxBytesPerChar()).toInt
                     val inBuf =
-                        java.nio.ByteBuffer.allocate(bufferSize + maxTrailing) // extra space for incomplete trailing multi-byte sequence
-                    val outBuf = java.nio.CharBuffer.allocate(math.ceil(bufferSize * decoder.maxCharsPerByte()).toInt)
+                        java.nio.ByteBuffer.allocate(capacity + maxTrailing) // extra space for incomplete trailing multi-byte sequence
+                    val outBuf = java.nio.CharBuffer.allocate(math.ceil(capacity * decoder.maxCharsPerByte()).toInt)
                     Loop.foreach {
                         Sync.Unsafe.defer {
                             val result = handle.readChunk(rawBuf)
@@ -312,23 +317,29 @@ object Path extends PathPlatformSpecific:
                     }
                 }
             }
+        end readStream
 
         /** Streams the raw bytes of the file. */
         def readBytesStream(using Frame): Stream[Byte, Scope & Sync & Abort[FileReadException]] =
-            readBytesStream(8192)
+            readBytesStream(8.kib)
 
-        /** Streams the raw bytes of the file using the given read buffer size. */
-        def readBytesStream(bufferSize: Int)(using Frame): Stream[Byte, Scope & Sync & Abort[FileReadException]] =
+        /** Streams the raw bytes of the file using the given read buffer size.
+          *
+          * `bufferSize` is clamped to the range an array can address: `ByteSize.Zero` reads one byte at a time rather than spinning on a
+          * buffer that holds nothing, and anything above `Int.MaxValue` bytes reads through the largest buffer there is.
+          */
+        def readBytesStream(bufferSize: ByteSize)(using Frame): Stream[Byte, Scope & Sync & Abort[FileReadException]] =
+            val capacity = readBufferCapacity(bufferSize)
             Stream {
                 Scope.acquireRelease(
                     Sync.Unsafe.defer(Abort.get(self.unsafe.openRead()))
                 )(handle => Sync.Unsafe.defer(handle.close())).map { handle =>
                     Loop.foreach {
                         Sync.Unsafe.defer {
-                            val buf    = new Array[Byte](bufferSize)
+                            val buf    = new Array[Byte](capacity)
                             val result = handle.readChunk(buf)
                             if result.isEof then Loop.done
-                            else if result.bytesRead == bufferSize then
+                            else if result.bytesRead == capacity then
                                 Emit.valueWith(Chunk.fromNoCopy(buf))(Loop.continue)
                             else
                                 Emit.valueWith(Chunk.fromNoCopy(java.util.Arrays.copyOf(buf, result.bytesRead)))(Loop.continue)
@@ -337,6 +348,7 @@ object Path extends PathPlatformSpecific:
                     }
                 }
             }
+        end readBytesStream
 
         /** Streams the file line-by-line as UTF-8 strings. */
         def readLinesStream(using Frame): Stream[String, Scope & Sync & Abort[FileReadException]] =
@@ -364,15 +376,18 @@ object Path extends PathPlatformSpecific:
 
         /** Tails the file, emitting new lines as they are appended, sleeping `pollDelay` between polls. */
         def tail(pollDelay: Duration)(using Frame): Stream[String, Async & Scope & Abort[FileReadException]] =
-            tail(pollDelay, 8192)
+            tail(pollDelay, 8.kib)
 
         /** Tails the file, emitting new lines as they are appended, sleeping `pollDelay` between polls, using the given read buffer size.
           *
           * Follows the open file rather than the name, exactly as [[tailBytes]] does: see its documentation for what a rename, a
           * replacement, and a deletion of the name do to the stream. A truncation in place drops the pending partial line along with the
           * rest of the old content, so no line ever spans the rewind.
+          *
+          * `bufferSize` is clamped to the range an array can address: `ByteSize.Zero` reads one byte at a time rather than spinning on a
+          * buffer that holds nothing, and anything above `Int.MaxValue` bytes reads through the largest buffer there is.
           */
-        def tail(pollDelay: Duration, bufferSize: Int)(using Frame): Stream[String, Async & Scope & Abort[FileReadException]] =
+        def tail(pollDelay: Duration, bufferSize: ByteSize)(using Frame): Stream[String, Async & Scope & Abort[FileReadException]] =
             // State carried between reads: leftover bytes from an incomplete UTF-8 sequence, plus the pending incomplete line text.
             // `watch` restores this initial state when the file is truncated, so neither survives a rewind.
             val emptyBytes = new Array[Byte](0)
@@ -434,12 +449,13 @@ object Path extends PathPlatformSpecific:
           * @param pollDelay
           *   how long to sleep between polls once the end of the file is reached
           * @param bufferSize
-          *   read buffer size in bytes
+          *   read buffer size, clamped to the range an array can address: `ByteSize.Zero` reads one byte at a time and anything above
+          *   `Int.MaxValue` bytes reads through the largest buffer there is
           */
         def tailBytes(
             from: Origin = Origin.End,
             pollDelay: Duration = 100.millis,
-            bufferSize: Int = 8192
+            bufferSize: ByteSize = 8.kib
         )(using Frame): Stream[Byte, Async & Scope & Abort[FileReadException]] =
             watch[Byte, Unit](self, from, pollDelay, bufferSize, ()) { (_, buf, n) =>
                 // The loop reuses `buf`, so each emitted chunk gets its own copy
@@ -698,11 +714,12 @@ object Path extends PathPlatformSpecific:
         self: Path,
         from: Origin,
         pollDelay: Duration,
-        bufferSize: Int,
+        bufferSize: ByteSize,
         initialState: St
     )(
         step: (St, Array[Byte], Int) => Step[V, St]
     )(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, Async & Scope & Abort[FileReadException]] =
+        val capacity = readBufferCapacity(bufferSize)
         Stream {
             Scope.acquireRelease(
                 Sync.Unsafe.defer(Abort.get(self.unsafe.openRead()))
@@ -722,7 +739,7 @@ object Path extends PathPlatformSpecific:
                     Abort.get(startPos).map { start =>
                         Sync.Unsafe.defer {
                             handle.position(start)
-                            val buf = new Array[Byte](bufferSize)
+                            val buf = new Array[Byte](capacity)
                             Loop(start, initialState) { (pos, state) =>
                                 Sync.Unsafe.defer {
                                     poll(handle, buf, pos) match
@@ -751,6 +768,23 @@ object Path extends PathPlatformSpecific:
             }
         }
     end watch
+
+    /** Narrows a read buffer size to the array capacity the read loops allocate.
+      *
+      * Two ends need a rule. `ByteSize.Zero` would allocate a buffer that reads nothing, which turns every read loop into a spin, so it
+      * becomes one byte. A size above `Int.MaxValue` names more bytes than an array can address, so it becomes `Int.MaxValue`: the caller
+      * asked for the largest buffer it could name and gets the largest one there is, which is what the `Int`-typed parameter this replaced
+      * already did at its own ceiling.
+      *
+      * Clamping rather than failing keeps the read APIs total, so the effect row of a stream stays what the read itself needs and does not
+      * grow an argument-validation failure that no realistic buffer size can reach.
+      */
+    private[kyo] def readBufferCapacity(bufferSize: ByteSize): Int =
+        val bytes = bufferSize.toBytes
+        if bytes <= 0L then 1
+        else if bytes > Int.MaxValue.toLong then Int.MaxValue
+        else bytes.toInt
+    end readBufferCapacity
 
     /** Returns the number of trailing bytes that form an incomplete UTF-8 sequence. */
     private def incompleteUtf8Tail(bytes: Array[Byte], len: Int): Int =

@@ -22,7 +22,7 @@ import scala.annotation.tailrec
   */
 object JsonLines:
 
-    /** Maximum bytes in a single record before framing aborts.
+    /** Maximum size of a single record before framing aborts.
       *
       * A byte stream that contains no newline would otherwise grow the framer's residual without bound. The `maxDepth` and
       * `maxCollectionSize` limits operate inside a single document and do not cover this.
@@ -32,7 +32,14 @@ object JsonLines:
       * in `'\n'`, and two more when it ends in `"\r\n"`. A pending residual is measured the same way, so a record is accepted or rejected
       * identically whether its terminator arrived in the same span or a later one.
       */
-    val DefaultMaxLineBytes: Int = 16 * 1024 * 1024
+    val DefaultMaxLineSize: ByteSize = 16.mib
+
+    /** The largest record ceiling framing can honor, and the value [[Framer.init]] clamps a larger one to.
+      *
+      * A record is handed out as a `Span[Byte]`, which is array-backed, so no record above `Int.MaxValue` bytes can be built whatever the
+      * ceiling says. Clamping at the boundary keeps every later comparison exact and keeps the size a breach reports truthful.
+      */
+    val MaxLineSize: ByteSize = Int.MaxValue.bytes
 
     private val LimitName: String = "JSONL record length"
 
@@ -59,7 +66,7 @@ object JsonLines:
       * split into spans.
       *
       * `index` is the line's position among the non-blank lines, so blank and whitespace-only lines do not consume an index while a line
-      * skipped for exceeding `maxLineBytes` does, exactly as an undecodable line does. `byteOffset` counts every byte of the overall
+      * skipped for exceeding `maxLineSize` does, exactly as an undecodable line does. `byteOffset` counts every byte of the overall
       * input, including skipped blank lines and a leading byte order mark, so it addresses the line in the original source.
       *
       * Equality is structural over all three: two lines are equal when they carry the same bytes at the same index and the same offset.
@@ -101,7 +108,7 @@ object JsonLines:
       * again per span, so a line spanning k spans of size c would cost O(c*k^2) bytes copied.
       *
       * Two invariants hold, and holding the pieces and their total in one value is what keeps them together at every construction site:
-      * `size` is the total of `pieces`, so measuring against `maxLineBytes` never joins anything, and no piece is empty, so
+      * `size` is the total of `pieces`, so measuring against `maxLineSize` never joins anything, and no piece is empty, so
       * [[endsWithReturn]] can read the final held byte off the final piece.
       *
       * `size` is a `Long` because it grows by a whole span at a time: a span landing against a ceiling near `Int.MaxValue` would wrap an
@@ -219,7 +226,7 @@ object JsonLines:
           */
         case Continued(framer: Framer, lines: Chunk[Result[LimitExceededException, Line]])
 
-        /** Every line resolved before the pending residual outgrew `maxLineBytes`, and that breach.
+        /** Every line resolved before the pending residual outgrew `maxLineSize`, and that breach.
           *
           * No line boundary was found for the residual, so there is nothing to skip to and framing is over. There is no framer to carry on
           * with, and `finishLine` is not reachable either: the bytes that would have produced a trailing line are the ones that breached.
@@ -254,8 +261,8 @@ object JsonLines:
       *   index the next emitted line will carry
       * @param residualOffset
       *   overall-input offset of the first pending byte
-      * @param maxLineBytes
-      *   line size ceiling
+      * @param maxLineSize
+      *   line size ceiling, never above [[MaxLineSize]]
       * @param atStart
       *   true until a byte that settles the byte order mark question is consumed
       */
@@ -263,9 +270,12 @@ object JsonLines:
         pending: Pending,
         nextIndex: Long,
         residualOffset: Long,
-        maxLineBytes: Int,
+        maxLineSize: ByteSize,
         atStart: Boolean
     ):
+
+        /** The ceiling as the `Int` the breach reports, exact because [[Framer.init]] clamps to [[MaxLineSize]]. */
+        private def maxLineBytes: Int = maxLineSize.toBytes.toInt
 
         /** Feeds a span, returning every line it resolved along with the framer for the next one.
           *
@@ -273,7 +283,7 @@ object JsonLines:
           *   the next bytes of the input, of any size including empty
           * @return
           *   [[Framed.Continued]] holding every line this span resolved and the advanced framer, or [[Framed.Halted]] when the pending
-          *   residual outgrew `maxLineBytes` with no line boundary to skip to. A terminated line over the ceiling is not a halt: it
+          *   residual outgrew `maxLineSize` with no line boundary to skip to. A terminated line over the ceiling is not a halt: it
           *   arrives as a failure element inside [[Framed.Continued]], and framing carries on after its terminator.
           */
         def feed(span: Span[Byte])(using Frame): Framed =
@@ -314,7 +324,7 @@ object JsonLines:
             else if total < Bom.size then
                 // Still undecided: the bytes so far are a proper prefix of the mark, and a proper prefix
                 // holds no newline, so there is nothing to emit while waiting for the rest.
-                Framed.Continued(Framer(pending.add(span), nextIndex, residualOffset, maxLineBytes, true), Chunk.empty)
+                Framed.Continued(Framer(pending.add(span), nextIndex, residualOffset, maxLineSize, true), Chunk.empty)
             else
                 // The whole mark is in hand, and every byte of it was held or is at the head of this span,
                 // so nothing pending survives it.
@@ -355,8 +365,11 @@ object JsonLines:
             val end       = held.size + nl
             val hasReturn = if nl > 0 then span(nl - 1) == Return else held.endsWithReturn
             val lineSize  = if hasReturn then end - 1 else end
-            if lineSize > maxLineBytes then
-                (nextIndex + 1, Chunk(Result.fail(LimitExceededException(LimitName, lineSize.toInt, maxLineBytes))))
+            if lineSize > maxLineSize.toBytes then
+                // Saturating for the same reason `settle` saturates: the held total and the span are each
+                // bounded by `Int.MaxValue`, so their sum is not, and a wrapped size would report a
+                // negative line length in the breach.
+                (nextIndex + 1, Chunk(Result.fail(LimitExceededException(LimitName, saturateToInt(lineSize), maxLineBytes))))
             else if held.isBlankPrefix(span, lineSize.toInt) then (nextIndex, Chunk.empty)
             else
                 (
@@ -380,12 +393,12 @@ object JsonLines:
             // The residual is measured by the same rule a completed line is: a trailing '\r' is the
             // first half of a terminator that has not arrived yet, so it does not count toward the limit.
             val restLine = if held.endsWithReturn then held.size - 1 else held.size
-            if restLine > maxLineBytes || held.size > Int.MaxValue then
+            if restLine > maxLineSize.toBytes || held.size > Int.MaxValue then
                 // No newline anywhere in the residual, so there is no boundary to resume at and no framer
                 // worth handing back. The lines resolved before it stay.
-                Framed.Halted(lines, LimitExceededException(LimitName, math.min(restLine, Int.MaxValue.toLong).toInt, maxLineBytes))
+                Framed.Halted(lines, LimitExceededException(LimitName, saturateToInt(restLine), maxLineBytes))
             else
-                Framed.Continued(Framer(held, index, offset, maxLineBytes, false), lines)
+                Framed.Continued(Framer(held, index, offset, maxLineSize, false), lines)
             end if
         end settle
 
@@ -396,7 +409,7 @@ object JsonLines:
           * allocation proportional to the output.
           *
           * `offset` is the overall-input offset of `buf(start)`, and the returned `Int` is the index where the unterminated residual
-          * begins. A line over `maxLineBytes` is recorded as a failure element and the walk continues past its terminator, since that
+          * begins. A line over `maxLineSize` is recorded as a failure element and the walk continues past its terminator, since that
           * terminator is a line boundary like any other. It consumes an index, because it is a non-blank line that a lenient consumer sees
           * one failure for, so an index keeps naming a line's position whether or not the line was kept.
           */
@@ -414,7 +427,7 @@ object JsonLines:
                     val lineEnd    = if nl > start && buf(nl - 1) == Return then nl - 1 else nl
                     val lineSize   = lineEnd - start
                     val restOffset = offset + (nl + 1 - start)
-                    if lineSize > maxLineBytes then
+                    if lineSize.toLong > maxLineSize.toBytes then
                         emitFrom(
                             buf,
                             nl + 1,
@@ -439,14 +452,21 @@ object JsonLines:
     object Framer:
         /** Creates a framer positioned at the start of an input.
           *
-          * @param maxLineBytes
-          *   the largest line the framer will emit, in bytes
+          * A ceiling above [[MaxLineSize]] is clamped to it: a record is handed out as an array-backed `Span`, so a larger ceiling names
+          * records that cannot be built. Clamping here is what lets every comparison downstream stay exact.
+          *
+          * @param maxLineSize
+          *   the largest line the framer will emit, clamped to [[MaxLineSize]]
           * @return
           *   a framer holding no pending bytes, at line index zero and byte offset zero
           */
-        def init(maxLineBytes: Int = DefaultMaxLineBytes): Framer =
-            Framer(Pending.empty, 0L, 0L, maxLineBytes, true)
+        def init(maxLineSize: ByteSize = DefaultMaxLineSize): Framer =
+            Framer(Pending.empty, 0L, 0L, if maxLineSize > MaxLineSize then MaxLineSize else maxLineSize, true)
     end Framer
+
+    /** The size a breach reports, clamped to what its `Int` field can hold. */
+    private def saturateToInt(size: Long): Int =
+        if size > Int.MaxValue.toLong then Int.MaxValue else size.toInt
 
     private def indexOfNewline(buf: Span[Byte], from: Int): Int =
         var i     = from
@@ -519,8 +539,8 @@ object JsonLines:
       *   maximum nesting depth for objects/arrays (default `Json.DefaultMaxDepth`)
       * @param maxCollectionSize
       *   maximum number of entries in maps, sets, or arrays (default `Json.DefaultMaxCollectionSize`)
-      * @param maxLineBytes
-      *   the largest record the framer will accept, in bytes (default `DefaultMaxLineBytes`)
+      * @param maxLineSize
+      *   the largest record the framer will accept (default `DefaultMaxLineSize`)
       * @return
       *   every decoded value in order, or the first decode or framing failure encountered
       */
@@ -528,13 +548,13 @@ object JsonLines:
         input: String,
         maxDepth: Int = Json.DefaultMaxDepth,
         maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
-        maxLineBytes: Int = DefaultMaxLineBytes
+        maxLineSize: ByteSize = DefaultMaxLineSize
     )(using Json, Schema[A], Frame): Result[DecodeException, Chunk[A]] =
         decodeAllBytes[A](
             Span.from(input.getBytes(StandardCharsets.UTF_8)),
             maxDepth,
             maxCollectionSize,
-            maxLineBytes
+            maxLineSize
         )
     end decodeAll
 
@@ -546,8 +566,8 @@ object JsonLines:
       *   maximum nesting depth for objects/arrays (default `Json.DefaultMaxDepth`)
       * @param maxCollectionSize
       *   maximum number of entries in maps, sets, or arrays (default `Json.DefaultMaxCollectionSize`)
-      * @param maxLineBytes
-      *   the largest record the framer will accept, in bytes (default `DefaultMaxLineBytes`)
+      * @param maxLineSize
+      *   the largest record the framer will accept (default `DefaultMaxLineSize`)
       * @return
       *   every decoded value in order, or the first decode or framing failure encountered
       */
@@ -555,9 +575,9 @@ object JsonLines:
         input: Span[Byte],
         maxDepth: Int = Json.DefaultMaxDepth,
         maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
-        maxLineBytes: Int = DefaultMaxLineBytes
+        maxLineSize: ByteSize = DefaultMaxLineSize
     )(using Json, Schema[A], Frame): Result[DecodeException, Chunk[A]] =
-        foldResults(decodeAllBytesResults[A](input, maxDepth, maxCollectionSize, maxLineBytes))
+        foldResults(decodeAllBytesResults[A](input, maxDepth, maxCollectionSize, maxLineSize))
     end decodeAllBytes
 
     /** Decodes every record, returning one `Result` per record instead of failing the whole input.
@@ -565,7 +585,7 @@ object JsonLines:
       * The variant for heterogeneous or partially-written logs: a truncated tail or an unrecognized record type yields one failure rather
       * than discarding the whole file.
       *
-      * A record exceeding `maxLineBytes` is one failure element too, as long as its terminator arrived: the boundary is known, so framing
+      * A record exceeding `maxLineSize` is one failure element too, as long as its terminator arrived: the boundary is known, so framing
       * skips the record and the records after it decode normally. Only an oversized trailing residual, which has no boundary to skip to,
       * cannot be recovered from; it surfaces as a final failure element and ends the chunk. Either way every record decoded before the
       * breach is kept: a limit breach on record 5 of a 4-record-so-far log yields 4 successes followed by that one failure, not an empty
@@ -577,19 +597,19 @@ object JsonLines:
       *   maximum nesting depth for objects/arrays (default `Json.DefaultMaxDepth`)
       * @param maxCollectionSize
       *   maximum number of entries in maps, sets, or arrays (default `Json.DefaultMaxCollectionSize`)
-      * @param maxLineBytes
-      *   the largest record the framer will accept, in bytes (default `DefaultMaxLineBytes`)
+      * @param maxLineSize
+      *   the largest record the framer will accept (default `DefaultMaxLineSize`)
       * @return
-      *   one result per record, including one failure per record skipped for exceeding `maxLineBytes`; an oversized trailing residual,
+      *   one result per record, including one failure per record skipped for exceeding `maxLineSize`; an oversized trailing residual,
       *   which finds no record boundary, is appended as a final failure element after every record decoded before it
       */
     def decodeAllBytesResults[A](
         input: Span[Byte],
         maxDepth: Int = Json.DefaultMaxDepth,
         maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
-        maxLineBytes: Int = DefaultMaxLineBytes
+        maxLineSize: ByteSize = DefaultMaxLineSize
     )(using Json, Schema[A], Frame): Chunk[Result[DecodeException, A]] =
-        Framer.init(maxLineBytes).feed(input) match
+        Framer.init(maxLineSize).feed(input) match
             case Framed.Continued(framer, lines) =>
                 val decoded = decodeLines[A](lines, maxDepth, maxCollectionSize)
                 framer.finishLine match

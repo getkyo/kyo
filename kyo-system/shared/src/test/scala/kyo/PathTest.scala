@@ -448,6 +448,43 @@ class PathTest extends kyo.test.Test[Any]:
         end for
     }
 
+    // A zero-size buffer would read nothing on every pass, so the read loop would spin without ever
+    // reaching the end of the file. One byte at a time is slow but finite, and it still delivers every
+    // byte in order, which is what this pins.
+    "readBytesStream with a zero buffer size reads one byte at a time" in {
+        val data = Span.from(Array[Byte](10, 20, 30, 40, 50))
+        for
+            dir <- Path.tempDir("kyo-path-read-test")
+            file = dir / "read-bytes-stream-zero-buffer.bin"
+            _      <- file.writeBytes(data)
+            result <- Scope.run(file.readBytesStream(ByteSize.Zero).run)
+            _      <- dir.removeAll
+        yield assert(result.toArray.toList == data.toArray.toList)
+        end for
+    }
+
+    "readStream with a zero buffer size decodes the whole file" in {
+        for
+            dir <- Path.tempDir("kyo-path-read-test")
+            file = dir / "read-stream-zero-buffer.txt"
+            _      <- file.write("hello")
+            result <- Scope.run(file.readStream(java.nio.charset.StandardCharsets.UTF_8, ByteSize.Zero).run)
+            _      <- dir.removeAll
+        yield assert(result.mkString == "hello")
+        end for
+    }
+
+    // The clamp is pinned on the function rather than through a read, because the upper end names a
+    // two-gigabyte allocation that a test cannot make.
+    "readBufferCapacity clamps a buffer size to the range an array can address" in {
+        assert(Path.readBufferCapacity(ByteSize.Zero) == 1)
+        assert(Path.readBufferCapacity(1.bytes) == 1)
+        assert(Path.readBufferCapacity(8.kib) == 8192)
+        assert(Path.readBufferCapacity(Int.MaxValue.bytes) == Int.MaxValue)
+        assert(Path.readBufferCapacity((Int.MaxValue.toLong + 1L).bytes) == Int.MaxValue)
+        assert(Path.readBufferCapacity(4.gib) == Int.MaxValue)
+    }
+
     "read on a directory raises FileIsADirectoryException" in {
         for
             dir    <- Path.tempDir("kyo-path-read-test")
@@ -1487,7 +1524,7 @@ class PathTest extends kyo.test.Test[Any]:
                 file = dir / "tail-utf8.txt"
                 _ <- file.mkFile
                 tailFiber <- Fiber.initUnscoped(
-                    Scope.run(file.tail(50.millis, 16).take(1).run)
+                    Scope.run(file.tail(50.millis, 16.bytes).take(1).run)
                 )
                 _     <- control.advance(50.millis)
                 _     <- file.append(multiByteContent)
