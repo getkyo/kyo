@@ -91,6 +91,10 @@ final private[kyo] class Stack:
     // buffer breaks or fixes the three together
     private[kernel] def entry(i: Int): Arrow[?, ?, ?] = entries((head + i) & mask)
 
+    // how many releases are held. Only a test reads this, to pin that a drive running one bracket after
+    // another does not accumulate entries for the ones that already ran
+    private[kernel] def outstanding: Int = pending
+
     def find[A](t: Tag[A]): Int =
         val n = size
         @tailrec def loop(i: Int): Int =
@@ -148,6 +152,15 @@ final private[kyo] class Stack:
     end truncate
 
     def pushFinalizer(f: Finalizer[?]): Unit =
+        // drop the run of releases on top that have already run, so a drive that brackets many resources one
+        // after another holds one entry rather than one per bracket. Only the drive reaches this, on its own
+        // thread and while the stack is live, which is why the finalizer itself does not remove its own entry:
+        // it can be applied from a continuation held past the end of the drive, by which point this stack has
+        // been pooled and belongs to someone else
+        while pending > 0 && finalizers(pending - 1).fold(true)(_.get()) do
+            pending -= 1
+            finalizers(pending) = Absent
+        end while
         if pending == finalizers.length then
             val arr = Array.fill[Maybe[Finalizer[?]]](pending * 2)(Absent)
             var i   = 0

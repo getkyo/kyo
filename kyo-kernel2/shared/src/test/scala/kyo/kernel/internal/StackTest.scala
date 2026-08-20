@@ -418,4 +418,107 @@ class StackTest extends AnyFreeSpec:
         }
     }
 
+    "finalizers" - {
+        def finalizer(ran: () => Unit) =
+            new Finalizer[Unit](Arrow[Unit, Any, Any](_ => ran()), ())
+
+        "hold until drained" in {
+            val s = Stack.borrow()
+            var n = 0
+            s.pushFinalizer(finalizer(() => n += 1))
+            s.pushFinalizer(finalizer(() => n += 1))
+            assert(s.outstanding == 2)
+            assert(n == 0)
+            s.drainFinalizers(null)
+            assert(n == 2)
+            assert(s.outstanding == 0)
+            Stack.release(s)
+        }
+
+        "drain innermost first" in {
+            val s     = Stack.borrow()
+            var order = List.empty[String]
+            s.pushFinalizer(finalizer(() => order :+= "outer"))
+            s.pushFinalizer(finalizer(() => order :+= "inner"))
+            s.drainFinalizers(null)
+            assert(order == List("inner", "outer"))
+            Stack.release(s)
+        }
+
+        "one that already ran is a no-op at the drain" in {
+            val s = Stack.borrow()
+            var n = 0
+            val f = finalizer(() => n += 1)
+            s.pushFinalizer(f)
+            f.run()
+            assert(n == 1)
+            s.drainFinalizers(null)
+            assert(n == 1)
+            Stack.release(s)
+        }
+
+        // a drive that brackets one resource after another must not keep an entry per bracket once each has
+        // released, or a long drive accumulates dead entries for its whole length
+        "a run of released finalizers does not accumulate" in {
+            val s = Stack.borrow()
+            var i = 0
+            while i < 100 do
+                val f = finalizer(() => ())
+                s.pushFinalizer(f)
+                f.run()
+                assert(s.outstanding == 1)
+                i += 1
+            end while
+            Stack.release(s)
+        }
+
+        "an outstanding finalizer is not dropped by a later push" in {
+            val s    = Stack.borrow()
+            val held = finalizer(() => ())
+            s.pushFinalizer(held)
+            val done = finalizer(() => ())
+            s.pushFinalizer(done)
+            done.run()
+            s.pushFinalizer(finalizer(() => ()))
+            // the released one in the middle is gone, the one still owed is not
+            assert(s.outstanding == 2)
+            Stack.release(s)
+        }
+
+        "a release that throws does not stop the rest, and surfaces when the drive is not already failing" in {
+            val s   = Stack.borrow()
+            var ran = List.empty[String]
+            s.pushFinalizer(finalizer(() => ran :+= "outer"))
+            s.pushFinalizer(finalizer(() => throw new IllegalStateException("inner")))
+            val message =
+                try
+                    s.drainFinalizers(null)
+                    Maybe.empty[String]
+                catch case ex: IllegalStateException => Maybe(ex.getMessage)
+            assert(message == Maybe("inner"))
+            assert(ran == List("outer"))
+            Stack.release(s)
+        }
+
+        "a release that throws is suppressed onto the drive's own failure" in {
+            val s       = Stack.borrow()
+            val failure = new UnsupportedOperationException("body")
+            s.pushFinalizer(finalizer(() => throw new IllegalStateException("release")))
+            s.drainFinalizers(failure)
+            assert(failure.getSuppressed.toList.map(_.getMessage) == List("release"))
+            Stack.release(s)
+        }
+
+        "clear forgets them, since the stack is pooled" in {
+            val s = Stack.borrow()
+            var n = 0
+            s.pushFinalizer(finalizer(() => n += 1))
+            s.clear()
+            assert(s.outstanding == 0)
+            s.drainFinalizers(null)
+            assert(n == 0)
+            Stack.release(s)
+        }
+    }
+
 end StackTest
