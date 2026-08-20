@@ -68,7 +68,10 @@ object Arrow:
                             out
                         end if
 
-    private[kyo] trait Transform[-A, B, -S] extends Arrow[A, B, S]:
+    // public because the inline combinators name it: an inline body is re-typechecked at every
+    // expansion site, including sites outside package kyo, so every symbol map names has to be
+    // reachable there. The same rule that keeps EffectTrace public
+    trait Transform[-A, B, -S] extends Arrow[A, B, S]:
         type X = B
         def head = this
         def tail = Arrow.id[B]
@@ -78,8 +81,10 @@ object Arrow:
         override def toString: String = s"Arrow(${frame.position.show}, ${frame.snippetShort})"
     end Transform
 
-    // the evaluator flattens a chain onto its stack, so it sees the two halves
-    private[kyo] class Chain[-A, B, +C, -S](
+    // the evaluator flattens a chain onto its stack, so it sees the two halves. Public for the
+    // same reason as Transform: Eval.apply is inline and matches on this class, so it has to be
+    // reachable from every drive site
+    class Chain[-A, B, +C, -S] private[kyo] (
         val a: Arrow[A, B, S],
         val b: Arrow[B, C, S]
     ) extends Arrow[A, C, S]:
@@ -120,7 +125,9 @@ object Arrow:
 
     end Chain
 
-    private[Arrow] class Id[A] extends Arrow[A, A, Any]:
+    // likewise reachable from an expansion site: `Arrow.id` is named inside the inline
+    // combinators and its result type is this class
+    class Id[A] private[Arrow] () extends Arrow[A, A, Any]:
         type X = A
         def head                      = this
         def tail                      = this
