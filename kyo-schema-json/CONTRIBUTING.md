@@ -185,9 +185,9 @@ loop.**
 
 ---
 
-## `maxLineBytes` and the one unrecoverable failure
+## `maxLineSize` and the one unrecoverable failure
 
-`maxLineBytes` (default `Json.Lines.DefaultMaxLineBytes`, 16 MiB) exists because
+`maxLineSize` (default `Json.Lines.DefaultMaxLineSize`, 16 MiB) exists because
 a byte stream containing no newline would otherwise grow the framer's residual
 without bound. `maxDepth` and `maxCollectionSize` do not cover this: both
 operate inside a single document, and a stream with no record boundary never
@@ -260,7 +260,7 @@ for the full rationale on the source.
 Nothing in this module buffers a whole stream, in either direction, and every
 entry point must keep that property.
 
-Reading: the framer holds at most one partial record, capped by `maxLineBytes`.
+Reading: the framer holds at most one partial record, capped by `maxLineSize`.
 Records complete within a chunk are emitted and dropped.
 
 Writing: `writeAll` folds the value stream chunk by chunk. Each chunk goes

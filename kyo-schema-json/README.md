@@ -245,7 +245,7 @@ assert(completed.isInstanceOf[Json.Lines.Framed.Continued])
 Each resolved line is a `Result`: a success carries a `Json.Lines.Line`, and a failure carries the size-limit breach occupying that record position. `Framed.Continued` carries resolved lines plus the next framer, while `Framed.Halted` carries resolved lines plus the terminal breach:
 
 ```scala doctest:expect=runs
-val outcome = Json.Lines.Framer.init(maxLineBytes = 8).feed(utf8("123456789\n12345678\n"))
+val outcome = Json.Lines.Framer.init(maxLineSize = 8.bytes).feed(utf8("123456789\n12345678\n"))
 val texts = outcome match
     case Json.Lines.Framed.Continued(_, lines) =>
         lines.collect { case Result.Success(record) => record.text }
@@ -256,7 +256,7 @@ assert(texts == Chunk("12345678"))
 
 > **Unlike** a terminated oversized line, which becomes a failure element inside `Framed.Continued` and lets framing resume after its newline, an oversized unterminated residual produces `Framed.Halted` because no record boundary exists to resume from.
 
-`Json.Lines.DefaultMaxLineBytes` is the default bound for both a pending residual and a complete record. Supply a lower value to `Framer.init` and the decoding APIs when the application accepts smaller records.
+`Json.Lines.DefaultMaxLineSize` is the default bound for both a pending residual and a complete record. It is a `ByteSize`, so a ceiling reads as `8.bytes` or `1.mib` rather than as a bare number. Supply a lower value to `Framer.init` and the decoding APIs when the application accepts smaller records.
 
 ## Reading and watching streams
 
@@ -274,7 +274,7 @@ def recoverable(input: Stream[Byte, Any]): Stream[Result[DecodeException, Event]
     input.into(Jsonl.pipeResults[Event]())
 ```
 
-Both pipes accept `maxDepth`, `maxCollectionSize`, and `maxLineBytes`. Their output is independent of how the upstream stream groups bytes into chunks.
+Both pipes accept `maxDepth`, `maxCollectionSize`, and `maxLineSize`. Their output is independent of how the upstream stream groups bytes into chunks.
 
 > **Note:** Strict streaming emits every successfully decoded record before the first failure, including when those records and the failure arrive in one upstream chunk. The emitted prefix therefore does not depend on upstream chunk size.
 
