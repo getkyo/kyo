@@ -1,6 +1,7 @@
 package kyo.kernel
 
 import kyo.Arrow
+import kyo.Arrow.Transform
 import kyo.Frame
 import kyo.Maybe
 import kyo.Render
@@ -20,10 +21,14 @@ object `<` extends Implicits:
         @nowarn("msg=anonymous")
         inline def map[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
             // TODO check if this expanded code uses other nested `inline` methods and report
-            // the ascription keeps the anonymous class's type out of the expansion: without it the
-            // inferred type names Arrow.Transform, which an expansion site outside kyo cannot select
+            // Transform is referenced unqualified, through the import, and never as Arrow.Transform.
+            // The combinators are inline, so the body is re-typechecked at the expansion site, and a
+            // site outside package kyo cannot select a private[kyo] member from Arrow.type: the
+            // qualified spelling fails there with "Found: kyo.Arrow.type, Required: ?{ Transform: ? }".
+            // Reached through the import it resolves without that selection. kyo-compile-bench is the
+            // only corpus outside package kyo, so it is the only thing that catches a regression here
             def arrow: Arrow[A, B, S2] =
-                new Arrow.Transform[A, B, S2]:
+                new Transform[A, B, S2]:
                     def frame                                          = _frame
                     def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]) = run(v, next)
             def run[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S2 & S3) =
@@ -45,7 +50,7 @@ object `<` extends Implicits:
         @nowarn("msg=anonymous")
         inline def flatMap[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
             def arrow =
-                new Arrow.Transform[A, B, S2]:
+                new Transform[A, B, S2]:
                     def frame                                          = _frame
                     def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]) = run(v, next)
             def run[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S2 & S3) =
@@ -67,7 +72,7 @@ object `<` extends Implicits:
         @nowarn("msg=anonymous")
         inline def andThen[B, S2](inline f: => B < S2)(using inline _frame: Frame): B < (S & S2) =
             def arrow =
-                new Arrow.Transform[A, B, S2]:
+                new Transform[A, B, S2]:
                     def frame                                          = _frame
                     def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]) = run(v, next)
             def run[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S2 & S3) =
@@ -89,7 +94,7 @@ object `<` extends Implicits:
         @nowarn("msg=anonymous")
         inline def unit(using inline _frame: Frame): Unit < S =
             def arrow =
-                new Arrow.Transform[A, Unit, Any]:
+                new Transform[A, Unit, Any]:
                     def frame                                             = _frame
                     def apply[C, S3](v: A < S3, next: Arrow[Unit, C, S3]) = run(v, next)
             def run[C, S3](v: A < S3, next: Arrow[Unit, C, S3]): C < S3 =
@@ -111,7 +116,7 @@ object `<` extends Implicits:
         @nowarn("msg=anonymous")
         inline def flatten[B, S2](using ev: A <:< (B < S2), inline _frame: Frame): B < (S & S2) =
             def arrow =
-                new Arrow.Transform[A, B, S2]:
+                new Transform[A, B, S2]:
                     def frame                                          = _frame
                     def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]) = run(v, next)
             def run[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S2 & S3) =

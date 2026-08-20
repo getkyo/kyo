@@ -1,6 +1,9 @@
 package kyo.kernel
 
 import kyo.Arrow
+// unqualified so the inline expansions do not select it from Arrow.type at a site outside
+// package kyo, where it is not accessible. See the note in Pending.scala
+import kyo.Arrow.Transform
 import kyo.Frame
 import kyo.Tag
 import kyo.kernel.internal.*
@@ -32,7 +35,7 @@ object ArrowEffect:
     )(
         inline f: O[C] => B < S
     ): B < (E & S) =
-        new Kyo.Suspend[I, O, E, C, B, S] with Arrow.Transform[O[C], B, S]:
+        new Kyo.Suspend[I, O, E, C, B, S] with Transform[O[C], B, S]:
             def frame                   = _frame
             def tag                     = effectTag
             def input                   = effectInput
@@ -148,7 +151,7 @@ object ArrowEffect:
         def onDone(v: A) = done(v)
         v match
             case body: Kyo[A, E & S] @unchecked =>
-                new Kyo.Handle[E, A, B, C, S & S2] with Arrow.Transform[B, C, S & S2]:
+                new Kyo.Handle[E, A, B, C, S & S2] with Transform[B, C, S & S2]:
                     def frame = _frame
                     def value = body
                     val handler =
@@ -182,7 +185,7 @@ object ArrowEffect:
         def onDone(v: A) = done(v)
         v match
             case body: Kyo[A, E & S] @unchecked =>
-                new Kyo.Handle[E, A, B, C, S & S2] with Arrow.Transform[B, C, S & S2]:
+                new Kyo.Handle[E, A, B, C, S & S2] with Transform[B, C, S & S2]:
                     def frame = _frame
                     def value = body
                     val handler =
@@ -217,7 +220,7 @@ object ArrowEffect:
         def onDone(s: State, v: A) = done(s, v)
         v match
             case body: Kyo[A, E & S] @unchecked =>
-                new Kyo.Handle[E, A, B, C, S & S2] with Arrow.Transform[B, C, S & S2]:
+                new Kyo.Handle[E, A, B, C, S & S2] with Transform[B, C, S & S2]:
                     def frame = _frame
                     def value = body
                     val handler =

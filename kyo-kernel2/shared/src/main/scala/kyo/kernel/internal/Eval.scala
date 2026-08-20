@@ -1,6 +1,10 @@
 package kyo.kernel.internal
 
 import kyo.Arrow
+// unqualified so the inlined drive does not select these from Arrow.type at an expansion site
+// outside package kyo, where they are not accessible. See the note in Pending.scala
+import kyo.Arrow.Chain
+import kyo.Arrow.Transform
 import kyo.Frame
 import kyo.Maybe
 import kyo.Maybe.*
@@ -71,7 +75,7 @@ object Eval:
                                         discard(stack.pop())
                                         loop(
                                             new Kyo.Defer[Loop.Outcome[OX[CX] < (EX & S), BX], BX, BX, EX & S]
-                                                with Arrow.Transform[Loop.Outcome[OX[CX] < (EX & S), BX], BX, EX & S]:
+                                                with Transform[Loop.Outcome[OX[CX] < (EX & S), BX], BX, EX & S]:
                                                 def frame = Frame.internal
                                                 def value = clause
                                                 def contA = this
@@ -114,7 +118,7 @@ object Eval:
                                         discard(stack.pop())
                                         loop(
                                             new Kyo.Defer[Loop.Outcome2[StateX, OX[CX] < (EX & S), BX], BX, BX, EX & S]
-                                                with Arrow.Transform[Loop.Outcome2[StateX, OX[CX] < (EX & S), BX], BX, EX & S]:
+                                                with Transform[Loop.Outcome2[StateX, OX[CX] < (EX & S), BX], BX, EX & S]:
                                                 def frame = Frame.internal
                                                 def value = clause
                                                 def contA = this
@@ -175,7 +179,7 @@ object Eval:
                                             EffectTrace.attach(ex, h, tail, stack)
                                             throw ex
                                 loop(next)
-                            case c: Arrow.Chain[Any, ?, Any, EX & S] @unchecked =>
+                            case c: Chain[Any, ?, Any, EX & S] @unchecked =>
                                 val tail = stack.dump[Any, Any, EX & S]()
                                 val next =
                                     try c(curr, tail)

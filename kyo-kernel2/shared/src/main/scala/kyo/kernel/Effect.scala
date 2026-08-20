@@ -57,6 +57,7 @@ object Effect:
       * boundary, which assumes an exception is observed only there. This handler is a second observation point, so it has to attach and
       * splice before calling `f`, or the handler sees frames in the carrier that are not in the stack trace.
       */
+    // TODO please implement but only if it can be implemented without any other changes (EffectTrace is fine). Check with me otherwise
     // inline def catching[A, S, B >: A, S2](inline v: => A < S)(
     //     inline f: Throwable => B < S2
     // )(using inline _frame: Frame): B < (S & S2)
