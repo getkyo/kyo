@@ -55,7 +55,7 @@ case kyo: Kyo.Handled[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @un
 
 ```scala
 case done =>
-    loop(walk(node.exit, Nested.lift(done)), node.prev)
+    loop(walk(node.exit, Nested.nest(done)), node.prev)
 ```
 
 What each mechanism enforced, the shape now implies:
@@ -121,7 +121,7 @@ A budget is not a carrier. The redesign between step 1 and merged layers kept en
 
 ## Currency discipline
 
-The implicit lift passes primitives and `String` raw and routes everything else through `Nested.lift`, which boxes only `Boxed` values: `Kyo` nodes and already-nested values. Ordinary user values pass raw. The lift requires `CanLift` evidence, which `NotGiven[A <:< (Any < Nothing)]` derives for everything except statically pending types: ascribing a computation into a nested `< S` position is a compile error with a teaching message, so the footgun in rule 2 cannot arrive through inference anymore. Deliberately holding a computation as data goes through a generic indirection (`def box[A](v: A): A < Any = v`), where the runtime lift boxes it. A macro-based lift with per-type static mode selection was tried and reverted: same-module macro expansion trips the compiler's compilation-suspension bug, and the constraint that matters needs no macro. This gives four rules:
+The implicit lift passes primitives and `String` raw and routes everything else through `Nested.nest`, which boxes only `Boxed` values: `Kyo` nodes and already-nested values. Ordinary user values pass raw. The lift requires `CanLift` evidence, which `NotGiven[A <:< (Any < Nothing)]` derives for everything except statically pending types: ascribing a computation into a nested `< S` position is a compile error with a teaching message, so the footgun in rule 2 cannot arrive through inference anymore. Deliberately holding a computation as data goes through a generic indirection (`def box[A](v: A): A < Any = v`), where the runtime lift boxes it. A macro-based lift with per-type static mode selection was tried and reverted: same-module macro expansion trips the compiler's compilation-suspension bug, and the constraint that matters needs no macro. This gives four rules:
 
 1. **`lift` is for a plain value entering the kernel, exactly once.** A settled result of an evaluation pass is already currency; passing it through `lift` again double-nests it as data.
 2. **Know the footgun.** `<` is contravariant in `S`, so a value read at `Any < Nothing` does not conform to an expected `Any < Any`. At any site where a `Kyo` fails to conform to the expected `<` type, the compiler silently applies the implicit conversion and turns the whole computation into data as `Nested(...)`. Nothing fails at that point; the failure surfaces arbitrarily far away as `ClassCastException: kyo.kernel.Nested cannot be cast to ...`. This bit three times during the kernel's development. The canonical bad site was an erased alias pinning the effect slot to `Nothing`, making every field read a conversion site; the debugging session was long precisely because the construction sites had been pinned with explicit type parameters while the real culprits were the erased reads.

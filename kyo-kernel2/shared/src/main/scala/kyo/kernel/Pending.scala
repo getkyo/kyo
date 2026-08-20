@@ -20,15 +20,16 @@ object `<` extends Implicits:
 
         @nowarn("msg=anonymous")
         inline def map[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
-            // What a call site expands to, read off `-Xprint:inlining` for kyo-compile-bench's
-            // fixtures-expansion corpus. Inlined here: `f`, `unsafeGet`, `self` by substitution, and the
-            // implicit lift. Left as calls: `Effect.defer` twice, `Arrow.id` twice, `next.head`,
+            // What a call site expands to, read off `-Xprint:inlining` over kyo-compile-bench's
+            // fixtures-expansion corpus. Inlined: `f`, `self` by substitution, and the implicit lift.
+            // Left as calls: `Nested.unnest`, `Effect.defer` twice, `Arrow.id` twice, `next.head`,
             // `next.tail`, and the three `Safepoint` entry points. One anonymous Transform is constructed.
             //
-            // Against a fixture with the map removed, a site costs 7053 characters of tree when the lift
-            // folds to a cast and 8147 when the lambda returns a singleton, which is the only shape that
-            // reaches the CanLift macro and then `Nested.lift`. The lift itself is free: the bare-value
-            // shape is smaller than a control whose lambda is already pending.
+            // `Nested.unnest` rather than `unsafeGet` is what keeps that list short. An inline body that
+            // selects a member through the opaque type's owner makes the expansion carry a proxy chain for
+            // that owner with the refinement written out longhand; a call to a plain object does not. The
+            // lift is not in that category: it only names `A < S` as a type, so it costs nothing here
+            // beyond the CanLift macro on the one shape that reaches it, a lambda returning a singleton.
             //
             // Transform is referenced unqualified, through the import, and never as Arrow.Transform.
             // The combinators are inline, so the body is re-typechecked at the expansion site, and a
@@ -49,7 +50,7 @@ object `<` extends Implicits:
                         if !Safepoint.enter(slot) then
                             Effect.defer(v, arrow, next)
                         else
-                            val out = next.head(f(v.unsafeGet), next.tail)
+                            val out = next.head(f(Nested.unnest(v)), next.tail)
                             Safepoint.exit(slot)
                             out
                         end if
@@ -71,7 +72,7 @@ object `<` extends Implicits:
                         if !Safepoint.enter(slot) then
                             Effect.defer(v, arrow, next)
                         else
-                            val out = next.head(f(v.unsafeGet), next.tail)
+                            val out = next.head(f(Nested.unnest(v)), next.tail)
                             Safepoint.exit(slot)
                             out
                         end if
@@ -137,7 +138,7 @@ object `<` extends Implicits:
                         if !Safepoint.enter(slot) then
                             Effect.defer(v, arrow, next)
                         else
-                            val out = next.head(ev(v.unsafeGet), next.tail)
+                            val out = next.head(ev(Nested.unnest(v)), next.tail)
                             Safepoint.exit(slot)
                             out
                         end if
@@ -304,14 +305,8 @@ object `<` extends Implicits:
             val v = self
             v match
                 case _: Kyo[?, ?] => Maybe.empty
-                case _            => Maybe(v.unsafeGet)
+                case _            => Maybe(Nested.unnest(v))
         end evalNow
-
-        /** The settled value, one nesting level stripped. Only valid where the pending case is already excluded. */
-        inline def unsafeGet: A =
-            self match
-                case self: Nested[A] @unchecked => self.value
-                case self                       => self.asInstanceOf[A]
     end extension
 
     /** A pending computation renders as its payload wrapped in `Kyo(...)`, with the payload rendered by its own instance, so the wrapper

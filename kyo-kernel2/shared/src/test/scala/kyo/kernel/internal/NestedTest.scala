@@ -23,20 +23,20 @@ class NestedTest extends AnyFreeSpec:
 
     "lift" - {
         "passes a settled value through unwrapped" in {
-            val v: Int < Any = Nested.lift(42)
+            val v: Int < Any = Nested.nest(42)
             assert(!boxed(v))
             assert(v.evalNow == Maybe(42))
         }
 
         "passes a reference value through unwrapped" in {
-            val v: String < Any = Nested.lift("x")
+            val v: String < Any = Nested.nest("x")
             assert(!boxed(v))
             assert(v.eval == "x")
         }
 
         "boxes a computation, so it travels as data" in {
             val inner: Int < Ask     = ask.map(_ + 1)
-            val v: (Int < Ask) < Any = Nested.lift(inner)
+            val v: (Int < Ask) < Any = Nested.nest(inner)
             assert(boxed(v))
             val payload: Int < Ask = v.eval
             assert(answerAsk(41)(payload).eval == 42)
@@ -44,8 +44,8 @@ class NestedTest extends AnyFreeSpec:
 
         "boxes an already-boxed value again, one level per lift" in {
             val inner: Int < Ask                 = ask.map(_ + 1)
-            val once: (Int < Ask) < Any          = Nested.lift(inner)
-            val twice: ((Int < Ask) < Any) < Any = Nested.lift(once)
+            val once: (Int < Ask) < Any          = Nested.nest(inner)
+            val twice: ((Int < Ask) < Any) < Any = Nested.nest(once)
             assert(boxed(twice))
             assert(boxed(twice.eval))
             assert(answerAsk(41)(twice.eval.eval).eval == 42)
@@ -55,7 +55,7 @@ class NestedTest extends AnyFreeSpec:
         // lift sees it, and there is nothing an evaluator could mistake for a suspension
         "does not box a computation that has already settled" in {
             val inner: Int < Any     = (1: Int < Any).map(_ + 1)
-            val v: (Int < Any) < Any = Nested.lift(inner)
+            val v: (Int < Any) < Any = Nested.nest(inner)
             assert(!boxed(v))
             assert(v.eval.eval == 2)
         }
@@ -70,8 +70,8 @@ class NestedTest extends AnyFreeSpec:
 
     "unwrapping strips exactly one level" in {
         val inner: Int < Ask     = ask.map(_ + 1)
-        val v: (Int < Ask) < Any = Nested.lift(inner)
-        val stripped: Int < Ask  = v.unsafeGet
+        val v: (Int < Ask) < Any = Nested.nest(inner)
+        val stripped: Int < Ask  = Nested.unnest(v)
         assert(!boxed(stripped))
         assert(answerAsk(41)(stripped).eval == 42)
     }

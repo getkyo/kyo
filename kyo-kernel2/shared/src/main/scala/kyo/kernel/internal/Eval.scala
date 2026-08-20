@@ -101,10 +101,10 @@ object Eval:
                                                     o match
                                                         case kyo: Kyo[Loop.Outcome[OX[CX] < (EX & S), BX], S2] @unchecked =>
                                                             Effect.defer(kyo, this, next)
-                                                        case _ => next(apply(o.unsafeGet), Arrow.id)
+                                                        case _ => next(apply(Nested.unnest(o)), Arrow.id)
                                         )
                                     case o =>
-                                        o.unsafeGet match
+                                        Nested.unnest[Any](o) match
                                             case r: Loop.Continue[OX[CX] < (EX & S)] @unchecked =>
                                                 r._1 match
                                                     case _: Kyo[OX[CX], EX & S] @unchecked =>
@@ -146,10 +146,10 @@ object Eval:
                                                     o match
                                                         case kyo: Kyo[Loop.Outcome2[StateX, OX[CX] < (EX & S), BX], S2] @unchecked =>
                                                             Effect.defer(kyo, this, next)
-                                                        case _ => next(apply(o.unsafeGet), Arrow.id)
+                                                        case _ => next(apply(Nested.unnest(o)), Arrow.id)
                                         )
                                     case o =>
-                                        o.unsafeGet match
+                                        Nested.unnest[Any](o) match
                                             case r: Loop.Continue2[StateX, OX[CX] < (EX & S)] @unchecked =>
                                                 stack.putState(pos, r._1)
                                                 r._2 match
@@ -169,7 +169,7 @@ object Eval:
                     stack.push(kyo.handler)
                     loop(kyo.value)
                 case _ =>
-                    val r = curr.unsafeGet
+                    val r = Nested.unnest[Any](curr)
                     if !stack.isEmpty then
                         val s = stack.state[StateX](0)
                         stack.pop() match

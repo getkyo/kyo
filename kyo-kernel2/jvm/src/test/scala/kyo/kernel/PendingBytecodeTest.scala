@@ -54,7 +54,7 @@ class PendingBytecodeTest extends AnyFreeSpec:
     "lift of a concrete class keeps the runtime test" in {
         // MOVED, not re-baselined: this was 2 in the previous kernel2, where the emission analyzed
         // the type and proved a final class admits no nested payload, leaving a bare cast. This
-        // lift has two arms, a primitive fast path and Nested.lift, so a concrete class takes the
+        // lift has two arms, a primitive fast path and Nested.nest, so a concrete class takes the
         // same static call a generic value takes: aload, invokestatic, areturn.
         //
         // The cost is one union instanceof on the most common boundary in the library. Restoring

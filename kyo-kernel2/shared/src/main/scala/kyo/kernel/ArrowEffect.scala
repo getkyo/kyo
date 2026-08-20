@@ -51,7 +51,7 @@ object ArrowEffect:
             def apply[D, S2](v: O[C] < S2, next: Arrow[B, D, S2]): D < (S & S2) =
                 v match
                     case kyo: Kyo[O[C], S2] @unchecked => Effect.defer(kyo, this, next)
-                    case _                             => next(apply(v.unsafeGet), Arrow.id)
+                    case _                             => next(apply(Nested.unnest(v)), Arrow.id)
     end suspendWith
 
     @nowarn("msg=anonymous")
@@ -74,7 +74,7 @@ object ArrowEffect:
                             def run[C](input: I[C], cont: O[C] => A < (E & S)) = handle[C](input, cont)
                             override def apply(a: A)                           = onDone(a)
                     def cont = Arrow.id[B]
-            case _ => onDone(v.unsafeGet)
+            case _ => onDone(Nested.unnest(v))
         end match
     end handleCont
 
@@ -98,7 +98,7 @@ object ArrowEffect:
                             def run[C](input: I[C])  = handle[C](input)
                             override def apply(a: A) = onDone(a)
                     def cont = Arrow.id[B]
-            case _ => onDone(v.unsafeGet)
+            case _ => onDone(Nested.unnest(v))
         end match
     end handleLoop
 
@@ -124,7 +124,7 @@ object ArrowEffect:
                             def run[C](st: State, input: I[C]) = handle[C](st, input)
                             def apply(st: State, a: A)         = onDone(st, a)
                     def cont = Arrow.id[B]
-            case _ => onDone(state, v.unsafeGet)
+            case _ => onDone(state, Nested.unnest(v))
         end match
     end handleLoopState
 
@@ -172,8 +172,8 @@ object ArrowEffect:
                     def apply[D, S3](b: B < S3, next: Arrow[C, D, S3]): D < (S & S2 & S3) =
                         b match
                             case kyo: Kyo[B, S3] @unchecked => Effect.defer(kyo, this, next)
-                            case _                          => next(apply(b.unsafeGet), Arrow.id)
-            case _ => onDone(v.unsafeGet).map(f)
+                            case _                          => next(apply(Nested.unnest(b)), Arrow.id)
+            case _ => onDone(Nested.unnest(v)).map(f)
         end match
     end handleContWith
 
@@ -206,8 +206,8 @@ object ArrowEffect:
                     def apply[D, S3](b: B < S3, next: Arrow[C, D, S3]): D < (S & S2 & S3) =
                         b match
                             case kyo: Kyo[B, S3] @unchecked => Effect.defer(kyo, this, next)
-                            case _                          => next(apply(b.unsafeGet), Arrow.id)
-            case _ => onDone(v.unsafeGet).map(f)
+                            case _                          => next(apply(Nested.unnest(b)), Arrow.id)
+            case _ => onDone(Nested.unnest(v)).map(f)
         end match
     end handleLoopWith
 
@@ -242,8 +242,8 @@ object ArrowEffect:
                     def apply[D, S3](b: B < S3, next: Arrow[C, D, S3]): D < (S & S2 & S3) =
                         b match
                             case kyo: Kyo[B, S3] @unchecked => Effect.defer(kyo, this, next)
-                            case _                          => next(apply(b.unsafeGet), Arrow.id)
-            case _ => onDone(state, v.unsafeGet).map(f)
+                            case _                          => next(apply(Nested.unnest(b)), Arrow.id)
+            case _ => onDone(state, Nested.unnest(v)).map(f)
         end match
     end handleLoopStateWith
 

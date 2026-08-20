@@ -17,7 +17,7 @@ sealed abstract private[kyo] class Handler[E <: ArrowEffect[?, ?], A, B, -S] ext
                 if !Safepoint.enter(slot) then
                     Effect.defer(v, this, next)
                 else
-                    val out = next.head(apply(v.unsafeGet), next.tail)
+                    val out = next.head(apply(Nested.unnest(v)), next.tail)
                     Safepoint.exit(slot)
                     out
                 end if
