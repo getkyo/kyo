@@ -1,6 +1,7 @@
 package kyo.kernel.internal
 
 import kyo.Arrow
+import kyo.Arrow.Transform
 import kyo.Frame
 import kyo.Maybe
 import kyo.Span
@@ -66,17 +67,32 @@ object Kyo:
       * so the acquire settles before anything is owed, and that is what answers "did the acquire complete"
       * by construction. Nothing has to settle before a recovery is owed, so it is installed on the way in.
       */
-    abstract private[kyo] class Catching[A, S] extends Kyo[A, S]:
+    // the node is also the entry that marks the scope: identity on the completing path, since a value
+    // flowing back through is what ends the scope, and the recovery the unwind asks on the way down.
+    // Nothing else has to be allocated when the eval enters one
+    abstract private[kyo] class Catching[A, S] extends Kyo[A, S], Transform[Any, Any, Any], Recover:
         // a method, for the reason a deferral's payload is one: the guarded body has to run when the
         // evaluator reads it and not when the node is built, or `catching { throw ... }` throws before
         // anything guards it. Abstract rather than a by-name constructor parameter, which would store the
         // thunk in a field and read it through a pointer at every use
         def value: A < S
-        def recover: Arrow[Throwable, A, S]
+
+        override def apply(v: Any): Any < Any = v
+
+        def apply[C, S2](v: Any < S2, next: Arrow[Any, C, S2]): C < S2 =
+            v match
+                case kyo: Kyo[Any, S2] @unchecked => Effect.defer(kyo, this, next)
+                case _                            => next(apply(Nested.unnest[Any](v)), Arrow.id)
+
+        override def toString: String = render(value)
     end Catching
 
     abstract private[kyo] class Handle[E <: ArrowEffect[?, ?], A, B, +C, -S] extends Kyo[C, S]:
-        def value: Kyo[A, E & S]
+        // the pending type rather than `Kyo`, and a method rather than a field, so a region can hold its body
+        // unforced: the eval reads this after the handler is on the stack, which is what lets a recovering
+        // region guard a body that throws while it is being built. The handlers that match their body at
+        // construction hand back the value they matched, so nothing converts
+        def value: A < (E & S)
         def handler: Handler[E, A, B, S]
         def cont: Arrow[B, C, S]
 

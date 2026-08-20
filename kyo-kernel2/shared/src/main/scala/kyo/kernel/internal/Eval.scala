@@ -61,42 +61,35 @@ final private[kyo] class Finalizer[A](release: Arrow[A, Any, Any], resource: A)
             case _                            => next(apply(Nested.unnest[Any](v)), Arrow.id)
 end Finalizer
 
-/** A scope that answers its own failure, and the arrow that answers it.
+/** A scope that answers its own failure.
+  *
+  * A trait, so an object that is already an entry can be a scope as well: a recovering region's handler
+  * carries this and is pushed as any other handler is, and `Effect.catching`'s node carries it and is pushed
+  * as itself. Nothing is allocated when the eval enters a scope.
   *
   * `Finalizer`'s sibling, and deliberately stateless where that one is not. A finalizer needs a flag because
   * two mechanisms reach it, the arrow on the completing path and the drain on the abandoning one, and running
   * a release twice is a double free. Only the unwind reaches this, and being applied is what takes it off the
   * stack, so stack presence is the scope and there is nothing to guard. That also keeps a resumed
-  * continuation honest: re-entering the scope re-pushes this entry, and each entry can fail and recover.
+  * continuation honest: re-entering the scope re-pushes its entry, and each entry can fail and recover.
   *
   * It carries no backup in the stack's side collection either. A continuation a clause drops takes its scope
   * with it, and a scope that never ran owes no recovery, where a resource already acquired still owes its
   * release.
   */
-final private[kyo] class Recover(f: Arrow[Throwable, Any, Any]) extends Transform[Any, Any, Any]:
-
-    def frame = Frame.internal
-
-    // identity on the completing path: this exists to hold a stack position, so an unwind can see where the
-    // scope ends. Nothing to retire, since being applied is what removes it
-    override def apply(v: Any): Any < Any = v
-
-    def apply[C, S2](v: Any < S2, next: Arrow[Any, C, S2]): C < S2 =
-        v match
-            case kyo: Kyo[Any, S2] @unchecked => Effect.defer(kyo, this, next)
-            case _                            => next(apply(Nested.unnest[Any](v)), Arrow.id)
+private[kyo] trait Recover:
 
     /** The answer to a failure, or absent for one this must not answer.
       *
       * Fatal errors pass every recovery untouched, which is the previous kernel's rule: both of its arms
-      * guard on `NonFatal`. The recovery function itself never declines, and never had to: the consumers pass
-      * total functions, `Abort.catching` with an explicit catch-all and `Debug` with a lambda that rethrows.
+      * guard on `NonFatal`. The recovery itself never declines, and never had to: the consumers pass total
+      * functions, `Abort.catching` with an explicit catch-all and `Debug` with a lambda that rethrows.
       *
-      * The frames are reconstructed before `f` runs. A recovery is a second place a failure is observed, and
+      * The frames are reconstructed before the recovery runs. It is a second place a failure is observed, and
       * the boundary is no longer the only one, so a handler that reads the carrier has to see what a handler
       * at the boundary would. The previous kernel owed the same and paid it the same way.
       */
-    def panic(ex: Throwable): Maybe[Any] =
+    final def panic(ex: Throwable): Maybe[Any < Nothing] =
         if !NonFatal(ex) then Maybe.empty
         else
             // spliced, not attached. The frames were reconstructed where the failure happened, by the arm
@@ -105,8 +98,12 @@ final private[kyo] class Recover(f: Arrow[Throwable, Any, Any]) extends Transfor
             // went wrong. What a recovery needs is those frames written into the exception it inspects,
             // which is the obligation the boundary used to be the only one to meet
             EffectTrace.splice(ex)
-            Maybe(f(ex))
+            Maybe(recover(ex))
     end panic
+
+    /** The computation the eval carries on from. */
+    def recover(ex: Throwable): Any < Nothing
+
 end Recover
 
 object Eval:
@@ -199,7 +196,7 @@ object Eval:
                 case kyo: Catching[?, ?] =>
                     // the entry marks where the scope ends, and the body runs above it. A value flowing back
                     // through pops it, which is what makes the scope end; a failure finds it on the way down
-                    stack.push(new Recover(kyo.recover.asInstanceOf[Arrow[Throwable, Any, Any]]))
+                    stack.push(kyo)
                     loop(kyo.value)
                 case kyo: Suspend[IX, OX, EX, CX, A, S] @unchecked =>
                     stack.push(kyo.cont)

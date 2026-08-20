@@ -1123,9 +1123,6 @@ class ArrowEffectTest extends AnyFreeSpec:
     }
      */
 
-    // This kernel has no handleCatching: recovery from a throw inside a region
-    // is not an ArrowEffect primitive here.
-    /*
     "handleCatching" - {
         "answers operations when nothing fails" in {
             val v = ask.map(a => ask.map(b => a + b))
@@ -1189,16 +1186,17 @@ class ArrowEffectTest extends AnyFreeSpec:
             }
         }
 
-        "a throw inside a region nested in the computation is not recovered" in {
+        // the previous kernel evaluated a region as it was built, so a nested region's throw escaped at its
+        // own definition site, before the recovering region existed. Here a region is a value and nothing
+        // runs until the eval reaches it, so the throw happens inside the scope
+        "a throw inside a region nested in the computation is recovered" in {
             val region = ArrowEffect.handleLoop(Tag[Say], say("x").map(_ => (throw new RuntimeException("boom")): Int))(
                 [X] => _ => Loop.continue((): Unit < Any),
                 a => a
             )
             val v: Int < Ask = ask.map(_ => region)
             val r            = ArrowEffect.handleCatching(Tag[Ask], v)([X] => (_, cont) => cont(0))(_ => -1)
-            intercept[RuntimeException] {
-                val _ = Eval(r)
-            }
+            assert(Eval(r) == -1)
         }
 
         "a fatal error in the computation is not recovered" in {
@@ -1224,8 +1222,39 @@ class ArrowEffectTest extends AnyFreeSpec:
             val r                        = ArrowEffect.handleCatching(Tag[Ask], sayHandled)([X] => (_, cont) => cont(41))(_ => -1)
             assert(Eval(r) == 42)
         }
+
+        "the done clause takes the region's result" in {
+            val v = ask.map(_ + 1)
+            val r = ArrowEffect.handleCatching(Tag[Ask], v)([X] => (_, cont) => cont(41), a => a * 2)(_ => -1)
+            assert(Eval(r) == 84)
+        }
+
+        // the recovery is the handler entry, and a region that completes pops it before the done clause
+        // runs. The previous kernel recovered here, its recovery being a try around the whole traversal
+        // rather than a position on a stack
+        "a throw in the done clause is not recovered" in {
+            val v = ask.map(_ + 1)
+            val r = ArrowEffect.handleCatching(Tag[Ask], v)(
+                [X] => (_, cont) => cont(41),
+                _ => (throw new RuntimeException("boom")): Int
+            )(_ => -1)
+            intercept[RuntimeException] {
+                val _ = Eval(r)
+            }
+        }
+
+        "the recovery answers at the region's row, so the done clause is not reached" in {
+            var doneRan = false
+            val v       = ask.map(_ => (throw new RuntimeException("boom")): Int)
+            val r = ArrowEffect.handleCatching(Tag[Ask], v)(
+                [X] => (_, cont) => cont(41),
+                a =>
+                    doneRan = true; a
+            )(_ => -1)
+            assert(Eval(r) == -1)
+            assert(!doneRan)
+        }
     }
-     */
 
     // Parked with the removal of ArrowEffect.handlePartial: the partial
     // handler returns with the IOTask integration design. Restore then.

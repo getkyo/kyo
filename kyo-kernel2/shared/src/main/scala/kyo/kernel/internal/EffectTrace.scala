@@ -274,7 +274,7 @@ object EffectTrace:
                                 // body, so the body drains first and the label follows it
                                 push(h.cont)
                                 push(h.handler)
-                                push(new Node(h.value))
+                                pushValue(h.value)
                             case d: Kyo.Defer[?, ?, ?, ?] =>
                                 push(d.contB)
                                 push(d.contA)

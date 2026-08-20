@@ -64,9 +64,9 @@ object ArrowEffect:
     )(using inline _frame: Frame): B < S =
         def onDone(v: A) = done(v)
         v match
-            case body: Kyo[A, E & S] @unchecked =>
+            case _: Kyo[A, E & S] @unchecked =>
                 new Handle[E, A, B, B, S]:
-                    def value = body
+                    def value = v
                     val handler =
                         new HandlerCont[I, O, E, A, B, S]:
                             def frame                                            = _frame
@@ -88,9 +88,9 @@ object ArrowEffect:
     )(using inline _frame: Frame): B < S =
         def onDone(v: A) = done(v)
         v match
-            case body: Kyo[A, E & S] @unchecked =>
+            case _: Kyo[A, E & S] @unchecked =>
                 new Handle[E, A, B, B, S]:
-                    def value = body
+                    def value = v
                     val handler =
                         new HandlerLoop[I, O, E, A, B, S]:
                             def frame                = _frame
@@ -113,9 +113,9 @@ object ArrowEffect:
     )(using inline _frame: Frame): B < S =
         def onDone(s: State, v: A) = done(s, v)
         v match
-            case body: Kyo[A, E & S] @unchecked =>
+            case _: Kyo[A, E & S] @unchecked =>
                 new Handle[E, A, B, B, S]:
-                    def value = body
+                    def value = v
                     val handler =
                         new HandlerLoopState[I, O, E, A, B, S, State]:
                             def frame                          = _frame
@@ -157,10 +157,10 @@ object ArrowEffect:
     ): C < (S & S2) =
         def onDone(v: A) = done(v)
         v match
-            case body: Kyo[A, E & S] @unchecked =>
+            case _: Kyo[A, E & S] @unchecked =>
                 new Handle[E, A, B, C, S & S2] with Transform[B, C, S & S2]:
                     def frame = _frame
-                    def value = body
+                    def value = v
                     val handler =
                         new HandlerCont[I, O, E, A, B, S]:
                             def frame                                            = _frame
@@ -191,10 +191,10 @@ object ArrowEffect:
     ): C < (S & S2) =
         def onDone(v: A) = done(v)
         v match
-            case body: Kyo[A, E & S] @unchecked =>
+            case _: Kyo[A, E & S] @unchecked =>
                 new Handle[E, A, B, C, S & S2] with Transform[B, C, S & S2]:
                     def frame = _frame
-                    def value = body
+                    def value = v
                     val handler =
                         new HandlerLoop[I, O, E, A, B, S]:
                             def frame                = _frame
@@ -226,10 +226,10 @@ object ArrowEffect:
     ): C < (S & S2) =
         def onDone(s: State, v: A) = done(s, v)
         v match
-            case body: Kyo[A, E & S] @unchecked =>
+            case _: Kyo[A, E & S] @unchecked =>
                 new Handle[E, A, B, C, S & S2] with Transform[B, C, S & S2]:
                     def frame = _frame
-                    def value = body
+                    def value = v
                     val handler =
                         new HandlerLoopState[I, O, E, A, B, S, State]:
                             def frame                          = _frame
@@ -246,6 +246,56 @@ object ArrowEffect:
             case _ => onDone(state, Nested.unnest(v)).map(f)
         end match
     end handleLoopStateWith
+
+    /** Answers operations while recovering from a throw raised inside the region.
+      *
+      * The handler is the recovery: the entry that answers the region's operations is the entry an unwind
+      * stops at, so the scope is the region exactly. There is no second object marking where it ends and
+      * nothing is allocated when the eval enters one, which is what makes this cost what a plain region costs.
+      *
+      * What it covers is what runs while it is installed: forcing the body, a resumption, the clause, and a
+      * region nested inside. What it does not cover is the done clause, which runs once the region has been
+      * popped, or anything after it. The previous kernel covered the done clause because its recovery was a
+      * try around the whole traversal rather than a position on a stack.
+      */
+    @nowarn("msg=anonymous")
+    private[kyo] inline def handleCatching[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](
+        inline effectTag: Tag[E],
+        inline v: => A < (E & S)
+    )(
+        inline handle: [C] => (I[C], Arrow[O[C], A, E & S]) => A < (E & S),
+        inline done: A => B < S
+    )(
+        inline recover: Throwable => B < S
+    )(using inline _frame: Frame): B < S =
+        // named apart from the member below, which would shadow the parameter inside the class body
+        def onPanic(ex: Throwable) = recover(ex)
+        // the body is not matched here, as the other regions match theirs: `value` is a method, so the eval
+        // forces it once the handler is on the stack, and a body that throws while it is forced throws inside
+        // the scope that guards it. `Abort.run { throw ... }` rests on that
+        new Handle[E, A, B, B, S]:
+            def value = v
+            val handler =
+                new HandlerCont[I, O, E, A, B, S] with Recover:
+                    def frame                                            = _frame
+                    def tag                                              = effectTag
+                    def run[C](input: I[C], cont: Arrow[O[C], A, E & S]) = handle[C](input, cont)
+                    override def apply(a: A)                             = done(a)
+                    def recover(ex: Throwable)                           = onPanic(ex)
+            def cont = Arrow.id[B]
+        end new
+    end handleCatching
+
+    /** The recovering region without a done clause: it completes with the body's own result. */
+    private[kyo] inline def handleCatching[I[_], O[_], E <: ArrowEffect[I, O], A, S](
+        inline effectTag: Tag[E],
+        inline v: => A < (E & S)
+    )(
+        inline handle: [C] => (I[C], Arrow[O[C], A, E & S]) => A < (E & S)
+    )(
+        inline recover: Throwable => A < S
+    )(using inline _frame: Frame): A < S =
+        handleCatching(effectTag, v)(handle, a => a)(recover)
 
     // Surface the previous kernels carry that this one does not yet. Kept as signatures so the
     // gap is visible here rather than only in a parked test.
@@ -274,19 +324,6 @@ object ArrowEffect:
     // )(
     //     inline f: [C] => I[C] => Unit
     // )(using inline _frame: Frame): Unit
-
-    /** Answers operations while recovering from a throw raised inside the region.
-      *
-      * Wants the same unwind mechanism as Effect.catching; see the note there.
-      */
-    // private[kyo] inline def handleCatching[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](
-    //     inline effectTag: Tag[E],
-    //     v: A < (E & S)
-    // )(
-    //     inline handle: [C] => (I[C], O[C] => A < (E & S)) => A < (E & S)
-    // )(
-    //     inline recover: Throwable => A < S
-    // )(using inline _frame: Frame): A < S
 
     /** Answers operations while the clause allows, parking at the first it refuses so a later handler finishes the remainder.
       *

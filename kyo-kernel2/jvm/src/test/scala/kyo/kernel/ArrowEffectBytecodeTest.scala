@@ -40,16 +40,17 @@ class ArrowEffectBytecodeTest extends AnyFreeSpec:
     }
 
     "handleCont" in {
-        // 44 against the old kernel's 33 for `handle`, and the two are not the same expansion: this
+        // 37 against the old kernel's 33 for `handle`, and the two are not the same expansion: this
         // one carries a done clause the old one did not, and it opens with the settled-input check.
         // It stood at 87 while the settled arm went through `unsafeGet`, an inline extension on the
         // opaque type, which made the expansion carry a proxy chain for the type's owner. Reading
-        // the settled value through `Nested.unnest` instead halved it. The call site still allocates
-        // twice, the region node and the handler it holds, where the old kernel's region was a
-        // single node; whether the handler should fuse into the node is a design question, not a
-        // pin to adjust
+        // the settled value through `Nested.unnest` instead halved it, and it went 44 to 37 when the
+        // region stopped binding the matched body and stored the value it already had. The call site
+        // still allocates twice, the region node and the handler it holds, where the old kernel's
+        // region was a single node; whether the handler should fuse into the node is a design
+        // question, not a pin to adjust
         val sizes = methodBytecodeSize[TestHandleCont]
-        assert(sizes == Map("test" -> 44))
+        assert(sizes == Map("test" -> 37))
     }
 
     private def methodBytecodeSize[A](using ct: ClassTag[A]): Map[String, Int] =

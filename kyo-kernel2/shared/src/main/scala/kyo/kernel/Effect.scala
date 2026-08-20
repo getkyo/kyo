@@ -67,8 +67,9 @@ object Effect:
         inline f: Throwable => B < S2
     )(using inline _frame: Frame): B < (S & S2) =
         new Catching[B, S & S2]:
-            def value   = v
-            val recover = Arrow(f)
+            def frame                  = _frame
+            def value                  = v
+            def recover(ex: Throwable) = f(ex)
 
     /** Detaches a computation from the bindings standing at this point, so the child carries them and can be evaluated elsewhere.
       *
