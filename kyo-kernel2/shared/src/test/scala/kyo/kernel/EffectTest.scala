@@ -1,8 +1,11 @@
 package kyo.kernel
 
+import kyo.Arrow
 import kyo.Const
+import kyo.Frame
 import kyo.Tag
 import kyo.kernel.internal.Eval
+import kyo.kernel.internal.Kyo
 import org.scalatest.freespec.AnyFreeSpec
 
 class EffectTest extends AnyFreeSpec:
@@ -11,7 +14,7 @@ class EffectTest extends AnyFreeSpec:
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
     def answerAsk[A](value: Int)(v: A < Ask): A < Any =
-        ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value), a => a)
+        ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value: Int < Any), a => a)
 
     "defer delays evaluation until the drive" in {
         var ran = false
@@ -82,6 +85,38 @@ class EffectTest extends AnyFreeSpec:
         }
         assert(Eval(d) == 42)
         assert(order == List(3, 2, 1))
+    }
+
+    "the deferral node" - {
+        def inc(using _frame: Frame): Arrow.Transform[Int, Int, Any] =
+            new Arrow.Transform[Int, Int, Any]:
+                def frame                                              = _frame
+                def apply[C, S2](v: Int < S2, next: Arrow[Int, C, S2]) = v.map(i => next(i + 1))
+
+        "runs the value into its continuation" in {
+            assert(Eval(Effect.defer(1: Int < Any, inc)) == 2)
+        }
+
+        "runs both continuations in order" in {
+            def double(using _frame: Frame): Arrow.Transform[Int, Int, Any] =
+                new Arrow.Transform[Int, Int, Any]:
+                    def frame                                              = _frame
+                    def apply[C, S2](v: Int < S2, next: Arrow[Int, C, S2]) = v.map(i => next(i * 2))
+            assert(Eval(Effect.defer(1: Int < Any, inc, double)) == 4)
+            assert(Eval(Effect.defer(1: Int < Any, double, inc)) == 3)
+        }
+
+        "collapses an identity second continuation into the one-continuation node" in {
+            val node = Effect.defer(1: Int < Any, inc, Arrow.id[Int])
+            node match
+                case d: Kyo.Defer[?, ?, ?, ?] => assert(d.contB eq Arrow.id[Int])
+                case other                    => fail(s"expected a deferral node, got $other")
+            assert(Eval(node) == 2)
+        }
+
+        "defers a pending value" in {
+            assert(Eval(answerAsk(41)(Effect.defer(ask, inc))) == 42)
+        }
     }
 
     // Effect.catching is not in this kernel yet. These are the previous kernel's cases, kept

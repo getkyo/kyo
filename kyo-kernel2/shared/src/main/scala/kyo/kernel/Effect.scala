@@ -1,12 +1,27 @@
 package kyo.kernel
 
 import kyo.Arrow
+import kyo.Frame
 import kyo.kernel.internal.*
+import scala.annotation.nowarn
 import scala.annotation.static
 
 abstract class Effect private[kernel] ()
 
 object Effect:
+
+    /** Holds a computation unevaluated until a drive reaches it. */
+    private[kyo] def defer[A, S](f: => A < S)(using Frame): A < S =
+        deferInline(f)
+
+    // the node's payload is a by-name method, so the body runs when the evaluator
+    // reads it and not when the node is built
+    @nowarn("msg=anonymous")
+    private[kyo] inline def deferInline[A, S](inline f: => A < S): A < S =
+        new Kyo.Defer[A, A, A, S]:
+            def value = f
+            def contA = Arrow.id[A]
+            def contB = Arrow.id[A]
 
     @static def defer[A, B, S](v: A < S, next: Arrow[A, B, S]): B < S =
         new Kyo.Defer[A, B, B, S]:
