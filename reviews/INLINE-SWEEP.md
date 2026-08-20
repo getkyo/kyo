@@ -55,6 +55,21 @@ all, so they are run-to-run drift rather than an effect of the change.
 This also answers the standing question about `HandleSites` compiling 1.49x slower than the old kernel: at 0.42x of
 its own previous number it lands at roughly 0.63x of the old kernel.
 
+**Runtime: allocation is unchanged, time is not yet settled.** Both legs of the 34-row board, same session, back to
+back, `-f 1 -prof gc`. Every row's `gc.alloc.rate.norm` is **identical to the byte**, which rules allocation out and
+forces any time difference into path length or code shape.
+
+The time column at `-f 1` does not support a claim in either direction, because the two bench classes disagree
+about the same paths: `suspensionFusesContinuation` reads 1.13x on `KernelBench` and 1.00x on `ProtoKernelBench`;
+`trailingMapsStayLinear` reads 1.32x and 1.07x; `statefulAnswersPaySuccessor` 1.23x and 1.04x. Same code, same
+session, two forks. That is fork variance rather than a mechanism, which is exactly what a single-fork screen is
+for. `evalFixedOverhead` is at 0.01 us/op, below the harness's resolution, and is not readable at all.
+
+Five rows sit outside the drift band and are being confirmed at `-f 3`: `trailingMapsStayLinear`,
+`foreignCrossingsPayRotation`, `statefulAnswersPaySuccessor`, `suspensionFusesContinuation`,
+`deepRecursionPaysRescuesOnly`. **Nothing is claimed about runtime until that lands.** If a delta survives, it is an
+open defect against this change, not a trade to be accepted alongside the compile-time win.
+
 **`@static` was tried and cannot be used here.** Scala.js cannot emit a static method containing a lambda:
 `genSJSIR` fails with `Cannot resolve delambdafy target method $anonfun` on the eta-expansion in the `handleCont`
 arm. The other `@static` methods in `kyo.kernel.internal` hold local defs and anonymous classes but never lambdas,
@@ -75,6 +90,14 @@ real implementations on `Chunk`, `List`, `Set` and the generic `CC` are already 
 **`map` itself.** Its expansion is one anonymous `Transform` plus a local `run`; `Effect.defer`'s three-argument
 form is already `@static` and non-inline, so a call site mints one class rather than three. The Safepoint depth
 guard cannot be hoisted out because the inlined `f` sits in the middle of it.
+
+This also answers the standing question in `Pending.scala` about whether the expanded code reaches other `inline`
+methods. Reading the `-Xprint:inlining` tree for `BareValue`, the map expansion contains **calls**, not expansions,
+to `Effect.defer` (twice), `Arrow.id` (twice), `next.head`, `next.tail` and the three `Safepoint` entry points, and
+it constructs one `Arrow.Transform`. It carries exactly two inlined bodies, visible as the two `v$proxy` bindings:
+the user's `f`, and `unsafeGet`. So `map` nests two inline methods and nothing else, which is why there is no
+flattening left to do there. The dump this is read from predates the visibility fix, so the Safepoint calls appear
+there through accessors; they are direct calls now, and the count of nested inline bodies is unaffected.
 
 **`CanLift`'s `derivedSingleton`.** The macro costs about 19% of a map site's tree, but it must stay inline: as a
 plain given it would expand against an abstract type, both of `checkImpl`'s guards would evaluate false, and the
