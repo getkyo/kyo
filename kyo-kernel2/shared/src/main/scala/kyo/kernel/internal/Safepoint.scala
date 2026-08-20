@@ -6,9 +6,9 @@ import scala.annotation.static
 import scala.annotation.tailrec
 
 // TODO this should be private[kernel]
-class Safepoint
+private[kyo] class Safepoint
 
-object Safepoint:
+private[kyo] object Safepoint:
 
     opaque type Slot = Int
 

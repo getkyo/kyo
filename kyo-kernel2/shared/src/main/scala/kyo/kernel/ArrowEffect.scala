@@ -249,8 +249,7 @@ object ArrowEffect:
       * resumed remainder out. Neither primitive here stands in for that: `handleCont` keeps the region installed, and `handleLoopState`
       * answers with a value rather than handing the clause a continuation it can end the region from.
       */
-    // TODO ok, let's add but keep it private[kyo]
-    // inline def handleFirst[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
+    // private[kyo] inline def handleFirst[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
     //     inline effectTag: Tag[E],
     //     v: A < (E & S)
     // )(
@@ -262,8 +261,7 @@ object ArrowEffect:
       *
       * Parked with the IOTask integration design, which is what reads a standing operation.
       */
-    // TODO ok, let's add but keep it private[kyo]
-    // inline def dispatchFirst[I[_], O[_], E <: ArrowEffect[I, O], A, S](
+    // private[kyo] inline def dispatchFirst[I[_], O[_], E <: ArrowEffect[I, O], A, S](
     //     inline effectTag: Tag[E],
     //     v: A < (E & S)
     // )(
@@ -274,7 +272,7 @@ object ArrowEffect:
       *
       * Wants the same unwind mechanism as Effect.catching; see the note there.
       */
-    // inline def handleCatching[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](
+    // private[kyo] inline def handleCatching[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](
     //     inline effectTag: Tag[E],
     //     v: A < (E & S)
     // )(
@@ -287,7 +285,7 @@ object ArrowEffect:
       *
       * Parked with the IOTask integration design, and it needs partial evaluation to hand back a resumable value.
       */
-    // inline def handlePartial[I[_], O[_], E <: ArrowEffect[I, O], A, S](
+    // private[kyo] inline def handlePartial[I[_], O[_], E <: ArrowEffect[I, O], A, S](
     //     inline effectTag: Tag[E],
     //     v: A < (E & S)
     // )(

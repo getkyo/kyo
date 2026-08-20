@@ -9,9 +9,9 @@ import kyo.kernel.Loop.Outcome2
 import scala.annotation.static
 import scala.annotation.tailrec
 
-sealed abstract class Kyo[+A, -S]
+private[kyo] sealed abstract class Kyo[+A, -S]
 
-object Kyo:
+private[kyo] object Kyo:
 
     abstract class Defer[A, B, +C, -S] extends Kyo[C, S]:
         def value: A < S

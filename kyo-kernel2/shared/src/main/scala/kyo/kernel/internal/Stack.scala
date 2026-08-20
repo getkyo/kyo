@@ -8,7 +8,7 @@ import kyo.bug
 import scala.annotation.static
 import scala.annotation.tailrec
 
-final class Stack:
+private[kyo] final class Stack:
     private var entries = new Array[Arrow[?, ?, ?]](16)
     private var states  = Array.fill[Maybe[Any]](16)(Absent)
     private var mask    = 15
@@ -169,7 +169,7 @@ final class Stack:
             tail = s
 end Stack
 
-object Stack:
+private[kyo] object Stack:
     final private class Pool:
         private var free = new Array[Stack](4)
         private var size = 0

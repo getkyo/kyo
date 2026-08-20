@@ -3,9 +3,9 @@ package kyo.kernel.internal
 import kyo.<
 import scala.annotation.static
 
-class Nested[+A](val value: A)
+private[kyo] class Nested[+A](val value: A)
 
-object Nested:
+private[kyo] object Nested:
 
     @static def lift[A, S](v: A): A < S =
         v match

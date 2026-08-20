@@ -57,8 +57,15 @@ object Effect:
       * boundary, which assumes an exception is observed only there. This handler is a second observation point, so it has to attach and
       * splice before calling `f`, or the handler sees frames in the carrier that are not in the stack trace.
       */
-    // TODO please implement but only if it can be implemented without any other changes (EffectTrace is fine). Check with me otherwise
-    // inline def catching[A, S, B >: A, S2](inline v: => A < S)(
+    // Parked: it cannot be implemented without other changes. CPS makes the continuation be the
+    // rest of the computation, so the old kernel could wrap it in a try and guard everything
+    // downstream. Here the drive owns a stack and the rest is spread across its entries, so a try
+    // inside one arrow's apply guards building the next deferral, not running it. A self-
+    // reinstalling guard arrow and a structural rewrite of every continuation were both
+    // considered; the first does not guard the drive's own evaluation and the second pays an
+    // allocation per drive step. What it needs is a stack entry the drive consults while
+    // unwinding, which is the mechanism the Bracket work introduces, so this rides on that.
+    // private[kyo] inline def catching[A, S, B >: A, S2](inline v: => A < S)(
     //     inline f: Throwable => B < S2
     // )(using inline _frame: Frame): B < (S & S2)
 
