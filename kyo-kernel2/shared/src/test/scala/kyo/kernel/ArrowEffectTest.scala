@@ -578,15 +578,11 @@ class ArrowEffectTest extends AnyFreeSpec:
             assert(Eval(out) == 10)
         }
 
-        // the stateful handler always takes a done clause here; the old kernel's
-        // overload without one completed with the result and discarded the state
-        /*
         "the overload without done completes with the result and discards the state" in {
             val v = ask.map(a => ask.map(b => a + b))
             val r = ArrowEffect.handleLoopState(Tag[Ask], 10, v)([C] => (s, _) => Loop.continue(s + 1, s: Int < Any))
             assert(Eval(r) == 21)
         }
-         */
 
         // Waiting on partial evaluation, which lands with the Bracket and Park work
         // (see reviews/BRACKET-PARK-DESIGN.md).

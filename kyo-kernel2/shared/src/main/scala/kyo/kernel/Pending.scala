@@ -3,6 +3,7 @@ package kyo.kernel
 import kyo.Arrow
 import kyo.Frame
 import kyo.Maybe
+import kyo.Render
 import kyo.kernel.internal.*
 import language.implicitConversions
 import scala.annotation.nowarn
@@ -291,4 +292,17 @@ object `<` extends Implicits:
                 case self: Nested[A] @unchecked => self.value
                 case self                       => self.asInstanceOf[A]
     end extension
+
+    /** A pending computation renders as its payload wrapped in `Kyo(...)`, with the payload rendered by its own instance, so the wrapper
+      * says the value is a computation without hiding what it holds. A computation that has not settled renders as the operation it is
+      * waiting on. A payload that is itself a computation renders through its own `toString` rather than through `ra`, which would be this
+      * same instance and would not terminate.
+      */
+    given [A, S, APendingS <: A < S](using ra: Render[A]): Render[APendingS] with
+        def asString(value: APendingS): String =
+            value match
+                case kyo: Kyo[?, ?]    => kyo.toString
+                case nested: Nested[?] => s"Kyo(${nested.value})"
+                case a: A @unchecked   => s"Kyo(${ra.asString(a)})"
+    end given
 end `<`

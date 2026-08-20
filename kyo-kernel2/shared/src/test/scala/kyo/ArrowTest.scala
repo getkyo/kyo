@@ -82,6 +82,7 @@ class ArrowTest extends AnyFreeSpec:
     }
 
     "recursive builds an arrow that can call itself" - {
+        // TODO let's add benchmarks comparing recursing with an arrow vs a Loop vs a recursive method. Maybe Loop should be based on Arrow.recursive
         "over a settled input" in {
             val countdown = Arrow.recursive[Int, Int, Any]((self, i) => if i == 0 then 0 else self(i - 1))
             assert(countdown(10).eval == 0)
@@ -152,31 +153,39 @@ class ArrowTest extends AnyFreeSpec:
         assert(List(1, 2, 3).map(i => f(i).eval) == List(2, 3, 4))
     }
 
-    // Not supported yet: the previous kernel rendered arrows through `toString` and exposed the
-    // composed shape through `step`. This implementation has neither, so the corpus is kept with
-    // its code commented until the surface exists.
-    //
-    // "toString renders identity and transform frames" in {
-    //     assert(Arrow.id[Int].toString == "Arrow(identity)")
-    //     assert(inc.toString.startsWith("Arrow("))
-    //     assert(inc.toString.contains("ArrowTest.scala"))
-    // }
-    //
-    // "a composed arrow renders its shape and frame info" in {
-    //     val step = inc.chain(inc)
-    //     assert(step.toString.startsWith("Arrow.Step("))
-    //     assert(step.toString.contains("ArrowTest.scala"))
-    //     val chained = inc.chain(inc).chain(inc)
-    //     assert(chained.toString.startsWith("Arrow.Chain("))
-    //     assert(chained.toString.contains("Arrow.Step("))
-    // }
-    //
-    // "step exposes the first transform and the rest" in {
-    //     val first  = inc
-    //     val second = inc
-    //     val step   = first.chain(second).step
-    //     assert(step.head eq first)
-    //     assert(step.tail eq second)
-    // }
+    // the previous kernel also exposed the composed shape through `step`. `head` and `tail` are on
+    // Arrow itself here and say the same thing, so `step` is not coming back and its case is gone
+    // rather than parked.
+    "toString" - {
+        "renders identity" in {
+            assert(Arrow.id[Int].toString == "Arrow(identity)")
+        }
+
+        "renders a transform with its frame" in {
+            assert(inc.toString.startsWith("Arrow("))
+            assert(inc.toString.contains("ArrowTest.scala"))
+        }
+
+        "renders a chain as its two links" in {
+            val chain = inc.chain(double)
+            assert(chain.toString.startsWith("Arrow.Chain("))
+            assert(chain.toString.contains("ArrowTest.scala"))
+        }
+
+        "renders a nested chain at every level" in {
+            val nested = inc.chain(double).chain(inc)
+            assert(nested.toString.startsWith("Arrow.Chain("))
+            assert(nested.toString.indexOf("Arrow.Chain(", 1) > 0)
+        }
+
+        "renders a deep chain in bounded stack" in {
+            @tailrec def build(acc: Arrow[Int, Int, Any], n: Int): Arrow[Int, Int, Any] =
+                if n == 0 then acc else build(acc.chain(inc), n - 1)
+            val rendered = build(Arrow.id[Int], 100000).toString
+            assert(rendered.startsWith("Arrow.Chain("))
+            assert(rendered.endsWith(")"))
+            assert(rendered.contains("..."))
+        }
+    }
 
 end ArrowTest

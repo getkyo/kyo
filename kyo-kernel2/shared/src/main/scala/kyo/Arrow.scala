@@ -5,6 +5,7 @@ import kyo.kernel.*
 import kyo.kernel.internal.*
 import scala.annotation.nowarn
 import scala.annotation.static
+import scala.annotation.tailrec
 
 sealed trait Arrow[-A, +B, -S] extends (A => B < S):
     self =>
@@ -73,6 +74,8 @@ object Arrow:
         def tail = Arrow.id[B]
 
         def apply(v: A) = this(v, Arrow.id[B])
+
+        override def toString: String = s"Arrow(${frame.position.show}, ${frame.snippetShort})"
     end Transform
 
     // the evaluator flattens a chain onto its stack, so it sees the two halves
@@ -90,14 +93,40 @@ object Arrow:
         def apply[D, S2](v: A < S2, next: Arrow[C, D, S2]) =
             Effect.defer(v, this, next)
 
+        // a chain of any depth renders in bounded stack: the walk is a loop with a depth cap, so a
+        // capture folded from a long drive stack stays printable in a debugger
+        override def toString: String =
+            val out = new StringBuilder
+            @tailrec def loop(pending: List[Arrow[?, ?, ?] | String], fuel: Int): Unit =
+                pending match
+                    case (s: String) :: rest =>
+                        out.append(s)
+                        loop(rest, fuel)
+                    case (link: Arrow[?, ?, ?]) :: rest =>
+                        link match
+                            case c: Chain[?, ?, ?, ?] if fuel > 0 =>
+                                out.append("Arrow.Chain(")
+                                loop(c.a :: ", " :: c.b :: ")" :: rest, fuel - 1)
+                            case _: Chain[?, ?, ?, ?] =>
+                                out.append("...")
+                                loop(rest, fuel)
+                            case other =>
+                                out.append(other.toString)
+                                loop(rest, fuel)
+                    case _ => ()
+            loop(this :: Nil, 32)
+            out.result()
+        end toString
+
     end Chain
 
     private[Arrow] class Id[A] extends Arrow[A, A, Any]:
         type X = A
-        def head                 = this
-        def tail                 = this
-        def frame                = Frame.internal
-        def apply(v: A): A < Any = v
+        def head                      = this
+        def tail                      = this
+        def frame                     = Frame.internal
+        def apply(v: A): A < Any      = v
+        override def toString: String = "Arrow(identity)"
         override def apply[C, S2](v: A < S2, next: Arrow[A, C, S2]) =
             if next eq Id then
                 v.asInstanceOf[C < S2]

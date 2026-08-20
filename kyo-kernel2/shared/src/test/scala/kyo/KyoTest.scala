@@ -28,16 +28,14 @@ class KyoTest extends org.scalatest.freespec.AnyFreeSpec:
 
     def widen[A](v: A): A < Any = v
 
-    // Not supported yet: the previous kernel rendered a pending computation through `toString` as
-    // `Kyo(<tag>, <input>, <frame>, <snippet>)`. The node kinds here declare no `toString`, so the
-    // case is kept with its code commented until the surface exists.
-    //
-    // "toString" in {
-    //     val rendered = TestEffect1(1).map(_ + 1).toString
-    //     assert(rendered.startsWith("Kyo(kyo.KyoTest.TestEffect1, Input(1), KyoTest.scala:"))
-    //     val rendered2 = TestEffect1(1).map(_ + 1).map(_ + 2).toString
-    //     assert(rendered2.startsWith("Kyo(kyo.KyoTest.TestEffect1, Input(1), KyoTest.scala:"))
-    // }
+    // the rendering carries the pending operation's origin frame: a deferral has no site of its
+    // own, so it renders as whatever operation it is waiting on, however many maps deep
+    "toString" in {
+        val rendered = TestEffect1(1).map(_ + 1).toString
+        assert(rendered.startsWith("Kyo(kyo.KyoTest.TestEffect1, Input(1), KyoTest.scala:"))
+        val rendered2 = TestEffect1(1).map(_ + 1).map(_ + 2).toString
+        assert(rendered2.startsWith("Kyo(kyo.KyoTest.TestEffect1, Input(1), KyoTest.scala:"))
+    }
 
     "eval" in {
         assert(TestEffect1.run(TestEffect1(1).map(_ + 1)).eval == 3)

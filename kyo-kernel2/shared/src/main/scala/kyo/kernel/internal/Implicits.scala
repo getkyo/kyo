@@ -7,7 +7,7 @@ import scala.language.implicitConversions
 
 private[kernel] trait Implicits:
 
-    implicit inline def lift[A, S](v: A)(using inline flat: CanLift[A]): A < S =
+    implicit inline def lift[A, S](v: A)(using inline cl: CanLift[A]): A < S =
         inline scala.compiletime.erasedValue[A] match
             case _: (Int | Long | Float | Double | Boolean | Byte | Short | Char | Unit | String) =>
                 v.asInstanceOf[A < S]

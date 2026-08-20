@@ -3,10 +3,13 @@ package kyo.kernel
 import kyo.Const
 import kyo.Kyo
 import kyo.Maybe
+import kyo.Render
+import kyo.Result
 import kyo.Tag
 import kyo.discard
 import kyo.kernel.internal.Eval
 import kyo.kernel.internal.Safepoint
+import kyo.render
 import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
 import scala.compiletime.testing.typeCheckErrors
@@ -617,18 +620,14 @@ class PendingTest extends AnyFreeSpec:
         }
     }
 
-    // Not supported yet: the kernel gives the pending type a `Render` instance so a computation
-    // holding a settled value shows as `Kyo(<value>)`. This implementation has no Render wiring,
-    // so the case is kept with its code commented until the surface exists.
-    //
-    // "show" - {
-    //     "displays a settled value through the inner type's Render" in {
-    //         val i: Result[String, Int] < Any         = Result.succeed(23)
-    //         val r: Render[Result[String, Int] < Any] = Render.apply
-    //         assert(r.asString(i) == "Kyo(Success(23))")
-    //         assert(render"$i" == "Kyo(Success(23))")
-    //     }
-    // }
+    "show" - {
+        "displays a settled value through the inner type's Render" in {
+            val i: Result[String, Int] < Any         = Result.succeed(23)
+            val r: Render[Result[String, Int] < Any] = Render.apply
+            assert(r.asString(i) == "Kyo(Success(23))")
+            assert(render"$i" == "Kyo(Success(23))")
+        }
+    }
 
     "nested computations" - {
         sealed trait TestEffect1 extends ArrowEffect[Const[Int], Const[String]]

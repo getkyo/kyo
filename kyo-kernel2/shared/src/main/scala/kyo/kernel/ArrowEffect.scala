@@ -118,6 +118,16 @@ object ArrowEffect:
         end match
     end handleLoopState
 
+    /** The stateful region without a done clause: it completes with the body's own result and discards the final state. */
+    inline def handleLoopState[I[_], O[_], E <: ArrowEffect[I, O], A, S, State](
+        inline effectTag: Tag[E],
+        state: State,
+        v: A < (E & S)
+    )(
+        inline handle: [C] => (State, I[C]) => Loop.Outcome2[State, O[C] < (E & S), A] < S
+    )(using inline _frame: Frame): A < S =
+        handleLoopState(effectTag, state, v)(handle, (_, a) => a)
+
     // the *With variants take the region's continuation as a separate parameter group and fuse it
     // into the region node: the node is the arrow the region's result flows into, as suspendWith's
     // node is the arrow the operation's answer flows into. A settled input takes done and then the
