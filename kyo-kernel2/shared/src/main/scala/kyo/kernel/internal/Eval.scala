@@ -23,6 +23,9 @@ import scala.annotation.nowarn
 import scala.annotation.static
 import scala.annotation.tailrec
 
+// @static requires a companion class, as it does for Safepoint and Nested. The drive has no instances.
+private[kyo] class Eval
+
 object Eval:
 
     type IX[_]
@@ -35,8 +38,12 @@ object Eval:
 
     private inline given Frame = Frame.internal
 
+    // not inline: the drive is ~555 instructions and HotSpot refuses to inline it at any call site, so an
+    // inline definition bought nothing at runtime and emitted a private copy of the whole interpreter per
+    // call site. PendingTest alone carried 132 of them. @static keeps the call an invokestatic so the
+    // expansion sites do not capture the module
     @nowarn("msg=anonymous")
-    inline def apply[A, S](v: A < S): A =
+    @static def apply[A, S](v: A < S): A =
         val stack = Stack.borrow()
 
         @tailrec def loop(curr: Any < Nothing): Any =
