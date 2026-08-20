@@ -27,7 +27,7 @@ end Handler
 object Handler:
 
     abstract private[kyo] class HandlerCont[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Handler[E, A, B, S]:
-        def run[X](input: I[X], cont: O[X] => A < (E & S)): A < (E & S)
+        def run[X](input: I[X], cont: Arrow[O[X], A, E & S]): A < (E & S)
 
     abstract private[kyo] class HandlerLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Handler[E, A, B, S]:
         def run[X](input: I[X]): Outcome[O[X] < (E & S), B] < S

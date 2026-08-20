@@ -2,6 +2,7 @@ package kyo.kernel
 
 import kyo.Arrow
 import kyo.Arrow.Transform
+import kyo.Arrow.TransformBase
 import kyo.Frame
 import kyo.Maybe
 import kyo.Render
@@ -38,22 +39,22 @@ object `<` extends Implicits:
             // Reached through the import it resolves without that selection. kyo-compile-bench is the
             // only corpus outside package kyo, so it is the only thing that catches a regression here
             def arrow: Arrow[A, B, S2] =
-                new Transform[A, B, S2]:
+                new TransformBase[A, B, S2]:
                     def frame                                          = _frame
                     def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]) = run(v, next)
             def run[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S2 & S3) =
-                v match
-                    case kyo: Kyo[A, S3] @unchecked =>
-                        Effect.defer(kyo, arrow, next)
-                    case _ =>
-                        val slot = Safepoint.get()
-                        if !Safepoint.enter(slot) then
-                            Effect.defer(v, arrow, next)
-                        else
-                            val out = next.head(f(Nested.unnest(v)), next.tail)
-                            Safepoint.exit(slot)
-                            out
-                        end if
+                // the slot is held in a var so the two ways of reaching the deferral, a pending input and an
+                // exhausted depth budget, share one arm. `||` short-circuits, so a pending input never pays
+                // Safepoint.get()
+                var slot: Safepoint.Slot = -1
+                val shouldDefer          = v.isInstanceOf[Kyo[?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
+                if shouldDefer then Effect.defer(v, arrow, next)
+                else
+                    val out = next.head(f(Nested.unnest(v)), next.tail)
+                    Safepoint.exit(slot)
+                    out
+                end if
+            end run
             run(self, Arrow.id)
         end map
 

@@ -59,7 +59,7 @@ object ArrowEffect:
         inline effectTag: Tag[E],
         v: A < (E & S)
     )(
-        inline handle: [C] => (I[C], O[C] => A < (E & S)) => A < (E & S),
+        inline handle: [C] => (I[C], Arrow[O[C], A, E & S]) => A < (E & S),
         inline done: A => B < S
     )(using inline _frame: Frame): B < S =
         def onDone(v: A) = done(v)
@@ -69,10 +69,10 @@ object ArrowEffect:
                     def value = body
                     val handler =
                         new HandlerCont[I, O, E, A, B, S]:
-                            def frame                                          = _frame
-                            def tag                                            = effectTag
-                            def run[C](input: I[C], cont: O[C] => A < (E & S)) = handle[C](input, cont)
-                            override def apply(a: A)                           = onDone(a)
+                            def frame                                            = _frame
+                            def tag                                              = effectTag
+                            def run[C](input: I[C], cont: Arrow[O[C], A, E & S]) = handle[C](input, cont)
+                            override def apply(a: A)                             = onDone(a)
                     def cont = Arrow.id[B]
             case _ => onDone(Nested.unnest(v))
         end match
@@ -150,7 +150,7 @@ object ArrowEffect:
         inline effectTag: Tag[E],
         v: A < (E & S)
     )(
-        inline handle: [X] => (I[X], O[X] => A < (E & S)) => A < (E & S),
+        inline handle: [X] => (I[X], Arrow[O[X], A, E & S]) => A < (E & S),
         inline done: A => B < S
     )[C, S2](
         inline f: B => C < S2
@@ -163,10 +163,10 @@ object ArrowEffect:
                     def value = body
                     val handler =
                         new HandlerCont[I, O, E, A, B, S]:
-                            def frame                                          = _frame
-                            def tag                                            = effectTag
-                            def run[X](input: I[X], cont: O[X] => A < (E & S)) = handle[X](input, cont)
-                            override def apply(a: A)                           = onDone(a)
+                            def frame                                            = _frame
+                            def tag                                              = effectTag
+                            def run[X](input: I[X], cont: Arrow[O[X], A, E & S]) = handle[X](input, cont)
+                            override def apply(a: A)                             = onDone(a)
                     def cont                 = this
                     override def apply(b: B) = f(b)
                     def apply[D, S3](b: B < S3, next: Arrow[C, D, S3]): D < (S & S2 & S3) =

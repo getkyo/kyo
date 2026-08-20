@@ -49,7 +49,9 @@ object Tag:
       * @return
       *   The Tag for type A
       */
-    def apply[A: Tag as tag]: Tag[A] = tag
+    // inline so a use site gets the tag itself rather than a call that returns its own argument. The given is
+    // already inline, so the static case is a string constant and this was the only hop left
+    inline def apply[A](using inline tag: Tag[A]): Tag[A] = tag
 
     /** Derives a Tag for type A. This method attempts to statically analyze the structure of type A and encode it as a string constant in
       * the bytecode. This approach offers optimal performance as the type information is available without allocations but it can fall back

@@ -7,7 +7,11 @@ import scala.annotation.nowarn
 import scala.annotation.static
 import scala.annotation.tailrec
 
-sealed trait Arrow[-A, +B, -S] extends (A => B < S):
+// deliberately not a Function1. Function1 is @specialized on both parameters, so every class that
+// mixes it in emits the whole apply$mcXY$sp forwarder grid: 26 methods, measured at 19776 definitions
+// across this module and not one genuine call site. Handlers take an Arrow directly instead, which
+// also spares the drive an eta-expansion per suspension
+sealed trait Arrow[-A, +B, -S]:
     self =>
 
     def frame: Frame
@@ -77,6 +81,18 @@ object Arrow:
 
         override def toString: String = s"Arrow(${frame.position.show}, ${frame.snippetShort})"
     end Transform
+
+    /** `Transform` as a class, for the sites that mint a standalone arrow.
+      *
+      * A mixin forwarder is emitted into every class that mixes a trait in, for each concrete trait member not
+      * already implemented in a superclass. Since `Arrow` and `Transform` are both traits, an anonymous
+      * `new Transform` is the first class in its chain and emits one for `head`, `tail`, `apply`, `toString` and
+      * `chain`. Extending this instead inherits them, and an anonymous subclass carries only what it implements.
+      *
+      * `Transform` stays a trait because the sites that fuse an arrow into a `Kyo` node mix it onto that node's
+      * class, and those cannot take a second superclass.
+      */
+    abstract private[kyo] class TransformBase[-A, B, -S] extends Transform[A, B, S]
 
     // the evaluator flattens a chain onto its stack, so it sees the two halves
     private[kyo] class Chain[-A, B, +C, -S](

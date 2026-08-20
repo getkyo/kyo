@@ -16,7 +16,10 @@ private[kyo] class Safepoint
 // the rest narrows. Slot and State are opaque, so public here hands out no operations.
 object Safepoint:
 
-    opaque type Slot = Int
+    /** The lower bound lets a caller declare the variable holding a slot with a literal, and fill it only on the
+      * path that resolves one. There is no upper bound, so a `Slot` still cannot be used as an `Int` out here.
+      */
+    opaque type Slot >: Int = Int
 
     opaque type State = Int
 
@@ -26,6 +29,7 @@ object Safepoint:
 
     @static private val Slots      = slotCount()
     @static private val Overflowed = Slots
+
     @static private val depths =
         val a = new Array[State](Slots + 1)
         a(Slots) = State.init

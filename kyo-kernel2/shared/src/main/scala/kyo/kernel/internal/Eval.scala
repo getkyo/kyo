@@ -67,7 +67,7 @@ object Eval:
                             case h: HandlerCont[IX, OX, EX, AX, ?, S] @unchecked =>
                                 val k = stack.dump[OX[CX], AX, EX & S](pos)
                                 val next =
-                                    try h.run(kyo.input, k(_))
+                                    try h.run(kyo.input, k)
                                     catch
                                         case ex: Throwable =>
                                             EffectTrace.attach(ex, kyo, k, stack)
@@ -94,7 +94,7 @@ object Eval:
                                                 override def apply(o: Loop.Outcome[OX[CX] < (EX & S), BX]) =
                                                     o match
                                                         case r: Loop.Continue[OX[CX] < (EX & S)] @unchecked =>
-                                                            Effect.defer(r._1.map(k), h)
+                                                            Effect.defer(k(r._1, Arrow.id), h)
                                                         case v => v.asInstanceOf[BX]
                                                 def apply[D, S2](o: Loop.Outcome[OX[CX] < (EX & S), BX] < S2, next: Arrow[BX, D, S2])
                                                     : D < (EX & S & S2) =
@@ -109,7 +109,7 @@ object Eval:
                                                 r._1 match
                                                     case _: Kyo[OX[CX], EX & S] @unchecked =>
                                                         val k = stack.dump(pos)
-                                                        loop(r._1.map(k))
+                                                        loop(k(r._1, Arrow.id))
                                                     case _ => loop(r._1)
                                             case _ =>
                                                 stack.truncate(pos + 1)
@@ -137,7 +137,7 @@ object Eval:
                                                 override def apply(o: Loop.Outcome2[StateX, OX[CX] < (EX & S), BX]) =
                                                     o match
                                                         case r: Loop.Continue2[StateX, OX[CX] < (EX & S)] @unchecked =>
-                                                            Effect.defer(r._2.map(k), HandlerLoopState(h, r._1))
+                                                            Effect.defer(k(r._2, Arrow.id), HandlerLoopState(h, r._1))
                                                         case v => v.asInstanceOf[BX]
                                                 def apply[D, S2](
                                                     o: Loop.Outcome2[StateX, OX[CX] < (EX & S), BX] < S2,
@@ -155,7 +155,7 @@ object Eval:
                                                 r._2 match
                                                     case _: Kyo[OX[CX], EX & S] @unchecked =>
                                                         val k = stack.dump(pos)
-                                                        loop(r._2.map(k))
+                                                        loop(k(r._2, Arrow.id))
                                                     case _ => loop(r._2)
                                                 end match
                                             case _ =>
