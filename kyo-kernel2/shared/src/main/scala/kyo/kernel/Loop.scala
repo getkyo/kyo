@@ -1,7 +1,7 @@
 package kyo.kernel
 
-import kyo.Arrow
 import kyo.Frame
+import kyo.kernel.internal.Kyo
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.annotation.targetName
@@ -255,7 +255,7 @@ object Loop:
             v match
                 case next: Continue[A] @unchecked =>
                     loop(run(next._1))
-                case arrow: Arrow[?, ?, ?] =>
+                case _: Kyo[?, ?] =>
                     suspended(v)
                 case res =>
                     res.asInstanceOf[O < S]
@@ -285,7 +285,7 @@ object Loop:
             v match
                 case next: Continue2[A, B] @unchecked =>
                     loop(run(next._1, next._2))
-                case arrow: Arrow[?, ?, ?] =>
+                case _: Kyo[?, ?] =>
                     suspended(v)
                 case res =>
                     res.asInstanceOf[O < S]
@@ -317,7 +317,7 @@ object Loop:
             v match
                 case next: Continue3[A, B, C] @unchecked =>
                     loop(run(next._1, next._2, next._3))
-                case arrow: Arrow[?, ?, ?] =>
+                case _: Kyo[?, ?] =>
                     suspended(v)
                 case res =>
                     res.asInstanceOf[O < S]
@@ -351,7 +351,7 @@ object Loop:
             v match
                 case next: Continue4[A, B, C, D] @unchecked =>
                     loop(run(next._1, next._2, next._3, next._4))
-                case arrow: Arrow[?, ?, ?] =>
+                case _: Kyo[?, ?] =>
                     suspended(v)
                 case res =>
                     res.asInstanceOf[O < S]
@@ -376,7 +376,7 @@ object Loop:
             v match
                 case next: Continue[Unit] @unchecked =>
                     loop(idx + 1)(run(idx))
-                case arrow: Arrow[?, ?, ?] =>
+                case _: Kyo[?, ?] =>
                     suspended(idx)(v)
                 case res =>
                     res.asInstanceOf[O < S]
@@ -402,7 +402,7 @@ object Loop:
             v match
                 case next: Continue[A] @unchecked =>
                     loop(idx + 1)(run(idx, next._1))
-                case arrow: Arrow[?, ?, ?] =>
+                case _: Kyo[?, ?] =>
                     suspended(idx)(v)
                 case res =>
                     res.asInstanceOf[O < S]
@@ -432,7 +432,7 @@ object Loop:
             v match
                 case next: Continue2[A, B] @unchecked =>
                     loop(idx + 1)(run(idx, next._1, next._2))
-                case arrow: Arrow[?, ?, ?] =>
+                case _: Kyo[?, ?] =>
                     suspended(idx)(v)
                 case res =>
                     res.asInstanceOf[O < S]
@@ -464,7 +464,7 @@ object Loop:
             v match
                 case next: Continue3[A, B, C] @unchecked =>
                     loop(idx + 1)(run(idx, next._1, next._2, next._3))
-                case arrow: Arrow[?, ?, ?] =>
+                case _: Kyo[?, ?] =>
                     suspended(idx)(v)
                 case res =>
                     res.asInstanceOf[O < S]
@@ -498,7 +498,7 @@ object Loop:
             v match
                 case next: Continue4[A, B, C, D] @unchecked =>
                     loop(idx + 1)(run(idx, next._1, next._2, next._3, next._4))
-                case arrow: Arrow[?, ?, ?] =>
+                case _: Kyo[?, ?] =>
                     suspended(idx)(v)
                 case res =>
                     res.asInstanceOf[O < S]
@@ -522,7 +522,7 @@ object Loop:
             v match
                 case next: Continue[Unit] @unchecked =>
                     loop(run)
-                case arrow: Arrow[?, ?, ?] =>
+                case _: Kyo[?, ?] =>
                     suspended(v)
                 case res =>
                     res.asInstanceOf[A < S]
@@ -548,7 +548,7 @@ object Loop:
             if i > n then ()
             else
                 v match
-                    case arrow: Arrow[?, ?, ?] =>
+                    case _: Kyo[?, ?] =>
                         suspended(i)(v)
                     case _ =>
                         loop(i + 1)(run)
@@ -572,7 +572,7 @@ object Loop:
             v.map(_ => loop(run))
         @tailrec def loop(v: Any < S): Nothing < S =
             v match
-                case arrow: Arrow[?, ?, ?] =>
+                case _: Kyo[?, ?] =>
                     suspended(v)
                 case _ =>
                     loop(run)
@@ -596,7 +596,7 @@ object Loop:
             condition.map {
                 case true =>
                     v match
-                        case arrow: Arrow[?, ?, ?] =>
+                        case _: Kyo[?, ?] =>
                             v.map(_ => loop(run))
                         case _ =>
                             loop(run)
