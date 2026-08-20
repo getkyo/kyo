@@ -8,7 +8,13 @@ import scala.annotation.tailrec
 // TODO this should be private[kernel]
 private[kyo] class Safepoint
 
-private[kyo] object Safepoint:
+// What an inline body names has to be public, at both levels. A private[kyo] top-level object makes dotty
+// emit an accessor whose receiver is the package itself, which the backend loads as
+// `getstatic kyo/kernel/internal.MODULE$` and no such class exists. A private[kyo] member gets a well formed
+// accessor instead, but the accessor is a second call the expansion pays for: narrowing `lift` and the depth
+// guard this way took the value lift from 5 bytes to 20. So the members the expansions reach stay public and
+// the rest narrows. Slot and State are opaque, so public here hands out no operations.
+object Safepoint:
 
     opaque type Slot = Int
 
@@ -37,7 +43,7 @@ private[kyo] object Safepoint:
                 else Left(new IllegalArgumentException(s"slotCount must be a power of two, got $n"))
         )
 
-    object State:
+    private[kyo] object State:
         private inline def DepthGuard = 1 << 15
         private inline def Armed      = 1 << 30
 
@@ -128,13 +134,13 @@ private[kyo] object Safepoint:
     @static def restore(slot: Slot, saved: State): Unit =
         depths(slot) = saved
 
-    @static def reset(slot: Slot): Unit =
+    @static private[kyo] def reset(slot: Slot): Unit =
         depths(slot) = depths(slot).reset
 
-    @static def arm(slot: Slot): Unit =
+    @static private[kyo] def arm(slot: Slot): Unit =
         depths(slot) = depths(slot).armed
 
-    @static def stop(thread: Thread): Boolean =
+    @static private[kyo] def stop(thread: Thread): Boolean =
         @tailrec def loop(i: Int, probes: Int): Boolean =
             if probes == Slots then false
             else
@@ -158,7 +164,7 @@ private[kyo] object Safepoint:
         thread.isAlive() && loop(home(thread), 0)
     end stop
 
-    @static def consumeStopped(slot: Slot): Boolean =
+    @static private[kyo] def consumeStopped(slot: Slot): Boolean =
         slots.get(slot) match
             case pending: Stop =>
                 slots.set(slot, pending.thread)

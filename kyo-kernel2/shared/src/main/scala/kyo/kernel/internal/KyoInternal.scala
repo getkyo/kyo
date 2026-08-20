@@ -11,9 +11,10 @@ import scala.annotation.tailrec
 
 sealed abstract private[kyo] class Kyo[+A, -S]
 
-private[kyo] object Kyo:
+// Public object, private[kyo] members: see the note on Safepoint for the accessor the other shape emits.
+object Kyo:
 
-    abstract class Defer[A, B, +C, -S] extends Kyo[C, S]:
+    abstract private[kyo] class Defer[A, B, +C, -S] extends Kyo[C, S]:
         def value: A < S
         def contA: Arrow[A, B, S]
         def contB: Arrow[B, C, S]
@@ -21,7 +22,7 @@ private[kyo] object Kyo:
         override def toString: String = render(value)
     end Defer
 
-    abstract class Suspend[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Kyo[B, E & S]:
+    abstract private[kyo] class Suspend[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Kyo[B, E & S]:
         def frame: Frame
         def tag: Tag[E]
         def input: I[A]
@@ -31,7 +32,7 @@ private[kyo] object Kyo:
             s"Kyo(${tag.show}, Input($input), ${frame.position.show}, ${frame.snippetShort})"
     end Suspend
 
-    abstract class Handle[E <: ArrowEffect[?, ?], A, B, +C, -S] extends Kyo[C, S]:
+    abstract private[kyo] class Handle[E <: ArrowEffect[?, ?], A, B, +C, -S] extends Kyo[C, S]:
         def value: Kyo[A, E & S]
         def handler: Handler[E, A, B, S]
         def cont: Arrow[B, C, S]

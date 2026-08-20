@@ -7,6 +7,13 @@ import kyo.Arrow.Transform
 import kyo.Frame
 import kyo.Tag
 import kyo.kernel.internal.*
+// unqualified for the same reason as Arrow.Transform above: these are private[kyo] members of
+// public objects, and a qualified selection does not resolve at an expansion site outside package kyo
+import kyo.kernel.internal.Handler.HandlerCont
+import kyo.kernel.internal.Handler.HandlerLoop
+import kyo.kernel.internal.Handler.HandlerLoopState
+import kyo.kernel.internal.Kyo.Handle
+import kyo.kernel.internal.Kyo.Suspend
 import scala.annotation.nowarn
 
 abstract class ArrowEffect[I[_], O[_]] extends Effect
@@ -20,7 +27,7 @@ object ArrowEffect:
         inline effectTag: Tag[E],
         inline effectInput: I[C]
     ): O[C] < E =
-        new Kyo.Suspend[I, O, E, C, O[C], Any]:
+        new Suspend[I, O, E, C, O[C], Any]:
             def frame = _frame
             def tag   = effectTag
             def input = effectInput
@@ -35,7 +42,7 @@ object ArrowEffect:
     )(
         inline f: O[C] => B < S
     ): B < (E & S) =
-        new Kyo.Suspend[I, O, E, C, B, S] with Transform[O[C], B, S]:
+        new Suspend[I, O, E, C, B, S] with Transform[O[C], B, S]:
             def frame                   = _frame
             def tag                     = effectTag
             def input                   = effectInput
@@ -58,10 +65,10 @@ object ArrowEffect:
         def onDone(v: A) = done(v)
         v match
             case body: Kyo[A, E & S] @unchecked =>
-                new Kyo.Handle[E, A, B, B, S]:
+                new Handle[E, A, B, B, S]:
                     def value = body
                     val handler =
-                        new Handler.HandlerCont[I, O, E, A, B, S]:
+                        new HandlerCont[I, O, E, A, B, S]:
                             def frame                                          = _frame
                             def tag                                            = effectTag
                             def run[C](input: I[C], cont: O[C] => A < (E & S)) = handle[C](input, cont)
@@ -82,10 +89,10 @@ object ArrowEffect:
         def onDone(v: A) = done(v)
         v match
             case body: Kyo[A, E & S] @unchecked =>
-                new Kyo.Handle[E, A, B, B, S]:
+                new Handle[E, A, B, B, S]:
                     def value = body
                     val handler =
-                        new Handler.HandlerLoop[I, O, E, A, B, S]:
+                        new HandlerLoop[I, O, E, A, B, S]:
                             def frame                = _frame
                             def tag                  = effectTag
                             def run[C](input: I[C])  = handle[C](input)
@@ -107,10 +114,10 @@ object ArrowEffect:
         def onDone(s: State, v: A) = done(s, v)
         v match
             case body: Kyo[A, E & S] @unchecked =>
-                new Kyo.Handle[E, A, B, B, S]:
+                new Handle[E, A, B, B, S]:
                     def value = body
                     val handler =
-                        new Handler.HandlerLoopState[I, O, E, A, B, S, State]:
+                        new HandlerLoopState[I, O, E, A, B, S, State]:
                             def frame                          = _frame
                             def tag                            = effectTag
                             def initialState                   = state
@@ -151,11 +158,11 @@ object ArrowEffect:
         def onDone(v: A) = done(v)
         v match
             case body: Kyo[A, E & S] @unchecked =>
-                new Kyo.Handle[E, A, B, C, S & S2] with Transform[B, C, S & S2]:
+                new Handle[E, A, B, C, S & S2] with Transform[B, C, S & S2]:
                     def frame = _frame
                     def value = body
                     val handler =
-                        new Handler.HandlerCont[I, O, E, A, B, S]:
+                        new HandlerCont[I, O, E, A, B, S]:
                             def frame                                          = _frame
                             def tag                                            = effectTag
                             def run[X](input: I[X], cont: O[X] => A < (E & S)) = handle[X](input, cont)
@@ -185,11 +192,11 @@ object ArrowEffect:
         def onDone(v: A) = done(v)
         v match
             case body: Kyo[A, E & S] @unchecked =>
-                new Kyo.Handle[E, A, B, C, S & S2] with Transform[B, C, S & S2]:
+                new Handle[E, A, B, C, S & S2] with Transform[B, C, S & S2]:
                     def frame = _frame
                     def value = body
                     val handler =
-                        new Handler.HandlerLoop[I, O, E, A, B, S]:
+                        new HandlerLoop[I, O, E, A, B, S]:
                             def frame                = _frame
                             def tag                  = effectTag
                             def run[X](input: I[X])  = handle[X](input)
@@ -220,11 +227,11 @@ object ArrowEffect:
         def onDone(s: State, v: A) = done(s, v)
         v match
             case body: Kyo[A, E & S] @unchecked =>
-                new Kyo.Handle[E, A, B, C, S & S2] with Transform[B, C, S & S2]:
+                new Handle[E, A, B, C, S & S2] with Transform[B, C, S & S2]:
                     def frame = _frame
                     def value = body
                     val handler =
-                        new Handler.HandlerLoopState[I, O, E, A, B, S, State]:
+                        new HandlerLoopState[I, O, E, A, B, S, State]:
                             def frame                          = _frame
                             def tag                            = effectTag
                             def initialState                   = state

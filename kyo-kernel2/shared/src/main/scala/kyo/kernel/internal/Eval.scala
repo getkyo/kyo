@@ -16,6 +16,9 @@ import kyo.kernel.Loop.Outcome
 import kyo.kernel.internal.Handler.HandlerCont
 import kyo.kernel.internal.Handler.HandlerLoop
 import kyo.kernel.internal.Handler.HandlerLoopState
+import kyo.kernel.internal.Kyo.Defer
+import kyo.kernel.internal.Kyo.Handle
+import kyo.kernel.internal.Kyo.Suspend
 import scala.annotation.nowarn
 import scala.annotation.static
 import scala.annotation.tailrec
@@ -38,11 +41,11 @@ object Eval:
 
         @tailrec def loop(curr: Any < Nothing): Any =
             curr match
-                case kyo: Kyo.Defer[?, ?, A, S] @unchecked =>
+                case kyo: Defer[?, ?, A, S] @unchecked =>
                     stack.push(kyo.contB)
                     stack.push(kyo.contA)
                     loop(kyo.value)
-                case kyo: Kyo.Suspend[IX, OX, EX, CX, A, S] @unchecked =>
+                case kyo: Suspend[IX, OX, EX, CX, A, S] @unchecked =>
                     stack.push(kyo.cont)
                     val pos = stack.find(kyo.tag)
                     if pos < 0 then
@@ -74,7 +77,7 @@ object Eval:
                                         val k = stack.dump(pos)
                                         discard(stack.pop())
                                         loop(
-                                            new Kyo.Defer[Loop.Outcome[OX[CX] < (EX & S), BX], BX, BX, EX & S]
+                                            new Defer[Loop.Outcome[OX[CX] < (EX & S), BX], BX, BX, EX & S]
                                                 with Transform[Loop.Outcome[OX[CX] < (EX & S), BX], BX, EX & S]:
                                                 def frame = Frame.internal
                                                 def value = clause
@@ -117,7 +120,7 @@ object Eval:
                                         val k = stack.dump(pos)
                                         discard(stack.pop())
                                         loop(
-                                            new Kyo.Defer[Loop.Outcome2[StateX, OX[CX] < (EX & S), BX], BX, BX, EX & S]
+                                            new Defer[Loop.Outcome2[StateX, OX[CX] < (EX & S), BX], BX, BX, EX & S]
                                                 with Transform[Loop.Outcome2[StateX, OX[CX] < (EX & S), BX], BX, EX & S]:
                                                 def frame = Frame.internal
                                                 def value = clause
@@ -153,7 +156,7 @@ object Eval:
                                 end match
                         end match
                     end if
-                case kyo: Kyo.Handle[EX, ?, ?, A, S] @unchecked =>
+                case kyo: Handle[EX, ?, ?, A, S] @unchecked =>
                     stack.push(kyo.cont)
                     stack.push(kyo.handler)
                     loop(kyo.value)

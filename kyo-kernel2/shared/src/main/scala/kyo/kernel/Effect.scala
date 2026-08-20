@@ -3,6 +3,9 @@ package kyo.kernel
 import kyo.Arrow
 import kyo.Frame
 import kyo.kernel.internal.*
+// unqualified so the inline expansions do not select it from Kyo.type at a site outside
+// package kyo, where it is not accessible. See the note in Pending.scala
+import kyo.kernel.internal.Kyo.Defer
 import scala.annotation.nowarn
 import scala.annotation.static
 
@@ -18,13 +21,13 @@ object Effect:
     // reads it and not when the node is built
     @nowarn("msg=anonymous")
     private[kyo] inline def deferInline[A, S](inline f: => A < S): A < S =
-        new Kyo.Defer[A, A, A, S]:
+        new Defer[A, A, A, S]:
             def value = f
             def contA = Arrow.id[A]
             def contB = Arrow.id[A]
 
     @static def defer[A, B, S](v: A < S, next: Arrow[A, B, S]): B < S =
-        new Kyo.Defer[A, B, B, S]:
+        new Defer[A, B, B, S]:
             def value = v
             def contA = next
             def contB = Arrow.id[B]
@@ -33,7 +36,7 @@ object Effect:
         if b eq Arrow.id then
             defer(v, a.asInstanceOf[Arrow[A, C, S]])
         else
-            new Kyo.Defer[A, B, C, S]:
+            new Defer[A, B, C, S]:
                 def value = v
                 def contA = a
                 def contB = b

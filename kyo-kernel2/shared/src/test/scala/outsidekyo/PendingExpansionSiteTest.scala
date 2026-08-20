@@ -1,0 +1,513 @@
+package outsidekyo
+
+import kyo.*
+import kyo.Arrow
+import kyo.Const
+import kyo.kernel.*
+import kyo.kernel.internal.Eval
+import org.scalatest.freespec.AnyFreeSpec
+
+/** The public inline surface, exercised from outside package `kyo`.
+  *
+  * Every other kernel2 test is in package `kyo`, so none of them can observe what a call site outside it sees, and two failures have
+  * already reached that blind spot. An inline body is re-typechecked where it expands, so a `private[kyo]` name it selects qualified does
+  * not resolve there: `map` and `Eval` both stopped compiling outside `kyo` that way. And a `private[kyo]` term an inline body names gets
+  * an inline accessor, which for a top-level object in `kyo.kernel.internal` dotty emits with the package itself as the receiver, so every
+  * drive failed with `NoClassDefFoundError: kyo/kernel/internal`.
+  *
+  * The two halves need different evidence, so the tests here both expand each entry point and assert on what it produces: compiling proves
+  * the name resolves, running proves the accessor the compiler emitted for it is well formed.
+  *
+  * A new public inline entry point belongs here. `Implicits.abortCastUnit` is the one deliberate omission: it exists to fail compilation,
+  * so exercising it would fail this file.
+  */
+class PendingExpansionSiteTest extends AnyFreeSpec:
+
+    sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
+    sealed trait Say extends ArrowEffect[Const[String], Const[Unit]]
+
+    def ask: Int < Ask             = ArrowEffect.suspend[Any](Tag[Ask], ())
+    def say(s: String): Unit < Say = ArrowEffect.suspend[Any](Tag[Say], s)
+
+    /** Answers every Ask with 1. */
+    def answer[A, S](v: A < (Ask & S)): A < S =
+        ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, cont) => cont(1), a => a)
+
+    "the pending combinators" - {
+
+        "map" in {
+            val r = Eval(answer(ask.map(_ + 1)))
+            assert(r == 2)
+        }
+
+        "flatMap" in {
+            val r = Eval(answer(ask.flatMap(a => ask.map(b => a + b))))
+            assert(r == 2)
+        }
+
+        "andThen" in {
+            val r = Eval(answer(ask.andThen(ask.map(_ + 10))))
+            assert(r == 11)
+        }
+
+        "unit" in {
+            var seen = 0
+            val v    = ask.map { a => seen = a; a }.unit
+            discard(Eval(answer(v)))
+            assert(seen == 1)
+        }
+
+        "flatten" in {
+            val nested: (Int < Ask) < Any = Kyo.lift(ask.map(_ + 1))
+            val r                         = Eval(answer(nested.flatten))
+            assert(r == 2)
+        }
+
+        "eval" in {
+            val v: Int < Any = 42
+            assert(v.eval == 42)
+        }
+
+        "evalNow on a settled value" in {
+            val v: Int < Any = 42
+            assert(v.evalNow == Maybe(42))
+        }
+
+        "evalNow on a suspended computation" in {
+            assert(ask.evalNow == Maybe.Absent)
+        }
+
+        "unsafeGet" in {
+            val v: Int < Any = 42
+            assert(v.unsafeGet == 42)
+        }
+    }
+
+    "handle, at every arity" - {
+
+        "one" in {
+            val r = ask.handle(v => Eval(answer(v)))
+            assert(r == 1)
+        }
+
+        "two" in {
+            val r = ask.handle(v => v.map(_ + 1), v => Eval(answer(v)))
+            assert(r == 2)
+        }
+
+        "three" in {
+            val r = ask.handle(v => v.map(_ + 1), v => v.map(_ + 1), v => Eval(answer(v)))
+            assert(r == 3)
+        }
+
+        "four" in {
+            val r = ask.handle(v => v.map(_ + 1), v => v.map(_ + 1), v => v.map(_ + 1), v => Eval(answer(v)))
+            assert(r == 4)
+        }
+
+        "five" in {
+            val r = ask.handle(
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => Eval(answer(v))
+            )
+            assert(r == 5)
+        }
+
+        "six" in {
+            val r = ask.handle(
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => Eval(answer(v))
+            )
+            assert(r == 6)
+        }
+
+        "seven" in {
+            val r = ask.handle(
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => Eval(answer(v))
+            )
+            assert(r == 7)
+        }
+
+        "eight" in {
+            val r = ask.handle(
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => Eval(answer(v))
+            )
+            assert(r == 8)
+        }
+
+        "nine" in {
+            val r = ask.handle(
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => Eval(answer(v))
+            )
+            assert(r == 9)
+        }
+
+        "ten" in {
+            val r = ask.handle(
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => v.map(_ + 1),
+                v => Eval(answer(v))
+            )
+            assert(r == 10)
+        }
+    }
+
+    "the arrow constructors" - {
+
+        "Arrow.apply" in {
+            val plusOne: Arrow[Int, Int, Any] = Arrow(x => x + 1)
+            val r                             = Eval(answer(ask.map(x => plusOne(x))))
+            assert(r == 2)
+        }
+
+        "Arrow.recursive" in {
+            val sum: Arrow[Int, Int, Any] = Arrow.recursive((self, x) => if x == 0 then 0 else self(x - 1).map(_ + x))
+            assert(Eval(sum(4)) == 10)
+        }
+    }
+
+    "the effect surface" - {
+
+        "suspend" in {
+            assert(Eval(answer(ask)) == 1)
+        }
+
+        "suspendWith" in {
+            val v = ArrowEffect.suspendWith[Any](Tag[Ask], ())(i => i + 5)
+            assert(Eval(answer(v)) == 6)
+        }
+
+        "handleCont" in {
+            val v = ArrowEffect.handleCont(Tag[Ask], ask.map(_ + 1))([C] => (_, cont) => cont(2), a => a * 10)
+            assert(Eval(v) == 30)
+        }
+
+        "handleLoop" in {
+            val v = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([C] => _ => Loop.continue(3), a => a)
+            assert(Eval(v) == 4)
+        }
+
+        "handleLoop completing from the clause" in {
+            val v = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([C] => _ => Loop.done(99), a => a)
+            assert(Eval(v) == 99)
+        }
+
+        "handleLoopState" in {
+            val v = ArrowEffect.handleLoopState(Tag[Ask], 7, ask.map(_ + 1))(
+                [C] => (state, _) => Loop.continue(state + 1, state),
+                (state, a) => a * 100 + state
+            )
+            assert(Eval(v) == 808)
+        }
+
+        "handleLoopState without a done clause" in {
+            val v = ArrowEffect.handleLoopState(Tag[Ask], 7, ask.map(_ + 1))(
+                [C] => (state, _) => Loop.continue(state + 1, state)
+            )
+            assert(Eval(v) == 8)
+        }
+
+        "handleContWith" in {
+            val v = ArrowEffect.handleContWith(Tag[Ask], ask.map(_ + 1))(
+                [C] => (_, cont) => cont(2),
+                a => a
+            )(b => b * 10)
+            assert(Eval(v) == 30)
+        }
+
+        "handleLoopWith" in {
+            val v = ArrowEffect.handleLoopWith(Tag[Ask], ask.map(_ + 1))(
+                [C] => _ => Loop.continue(3),
+                a => a
+            )(b => b * 10)
+            assert(Eval(v) == 40)
+        }
+
+        "handleLoopStateWith" in {
+            val v = ArrowEffect.handleLoopStateWith(Tag[Ask], 7, ask.map(_ + 1))(
+                [C] => (state, _) => Loop.continue(state + 1, state),
+                (state, a) => a + state
+            )(b => b * 10)
+            assert(Eval(v) == 150)
+        }
+
+        "a region nested under another effect" in {
+            var said = List.empty[String]
+            val body = ask.map(a => say("a" + a).map(_ => a))
+            val v    = ArrowEffect.handleCont(Tag[Say], answer(body))(
+                [C] =>
+                    (input, cont) =>
+                        said = said :+ input
+                        cont(()),
+                a => a
+            )
+            assert(Eval(v) == 1)
+            assert(said == List("a1"))
+        }
+    }
+
+    "Loop" - {
+
+        "apply with one state" in {
+            val v = Loop(0)(i => if i == 3 then Loop.done(i) else Loop.continue(i + 1))
+            assert(Eval(v) == 3)
+        }
+
+        "apply with two states" in {
+            val v = Loop(0, 10)((i, acc) => if i == 3 then Loop.done(acc) else Loop.continue(i + 1, acc + i))
+            assert(Eval(v) == 13)
+        }
+
+        "apply with three states" in {
+            val v = Loop(0, 10, 100)((i, a, b) => if i == 3 then Loop.done(a + b) else Loop.continue(i + 1, a + i, b))
+            assert(Eval(v) == 113)
+        }
+
+        "apply with four states" in {
+            val v = Loop(0, 10, 100, 1000)((i, a, b, c) =>
+                if i == 3 then Loop.done(a + b + c) else Loop.continue(i + 1, a + i, b, c)
+            )
+            assert(Eval(v) == 1113)
+        }
+
+        "apply resuming through an effect" in {
+            val v = Loop(0)(i => if i == 3 then Loop.done(i) else ask.map(a => Loop.continue(i + a)))
+            assert(Eval(answer(v)) == 3)
+        }
+
+        "indexed with no state" in {
+            val v = Loop.indexed(idx => if idx == 3 then Loop.done(idx) else Loop.continue)
+            assert(Eval(v) == 3)
+        }
+
+        "indexed with one state" in {
+            val v = Loop.indexed(10)((idx, acc) => if idx == 3 then Loop.done(acc) else Loop.continue(acc + idx))
+            assert(Eval(v) == 13)
+        }
+
+        "indexed with two states" in {
+            val v = Loop.indexed(10, 100)((idx, a, b) => if idx == 3 then Loop.done(a + b) else Loop.continue(a + idx, b))
+            assert(Eval(v) == 113)
+        }
+
+        "indexed with three states" in {
+            val v = Loop.indexed(10, 100, 1000)((idx, a, b, c) =>
+                if idx == 3 then Loop.done(a + b + c) else Loop.continue(a + idx, b, c)
+            )
+            assert(Eval(v) == 1113)
+        }
+
+        "indexed with four states" in {
+            val v = Loop.indexed(10, 100, 1000, 10000)((idx, a, b, c, d) =>
+                if idx == 3 then Loop.done(a + b + c + d) else Loop.continue(a + idx, b, c, d)
+            )
+            assert(Eval(v) == 11113)
+        }
+
+        "foreach" in {
+            var n = 0
+            val v = Loop.foreach {
+                n += 1
+                if n == 3 then Loop.done(n) else Loop.continue
+            }
+            assert(Eval(v) == 3)
+        }
+
+        "repeat" in {
+            var n = 0
+            discard(Eval(Loop.repeat(3)(Kyo.lift[Unit, Any] { n += 1 })))
+            assert(n == 3)
+        }
+
+        "whileTrue" in {
+            var n = 0
+            discard(Eval(Loop.whileTrue(Kyo.lift[Boolean, Any](n < 3))(Kyo.lift[Unit, Any] { n += 1 })))
+            assert(n == 3)
+        }
+
+        "forever" in {
+            var n = 0
+            val v: Nothing < Ask = Loop.forever(ask.map { a =>
+                n += a
+                if n == 3 then throw new IllegalStateException("stop")
+            })
+            val stopped =
+                try
+                    discard(Eval(answer(v)))
+                    false
+                catch case _: IllegalStateException => true
+            assert(stopped)
+            assert(n == 3)
+        }
+    }
+
+    "the lifts" - {
+
+        "Kyo.lift" in {
+            val v: Int < Ask = Kyo.lift(42)
+            assert(Eval(answer(v)) == 42)
+        }
+
+        "Kyo.unit" in {
+            var ran = false
+            discard(Eval(Kyo.unit.map(_ => ran = true)))
+            assert(ran)
+        }
+
+        "a bare value in a lambda" in {
+            assert(Eval(answer(ask.map(a => a + 1))) == 2)
+        }
+
+        "a singleton in a lambda, which reaches the CanLift macro" in {
+            object Plain
+            assert(Eval(answer(ask.map(_ => Plain))) eq Plain)
+        }
+
+        "a pure function of one argument" in {
+            val f: Int => Int < Any = (a: Int) => a + 1
+            assert(f(1).eval == 2)
+        }
+
+        "a pure function of two arguments" in {
+            val f: (Int, Int) => Int < Any = (a: Int, b: Int) => a + b
+            assert(f(1, 2).eval == 3)
+        }
+
+        "a pure function of three arguments" in {
+            val f: (Int, Int, Int) => Int < Any = (a: Int, b: Int, c: Int) => a + b + c
+            assert(f(1, 2, 3).eval == 6)
+        }
+
+        "a pure function of four arguments" in {
+            val f: (Int, Int, Int, Int) => Int < Any = (a: Int, b: Int, c: Int, d: Int) => a + b + c + d
+            assert(f(1, 2, 3, 4).eval == 10)
+        }
+
+        "a pure function of five arguments" in {
+            val f: (Int, Int, Int, Int, Int) => Int < Any = (a: Int, b: Int, c: Int, d: Int, e: Int) => a + b + c + d + e
+            assert(f(1, 2, 3, 4, 5).eval == 15)
+        }
+
+        "a pure function of six arguments" in {
+            val f: (Int, Int, Int, Int, Int, Int) => Int < Any =
+                (a: Int, b: Int, c: Int, d: Int, e: Int, g: Int) => a + b + c + d + e + g
+            assert(f(1, 2, 3, 4, 5, 6).eval == 21)
+        }
+    }
+
+    "the collection combinators" - {
+
+        "foreach" in {
+            assert(Eval(answer(Kyo.foreach(Seq(1, 2, 3))(x => ask.map(_ + x)))) == Seq(2, 3, 4))
+        }
+
+        "foreachConcat" in {
+            assert(Eval(answer(Kyo.foreachConcat(Seq(1, 2))(x => ask.map(a => Seq(x, x + a))))) == Seq(1, 2, 2, 3))
+        }
+
+        "foreachIndexed" in {
+            assert(Eval(answer(Kyo.foreachIndexed(Seq(10, 20))((idx, v) => ask.map(a => idx + v + a)))) == Seq(11, 22))
+        }
+
+        "foreachDiscard" in {
+            var seen = List.empty[Int]
+            discard(Eval(answer(Kyo.foreachDiscard(Seq(1, 2))(x => ask.map(a => seen = seen :+ (x + a))))))
+            assert(seen == List(2, 3))
+        }
+
+        "filter" in {
+            assert(Eval(answer(Kyo.filter(Seq(1, 2, 3, 4))(x => ask.map(a => x % (a + 1) == 0)))) == Seq(2, 4))
+        }
+
+        "foldLeft" in {
+            assert(Eval(answer(Kyo.foldLeft(Seq(1, 2, 3))(0)((acc, x) => ask.map(a => acc + x * a)))) == 6)
+        }
+
+        "collect" in {
+            assert(Eval(answer(Kyo.collect(Seq(1, 2, 3))(x => ask.map(a => if x % 2 == a then Maybe(x) else Maybe.empty)))) == Seq(1, 3))
+        }
+
+        "collectAll" in {
+            assert(Eval(answer(Kyo.collectAll(Seq(ask, ask.map(_ + 1))))) == Seq(1, 2))
+        }
+
+        "collectAllDiscard" in {
+            var n = 0
+            discard(Eval(answer(Kyo.collectAllDiscard(Seq(ask.map(a => n += a), ask.map(a => n += a))))))
+            assert(n == 2)
+        }
+
+        "findFirst" in {
+            assert(Eval(answer(Kyo.findFirst(Seq(1, 2, 3))(x => ask.map(a => if x > a then Maybe(x * 10) else Maybe.empty)))) == Maybe(20))
+        }
+
+        "takeWhile" in {
+            assert(Eval(answer(Kyo.takeWhile(Seq(1, 2, 3))(x => ask.map(a => x <= a + 1)))) == Seq(1, 2))
+        }
+
+        "span" in {
+            assert(Eval(answer(Kyo.span(Seq(1, 2, 3))(x => ask.map(a => x <= a + 1)))) == (Seq(1, 2), Seq(3)))
+        }
+
+        "dropWhile" in {
+            assert(Eval(answer(Kyo.dropWhile(Seq(1, 2, 3))(x => ask.map(a => x <= a + 1)))) == Seq(3))
+        }
+
+        "partition" in {
+            assert(Eval(answer(Kyo.partition(Seq(1, 2, 3, 4))(x => ask.map(a => x % (a + 1) == 0)))) == (Seq(2, 4), Seq(1, 3)))
+        }
+
+        "partitionMap" in {
+            val r = Eval(answer(Kyo.partitionMap(Seq(1, 2, 3))(x => ask.map(a => if x > a then Right(x) else Left(x.toString)))))
+            assert(r == (Seq("1"), Seq(2, 3)))
+        }
+
+        "scanLeft" in {
+            assert(Eval(answer(Kyo.scanLeft(Seq(1, 2))(0)((acc, x) => ask.map(a => acc + x * a)))) == Seq(0, 1, 3))
+        }
+
+        "groupBy" in {
+            assert(Eval(answer(Kyo.groupBy(Seq(1, 2, 3))(x => ask.map(a => x % (a + 1))))) == Map(1 -> Seq(1, 3), 0 -> Seq(2)))
+        }
+
+        "groupMap" in {
+            val r = Eval(answer(Kyo.groupMap(Seq(1, 2, 3))(x => ask.map(a => x % (a + 1)))(x => ask.map(a => x * 10 * a))))
+            assert(r == Map(1 -> Seq(10, 30), 0 -> Seq(20)))
+        }
+    }
+end PendingExpansionSiteTest
