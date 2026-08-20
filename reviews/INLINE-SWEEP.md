@@ -82,6 +82,76 @@ Not a performance question in the end. `self` is `inline` on the extension, so e
 receiver expression, and `evalNow` had one occurrence per branch. `v.map(f).evalNow` therefore built the map twice
 and, on the settled path, ran `f` twice. Bound once now, with a reproducing test in `PendingTest`.
 
+### `Nested.unnest` replaces the `unsafeGet` extension
+
+An inline body that selects a member through the opaque type's owner makes the expansion carry a proxy chain for
+that owner with the refinement written out longhand. `unsafeGet` is an extension on `A < S`, so every inline
+combinator that read a settled value paid for it. `Nested` gained a sibling to its lift, and the two are now named
+for each other: `nest` and `unnest`. The extension is removed rather than kept as a delegate, so the trap is not
+available; nothing outside kernel2 used it.
+
+The decompiled `map` body for `ask.map(_ + 1)` shows what it bought. Before:
+
+```java
+public final Object run$1(Pending$package$ $proxy8$1, Object v, Arrow next) {
+    ...
+    Pending$package$ Pending$package$_this = pending$package$ = $proxy8$1;
+    if (object2 instanceof Nested) n = unboxToInt(((Nested)object2).value());
+    else                           n = unboxToInt(object2);
+```
+
+After:
+
+```java
+public final Object run$1(Object v, Arrow next) {
+    ...
+    int n = unboxToInt(Nested.unnest(v));
+```
+
+`run$1` loses a parameter, and the anonymous `Transform` loses a captured `Pending$package$` field it stored in its
+constructor. That second part is a per-allocation runtime saving on the hottest allocation in the kernel, not only a
+compile-time one.
+
+Per map call site, against a map-free control: 7053 characters of tree to 4164, `$proxy` bindings 14 to 12,
+refinement restatements 10 to 4.
+
+Compile time, `kyo-compile-bench` on the fixtures that exercise `map`, 8 warmup and 5 measured as the harness
+defines, on an otherwise quiet machine:
+
+| fixture | before | after | |
+|---|---:|---:|---|
+| **MapChainDeep100** | 13,981 ± 2,250 ms | **11,090 ± 345 ms** | 🟢 0.79x |
+| MapChain10 | 187.1 ± 84.4 | 153.3 ± 18.9 | 🟢 0.82x |
+| MapChainWide100 | 617.5 ± 68.6 | 529.6 ± 36.0 | 🟢 0.86x |
+| NestedMaps | 589.3 ± 48.3 | 547.3 ± 71.2 | 🟢 0.93x |
+
+`MapChainDeep100` is where the inliner is superlinear and it is the row that moves most, 2.9 seconds. It is also the
+only row whose intervals essentially separate, and the after leg is far more stable, ±345 against ±2250.
+
+Runtime: every lift pin in `PendingBytecodeTest` is unchanged, so the primitive lift is still a bare cast and the
+concrete-class lift is still 5 bytes. `ArrowEffectBytecodeTest`'s `handleCont` pin moved 87 to 44, which also closes
+the standing question about that call site.
+
+### Function1's specialization forwarders are dead weight, and not yet addressed
+
+`Arrow` extends `(A => B < S)`. `Function1` is `@specialized` on both parameters, so the library declares the
+`apply$mcXY$sp` grid, and Scala 3 emits a concrete mixin forwarder per trait member into every implementing class.
+Since `Arrow` and `Transform` are both traits, each anonymous `new Transform[...]` is the first class in its chain
+and emits all 26.
+
+Measured across kernel2's 1165 classes: **19,776 forwarder definitions and zero genuine call sites.** Every
+occurrence is a forwarder invoking its own trait default. That matches the decompiled body, where the value goes
+through `boxToInteger` into the generic two-argument `apply`; the grid targets the one-argument `Function1.apply`,
+which the drive barely uses. One `Transform` class is 6195 bytes, of which 26 of its 34 methods are forwarders.
+
+An isolated probe confirms the fix without touching kyo: an anonymous class mixing the trait directly is 5459 bytes
+with 24 forwarders, and one extending an abstract class that mixes the trait once is 1014 bytes with none. The
+abstract class pays them once.
+
+`Transform` has to stay a trait, since six sites mix it into a `Kyo` node class. So the shape is abstract classes
+alongside it, one per instantiated combination: a plain `TransformBase` for the seven standalone-arrow sites, and
+fused ones for `suspendWith` and the three `*With` handlers. Not implemented.
+
 ## What was checked and left alone
 
 **The 18 collection combinators.** Only the `Seq` façade is `inline` and each of those is a one-line delegate; the
