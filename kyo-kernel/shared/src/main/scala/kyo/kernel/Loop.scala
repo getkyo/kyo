@@ -567,18 +567,20 @@ object Loop:
       */
     inline def repeat[S](n: Int)(inline run: Safepoint ?=> Any < S)(using inline _frame: Frame, safepoint: Safepoint): Unit < S =
         @nowarn("msg=anonymous")
+        // the count is checked on the settled arm, immediately before `run` is reached, so the body is
+        // evaluated exactly n times. Checking it at the top of the loop instead evaluates `run` once past
+        // the limit: harmless for a suspended body, where the extra evaluation only builds a node that is
+        // then discarded undriven, and one extra execution for a settled one
         @tailrec def loop(i: Int)(v: Any < S)(using Safepoint): Unit < S =
-            if i > n then ()
-            else
-                v match
-                    case kyo: KyoSuspend[IX, OX, EX, Any, Unit, S] @unchecked =>
-                        new KyoContinue[IX, OX, EX, Any, Unit, S](kyo):
-                            def frame = _frame
-                            def apply(v: OX[Any], context: Context)(using Safepoint) =
-                                loop(i)(kyo(v, context))
-                    case _ =>
-                        loop(i + 1)(run)
-            end if
+            v match
+                case kyo: KyoSuspend[IX, OX, EX, Any, Unit, S] @unchecked =>
+                    new KyoContinue[IX, OX, EX, Any, Unit, S](kyo):
+                        def frame = _frame
+                        def apply(v: OX[Any], context: Context)(using Safepoint) =
+                            loop(i)(kyo(v, context))
+                case _ =>
+                    if i >= n then ()
+                    else loop(i + 1)(run)
         end loop
         loop(0)(())
     end repeat
