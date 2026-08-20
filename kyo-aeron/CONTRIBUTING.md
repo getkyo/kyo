@@ -165,7 +165,31 @@ sbt 'kyo-aeronJS/test'
 
 ### Staging libaeron
 
-`kyo-aeron/scripts/build-aeron.sh <os-arch>` clones Aeron at the pinned 1.50.2 tag, builds the static archives with CMake, and stages them under `kyo-aeron/build/aeron/staged/<os-arch>/` (e.g. `darwin-aarch64`, `linux-x86_64`, `linux-aarch64`). The staged tree is gitignored: the archives are build artifacts, never committed binary blobs, so they must be produced on every machine and every CI runner before the compile step. The CI "Prepare libaeron" step runs `kyo-aeron/scripts/build-aeron.sh` per arch on the JVM, Native, JS, and Wasm legs (cmake is preinstalled or installed on demand). Run the script locally once per os-arch before a Native, JS, or Wasm build.
+`kyo-aeron/scripts/build-aeron.sh <os-arch>` clones Aeron at the pinned 1.50.2 tag, builds the static archives with CMake, and stages them under `kyo-aeron/build/aeron/staged/<os-arch>/` (e.g. `darwin-aarch64`, `linux-x86_64`, `linux-aarch64`, `windows-x86_64`). The staged tree is gitignored: the archives are build artifacts, never committed binary blobs, so they must be produced on every machine and every CI runner before the compile step. The CI "Prepare libaeron" step runs `kyo-aeron/scripts/build-aeron.sh` per arch on the JVM, Native, JS, and Wasm legs (cmake is preinstalled or installed on demand). Run the script locally once per os-arch before any build whose dependency graph reaches kyo-aeron, including a JVM build, because shared FFI generation resolves the staged headers and archive.
+
+On Windows, Aeron supports MSVC rather than MinGW. Install CMake and the Visual
+Studio Build Tools C++ workload. Initialize the build shell with
+`VsDevCmd.bat` so `cl.exe`, `link.exe`, `INCLUDE`, and `LIB` are available to
+the later FFI compile. Then stage the x86_64 archive before running sbt:
+
+```powershell
+cmd.exe /k '"C:\Program Files\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=amd64'
+```
+
+The command opens an initialized Command Prompt. Run `powershell` inside it,
+then launch Git Bash for the staging script. Use a
+Windows-style temporary directory because an MSYS-style `/tmp` path can be
+passed through to native CMake tools without the required path conversion:
+
+```powershell
+New-Item -ItemType Directory -Force C:\Temp | Out-Null
+& $env:SHELL -lc 'export TMPDIR=C:/Temp; kyo-aeron/scripts/build-aeron.sh windows-x86_64'
+```
+
+The generic kyo-ffi compiler defaults to `cc`. If a separate FFI dependency
+uses MinGW GCC and only `gcc.exe` exists, set `$env:CC = "gcc"` before running
+sbt. Keep the MSVC environment initialized because kyo-aeron selects `cl.exe`
+for its Windows shim.
 
 ### The link is driver-only
 
