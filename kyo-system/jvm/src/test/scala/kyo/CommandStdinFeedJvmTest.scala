@@ -1,20 +1,21 @@
 package kyo
 
-/** Ownership of the threads that feed a process's stdin.
+/** Ownership of the fibers that feed a process's stdin.
   *
   * JVM-only, and the split is genuine rather than a way to avoid platform cost. JS feeds stdin
-  * through Node streams with no thread of its own, so there is nothing here to own. On Native the
-  * threads exist, but interrupting one parked in a blocking read is not dependable, which
+  * through Node streams with no carrier of its own, so there is nothing here to own. On Native the
+  * carriers exist, but releasing one parked in a blocking read is not dependable, which
   * `ProcessPlatformSpecific` already notes where it routes pipelines through `sh -c` rather than
-  * through threads. What is asserted below is specifically that a JVM thread parked in a read is
-  * released when the scope closes.
+  * through feeds of its own. What is asserted below is specifically that a JVM carrier parked in a
+  * read is released when the scope closes.
   */
 class CommandStdinFeedJvmTest extends kyo.test.Test[Any]:
 
     "a stdin feed does not outlive the scope that spawned the process" in {
-        // The feed runs on a thread of its own, so nothing about the fiber's lifetime reaches it
-        // unaided: before the feed was tied to the process, closing the scope left the thread parked
-        // in read() for as long as its source withheld bytes, holding that source open with it.
+        // The feed runs on a carrier of its own, so nothing about the spawning fiber's lifetime
+        // reaches it unaided: before the feed was tied to the process, closing the scope left the
+        // carrier parked in read() for as long as its source withheld bytes, holding that source
+        // open with it.
         val closed = new java.util.concurrent.atomic.AtomicBoolean(false)
         val parked = new java.util.concurrent.CountDownLatch(1)
 

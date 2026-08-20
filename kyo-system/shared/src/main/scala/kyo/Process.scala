@@ -242,7 +242,7 @@ object Process:
         /** Stops any background feed writing into this process's stdin.
           *
           * Idempotent, and safe to call after the process has exited: a feed can still be parked reading its source when the child is
-          * already gone. Platforms that feed stdin without a thread of their own do not need to do anything here.
+          * already gone. Platforms that feed stdin without a carrier of their own do not need to do anything here.
           */
         def stopInputFeeds()(using AllowUnsafe): Unit = ()
 
