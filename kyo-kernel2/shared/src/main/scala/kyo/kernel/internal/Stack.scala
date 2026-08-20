@@ -16,6 +16,11 @@ final private[kyo] class Stack:
     private var tail    = 0
     private val reach   = Safepoint.period() / 2
 
+    // outstanding releases, held apart from the entries so a fold cannot bury one: `dump` merges runs of
+    // entries into a chain, and a release that ended up inside one would be invisible to the drain
+    private var finalizers = Array.fill[Maybe[Finalizer[?]]](8)(Absent)
+    private var pending    = 0
+
     def isEmpty: Boolean = head == tail
 
     def size: Int = tail - head
@@ -142,10 +147,62 @@ final private[kyo] class Stack:
         loop(n)
     end truncate
 
+    def pushFinalizer(f: Finalizer[?]): Unit =
+        if pending == finalizers.length then
+            val arr = Array.fill[Maybe[Finalizer[?]]](pending * 2)(Absent)
+            var i   = 0
+            while i < pending do
+                arr(i) = finalizers(i)
+                i += 1
+            finalizers = arr
+        end if
+        finalizers(pending) = Present(f)
+        pending += 1
+    end pushFinalizer
+
+    /** Runs every release still outstanding, innermost first, and forgets them.
+      *
+      * One that already ran through its arrow is a no-op, so a drive that completed normally drains nothing.
+      * What this catches is the drive that threw, and the one that ended holding a continuation a clause
+      * received and never applied.
+      *
+      * A release that throws never stops the ones after it: each is owed independently, and losing the rest
+      * because the first failed is how a single bad close leaks everything else. The failure is attached to
+      * whatever the drive was already leaving with, as a suppressed exception, since that one describes why
+      * the computation ended and this one only describes the cleanup. Where the drive was leaving normally
+      * there is nothing to attach to, so the first failure is thrown once the drain is complete rather than
+      * dropped: a release that cannot run is a real error, and silence there is invisible resource loss.
+      *
+      * @param failure
+      *   the exception the drive is already unwinding with, or null if it is completing normally
+      */
+    def drainFinalizers(failure: Throwable | Null): Unit =
+        var first: Throwable | Null = null
+        while pending > 0 do
+            pending -= 1
+            val f = finalizers(pending)
+            finalizers(pending) = Absent
+            try f.foreach(_.run())
+            catch
+                case ex: Throwable =>
+                    if failure ne null then failure.addSuppressed(ex)
+                    else if first eq null then first = ex
+                    else first.addSuppressed(ex)
+            end try
+        end while
+        if (failure eq null) && (first ne null) then throw first
+    end drainFinalizers
+
     def clear(): Unit =
         truncate(size)
         head = 0
         tail = 0
+        // the stack is pooled, so an undrained release must not reach the next borrower
+        var i = 0
+        while i < pending do
+            finalizers(i) = Absent
+            i += 1
+        pending = 0
     end clear
 
     private def ensure(n: Int): Unit =

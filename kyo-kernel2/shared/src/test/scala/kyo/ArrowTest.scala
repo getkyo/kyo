@@ -148,8 +148,16 @@ class ArrowTest extends AnyFreeSpec:
         }
     }
 
-    "an arrow is a function into the pending type" in {
-        val f: Int => Int < Any = Arrow[Int, Int, Any](i => i + 1)
+    // an arrow is deliberately not a Function1. Function1 is @specialized on both parameters, so every class
+    // implementing it carries the apply$mcXY$sp forwarder grid, which measured 19776 definitions across this
+    // module against zero call sites, and every anonymous arrow paid 26 of them. Handlers take an arrow
+    // directly instead. This pins the decision: if the conversion comes back, so does the grid
+    "an arrow is not a function" in {
+        assert(!scala.compiletime.testing.typeChecks("val f: Int => Int < Any = kyo.Arrow[Int, Int, Any](i => i + 1)"))
+    }
+
+    "an arrow applies to a plain value" in {
+        val f = Arrow[Int, Int, Any](i => i + 1)
         assert(List(1, 2, 3).map(i => f(i).eval) == List(2, 3, 4))
     }
 

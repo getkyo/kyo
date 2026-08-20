@@ -1,5 +1,6 @@
 package kyo.kernel.internal
 
+import kyo.Arrow
 import kyo.Const
 import kyo.Maybe
 import kyo.Tag
@@ -759,8 +760,8 @@ class EvalTest extends AnyFreeSpec:
         end trailing
 
         "resumes after its region completed, in a fresh evaluation, each shot from capture-time state" in {
-            var stored: Maybe[Unit => Int < Say] = Maybe.empty
-            val inner: Int < Say                 = stateful(ask.map(a => say("x").map(_ => ask.map(b => a * 10 + b))))
+            var stored: Maybe[Arrow[Unit, Int, Say]] = Maybe.empty
+            val inner: Int < Say                     = stateful(ask.map(a => say("x").map(_ => ask.map(b => a * 10 + b))))
             val r: Int < Any = ArrowEffect.handleCont(Tag[Say], inner)(
                 [C] =>
                     (_, cont) =>
@@ -777,8 +778,8 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "resumes on another thread" in {
-            var stored: Maybe[Unit => Int < Say] = Maybe.empty
-            val inner: Int < Say                 = stateful(ask.map(a => say("x").map(_ => ask.map(b => a * 10 + b))))
+            var stored: Maybe[Arrow[Unit, Int, Say]] = Maybe.empty
+            val inner: Int < Say                     = stateful(ask.map(a => say("x").map(_ => ask.map(b => a * 10 + b))))
             val r: Int < Any = ArrowEffect.handleCont(Tag[Say], inner)(
                 [C] =>
                     (_, cont) =>
@@ -803,8 +804,8 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "resumes under a later region of the same tag, which answers the remainder" in {
-            var stored: Maybe[Int => Int < Ask] = Maybe.empty
-            val body: Int < Ask                 = ask.map(a => ask.map(b => a * 10 + b))
+            var stored: Maybe[Arrow[Int, Int, Ask]] = Maybe.empty
+            val body: Int < Ask                     = ask.map(a => ask.map(b => a * 10 + b))
             val first: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
                 [C] =>
                     (_, cont) =>
@@ -854,8 +855,8 @@ class EvalTest extends AnyFreeSpec:
 
         "stays valid after its drive completes, replaying the trailing maps once per shot" in {
             for depth <- List(8, 64) do
-                val runs                            = new Array[Int](depth)
-                var stored: Maybe[Int => Int < Ask] = Maybe.empty
+                val runs                                = new Array[Int](depth)
+                var stored: Maybe[Arrow[Int, Int, Ask]] = Maybe.empty
                 val first: Int < Any = ArrowEffect.handleCont(Tag[Ask], trailing(depth, runs))(
                     [C] =>
                         (_, cont) =>

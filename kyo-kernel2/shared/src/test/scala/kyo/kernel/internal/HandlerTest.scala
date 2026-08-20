@@ -21,10 +21,10 @@ class HandlerTest extends AnyFreeSpec:
 
     def contHandler(done: Int => Int)(using _frame: Frame): Handler.HandlerCont[Const[Unit], Const[Int], Ask, Int, Int, Any] =
         new Handler.HandlerCont[Const[Unit], Const[Int], Ask, Int, Int, Any]:
-            def frame                                               = _frame
-            def tag                                                 = Tag[Ask]
-            def run[X](input: Unit, cont: Int => Int < (Ask & Any)) = cont(1)
-            override def apply(a: Int)                              = done(a)
+            def frame                                                 = _frame
+            def tag                                                   = Tag[Ask]
+            def run[X](input: Unit, cont: Arrow[Int, Int, Ask & Any]) = cont(1)
+            override def apply(a: Int)                                = done(a)
 
     def statefulHandler(init: Int): Handler.HandlerLoopState[Const[Unit], Const[Int], Ask, Int, Int, Any, Int] =
         new Handler.HandlerLoopState[Const[Unit], Const[Int], Ask, Int, Int, Any, Int]:

@@ -1,8 +1,10 @@
 package kyo.kernel.internal
 
+import java.util.concurrent.atomic.AtomicBoolean
 import kyo.Arrow
 // unqualified so the inlined drive does not select these from Arrow.type at an expansion site
 // outside package kyo, where they are not accessible. See the note in Pending.scala
+import kyo.Arrow.Bracket
 import kyo.Arrow.Chain
 import kyo.Arrow.Transform
 import kyo.Frame
@@ -22,6 +24,39 @@ import kyo.kernel.internal.Kyo.Suspend
 import scala.annotation.nowarn
 import scala.annotation.static
 import scala.annotation.tailrec
+
+/** A release that has not run yet, together with the arrow that runs it.
+  *
+  * One object fills three roles. It is the entry a stack holds, so a drive that throws or abandons a
+  * continuation can still release. It is the arrow spliced after the bracket's `use`, so a drive that
+  * completes releases at the point the use ends rather than at the boundary. And it is the flag that makes
+  * those two paths exclusive, which they have to be because both can be reached for the same resource.
+  *
+  * Atomic rather than a plain `var`: a captured continuation can be resumed on one thread while the drive
+  * that created it drains on another, so the two paths genuinely race.
+  *
+  * The flag is set before the release runs, so a release that throws still counts as run and the drain does
+  * not retry it.
+  */
+final private[kyo] class Finalizer[A](release: Arrow[A, Any, Any], resource: A)
+    extends AtomicBoolean with Transform[Any, Any, Any]:
+
+    def frame = Frame.internal
+
+    def run(): Unit =
+        if compareAndSet(false, true) then discard(Eval(release(resource)))
+
+    override def apply(v: Any): Any < Any =
+        run()
+        v
+
+    // defers on a pending input: while the value has not settled the use has not finished, and the release
+    // is owed only once it has
+    def apply[C, S2](v: Any < S2, next: Arrow[Any, C, S2]): C < S2 =
+        v match
+            case kyo: Kyo[Any, S2] @unchecked => Effect.defer(kyo, this, next)
+            case _                            => next(apply(Nested.unnest[Any](v)), Arrow.id)
+end Finalizer
 
 object Eval:
 
@@ -94,7 +129,7 @@ object Eval:
                                                 override def apply(o: Loop.Outcome[OX[CX] < (EX & S), BX]) =
                                                     o match
                                                         case r: Loop.Continue[OX[CX] < (EX & S)] @unchecked =>
-                                                            Effect.defer(k(r._1, Arrow.id), h)
+                                                            Effect.defer(r._1.map(a => k(a)), h)
                                                         case v => v.asInstanceOf[BX]
                                                 def apply[D, S2](o: Loop.Outcome[OX[CX] < (EX & S), BX] < S2, next: Arrow[BX, D, S2])
                                                     : D < (EX & S & S2) =
@@ -109,7 +144,7 @@ object Eval:
                                                 r._1 match
                                                     case _: Kyo[OX[CX], EX & S] @unchecked =>
                                                         val k = stack.dump(pos)
-                                                        loop(k(r._1, Arrow.id))
+                                                        loop(r._1.map(a => k(a)))
                                                     case _ => loop(r._1)
                                             case _ =>
                                                 stack.truncate(pos + 1)
@@ -137,7 +172,7 @@ object Eval:
                                                 override def apply(o: Loop.Outcome2[StateX, OX[CX] < (EX & S), BX]) =
                                                     o match
                                                         case r: Loop.Continue2[StateX, OX[CX] < (EX & S)] @unchecked =>
-                                                            Effect.defer(k(r._2, Arrow.id), HandlerLoopState(h, r._1))
+                                                            Effect.defer(r._2.map(a => k(a)), HandlerLoopState(h, r._1))
                                                         case v => v.asInstanceOf[BX]
                                                 def apply[D, S2](
                                                     o: Loop.Outcome2[StateX, OX[CX] < (EX & S), BX] < S2,
@@ -155,7 +190,7 @@ object Eval:
                                                 r._2 match
                                                     case _: Kyo[OX[CX], EX & S] @unchecked =>
                                                         val k = stack.dump(pos)
-                                                        loop(k(r._2, Arrow.id))
+                                                        loop(r._2.map(a => k(a)))
                                                     case _ => loop(r._2)
                                                 end match
                                             case _ =>
@@ -199,6 +234,23 @@ object Eval:
                                             EffectTrace.attach(ex, c, tail, stack)
                                             throw ex
                                 loop(next)
+                            case b: Bracket[Any, Any, EX & S] @unchecked =>
+                                // the input is the acquired resource and it has settled by here, so the
+                                // release is owed from this point on. Registering before `use` runs is what
+                                // makes the throwing and the abandoning paths recoverable; the same object
+                                // goes into the continuation, so a use that completes releases there rather
+                                // than waiting for the drain
+                                val tail     = stack.dump[Any, Any, EX & S]()
+                                val resource = Nested.unnest[Any](curr)
+                                val fin      = new Finalizer(b.release, resource)
+                                stack.pushFinalizer(fin)
+                                val next =
+                                    try b.use(curr, fin.chain(tail))
+                                    catch
+                                        case ex: Throwable =>
+                                            EffectTrace.attach(ex, b, tail, stack)
+                                            throw ex
+                                loop(next)
                             case head =>
                                 val tail = stack.dump[Any, Any, EX & S]()
                                 val next =
@@ -215,16 +267,24 @@ object Eval:
 
         val slot  = Safepoint.get()
         val saved = Safepoint.save(slot)
+        // recorded so the drain below can tell a drive that is leaving on an exception from one that is
+        // completing, and attach a failing release to the former rather than replacing it
+        var failure: Throwable | Null = null
         try
             loop(v.asInstanceOf[Any < Nothing]).asInstanceOf[A]
         catch
             case ex: Throwable =>
+                failure = ex
                 // TODO is the exception tracing mechanism assuming the enrichment can happend only at the "end" in eval? That'd be incorrect but I guess we need to add Effect.catching. Design it and validate with me
                 // every throw that carries frames has already had them reconstructed at the site that
                 // ran the user code, so the boundary only rewrites the exception's own trace
                 EffectTrace.splice(ex)
                 throw ex
         finally
+            // before the stack is pooled, and outside the catch above, so a release still runs when the
+            // drive is leaving on an exception. One whose use completed already ran through its arrow and
+            // is a no-op here
+            stack.drainFinalizers(failure)
             Stack.release(stack)
             Safepoint.restore(slot, saved)
         end try

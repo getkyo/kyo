@@ -1,10 +1,11 @@
 package kyo.kernel
 
 import kyo.Arrow
+// unqualified so the inline expansions do not select these from Arrow.type or Kyo.type at a site
+// outside package kyo, where they are not accessible. See the note in Pending.scala
+import kyo.Arrow.Bracket
 import kyo.Frame
 import kyo.kernel.internal.*
-// unqualified so the inline expansions do not select it from Kyo.type at a site outside
-// package kyo, where it is not accessible. See the note in Pending.scala
 import kyo.kernel.internal.Kyo.Defer
 import scala.annotation.nowarn
 import scala.annotation.static
@@ -80,8 +81,30 @@ object Effect:
 
     /** Acquires a resource, uses it, and releases it, with the release running whether or not the use completes.
       *
-      * Prior art was inline. Waits on the Bracket node and the finalizer mechanism.
+      * The bracket is the acquire followed by an arrow that carries the release, so the arrow is reached only
+      * once the acquire has settled: an acquire that never completes owes nothing, and one that completes owes
+      * the release from that moment. A drive that completes runs it where the use ends; a drive that throws, or
+      * that ends holding a continuation a clause never applied, runs it at the boundary.
+      *
+      * The release takes no effects. It has to be able to run where nothing is installed to answer for it,
+      * which is what a drive that is ending can offer.
       */
-    // inline def bracket[A, B, S](inline acquire: A < S)(inline release: A => Unit)(inline use: A => B < S): B < S
+    @nowarn("msg=anonymous")
+    inline def bracket[A, B, S](inline acquire: A < S)(inline release: A => Any < Any)(
+        inline use: A => B < S
+    )(using inline _frame: Frame): B < S =
+        val _release = release
+        val _use     = use
+        // the deferral of the acquire and the arrow that consumes it are one object, as a suspension and its
+        // continuation are in suspendWith: the node's own first continuation is the bracket
+        new Defer[A, B, B, S] with Bracket[A, B, S]:
+            def frame   = _frame
+            def value   = acquire
+            def contA   = this
+            def contB   = Arrow.id[B]
+            val use     = Arrow(_use)(using _frame)
+            val release = Arrow(_release)(using _frame)
+        end new
+    end bracket
 
 end Effect

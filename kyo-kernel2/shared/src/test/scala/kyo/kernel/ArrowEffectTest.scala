@@ -1,5 +1,6 @@
 package kyo.kernel
 
+import kyo.Arrow
 import kyo.Const
 import kyo.Maybe
 import kyo.Tag
@@ -804,9 +805,9 @@ class ArrowEffectTest extends AnyFreeSpec:
     "park" - {
 
         "a clause parks by returning and resumes by rewrapping the continuation" in {
-            var ready: Maybe[Int]              = Maybe.Absent
-            var stash: Maybe[Int => Int < Ask] = Maybe.Absent
-            var polls                          = 0
+            var ready: Maybe[Int]                  = Maybe.Absent
+            var stash: Maybe[Arrow[Int, Int, Ask]] = Maybe.Absent
+            var polls                              = 0
             def boundary(v: Int < Ask): Int < Any =
                 ArrowEffect.handleCont(Tag[Ask], v)(
                     [C] =>
@@ -837,8 +838,8 @@ class ArrowEffectTest extends AnyFreeSpec:
         }
 
         "a park preserves standing sibling regions" in {
-            var seen                           = List.empty[String]
-            var stash: Maybe[Int => Int < Ask] = Maybe.Absent
+            var seen                               = List.empty[String]
+            var stash: Maybe[Arrow[Int, Int, Ask]] = Maybe.Absent
             def boundary(v: Int < Ask): Int < Any =
                 ArrowEffect.handleCont(Tag[Ask], v)(
                     [C] =>
@@ -1374,7 +1375,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                 [C] =>
                     (_, cont) =>
                         val answered: Int < Any = ArrowEffect.handleCont(Tag[Say], inner)([D] => (_, c) => c(()), a => a)
-                        answered.map(cont)
+                        answered.map(a => cont(a))
                 ,
                 a => a
             )
