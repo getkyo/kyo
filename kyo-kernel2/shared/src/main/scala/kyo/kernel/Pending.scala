@@ -20,7 +20,9 @@ object `<` extends Implicits:
         @nowarn("msg=anonymous")
         inline def map[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
             // TODO check if this expanded code uses other nested `inline` methods and report
-            def arrow =
+            // the ascription keeps the anonymous class's type out of the expansion: without it the
+            // inferred type names Arrow.Transform, which an expansion site outside kyo cannot select
+            def arrow: Arrow[A, B, S2] =
                 new Arrow.Transform[A, B, S2]:
                     def frame                                          = _frame
                     def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]) = run(v, next)

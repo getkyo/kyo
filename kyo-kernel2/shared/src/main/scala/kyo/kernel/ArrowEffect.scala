@@ -237,4 +237,58 @@ object ArrowEffect:
         end match
     end handleLoopStateWith
 
+    // Surface the previous kernels carry that this one does not yet. Kept as signatures so the
+    // gap is visible here rather than only in a parked test.
+
+    /** Answers the first operation of a tag and leaves the rest of the region unhandled, ending it with the clause's own result type.
+      *
+      * The previous kernel built this on a stateful handleLoop whose clause received the continuation and used `Loop.done` to carry the
+      * resumed remainder out. Neither primitive here stands in for that: `handleCont` keeps the region installed, and `handleLoopState`
+      * answers with a value rather than handing the clause a continuation it can end the region from.
+      */
+    // TODO ok, let's add but keep it private[kyo]
+    // inline def handleFirst[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
+    //     inline effectTag: Tag[E],
+    //     v: A < (E & S)
+    // )(
+    //     inline handle: [C] => (I[C], O[C] => A < (E & S)) => B < S2,
+    //     inline done: A => B < S2
+    // )(using inline _frame: Frame): B < (S & S2)
+
+    /** Runs a clause against the operation a computation is currently standing on, without answering it.
+      *
+      * Parked with the IOTask integration design, which is what reads a standing operation.
+      */
+    // TODO ok, let's add but keep it private[kyo]
+    // inline def dispatchFirst[I[_], O[_], E <: ArrowEffect[I, O], A, S](
+    //     inline effectTag: Tag[E],
+    //     v: A < (E & S)
+    // )(
+    //     inline f: [C] => I[C] => Unit
+    // )(using inline _frame: Frame): Unit
+
+    /** Answers operations while recovering from a throw raised inside the region.
+      *
+      * Wants the same unwind mechanism as Effect.catching; see the note there.
+      */
+    // inline def handleCatching[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](
+    //     inline effectTag: Tag[E],
+    //     v: A < (E & S)
+    // )(
+    //     inline handle: [C] => (I[C], O[C] => A < (E & S)) => A < (E & S)
+    // )(
+    //     inline recover: Throwable => A < S
+    // )(using inline _frame: Frame): A < S
+
+    /** Answers operations while the clause allows, parking at the first it refuses so a later handler finishes the remainder.
+      *
+      * Parked with the IOTask integration design, and it needs partial evaluation to hand back a resumable value.
+      */
+    // inline def handlePartial[I[_], O[_], E <: ArrowEffect[I, O], A, S](
+    //     inline effectTag: Tag[E],
+    //     v: A < (E & S)
+    // )(
+    //     inline handle: [C] => (I[C], O[C] => A < (E & S)) => Maybe[A < (E & S)]
+    // )(using inline _frame: Frame): A < (E & S)
+
 end ArrowEffect

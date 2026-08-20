@@ -215,4 +215,15 @@ object Eval:
         end try
     end apply
 
+    /** Drives until the computation parks, handing back a value that resumes on a later drive.
+      *
+      * A slice ends on a preemption stop, on the caller's own stop function, or on an operation no handler in the slice answers, and the
+      * value returned carries the regions above the park intact. Lands with the Bracket and Park work
+      * (reviews/BRACKET-PARK-DESIGN.md), which is where the node that reifies a park is decided.
+      *
+      * Consumers waiting on it: the parked group in EvalTest, two cases in ArrowEffectTest, and
+      * SafepointConcurrencyTest's stop-observability case.
+      */
+    // def partial[A, S](v: A < S, stop: () => Boolean = () => false): A < S
+
 end Eval
