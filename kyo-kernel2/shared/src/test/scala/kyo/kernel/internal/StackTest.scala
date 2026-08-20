@@ -89,15 +89,31 @@ class StackTest extends AnyFreeSpec:
             assert(stack.pop() eq b)
         }
 
-        "a nested chain is flattened fully" in {
+        "a right-nested chain is flattened fully" in {
             val stack = new Stack
             val a     = transform
             val b     = transform
             val c     = transform
-            stack.push(a.chain(b).chain(c))
+            stack.push(a.chain(b.chain(c)))
             assert(stack.size == 3)
             assert(stack.pop() eq a)
             assert(stack.pop() eq b)
+            assert(stack.pop() eq c)
+        }
+
+        // push walks the right spine only, so the left-nested link lands as one entry. That is not a
+        // gap: the drive's done branch matches a Chain entry and re-defers it, which brings it back
+        // through the deferral arm and flattens it then. A capture built by dump is right-nested
+        // already, so this shape only arises from a user chaining onto an existing chain
+        "a left-nested chain keeps the nested link as one entry" in {
+            val stack = new Stack
+            val a     = transform
+            val b     = transform
+            val c     = transform
+            val inner = a.chain(b)
+            stack.push(inner.chain(c))
+            assert(stack.size == 2)
+            assert(stack.pop() eq inner)
             assert(stack.pop() eq c)
         }
 

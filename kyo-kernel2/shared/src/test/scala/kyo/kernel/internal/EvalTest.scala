@@ -678,23 +678,27 @@ class EvalTest extends AnyFreeSpec:
             assert(log.toList == List("inner", "outer"))
         }
 
-        "a clause's re-raise of its own tag is answered by the successor, not by itself" in {
-            // the Ask clause re-raises Ask. Answered OUTSIDE it reaches the successor. Answered
-            // INSIDE, the region's stack still holds this very handler, so the re-raise comes back
-            // to the same clause, which re-raises again: the leak is a livelock. The counter bounds
-            // it so a regression fails instead of hanging.
+        // The two own-tag shapes are not the same law, and the signature is what separates them.
+        // A clause SUSPENDING on its own tag happens at row S, outside the region, so the drive has
+        // popped this handler and the successor answers. A clause's ANSWER carries row E & S, which
+        // is region currency, so it runs with this handler still installed and this handler answers
+        // it. The answer shape is pinned under "handleLoop" above; this is the suspension shape.
+        "a clause's own-tag suspension before its outcome is answered by the successor" in {
+            // answered by this handler instead, the suspension would come back to the same clause,
+            // which would suspend again: the failure mode is a livelock, so the counter bounds it
+            // into a failure rather than a hang
             var clauseRuns = 0
-            val askScope = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))(
+            val askScope: Int < Ask = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))(
                 [C] =>
                     _ =>
                         clauseRuns += 1
-                        if clauseRuns > 3 then throw new IllegalStateException("clause answered its own re-raise")
-                        Loop.continue(ask.map(x => x + 100))
+                        if clauseRuns > 3 then throw new IllegalStateException("clause answered its own suspension")
+                        ask.map(x => Loop.continue(x + 100: Int < Any))
                 ,
                 a => a
             )
             val outerAsk = ArrowEffect.handleLoop(Tag[Ask], askScope)([C] => _ => Loop.continue(5: Int < Any), a => a)
-            // askScope's clause re-raises ask, answered by outerAsk with 5, plus 100 -> 105, plus 1
+            // the clause suspends on ask, answered by outerAsk with 5, plus 100 -> 105, plus 1
             assert(Eval(outerAsk) == 106)
             assert(clauseRuns == 1)
         }

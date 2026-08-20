@@ -51,11 +51,17 @@ class PendingBytecodeTest extends AnyFreeSpec:
         assert(sizes == Map("test" -> 2))
     }
 
-    "lift of a concrete class is a bare cast" in {
-        // a final class admits no Boxed subtype, so the emission proves the
-        // value can never be a computation and emits a bare cast
+    "lift of a concrete class keeps the runtime test" in {
+        // MOVED, not re-baselined: this was 2 in the previous kernel2, where the emission analyzed
+        // the type and proved a final class admits no nested payload, leaving a bare cast. This
+        // lift has two arms, a primitive fast path and Nested.lift, so a concrete class takes the
+        // same static call a generic value takes: aload, invokestatic, areturn.
+        //
+        // The cost is one union instanceof on the most common boundary in the library. Restoring
+        // the elision means an emission macro that reads the type, which is machinery this lift
+        // deliberately does not have. Flagged for the owner rather than decided here.
         val sizes = methodBytecodeSize[TestLiftConcrete]
-        assert(sizes == Map("test" -> 2))
+        assert(sizes == Map("test" -> 5))
     }
 
     "lift of a generic value is one runtime test" in {
