@@ -14,7 +14,7 @@ import scala.util.control.NoStackTrace
 /** The effect-level frames of a failure, carried as a suppressed exception on the failure itself.
   *
   * The frames are not recorded while the computation runs. They are reconstructed at the boundary the exception crosses, from the failing
-  * value and the drive stack the evaluator is already holding, so nothing is paid when nothing throws. The carrier exists for three reasons
+  * value and the eval stack the evaluator is already holding, so nothing is paid when nothing throws. The carrier exists for three reasons
   * and no others: its presence among `getSuppressed` marks an exception as already enriched, it accumulates the reconstructions of every
   * boundary an exception crosses, and `getMessage` renders them for a reader that would rather not parse a stack trace.
   */
@@ -34,7 +34,7 @@ final class EffectTrace extends Exception(null, null, false, false):
 end EffectTrace
 
 /** The class and its two entry points are public because `Eval.apply` is `inline`: its body is re-typechecked at every expansion site,
-  * including sites outside package `kyo`, so every symbol the drive names has to be reachable there. The carrier's mutable fields stay
+  * including sites outside package `kyo`, so every symbol the eval names has to be reachable there. The carrier's mutable fields stay
   * `private[kyo]`; no inline method touches them.
   */
 object EffectTrace:
@@ -46,12 +46,12 @@ object EffectTrace:
 
     private val noElements = new Array[StackTraceElement](0)
 
-    // the drive's spelling for the erased operation types
+    // the eval's spelling for the erased operation types
     private type IX[_]
     private type OX[_]
     private type EX <: ArrowEffect[IX, OX]
 
-    /** The drive was about to run `node`: the node, everything it composes, the continuation the drive folded, and the drive stack are all
+    /** The eval was about to run `node`: the node, everything it composes, the continuation the eval folded, and the eval stack are all
       * pending.
       */
     def attach(ex: Throwable, node: Kyo[?, ?], next: Arrow[?, ?, ?], stack: Stack): Unit =
@@ -61,7 +61,7 @@ object EffectTrace:
             builder.entries(stack)
         }
 
-    /** The drive applied `entry` with `next` folded behind it. `entry` is walked in its arrow role: the drive already took it apart onto the
+    /** The eval applied `entry` with `next` folded behind it. `entry` is walked in its arrow role: the eval already took it apart onto the
       * stack, so its node payload, if it has one, is behind the failure rather than ahead of it.
       */
     def attach(ex: Throwable, entry: Arrow[?, ?, ?], next: Arrow[?, ?, ?], stack: Stack): Unit =
@@ -117,8 +117,8 @@ object EffectTrace:
       * The per-site `Arrow.Transform` a user's `map` mints is an anonymous class in the user's own compilation unit carrying the user's line
       * numbers, so it is the most informative physical frame present and is never filtered.
       *
-      * With `Eval.apply` inline, the drive's own frames no longer appear under `kyo.kernel.internal.Eval`: `loop` expands into the caller
-      * and its physical frames carry the caller's class name, so the first entry below filters nothing at a site that expanded the drive.
+      * With `Eval.apply` inline, the eval's own frames no longer appear under `kyo.kernel.internal.Eval`: `loop` expands into the caller
+      * and its physical frames carry the caller's class name, so the first entry below filters nothing at a site that expanded the eval.
       * There is no correct fix here: filtering by a mangled local-method name would be guesswork, and filtering by the caller's own class
       * would delete the frames this design exists to keep.
       */
@@ -164,13 +164,13 @@ object EffectTrace:
 
     /** The reconstruction walk.
       *
-      * A node in this kernel can be two things at once, and the drive tells the two apart by position. A value position holds a computation
-      * the drive will take apart, so it is walked as a node. An arrow position holds something the drive will only ever apply, so it is
+      * A node in this kernel can be two things at once, and the eval tells the two apart by position. A value position holds a computation
+      * the eval will take apart, so it is walked as a node. An arrow position holds something the eval will only ever apply, so it is
       * walked as an arrow: it contributes its frame, and for a handler its region label, and nothing else. Every self-referential slot the
       * kernel mints is a continuation slot, so it is reached in the arrow role and termination is structural rather than defensive.
       *
       * The cap is the walk's stack-safe carrier: emission stops at it and the worklist never holds more than that many items, so a chain or
-      * a drive stack of any depth is bounded, and nothing recurses on the Java stack.
+      * an eval stack of any depth is bounded, and nothing recurses on the Java stack.
       */
     final private class Builder(budget: Int):
 
@@ -229,19 +229,19 @@ object EffectTrace:
             end if
         end push
 
-        /** A value-position node: the drive was about to run it. */
+        /** A value-position node: the eval was about to run it. */
         def node(k: Kyo[?, ?]): Unit =
             push(new Node(k))
             drain()
         end node
 
-        /** An arrow-position item: a drive-stack entry, or a continuation the drive folded. */
+        /** An arrow-position item: an eval-stack entry, or a continuation the eval folded. */
         def arrow(a: Arrow[?, ?, ?]): Unit =
             push(a)
             drain()
         end arrow
 
-        /** The pending continuation held on the drive stack, innermost first. Index 0 is the entry the drive would apply next: `push`
+        /** The pending continuation held on the eval stack, innermost first. Index 0 is the entry the eval would apply next: `push`
           * decrements `head`, `pop` reads at `head`, `find` scans upward from 0, and `dump` folds `pos-1` down to 0 so that entry 0 ends up
           * leftmost in the chain. Entries the cap keeps the sweep from reaching are counted as dropped.
           */
@@ -270,7 +270,7 @@ object EffectTrace:
                                 frame(s.frame)
                                 push(s.cont)
                             case h: Kyo.Handle[?, ?, ?, ?, ?] =>
-                                // mirrors the drive's Handle arm: cont, then the region label, then the
+                                // mirrors the eval's Handle arm: cont, then the region label, then the
                                 // body, so the body drains first and the label follows it
                                 push(h.cont)
                                 push(h.handler)
@@ -279,6 +279,15 @@ object EffectTrace:
                                 push(d.contB)
                                 push(d.contA)
                                 pushValue(d.value)
+                            case p: Kyo.Park[?, ?] =>
+                                // mirrors the eval's Park arm: the parked entries stand above the value, so
+                                // they drain after it, and they go on innermost first the way the stack held
+                                // them. The finalizers carry no site of their own and are skipped
+                                var i = p.entries.size
+                                while i > 0 do
+                                    i -= 1
+                                    push(p.entries(i))
+                                pushValue(p.value)
                     case h: Handler[?, ?, ?, ?] =>
                         // before the Arrow arm: Handler extends Arrow.Transform, and a folded
                         // continuation can contain inner handlers

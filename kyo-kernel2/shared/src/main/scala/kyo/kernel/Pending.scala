@@ -21,31 +21,11 @@ object `<` extends Implicits:
 
         @nowarn("msg=anonymous")
         inline def map[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
-            // What a call site expands to, read off `-Xprint:inlining` over kyo-compile-bench's
-            // fixtures-expansion corpus. Inlined: `f`, `self` by substitution, and the implicit lift.
-            // Left as calls: `Nested.unnest`, `Effect.defer` twice, `Arrow.id` twice, `next.head`,
-            // `next.tail`, and the three `Safepoint` entry points. One anonymous Transform is constructed.
-            //
-            // `Nested.unnest` rather than `unsafeGet` is what keeps that list short. An inline body that
-            // selects a member through the opaque type's owner makes the expansion carry a proxy chain for
-            // that owner with the refinement written out longhand; a call to a plain object does not. The
-            // lift is not in that category: it only names `A < S` as a type, so it costs nothing here
-            // beyond the CanLift macro on the one shape that reaches it, a lambda returning a singleton.
-            //
-            // Transform is referenced unqualified, through the import, and never as Arrow.Transform.
-            // The combinators are inline, so the body is re-typechecked at the expansion site, and a
-            // site outside package kyo cannot select a private[kyo] member from Arrow.type: the
-            // qualified spelling fails there with "Found: kyo.Arrow.type, Required: ?{ Transform: ? }".
-            // Reached through the import it resolves without that selection. kyo-compile-bench is the
-            // only corpus outside package kyo, so it is the only thing that catches a regression here
             def arrow: Arrow[A, B, S2] =
                 new TransformBase[A, B, S2]:
                     def frame                                          = _frame
                     def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]) = run(v, next)
             def run[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S2 & S3) =
-                // the slot is held in a var so the two ways of reaching the deferral, a pending input and an
-                // exhausted depth budget, share one arm. `||` short-circuits, so a pending input never pays
-                // Safepoint.get()
                 var slot: Safepoint.Slot = -1
                 val shouldDefer          = v.isInstanceOf[Kyo[?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
                 if shouldDefer then Effect.defer(v, arrow, next)
@@ -308,6 +288,17 @@ object `<` extends Implicits:
                 case _: Kyo[?, ?] => Maybe.empty
                 case _            => Maybe(Nested.unnest(v))
         end evalNow
+
+        /** Runs the releases this computation still owes, for a holder giving up on resuming it.
+          *
+          * Only a parked computation owes anything here: a bracket releases where its use ends, and one whose
+          * slice ended early carries what it had not released yet. Anything else is a no-op.
+          *
+          * Delegates rather than matching in place, so the expansion is one call and carries no proxy for the
+          * opaque type's owner.
+          */
+        private[kyo] inline def finalizeResources: Unit =
+            Eval.finalizeResources(self.asInstanceOf[Any < Any])
     end extension
 
     /** A pending computation renders as its payload wrapped in `Kyo(...)`, with the payload rendered by its own instance, so the wrapper

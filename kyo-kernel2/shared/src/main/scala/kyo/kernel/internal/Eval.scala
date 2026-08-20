@@ -2,7 +2,7 @@ package kyo.kernel.internal
 
 import java.util.concurrent.atomic.AtomicBoolean
 import kyo.Arrow
-// unqualified so the inlined drive does not select these from Arrow.type at an expansion site
+// unqualified so the inlined eval does not select these from Arrow.type at an expansion site
 // outside package kyo, where they are not accessible. See the note in Pending.scala
 import kyo.Arrow.Bracket
 import kyo.Arrow.Chain
@@ -20,6 +20,7 @@ import kyo.kernel.internal.Handler.HandlerLoop
 import kyo.kernel.internal.Handler.HandlerLoopState
 import kyo.kernel.internal.Kyo.Defer
 import kyo.kernel.internal.Kyo.Handle
+import kyo.kernel.internal.Kyo.Park
 import kyo.kernel.internal.Kyo.Suspend
 import scala.annotation.nowarn
 import scala.annotation.static
@@ -27,12 +28,12 @@ import scala.annotation.tailrec
 
 /** A release that has not run yet, together with the arrow that runs it.
   *
-  * One object fills three roles. It is the entry a stack holds, so a drive that throws or abandons a
-  * continuation can still release. It is the arrow spliced after the bracket's `use`, so a drive that
+  * One object fills three roles. It is the entry a stack holds, so an eval that throws or abandons a
+  * continuation can still release. It is the arrow spliced after the bracket's `use`, so an eval that
   * completes releases at the point the use ends rather than at the boundary. And it is the flag that makes
   * those two paths exclusive, which they have to be because both can be reached for the same resource.
   *
-  * Atomic rather than a plain `var`: a captured continuation can be resumed on one thread while the drive
+  * Atomic rather than a plain `var`: a captured continuation can be resumed on one thread while the eval
   * that created it drains on another, so the two paths genuinely race.
   *
   * The flag is set before the release runs, so a release that throws still counts as run and the drain does
@@ -70,7 +71,7 @@ object Eval:
 
     private inline given Frame = Frame.internal
 
-    // not inline: the drive is ~555 instructions and HotSpot refuses to inline it at any call site, so an
+    // not inline: the eval is ~555 instructions and HotSpot refuses to inline it at any call site, so an
     // inline definition bought nothing at runtime and emitted a private copy of the whole interpreter per
     // call site. PendingTest alone carried 132 of them.
     //
@@ -78,20 +79,79 @@ object Eval:
     // method that contains a lambda: genSJSIR fails with "Cannot resolve delambdafy target method $anonfun"
     // on the eta-expansion below. The other @static methods in this package hold local defs and anonymous
     // classes, never lambdas, which is why they compile. The module load this costs is one getstatic
-    @nowarn("msg=anonymous")
     def apply[A, S](v: A < S): A =
+        apply(v, armed = false, neverStop).asInstanceOf[A]
+
+    /** Evaluates until the computation parks, handing back a value that resumes on a later slice.
+      *
+      * A slice ends on a preemption stop or on the caller's own stop function, and the value returned carries
+      * the regions above the park intact, with their state.
+      *
+      * The row is `Any`, the same as a full evaluation: every effect must already be handled. An operation
+      * with no handler is a bug here too, not something a slice can park on and have answered later.
+      *
+      * A stop already delivered before the slice begins ends it before it starts: the input comes straight
+      * back, and the sentinel is taken so the slice after this one runs.
+      */
+    private[kyo] def partial[A](v: A < Any, stop: () => Boolean = neverStop): A < Any =
+        val slot = Safepoint.get()
+        if Safepoint.consumeStopped(slot) then v
+        else apply(v, armed = true, () => Safepoint.consumeStopped(slot) || stop()).asInstanceOf[A < Any]
+    end partial
+
+    // shared so a full evaluation and a partial one cannot drift apart. `armed` gates the poll rather than
+    // the poll gating itself: a call per step costs 3 to 5 percent on the hot rows because the JIT will not
+    // fold it away, and a full evaluation must not pay for a slice mechanism it cannot use
+    private val neverStop: () => Boolean = () => false
+
+    @nowarn("msg=anonymous")
+    private def apply[A, S](v: A < S, armed: Boolean, stop: () => Boolean): Any =
         val stack = Stack.borrow()
+
+        /** The slice, as a value that resumes it.
+          *
+          * An empty stack with nothing owed means the value alone is the whole remainder, so no node is built
+          * for it. Otherwise the three arrays move into the park and the stack is left clean: the releases
+          * belong to the computation, and this eval is ending without finishing it, so its drain must not
+          * run them.
+          */
+        def park(curr: Any < Nothing): Any =
+            if stack.isEmpty && stack.outstanding == 0 then curr
+            else
+                val es   = stack.snapshotEntries()
+                val sts  = stack.snapshotStates()
+                val fins = stack.snapshotFinalizers()
+                stack.clear()
+                // the row widens from Nothing to Any: what the loop carries is a value whose effects the
+                // regions in the snapshot answer, and those travel with it
+                new Park[Any, Any](curr.asInstanceOf[Any < Any], es, sts, fins)
+        end park
 
         @tailrec def loop(curr: Any < Nothing): Any =
             curr match
                 case kyo: Defer[?, ?, A, S] @unchecked =>
-                    stack.push(kyo.contB)
-                    stack.push(kyo.contA)
+                    // the poll lives here rather than at the top of the loop because a stop drains the budget,
+                    // so every combinator starts deferring and this arm is reached on the next operation. The
+                    // stop function is polled at the same cadence, which is often enough: nothing runs long
+                    // without deferring, since a fused chain is bounded by the depth guard and hitting it is
+                    // itself a deferral
+                    if armed && stop() then park(curr)
+                    else
+                        stack.push(kyo.contB)
+                        stack.push(kyo.contA)
+                        loop(kyo.value)
+                case kyo: Park[?, ?] =>
+                    // resuming is putting the parked stack back and carrying on from the value it held. The
+                    // entries go above whatever this eval already pushed, so a handler installed around the
+                    // parked computation sits below its regions and answers what they do not
+                    stack.restore(kyo.entries, kyo.states, kyo.finalizers)
                     loop(kyo.value)
                 case kyo: Suspend[IX, OX, EX, CX, A, S] @unchecked =>
                     stack.push(kyo.cont)
                     val pos = stack.find(kyo.tag)
                     if pos < 0 then
+                        // the row rules this out for both entry points: a slice takes `A < Any` as well, so
+                        // an operation reaching here has no handler anywhere and never will
                         try bug(s"unhandled suspension: ${kyo.tag}")
                         catch
                             case ex: Throwable =>
@@ -267,11 +327,16 @@ object Eval:
 
         val slot  = Safepoint.get()
         val saved = Safepoint.save(slot)
-        // recorded so the drain below can tell a drive that is leaving on an exception from one that is
+        // after `save`, which installs a fresh budget and clears the armed bit as it reads. Arming makes a
+        // stop drain that budget, so the next operation defers and the poll above is reached at once rather
+        // than up to a depth guard's worth of fused steps later. `restore` in the finally puts the caller's
+        // state back, armed bit included, so a slice nested in another eval leaves no trace
+        if armed then Safepoint.arm(slot)
+        // recorded so the drain below can tell an eval that is leaving on an exception from one that is
         // completing, and attach a failing release to the former rather than replacing it
         var failure: Throwable | Null = null
         try
-            loop(v.asInstanceOf[Any < Nothing]).asInstanceOf[A]
+            loop(v.asInstanceOf[Any < Nothing])
         catch
             case ex: Throwable =>
                 failure = ex
@@ -282,7 +347,7 @@ object Eval:
                 throw ex
         finally
             // before the stack is pooled, and outside the catch above, so a release still runs when the
-            // drive is leaving on an exception. One whose use completed already ran through its arrow and
+            // eval is leaving on an exception. One whose use completed already ran through its arrow and
             // is a no-op here
             stack.drainFinalizers(failure)
             Stack.release(stack)
@@ -290,15 +355,25 @@ object Eval:
         end try
     end apply
 
-    /** Drives until the computation parks, handing back a value that resumes on a later drive.
+    /** Runs the releases a parked computation still owes, for a holder that has decided not to resume it.
       *
-      * A slice ends on a preemption stop, on the caller's own stop function, or on an operation no handler in the slice answers, and the
-      * value returned carries the regions above the park intact. Lands with the Bracket and Park work
-      * (reviews/BRACKET-PARK-DESIGN.md), which is where the node that reifies a park is decided.
+      * A park carries its outstanding releases rather than running them, because the computation may carry on
+      * and use those resources. That leaves whoever holds the park with the choice, and this is the half of
+      * it that gives up. Resuming afterwards is harmless but pointless: the releases have run, and each is a
+      * no-op the second time.
       *
-      * Consumers waiting on it: the parked group in EvalTest, two cases in ArrowEffectTest, and
-      * SafepointConcurrencyTest's stop-observability case.
+      * Only the park itself is inspected. A parked value that has been composed since holds its park inside a
+      * deferral where this cannot see it, so a holder that intends to finalize must keep what it was handed.
       */
-    // def partial[A, S](v: A < S, stop: () => Boolean = () => false): A < S
+    private[kyo] def finalizeResources(v: Any < Any): Unit =
+        v match
+            case p: Park[?, ?] =>
+                // backwards, since index zero is the outermost: a resource acquired inside another is
+                // released before it
+                var i = p.finalizers.size
+                while i > 0 do
+                    i -= 1
+                    p.finalizers(i).run()
+            case _ => ()
 
 end Eval

@@ -14,7 +14,7 @@ abstract class Effect private[kernel] ()
 
 object Effect:
 
-    /** Holds a computation unevaluated until a drive reaches it. */
+    /** Holds a computation unevaluated until an eval reaches it. */
     private[kyo] def defer[A, S](f: => A < S)(using Frame): A < S =
         deferInline(f)
 
@@ -50,30 +50,30 @@ object Effect:
       *
       * Shape below is the old kernel's, which is CPS: `catchingLoop` walks the computation and rebuilds each suspension with its
       * continuation wrapped, so resuming inside the region is inside the try. This kernel has no continuation to rebuild at construction
-      * time; the drive holds continuations on its stack and applies them one at a time, and a try inside a single arrow's `apply` guards
+      * time; the eval holds continuations on its stack and applies them one at a time, and a try inside a single arrow's `apply` guards
       * that one application rather than the rest of the region.
       *
-      * What the guard actually needs is to be a stack entry the drive consults while unwinding, so a throw from anything above it lands
+      * What the guard actually needs is to be a stack entry the eval consults while unwinding, so a throw from anything above it lands
       * here. That is the same mechanism a bracket's release needs, and the Bracket design introduces it (reviews/BRACKET-PARK-DESIGN.md).
       * Designing catching before that mechanism exists would duplicate it, so the signature is recorded and the implementation waits.
       *
-      * The tracing contract this owes, established while porting EffectTrace: `EffectTrace.splice` currently runs only at the drive
+      * The tracing contract this owes, established while porting EffectTrace: `EffectTrace.splice` currently runs only at the eval
       * boundary, which assumes an exception is observed only there. This handler is a second observation point, so it has to attach and
       * splice before calling `f`, or the handler sees frames in the carrier that are not in the stack trace.
       */
     // Parked: it cannot be implemented without other changes. CPS makes the continuation be the
     // rest of the computation, so the old kernel could wrap it in a try and guard everything
-    // downstream. Here the drive owns a stack and the rest is spread across its entries, so a try
+    // downstream. Here the eval owns a stack and the rest is spread across its entries, so a try
     // inside one arrow's apply guards building the next deferral, not running it. A self-
     // reinstalling guard arrow and a structural rewrite of every continuation were both
-    // considered; the first does not guard the drive's own evaluation and the second pays an
-    // allocation per drive step. What it needs is a stack entry the drive consults while
+    // considered; the first does not guard the eval's own work and the second pays an
+    // allocation per eval step. What it needs is a stack entry the eval consults while
     // unwinding, which is the mechanism the Bracket work introduces, so this rides on that.
     // private[kyo] inline def catching[A, S, B >: A, S2](inline v: => A < S)(
     //     inline f: Throwable => B < S2
     // )(using inline _frame: Frame): B < (S & S2)
 
-    /** Detaches a computation from the bindings standing at this point, so the child carries them and can be driven elsewhere.
+    /** Detaches a computation from the bindings standing at this point, so the child carries them and can be evaluated elsewhere.
       *
       * Waits on ContextEffect, which this kernel does not have.
       */
@@ -83,11 +83,11 @@ object Effect:
       *
       * The bracket is the acquire followed by an arrow that carries the release, so the arrow is reached only
       * once the acquire has settled: an acquire that never completes owes nothing, and one that completes owes
-      * the release from that moment. A drive that completes runs it where the use ends; a drive that throws, or
+      * the release from that moment. An eval that completes runs it where the use ends; one that throws, or
       * that ends holding a continuation a clause never applied, runs it at the boundary.
       *
       * The release takes no effects. It has to be able to run where nothing is installed to answer for it,
-      * which is what a drive that is ending can offer.
+      * which is what an eval that is ending can offer.
       */
     @nowarn("msg=anonymous")
     inline def bracket[A, B, S](inline acquire: A < S)(inline release: A => Any < Any)(

@@ -10,7 +10,7 @@ import scala.annotation.tailrec
 // deliberately not a Function1. Function1 is @specialized on both parameters, so every class that
 // mixes it in emits the whole apply$mcXY$sp forwarder grid: 26 methods, measured at 19776 definitions
 // across this module and not one genuine call site. Handlers take an Arrow directly instead, which
-// also spares the drive an eta-expansion per suspension
+// also spares the eval an eta-expansion per suspension
 sealed trait Arrow[-A, +B, -S]:
     self =>
 
@@ -100,18 +100,18 @@ object Arrow:
       * once the acquire has settled, which answers "did the acquire complete" by construction rather than by
       * inspecting a suspended computation.
       *
-      * `release` sits at row `Any` so it can run where nothing is installed to answer for it, which is what a
-      * drive that is ending or a park that is being abandoned can offer.
+      * `release` sits at row `Any` so it can run where nothing is installed to answer for it, which is what an
+      * eval that is ending or a park that is being abandoned can offer.
       */
     trait Bracket[-A, B, -S] extends Transform[A, B, S]:
         def use: Arrow[A, B, S]
         def release: Arrow[A, Any, Any]
 
-        /** Always defers, and the drive calls `use` rather than coming back through here.
+        /** Always defers, and the eval calls `use` rather than coming back through here.
           *
-          * The drive is the only site that registers the release, so `use` must not be reachable without
-          * passing it. Deferring makes an application anywhere else a value that has to be driven, and the
-          * drive's own arm never calls this method, so there is no cycle.
+          * The eval is the only site that registers the release, so `use` must not be reachable without
+          * passing it. Deferring makes an application anywhere else a value that has to be evaluated, and
+          * the eval's own arm never calls this method, so there is no cycle.
           */
         def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]) =
             Effect.defer(v, this, next)
@@ -133,7 +133,7 @@ object Arrow:
             Effect.defer(v, this, next)
 
         // a chain of any depth renders in bounded stack: the walk is a loop with a depth cap, so a
-        // capture folded from a long drive stack stays printable in a debugger
+        // capture folded from a long eval stack stays printable in a debugger
         override def toString: String =
             val out = new StringBuilder
             @tailrec def loop(pending: List[Arrow[?, ?, ?] | String], fuel: Int): Unit =

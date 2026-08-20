@@ -2,6 +2,8 @@ package kyo.kernel.internal
 
 import kyo.Arrow
 import kyo.Frame
+import kyo.Maybe
+import kyo.Span
 import kyo.Tag
 import kyo.kernel.*
 import kyo.kernel.Loop.Outcome
@@ -32,6 +34,32 @@ object Kyo:
             s"Kyo(${tag.show}, Input($input), ${frame.position.show}, ${frame.snippetShort})"
     end Suspend
 
+    /** An eval that ended before the computation did, holding everything needed to carry on.
+      *
+      * The three spans are the eval stack as it stood, rather than a continuation folded out of it: `dump`
+      * chains entries together and re-wraps a stateful handler with its live state, and pushing that chain
+      * takes it apart again, a round trip that does not preserve the shape it started from. Snapshotting the
+      * arrays instead keeps the regions and their states exactly as they were, and being spans they are
+      * immutable, so a parked computation is a complete value like any other: resumable more than once, on
+      * any thread.
+      *
+      * The finalizers travel with it because the eval that parked is ending and its drain must not run: the
+      * releases are owed by the computation, not by the slice of it that happened to execute. Whoever holds
+      * the park decides between resuming it and discharging them.
+      */
+    // concrete, unlike its siblings: they are abstract because their members close over the site that builds
+    // them, and a deferral's payload is a method on purpose so the body runs when the evaluator reads it.
+    // Everything here is a value already in hand at the moment of parking, and there is one site that builds
+    // one, so a class with fields is a class rather than an anonymous subclass of one
+    final private[kyo] class Park[+A, -S](
+        val value: Any < Any,
+        val entries: Span[Arrow[?, ?, ?]],
+        val states: Span[Maybe[Any]],
+        val finalizers: Span[Finalizer[?]]
+    ) extends Kyo[A, S]:
+        override def toString: String = render(value)
+    end Park
+
     abstract private[kyo] class Handle[E <: ArrowEffect[?, ?], A, B, +C, -S] extends Kyo[C, S]:
         def value: Kyo[A, E & S]
         def handler: Handler[E, A, B, S]
@@ -52,6 +80,7 @@ object Kyo:
                     case k: Suspend[?, ?, ?, ?, ?, ?] => k.toString
                     case k: Defer[?, ?, ?, ?]         => loop(k.value, fuel - 1)
                     case k: Handle[?, ?, ?, ?, ?]     => loop(k.value, fuel - 1)
+                    case k: Park[?, ?]                => loop(k.value, fuel - 1)
                     case n: Nested[?]                 => loop(n.value, fuel - 1)
                     case settled                      => s"Kyo($settled)"
         loop(v, 64)

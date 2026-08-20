@@ -3,6 +3,7 @@ package kyo.kernel.internal
 import kyo.Arrow
 import kyo.Maybe
 import kyo.Maybe.*
+import kyo.Span
 import kyo.Tag
 import kyo.bug
 import scala.annotation.static
@@ -91,7 +92,7 @@ final private[kyo] class Stack:
     // buffer breaks or fixes the three together
     private[kernel] def entry(i: Int): Arrow[?, ?, ?] = entries((head + i) & mask)
 
-    // how many releases are held. Only a test reads this, to pin that a drive running one bracket after
+    // how many releases are held. Only a test reads this, to pin that an eval running one bracket after
     // another does not accumulate entries for the ones that already ran
     private[kernel] def outstanding: Int = pending
 
@@ -151,11 +152,73 @@ final private[kyo] class Stack:
         loop(n)
     end truncate
 
+    /** Takes everything this stack holds, linearized, and leaves it empty.
+      *
+      * The ring buffer is walked from `head` so the spans read innermost first, which is the order `restore`
+      * expects and the order a drain runs in. Ownership moves with the call: the arrays handed out are not
+      * shared with this stack, which is free to be pooled and reused.
+      */
+    def snapshotEntries(): Span[Arrow[?, ?, ?]] =
+        val n   = size
+        val arr = new Array[Arrow[?, ?, ?]](n)
+        var i   = 0
+        while i < n do
+            arr(i) = entries((head + i) & mask)
+            i += 1
+        Span.fromUnsafe(arr)
+    end snapshotEntries
+
+    def snapshotStates(): Span[Maybe[Any]] =
+        val n   = size
+        val arr = new Array[Maybe[Any]](n)
+        var i   = 0
+        while i < n do
+            arr(i) = states((head + i) & mask)
+            i += 1
+        Span.fromUnsafe(arr)
+    end snapshotStates
+
+    def snapshotFinalizers(): Span[Finalizer[?]] =
+        val arr = new Array[Finalizer[?]](pending)
+        var i   = 0
+        while i < pending do
+            arr(i) = finalizers(i).getOrElse(null.asInstanceOf[Finalizer[?]])
+            i += 1
+        Span.fromUnsafe(arr)
+    end snapshotFinalizers
+
+    /** Puts a parked stack back, above whatever is already here.
+      *
+      * Above, because a handler installed around a parked computation was pushed before the eval reached
+      * the park, and the parked regions have to run inside it rather than the other way round.
+      *
+      * The states are written alongside the entries rather than through `put`, which would reinitialize a
+      * stateful handler's slot from its initial state and lose the state the park was holding.
+      */
+    def restore(es: Span[Arrow[?, ?, ?]], sts: Span[Maybe[Any]], fins: Span[Finalizer[?]]): Unit =
+        val n = es.size
+        if n > 0 then
+            ensure(n)
+            head -= n
+            var i = 0
+            while i < n do
+                val idx = (head + i) & mask
+                entries(idx) = es(i)
+                states(idx) = sts(i)
+                i += 1
+            end while
+        end if
+        var i = 0
+        while i < fins.size do
+            pushFinalizer(fins(i))
+            i += 1
+    end restore
+
     def pushFinalizer(f: Finalizer[?]): Unit =
-        // drop the run of releases on top that have already run, so a drive that brackets many resources one
-        // after another holds one entry rather than one per bracket. Only the drive reaches this, on its own
+        // drop the run of releases on top that have already run, so an eval that brackets many resources one
+        // after another holds one entry rather than one per bracket. Only the eval reaches this, on its own
         // thread and while the stack is live, which is why the finalizer itself does not remove its own entry:
-        // it can be applied from a continuation held past the end of the drive, by which point this stack has
+        // it can be applied from a continuation held past the end of the eval, by which point this stack has
         // been pooled and belongs to someone else
         while pending > 0 && finalizers(pending - 1).fold(true)(_.get()) do
             pending -= 1
@@ -175,19 +238,19 @@ final private[kyo] class Stack:
 
     /** Runs every release still outstanding, innermost first, and forgets them.
       *
-      * One that already ran through its arrow is a no-op, so a drive that completed normally drains nothing.
-      * What this catches is the drive that threw, and the one that ended holding a continuation a clause
+      * One that already ran through its arrow is a no-op, so an eval that completed normally drains nothing.
+      * What this catches is the eval that threw, and the one that ended holding a continuation a clause
       * received and never applied.
       *
       * A release that throws never stops the ones after it: each is owed independently, and losing the rest
       * because the first failed is how a single bad close leaks everything else. The failure is attached to
-      * whatever the drive was already leaving with, as a suppressed exception, since that one describes why
-      * the computation ended and this one only describes the cleanup. Where the drive was leaving normally
+      * whatever the eval was already leaving with, as a suppressed exception, since that one describes why
+      * the computation ended and this one only describes the cleanup. Where the eval was leaving normally
       * there is nothing to attach to, so the first failure is thrown once the drain is complete rather than
       * dropped: a release that cannot run is a real error, and silence there is invisible resource loss.
       *
       * @param failure
-      *   the exception the drive is already unwinding with, or null if it is completing normally
+      *   the exception the eval is already unwinding with, or null if it is completing normally
       */
     def drainFinalizers(failure: Throwable | Null): Unit =
         var first: Throwable | Null = null

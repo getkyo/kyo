@@ -947,81 +947,51 @@ class EvalTest extends AnyFreeSpec:
         assert(Eval(loop(Period * 4)) == 0)
     }
 
-    // Not supported yet: partial evaluation drives a computation until it parks and hands back a
-    // resumable value. It lands with the Bracket and Park work (see reviews/BRACKET-PARK-DESIGN.md);
-    // `kyo-kernel2/jvm/src/test/scala/kyo/kernel/internal/SafepointConcurrencyTest.scala` is the
-    // other consumer waiting on it. The corpus is kept with its code commented so the gap is visible.
-    //
-    // "partial evaluation" - {
-    //
-    //     "a preemption stop reifies and resumes with handler state" in {
-    //         def countdown(i: Int): Int < Ask =
-    //             if i == 0 then 0 else ask.map(a => countdown(i - a))
-    //         val counted: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 0, countdown(100))(
-    //             [C] =>
-    //                 (n, _) =>
-    //                     if n == 10 then discard(Safepoint.stop(Thread.currentThread()))
-    //                     Loop.continue(n + 1, 1: Int < Any)
-    //             ,
-    //             (n, a) => n + a
-    //         )
-    //         val first = Eval.partial(counted)
-    //         assert(first.evalNow == Maybe.Absent)
-    //         assert(Eval.partial(first).evalNow == Maybe(100))
-    //     }
-    //
-    //     "the stop function ends the slice" in {
-    //         var steps = 0
-    //         val stop = () =>
-    //             steps += 1; steps > 50
-    //         def countdown(i: Int): Int < Ask =
-    //             if i == 0 then 0 else ask.map(a => countdown(i - a))
-    //         val first = Eval.partial(answerAsk(1)(countdown(1000)), stop)
-    //         assert(first.evalNow == Maybe.Absent)
-    //         assert(Eval.partial(first).evalNow == Maybe(0))
-    //     }
-    //
-    //     "partial completes when nothing stops" in {
-    //         assert(Eval.partial(answerAsk(21)(ask.map(_ * 2))).evalNow == Maybe(42))
-    //     }
-    //
-    //     "an unhandled operation parks the slice for a handler installed later" in {
-    //         var reached = false
-    //         val v: Int < Ask = ask.map { a =>
-    //             reached = true; a + 1
-    //         }
-    //         val parked: Int < Ask = Eval.partial(v)
-    //         assert(parked.evalNow == Maybe.Absent)
-    //         assert(!reached)
-    //         assert(Eval(answerAsk(41)(parked)) == 42)
-    //         assert(reached)
-    //     }
-    //
-    //     "an unhandled operation parks the slice with the regions above it intact" in {
-    //         var seen                 = List.empty[String]
-    //         val v: Int < (Ask & Say) = say("before").map(_ => ask).map(a => say("after").map(_ => a + 1))
-    //         val inner: Int < Ask = ArrowEffect.handleLoop(Tag[Say], v)(
-    //             [C] =>
-    //                 s =>
-    //                     seen = s :: seen
-    //                     Loop.continue((): Unit < Any)
-    //             ,
-    //             a => a
-    //         )
-    //         val parked: Int < Ask = Eval.partial(inner)
-    //         assert(parked.evalNow == Maybe.Absent)
-    //         assert(seen == List("before"))
-    //         assert(Eval(answerAsk(41)(parked)) == 42)
-    //         assert(seen == List("after", "before"))
-    //     }
-    //
-    //     "a stop delivered between slices short-circuits" in {
-    //         val v: Int < Any = answerAsk(41)(ask.map(_ + 1))
-    //         discard(Safepoint.stop(Thread.currentThread()))
-    //         val r = Eval.partial(v)
-    //         assert(r.asInstanceOf[AnyRef] eq v.asInstanceOf[AnyRef])
-    //         assert(Eval.partial(r).evalNow == Maybe(42))
-    //     }
-    // }
+    "partial evaluation" - {
+
+        "a preemption stop reifies and resumes with handler state" in {
+            def countdown(i: Int): Int < Ask =
+                if i == 0 then 0 else ask.map(a => countdown(i - a))
+            val counted: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 0, countdown(100))(
+                [C] =>
+                    (n, _) =>
+                        if n == 10 then discard(Safepoint.stop(Thread.currentThread()))
+                        Loop.continue(n + 1, 1: Int < Any)
+                ,
+                (n, a) => n + a
+            )
+            val first = Eval.partial(counted)
+            assert(first.evalNow == Maybe.Absent)
+            assert(Eval.partial(first).evalNow == Maybe(100))
+        }
+
+        "the stop function ends the slice" in {
+            var steps = 0
+            val stop = () =>
+                steps += 1; steps > 50
+            def countdown(i: Int): Int < Ask =
+                if i == 0 then 0 else ask.map(a => countdown(i - a))
+            val first = Eval.partial(answerAsk(1)(countdown(1000)), stop)
+            assert(first.evalNow == Maybe.Absent)
+            assert(Eval.partial(first).evalNow == Maybe(0))
+        }
+
+        "partial completes when nothing stops" in {
+            assert(Eval.partial(answerAsk(21)(ask.map(_ * 2))).evalNow == Maybe(42))
+        }
+
+        // Two cases from an earlier design are gone rather than parked: a slice took a row that could still
+        // name unhandled effects, so an operation without a handler ended the slice and something installed
+        // later answered it. `partial` takes `A < Any` now, the same row a full evaluation takes, so an
+        // operation with no handler has none anywhere and is a bug at both entry points.
+
+        "a stop delivered between slices short-circuits" in {
+            val v: Int < Any = answerAsk(41)(ask.map(_ + 1))
+            discard(Safepoint.stop(Thread.currentThread()))
+            val r = Eval.partial(v)
+            assert(r.asInstanceOf[AnyRef] eq v.asInstanceOf[AnyRef])
+            assert(Eval.partial(r).evalNow == Maybe(42))
+        }
+    }
 
 end EvalTest
