@@ -54,12 +54,48 @@ and both were correctness fixes as much as performance ones.
 receiver expression, and `evalNow` had one per branch. `v.map(f).evalNow` therefore built the map twice and ran `f`
 twice on the settled path. Bound once now, with a reproducing test in `PendingTest`.
 
-**The measurement harness no longer needs sbt.** `dotty.tools.dotc.Main` runs directly off the coursier cache, so
-a fixture can be compiled and its tree dumped while a suite is running. Note for anyone repeating it: at 3.8.4
-`scala3-library_3` is an empty forwarder jar and the classes are in `scala-library` 3.8.4.
+**`Eval.apply` is no longer inline, per your ruling, and `@static` per your note about offsetting.** The drive is
+555 instructions and HotSpot refuses to inline it at any call site, so the inline definition bought nothing at
+runtime while emitting a private copy of the whole interpreter into every caller: `PendingTest.class` alone
+carried 132 copies of `loop$N` at 555 instructions each. `@static` needs a companion class, which is the same
+reason the vestigial `class Safepoint` exists.
 
-Still open under this heading: `Kyo.lift` and `Kyo.unit` to `@static`, dropping `inline` from `self`, and the
-per-shape expansion sizes (was R2, folded in here since it is the measurement this work is keyed to).
+Same-session A/B over the fixture corpus, 5 warmup and 12 measured compiles per fixture in one JVM, trimmed mean:
+
+| fixture | inline | `@static` | |
+|---|---:|---:|---|
+| **HandleSites** | 831.7 ms | **351.5 ms** | 🟢 0.42x |
+| NestedMaps | 599.1 | 570.9 | 🟢 0.95x |
+| ForCompShallow | 241.9 | 231.2 | 🟢 0.96x |
+| MapChainDeep100 | 13445.1 | 13151.6 | ⚪ 0.98x |
+| ForComprehensions | 597.4 | 587.3 | ⚪ 0.98x |
+| MapChain10 | 161.5 | 160.6 | ⚪ 0.99x |
+| MapChainWide100 | 578.5 | 577.1 | ⚪ 1.00x |
+| FlatMapChains | 457.5 | 444.4 | ⚪ 0.97x |
+| Baseline | 210.8 | 207.0 | ⚪ 0.98x |
+| EffectRowGenerics | 288.2 | 290.9 | ⚪ 1.01x |
+| ForCompDeep25 | 1206.7 | 1226.0 | ⚪ 1.02x |
+| SuspendSites | 251.5 | 261.4 | 🔴 1.04x |
+| TagDerivation | 130.7 | 138.7 | 🔴 1.06x |
+
+`HandleSites` is the only fixture that drives at many sites, 26 of them, and it is the one that moves. The rest
+drive once or not at all, so one expansion out of a large file is invisible. The two red rows have no `Eval` at
+all, so they are run-to-run drift rather than an effect of the change.
+
+This also answers open question 3: `HandleSites` compiling 1.49x slower than the old kernel now lands at
+0.42 × 1.49 ≈ 0.63x of it. **865 tests green with the change.** The runtime board is running; nothing is claimed
+about runtime until it lands.
+
+**The measurement harness no longer needs sbt.** `dotty.tools.dotc.Main` runs directly off the coursier cache, so
+a fixture can be compiled, timed, or its tree dumped while a suite is running. Note for anyone repeating it: at
+3.8.4 `scala3-library_3` is an empty forwarder jar and the classes are in `scala-library` 3.8.4.
+
+Checked and dropped: the 18 collection combinators. Only the `Seq` façade is `inline` and each of those is a
+one-line delegate; the real implementations on `Chunk`, `List`, `Set` and the generic `CC` are already plain
+`def`s, so there is nothing to win there.
+
+Still open under this heading: `Kyo.lift` and `Kyo.unit`, dropping `inline` from `self`, and the per-shape
+expansion sizes (was R2, folded in here since it is the measurement this work is keyed to).
 
 ---
 
