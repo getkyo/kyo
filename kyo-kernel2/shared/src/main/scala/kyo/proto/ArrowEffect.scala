@@ -37,10 +37,9 @@ object ArrowEffect:
             def cont                    = this
             override def apply(v: O[C]) = f(v)
             def apply[D, S2](v: O[C] < S2, next: Arrow[B, D, S2]): D < (S & S2) =
-                v.lower(
-                    pending = Effect.defer(_, this, next),
-                    done = v => next(apply(v), Arrow.id)
-                )
+                v match
+                    case kyo: Kyo[O[C], S2] @unchecked => Effect.defer(kyo, this, next)
+                    case _                             => next(apply(v.unsafeGet), Arrow.id)
     end suspendWith
 
     @nowarn("msg=anonymous")
@@ -52,8 +51,8 @@ object ArrowEffect:
         inline done: A => B < S
     )(using inline _frame: Frame): B < S =
         def onDone(v: A) = done(v)
-        v.lower[B < S](
-            pending = body =>
+        v match
+            case body: Kyo[A, E & S] @unchecked =>
                 new Kyo.Handle[E, A, B, B, S]:
                     def value = body
                     val handler =
@@ -63,9 +62,8 @@ object ArrowEffect:
                             def run[C](input: I[C], cont: O[C] => A < (E & S)) = handle[C](input, cont)
                             override def apply(a: A)                           = onDone(a)
                     def cont = Arrow.id[B]
-            ,
-            done = a => onDone(a)
-        )
+            case _ => onDone(v.unsafeGet)
+        end match
     end handleCont
 
     @nowarn("msg=anonymous")
@@ -77,8 +75,8 @@ object ArrowEffect:
         inline done: A => B < S
     )(using inline _frame: Frame): B < S =
         def onDone(v: A) = done(v)
-        v.lower[B < S](
-            pending = body =>
+        v match
+            case body: Kyo[A, E & S] @unchecked =>
                 new Kyo.Handle[E, A, B, B, S]:
                     def value = body
                     val handler =
@@ -88,9 +86,8 @@ object ArrowEffect:
                             def run[C](input: I[C])  = handle[C](input)
                             override def apply(a: A) = onDone(a)
                     def cont = Arrow.id[B]
-            ,
-            done = a => onDone(a)
-        )
+            case _ => onDone(v.unsafeGet)
+        end match
     end handleLoop
 
     @nowarn("msg=anonymous")
@@ -103,8 +100,8 @@ object ArrowEffect:
         inline done: (State, A) => B < S
     )(using inline _frame: Frame): B < S =
         def onDone(s: State, v: A) = done(s, v)
-        v.lower[B < S](
-            pending = body =>
+        v match
+            case body: Kyo[A, E & S] @unchecked =>
                 new Kyo.Handle[E, A, B, B, S]:
                     def value = body
                     val handler =
@@ -115,9 +112,8 @@ object ArrowEffect:
                             def run[C](st: State, input: I[C]) = handle[C](st, input)
                             def apply(st: State, a: A)         = onDone(st, a)
                     def cont = Arrow.id[B]
-            ,
-            done = a => onDone(state, a)
-        )
+            case _ => onDone(state, v.unsafeGet)
+        end match
     end handleLoopState
 
     // the *With variants take the region's continuation as a separate parameter group and fuse it
@@ -138,8 +134,8 @@ object ArrowEffect:
         inline f: B => C < S2
     ): C < (S & S2) =
         def onDone(v: A) = done(v)
-        v.lower[C < (S & S2)](
-            pending = body =>
+        v match
+            case body: Kyo[A, E & S] @unchecked =>
                 new Kyo.Handle[E, A, B, C, S & S2] with Arrow.Transform[B, C, S & S2]:
                     def frame = _frame
                     def value = body
@@ -152,13 +148,11 @@ object ArrowEffect:
                     def cont                 = this
                     override def apply(b: B) = f(b)
                     def apply[D, S3](b: B < S3, next: Arrow[C, D, S3]): D < (S & S2 & S3) =
-                        b.lower(
-                            pending = Effect.defer(_, this, next),
-                            done = b => next(apply(b), Arrow.id)
-                        )
-            ,
-            done = a => onDone(a).map(f)
-        )
+                        b match
+                            case kyo: Kyo[B, S3] @unchecked => Effect.defer(kyo, this, next)
+                            case _                          => next(apply(b.unsafeGet), Arrow.id)
+            case _ => onDone(v.unsafeGet).map(f)
+        end match
     end handleContWith
 
     @nowarn("msg=anonymous")
@@ -174,8 +168,8 @@ object ArrowEffect:
         inline f: B => C < S2
     ): C < (S & S2) =
         def onDone(v: A) = done(v)
-        v.lower[C < (S & S2)](
-            pending = body =>
+        v match
+            case body: Kyo[A, E & S] @unchecked =>
                 new Kyo.Handle[E, A, B, C, S & S2] with Arrow.Transform[B, C, S & S2]:
                     def frame = _frame
                     def value = body
@@ -188,13 +182,11 @@ object ArrowEffect:
                     def cont                 = this
                     override def apply(b: B) = f(b)
                     def apply[D, S3](b: B < S3, next: Arrow[C, D, S3]): D < (S & S2 & S3) =
-                        b.lower(
-                            pending = Effect.defer(_, this, next),
-                            done = b => next(apply(b), Arrow.id)
-                        )
-            ,
-            done = a => onDone(a).map(f)
-        )
+                        b match
+                            case kyo: Kyo[B, S3] @unchecked => Effect.defer(kyo, this, next)
+                            case _                          => next(apply(b.unsafeGet), Arrow.id)
+            case _ => onDone(v.unsafeGet).map(f)
+        end match
     end handleLoopWith
 
     @nowarn("msg=anonymous")
@@ -211,8 +203,8 @@ object ArrowEffect:
         inline f: B => C < S2
     ): C < (S & S2) =
         def onDone(s: State, v: A) = done(s, v)
-        v.lower[C < (S & S2)](
-            pending = body =>
+        v match
+            case body: Kyo[A, E & S] @unchecked =>
                 new Kyo.Handle[E, A, B, C, S & S2] with Arrow.Transform[B, C, S & S2]:
                     def frame = _frame
                     def value = body
@@ -226,13 +218,11 @@ object ArrowEffect:
                     def cont                 = this
                     override def apply(b: B) = f(b)
                     def apply[D, S3](b: B < S3, next: Arrow[C, D, S3]): D < (S & S2 & S3) =
-                        b.lower(
-                            pending = Effect.defer(_, this, next),
-                            done = b => next(apply(b), Arrow.id)
-                        )
-            ,
-            done = a => onDone(state, a).map(f)
-        )
+                        b match
+                            case kyo: Kyo[B, S3] @unchecked => Effect.defer(kyo, this, next)
+                            case _                          => next(apply(b.unsafeGet), Arrow.id)
+            case _ => onDone(state, v.unsafeGet).map(f)
+        end match
     end handleLoopStateWith
 
 end ArrowEffect

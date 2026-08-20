@@ -33,18 +33,18 @@ object Arrow:
             def frame                = _frame
             override def apply(v: A) = f(v)
             def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]) =
-                v.lower(
-                    pending = Effect.defer(_, this, next),
-                    done = b =>
+                v match
+                    case kyo: Kyo[A, S2] @unchecked =>
+                        Effect.defer(kyo, this, next)
+                    case _ =>
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
                             Effect.defer(v, this, next)
                         else
-                            val out = next.head(apply(b), next.tail)
+                            val out = next.head(apply(v.unsafeGet), next.tail)
                             Safepoint.exit(slot)
                             out
                         end if
-                )
 
     @nowarn
     inline def recursive[A, B, S](inline f: (Arrow[A, B, S], A) => B < S)(using _frame: Frame): Arrow[A, B, S] =
@@ -52,18 +52,18 @@ object Arrow:
             def frame                = _frame
             override def apply(v: A) = f(this, v)
             def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]) =
-                v.lower(
-                    pending = Effect.defer(_, this, next),
-                    done = b =>
+                v match
+                    case kyo: Kyo[A, S2] @unchecked =>
+                        Effect.defer(kyo, this, next)
+                    case _ =>
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
                             Effect.defer(v, this, next)
                         else
-                            val out = next.head(apply(b), next.tail)
+                            val out = next.head(apply(v.unsafeGet), next.tail)
                             Safepoint.exit(slot)
                             out
                         end if
-                )
 
     private[kyo] trait Transform[-A, B, -S] extends Arrow[A, B, S]:
         type X = B

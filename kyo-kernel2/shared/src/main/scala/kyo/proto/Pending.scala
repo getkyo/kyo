@@ -21,18 +21,18 @@ object `<` extends Implicits:
                     def frame                                          = _frame
                     def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]) = run(v, next)
             def run[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S2 & S3) =
-                v.lower(
-                    pending = kyo => Effect.defer(kyo, arrow, next),
-                    done = b =>
+                v match
+                    case kyo: Kyo[A, S3] @unchecked =>
+                        Effect.defer(kyo, arrow, next)
+                    case _ =>
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
                             Effect.defer(v, arrow, next)
                         else
-                            val out = next.head(f(b), next.tail)
+                            val out = next.head(f(v.unsafeGet), next.tail)
                             Safepoint.exit(slot)
                             out
                         end if
-                )
             run(self, Arrow.id)
         end map
 
@@ -43,18 +43,18 @@ object `<` extends Implicits:
                     def frame                                          = _frame
                     def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]) = run(v, next)
             def run[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S2 & S3) =
-                v.lower(
-                    pending = kyo => Effect.defer(kyo, arrow, next),
-                    done = b =>
+                v match
+                    case kyo: Kyo[A, S3] @unchecked =>
+                        Effect.defer(kyo, arrow, next)
+                    case _ =>
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
                             Effect.defer(v, arrow, next)
                         else
-                            val out = next.head(f(b), next.tail)
+                            val out = next.head(f(v.unsafeGet), next.tail)
                             Safepoint.exit(slot)
                             out
                         end if
-                )
             run(self, Arrow.id)
         end flatMap
 
@@ -65,9 +65,10 @@ object `<` extends Implicits:
                     def frame                                          = _frame
                     def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]) = run(v, next)
             def run[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S2 & S3) =
-                v.lower(
-                    pending = kyo => Effect.defer(kyo, arrow, next),
-                    done = _ =>
+                v match
+                    case kyo: Kyo[A, S3] @unchecked =>
+                        Effect.defer(kyo, arrow, next)
+                    case _ =>
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
                             Effect.defer(v, arrow, next)
@@ -76,7 +77,6 @@ object `<` extends Implicits:
                             Safepoint.exit(slot)
                             out
                         end if
-                )
             run(self, Arrow.id)
         end andThen
 
@@ -87,9 +87,10 @@ object `<` extends Implicits:
                     def frame                                             = _frame
                     def apply[C, S3](v: A < S3, next: Arrow[Unit, C, S3]) = run(v, next)
             def run[C, S3](v: A < S3, next: Arrow[Unit, C, S3]): C < S3 =
-                v.lower(
-                    pending = kyo => Effect.defer(kyo, arrow, next),
-                    done = _ =>
+                v match
+                    case kyo: Kyo[A, S3] @unchecked =>
+                        Effect.defer(kyo, arrow, next)
+                    case _ =>
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
                             Effect.defer(v, arrow, next)
@@ -98,7 +99,6 @@ object `<` extends Implicits:
                             Safepoint.exit(slot)
                             out
                         end if
-                )
             run(self, Arrow.id)
         end unit
 
@@ -109,18 +109,18 @@ object `<` extends Implicits:
                     def frame                                          = _frame
                     def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]) = run(v, next)
             def run[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S2 & S3) =
-                v.lower(
-                    pending = kyo => Effect.defer(kyo, arrow, next),
-                    done = b =>
+                v match
+                    case kyo: Kyo[A, S3] @unchecked =>
+                        Effect.defer(kyo, arrow, next)
+                    case _ =>
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
                             Effect.defer(v, arrow, next)
                         else
-                            val out = next.head(ev(b), next.tail)
+                            val out = next.head(ev(v.unsafeGet), next.tail)
                             Safepoint.exit(slot)
                             out
                         end if
-                )
             run(self, Arrow.id)
         end flatten
 
@@ -279,21 +279,14 @@ object `<` extends Implicits:
             Eval(self.asInstanceOf[A < Any]).asInstanceOf[A]
 
         inline def evalNow: Maybe[A] =
-            self.lower(pending = _ => Maybe.empty, done = a => Maybe(a))
-
-        inline def lower[B](
-            inline pending: Kyo[A, S] => B,
-            inline done: A => B
-        ): B =
             self match
-                case self: Kyo[A, S] @unchecked => pending(self)
-                case self =>
-                    val value =
-                        self match
-                            case self: Nested[A] @unchecked => self.value
-                            case self                       => self.asInstanceOf[A]
-                    done(value)
-            end match
-        end lower
+                case _: Kyo[?, ?] => Maybe.empty
+                case _            => Maybe(self.unsafeGet)
+
+        /** The settled value, one nesting level stripped. Only valid where the pending case is already excluded. */
+        inline def unsafeGet: A =
+            self match
+                case self: Nested[A] @unchecked => self.value
+                case self                       => self.asInstanceOf[A]
     end extension
 end `<`

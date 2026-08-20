@@ -7,18 +7,18 @@ import kyo.Tag
 sealed abstract class Handler[E <: ArrowEffect[?, ?], A, B, -S] extends Arrow.Transform[A, B, S]:
     def tag: Tag[E]
     def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]): C < (S & S2) =
-        v.lower(
-            pending = Effect.defer(_, this, next),
-            done = b =>
+        v match
+            case kyo: Kyo[A, S2] @unchecked =>
+                Effect.defer(kyo, this, next)
+            case _ =>
                 val slot = Safepoint.get()
                 if !Safepoint.enter(slot) then
                     Effect.defer(v, this, next)
                 else
-                    val out = next.head(apply(b), next.tail)
+                    val out = next.head(apply(v.unsafeGet), next.tail)
                     Safepoint.exit(slot)
                     out
                 end if
-        )
 end Handler
 
 object Handler:
