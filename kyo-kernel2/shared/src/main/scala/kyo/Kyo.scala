@@ -31,6 +31,7 @@ object Kyo:
       * @return
       *   A computation that directly produces the given value without suspension
       */
+    // TODO could these two methods (lift, unit) not be inline and use @static instead? or does it regress performance?
     inline def lift[A, S](inline v: A): A < S = v
 
     /** Returns a pure effect that produces Unit.
