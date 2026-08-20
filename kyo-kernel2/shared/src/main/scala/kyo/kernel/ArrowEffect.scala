@@ -1,18 +1,12 @@
 package kyo.kernel
 
 import kyo.Arrow
-import kyo.Arrow.*
 import kyo.Frame
 import kyo.Tag
-import kyo.kernel.Loop.Outcome
-import kyo.kernel.Loop.Outcome2
-import kyo.kernel.internal.Nested
-import kyo.kernel.internal.Safepoint
+import kyo.kernel.internal.*
 import scala.annotation.nowarn
 
-// TODO we also need to add ContextEffect. I'm considering making it an ArrowEffect that keeps a map with all the contextual values
-
-abstract class ArrowEffect[-I[_], +O[_]]
+abstract class ArrowEffect[I[_], O[_]] extends Effect
 
 object ArrowEffect:
 
@@ -23,11 +17,11 @@ object ArrowEffect:
         inline effectTag: Tag[E],
         inline effectInput: I[C]
     ): O[C] < E =
-        new Suspend[I, O, E, C, O[C], Any]:
+        new Kyo.Suspend[I, O, E, C, O[C], Any]:
             def frame = _frame
             def tag   = effectTag
             def input = effectInput
-            def cont  = Arrow[O[C]]
+            def cont  = Arrow.id[O[C]]
 
     @nowarn("msg=anonymous")
     inline def suspendWith[C](
@@ -38,11 +32,16 @@ object ArrowEffect:
     )(
         inline f: O[C] => B < S
     ): B < (E & S) =
-        new Suspend[I, O, E, C, B, S]:
-            def frame = _frame
-            def tag   = effectTag
-            def input = effectInput
-            def cont  = ???
+        new Kyo.Suspend[I, O, E, C, B, S] with Arrow.Transform[O[C], B, S]:
+            def frame                   = _frame
+            def tag                     = effectTag
+            def input                   = effectInput
+            def cont                    = this
+            override def apply(v: O[C]) = f(v)
+            def apply[D, S2](v: O[C] < S2, next: Arrow[B, D, S2]): D < (S & S2) =
+                v match
+                    case kyo: Kyo[O[C], S2] @unchecked => Effect.defer(kyo, this, next)
+                    case _                             => next(apply(v.unsafeGet), Arrow.id)
     end suspendWith
 
     @nowarn("msg=anonymous")
@@ -52,138 +51,46 @@ object ArrowEffect:
     )(
         inline handle: [C] => (I[C], O[C] => A < (E & S)) => A < (E & S),
         inline done: A => B < S
-    ): B < S =
+    )(using inline _frame: Frame): B < S =
         def onDone(v: A) = done(v)
         v match
-            case body: Arrow[Any, A, E & S] @unchecked =>
-                new Handle[E, A, B, B, S]:
-                    def v = body
+            case body: Kyo[A, E & S] @unchecked =>
+                new Kyo.Handle[E, A, B, B, S]:
+                    def value = body
                     val handler =
-                        new Handler.HandleCont[I, O, E, A, B, S]:
+                        new Handler.HandlerCont[I, O, E, A, B, S]:
+                            def frame                                          = _frame
                             def tag                                            = effectTag
                             def run[C](input: I[C], cont: O[C] => A < (E & S)) = handle[C](input, cont)
-                            def complete(a: A)                                 = onDone(a)
-                    def cont = Arrow[B]
-            case a =>
-                onDone(Nested.unnest[A](a))
+                            override def apply(a: A)                           = onDone(a)
+                    def cont = Arrow.id[B]
+            case _ => onDone(v.unsafeGet)
         end match
     end handleCont
-
-    @nowarn("msg=anonymous")
-    inline def handleContWith[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](
-        inline effectTag: Tag[E],
-        v: A < (E & S)
-    )(
-        inline handle: [C] => (I[C], O[C] => A < (E & S)) => A < (E & S),
-        inline done: A => B < S
-    )[C2, S2](
-        inline cont: B => C2 < S2
-    )(using inline _frame: Frame): C2 < (S & S2) =
-        def onDone(v: A) = done(v)
-        def arrow =
-            new Transform[B, C2, S2]:
-                def frame = _frame
-                def apply[C3, S3](v: B < S3, next: Arrow[C2, C3, S3]) =
-                    v match
-                        case v: Arrow[Any, B, S3] @unchecked =>
-                            v.chain(this.chain(next))
-                        case v =>
-                            val res  = Nested.unnest[B](v)
-                            val slot = Safepoint.get()
-                            if !Safepoint.enter(slot) then
-                                Bind(v, this.chain(next))
-                            else
-                                val step = next.step
-                                val out  = step.head(cont(res), step.tail)
-                                Safepoint.exit(slot)
-                                out
-                            end if
-                    end match
-                end apply
-        v match
-            case body: Arrow[Any, A, E & S] @unchecked =>
-                new Handle[E, A, B, C2, S & S2]:
-                    def v = body
-                    val handler =
-                        new Handler.HandleCont[I, O, E, A, B, S]:
-                            def tag                                            = effectTag
-                            def run[C](input: I[C], cont: O[C] => A < (E & S)) = handle[C](input, cont)
-                            def complete(a: A)                                 = onDone(a)
-                    def cont = arrow
-            case a =>
-                arrow(onDone(Nested.unnest[A](a)), Arrow[C2])
-        end match
-    end handleContWith
 
     @nowarn("msg=anonymous")
     inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](
         inline effectTag: Tag[E],
         v: A < (E & S)
     )(
-        inline handle: [C] => I[C] => Outcome[O[C] < (E & S), B] < S,
+        inline handle: [C] => I[C] => Loop.Outcome[O[C] < (E & S), B] < S,
         inline done: A => B < S
-    ): B < S =
+    )(using inline _frame: Frame): B < S =
         def onDone(v: A) = done(v)
         v match
-            case body: Arrow[Any, A, E & S] @unchecked =>
-                new Handle[E, A, B, B, S]:
-                    def v = body
+            case body: Kyo[A, E & S] @unchecked =>
+                new Kyo.Handle[E, A, B, B, S]:
+                    def value = body
                     val handler =
-                        new Handler.HandleLoop[I, O, E, A, B, S]:
-                            def tag                 = effectTag
-                            def run[C](input: I[C]) = handle[C](input)
-                            def complete(a: A)      = onDone(a)
-                    def cont = Arrow[B]
-            case a =>
-                onDone(Nested.unnest[A](a))
+                        new Handler.HandlerLoop[I, O, E, A, B, S]:
+                            def frame                = _frame
+                            def tag                  = effectTag
+                            def run[C](input: I[C])  = handle[C](input)
+                            override def apply(a: A) = onDone(a)
+                    def cont = Arrow.id[B]
+            case _ => onDone(v.unsafeGet)
         end match
     end handleLoop
-
-    @nowarn("msg=anonymous")
-    inline def handleLoopWith[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](
-        inline effectTag: Tag[E],
-        v: A < (E & S)
-    )(
-        inline f: [C] => I[C] => Outcome[O[C] < (E & S), B] < S,
-        inline done: A => B < S
-    )[C2, S2](
-        inline cont: B => C2 < S2
-    )(using inline _frame: Frame): C2 < (S & S2) =
-        def onDone(v: A) = done(v)
-        def arrow =
-            new Transform[B, C2, S2]:
-                def frame = _frame
-                def apply[C3, S3](v: B < S3, next: Arrow[C2, C3, S3]): C3 < (S2 & S3) =
-                    v match
-                        case v: Arrow[Any, B, S3] @unchecked =>
-                            v.chain(this.chain(next))
-                        case v =>
-                            val res  = Nested.unnest[B](v)
-                            val slot = Safepoint.get()
-                            if !Safepoint.enter(slot) then
-                                Bind(v, this.chain(next))
-                            else
-                                val step = next.step
-                                val out  = step.head(cont(res), step.tail)
-                                Safepoint.exit(slot)
-                                out
-                            end if
-                    end match
-                end apply
-        v match
-            case body: Arrow[Any, A, E & S] @unchecked =>
-                new Handle[E, A, B, C2, S & S2]:
-                    def v = body
-                    val handler =
-                        new Handler.HandleLoop[I, O, E, A, B, S]:
-                            def tag                 = effectTag
-                            def run[C](input: I[C]) = f[C](input)
-                            def complete(a: A)      = onDone(a)
-                    def cont = arrow
-            case a =>
-                arrow(onDone(Nested.unnest[A](a)), Arrow[C2])
-        end match
-    end handleLoopWith
 
     @nowarn("msg=anonymous")
     inline def handleLoopState[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State](
@@ -191,71 +98,132 @@ object ArrowEffect:
         state: State,
         v: A < (E & S)
     )(
-        inline handle: [C] => (State, I[C]) => Outcome2[State, O[C] < (E & S), B] < S,
+        inline handle: [C] => (State, I[C]) => Loop.Outcome2[State, O[C] < (E & S), B] < S,
         inline done: (State, A) => B < S
-    ): B < S =
+    )(using inline _frame: Frame): B < S =
         def onDone(s: State, v: A) = done(s, v)
         v match
-            case body: Arrow[Any, A, E & S] @unchecked =>
-                new Handle[E, A, B, B, S]:
-                    def v = body
+            case body: Kyo[A, E & S] @unchecked =>
+                new Kyo.Handle[E, A, B, B, S]:
+                    def value = body
                     val handler =
-                        new Handler.HandleLoopState[I, O, E, A, B, S, State]:
+                        new Handler.HandlerLoopState[I, O, E, A, B, S, State]:
+                            def frame                          = _frame
                             def tag                            = effectTag
                             def initialState                   = state
                             def run[C](st: State, input: I[C]) = handle[C](st, input)
-                            def complete(st: State, a: A)      = onDone(st, a)
-                    def cont = Arrow[B]
-            case a =>
-                onDone(state, Nested.unnest[A](a))
+                            def apply(st: State, a: A)         = onDone(st, a)
+                    def cont = Arrow.id[B]
+            case _ => onDone(state, v.unsafeGet)
         end match
     end handleLoopState
 
+    // the *With variants take the region's continuation as a separate parameter group and fuse it
+    // into the region node: the node is the arrow the region's result flows into, as suspendWith's
+    // node is the arrow the operation's answer flows into. A settled input takes done and then the
+    // continuation as a map
+
+    @nowarn("msg=anonymous")
+    inline def handleContWith[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](
+        using inline _frame: Frame
+    )(
+        inline effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        inline handle: [X] => (I[X], O[X] => A < (E & S)) => A < (E & S),
+        inline done: A => B < S
+    )[C, S2](
+        inline f: B => C < S2
+    ): C < (S & S2) =
+        def onDone(v: A) = done(v)
+        v match
+            case body: Kyo[A, E & S] @unchecked =>
+                new Kyo.Handle[E, A, B, C, S & S2] with Arrow.Transform[B, C, S & S2]:
+                    def frame = _frame
+                    def value = body
+                    val handler =
+                        new Handler.HandlerCont[I, O, E, A, B, S]:
+                            def frame                                          = _frame
+                            def tag                                            = effectTag
+                            def run[X](input: I[X], cont: O[X] => A < (E & S)) = handle[X](input, cont)
+                            override def apply(a: A)                           = onDone(a)
+                    def cont                 = this
+                    override def apply(b: B) = f(b)
+                    def apply[D, S3](b: B < S3, next: Arrow[C, D, S3]): D < (S & S2 & S3) =
+                        b match
+                            case kyo: Kyo[B, S3] @unchecked => Effect.defer(kyo, this, next)
+                            case _                          => next(apply(b.unsafeGet), Arrow.id)
+            case _ => onDone(v.unsafeGet).map(f)
+        end match
+    end handleContWith
+
+    @nowarn("msg=anonymous")
+    inline def handleLoopWith[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](
+        using inline _frame: Frame
+    )(
+        inline effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        inline handle: [X] => I[X] => Loop.Outcome[O[X] < (E & S), B] < S,
+        inline done: A => B < S
+    )[C, S2](
+        inline f: B => C < S2
+    ): C < (S & S2) =
+        def onDone(v: A) = done(v)
+        v match
+            case body: Kyo[A, E & S] @unchecked =>
+                new Kyo.Handle[E, A, B, C, S & S2] with Arrow.Transform[B, C, S & S2]:
+                    def frame = _frame
+                    def value = body
+                    val handler =
+                        new Handler.HandlerLoop[I, O, E, A, B, S]:
+                            def frame                = _frame
+                            def tag                  = effectTag
+                            def run[X](input: I[X])  = handle[X](input)
+                            override def apply(a: A) = onDone(a)
+                    def cont                 = this
+                    override def apply(b: B) = f(b)
+                    def apply[D, S3](b: B < S3, next: Arrow[C, D, S3]): D < (S & S2 & S3) =
+                        b match
+                            case kyo: Kyo[B, S3] @unchecked => Effect.defer(kyo, this, next)
+                            case _                          => next(apply(b.unsafeGet), Arrow.id)
+            case _ => onDone(v.unsafeGet).map(f)
+        end match
+    end handleLoopWith
+
     @nowarn("msg=anonymous")
     inline def handleLoopStateWith[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State](
+        using inline _frame: Frame
+    )(
         inline effectTag: Tag[E],
         state: State,
         v: A < (E & S)
     )(
-        inline handle: [C] => (State, I[C]) => Outcome2[State, O[C] < (E & S), B] < S,
+        inline handle: [X] => (State, I[X]) => Loop.Outcome2[State, O[X] < (E & S), B] < S,
         inline done: (State, A) => B < S
-    )[C2, S2](
-        inline cont: B => C2 < S2
-    )(using inline _frame: Frame): C2 < (S & S2) =
+    )[C, S2](
+        inline f: B => C < S2
+    ): C < (S & S2) =
         def onDone(s: State, v: A) = done(s, v)
-        def arrow =
-            new Transform[B, C2, S2]:
-                def frame = _frame
-                def apply[C3, S3](v: B < S3, next: Arrow[C2, C3, S3]) =
-                    v match
-                        case v: Arrow[Any, B, S3] @unchecked =>
-                            v.chain(this.chain(next))
-                        case v =>
-                            val res  = Nested.unnest[B](v)
-                            val slot = Safepoint.get()
-                            if !Safepoint.enter(slot) then
-                                Bind(v, this.chain(next))
-                            else
-                                val step = next.step
-                                val out  = step.head(cont(res), step.tail)
-                                Safepoint.exit(slot)
-                                out
-                            end if
-                    end match
-                end apply
         v match
-            case body: Arrow[Any, A, E & S] @unchecked =>
-                new Handle[E, A, B, C2, S & S2]:
-                    def v = body
+            case body: Kyo[A, E & S] @unchecked =>
+                new Kyo.Handle[E, A, B, C, S & S2] with Arrow.Transform[B, C, S & S2]:
+                    def frame = _frame
+                    def value = body
                     val handler =
-                        new Handler.HandleLoopState[I, O, E, A, B, S, State]:
+                        new Handler.HandlerLoopState[I, O, E, A, B, S, State]:
+                            def frame                          = _frame
                             def tag                            = effectTag
                             def initialState                   = state
-                            def run[C](st: State, input: I[C]) = handle[C](st, input)
-                            def complete(st: State, a: A)      = onDone(st, a)
-                    def cont = arrow
-            case a =>
-                arrow(onDone(state, Nested.unnest[A](a)), Arrow[C2])
+                            def run[X](st: State, input: I[X]) = handle[X](st, input)
+                            def apply(st: State, a: A)         = onDone(st, a)
+                    def cont                 = this
+                    override def apply(b: B) = f(b)
+                    def apply[D, S3](b: B < S3, next: Arrow[C, D, S3]): D < (S & S2 & S3) =
+                        b match
+                            case kyo: Kyo[B, S3] @unchecked => Effect.defer(kyo, this, next)
+                            case _                          => next(apply(b.unsafeGet), Arrow.id)
+            case _ => onDone(state, v.unsafeGet).map(f)
         end match
     end handleLoopStateWith
 

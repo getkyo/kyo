@@ -2,7 +2,6 @@ package kyo.kernel
 
 import kyo.Arrow
 import kyo.Frame
-import kyo.kernel.internal.Implicits.liftInternal
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.annotation.targetName
@@ -134,7 +133,7 @@ object Loop:
       * @return
       *   An Outcome indicating continuation with Unit state
       */
-    inline def continue[A]: Outcome[Unit, A] < Any = _continueUnit.asInstanceOf[Outcome[Unit, A] < Any]
+    inline def continue[A]: Outcome[Unit, A] = _continueUnit
 
     /** Creates an outcome signaling continuation with a single state value.
       *
@@ -142,12 +141,9 @@ object Loop:
       *   The state value to continue with
       */
     @nowarn("msg=anonymous")
-    inline def continue[A, O, S](inline v: A): Outcome[A, O] < Any =
-        val outcome =
-            new Continue[A]:
-                val _1 = v
-        outcome.asInstanceOf[Outcome[A, O] < Any]
-    end continue
+    inline def continue[A, O, S](inline v: A): Outcome[A, O] =
+        new Continue[A]:
+            val _1 = v
 
     /** Creates an outcome signaling continuation with two state values.
       *
@@ -157,13 +153,10 @@ object Loop:
       *   The second state value
       */
     @nowarn("msg=anonymous")
-    inline def continue[A, B, O](inline v1: A, inline v2: B): Outcome2[A, B, O] < Any =
-        val outcome =
-            new Continue2[A, B]:
-                val _1 = v1
-                val _2 = v2
-        outcome.asInstanceOf[Outcome2[A, B, O] < Any]
-    end continue
+    inline def continue[A, B, O](inline v1: A, inline v2: B): Outcome2[A, B, O] =
+        new Continue2[A, B]:
+            val _1 = v1
+            val _2 = v2
 
     /** Creates an outcome signaling continuation with three state values.
       *
@@ -175,14 +168,11 @@ object Loop:
       *   The third state value
       */
     @nowarn("msg=anonymous")
-    inline def continue[A, B, C, O](inline v1: A, inline v2: B, inline v3: C): Outcome3[A, B, C, O] < Any =
-        val outcome =
-            new Continue3[A, B, C]:
-                val _1 = v1
-                val _2 = v2
-                val _3 = v3
-        outcome.asInstanceOf[Outcome3[A, B, C, O] < Any]
-    end continue
+    inline def continue[A, B, C, O](inline v1: A, inline v2: B, inline v3: C): Outcome3[A, B, C, O] =
+        new Continue3[A, B, C]:
+            val _1 = v1
+            val _2 = v2
+            val _3 = v3
 
     /** Creates an outcome signaling continuation with four state values.
       *
@@ -201,15 +191,12 @@ object Loop:
         inline v2: B,
         inline v3: C,
         inline v4: D
-    ): Outcome4[A, B, C, D, O] < Any = // TODO fuck, this came back. No these methods should have no < Any. You introduced a hack at some point and keeps poping up over and over
-        val outcome =
-            new Continue4[A, B, C, D]:
-                val _1 = v1
-                val _2 = v2
-                val _3 = v3
-                val _4 = v4
-        outcome.asInstanceOf[Outcome4[A, B, C, D, O] < Any]
-    end continue
+    ): Outcome4[A, B, C, D, O] =
+        new Continue4[A, B, C, D]:
+            val _1 = v1
+            val _2 = v2
+            val _3 = v3
+            val _4 = v4
 
     /** Creates an outcome signaling completion with no value. */
     @targetName("done0")

@@ -1,71 +1,80 @@
 package kyo.kernel.internal
 
-import kyo.Arrow
-import kyo.kernel.<
+import kyo.<
 import scala.annotation.implicitNotFound
 import scala.quoted.*
 import scala.util.NotGiven
 
-/** CanLift is the lift's evidence, and its companion carries the lift's one macro.
-  *
-  * The split follows what each half must do at expansion time. The lint may not re-expand: it rides the NotGiven parameter of a macro-free
-  * given, so it resolves once where the conversion is written and is baked as a value, which waives an inline method with an abstract type
-  * parameter and keeps it sound through the boxing emission. The emission must re-expand: it is the macro, so an inline method instantiated
-  * at a concrete type still gets that type's strategy, the bare cast where a value of the type can never be a computation and the runtime
-  * boxing test everywhere else.
-  *
-  * Invariance is load-bearing: with a covariant evidence the derivation leaves the type under-constrained and the negation becomes
-  * satisfiable through Nothing, so the lint never fires.
-  */
 @implicitNotFound("""
-Cannot lift `${A}` to a pending computation.
+Type '${A}' may contain a nested effect computation.
+This usually means you have a value of type `X < S1 < S2` (i.e. `(X < S1) < S2`) where a plain value `X < S` is expected.
 
-If the type is nested (`X < S1 < S2`), this usually comes from type inference
-nesting effect computations instead of merging them: call `.flatten` to merge
-the nested effects, or split the expression into smaller statements so the
-effect rows unify.
+This often happens due to *type inference*: some effect computations are nested when chaining operations, and Scala infers a value with nested effects instead of merging them.
 
-If the value's effect row simply does not fit the expected row (for example a
-`Unit < S1` where a `Unit < S2` is expected), consider removing or adjusting
-the type constraint on the left-hand side.
-More info : https://github.com/getkyo/kyo/issues/903
+To fix this, you can:
+
+1. Call `.flatten` to merge the nested effects:
+    val x: (Int < S1) < S2 = ...
+    val y: Int < (S1 & S2) = x.flatten
+
+2. Split the computation into multiple statements:
+   Breaking the code into smaller expressions helps Scala infer the correct types incrementally, avoiding nested effects.
+    val x: Int < S1 = computeFirst()
+    val y: Int < S2 = useResult(x)
 """)
 opaque type CanLift[A] = Null
 
 object CanLift:
 
-    inline given derived[A](using inline ng: NotGiven[A <:< (Any < Nothing)]): CanLift[A] = null
+    inline given derived[A](using inline ng: NotGiven[A <:< (Any < Nothing)], inline ns: NotGiven[A <:< Singleton]): CanLift[A] = null
 
-    /** The lift's emission, expanded at the site the conversion lands on. */
-    private[kyo] inline def lift[A, S](inline v: A): A < S = ${ liftImpl[A, S]('v) }
+    // case objects are products, so data constructors like Absent lift
+    // without touching the macro and never suspend units of this module
+    inline given derivedCaseObject[A <: Singleton & Product](using inline ng: NotGiven[A <:< (Any < Nothing)]): CanLift[A] = null
 
-    private def liftImpl[A: Type, S: Type](v: Expr[A])(using Quotes): Expr[A < S] =
-        import quotes.reflect.*
+    // the remaining singleton types are module objects and rare non-case
+    // singletons; they resolve through the macro, which rejects lifting kyo
+    // module objects and nested computations and passes everything else.
+    // Keeping the macro on this narrow path means ordinary lifts never
+    // expand a macro, so units of this module do not suspend compilation
+    // waiting for the macro classes
+    inline given derivedSingleton[A <: Singleton]: CanLift[A] = CanLiftMacro.checkSingleton[A]
 
-        val tpe  = TypeRepr.of[A].dealias
-        val wide = tpe.widen.dealias
-        val sym  = wide.typeSymbol
-
-        def isNothing = tpe =:= TypeRepr.of[Nothing]
-        def isModule  = sym.fullName.startsWith("kyo.") && sym.flags.is(Flags.Module) && !sym.flags.is(Flags.Case)
-        def isValue   = wide <:< TypeRepr.of[AnyVal] || wide <:< TypeRepr.of[String]
-        // an Arrow is a computation, never a value to lift; `<.fromArrow` is the only bridge
-        def isArrow = wide <:< TypeRepr.of[Arrow[?, ?, ?]]
-        // a final class admits no Boxed subtype, so a value of the type is
-        // provably not a computation and the box test can never fire
-        def isSafeFinalClass =
-            sym.isClassDef && sym.flags.is(Flags.Final) && !sym.flags.is(Flags.Trait) &&
-                !(wide <:< TypeRepr.of[Boxed])
-
-        if isModule then
-            report.errorAndAbort(s"Cannot lift '${sym.fullName}' to a '${sym.name} < S'", Position.ofMacroExpansion)
-        else if isArrow then
-            report.errorAndAbort(
-                s"Cannot lift an Arrow to a '${sym.name} < S': an Arrow is a computation, not a value. Use `<.fromArrow`.",
-                Position.ofMacroExpansion
-            )
-        else if isNothing || isValue || isSafeFinalClass then '{ $v.asInstanceOf[A < S] } else '{ Nested.nest[A, S]($v) }
-        end if
-    end liftImpl
+    inline given nothing: CanLift[Nothing] = null
 
 end CanLift
+
+object CanLiftMacro:
+
+    inline def checkSingleton[A]: CanLift[A] = ${ checkImpl[A] }
+
+    private[kernel] def checkImpl[A: Type](using Quotes): Expr[CanLift[A]] =
+        import quotes.reflect.*
+        val tpe = TypeRepr.of[A]
+        val sym = tpe.typeSymbol
+
+        if sym.fullName.startsWith("kyo.") && sym.flags.is(Flags.Module) && !sym.flags.is(Flags.Case) then
+            report.errorAndAbort(s"Cannot lift '${sym.fullName}' to a '${sym.name} < S'", Position.ofMacroExpansion)
+
+        if tpe <:< TypeRepr.of[Any < Nothing] then
+            report.errorAndAbort(s"Type '${tpe.show}' may contain a nested effect computation.", Position.ofMacroExpansion)
+
+        '{ null.asInstanceOf[CanLift[A]] }
+    end checkImpl
+
+end CanLiftMacro
+
+object LiftMacro:
+
+    def abortCastUnitMacro[S1: Type, S2: Type](v: Expr[Unit < S1])(using Quotes): Expr[Unit < S2] =
+        import quotes.reflect.*
+        val source = TypeRepr.of[S1].show
+        report.errorAndAbort(
+            s"""Cannot lift `Unit < ${source}` to the expected type (`Unit < ?`).
+               |This may be due to an effect type mismatch.
+               |Consider removing or adjusting the type constraint on the left-hand side.
+               |More info : https://github.com/getkyo/kyo/issues/903""".stripMargin
+        )
+    end abortCastUnitMacro
+
+end LiftMacro

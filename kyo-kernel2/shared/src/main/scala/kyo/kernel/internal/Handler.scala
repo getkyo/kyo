@@ -1,8 +1,10 @@
-package kyo.proto
+package kyo.kernel.internal
 
-import Loop.Outcome
-import Loop.Outcome2
+import kyo.Arrow
+import kyo.Loop.Outcome
+import kyo.Loop.Outcome2
 import kyo.Tag
+import kyo.kernel.*
 
 sealed abstract class Handler[E <: ArrowEffect[?, ?], A, B, -S] extends Arrow.Transform[A, B, S]:
     def tag: Tag[E]

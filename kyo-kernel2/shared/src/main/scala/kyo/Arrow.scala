@@ -1,149 +1,110 @@
 package kyo
 
 import kyo.Frame
-import kyo.Span
-import kyo.Tag
-import kyo.kernel.ArrowEffect
-import kyo.kernel.Loop.Outcome
-import kyo.kernel.Loop.Outcome2
-import kyo.kernel.internal.Boxed
-import kyo.kernel.internal.Implicits.liftInternal
-import scala.runtime.AbstractFunction1
+import kyo.kernel.*
+import kyo.kernel.internal.*
+import scala.annotation.nowarn
+import scala.annotation.static
 
-sealed abstract class Arrow[-A, +B, -S] extends AbstractFunction1[A, B < S] with Boxed:
+sealed trait Arrow[-A, +B, -S] extends (A => B < S):
+    self =>
+
+    def frame: Frame
 
     def apply(v: A): B < S
 
-    def step: Arrow.Step[A, B, S]
+    def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]): C < (S & S2)
 
-    def chain[C, S2](f: Arrow[B, C, S2]): Arrow[A, C, S & S2] =
-        if f.isInstanceOf[Arrow.Identity] then
-            this.asInstanceOf[Arrow[A, C, S & S2]]
-        else
-            Arrow.Chain(this, f)
+    final def chain[C, S2](f: Arrow[B, C, S2]): Arrow[A, C, S & S2] =
+        if f eq Arrow.Id then this.asInstanceOf[Arrow[A, C, S]]
+        else new Arrow.Chain(this, f)
+
+    type X
+    def head: Arrow[A, X, S]
+    def tail: Arrow[X, B, S]
+
 end Arrow
 
 object Arrow:
 
-    def apply[A]: Transform[A, A, Any] = Identity.asInstanceOf[Transform[A, A, Any]]
+    def id[A]: Arrow.Id[A] = Id.asInstanceOf[Id[A]]
 
-    sealed abstract class Step[-A, +B, -S] extends Arrow[A, B, S]:
-        type X
-        def head: Transform[A, X, S]
-        def tail: Arrow[X, B, S]
-        final def step = this
+    @nowarn
+    inline def apply[A, B, S](inline f: A => B < S)(using _frame: Frame): Arrow[A, B, S] =
+        new Transform[A, B, S]:
+            def frame                = _frame
+            override def apply(v: A) = f(v)
+            def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]) =
+                v match
+                    case kyo: Kyo[A, S2] @unchecked =>
+                        Effect.defer(kyo, this, next)
+                    case _ =>
+                        val slot = Safepoint.get()
+                        if !Safepoint.enter(slot) then
+                            Effect.defer(v, this, next)
+                        else
+                            val out = next.head(apply(v.unsafeGet), next.tail)
+                            Safepoint.exit(slot)
+                            out
+                        end if
 
-        override def toString: String = s"Arrow.Step(${head.frameInfo})"
-    end Step
+    @nowarn
+    inline def recursive[A, B, S](inline f: (Arrow[A, B, S], A) => B < S)(using _frame: Frame): Arrow[A, B, S] =
+        new Transform[A, B, S]:
+            def frame                = _frame
+            override def apply(v: A) = f(this, v)
+            def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]) =
+                v match
+                    case kyo: Kyo[A, S2] @unchecked =>
+                        Effect.defer(kyo, this, next)
+                    case _ =>
+                        val slot = Safepoint.get()
+                        if !Safepoint.enter(slot) then
+                            Effect.defer(v, this, next)
+                        else
+                            val out = next.head(apply(v.unsafeGet), next.tail)
+                            Safepoint.exit(slot)
+                            out
+                        end if
 
-    abstract class Transform[-A, B, -S] extends Step[A, B, S]:
-        self =>
+    private[kyo] trait Transform[-A, B, -S] extends Arrow[A, B, S]:
         type X = B
-        final def head = this
-        final def tail = Arrow[B]
+        def head = this
+        def tail = Arrow.id[B]
 
-        def frame: Frame
-
-        def apply(v: A) = this(v, Arrow[B])
-
-        def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]): C < (S & S2)
-
-        final private[kyo] def frameInfo: String =
-            if this eq Identity then "identity"
-            else s"${frame.position.show}, ${frame.snippetShort}"
-
-        override def toString: String = s"Arrow($frameInfo)"
-
-        override def chain[C, S2](f: Arrow[B, C, S2]) =
-            if f eq Identity then
-                this.asInstanceOf[Arrow[A, C, S & S2]]
-            else
-                new Step[A, C, S & S2]:
-                    type X = B
-                    def head        = self
-                    def tail        = f
-                    def apply(v: A) = self(v, f)
-
+        def apply(v: A) = this(v, Arrow.id[B])
     end Transform
 
-    sealed abstract class Identity extends Transform[Any, Any, Any]
-    object Identity extends Identity:
-        def frame                                       = Frame.internal
-        override def chain[C, S2](f: Arrow[Any, C, S2]) = f
-        def apply[C, S2](v: Any < S2, next: Arrow[Any, C, S2]): C < S2 =
-            if next eq Identity then v.asInstanceOf[C < S2]
-            else
-                v match
-                    case v: Arrow[Any, Any, S2] @unchecked => Chain(v, next)
-                    case v =>
-                        next match
-                            case _: Defer[?, ?, ?] =>
-                                Bind(v, next)
-                            case _ =>
-                                val s = next.step
-                                s.head(v, s.tail)
+    // the evaluator flattens a chain onto its stack, so it sees the two halves
+    private[kyo] class Chain[-A, B, +C, -S](
+        val a: Arrow[A, B, S],
+        val b: Arrow[B, C, S]
+    ) extends Arrow[A, C, S]:
+        type X = B
+        def head = a
+        def tail = b
 
-    end Identity
+        def frame = Frame.internal
+        def apply(v: A) =
+            Effect.defer(v, a, b)
+        def apply[D, S2](v: A < S2, next: Arrow[C, D, S2]) =
+            Effect.defer(v, this, next)
 
-    sealed abstract class Defer[A, +B, -S] extends Step[A, B, S]:
-        type X = A
-        final def head = Arrow[A]
-        final def tail = this
-
-        def apply(v: A) = Bind(v, this)
-    end Defer
-
-    final class Chain[A, X, +B, -S](
-        val a: Arrow[A, X, S],
-        val b: Arrow[X, B, S]
-    ) extends Defer[A, B, S]:
-        override def toString: String = s"Arrow.Chain($a, $b)"
     end Chain
 
-    final class Bind[A, +B, -S](
-        val value: A < S,
-        val cont: Arrow[A, B, S]
-    ) extends Defer[Any, B, S]
+    private[Arrow] class Id[A] extends Arrow[A, A, Any]:
+        type X = A
+        def head                 = this
+        def tail                 = this
+        def frame                = Frame.internal
+        def apply(v: A): A < Any = v
+        override def apply[C, S2](v: A < S2, next: Arrow[A, C, S2]) =
+            if next eq Id then
+                v.asInstanceOf[C < S2]
+            else
+                next(v, Arrow.id)
+    end Id
 
-    final private[kyo] class Park[+A, +B, -S](
-        val entries: Span[Arrow[?, ?, ?]],
-        val tags: Span[AnyRef],
-        val states: Span[AnyRef],
-        val value: A < S
-    ) extends Defer[Any, B, S]
-
-    abstract private[kyo] class Suspend[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Defer[Any, B, E & S]:
-        def frame: Frame
-        def tag: Tag[E]
-        def input: I[A]
-        def cont: Arrow[O[A], B, S]
-    end Suspend
-
-    abstract class Handle[E <: ArrowEffect[?, ?], A, B, +C, -S] extends Defer[Any, C, S]:
-        def v: Arrow[Any, A, E & S]
-        def handler: Handler[E, A, B, S]
-        def cont: Arrow[B, C, S]
-    end Handle
-
-    sealed abstract class Handler[E <: ArrowEffect[?, ?], A, +B, -S]:
-        def tag: Tag[E]
-
-    object Handler:
-
-        abstract class HandleCont[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Handler[E, A, B, S]:
-            def run[X](input: I[X], cont: O[X] => A < (E & S)): A < (E & S)
-            def complete(v: A): B < S
-
-        abstract class HandleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Handler[E, A, B, S]:
-            def run[X](input: I[X]): Outcome[O[X] < (E & S), B] < S
-            def complete(v: A): B < S
-
-        abstract class HandleLoopState[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State] extends Handler[E, A, B, S]:
-            def initialState: State
-            def run[X](state: State, input: I[X]): Outcome2[State, O[X] < (E & S), B] < S
-            def complete(state: State, v: A): B < S
-        end HandleLoopState
-
-    end Handler
+    private[kyo] object Id extends Id[Any]
 
 end Arrow

@@ -1,24 +1,26 @@
 package kyo.kernel
 
 import kyo.Arrow
-import kyo.Arrow.*
-import kyo.Frame
-import kyo.kernel.internal.Implicits.liftInternal
-import scala.annotation.nowarn
+import kyo.kernel.internal.*
+import scala.annotation.static
+
+abstract class Effect private[kernel] ()
 
 object Effect:
 
-    private[kyo] def defer[A, S](f: => A < S)(using Frame): A < S =
-        deferInline(f)
+    @static def defer[A, B, S](v: A < S, next: Arrow[A, B, S]): B < S =
+        new Kyo.Defer[A, B, B, S]:
+            def value = v
+            def contA = next
+            def contB = Arrow.id[B]
 
-    @nowarn("msg=anonymous")
-    private[kyo] inline def deferInline[A, S](inline f: => A < S)(using inline _frame: Frame): A < S =
-        new Transform[Any, A, S]:
-            def frame = _frame
-            def apply[C, S2](v: Any < S2, next: Arrow[A, C, S2]): C < (S & S2) =
-                val step = next.step
-                step.head(f, step.tail)
-
-    // TODO launch an opus agent to explore the design of Effect.catching. Please do not overengineer, you always do when we get to this point. THink in terms of composition and see how the old kernel does this. I need exploration please not a quick solution
+    @static def defer[A, B, C, S](v: A < S, a: Arrow[A, B, S], b: Arrow[B, C, S]): C < S =
+        if b eq Arrow.id then
+            defer(v, a.asInstanceOf[Arrow[A, C, S]])
+        else
+            new Kyo.Defer[A, B, C, S]:
+                def value = v
+                def contA = a
+                def contB = b
 
 end Effect
