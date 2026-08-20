@@ -1,7 +1,9 @@
 package kyo.kernel.internal
 
 import kyo.Arrow
+import kyo.Const
 import kyo.Frame
+import kyo.Maybe
 import kyo.Tag
 import kyo.kernel.*
 import org.scalatest.freespec.AnyFreeSpec
@@ -10,148 +12,393 @@ class StackTest extends AnyFreeSpec:
 
     given Frame = Frame.internal
 
-    type Const[A] = [B] =>> A
-
     sealed trait Ask    extends ArrowEffect[Const[Unit], Const[Int]]
     sealed trait AskSub extends Ask
     sealed trait Say    extends ArrowEffect[Const[String], Const[Unit]]
 
-    def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
+    private val Reach = Safepoint.period() / 2
 
-    // stack entries are `Arrow` nodes now; the old kernel's `Stack.Entry` aliased its `Kyo` model
-    def askRegion: Arrow[?, ?, ?] =
-        ArrowEffect.handleLoop(Tag[Ask], ask)([X] => _ => Loop.continue(1), (i: Int) => i) match
-            case a: Arrow[?, ?, ?] => a
-            case v                 => fail(s"expected a region node, got $v")
+    def transform(using _frame: Frame): Arrow.Transform[Int, Int, Any] =
+        new Arrow.Transform[Int, Int, Any]:
+            def frame                                              = _frame
+            def apply[C, S2](v: Int < S2, next: Arrow[Int, C, S2]) = v.map(i => next(i + 1))
 
-    def arrow: Arrow[?, ?, ?] = Arrow[Int]
+    def askHandler: Handler.HandlerLoop[Const[Unit], Const[Int], Ask, Int, Int, Any] =
+        new Handler.HandlerLoop[Const[Unit], Const[Int], Ask, Int, Int, Any]:
+            def frame                  = Frame.internal
+            def tag                    = Tag[Ask]
+            def run[X](input: Unit)    = Loop.continue(1: Int < Any)
+            override def apply(a: Int) = a
+
+    def askSubHandler: Handler.HandlerLoop[Const[Unit], Const[Int], AskSub, Int, Int, Any] =
+        new Handler.HandlerLoop[Const[Unit], Const[Int], AskSub, Int, Int, Any]:
+            def frame                  = Frame.internal
+            def tag                    = Tag[AskSub]
+            def run[X](input: Unit)    = Loop.continue(1: Int < Any)
+            override def apply(a: Int) = a
+
+    def sayHandler: Handler.HandlerLoop[Const[String], Const[Unit], Say, Int, Int, Any] =
+        new Handler.HandlerLoop[Const[String], Const[Unit], Say, Int, Int, Any]:
+            def frame                  = Frame.internal
+            def tag                    = Tag[Say]
+            def run[X](input: String)  = Loop.continue((): Unit < Any)
+            override def apply(a: Int) = a
+
+    def statefulHandler(init: Int): Handler.HandlerLoopState[Const[Unit], Const[Int], Ask, Int, Int, Any, Int] =
+        new Handler.HandlerLoopState[Const[Unit], Const[Int], Ask, Int, Int, Any, Int]:
+            def frame                           = Frame.internal
+            def tag                             = Tag[Ask]
+            def initialState                    = init
+            def run[X](state: Int, input: Unit) = Loop.continue(state + 1, 1: Int < Any)
+            def apply(state: Int, a: Int): Int  = a + state
+    end statefulHandler
 
     "starts empty" in {
         val stack = new Stack
+        assert(stack.isEmpty)
         assert(stack.size == 0)
     }
 
-    "push and pop are LIFO" in {
-        val stack = new Stack
-        val a     = arrow
-        val b     = askRegion
-        stack.push(a)
-        stack.push(b)
-        assert(stack.size == 2)
-        assert(stack.pop() eq b)
-        assert(stack.pop() eq a)
-        assert(stack.size == 0)
+    "push and pop" - {
+        "are LIFO, index zero innermost" in {
+            val stack = new Stack
+            val a     = transform
+            val b     = askHandler
+            stack.push(a)
+            stack.push(b)
+            assert(stack.size == 2)
+            assert(stack.pop() eq b)
+            assert(stack.pop() eq a)
+            assert(stack.isEmpty)
+        }
+
+        "pushing identity is a no-op" in {
+            val stack = new Stack
+            stack.push(Arrow.id[Int])
+            assert(stack.isEmpty)
+        }
+
+        "a chain is flattened into one entry per link" in {
+            val stack = new Stack
+            val a     = transform
+            val b     = transform
+            stack.push(a.chain(b))
+            assert(stack.size == 2)
+            assert(stack.pop() eq a)
+            assert(stack.pop() eq b)
+        }
+
+        "a nested chain is flattened fully" in {
+            val stack = new Stack
+            val a     = transform
+            val b     = transform
+            val c     = transform
+            stack.push(a.chain(b).chain(c))
+            assert(stack.size == 3)
+            assert(stack.pop() eq a)
+            assert(stack.pop() eq b)
+            assert(stack.pop() eq c)
+        }
+
+        "identity links inside a chain are skipped" in {
+            val stack = new Stack
+            val a     = transform
+            stack.push(new Arrow.Chain(Arrow.id[Int], a))
+            assert(stack.size == 1)
+            assert(stack.pop() eq a)
+        }
     }
 
-    "apply reads an entry without removing it" in {
+    "find" - {
+        "locates a handler by its tag" in {
+            val stack = new Stack
+            stack.push(askHandler)
+            assert(stack.find(Tag[Ask]) == 0)
+        }
+
+        "misses on an unrelated tag" in {
+            val stack = new Stack
+            stack.push(askHandler)
+            assert(stack.find(Tag[Say]) == -1)
+        }
+
+        "returns the innermost matching handler" in {
+            val stack = new Stack
+            val outer = askHandler
+            val inner = askHandler
+            stack.push(outer)
+            stack.push(transform)
+            stack.push(inner)
+            assert(stack.find(Tag[Ask]) == 0)
+            assert(stack.handler(0) eq inner)
+        }
+
+        "skips non-handler entries" in {
+            val stack = new Stack
+            val h     = askHandler
+            stack.push(h)
+            stack.push(transform)
+            stack.push(transform)
+            assert(stack.find(Tag[Ask]) == 2)
+            assert(stack.handler(2) eq h)
+        }
+
+        "a subtype suspension tag resolves a supertype handler" in {
+            val stack = new Stack
+            stack.push(askHandler)
+            assert(stack.find(Tag[AskSub]) == 0)
+        }
+
+        "a supertype suspension tag does not resolve a subtype handler" in {
+            val stack = new Stack
+            stack.push(askSubHandler)
+            assert(stack.find(Tag[Ask]) == -1)
+        }
+
+        "an empty stack misses" in {
+            val stack = new Stack
+            assert(stack.find(Tag[Ask]) == -1)
+        }
+
+        "a popped handler is no longer found" in {
+            val stack = new Stack
+            stack.push(askHandler)
+            stack.pop()
+            stack.push(transform)
+            assert(stack.find(Tag[Ask]) == -1)
+        }
+    }
+
+    "state" - {
+        "a stateful handler is seeded with its initial state on push" in {
+            val stack = new Stack
+            stack.push(statefulHandler(7))
+            assert(stack.state[Int](0) == Maybe(7))
+        }
+
+        "a plain entry carries no state" in {
+            val stack = new Stack
+            stack.push(transform)
+            assert(stack.state[Int](0).isEmpty)
+        }
+
+        "putState round-trips at the entry's index" in {
+            val stack = new Stack
+            stack.push(statefulHandler(0))
+            stack.push(transform)
+            stack.putState(1, 42)
+            assert(stack.state[Int](1) == Maybe(42))
+        }
+
+        "pop clears the state of the vacated slot" in {
+            val stack = new Stack
+            stack.push(statefulHandler(7))
+            stack.pop()
+            stack.push(transform)
+            assert(stack.state[Int](0).isEmpty)
+        }
+    }
+
+    "truncate" - {
+        "drops the innermost entries" in {
+            val stack = new Stack
+            val outer = transform
+            stack.push(outer)
+            stack.push(transform)
+            stack.push(transform)
+            stack.truncate(2)
+            assert(stack.size == 1)
+            assert(stack.pop() eq outer)
+        }
+
+        "of zero keeps everything" in {
+            val stack = new Stack
+            stack.push(transform)
+            stack.truncate(0)
+            assert(stack.size == 1)
+        }
+
+        "past the bottom stops at empty" in {
+            val stack = new Stack
+            stack.push(transform)
+            stack.truncate(10)
+            assert(stack.isEmpty)
+        }
+    }
+
+    "clear empties the stack" in {
         val stack = new Stack
-        val a     = arrow
-        stack.push(a)
-        assert(stack(0) eq a)
+        stack.push(askHandler)
+        stack.push(transform)
+        stack.clear()
+        assert(stack.isEmpty)
+        assert(stack.find(Tag[Ask]) == -1)
+    }
+
+    "dump" - {
+        "folds the entries below the position, innermost first" in {
+            val stack = new Stack
+            val log   = List.newBuilder[String]
+            def note(name: String)(using _frame: Frame): Arrow.Transform[Int, Int, Any] =
+                new Arrow.Transform[Int, Int, Any]:
+                    def frame = _frame
+                    def apply[C, S2](v: Int < S2, next: Arrow[Int, C, S2]) =
+                        v.map { i =>
+                            log += name
+                            next(i)
+                        }
+            stack.push(note("outer"))
+            stack.push(note("inner"))
+            val k = stack.dump[Int, Int, Any](2)
+            assert(stack.isEmpty)
+            assert(k(0).eval == 0)
+            assert(log.result() == List("inner", "outer"))
+        }
+
+        "consumes exactly the requested entries" in {
+            val stack = new Stack
+            val outer = transform
+            stack.push(outer)
+            stack.push(transform)
+            stack.push(transform)
+            discard(stack.dump[Int, Int, Any](2))
+            assert(stack.size == 1)
+            assert(stack.pop() eq outer)
+        }
+
+        "of nothing is the identity arrow" in {
+            val stack = new Stack
+            stack.push(transform)
+            assert(stack.dump[Int, Int, Any](0) eq Arrow.id[Int])
+            assert(stack.size == 1)
+        }
+
+        "composes the captured transforms in order" in {
+            val stack = new Stack
+            def add(n: Int)(using _frame: Frame): Arrow.Transform[Int, Int, Any] =
+                new Arrow.Transform[Int, Int, Any]:
+                    def frame                                              = _frame
+                    def apply[C, S2](v: Int < S2, next: Arrow[Int, C, S2]) = v.map(i => next(i + n))
+            stack.push(add(100))
+            stack.push(add(10))
+            stack.push(add(1))
+            val k = stack.dump[Int, Int, Any](3)
+            assert(k(0).eval == 111)
+        }
+
+        "the captured arrow is multi-shot" in {
+            val stack = new Stack
+            stack.push(transform)
+            stack.push(transform)
+            val k = stack.dump[Int, Int, Any](2)
+            assert(k(0).eval == 2)
+            assert(k(0).eval == 2)
+            assert(k(10).eval == 12)
+        }
+
+        "a handler-free capture is denormalized so pushing it back stays bounded" in {
+            val stack = new Stack
+            (0 until 5).foreach(_ => stack.push(transform))
+            val k     = stack.dump[Int, Int, Any](5)
+            val other = new Stack
+            other.push(k)
+            assert(other.size == 2)
+            assert(k(0).eval == 5)
+        }
+
+        "a capture holding a handler is left normalized" in {
+            val stack = new Stack
+            stack.push(transform)
+            stack.push(askHandler)
+            stack.push(transform)
+            stack.push(transform)
+            stack.push(transform)
+            val k     = stack.dump[Int, Int, Any](5)
+            val other = new Stack
+            other.push(k)
+            assert(other.size == 5)
+        }
+
+        "a stateful handler is captured with the state it carried" in {
+            val stack = new Stack
+            stack.push(statefulHandler(0))
+            stack.putState(0, 9)
+            val k = stack.dump[Int, Int, Any](1)
+            assert(k(1).eval == 10)
+        }
+    }
+
+    "dump of the tail" - {
+        "stops at the innermost handler" in {
+            val stack = new Stack
+            val h     = askHandler
+            stack.push(h)
+            stack.push(transform)
+            stack.push(transform)
+            stack.push(transform)
+            discard(stack.dump[Int, Int, Any]())
+            assert(stack.size == 1)
+            assert(stack.pop() eq h)
+        }
+
+        "takes the whole stack when no handler is below" in {
+            val stack = new Stack
+            stack.push(transform)
+            stack.push(transform)
+            val k = stack.dump[Int, Int, Any]()
+            assert(stack.isEmpty)
+            assert(k(0).eval == 2)
+        }
+
+        "caps at half the safepoint period" in {
+            val stack = new Stack
+            (0 until Reach + 44).foreach(_ => stack.push(transform))
+            discard(stack.dump[Int, Int, Any]())
+            assert(stack.size == 44)
+        }
+
+        "leaves a capture that pushes back link by link" in {
+            val stack = new Stack
+            (0 until 5).foreach(_ => stack.push(transform))
+            val k     = stack.dump[Int, Int, Any]()
+            val other = new Stack
+            other.push(k)
+            assert(other.size == 5)
+        }
+    }
+
+    "growth beyond the initial capacity preserves entries and state" in {
+        val stack  = new Stack
+        val bottom = transform
+        stack.push(bottom)
+        stack.push(statefulHandler(5))
+        (0 until 100).foreach(_ => stack.push(transform))
+        assert(stack.size == 102)
+        assert(stack.find(Tag[Ask]) == 100)
+        assert(stack.state[Int](100) == Maybe(5))
+        stack.truncate(101)
         assert(stack.size == 1)
+        assert(stack.pop() eq bottom)
     }
 
-    "a tagged entry is found by its tag" in {
-        val stack = new Stack
-        stack.push(askRegion, Tag[Ask].erased)
-        assert(stack.find(Tag[Ask].erased, 0) == 0)
-    }
+    "the pool" - {
+        "hands out a stack and takes it back" in {
+            val stack = Stack.borrow()
+            stack.push(transform)
+            Stack.release(stack)
+            val again = Stack.borrow()
+            assert(again eq stack)
+            assert(again.isEmpty)
+            Stack.release(again)
+        }
 
-    "find misses on an unrelated tag" in {
-        val stack = new Stack
-        stack.push(askRegion, Tag[Ask].erased)
-        assert(stack.find(Tag[Say].erased, 0) == -1)
-    }
-
-    "find returns the innermost matching entry" in {
-        val stack = new Stack
-        stack.push(askRegion, Tag[Ask].erased)
-        stack.push(arrow)
-        stack.push(askRegion, Tag[Ask].erased)
-        assert(stack.find(Tag[Ask].erased, 0) == 2)
-    }
-
-    "a subtype suspension tag resolves a supertype entry" in {
-        val stack = new Stack
-        stack.push(askRegion, Tag[Ask].erased)
-        assert(stack.find(Tag[AskSub].erased, 0) == 0)
-    }
-
-    "a supertype suspension tag does not resolve a subtype entry" in {
-        val stack = new Stack
-        stack.push(askRegion, Tag[AskSub].erased)
-        assert(stack.find(Tag[Ask].erased, 0) == -1)
-    }
-
-    "plain pushes are invisible to find" in {
-        val stack = new Stack
-        stack.push(arrow)
-        stack.push(arrow)
-        assert(stack.find(Tag[Ask].erased, 0) == -1)
-    }
-
-    "find does not look below the base" in {
-        val stack = new Stack
-        stack.push(askRegion, Tag[Ask].erased)
-        val base = stack.size
-        stack.push(arrow)
-        assert(stack.find(Tag[Ask].erased, base) == -1)
-        assert(stack.find(Tag[Ask].erased, 0) == 0)
-    }
-
-    "pop clears the tag of the vacated slot" in {
-        val stack = new Stack
-        stack.push(askRegion, Tag[Ask].erased)
-        stack.pop()
-        stack.push(arrow)
-        assert(stack.find(Tag[Ask].erased, 0) == -1)
-    }
-
-    "truncate drops the entries above the mark" in {
-        val stack = new Stack
-        stack.push(arrow)
-        stack.push(askRegion, Tag[Ask].erased)
-        stack.push(arrow)
-        stack.truncate(1)
-        assert(stack.size == 1)
-        assert(stack.find(Tag[Ask].erased, 0) == -1)
-    }
-
-    "truncate to the current size keeps everything" in {
-        val stack = new Stack
-        stack.push(askRegion, Tag[Ask].erased)
-        stack.truncate(stack.size)
-        assert(stack.size == 1)
-        assert(stack.find(Tag[Ask].erased, 0) == 0)
-    }
-
-    "copyEntries copies the segment above the index in order" in {
-        val stack = new Stack
-        val a     = arrow
-        val b     = askRegion
-        val c     = arrow
-        stack.push(a)
-        stack.push(b)
-        stack.push(c)
-        val seg = stack.copyEntries(1)
-        assert(seg.size == 2)
-        assert(seg(0) eq b)
-        assert(seg(1) eq c)
-        assert(stack.size == 3)
-    }
-
-    "growth beyond the initial capacity preserves entries and tags" in {
-        val stack   = new Stack
-        val entries = (0 until 100).map(_ => arrow)
-        entries.foreach(stack.push)
-        stack.push(askRegion, Tag[Ask].erased)
-        assert(stack.size == 101)
-        assert(stack.find(Tag[Ask].erased, 0) == 100)
-        (0 until 100).foreach(i => assert(stack(i) eq entries(i)))
-    }
-
-    "current returns the same stack on the same thread" in {
-        assert(Stack.current() eq Stack.current())
+        "borrows are distinct while held" in {
+            val a = Stack.borrow()
+            val b = Stack.borrow()
+            assert(a ne b)
+            Stack.release(a)
+            Stack.release(b)
+        }
     }
 
 end StackTest

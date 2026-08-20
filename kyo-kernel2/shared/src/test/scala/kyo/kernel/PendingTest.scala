@@ -4,6 +4,7 @@ import kyo.Const
 import kyo.Kyo
 import kyo.Maybe
 import kyo.Tag
+import kyo.discard
 import kyo.kernel.internal.Eval
 import kyo.kernel.internal.Safepoint
 import org.scalatest.freespec.AnyFreeSpec
@@ -12,7 +13,7 @@ import scala.compiletime.testing.typeCheckErrors
 
 class PendingTest extends AnyFreeSpec:
 
-    private val Period = 512
+    private val Period = Safepoint.period()
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
@@ -24,10 +25,10 @@ class PendingTest extends AnyFreeSpec:
     def give: (Int < Ask) < Give = ArrowEffect.suspend[Any](Tag[Give], ())
 
     def answerAsk[A](value: Int)(v: A < Ask): A < Any =
-        ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value), a => a)
+        ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value: Int < Any), a => a)
 
     def answerSay[A](v: A < Say): A < Any =
-        ArrowEffect.handleLoop(Tag[Say], v)([C] => _ => Loop.continue(()), a => a)
+        ArrowEffect.handleLoop(Tag[Say], v)([C] => _ => Loop.continue((): Unit < Any), a => a)
 
     def settled[A](v: A): A < Any = v
 
@@ -73,14 +74,14 @@ class PendingTest extends AnyFreeSpec:
     "a handler applies done to a settled payload without driving it" in {
         val outer: (Unit < Say) < Ask = settled(say("x"): Unit < Say)
         val handled: (Unit < Say) < Any =
-            ArrowEffect.handleLoop(Tag[Ask], outer)([C] => _ => Loop.continue(1), a => settled(a))
+            ArrowEffect.handleLoop(Tag[Ask], outer)([C] => _ => Loop.continue(1: Int < Any), a => settled(a))
         val payload: Unit < Say = Eval(handled)
         var seen                = ""
         val r: Unit < Any = ArrowEffect.handleLoop(Tag[Say], payload)(
             [C] =>
                 s =>
                     seen = s
-                    Loop.continue(())
+                    Loop.continue((): Unit < Any)
             ,
             a => a
         )
@@ -91,14 +92,14 @@ class PendingTest extends AnyFreeSpec:
     "a region returns a foreign payload untouched" in {
         val body: (Unit < Say) < Ask = after(say("y"): Unit < Say)
         val handled: (Unit < Say) < Any =
-            ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.continue(1), a => settled(a))
+            ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.continue(1: Int < Any), a => settled(a))
         val payload: Unit < Say = Eval(handled)
         var seen                = ""
         val r: Unit < Any = ArrowEffect.handleLoop(Tag[Say], payload)(
             [C] =>
                 s =>
                     seen = s
-                    Loop.continue(())
+                    Loop.continue((): Unit < Any)
             ,
             a => a
         )
@@ -394,6 +395,240 @@ class PendingTest extends AnyFreeSpec:
         )
         assert(errors.nonEmpty, "expected a type error, code compiled")
     }
+
+    "a for-comprehension chains through flatMap and map" in {
+        val result =
+            for
+                x <- 5: Int < Any
+                y <- 3: Int < Any
+            yield x + y
+        assert(result.eval == 8)
+    }
+
+    "lift" - {
+        "a pure value lifts into a computation" in {
+            val x: Int < Any = 5
+            assert(x.eval == 5)
+        }
+
+        "a pure function lifts into a computation-returning one" - {
+            "one param" in {
+                val f: Int => String            = _.toString
+                val lifted: Int => String < Any = f
+                assert(lifted(42).eval == "42")
+            }
+
+            "two params" in {
+                val f: (Int, Int) => String            = (a, b) => (a + b).toString
+                val lifted: (Int, Int) => String < Any = f
+                assert(lifted(20, 22).eval == "42")
+            }
+
+            "three params" in {
+                val f: (Int, Int, Int) => String            = (a, b, c) => (a + b + c).toString
+                val lifted: (Int, Int, Int) => String < Any = f
+                assert(lifted(10, 20, 12).eval == "42")
+            }
+
+            "four params" in {
+                val f: (Int, Int, Int, Int) => String            = (a, b, c, d) => (a + b + c + d).toString
+                val lifted: (Int, Int, Int, Int) => String < Any = f
+                assert(lifted(10, 20, 10, 2).eval == "42")
+            }
+
+            "five params" in {
+                val f: (Int, Int, Int, Int, Int) => String            = (a, b, c, d, e) => (a + b + c + d + e).toString
+                val lifted: (Int, Int, Int, Int, Int) => String < Any = f
+                assert(lifted(10, 20, 10, 1, 1).eval == "42")
+            }
+
+            "six params" in {
+                val f: (Int, Int, Int, Int, Int, Int) => String            = (a, b, c, d, e, g) => (a + b + c + d + e + g).toString
+                val lifted: (Int, Int, Int, Int, Int, Int) => String < Any = f
+                assert(lifted(10, 20, 10, 1, 0, 1).eval == "42")
+            }
+        }
+
+        "a computation-returning function does not lift again" in {
+            val f1: Int => String < Any                  = _ => "test"
+            val f2: (Int, Int) => String < Any           = (_, _) => "test"
+            val f3: (Int, Int, Int) => String < Any      = (_, _, _) => "test"
+            val f4: (Int, Int, Int, Int) => String < Any = (_, _, _, _) => "test"
+            discard(f1, f2, f3, f4)
+            assert(typeCheckErrors("val _: Int => String < Any < Any = f1").nonEmpty)
+            assert(typeCheckErrors("val _: (Int, Int) => String < Any < Any = f2").nonEmpty)
+            assert(typeCheckErrors("val _: (Int, Int, Int) => String < Any < Any = f3").nonEmpty)
+            assert(typeCheckErrors("val _: (Int, Int, Int, Int) => String < Any < Any = f4").nonEmpty)
+        }
+
+        "a generic method does not accept a wider effect row" in {
+            def widen[A](v: A < Any) = v
+            discard(widen(1: Int < Any))
+            assert(typeCheckErrors("widen(ask)").nonEmpty)
+        }
+    }
+
+    // the same shapes point-free: map takes A => B < S2, and a function returning a bare value is
+    // one only through the pure-function lift, since the alias is opaque outside its companion and
+    // a value conversion does not reach the result position of a function type
+    "a pure function passes to map point-free" in {
+        val f: Int => Int = _ + 1
+        val r: Int < Ask  = ask.map(f)
+        assert(Eval(answerAsk(41)(r)) == 42)
+    }
+
+    "a generic function passes to map point-free" in {
+        def f(a: Int): Int < Say       = say("x").map(_ => a + 5)
+        def g[B](f: Int => B): B < Ask = ask.map(f)
+        val nested: (Int < Say) < Ask  = g(f)
+        val payload: Int < Say         = Eval(answerAsk(1)(nested))
+        assert(Eval(answerSay(payload)) == 6)
+    }
+
+    "handle" - {
+        "applies a function to a settled value" in {
+            assert((5: Int < Any).handle(_.map(_ + 1)).eval == 6)
+        }
+
+        "applies a function to an effectful value" in {
+            assert(ask.handle(v => answerAsk(2)(v)).eval == 2)
+        }
+
+        "chains handles" in {
+            assert(ask.handle(v => v.map(_ * 2)).handle(v => answerAsk(3)(v)).eval == 6)
+        }
+
+        "works with the identity function" in {
+            val v: Int < Ask = ask
+            assert(answerAsk(2)(v.handle(identity)).eval == 2)
+        }
+
+        "can produce a value instead of a computation" in {
+            val result: Int = ask.handle(v => answerAsk(2)(v)).handle(_.eval)
+            assert(result == 2)
+        }
+
+        "works with two functions" in {
+            val result = (5: Int < Any).handle(
+                _.map(_ + 1),
+                _.map(_ * 2)
+            )
+            assert(result.eval == 12)
+        }
+
+        "works with three functions" in {
+            val result = (5: Int < Any).handle(
+                _.map(_ + 1),
+                _.map(_ * 2),
+                _.map(_.toString)
+            )
+            assert(result.eval == "12")
+        }
+
+        "works with four functions" in {
+            val result = (5: Int < Any).handle(
+                _.map(_ + 1),
+                _.map(_ * 2),
+                _.map(_.toString),
+                _.map(_.length)
+            )
+            assert(result.eval == 2)
+        }
+
+        "works with five functions" in {
+            val result = (5: Int < Any).handle(
+                _.map(_ + 1),
+                _.map(_ * 2),
+                _.map(_.toString),
+                _.map(_.length),
+                _.map(_ > 1)
+            )
+            assert(result.eval == true)
+        }
+
+        "works with six functions" in {
+            val result = (5: Int < Any).handle(
+                _.map(_ + 1),
+                _.map(_ * 2),
+                _.map(_.toString),
+                _.map(_.length),
+                _.map(_ > 1),
+                _.map(if _ then "Yes" else "No")
+            )
+            assert(result.eval == "Yes")
+        }
+
+        "works with seven functions" in {
+            val result = (5: Int < Any).handle(
+                _.map(_ + 1),
+                _.map(_ * 2),
+                _.map(_.toString),
+                _.map(_.length),
+                _.map(_ > 1),
+                _.map(if _ then "Yes" else "No"),
+                _.map(_.toLowerCase)
+            )
+            assert(result.eval == "yes")
+        }
+
+        "works with eight functions" in {
+            val result = (5: Int < Any).handle(
+                _.map(_ + 1),
+                _.map(_ * 2),
+                _.map(_.toString),
+                _.map(_.length),
+                _.map(_ > 1),
+                _.map(if _ then "Yes" else "No"),
+                _.map(_.toLowerCase),
+                _.map(_.length)
+            )
+            assert(result.eval == 3)
+        }
+
+        "works with nine functions" in {
+            val result = (5: Int < Any).handle(
+                _.map(_ + 1),
+                _.map(_ * 2),
+                _.map(_.toString),
+                _.map(_.length),
+                _.map(_ > 1),
+                _.map(if _ then "Yes" else "No"),
+                _.map(_.toLowerCase),
+                _.map(_.length),
+                _.map(_ * 2)
+            )
+            assert(result.eval == 6)
+        }
+
+        "works with ten functions" in {
+            val result = (5: Int < Any).handle(
+                _.map(_ + 1),
+                _.map(_ * 2),
+                _.map(_.toString),
+                _.map(_.length),
+                _.map(_ > 1),
+                _.map(if _ then "Yes" else "No"),
+                _.map(_.toLowerCase),
+                _.map(_.length),
+                _.map(_ * 2),
+                _.map(_ > 5)
+            )
+            assert(result.eval == true)
+        }
+    }
+
+    // Not supported yet: the kernel gives the pending type a `Render` instance so a computation
+    // holding a settled value shows as `Kyo(<value>)`. This implementation has no Render wiring,
+    // so the case is kept with its code commented until the surface exists.
+    //
+    // "show" - {
+    //     "displays a settled value through the inner type's Render" in {
+    //         val i: Result[String, Int] < Any         = Result.succeed(23)
+    //         val r: Render[Result[String, Int] < Any] = Render.apply
+    //         assert(r.asString(i) == "Kyo(Success(23))")
+    //         assert(render"$i" == "Kyo(Success(23))")
+    //     }
+    // }
 
     "nested computations" - {
         sealed trait TestEffect1 extends ArrowEffect[Const[Int], Const[String]]
