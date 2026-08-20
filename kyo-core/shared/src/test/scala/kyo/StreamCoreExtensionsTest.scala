@@ -121,8 +121,29 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                 // of the one before it all change the sequence, and none of them would change the count.
                 val data = Array.tabulate(20)(i => (i + 1).toByte)
                 val is   = new java.io.ByteArrayInputStream(data)
-                for bytes <- Scope.run(Stream.fromInputStream(is, bufferSize = 8).run)
+                for bytes <- Scope.run(Stream.fromInputStream(is, bufferSize = 8.bytes).run)
                 yield assert(bytes.toArray.toSeq == data.toSeq)
+            }
+
+            // A zero-size buffer would read nothing on every pass, so the read loop would spin without ever
+            // reaching the end of the stream. One byte at a time is slow but finite, and it still delivers
+            // every byte in order, which is what this pins.
+            "reads one byte at a time when the buffer size is zero" in {
+                val data = Array.tabulate(5)(i => (i + 1).toByte)
+                val is   = new java.io.ByteArrayInputStream(data)
+                for bytes <- Scope.run(Stream.fromInputStream(is, bufferSize = ByteSize.Zero).run)
+                yield assert(bytes.toArray.toSeq == data.toSeq)
+            }
+
+            // The clamp is pinned on the function rather than through a read, because the upper end names
+            // a two-gigabyte allocation that a test cannot make.
+            "clamps a buffer size to the range an array can address" in {
+                assert(StreamCoreExtensions.readBufferCapacity(ByteSize.Zero) == 1)
+                assert(StreamCoreExtensions.readBufferCapacity(1.bytes) == 1)
+                assert(StreamCoreExtensions.readBufferCapacity(8.kib) == 8192)
+                assert(StreamCoreExtensions.readBufferCapacity(Int.MaxValue.bytes) == Int.MaxValue)
+                assert(StreamCoreExtensions.readBufferCapacity((Int.MaxValue.toLong + 1L).bytes) == Int.MaxValue)
+                assert(StreamCoreExtensions.readBufferCapacity(4.gib) == Int.MaxValue)
             }
         }
     }

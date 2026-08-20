@@ -235,10 +235,13 @@ object StreamCoreExtensions:
           * @param is
           *   the input stream to consume
           * @param bufferSize
-          *   read buffer size in bytes
+          *   read buffer size, clamped to the range an array can address: `ByteSize.Zero` reads one byte at a time rather than spinning
+          *   on a buffer that holds nothing, and anything above `Int.MaxValue` bytes reads through the largest buffer there is
           */
-        def fromInputStream(is: java.io.InputStream, bufferSize: Int = 8192)(using Frame): Stream[Byte, Sync & Scope] =
-            streamFromJavaInputStream(is, bufferSize)
+        def fromInputStream(is: java.io.InputStream, bufferSize: ByteSize = 8.kib)(using
+            Frame
+        ): Stream[Byte, Sync & Scope] =
+            streamFromJavaInputStream(is, readBufferCapacity(bufferSize))
 
         /** Merges multiple streams asynchronously. Stream stops as soon as any of the source streams complete.
           *
@@ -1142,6 +1145,23 @@ object StreamCoreExtensions:
       * The stream reads the input in chunks of `bufferSize` bytes. The `InputStream` is registered with the enclosing `Scope` and closed
       * when the scope ends (whether by normal completion, `Abort`, or cancellation).
       */
+    /** Narrows a read buffer size to the array capacity the read loop allocates.
+      *
+      * Two ends need a rule. `ByteSize.Zero` would allocate a buffer that reads nothing, which turns the read loop into a spin, so it
+      * becomes one byte. A size above `Int.MaxValue` names more bytes than an array can address, so it becomes `Int.MaxValue`: the caller
+      * asked for the largest buffer it could name and gets the largest one there is, which is what the `Int`-typed parameter this replaced
+      * already did at its own ceiling.
+      *
+      * Clamping rather than failing keeps the read total, so the effect row of the stream stays what the read itself needs and does not
+      * grow an argument-validation failure that no realistic buffer size can reach.
+      */
+    private[kyo] def readBufferCapacity(bufferSize: ByteSize): Int =
+        val bytes = bufferSize.toBytes
+        if bytes <= 0L then 1
+        else if bytes > Int.MaxValue.toLong then Int.MaxValue
+        else bytes.toInt
+    end readBufferCapacity
+
     private[kyo] def streamFromJavaInputStream(is: java.io.InputStream, bufferSize: Int = 8192)(using Frame): Stream[Byte, Sync & Scope] =
         Stream {
             Scope.acquireRelease(is)(_.close()).map { stream =>
