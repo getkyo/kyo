@@ -10,16 +10,7 @@ import scala.util.NotGiven
 opaque type <[+A, -S] = A | Kyo[A, S] | Nested[A]
 
 object `<` extends Implicits:
-    implicit private[proto] def fromKyo[A, S](k: Kyo[A, S]): A < S = k
-
-    // the one lift's boxing arm. A box lifted again is boxed again, so each level of nesting is one
-    // Nested and lower strips one. A statically pending value never lifts: CanLift rejects it, since
-    // inference would nest a computation where a merged row was meant (issue 903), and a generic
-    // function is the way to hold a computation as a value on purpose
-    private[proto] def nest[A](v: A): A < Any =
-        v match
-            case v: (Kyo[?, ?] | Nested[?]) => Nested(v)
-            case _                          => v
+    implicit private[proto] inline def fromKyo[A, S](inline k: Kyo[A, S]): A < S = k
 
     extension [A, S](inline self: A < S)
 

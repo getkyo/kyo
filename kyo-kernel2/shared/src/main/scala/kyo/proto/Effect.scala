@@ -15,8 +15,6 @@ object Effect:
     @static def defer[A, B, C, S](v: A < S, a: Arrow[A, B, S], b: Arrow[B, C, S]): C < S =
         if b eq Arrow.id then
             defer(v, a.asInstanceOf[Arrow[A, C, S]])
-        else if a eq Arrow.id then
-            defer(v, b.asInstanceOf[Arrow[A, C, S]])
         else
             new Kyo.Defer[A, B, C, S]:
                 def value = v

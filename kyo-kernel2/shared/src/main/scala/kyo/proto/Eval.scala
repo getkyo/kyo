@@ -58,7 +58,7 @@ object Eval:
                                                     override def apply(o: Loop.Outcome[OX[CX] < (EX & S), BX]) =
                                                         o match
                                                             case r: Loop.Continue[OX[CX] < (EX & S)] @unchecked =>
-                                                                Effect.defer(r._1.map(k(_)), h)
+                                                                Effect.defer(r._1.map(k), h)
                                                             case v => v.asInstanceOf[BX]
                                                     def apply[D, S2](o: Loop.Outcome[OX[CX] < (EX & S), BX] < S2, next: Arrow[BX, D, S2])
                                                         : D < (EX & S & S2) =
@@ -73,7 +73,7 @@ object Eval:
                                                     r._1.lower(
                                                         pending = _ =>
                                                             val k = stack.dump[OX[CX], AX, EX & S](pos)
-                                                            r._1.map(k(_))
+                                                            r._1.map(k)
                                                         ,
                                                         done = _ => r._1
                                                     )
@@ -98,7 +98,7 @@ object Eval:
                                                     override def apply(o: Loop.Outcome2[StateX, OX[CX] < (EX & S), BX]) =
                                                         o match
                                                             case r: Loop.Continue2[StateX, OX[CX] < (EX & S)] @unchecked =>
-                                                                Effect.defer(r._2.map(k(_)), HandlerLoopState(h, r._1))
+                                                                Effect.defer(r._2.map(k), HandlerLoopState(h, r._1))
                                                             case v => v.asInstanceOf[BX]
                                                     def apply[D, S2](
                                                         o: Loop.Outcome2[StateX, OX[CX] < (EX & S), BX] < S2,
@@ -116,7 +116,7 @@ object Eval:
                                                     r._2.lower(
                                                         pending = _ =>
                                                             val k = stack.dump[OX[CX], AX, EX & S](pos)
-                                                            r._2.map(k(_))
+                                                            r._2.map(k)
                                                         ,
                                                         done = _ => r._2
                                                     )
