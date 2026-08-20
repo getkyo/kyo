@@ -142,6 +142,27 @@ class PendingTest extends AnyFreeSpec:
         assert(Eval(answerSay(payload)) == 6)
     }
 
+    // the same shapes point-free: map takes A => B < S2, and a function returning a bare value is
+    // not one, since the alias is opaque outside its companion and a value conversion does not
+    // reach the result position of a function type. The lambda form above compiles because the lift
+    // applies to the body value
+    "a pure function passes to map point-free" in {
+        assertCompiles("""
+            val f: Int => Int    = _ + 1
+            val r: Int < Ask     = ask.map(f)
+            ()
+        """)
+    }
+
+    "a generic function passes to map point-free" in {
+        assertCompiles("""
+            def f(a: Int): Int < Say       = say("x").map(_ => a + 5)
+            def g[B](f: Int => B): B < Ask = ask.map(f)
+            val nested: (Int < Say) < Ask  = g(f)
+            ()
+        """)
+    }
+
     "a loop can end its region with a computation result" in {
         val inner: Int < Ask = ask.map(_ + 1)
         val body: Int < Give = give.map(_ => 0)
