@@ -35,17 +35,17 @@ class NestedTest extends AnyFreeSpec:
         }
 
         "boxes a computation, so it travels as data" in {
-            val inner: Int < Ask         = ask.map(_ + 1)
-            val v: (Int < Ask) < Any     = Nested.lift(inner)
+            val inner: Int < Ask     = ask.map(_ + 1)
+            val v: (Int < Ask) < Any = Nested.lift(inner)
             assert(boxed(v))
             val payload: Int < Ask = v.eval
             assert(answerAsk(41)(payload).eval == 42)
         }
 
         "boxes an already-boxed value again, one level per lift" in {
-            val inner: Int < Ask                  = ask.map(_ + 1)
-            val once: (Int < Ask) < Any           = Nested.lift(inner)
-            val twice: ((Int < Ask) < Any) < Any  = Nested.lift(once)
+            val inner: Int < Ask                 = ask.map(_ + 1)
+            val once: (Int < Ask) < Any          = Nested.lift(inner)
+            val twice: ((Int < Ask) < Any) < Any = Nested.lift(once)
             assert(boxed(twice))
             assert(boxed(twice.eval))
             assert(answerAsk(41)(twice.eval.eval).eval == 42)

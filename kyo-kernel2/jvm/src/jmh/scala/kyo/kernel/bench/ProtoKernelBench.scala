@@ -73,6 +73,25 @@ class ProtoKernelBench:
         Eval(loop(0))
     end deepRecursionPaysRescuesOnly
 
+    // the two sides of the rescue boundary: 400 stays inside one budget, 600 crosses it once
+    @Benchmark
+    def deepRecursionNoRescue: Int =
+        def loop(i: Int): Int < Any =
+            ((): Unit < Any).map { _ =>
+                if i > 400 then 0 else loop(i + 1)
+            }
+        Eval(loop(0))
+    end deepRecursionNoRescue
+
+    @Benchmark
+    def deepRecursionOneRescue: Int =
+        def loop(i: Int): Int < Any =
+            ((): Unit < Any).map { _ =>
+                if i > 600 then 0 else loop(i + 1)
+            }
+        Eval(loop(0))
+    end deepRecursionOneRescue
+
     @Benchmark
     def suspensionBaseline: Int =
         def loop(i: Int): Int < Ask =
@@ -96,7 +115,7 @@ class ProtoKernelBench:
         def loop(i: Int): Int < Ask =
             if i > Depth then i
             else ask.map(a => loop(i + a))
-        val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], loop(0))([C] => _ => Loop.continue(1), a => a)
+        val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], loop(0))([C] => _ => Loop.continue(1: Int < Any), a => a)
         Eval(r)
     end handleLoopAnswersInPlace
 
@@ -105,7 +124,10 @@ class ProtoKernelBench:
         def loop(i: Int): Int < Ask =
             if i > Depth then i
             else ask.map(a => loop(i + a))
-        val r: Int < Any = ArrowEffect.handleLoopWith(Tag[Ask], loop(0))([C] => _ => Loop.continue(1), a => a)(b => b + 1)
+        val r: Int < Any = ArrowEffect.handleLoopWith[[B] =>> Unit, [B] =>> Int, Ask, Int, Int, Any](Tag[Ask], loop(0))(
+            [C] => _ => Loop.continue(1: Int < Any),
+            a => a
+        )(b => b + 1)
         Eval(r)
     end handleLoopFusesContinuation
 
@@ -123,7 +145,7 @@ class ProtoKernelBench:
             if i > Depth then i
             else ask.map(a => loop(i + a))
         val r: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 0, loop(0))(
-            [C] => (state, _) => Loop.continue(state + 1, 1),
+            [C] => (state, _) => Loop.continue(state + 1, 1: Int < Any),
             (_, a) => a
         )
         Eval(r)
@@ -159,10 +181,10 @@ class ProtoKernelBench:
             if i > NarrowDepth then i
             else ask.map(a => loop(i + a))
         val emitted: Int < Tick = ArrowEffect.handleLoop(Tag[Ask], loop(0))(
-            [C] => _ => tick.map(t => Loop.continue(t)),
+            [C] => _ => tick.map(t => Loop.continue(t: Int < Any)),
             a => a
         )
-        val r: Int < Any = ArrowEffect.handleLoop(Tag[Tick], emitted)([C] => _ => Loop.continue(1), a => a)
+        val r: Int < Any = ArrowEffect.handleLoop(Tag[Tick], emitted)([C] => _ => Loop.continue(1: Int < Any), a => a)
         Eval(r)
     end emittingClausesPayRegionRebuild
 

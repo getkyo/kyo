@@ -4,6 +4,7 @@ import kyo.Arrow
 import kyo.Const
 import kyo.Frame
 import kyo.Tag
+import kyo.discard
 import kyo.kernel.*
 import org.scalatest.freespec.AnyFreeSpec
 
@@ -43,11 +44,13 @@ class HandlerTest extends AnyFreeSpec:
         assert(contHandler(_ + 1)(41).eval == 42)
     }
 
-    "defers a pending region result instead of forcing it" in {
+    "defers a pending region result and answers it once the drive reaches it" in {
         val h = contHandler(_ + 1)
         val r = h(ask, Arrow.id[Int])
         assert(r.evalNow.isEmpty)
-        assert(answerAsk(41)(r).eval == 42)
+        // applying the handler puts it on the drive as the innermost handler for its own tag, so the
+        // region below is never consulted: run answers with 1, then done adds 1
+        assert(answerAsk(41)(r).eval == 2)
     }
 
     "runs its continuation after done" in {
@@ -69,7 +72,7 @@ class HandlerTest extends AnyFreeSpec:
             val h    = statefulHandler(10)
             val next = Handler.HandlerLoopState(h, 40)
             assert(next.initialState == 40)
-            assert(next.tag == h.tag)
+            assert(next.tag <:< h.tag && h.tag <:< next.tag)
             assert(next.frame eq h.frame)
             assert(next(2).eval == 42)
             assert(next.apply(1, 2).eval == 3)
