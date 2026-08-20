@@ -204,6 +204,7 @@ object Eval:
             loop(v.asInstanceOf[Any < Nothing]).asInstanceOf[A]
         catch
             case ex: Throwable =>
+                // TODO is the exception tracing mechanism assuming the enrichment can happend only at the "end" in eval? That'd be incorrect but I guess we need to add Effect.catching. Design it and validate with me
                 // every throw that carries frames has already had them reconstructed at the site that
                 // ran the user code, so the boundary only rewrites the exception's own trace
                 EffectTrace.splice(ex)
