@@ -3,6 +3,7 @@ package kyo
 import izumi.reflect.Tag as ITag
 import kyo.*
 import kyo.internal.RegisterFunction
+import kyo.internal.TagHash
 import kyo.internal.TagTestMacro.test
 import scala.annotation.nowarn
 
@@ -1257,6 +1258,35 @@ class TagTest extends kyo.test.Test[Any]:
         "is pinned to its content-derived constant (process-independent determinism)" in {
             assert(Tag[Int].hash == -1492440803, s"Tag[Int].hash = ${Tag[Int].hash}")
             assert(Tag[String].hash == -59591402, s"Tag[String].hash = ${Tag[String].hash}")
+        }
+    }
+
+    // `TagHash` is the dispatch hash, not the content-stable `Tag.hash` above: it memoizes on the
+    // platforms whose `String.hashCode` does not. What has to hold is that memoizing changes nothing,
+    // so each case reads a tag twice, once filling the memo and once through it.
+    "dispatch hash memoization" - {
+
+        "agrees with hashCode, before and after the memo is filled" in {
+            trait MA
+            val tag    = Tag[MA]
+            val direct = tag.hashCode
+            assert(TagHash.of(tag) == direct)
+            assert(TagHash.of(tag) == direct)
+        }
+
+        "distinct types keep distinct dispatch hashes" in {
+            assert(TagHash.of(Tag[Int]) != TagHash.of(Tag[String]))
+        }
+
+        "repeated comparisons hold their verdict once the memo is warm" in {
+            trait MB
+            trait MC extends MB
+            val sub    = (1 to 10).map(_ => Tag[MC] <:< Tag[MB])
+            val notSub = (1 to 10).map(_ => Tag[MB] <:< Tag[MC])
+            val notEq  = (1 to 10).map(_ => Tag[MB] =:= Tag[MC])
+            assert(sub.distinct.size == 1 && sub.head)
+            assert(notSub.distinct.size == 1 && !notSub.head)
+            assert(notEq.distinct.size == 1 && !notEq.head)
         }
     }
 
