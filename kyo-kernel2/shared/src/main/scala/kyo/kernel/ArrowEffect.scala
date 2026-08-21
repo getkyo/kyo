@@ -302,19 +302,18 @@ object ArrowEffect:
 
     /** Runs a clause against the operation a computation is currently standing on, without answering it.
       *
-      * Reads only what can be read. A box and a park hold their payload in a field, where a deferral holds a
-      * method that runs the body, so the walk stops at one: a caller inspecting a computation it does not
-      * intend to evaluate must not run any of it.
+      * Parked with the IOTask integration design, which is its only caller and the only thing that can say
+      * what it should read. The reach is the open question: the previous kernel's version matched a
+      * suspension directly, and a mapped suspension was still one node, where here a map wraps it in a
+      * deferral whose payload sits behind a method that runs user code. A park holds a field and can be read;
+      * whether the rest needs marking is a decision for the design that has a use for it.
       */
-    private[kyo] inline def dispatchFirst[I[_], O[_], E <: ArrowEffect[I, O], A, S](
-        inline effectTag: Tag[E],
-        v: A < (E & S)
-    )(
-        inline f: [C] => I[C] => Unit
-    ): Unit =
-        Kyo.standing(v) match
-            case kyo: Suspend[I, O, E, Any, A, E & S] @unchecked if kyo.tag <:< effectTag => f[Any](kyo.input)
-            case _                                                                        => ()
+    // private[kyo] inline def dispatchFirst[I[_], O[_], E <: ArrowEffect[I, O], A, S](
+    //     inline effectTag: Tag[E],
+    //     v: A < (E & S)
+    // )(
+    //     inline f: [C] => I[C] => Unit
+    // ): Unit
 
     /** Answers operations while the clause allows, parking at the first it refuses so a later handler finishes the remainder.
       *
