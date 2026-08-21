@@ -26,9 +26,13 @@ Goal, user's words: fully green against kyo-kernel. A red row means the kernel i
 2. [ ] E2 `exp-inline-drive`: per-call-site inline settled loop for handleLoopState, kyo-kernel style,
    bailing to the shared region. Must also measure compile-time cost (HandleSites fixture, kernel2 currently
    0.50x). Open question: the soundness guard for applying the continuation without the stack.
-3. [ ] E3 `exp-span-continuation`: HandlerCont continuation as a Park-shaped span value; equation
-   k(a) == Park(a, entries, states, empty). Targets the whole suspension cluster and RunOnly's 1,264 B/op.
-   Regression guards: trailingMapsStayLinear, emitting row, capture/multi-shot pins.
+3. [x] E3 `exp-span-continuation` DONE, NEGATIVE, do not adopt (branch e3-span-continuation, commits
+   8214b5c0b2 + 2279542e85, worktree agent-a6a2183859f104e7a). Spans re-expand the dumped range on resume,
+   forcing the settled path to re-fold every op what the baseline folds once and reuses as a single AndThen
+   entry: fusionAfterSuspension 1.55x, RunOnly 1.49x (1,264 to 1,720 B/op), trailing 1.07x. Two wins at
+   byte-identical allocation (suspensionBaseline 0.95x, suspensionFuses 0.93x) say restore-beats-flatten is
+   real on the pure-resume path; salvageable follow-up is cheaper AndThen flattening, not representation
+   change. Two park-style casts in its Resume flagged for sign-off if ever revived.
 4. [x] E4 `exp-morphism-probe` DONE (worktree agent-a161b3ee09690d980, commit 2718475ebd). Verdict: the
    cost IS morphism-dependent. Bimorphic clause site costs kernel2 +480,046 B/op (= +24 B per answer: the
    Continue2 outcome stops being scalar-replaced at two classes) in both JVM configs, and +23% time even
