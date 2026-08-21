@@ -111,7 +111,7 @@ class LocalInfileIntegrationTest extends SqlContainerTest:
             withMyClient { client =>
                 withLoadTable(client) { tbl =>
                     // Create a temp file with CSV data, use Path.readBytesStream to upload it.
-                    Path.temp(prefix = "kyo-infile", suffix = ".csv").flatMap { tmpPath =>
+                    Path.tempUnscoped(prefix = "kyo-infile", suffix = ".csv").flatMap { tmpPath =>
                         Scope.ensure(Abort.run[FileStructureException](tmpPath.remove).unit).andThen {
                             val csv = "1,alice\n2,bob\n3,carol\n"
                             tmpPath.writeBytes(Span.from(csv.getBytes(java.nio.charset.StandardCharsets.UTF_8))).flatMap { _ =>

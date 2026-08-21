@@ -24,7 +24,7 @@ Each `Path` method carries the failure category it can actually raise:
 |---|---|---|
 | Inspection and reads | `exists`, `isDirectory`, `read`, `readBytes`, `readLines`, `size`, `stat`, `realPath`, the read streams | `Sync & Abort[FileReadException]` |
 | Writes | `write`, `writeBytes`, `writeLines`, `append`, `truncate`, `setLastModified` | `Sync & Abort[FileWriteException]` |
-| Structure changes | `mkDir`, `mkFile`, `list`, `walk`, `move`, `copy`, `remove`, `removeAll`, `tempDir` | `Sync & Abort[FileStructureException]` |
+| Structure changes | `mkDir`, `mkFile`, `list`, `walk`, `move`, `copy`, `remove`, `removeAll`, `temp`, `tempDir` | `Sync & Abort[FileStructureException]` |
 
 `isDirectory`, `isRegularFile`, and `isSymbolicLink` answer `false` for an inaccessible path and carry only `Sync`.
 
@@ -345,13 +345,28 @@ val appData: Path   = proj.data
 
 `ProjectPaths` fields: `path`, `cache`, `config`, `data`, `dataLocal`, `preference`, `runtime`.
 
-`Path.tempDir(prefix)` creates a directory and registers its recursive removal for when the enclosing `Scope` closes:
+`Path.temp(prefix, suffix)` creates a file and `Path.tempDir(prefix)` creates a directory. Both register removal for
+when the enclosing `Scope` closes, so the effect row carries `Scope`:
 
 ```scala
 import kyo.*
 
+val tmpFile: Path < (Sync & Scope & Abort[FileStructureException]) =
+    Path.temp("kyo-build-", ".json")
+
 val tmpDir: Path < (Sync & Scope & Abort[FileStructureException]) =
     Path.tempDir("kyo-build-")
+```
+
+When the file or directory must outlive the scope that creates it, `Path.tempUnscoped` and `Path.tempDirUnscoped`
+skip the registration and hand removal to the caller. Reach for them only when something else owns the lifetime, such
+as a directory passed to a container or a background process that outlives the request:
+
+```scala
+import kyo.*
+
+val ownedByCaller: Path < (Sync & Abort[FileStructureException]) =
+    Path.tempDirUnscoped("kyo-container-certs-")
 ```
 
 On JVM and Scala Native, `path.toJava: java.nio.file.Path` converts to the standard library type without a cast. It is not available on Scala.js.

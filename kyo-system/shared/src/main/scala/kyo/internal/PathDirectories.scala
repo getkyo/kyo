@@ -30,7 +30,7 @@ private[kyo] trait PathDirectories:
     private[kyo] def osPlatform: String
 
     /** Creates a temporary file. Platform-specific. */
-    private[kyo] def temp(prefix: String, suffix: String)(using Frame): Path < (Sync & Abort[FileStructureException])
+    private[kyo] def tempUnscoped(prefix: String, suffix: String)(using Frame): Path < (Sync & Abort[FileStructureException])
 
     /** Creates a temporary directory. Platform-specific. */
     private[kyo] def tempDirUnscoped(prefix: String)(using Frame): Path < (Sync & Abort[FileStructureException])
@@ -70,19 +70,22 @@ private[kyo] trait PathDirectories:
     end platformProjectPaths
 
     /** Creates a temporary directory in the platform temporary location and registers its recursive
-      * removal with the enclosing `Scope`. There is no unscoped public temp-directory primitive.
+      * removal with the enclosing `Scope`. Use `tempDirUnscoped` when the directory must outlive the
+      * scope that creates it.
       */
     def tempDir(prefix: String = "kyo")(using Frame): Path < (Sync & Scope & Abort[FileStructureException]) =
         tempDirUnscoped(prefix).map { dir =>
             Scope.acquireRelease(dir)(created => Abort.run[FileStructureException](created.removeAll).unit)
         }
 
-    /** Creates a temporary file and registers it for deletion when the enclosing Scope closes. */
-    private[kyo] def tempScoped(
+    /** Creates a temporary file in the platform temporary location and registers its removal with the
+      * enclosing `Scope`. Use `tempUnscoped` when the file must outlive the scope that creates it.
+      */
+    private[kyo] def temp(
         prefix: String = "kyo",
         suffix: String = ".tmp"
     )(using Frame): Path < (Sync & Scope & Abort[FileStructureException]) =
-        temp(prefix, suffix).map { p =>
+        tempUnscoped(prefix, suffix).map { p =>
             Scope.acquireRelease(p) { q =>
                 Abort.run[FileStructureException](q.removeAll).unit
             }

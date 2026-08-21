@@ -293,7 +293,7 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     "sslmode=verify-ca with malformed PEM at sslrootcert fails with SqlConnectionException".tagged("kyo.OwnContainer") in {
         withTlsContainer { ctx =>
             // Write a malformed PEM file to a temp path using kyo.Path (cross-platform).
-            Path.temp(prefix = "kyo-sql-bad-cert-", suffix = ".pem").flatMap { tempPath =>
+            Path.tempUnscoped(prefix = "kyo-sql-bad-cert-", suffix = ".pem").flatMap { tempPath =>
                 tempPath.writeBytes(Span.from("NOT A VALID PEM CERTIFICATE".getBytes(StandardCharsets.UTF_8))).flatMap { _ =>
                     Scope.ensure(Abort.run[FileSystemException](tempPath.remove).unit).andThen {
                         val badPath = tempPath.toString

@@ -292,7 +292,7 @@ class ChromeDownloaderTest extends BaseBrowserTest:
         // 127.0.0.1:0 is reserved as 'no port' and refuses connection immediately.
         val url = "http://127.0.0.1:0/nonexistent"
         Scope.run {
-            Path.tempScoped("kyo-cd-dl-", ".zip").map { dest =>
+            Path.temp("kyo-cd-dl-", ".zip").map { dest =>
                 Abort.run[BrowserSetupException](ChromeDownloader.downloadZip(url, dest, 5.minutes)).map {
                     case Result.Failure(ex: BrowserSetupFailedException) => assert(ex.getMessage.contains("failed to download Chrome"))
                     case other => fail(s"expected Failure(BrowserSetupFailedException) but got $other")
@@ -321,7 +321,7 @@ class ChromeDownloaderTest extends BaseBrowserTest:
         Scope.run {
             for
                 server <- HttpServer.init(0, "127.0.0.1")(handler)
-                dest   <- Path.tempScoped("kyo-cd-stream-", ".zip")
+                dest   <- Path.temp("kyo-cd-stream-", ".zip")
                 url = s"http://${server.host}:${server.port}/chrome.zip"
                 // Force the buffered ceiling below the body size: getBinary would reject, the streamed path must not.
                 result <- HttpClient.withConfig(_.maxResponseLength(64 * 1024)) {
@@ -340,7 +340,7 @@ class ChromeDownloaderTest extends BaseBrowserTest:
     "extractZip on a garbage-bytes archive raises BrowserSetupFailedException" in {
         Scope.run {
             for
-                tmp <- Path.tempScoped("kyo-cd-zip-", ".zip")
+                tmp <- Path.temp("kyo-cd-zip-", ".zip")
                 garbage = Span[Byte](0x00.toByte, 0xff.toByte, 0x00.toByte, 0xff.toByte, 0xde.toByte, 0xad.toByte, 0xbe.toByte, 0xef.toByte)
                 _ <- tmp.writeBytes(garbage)
                 dest = Path(tmp.unsafe.show + "-extract")

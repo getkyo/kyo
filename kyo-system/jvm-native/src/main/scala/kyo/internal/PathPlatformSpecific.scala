@@ -556,16 +556,17 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
     def of(path: java.nio.file.Path): Path =
         new NioPathUnsafe(path.normalize()).safe
 
-    /** Creates a new temporary file with the given prefix and suffix.
+    /** Creates a new temporary file with the given prefix and suffix, leaving its removal to the caller.
       *
-      * The file is created in the system default temporary directory. Available on JVM and Scala Native only.
+      * The file is created in the system default temporary directory. Use `temp` for a file the enclosing
+      * `Scope` removes.
       *
       * @param prefix
       *   prefix for the temp file name (default `"kyo"`)
       * @param suffix
       *   suffix for the temp file name (default `".tmp"`)
       */
-    def temp(
+    def tempUnscoped(
         prefix: String = "kyo",
         suffix: String = ".tmp"
     )(using Frame): Path < (Sync & Abort[FileStructureException]) =
@@ -585,9 +586,10 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
             )
         )
 
-    /** Creates a new temporary directory with the given prefix.
+    /** Creates a new temporary directory with the given prefix, leaving its removal to the caller.
       *
-      * The directory is created in the system default temporary directory. Available on JVM and Scala Native only.
+      * The directory is created in the system default temporary directory. Use `tempDir` for a directory the
+      * enclosing `Scope` removes.
       *
       * @param prefix
       *   prefix for the temp directory name (default `"kyo"`)
@@ -618,11 +620,11 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
       * @param suffix
       *   suffix for the temp file name (default `".tmp"`)
       */
-    override def tempScoped(
+    override def temp(
         prefix: String = "kyo",
         suffix: String = ".tmp"
     )(using Frame): Path < (Sync & Scope & Abort[FileStructureException]) =
-        super.tempScoped(prefix, suffix)
+        super.temp(prefix, suffix)
 
     private[kyo] def make(parts: Chunk[String]): Path =
         val isAbsolute = parts.headOption.contains("")

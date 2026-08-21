@@ -787,7 +787,7 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
         end if
     end make
 
-    def temp(
+    def tempUnscoped(
         prefix: String = "kyo",
         suffix: String = ".tmp"
     )(using Frame): Path < (Sync & Abort[FileStructureException]) =
@@ -829,11 +829,11 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
       * @param suffix
       *   suffix for the temp file name (default `".tmp"`)
       */
-    override def tempScoped(
+    override def temp(
         prefix: String = "kyo",
         suffix: String = ".tmp"
     )(using Frame): Path < (Sync & Scope & Abort[FileStructureException]) =
-        super.tempScoped(prefix, suffix)
+        super.temp(prefix, suffix)
 
     /** Generates a random identifier using the Node.js crypto module (avoids java.security.SecureRandom). */
     private def randomId(): String =

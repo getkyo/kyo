@@ -184,7 +184,7 @@ class CommandTest extends kyo.test.Test[Any]:
 
     "stdoutToFile writes stdout to file" in {
         for
-            path    <- Path.temp("kyo-stdout-file-test", ".txt")
+            path    <- Path.tempUnscoped("kyo-stdout-file-test", ".txt")
             _       <- echo("stdout line").stdoutToFile(path).waitFor
             content <- path.read
             _       <- path.remove
@@ -197,7 +197,7 @@ class CommandTest extends kyo.test.Test[Any]:
         assume(!(isWindows && kyo.internal.Platform.isNative), "ProcessBuilder append broken on Native Windows")
         {
             for
-                path    <- Path.temp("kyo-stdout-append-test", ".txt")
+                path    <- Path.tempUnscoped("kyo-stdout-append-test", ".txt")
                 _       <- path.write("line1\n")
                 _       <- echo("line2").stdoutToFile(path, append = true).waitFor
                 content <- path.read
@@ -213,7 +213,7 @@ class CommandTest extends kyo.test.Test[Any]:
         assumeUnix("stderr redirect");
         {
             for
-                path    <- Path.temp("kyo-stderr-file-test", ".txt")
+                path    <- Path.tempUnscoped("kyo-stderr-file-test", ".txt")
                 _       <- Command("sh", "-c", "echo err >&2").stderrToFile(path).waitFor
                 content <- path.read
                 _       <- path.remove
@@ -226,7 +226,7 @@ class CommandTest extends kyo.test.Test[Any]:
         assumeUnix("stderr redirect");
         {
             for
-                path    <- Path.temp("kyo-stderr-append-test", ".txt")
+                path    <- Path.tempUnscoped("kyo-stderr-append-test", ".txt")
                 _       <- path.write("first\n")
                 _       <- Command("sh", "-c", "echo second >&2").stderrToFile(path, append = true).waitFor
                 content <- path.read
@@ -548,7 +548,7 @@ class CommandTest extends kyo.test.Test[Any]:
         assume(!(isWindows && kyo.internal.Platform.isNative), "ProcessBuilder append broken on Native Windows")
         {
             for
-                path    <- Path.temp("kyo-stdout-append-preserve-test", ".txt")
+                path    <- Path.tempUnscoped("kyo-stdout-append-preserve-test", ".txt")
                 _       <- path.write("line1\n")
                 _       <- echo("line2").stdoutToFile(path, append = true).waitFor
                 content <- path.read

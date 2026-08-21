@@ -2551,7 +2551,7 @@ class PathTest extends kyo.test.Test[Any]:
     }
 
     // =========================================================================
-    // BasePaths.tmp + Path.temp / tempDir / tempScoped
+    // BasePaths.tmp + Path.temp / tempUnscoped / tempDir / tempDirUnscoped
     // =========================================================================
 
     "basePaths.tmp is a non-empty path" in {
@@ -2562,17 +2562,17 @@ class PathTest extends kyo.test.Test[Any]:
         Path.basePaths.tmp.exists.map(e => assert(e))
     }
 
-    "Path.temp creates a file that exists" in {
+    "Path.tempUnscoped creates a file that exists" in {
         for
-            p      <- Path.temp()
+            p      <- Path.tempUnscoped()
             exists <- p.exists
             _      <- p.remove
         yield assert(exists)
     }
 
-    "Path.temp with custom prefix and suffix" in {
+    "Path.tempUnscoped with custom prefix and suffix" in {
         for
-            p <- Path.temp("myprefix", ".myext")
+            p <- Path.tempUnscoped("myprefix", ".myext")
             _ <- p.remove
         yield assert(p.name.exists(n => n.startsWith("myprefix") && n.endsWith(".myext")))
     }
@@ -2587,17 +2587,47 @@ class PathTest extends kyo.test.Test[Any]:
         }
     }
 
-    "Path.tempScoped auto-deletes on scope close" in {
+    "Path.temp auto-deletes on scope close" in {
         for
             captured <- AtomicRef.init[Maybe[Path]](Absent)
             _ <- Scope.run {
-                Path.tempScoped().map { p =>
+                Path.temp().map { p =>
                     captured.set(Present(p)).andThen(p)
                 }
             }
             maybePath   <- captured.get
             stillExists <- maybePath.get.exists
         yield assert(!stillExists)
+        end for
+    }
+
+    "Path.tempUnscoped survives scope close" in {
+        for
+            captured <- AtomicRef.init[Maybe[Path]](Absent)
+            _ <- Scope.run {
+                Path.tempUnscoped().map { p =>
+                    captured.set(Present(p)).andThen(p)
+                }
+            }
+            maybePath   <- captured.get
+            stillExists <- maybePath.get.exists
+            _           <- maybePath.get.remove
+        yield assert(stillExists)
+        end for
+    }
+
+    "Path.tempDirUnscoped survives scope close" in {
+        for
+            captured <- AtomicRef.init[Maybe[Path]](Absent)
+            _ <- Scope.run {
+                Path.tempDirUnscoped("kyotestdir-unscoped").map { p =>
+                    captured.set(Present(p)).andThen(p)
+                }
+            }
+            maybePath   <- captured.get
+            isDirectory <- maybePath.get.isDirectory
+            _           <- maybePath.get.removeAll
+        yield assert(isDirectory)
         end for
     }
 
