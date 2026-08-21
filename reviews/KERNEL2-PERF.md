@@ -67,27 +67,33 @@ Three things worth reading out of this table:
 
 Sorted worst to best for kernel2. Both boards ran back to back in one session, `-f 2 -wi 5 -i 5 -prof gc`.
 
-| | row | old µs | kernel2 µs | | old B/op | kernel2 B/op | |
-|---|---|---:|---:|---|---:|---:|---|
-| 🔴 | `fusionAfterSuspensionRunOnly` | 0.261 | 2.515 | 9.63x | 0 | 4792 | — |
-| 🔴 | `fusionAfterSuspension` | 82.6 | 565.7 | 6.85x | 408437 | 1385460 | 3.39x |
-| 🔴 | `statefulAnswersPaySuccessor` | 144.2 | 580.9 | 4.03x | 1040140 | 798124 | 🟢 0.77x |
-| 🔴 | `foreignCrossingsPayRotation` | 310.2 | 881.4 | 2.84x | 1680202 | 1760310 | 1.05x |
-| 🔴 | `suspensionBaseline` | 122.0 | 183.4 | 1.50x | 560081 | 640137 | 1.14x |
-| 🔴 | `sharedHandlerPaysDispatch` | 128.3 | 190.7 | 1.49x | 240407 | 240457 | ⚪ 1.00x |
-| 🔴 | `continuationBodiesFuse` | 23.4 | 33.1 | 1.41x | 56072 | 64136 | 1.14x |
-| 🔴 | `suspensionFusesContinuation` | 68.0 | 96.1 | 1.41x | 240050 | 240097 | ⚪ 1.00x |
-| 🔴 | `handleLoopAnswersInPlace` | 128.3 | 163.8 | 1.28x | 960136 | 640137 | 🟢 0.67x |
-| 🔴 | `evalFixedOverhead` | 0.009 | 0.011 | 1.26x | 0 | 0 | ⚪ |
-| 🔴 | `userTypesSkipKernelWrapping` | 41.4 | 47.0 | 1.14x | 177056 | 176848 | ⚪ 1.00x |
-| ⚪ | `deepRecursionPaysRescuesOnly` | 52.6 | 51.2 | 0.97x | 2128 | 912 | 🟢 0.43x |
-| ⚪ | `fusionPastBudgetPaysRescuesOnly` | 45.9 | 44.0 | 0.96x | 1128 | 664 | 🟢 0.59x |
-| ⚪ | `idleHandlerAddsNothing` | 46.1 | 44.0 | 0.95x | 1224 | 704 | 🟢 0.58x |
-| 🟢 | `inlineLimitCostsTimeNotAllocation` | 324.2 | 284.3 | 0.88x | 724434 | 740034 | 1.02x |
-| 🟢 | `fusionAllocatesNothing` | 0.791 | 0.553 | 0.70x | 0 | 0 | ⚪ |
-| 🟢 | `uncachedValuesPayBoxingOnly` | 70.8 | 46.6 | 0.66x | 141776 | 155376 | 1.10x |
-| 🟢 | `inlineLimitKeepsZeroAllocation` | 2.07 | 1.33 | 0.64x | 0 | 0 | ⚪ |
-| 🟢 | **`trailingMapsStayLinear`** | **622010** | **1554** | **0.0025x** | 1601251641 | 3840147 | **0.0024x** |
+Each ratio carries its own verdict, as in the compile table above: the `time` column judges the two time
+columns to its left, the `alloc` column judges the two byte columns to its left.
+
+| row | old µs | kernel2 µs | time | old B/op | kernel2 B/op | alloc |
+|---|---:|---:|---|---:|---:|---|
+| `fusionAfterSuspensionRunOnly` | 0.261 | 2.515 | 🔴 9.63x | 0 | 4792 | 🔴 none → 4792 |
+| `fusionAfterSuspension` | 82.6 | 565.7 | 🔴 6.85x | 408437 | 1385460 | 🔴 3.39x |
+| `statefulAnswersPaySuccessor` | 144.2 | 580.9 | 🔴 4.03x | 1040140 | 798124 | 🟢 0.77x |
+| `foreignCrossingsPayRotation` | 310.2 | 881.4 | 🔴 2.84x | 1680202 | 1760310 | ⚪ 1.05x |
+| `suspensionBaseline` | 122.0 | 183.4 | 🔴 1.50x | 560081 | 640137 | 🔴 1.14x |
+| `sharedHandlerPaysDispatch` | 128.3 | 190.7 | 🔴 1.49x | 240407 | 240457 | ⚪ 1.00x |
+| `continuationBodiesFuse` | 23.4 | 33.1 | 🔴 1.41x | 56072 | 64136 | 🔴 1.14x |
+| `suspensionFusesContinuation` | 68.0 | 96.1 | 🔴 1.41x | 240050 | 240097 | ⚪ 1.00x |
+| `handleLoopAnswersInPlace` | 128.3 | 163.8 | 🔴 1.28x | 960136 | 640137 | 🟢 0.67x |
+| `evalFixedOverhead` | 0.009 | 0.011 | ⚪ 1.26x, at the timer's floor | 0 | 0 | ⚪ |
+| `userTypesSkipKernelWrapping` | 41.4 | 47.0 | 🔴 1.14x | 177056 | 176848 | ⚪ 1.00x |
+| `deepRecursionPaysRescuesOnly` | 52.6 | 51.2 | ⚪ 0.97x | 2128 | 912 | 🟢 0.43x |
+| `fusionPastBudgetPaysRescuesOnly` | 45.9 | 44.0 | ⚪ 0.96x | 1128 | 664 | 🟢 0.59x |
+| `idleHandlerAddsNothing` | 46.1 | 44.0 | ⚪ 0.95x | 1224 | 704 | 🟢 0.58x |
+| `inlineLimitCostsTimeNotAllocation` | 324.2 | 284.3 | 🟢 0.88x | 724434 | 740034 | ⚪ 1.02x |
+| `fusionAllocatesNothing` | 0.791 | 0.553 | 🟢 0.70x | 0 | 0 | ⚪ both zero |
+| `uncachedValuesPayBoxingOnly` | 70.8 | 46.6 | 🟢 0.66x | 141776 | 155376 | 🔴 1.10x |
+| `inlineLimitKeepsZeroAllocation` | 2.07 | 1.33 | 🟢 0.64x | 0 | 0 | ⚪ both zero |
+| **`trailingMapsStayLinear`** | **622010** | **1554** | **🟢 0.0025x** | 1601251641 | 3840147 | **🟢 0.0024x** |
+
+`evalFixedOverhead` is 9 against 11 nanoseconds with a ±1 ns error, so its 1.26x is the timer's resolution
+rather than a difference; it is the one row where the ratio should not be read at all.
 
 ### Confirmation at `-f 3 -wi 10 -i 10`
 
