@@ -74,9 +74,16 @@ TransformBase, f statically bound, Safepoint.enter-gated local execution) is the
    expansions name only public surface). Stage 2: eval-governed local multi-answer loop, state in a
    local, budget and the eval's stop honored; the two EvalTest pins E2 broke must stay green. Also
    measures the compile-time cost (HandleSites/SuspendSites).
-6. [ ] F2 `exp-suspension-cluster`: attribute the ~1.4x cont-family gap and foreignCrossings 2.63x by
-   isolation probes (find walk with Tag <:< per foreign crossing, dump fold, defer-per-resume, clause
-   dispatch), then the cheapest named lever. E3's restore-beats-flatten salvage noted.
+6. [x] F2 `exp-suspension-cluster` DONE (branch worktree-agent-a205e32a91b7ad22f, report a2ca534b2d).
+   Attribution: the cont-family red is composition Defers + per-suspension dispatch round trips +
+   clause-boundary boxing, NOT the AndThen fold; foreign adds a Chain fold/walk per crossing (~25%).
+   L1 ADOPT: AndThen.apply peels its first step t(v, cont) instead of deferring (same law, no node;
+   24 B saved per application): trailing 0.80x, RunOnly 0.82x, fusionAfterSuspension 0.90x vs base;
+   34-row screen no row above 1.04x, movers all wins; 976 green. L2 dropped on measurement (flat push
+   compiled 2.4x larger). Law learned and pinned: Chain.apply MUST defer (tail may carry a region);
+   AndThen immune by type. Remaining reds attributed for next steps: cont dispatch/boxing (F1's
+   direction applied to HandlerCont), foreign fold/walk, RunOnly at the folded-continuation floor
+   (1,240 B/op vs CPS 0).
 7. [x] F3 `exp-small-reds` DONE (branch f3-small-reds, 41d8ee110b). evalFixedOverhead CLOSED
    red to 0.22x of kyo-kernel: batch probe exposed exactly one result box per settled eval (13.98
    B/op) escaping the non-inline Eval.apply boundary; .eval settled fast path fixes it (2ns, ~0 B,
