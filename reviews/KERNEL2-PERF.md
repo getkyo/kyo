@@ -5,6 +5,20 @@ from a run in this session; nothing is carried over from an earlier one.
 
 ---
 
+## What is being compared
+
+**"old kernel" is `kyo-kernel`**, the CPS kernel in the repo today, which everything above the kernel is still
+written against. **"kernel2" is `kyo-kernel2`**, the evaluator-and-stack rewrite.
+
+- For runtime, the old kernel's numbers come from `kyo-kernel-bench`
+  (`kyo-kernel/bench/src/main/scala/kyo/kernel/bench/KernelBench.scala`), a mirror of kernel2's board carrying
+  the same row bodies written against the old surface: `ArrowEffect.handle(tag, v)(clause)` where kernel2
+  writes `handleCont(tag, v)(clause, done)`. It is a separate sbt project because `kyo-kernel`'s Test
+  configuration depends on kyo-test and the stack above it, which is mid-migration.
+- For compile time, the same fixture text is compiled twice, once with
+  `kyo-kernel/jvm/target/scala-3.8.4/classes` on the classpath and once with kernel2's, everything else held
+  identical.
+
 ## Method
 
 **Compile time.** `kyo-compile-bench`: an in-process dotc compiles one fixture file per invocation against one
