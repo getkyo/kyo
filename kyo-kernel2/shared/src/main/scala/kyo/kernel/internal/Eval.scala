@@ -205,7 +205,16 @@ object Eval:
                     // innermost binding of its tag, or absent where none binds it
                     if kyo.bound.isDefined then
                         stack.push(kyo)
-                        loop(kyo.resume(stack.state(0)))
+                        val held = stack.state[Any](0)
+                        // a binding that owes something on the way out owes it exactly as a bracket does, so
+                        // it is a `Finalizer`: above the binding, so it runs where the extent ends, and in
+                        // the drain, so it still runs when the extent is abandoned rather than left
+                        kyo.release.foreach { release =>
+                            val fin = new Finalizer(Arrow(release), held.getOrElse(bug("bound value missing")))
+                            stack.pushFinalizer(fin)
+                            stack.push(fin)
+                        }
+                        loop(kyo.resume(held))
                     else
                         loop(kyo.resume(stack.lookup(kyo.key)))
                 case kyo: Suspend[IX, OX, EX, CX, A, S] @unchecked =>

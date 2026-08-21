@@ -27,8 +27,9 @@ import org.scalatest.freespec.AnyFreeSpec
   */
 class PendingExpansionSiteTest extends AnyFreeSpec:
 
-    sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
-    sealed trait Say extends ArrowEffect[Const[String], Const[Unit]]
+    sealed trait Ask   extends ArrowEffect[Const[Unit], Const[Int]]
+    sealed trait Say   extends ArrowEffect[Const[String], Const[Unit]]
+    sealed trait Level extends ContextEffect[Int]
 
     def ask: Int < Ask             = ArrowEffect.suspend[Any](Tag[Ask], ())
     def say(s: String): Unit < Say = ArrowEffect.suspend[Any](Tag[Say], s)
@@ -267,6 +268,44 @@ class PendingExpansionSiteTest extends AnyFreeSpec:
             // the clause answers 7 and advances the state to 8, so the body settles at 8 and the done
             // clause adds the final state, not the initial one
             assert(Eval(v) == 160)
+        }
+
+        "catching" in {
+            val v = Effect.catching((throw new RuntimeException("boom")): Int < Any)(_ => 42)
+            assert(Eval(v) == 42)
+        }
+
+        "bracket" in {
+            var released = false
+            val v        = Effect.bracket(1)(_ => released = true)(r => ask.map(_ + r))
+            assert(Eval(answer(v)) == 2)
+            assert(released)
+        }
+
+        "ContextEffect.suspend and handle" in {
+            val v = ContextEffect.suspend(Tag[Level])
+            assert(Eval(ContextEffect.handle(Tag[Level], 42)(v)) == 42)
+        }
+
+        "ContextEffect.suspendWith" in {
+            val v = ContextEffect.suspendWith(Tag[Level])(l => ask.map(_ + l))
+            assert(Eval(answer(ContextEffect.handle(Tag[Level], 41)(v))) == 42)
+        }
+
+        "ContextEffect.suspend with a default" in {
+            assert(Eval(ContextEffect.suspend(Tag[Level], -1)) == -1)
+        }
+
+        "ContextEffect.suspendWith with a default" in {
+            val v = ContextEffect.suspendWith(Tag[Level], 40)(l => ask.map(_ + l))
+            assert(Eval(answer(v)) == 41)
+        }
+
+        "ContextEffect.handle layering" in {
+            val v = ContextEffect.handle(Tag[Level], 100, _ * 2) {
+                ContextEffect.handle(Tag[Level], 100, _ * 2)(ContextEffect.suspend(Tag[Level]))
+            }
+            assert(Eval(v) == 200)
         }
 
         "a region nested under another effect" in {

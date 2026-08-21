@@ -4,6 +4,7 @@ import kyo.Arrow
 import kyo.Arrow.Transform
 import kyo.Frame
 import kyo.Maybe
+import kyo.Maybe.*
 import kyo.Span
 import kyo.Tag
 import kyo.kernel.*
@@ -122,17 +123,32 @@ object Kyo:
         /** What this binds, given what the enclosing scope binds, or absent where this only reads. */
         def bound: Maybe[Maybe[V] => V]
 
-        /** What a computation crossing a boundary inherits from this binding, or absent where it inherits
-          * nothing.
+        /** What a computation forked from here receives, given what this holds, or absent where nothing
+          * crosses.
           *
-          * The same shape as `bound`, and for the same reason: a child resolves it against what it has bound
-          * rather than carrying the parent's resolution, which is what makes an inherited `Local` merge into
-          * the child's map instead of replacing it.
-          *
-          * Inheriting by default, and a binding that must not cross says so here. That keeps the marker out
-          * of the kernel: nothing type-tests for a non-inheritable effect, each binding answers for itself.
+          * The binding answers for itself rather than the kernel testing it for a marker, so an effect that
+          * must not cross says so here, and one that crosses as something else, a counter reset for children
+          * say, can say that too.
           */
-        def inherit: Maybe[Maybe[V] => V] = bound
+        def fork(held: V): Maybe[V] < S = Maybe(held)
+
+        /** What this holds once a forked computation ends, given what it holds now and what the fork ended
+          * with.
+          *
+          * The pair with `fork` is what an isolate is: taking the fork's value is one strategy, keeping this
+          * one is another, and merging them is a third, which is the whole of `Var.isolate`.
+          */
+        def join(held: V, forked: V): V < S = held
+
+        /** What this owes when its extent ends, given what it holds, or absent where it owes nothing.
+          *
+          * The eval turns it into a `Finalizer` when the entry is installed, which is what makes it run once
+          * whether the extent is left, unwound past, or abandoned with the continuation that held it.
+          *
+          * `release` rather than `finalize`, which would sit on top of `Object.finalize`, and the same word
+          * `Arrow.Bracket` already uses for it.
+          */
+        def release: Maybe[V => Any < Any] = Absent
 
         /** Where the value flows: the bound body for a bind, the read's continuation for a read.
           *
