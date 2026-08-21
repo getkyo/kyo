@@ -60,7 +60,16 @@ any eval exists); the converged design runs the answer step at EVAL time inside 
 generated handler class, which E2's own verdict names as the sound home. The map expansion (per-site
 TransformBase, f statically bound, Safepoint.enter-gated local execution) is the in-repo precedent.
 
-5. [ ] F1 `exp-answer-in-class`: the per-answer step moves into the generated HandlerLoopState class.
+5. [x] F1 `exp-answer-in-class` DONE, VERDICT ADOPT (branch exp-f1-answer-in-class, final report
+   376cf5403c). stateful 597.77 to 90.81us = 0.63x of kyo-kernel; statefulTwiceBi==Mono to 1%
+   (morphism-independent by construction); handleLoopAnswersInPlace 0.67x; bands from bimodal
+   +-160-316 to +-1-2; compile cost unmeasurable; 981 tests; five Out-cell hostile pins green;
+   two representation-contract kernel bugs found and fixed at root en route. One flip-sweep
+   incident, repaired and recorded (b69b7293a5). Restructured post-ruling: templates inline in
+   Handler, ArrowEffect is wiring; restructured form measured 0.89x of pre-restructure. Open for
+   user review: single seam method; Answered-sum scaladoc on Out; flagged casts and private[kyo]
+   surface (Out, nextAnswer, resuspend). Remaining reds are handleCont-family (F2 territory).
+5b. [was] F1 original brief: the per-answer step moves into the generated HandlerLoopState class.
    Stage 1: single answer per dispatch, allocation-free state crossing (accessibility wall: user-site
    expansions name only public surface). Stage 2: eval-governed local multi-answer loop, state in a
    local, budget and the eval's stop honored; the two EvalTest pins E2 broke must stay green. Also
@@ -68,8 +77,13 @@ TransformBase, f statically bound, Safepoint.enter-gated local execution) is the
 6. [ ] F2 `exp-suspension-cluster`: attribute the ~1.4x cont-family gap and foreignCrossings 2.63x by
    isolation probes (find walk with Tag <:< per foreign crossing, dump fold, defer-per-resume, clause
    dispatch), then the cheapest named lever. E3's restore-beats-flatten salvage noted.
-7. [ ] F3 `exp-small-reds`: name the userTypesSkipKernelWrapping 1.11x mechanism (Box vs Int
-   asymmetry) and make evalFixedOverhead readable via probe rows.
+7. [x] F3 `exp-small-reds` DONE (branch f3-small-reds, 41d8ee110b). evalFixedOverhead CLOSED
+   red to 0.22x of kyo-kernel: batch probe exposed exactly one result box per settled eval (13.98
+   B/op) escaping the non-inline Eval.apply boundary; .eval settled fast path fixes it (2ns, ~0 B,
+   controls flat, 976 green). userTypes 1.12x mechanism NAMED, fix deliberately not taken:
+   Safepoint.get's volatile AtomicReferenceArray slot read is ~18% of every settled row; the lever
+   (plain read on ownership check, VarHandle on stop/CAS paths) needs a Stop-visibility argument
+   and concurrency pins. QUEUED as a future lever worth ~18% on all settled rows.
 
 ## Held items (do not start while explorations run, they collide)
 
