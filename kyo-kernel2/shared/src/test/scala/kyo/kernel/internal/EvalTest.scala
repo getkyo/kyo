@@ -72,7 +72,7 @@ class EvalTest extends AnyFreeSpec:
             assert(Eval((1: Int < Any).map(_ + 1).map(_ * 10)) == 20)
         }
 
-        "drives andThen and unit" in {
+        "evaluates andThen and unit" in {
             assert(Eval((1: Int < Any).andThen(2: Int < Any)) == 2)
             assert(Eval((1: Int < Any).unit) == ())
         }
@@ -680,7 +680,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         // The two own-tag shapes are not the same law, and the signature is what separates them.
-        // A clause SUSPENDING on its own tag happens at row S, outside the region, so the drive has
+        // A clause SUSPENDING on its own tag happens at row S, outside the region, so the eval has
         // popped this handler and the successor answers. A clause's ANSWER carries row E & S, which
         // is region currency, so it runs with this handler still installed and this handler answers
         // it. The answer shape is pinned under "handleLoop" above; this is the suspension shape.
@@ -833,7 +833,7 @@ class EvalTest extends AnyFreeSpec:
             assert(Eval(r) == 101)
         }
 
-        "a continuation folded from the drive stack runs every pending map exactly once" in {
+        "a continuation folded from the eval stack runs every pending map exactly once" in {
             for depth <- List(8, 64) do
                 val runs = new Array[Int](depth)
                 val r: Int < Any =
@@ -853,7 +853,7 @@ class EvalTest extends AnyFreeSpec:
                 assert(runs.forall(_ == 2))
         }
 
-        "stays valid after its drive completes, replaying the trailing maps once per shot" in {
+        "stays valid after its eval completes, replaying the trailing maps once per shot" in {
             for depth <- List(8, 64) do
                 val runs                                = new Array[Int](depth)
                 var stored: Maybe[Arrow[Int, Int, Ask]] = Maybe.empty

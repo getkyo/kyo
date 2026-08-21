@@ -253,7 +253,7 @@ class KernelBench:
         ArrowEffect.handleCont(Tag[Ask], loop(0))([X] => (_, cont) => cont(1), a => a).eval
     end suspensionFusesContinuation
 
-    /** suspensionBaseline driven through Eval.partial, the scheduler entry: measures the partial
+    /** suspensionBaseline evaluated through Eval.partial, the scheduler entry: measures the partial
       * mode's cost including the periodic preemption check on the budget path.
       */
     // Waits on Eval.partial, which this kernel does not have yet. Kept rather than deleted so the

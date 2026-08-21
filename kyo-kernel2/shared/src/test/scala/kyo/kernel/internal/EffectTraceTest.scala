@@ -86,7 +86,7 @@ class EffectTraceTest extends AnyFreeSpec:
         assert(t.get.getMessage.contains("ask"))
     }
 
-    "nested drives accumulate their regions innermost first" in {
+    "nested evals accumulate their regions innermost first" in {
         def innerBoom: Int =
             Eval(answerAsk(1)(ask.map(_ => (throw new RuntimeException("x")): Int)))
         val outer: Int < Any = dropSay(say("s").map(_ => innerBoom))
@@ -134,10 +134,10 @@ class EffectTraceTest extends AnyFreeSpec:
     "the effect frames of a throw inside a mapped step" - {
 
         // `ask` is answered before the map body runs, so by the time the throw happens the
-        // suspension is behind the drive rather than ahead of it: a map over a suspension mints a
+        // suspension is behind the eval rather than ahead of it: a map over a suspension mints a
         // deferral node here rather than fusing into the operation. The fused form below is where
         // the operation's own frame is pinned.
-        "are carried through a drive" in {
+        "are carried through an eval" in {
             val ex = intercept[Boom](Eval(answerAsk(1)(outerStep(ask))))
             assert(methods(ex).contains("innerStep"))
             assert(methods(ex).contains("outerStep"))
@@ -196,9 +196,9 @@ class EffectTraceTest extends AnyFreeSpec:
         }
 
         // Known limit, recorded rather than guarded: a throw from the body of `Effect.defer` happens
-        // while the drive reads the node's payload, which is the one path into user code the attach
+        // while the eval reads the node's payload, which is the one path into user code the attach
         // sites do not cover. Guarding it would put a try region on the deferral arm, the hottest
-        // arm of the drive, to describe a failure on a surface that carries no frame of its own
+        // arm of the eval, to describe a failure on a surface that carries no frame of its own
         // (Kyo.Defer declares no `frame`). The exception propagates correctly; it arrives without
         // effect frames.
         //
@@ -247,10 +247,10 @@ class EffectTraceTest extends AnyFreeSpec:
         // flight.
         //
         // Accepted limit, recorded rather than papered over: the region body's own frames do not
-        // appear here. The clause's answer is settled, so the drive resumes the captured
+        // appear here. The clause's answer is settled, so the eval resumes the captured
         // continuation strictly inside `map` rather than through a delivery site, and by the time
         // the throw reaches an attach site those frames have already been consumed. The region this
-        // clause serves is absent for a second reason: the drive pops that handler for the clause's
+        // clause serves is absent for a second reason: the eval pops that handler for the clause's
         // duration, which is the clause-scope semantics. What survives is the clause's own frame and
         // the region that answered the clause.
         "a throw under an emitting clause walks without looping" in {

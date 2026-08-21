@@ -13,7 +13,7 @@ import org.scalatest.freespec.AnyFreeSpec
   * already reached that blind spot. An inline body is re-typechecked where it expands, so a `private[kyo]` name it selects qualified does
   * not resolve there: `map` and `Eval` both stopped compiling outside `kyo` that way. And a `private[kyo]` term an inline body names gets
   * an inline accessor, which for a top-level object in `kyo.kernel.internal` dotty emits with the package itself as the receiver, so every
-  * drive failed with `NoClassDefFoundError: kyo/kernel/internal`.
+  * eval failed with `NoClassDefFoundError: kyo/kernel/internal`.
   *
   * The two halves need different evidence, so the tests here both expand each entry point and assert on what it produces: compiling proves
   * the name resolves, running proves the accessor the compiler emitted for it is well formed.

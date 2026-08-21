@@ -74,7 +74,7 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
         assert(!Safepoint.stop(target))
     }
 
-    // Waiting on partial evaluation: a stop is observable only through a drive that can hand back a
+    // Waiting on partial evaluation: a stop is observable only through an eval that can hand back a
     // parked value, which lands with the Bracket and Park work (see reviews/BRACKET-PARK-DESIGN.md).
     // Until then the stop protocol itself is covered by the cases above and by SafepointTest.
     //

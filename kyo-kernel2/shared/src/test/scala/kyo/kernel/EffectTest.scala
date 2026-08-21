@@ -20,7 +20,7 @@ class EffectTest extends AnyFreeSpec:
     def answerAsk[A](value: Int)(v: A < Ask): A < Any =
         ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value: Int < Any), a => a)
 
-    "defer delays evaluation until the drive" in {
+    "defer delays evaluation until the eval" in {
         var ran = false
         val d: Int < Any = Effect.defer {
             ran = true
@@ -54,7 +54,7 @@ class EffectTest extends AnyFreeSpec:
         assert(ran)
     }
 
-    "deferInline delays evaluation until the drive" in {
+    "deferInline delays evaluation until the eval" in {
         var ran = false
         val d: Int < Any = Effect.deferInline {
             ran = true
@@ -65,7 +65,7 @@ class EffectTest extends AnyFreeSpec:
         assert(ran)
     }
 
-    "defer evaluates once per drive of a fresh value" in {
+    "defer evaluates once per eval of a fresh value" in {
         var runs = 0
         def d: Int < Any = Effect.defer {
             runs += 1
@@ -366,7 +366,7 @@ class EffectTest extends AnyFreeSpec:
     //     // uses elsewhere to build fixtures whose declared row does not match
     //     // dynamic behavior (e.g. "the innermost handler of a tag answers")
     //
-    //     // extracts a still-pending, boxed child from a fully driven outer
+    //     // extracts a still-pending, boxed child from a fully evaluated outer
     //     // computation. Not `.eval`: its own settle step picks the primitive or
     //     // the Nested branch from the *static* type, and here the static type is
     //     // itself a pending type whose payload is a JVM primitive ((Int < TestCtx)
@@ -381,7 +381,7 @@ class EffectTest extends AnyFreeSpec:
     //         val forked = Effect.detach(testCtx).asInstanceOf[(Int < TestCtx) < TestCtx]
     //         val bound  = ContextEffect.handle(Tag[TestCtx], 42)(forked)
     //         // the child is dynamically self-answering: its own transplanted cell
-    //         // resolves TestCtx on a fresh drive. Its declared row still names
+    //         // resolves TestCtx on a fresh eval. Its declared row still names
     //         // TestCtx, so it is cast back to Any to call `.eval`; the value
     //         // position is a plain Int, so that final `.eval` is not the footgun
     //         // `extract` exists to route around
@@ -400,12 +400,12 @@ class EffectTest extends AnyFreeSpec:
     //         assert(extract(bound).asInstanceOf[Int < Any].eval == 8)
     //     }
     //
-    //     "the child ships boxed as data and evaluates correctly on a separate, fresh drive" in {
+    //     "the child ships boxed as data and evaluates correctly on a separate, fresh eval" in {
     //         val forked = Effect.detach(testCtx).asInstanceOf[(Int < TestCtx) < TestCtx]
     //         val bound  = ContextEffect.handle(Tag[TestCtx], 100)(forked)
     //         val child  = extract(bound).asInstanceOf[Int < Any]
     //         // a second, independent Eval call: the child is a self-contained value,
-    //         // not something still wired into the drive that produced it
+    //         // not something still wired into the eval that produced it
     //         assert(Eval(child).eval == 100)
     //         assert(child.eval == 100)
     //     }
@@ -421,7 +421,7 @@ class EffectTest extends AnyFreeSpec:
                 r + 1
             }
             // the trailing map runs after the release, which is what "at the end of the use" means: the
-            // release is spliced where the use ends rather than deferred to the end of the drive
+            // release is spliced where the use ends rather than deferred to the end of the eval
             val out = Eval(v.map { r =>
                 events :+= "after"; r
             })
@@ -461,7 +461,7 @@ class EffectTest extends AnyFreeSpec:
         // A handler that stops the computation must not be able to skip the release. This is the shape that
         // is broken in kyo today: `Sync.ensure` cannot run its finalizer when `Abort` short circuits, because
         // the ensure sits above the handler that cuts the computation off and never gets to see the cut.
-        // Here the bracket is registered by the drive, below every handler, so nothing a clause does can get
+        // Here the bracket is registered by the eval, below every handler, so nothing a clause does can get
         // between an acquire that completed and the release it owes.
 
         "a handleLoop clause that stops the computation still releases" in {
@@ -528,7 +528,7 @@ class EffectTest extends AnyFreeSpec:
             assert(!released)
         }
 
-        "releases exactly once when the use completes and the drive then ends" in {
+        "releases exactly once when the use completes and the eval then ends" in {
             var count = 0
             val v     = Effect.bracket(Effect.defer(1))(_ => count += 1)(r => r + 1)
             assert(Eval(v) == 2)
@@ -583,9 +583,9 @@ class EffectTest extends AnyFreeSpec:
         }
 
         // the two paths to a release, the arrow and the drain, have to be exclusive. A continuation held past
-        // the end of the drive is where they meet: the drain has already run by the time the arrow is
+        // the end of the eval is where they meet: the drain has already run by the time the arrow is
         // applied, and nothing orders those two events
-        "a continuation held past the end of the drive does not release again" in {
+        "a continuation held past the end of the eval does not release again" in {
             var count = 0
             var stash = Maybe.empty[Arrow[Int, Int, Ask & Any]]
             val v     = Effect.bracket(Effect.defer(1))(_ => count += 1)(r => ask.map(_ + r))
@@ -676,13 +676,13 @@ class EffectTest extends AnyFreeSpec:
             assert(count == 1000)
         }
 
-        "a bracket inside a nested drive releases at that drive's boundary" in {
+        "a bracket inside a nested eval releases at that eval's boundary" in {
             var events = List.empty[String]
             val inner  = Effect.bracket(Effect.defer(1))(_ => events :+= "inner release")(r => r + 1)
             val outer =
                 Effect.bracket(Effect.defer(2))(_ => events :+= "outer release") { r =>
                     // bound first: `events :+= s"...${Eval(inner)}"` reads `events` before running the inner
-                    // drive, so the append would overwrite what the inner release recorded
+                    // eval, so the append would overwrite what the inner release recorded
                     val got = Eval(inner)
                     events :+= s"inner = $got"
                     r
@@ -753,13 +753,13 @@ class EffectTest extends AnyFreeSpec:
             assert(released == List("outer"))
         }
 
-        "a release that throws while the drive is already failing is suppressed onto the original" in {
+        "a release that throws while the eval is already failing is suppressed onto the original" in {
             val v =
                 Effect.bracket(Effect.defer(1))(_ => throw new IllegalStateException("release")) { _ =>
                     ask.map(_ + 1)
                 }
             // the use suspends and the clause drops the continuation, so the release is owed at the drain.
-            // The drive is leaving on the body's exception, which is the one that says why the computation
+            // The eval is leaving on the body's exception, which is the one that says why the computation
             // ended, so the release failure attaches to it rather than replacing it
             val stopped =
                 ArrowEffect.handleCont(Tag[Ask], v)(

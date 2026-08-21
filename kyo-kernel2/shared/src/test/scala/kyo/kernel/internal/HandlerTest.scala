@@ -9,7 +9,7 @@ import kyo.kernel.*
 import org.scalatest.freespec.AnyFreeSpec
 
 /** A handler is an arrow: the region's result flows into it, and what it produces is the region's answer. These are the handler's arrow
-  * behaviors in isolation; how a region drives is covered by ArrowEffectTest and EvalTest.
+  * behaviors in isolation; how a region evaluates is covered by ArrowEffectTest and EvalTest.
   */
 class HandlerTest extends AnyFreeSpec:
 
@@ -44,11 +44,11 @@ class HandlerTest extends AnyFreeSpec:
         assert(contHandler(_ + 1)(41).eval == 42)
     }
 
-    "defers a pending region result and answers it once the drive reaches it" in {
+    "defers a pending region result and answers it once the eval reaches it" in {
         val h = contHandler(_ + 1)
         val r = h(ask, Arrow.id[Int])
         assert(r.evalNow.isEmpty)
-        // applying the handler puts it on the drive as the innermost handler for its own tag, so the
+        // applying the handler puts it on the eval as the innermost handler for its own tag, so the
         // region below is never consulted: run answers with 1, then done adds 1
         assert(answerAsk(41)(r).eval == 2)
     }
@@ -86,7 +86,7 @@ class HandlerTest extends AnyFreeSpec:
         }
     }
 
-    "answers a region through the drive" in {
+    "answers a region through the eval" in {
         val body: Int < Ask = ask.map(a => ask.map(b => a + b))
         val r: Int < Any    = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, cont) => cont(21), a => a)
         assert(r.eval == 42)

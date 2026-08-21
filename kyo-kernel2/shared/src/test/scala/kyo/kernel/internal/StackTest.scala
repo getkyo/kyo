@@ -103,7 +103,7 @@ class StackTest extends AnyFreeSpec:
         }
 
         // push walks the right spine only, so the left-nested link lands as one entry. That is not a
-        // gap: the drive's done branch matches a Chain entry and re-defers it, which brings it back
+        // gap: the eval's done branch matches a Chain entry and re-defers it, which brings it back
         // through the deferral arm and flattens it then. A capture built by dump is right-nested
         // already, so this shape only arises from a user chaining onto an existing chain
         "a left-nested chain keeps the nested link as one entry" in {
@@ -461,8 +461,8 @@ class StackTest extends AnyFreeSpec:
             Stack.release(s)
         }
 
-        // a drive that brackets one resource after another must not keep an entry per bracket once each has
-        // released, or a long drive accumulates dead entries for its whole length
+        // an eval that brackets one resource after another must not keep an entry per bracket once each has
+        // released, or a long eval accumulates dead entries for its whole length
         "a run of released finalizers does not accumulate" in {
             val s = Stack.borrow()
             var i = 0
@@ -489,7 +489,7 @@ class StackTest extends AnyFreeSpec:
             Stack.release(s)
         }
 
-        "a release that throws does not stop the rest, and surfaces when the drive is not already failing" in {
+        "a release that throws does not stop the rest, and surfaces when the eval is not already failing" in {
             val s   = Stack.borrow()
             var ran = List.empty[String]
             s.pushFinalizer(finalizer(() => ran :+= "outer"))
@@ -504,7 +504,7 @@ class StackTest extends AnyFreeSpec:
             Stack.release(s)
         }
 
-        "a release that throws is suppressed onto the drive's own failure" in {
+        "a release that throws is suppressed onto the eval's own failure" in {
             val s       = Stack.borrow()
             val failure = new UnsupportedOperationException("body")
             s.pushFinalizer(finalizer(() => throw new IllegalStateException("release")))
