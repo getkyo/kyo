@@ -872,6 +872,118 @@ class ArrowEffectTest extends AnyFreeSpec:
         }
     }
 
+    // Answering only the first operation of a tag, with no handler kind of its own. The region's currency
+    // carries both outcomes, so the clause's answer is an ordinary settled value of it, and a settled value
+    // is what ends a region: the entry pops, and the continuation the clause kept still carries the effect
+    // for someone else to answer.
+    enum First derives CanEqual:
+        case Done(value: Int)
+        case Standing(cont: Arrow[Int, First, Ask])
+
+    "answering only the first operation" - {
+
+        def firstOf(v: Int < Ask): First < Any =
+            ArrowEffect.handleCont(Tag[Ask], v.map(a => First.Done(a): First))(
+                [C] => (_, cont) => First.Standing(cont),
+                a => a
+            )
+
+        "answers the first and leaves the rest unhandled" in {
+            val v = ask.map(a => ask.map(b => a * 10 + b))
+            Eval(firstOf(v)) match
+                case First.Standing(cont) =>
+                    // annotated: `cont(4)` with no expected type resolves to Arrow's two-argument apply,
+                    // since a raw value inhabits the pending type's first arm
+                    val rest: First < Ask = cont(4)
+                    assert(Eval(ArrowEffect.handleCont(Tag[Ask], rest)([X] => (_, k) => k(2), a => a)) == First.Done(42))
+                case other => fail(s"expected a standing operation, got $other")
+            end match
+        }
+
+        "the clause may end the computation without resuming" in {
+            var reached = false
+            val v = ask.map { a =>
+                reached = true
+                a + 1
+            }
+            val r = ArrowEffect.handleCont(Tag[Ask], v.map(a => First.Done(a): First))([C] => (_, _) => First.Done(-1), a => a)
+            assert(Eval(r) == First.Done(-1))
+            assert(!reached)
+        }
+
+        "the continuation is resumable more than once" in {
+            var runs = 0
+            val v = ask.map { a =>
+                runs += 1
+                a * 10
+            }
+            Eval(firstOf(v)) match
+                case First.Standing(cont) =>
+                    val one: First < Ask = cont(1)
+                    val two: First < Ask = cont(2)
+                    assert(Eval(ArrowEffect.handleCont(Tag[Ask], one)([X] => (_, k) => k(0), a => a)) == First.Done(10))
+                    assert(Eval(ArrowEffect.handleCont(Tag[Ask], two)([X] => (_, k) => k(0), a => a)) == First.Done(20))
+                    assert(runs == 2)
+                case other => fail(s"expected a standing operation, got $other")
+            end match
+        }
+
+        // the clause answers at the region's own currency, so an operation it raises comes back to the same
+        // region rather than to the one outside. This is where the shape parts company with a handler whose
+        // clause sits outside the region it serves, and a clause that raises its own tag unguarded never ends
+        "an operation the clause raises re-enters the same region" in {
+            var clauseRuns = 0
+            val r: First < Any = ArrowEffect.handleCont(Tag[Ask], ask.map(a => First.Done(a): First))(
+                [C] =>
+                    (_, cont) =>
+                        clauseRuns += 1
+                        // the re-entry is dispatched here too, and what it receives is the continuation of
+                        // the clause's own operation, so resuming it delivers the answer to `extra`
+                        if clauseRuns == 1 then ask.map(extra => First.Done(extra * 10): First)
+                        else cont(7)
+                ,
+                a => a
+            )
+            assert(Eval(r) == First.Done(70))
+            assert(clauseRuns == 2)
+        }
+
+        // which is why the effectful half of a first-operation clause belongs after the region: by then the
+        // entry has popped, so the raise reaches whoever is installed outside
+        "an operation raised after the region reaches the outer handler" in {
+            var outer = 0
+            val captured: First < Ask =
+                firstOf(ask.map(_ + 1)).map:
+                    case First.Standing(_) => ask.map(extra => First.Done(extra * 10): First)
+                    case done              => done
+            val out = ArrowEffect.handleCont(Tag[Ask], captured)(
+                [X] =>
+                    (_, k) =>
+                        outer += 1
+                        k(4)
+                ,
+                a => a
+            )
+            assert(Eval(out) == First.Done(40))
+            assert(outer == 1)
+        }
+
+        "a settled body takes the done clause" in {
+            assert(Eval(firstOf(41)) == First.Done(41))
+        }
+
+        "deep sequential operations are stack safe" in {
+            def loop(n: Int): Int < Ask =
+                if n == 0 then 0 else ask.map(_ => loop(n - 1))
+            Eval(firstOf(loop(100000))) match
+                case First.Standing(cont) =>
+                    val rest: First < Ask = cont(1)
+                    assert(Eval(ArrowEffect.handleCont(Tag[Ask], rest)([X] => (_, k) => k(1), a => a)) == First.Done(0))
+                case other => fail(s"expected a standing operation, got $other")
+            end match
+        }
+    }
+
     // A first-operation region needs a clause that receives the continuation and
     // ends the region with its own result type. handleCont keeps the region
     // installed and handleLoopState answers with a value, so the old helper

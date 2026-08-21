@@ -99,6 +99,21 @@ object Kyo:
         override def toString: String = render(value)
     end Handle
 
+    /** The operation a computation is standing on, or the value itself where it is standing on none.
+      *
+      * Walks only what can be read without running anything: a box and a park hold their payload in a field,
+      * where a deferral and a region hold a method that runs user code when it is read. Stopping at those is
+      * the point, since the caller is inspecting a computation it does not intend to evaluate.
+      */
+    @static private[kyo] def standing(v: Any): Any =
+        @tailrec def loop(v: Any): Any =
+            v match
+                case n: Nested[?]  => loop(n.value)
+                case p: Park[?, ?] => loop(p.value)
+                case v             => v
+        loop(v)
+    end standing
+
     /** A node's rendering is the rendering of the operation it is waiting on, which is the frame a reader wants: a deferral and a region
       * carry no site of their own. The walk is a loop with a depth cap rather than recursion, so rendering a deeply nested computation in a
       * debugger cannot overflow the stack.
