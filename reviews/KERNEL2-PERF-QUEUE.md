@@ -47,8 +47,11 @@ Goal, user's words: fully green against kyo-kernel. A red row means the kernel i
    not sufficient. Evidence favors the per-call-site inline family (E2) or any design removing the
    per-answer allocation structurally rather than via EA across a shared site.
 
-Acceptance for whichever design is adopted: full KernelBench + ProtoKernelBench on both kernels, same
-session, -f 3 on movers, tables shown, every row at or under 1.05x or the row is an open defect.
+Acceptance for whichever design is adopted: USER REVIEW FIRST, always — no exploration result is merged,
+cherry-picked or re-implemented into the main tree without the user reviewing the diff, the exploration
+report, and the flagged casts/public surface. Then, per adopted change: full KernelBench + ProtoKernelBench
+on both kernels, same session, -f 3 on movers, tables shown, every row at or under 1.05x or the row is an
+open defect. One adoption at a time, re-measured before the next.
 
 ## Round two (launched after E1-E4 all closed; E2's report re-read first)
 
