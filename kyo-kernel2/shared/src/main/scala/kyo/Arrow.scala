@@ -93,8 +93,12 @@ object Arrow:
       * `AndThen` is, and its head being a `Step` is what keeps a region out of it.
       *
       * A trait rather than a class because six sites fuse a step onto a `Kyo` node, and `Kyo` is a class.
+      *
+      * Also a `Cont`, because a single step already is a normalized continuation: its head is itself and
+      * there is nothing after it. That is what lets a fold of one entry hand back the step untouched, so it
+      * applies inline rather than through a node that exists only to terminate the run.
       */
-    private[kyo] trait Step[-A, B, -S] extends Transform[A, B, S]
+    private[kyo] trait Step[-A, B, -S] extends Transform[A, B, S], Cont[A, B, S]
 
     /** A region marker: one link whose presence among the entries is what makes it work.
       *

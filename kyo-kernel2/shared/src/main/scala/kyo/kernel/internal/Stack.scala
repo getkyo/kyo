@@ -205,12 +205,17 @@ final private[kyo] class Stack:
                 entries(idx) = null
                 states(idx) = Absent
                 val link =
-                    e match
-                        case s: Arrow.Step[Any, Any, Any] @unchecked =>
-                            acc match
-                                case c: Arrow.Cont[Any, Any, Any] @unchecked => new Arrow.AndThen(s, c)
-                                case _                                       => e.chain(acc)
-                        case _ => e.chain(acc)
+                    // a run of one is the entry itself, which is what `chain` answered when its argument was
+                    // identity. It matters beyond the node saved: a step handed back bare applies inline,
+                    // where a node built only to terminate the run would defer instead
+                    if acc eq Arrow.Id then e
+                    else
+                        e match
+                            case s: Arrow.Step[Any, Any, Any] @unchecked =>
+                                acc match
+                                    case c: Arrow.Cont[Any, Any, Any] @unchecked => new Arrow.AndThen(s, c)
+                                    case _                                       => e.chain(acc)
+                            case _ => e.chain(acc)
                 loop(i - 1, link.asInstanceOf[Arrow[Any, Any, Any]])
         val k = loop(pos - 1, Arrow.id)
         head += pos
