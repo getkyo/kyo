@@ -50,6 +50,24 @@ Goal, user's words: fully green against kyo-kernel. A red row means the kernel i
 Acceptance for whichever design is adopted: full KernelBench + ProtoKernelBench on both kernels, same
 session, -f 3 on movers, tables shown, every row at or under 1.05x or the row is an open defect.
 
+## Round two (launched after E1-E4 all closed; E2's report re-read first)
+
+E2's refutation was COMPOSITION-TIME driving (answering suspensions while building the value, before
+any eval exists); the converged design runs the answer step at EVAL time inside the per-call-site
+generated handler class, which E2's own verdict names as the sound home. The map expansion (per-site
+TransformBase, f statically bound, Safepoint.enter-gated local execution) is the in-repo precedent.
+
+5. [ ] F1 `exp-answer-in-class`: the per-answer step moves into the generated HandlerLoopState class.
+   Stage 1: single answer per dispatch, allocation-free state crossing (accessibility wall: user-site
+   expansions name only public surface). Stage 2: eval-governed local multi-answer loop, state in a
+   local, budget and the eval's stop honored; the two EvalTest pins E2 broke must stay green. Also
+   measures the compile-time cost (HandleSites/SuspendSites).
+6. [ ] F2 `exp-suspension-cluster`: attribute the ~1.4x cont-family gap and foreignCrossings 2.63x by
+   isolation probes (find walk with Tag <:< per foreign crossing, dump fold, defer-per-resume, clause
+   dispatch), then the cheapest named lever. E3's restore-beats-flatten salvage noted.
+7. [ ] F3 `exp-small-reds`: name the userTypesSkipKernelWrapping 1.11x mechanism (Box vs Int
+   asymmetry) and make evalFixedOverhead readable via probe rows.
+
 ## Held items (do not start while explorations run, they collide)
 
 - 2.2 param-order fix, user-approved: handleLoopState clause follows kyo-kernel ordering (input before
