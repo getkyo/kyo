@@ -157,20 +157,16 @@ class ChangesetTest extends kyo.test.Test[Any]:
         val m2 = MTMapHolder(Map("a" -> 1, "c" -> 3))
         val d  = Changeset(m1, m2)
         assert(!d.isEmpty)
-        // Key "b" removed, key "c" added: changeset should have operations reflecting this
-        val nestedOps = d.operations.collect { case op: Changeset.Patch.Nested => op }
-        assert(nestedOps.size == 1)
-        assert(nestedOps.head.fieldPath == Chunk("data"))
-        val innerOps = nestedOps.head.operations
-        // Should have a RemoveField for "b" and SetField for "c"
-        assert(innerOps.exists {
-            case Changeset.Patch.RemoveField(Seq("b")) => true
-            case _                                     => false
-        })
-        assert(innerOps.exists {
-            case Changeset.Patch.SetField(Seq("c"), _) => true
-            case _                                     => false
-        })
+        // Maps encode as MapEntries, so a map field diffs into the dedicated MapPatch op:
+        // key "b" removed, key "c" added, nothing updated.
+        val mapOps = d.operations.collect { case op: Changeset.Patch.MapPatch => op }
+        assert(mapOps.size == 1)
+        val mapOp = mapOps.head
+        assert(mapOp.fieldPath == Chunk("data"))
+        assert(mapOp.added == Chunk((Structure.Value.Str("c"), Structure.Value.Integer(3L))))
+        assert(mapOp.removed == Chunk(Structure.Value.Str("b")))
+        assert(mapOp.updated.isEmpty)
+        assert(d.applyTo(m1).getOrThrow == m2)
     }
 
     // 17. StringPatch.applyTo inserts/deletes/replaces character range correctly

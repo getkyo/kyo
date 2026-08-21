@@ -9,8 +9,8 @@ import kyo.Codec.Reader
   * Provides the deserialization counterpart to [[StructureValueWriter]]: given a Structure.Value tree, this reader exposes it through the
   * standard Reader protocol so that Schema-derived codecs can reconstruct a typed Scala value from the universal representation.
   *
-  *   - Navigates [[kyo.Structure.Value.Record]], [[kyo.Structure.Value.Sequence]], typed primitive nodes (Str, Bool, Integer, Decimal,
-  *     BigNum, Bytes, Instant, Duration), and [[kyo.Structure.Value.VariantCase]] nodes
+  *   - Navigates [[kyo.Structure.Value.Record]], [[kyo.Structure.Value.Sequence]], [[kyo.Structure.Value.MapEntries]], typed primitive
+  *     nodes (Str, Bool, Integer, Decimal, BigNum, Bytes, Instant, Duration), and [[kyo.Structure.Value.VariantCase]] nodes
   *   - Maintains a stack of frames matching the nesting depth of the value tree
   *   - Supports `captureValue()` for deferred sub-tree reading (used by sum type codecs)
   *
@@ -66,6 +66,14 @@ final class StructureValueReader(root: Structure.Value)(using _frame: Frame) ext
             case Structure.Value.Sequence(elements) =>
                 stack = ArrayFrame(elements.iterator) :: stack
                 elements.size
+            case Structure.Value.MapEntries(entries) =>
+                // A map read through the array protocol (the non-string-keyed map readFn) is
+                // presented as the array-of-{key, value}-records envelope the wire uses.
+                val asRecords = entries.iterator.map { (k, v) =>
+                    Structure.Value.Record(Chunk(("key", k), ("value", v))): Structure.Value
+                }
+                stack = ArrayFrame(asRecords) :: stack
+                entries.size
             case other =>
                 throw TypeMismatchException(Seq.empty, "Sequence", other.toString)
     end arrayStart
@@ -205,7 +213,21 @@ final class StructureValueReader(root: Structure.Value)(using _frame: Frame) ext
 
     def readStructure(): Structure.Value = currentValue
 
-    def mapStart(): Int         = objectStart()
+    def mapStart(): Int =
+        currentValue match
+            case Structure.Value.MapEntries(entries) =>
+                // A map read through the string-map protocol requires Str keys; the entries are
+                // presented as object fields. A Record (the legacy spelling and every wire-decoded
+                // tree) falls through to the object presentation.
+                val asFields = entries.iterator.map {
+                    case (Structure.Value.Str(k), v) => (k, v)
+                    case (k, _)                      => throw TypeMismatchException(Seq.empty, "String map key", k.toString)
+                }
+                stack = ObjectFrame(asFields, Maybe.empty) :: stack
+                entries.size
+            case _ =>
+                objectStart()
+    end mapStart
     def mapEnd(): Unit          = objectEnd()
     def hasNextEntry(): Boolean = hasNextField()
 
