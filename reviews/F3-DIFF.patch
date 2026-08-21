@@ -1,0 +1,77 @@
+diff --git a/kyo-kernel/bench/src/main/scala/kyo/kernel/bench/KernelBench.scala b/kyo-kernel/bench/src/main/scala/kyo/kernel/bench/KernelBench.scala
+index 401dd61954..ad40401b3e 100644
+--- a/kyo-kernel/bench/src/main/scala/kyo/kernel/bench/KernelBench.scala
++++ b/kyo-kernel/bench/src/main/scala/kyo/kernel/bench/KernelBench.scala
+@@ -51,6 +51,22 @@ class KernelBench:
+     def evalFixedOverhead: Int =
+         ((seed: Int < Any).map(_ + 1)).eval
+ 
++    /** The fixed floor made readable: the single-shot row sits at ~10ns, inside the harness's own
++      * resolution, so its cross-kernel ratio carries no signal. This runs the same path a thousand
++      * times per invocation and reports per eval; the seed varies per step and the results
++      * accumulate, so no iteration can be hoisted or folded away.
++      */
++    @Benchmark
++    @OperationsPerInvocation(1000)
++    def evalFixedOverheadBatch: Int =
++        var acc = 0
++        var i   = 0
++        while i < 1000 do
++            acc += (((seed + i): Int < Any).map(_ + 1)).eval
++            i += 1
++        acc
++    end evalFixedOverheadBatch
++
+     @Benchmark
+     def fusionAllocatesNothing: Int =
+         def loop(i: Int): Int < Any =
+diff --git a/kyo-kernel2/jvm/src/jmh/scala/kyo/kernel/bench/KernelBench.scala b/kyo-kernel2/jvm/src/jmh/scala/kyo/kernel/bench/KernelBench.scala
+index 20cc8522d6..8b86c163e7 100644
+--- a/kyo-kernel2/jvm/src/jmh/scala/kyo/kernel/bench/KernelBench.scala
++++ b/kyo-kernel2/jvm/src/jmh/scala/kyo/kernel/bench/KernelBench.scala
+@@ -50,6 +50,21 @@ class KernelBench:
+     def evalFixedOverhead: Int =
+         ((seed: Int < Any).map(_ + 1)).eval
+ 
++    /** The fixed floor made readable: the single-shot row sits at ~10ns, inside the harness's own
++      * resolution, so its cross-kernel ratio carries no signal. This runs the same path a thousand
++      * times per invocation and reports per eval; the seed varies per step and the results
++      * accumulate, so no iteration can be hoisted or folded away.
++      */
++    @Benchmark
++    @OperationsPerInvocation(1000)
++    def evalFixedOverheadBatch: Int =
++        var acc = 0
++        var i   = 0
++        while i < 1000 do
++            acc += (((seed + i): Int < Any).map(_ + 1)).eval
++            i += 1
++        acc
++
+     /** Pure fusion: 396 cache-resident steps inside one safepoint window. Expect zero
+       * allocation and every mapLoop site inlined hot into one C2 region.
+       */
+diff --git a/kyo-kernel2/shared/src/main/scala/kyo/kernel/Pending.scala b/kyo-kernel2/shared/src/main/scala/kyo/kernel/Pending.scala
+index 4997fb9c7e..d63a278519 100644
+--- a/kyo-kernel2/shared/src/main/scala/kyo/kernel/Pending.scala
++++ b/kyo-kernel2/shared/src/main/scala/kyo/kernel/Pending.scala
+@@ -277,8 +277,18 @@ object `<` extends Implicits:
+             f10(h10)
+         end handle
+ 
++        // the settled arm stays in the caller's compilation on purpose: a value that never suspended has
++        // its result born in the caller's own map expansion, and delivering it through the non-inline
++        // interpreter boundary makes that box a real allocation (measured 14 B and 3ns per settled eval).
++        // Unnesting here instead lets escape analysis finish the job, and only a node graph pays the eval.
++        // Observationally the interpreter does exactly this for a settled value: unnest, empty stack, return
+         inline def eval(using S =:= Any): A =
+-            Eval(self.asInstanceOf[A < Any]).asInstanceOf[A]
++            // bound once, for the reason evalNow binds once
++            val v = self
++            v match
++                case _: Kyo[?, ?] => Eval(v.asInstanceOf[A < Any]).asInstanceOf[A]
++                case _            => Nested.unnest(v)
++        end eval
+ 
+         // bound once: `self` is inline, so every occurrence re-expands the receiver expression, and two
+         // occurrences here would build `v.map(f)` twice and run `f` twice on the settled path
