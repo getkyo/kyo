@@ -1,8 +1,36 @@
 # The three optimizations, presented for review
 
+Scope: this document presents the three UNLANDED adoption candidates from the exploration rounds.
 Each section: the problem with its evidence, the change as code, why it is sound, what it measured,
 and what needs sign-off. The combined change set applies cleanly (`KERNEL2-ALL-CHANGES.diff`, 889
 insertions across 9 files); raw per-candidate diffs and full exploration reports sit beside this file.
+
+Size is not impact here: candidate 1 is a design (766 source lines) and closes the worst red;
+candidates 2 and 3 are law substitutions of a few lines each, and that smallness is the point — each
+replaces an allocation-plus-round-trip with the call the round trip would have ended in anyway.
+
+## Already landed in the main tree (not in this document)
+
+For the complete picture, the optimizations adopted earlier in this campaign, each measured at its
+commit:
+
+| commit | change | measured |
+|---|---|---|
+| `b86a1cdf1a` | eval match arms ordered by frequency | handleLoop rows −9% |
+| `9dcec36058` | `Safepoint.enter`/`exit` under the 35-byte inline threshold | ~3% boxing row |
+| `89fff362f4` | no chain reaches the entries; dump folds transform-headed | closed the 739x trailing regression path |
+| `e845ffb589` | Step/Region hierarchy split; `AndThen` normalized continuations | `fusionAfterSuspensionRunOnly` 9.6x→3.4x, `fusionAfterSuspension` 6.9x→2.6x |
+| `12fd7f3dec` | a Step is its own Cont: a run of one costs no node | restored the suspension cluster to baseline, `trailingMaps` to 727x faster than kyo-kernel |
+| `26f14ecdd4` | eval dispatch extraction | null on wall clock; kept for the halved loop body |
+
+## Named levers, specified but not built (round three)
+
+- F1's design applied to `HandlerCont` (the cont cluster and much of `foreign`; both F1 and F2 point
+  there independently)
+- the Safepoint plain-read lever (~18% of every settled row; needs the `Stop`-visibility argument
+  and concurrency pins; specified in F3's report)
+- `foreign`'s per-crossing Chain fold/walk
+- `RunOnly`'s folded-continuation floor: likely a design ruling, not an optimization
 
 ---
 
