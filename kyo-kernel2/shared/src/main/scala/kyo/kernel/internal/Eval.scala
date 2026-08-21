@@ -83,6 +83,7 @@ object Eval:
     type AX
     type BX
     type StateX
+    type SX
 
     private inline given Frame = Frame.internal
 
@@ -118,6 +119,130 @@ object Eval:
     // the poll gating itself: a call per step costs 3 to 5 percent on the hot rows because the JIT will not
     // fold it away, and a full evaluation must not pay for a slice mechanism it cannot use
     private val neverStop: () => Boolean = () => false
+
+    // The loop is compiled as one unit, and that unit's inlining budget is what everything reached from it
+    // inlines out of, boxing helpers included: at 1.4KB the budget starved and Integer.valueOf stopped
+    // inlining on the hot paths, which the stateful rows paid four times over. So the bulky and the cold
+    // dispatches live out of line, each compiled with its own budget, and the loop keeps only the hot arms.
+
+    private def attachThrow(ex: Throwable, node: Kyo[?, ?], next: Arrow[?, ?, ?], stack: Stack): Nothing =
+        EffectTrace.attach(ex, node, next, stack)
+        throw ex
+
+    private def attachThrow(ex: Throwable, entry: Arrow[?, ?, ?], next: Arrow[?, ?, ?], stack: Stack): Nothing =
+        EffectTrace.attach(ex, entry, next, stack)
+        throw ex
+
+    private def unhandled(kyo: Suspend[IX, OX, EX, CX, AX, SX], stack: Stack): Nothing =
+        // the row rules this out for both entry points: a slice takes `A < Any` as well, so an operation
+        // reaching here has no handler anywhere and never will
+        attachThrow(bug.exception(s"unhandled suspension: ${kyo.tag}"), kyo, Arrow.id[Any], stack)
+
+    /** The looping region's dispatch, returning what the eval runs next. Every branch of the arm it came
+      * from ended in the loop, so the extraction is the arm with each of those calls replaced by its
+      * argument; the dumps, pops and truncations stay inside.
+      */
+    @nowarn("msg=anonymous")
+    private def dispatchLoop(
+        stack: Stack,
+        h: HandlerLoop[IX, OX, EX, AX, BX, SX],
+        kyo: Suspend[IX, OX, EX, CX, AX, SX],
+        pos: Int
+    ): Any < Nothing =
+        val ran =
+            try h.run(kyo.input)
+            catch
+                case ex: Throwable =>
+                    attachThrow(ex, kyo, Arrow.id[Any], stack)
+        ran match
+            case clause: Kyo[Loop.Outcome[OX[CX] < (EX & SX), BX], SX] @unchecked =>
+                val k = stack.dump[OX[CX], AX, EX & SX](pos)
+                discard(stack.pop())
+                new Defer[Loop.Outcome[OX[CX] < (EX & SX), BX], BX, BX, EX & SX]
+                    with Step[Loop.Outcome[OX[CX] < (EX & SX), BX], BX, EX & SX]:
+                    def frame = Frame.internal
+                    def value = clause
+                    def contA = this
+                    def contB = Arrow.id[BX]
+                    override def apply(o: Loop.Outcome[OX[CX] < (EX & SX), BX]) =
+                        o match
+                            case r: Loop.Continue[OX[CX] < (EX & SX)] @unchecked =>
+                                Effect.defer(r._1.map(a => k(a)), h)
+                            case v => v.asInstanceOf[BX]
+                    def apply[D, S2](o: Loop.Outcome[OX[CX] < (EX & SX), BX] < S2, next: Arrow[BX, D, S2])
+                        : D < (EX & SX & S2) =
+                        o match
+                            case kyo: Kyo[Loop.Outcome[OX[CX] < (EX & SX), BX], S2] @unchecked =>
+                                Effect.defer(kyo, this, next)
+                            case _ => next(apply(Nested.unnest(o)), Arrow.id)
+                end new
+            case o =>
+                Nested.unnest[Any](o) match
+                    case r: Loop.Continue[OX[CX] < (EX & SX)] @unchecked =>
+                        r._1 match
+                            case _: Kyo[OX[CX], EX & SX] @unchecked =>
+                                val k = stack.dump[OX[CX], AX, EX & SX](pos)
+                                r._1.map(a => k(a))
+                            case _ => r._1
+                    case _ =>
+                        stack.truncate(pos + 1)
+                        o
+        end match
+    end dispatchLoop
+
+    /** The stateful sibling of [[dispatchLoop]]; the state slot updates stay inside. */
+    @nowarn("msg=anonymous")
+    private def dispatchLoopState(
+        stack: Stack,
+        h: HandlerLoopState[IX, OX, EX, AX, BX, SX, StateX],
+        kyo: Suspend[IX, OX, EX, CX, AX, SX],
+        pos: Int
+    ): Any < Nothing =
+        val s = stack.state(pos).getOrElse(h.initialState)
+        val ran =
+            try h.run(s, kyo.input)
+            catch
+                case ex: Throwable =>
+                    attachThrow(ex, kyo, Arrow.id[Any], stack)
+        ran match
+            case clause: Kyo[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], SX] @unchecked =>
+                val k = stack.dump[OX[CX], AX, EX & SX](pos)
+                discard(stack.pop())
+                new Defer[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], BX, BX, EX & SX]
+                    with Step[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], BX, EX & SX]:
+                    def frame = Frame.internal
+                    def value = clause
+                    def contA = this
+                    def contB = Arrow.id[BX]
+                    override def apply(o: Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX]) =
+                        o match
+                            case r: Loop.Continue2[StateX, OX[CX] < (EX & SX)] @unchecked =>
+                                Effect.defer(r._2.map(a => k(a)), HandlerLoopState(h, r._1))
+                            case v => v.asInstanceOf[BX]
+                    def apply[D, S2](
+                        o: Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX] < S2,
+                        next: Arrow[BX, D, S2]
+                    ): D < (EX & SX & S2) =
+                        o match
+                            case kyo: Kyo[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], S2] @unchecked =>
+                                Effect.defer(kyo, this, next)
+                            case _ => next(apply(Nested.unnest(o)), Arrow.id)
+                end new
+            case o =>
+                Nested.unnest[Any](o) match
+                    case r: Loop.Continue2[StateX, OX[CX] < (EX & SX)] @unchecked =>
+                        stack.putState(pos, r._1)
+                        r._2 match
+                            case _: Kyo[OX[CX], EX & SX] @unchecked =>
+                                val k = stack.dump[OX[CX], AX, EX & SX](pos)
+                                r._2.map(a => k(a))
+                            case _ => r._2
+                        end match
+                    case _ =>
+                        stack.truncate(pos + 1)
+                        o
+        end match
+    end dispatchLoopState
 
     @nowarn("msg=anonymous")
     private def apply[A, S](v: A < S, armed: Boolean, stop: () => Boolean): Any =
@@ -163,117 +288,23 @@ object Eval:
                         stack.push(kyo.contA)
                         loop(v)
                     end if
-                case kyo: Suspend[IX, OX, EX, CX, A, S] @unchecked =>
+                case kyo: Suspend[IX, OX, EX, CX, AX, SX] @unchecked =>
                     stack.push(kyo.cont)
                     val pos = stack.find(kyo.tag)
-                    if pos < 0 then
-                        // the row rules this out for both entry points: a slice takes `A < Any` as well, so
-                        // an operation reaching here has no handler anywhere and never will
-                        try bug(s"unhandled suspension: ${kyo.tag}")
-                        catch
-                            case ex: Throwable =>
-                                EffectTrace.attach(ex, kyo, Arrow.id[Any], stack)
-                                throw ex
+                    if pos < 0 then unhandled(kyo, stack)
                     else
                         stack.handler(pos) match
-                            case h: HandlerCont[IX, OX, EX, AX, ?, S] @unchecked =>
-                                val k = stack.dump[OX[CX], AX, EX & S](pos)
+                            case h: HandlerCont[IX, OX, EX, AX, ?, SX] @unchecked =>
+                                val k = stack.dump[OX[CX], AX, EX & SX](pos)
                                 val next =
                                     try h.run(kyo.input, k)
                                     catch
-                                        case ex: Throwable =>
-                                            EffectTrace.attach(ex, kyo, k, stack)
-                                            throw ex
+                                        case ex: Throwable => attachThrow(ex, kyo, k, stack)
                                 loop(next)
-                            case h: HandlerLoop[IX, OX, EX, AX, BX, S] @unchecked =>
-                                val ran =
-                                    try h.run(kyo.input)
-                                    catch
-                                        case ex: Throwable =>
-                                            EffectTrace.attach(ex, kyo, Arrow.id[Any], stack)
-                                            throw ex
-                                ran match
-                                    case clause: Kyo[Loop.Outcome[OX[CX] < (EX & S), BX], S] @unchecked =>
-                                        val k = stack.dump(pos)
-                                        discard(stack.pop())
-                                        loop(
-                                            new Defer[Loop.Outcome[OX[CX] < (EX & S), BX], BX, BX, EX & S]
-                                                with Step[Loop.Outcome[OX[CX] < (EX & S), BX], BX, EX & S]:
-                                                def frame = Frame.internal
-                                                def value = clause
-                                                def contA = this
-                                                def contB = Arrow.id[BX]
-                                                override def apply(o: Loop.Outcome[OX[CX] < (EX & S), BX]) =
-                                                    o match
-                                                        case r: Loop.Continue[OX[CX] < (EX & S)] @unchecked =>
-                                                            Effect.defer(r._1.map(a => k(a)), h)
-                                                        case v => v.asInstanceOf[BX]
-                                                def apply[D, S2](o: Loop.Outcome[OX[CX] < (EX & S), BX] < S2, next: Arrow[BX, D, S2])
-                                                    : D < (EX & S & S2) =
-                                                    o match
-                                                        case kyo: Kyo[Loop.Outcome[OX[CX] < (EX & S), BX], S2] @unchecked =>
-                                                            Effect.defer(kyo, this, next)
-                                                        case _ => next(apply(Nested.unnest(o)), Arrow.id)
-                                        )
-                                    case o =>
-                                        Nested.unnest[Any](o) match
-                                            case r: Loop.Continue[OX[CX] < (EX & S)] @unchecked =>
-                                                r._1 match
-                                                    case _: Kyo[OX[CX], EX & S] @unchecked =>
-                                                        val k = stack.dump(pos)
-                                                        loop(r._1.map(a => k(a)))
-                                                    case _ => loop(r._1)
-                                            case _ =>
-                                                stack.truncate(pos + 1)
-                                                loop(o)
-                                end match
-                            case h: HandlerLoopState[IX, OX, EX, AX, BX, S, StateX] @unchecked =>
-                                val s = stack.state(pos).getOrElse(h.initialState)
-                                val ran =
-                                    try h.run(s, kyo.input)
-                                    catch
-                                        case ex: Throwable =>
-                                            EffectTrace.attach(ex, kyo, Arrow.id[Any], stack)
-                                            throw ex
-                                ran match
-                                    case clause: Kyo[Loop.Outcome2[StateX, OX[CX] < (EX & S), BX], S] @unchecked =>
-                                        val k = stack.dump(pos)
-                                        discard(stack.pop())
-                                        loop(
-                                            new Defer[Loop.Outcome2[StateX, OX[CX] < (EX & S), BX], BX, BX, EX & S]
-                                                with Step[Loop.Outcome2[StateX, OX[CX] < (EX & S), BX], BX, EX & S]:
-                                                def frame = Frame.internal
-                                                def value = clause
-                                                def contA = this
-                                                def contB = Arrow.id[BX]
-                                                override def apply(o: Loop.Outcome2[StateX, OX[CX] < (EX & S), BX]) =
-                                                    o match
-                                                        case r: Loop.Continue2[StateX, OX[CX] < (EX & S)] @unchecked =>
-                                                            Effect.defer(r._2.map(a => k(a)), HandlerLoopState(h, r._1))
-                                                        case v => v.asInstanceOf[BX]
-                                                def apply[D, S2](
-                                                    o: Loop.Outcome2[StateX, OX[CX] < (EX & S), BX] < S2,
-                                                    next: Arrow[BX, D, S2]
-                                                ): D < (EX & S & S2) =
-                                                    o match
-                                                        case kyo: Kyo[Loop.Outcome2[StateX, OX[CX] < (EX & S), BX], S2] @unchecked =>
-                                                            Effect.defer(kyo, this, next)
-                                                        case _ => next(apply(Nested.unnest(o)), Arrow.id)
-                                        )
-                                    case o =>
-                                        Nested.unnest[Any](o) match
-                                            case r: Loop.Continue2[StateX, OX[CX] < (EX & S)] @unchecked =>
-                                                stack.putState(pos, r._1)
-                                                r._2 match
-                                                    case _: Kyo[OX[CX], EX & S] @unchecked =>
-                                                        val k = stack.dump(pos)
-                                                        loop(r._2.map(a => k(a)))
-                                                    case _ => loop(r._2)
-                                                end match
-                                            case _ =>
-                                                stack.truncate(pos + 1)
-                                                loop(o)
-                                end match
+                            case h: HandlerLoop[IX, OX, EX, AX, BX, SX] @unchecked =>
+                                loop(dispatchLoop(stack, h, kyo, pos))
+                            case h: HandlerLoopState[IX, OX, EX, AX, BX, SX, StateX] @unchecked =>
+                                loop(dispatchLoopState(stack, h, kyo, pos))
                         end match
                     end if
                 case kyo: Handle[EX, ?, ?, A, S] @unchecked =>
@@ -325,18 +356,14 @@ object Eval:
                                 val next =
                                     try h.apply(s.getOrElse(h.initialState), r.asInstanceOf[AX])
                                     catch
-                                        case ex: Throwable =>
-                                            EffectTrace.attach(ex, h, Arrow.id[Any], stack)
-                                            throw ex
+                                        case ex: Throwable => attachThrow(ex, h, Arrow.id[Any], stack)
                                 loop(next)
                             case h: Handler[EX, AX, BX, S] @unchecked =>
                                 val tail = stack.dump[BX, Any, EX & S]()
                                 val next =
                                     try h(curr.asInstanceOf[AX < (EX & S)], tail)
                                     catch
-                                        case ex: Throwable =>
-                                            EffectTrace.attach(ex, h, tail, stack)
-                                            throw ex
+                                        case ex: Throwable => attachThrow(ex, h, tail, stack)
                                 loop(next)
                             // after the common entries, for the reason the node match orders its own arms:
                             // a value leaving a computation with no bindings in it must not pay a test for one
@@ -349,9 +376,7 @@ object Eval:
                                 val next =
                                     try head.asInstanceOf[Arrow[Any, ?, EX & S]](curr, tail)
                                     catch
-                                        case ex: Throwable =>
-                                            EffectTrace.attach(ex, head, tail, stack)
-                                            throw ex
+                                        case ex: Throwable => attachThrow(ex, head, tail, stack)
                                 loop(next)
                         end match
                     else r
