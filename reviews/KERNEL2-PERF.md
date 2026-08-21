@@ -144,9 +144,18 @@ are 1.5x and 1.4x slower with **identical** bytes per operation, so those two ar
 `fusionAfterSuspensionRunOnly` allocates 4792 B/op where the old kernel allocates **nothing**, and it has 53
 entries to fold, which is about 90 bytes per pending step.
 
-This is a design cost of the stack evaluator rather than a defect in any one commit. The Aug 18 cross-kernel
-screen (`reviews/bench/screen-0818-f1-head-report.md`, commit `35d4cbdba0`) already shows the same family
-slower, so it predates all of this month's work, including tonight's.
+**CORRECTED, Aug 21.** Two conclusions this section drew were later falsified and must not be relied on:
+
+1. The Aug 18 screen cited here measured `YetAnotherProtoBench`, a different board, so it says nothing about
+   whether the gap predated this month's kernel2 work. The provenance claim was wrong.
+2. "A design cost of the stack evaluator" was a rationale, not a diagnosis. The subsequent investigation
+   (see `KERNEL2-DIAGNOSTICS.md` and `KERNEL2-PERF-QUEUE.md`) named concrete, fixable mechanisms instead:
+   a left-nested chain reaching the stack entries made `Chain.apply` defer per map (fixed, `89fff362f4`
+   through `12fd7f3dec`: `fusionAfterSuspensionRunOnly` 9.63x to 3.40x, `fusionAfterSuspension` 6.85x to
+   2.59x, `trailingMapsStayLinear` from 397x to 727x faster than the old kernel), and the stateful rows'
+   per-answer box allocation escaping through the state slot array (mechanism proven by an AutoBoxCacheMax
+   isolation run; fix explorations in flight). The remaining reds are tracked in `KERNEL2-PERF-QUEUE.md`
+   as open defects, not accepted costs.
 
 ### The other side of the same design
 

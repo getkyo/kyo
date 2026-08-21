@@ -29,8 +29,15 @@ Goal, user's words: fully green against kyo-kernel. A red row means the kernel i
 3. [ ] E3 `exp-span-continuation`: HandlerCont continuation as a Park-shaped span value; equation
    k(a) == Park(a, entries, states, empty). Targets the whole suspension cluster and RunOnly's 1,264 B/op.
    Regression guards: trailingMapsStayLinear, emitting row, capture/multi-shot pins.
-4. [ ] E4 `exp-morphism-probe`: bench-only; does the box cost survive a bimorphic clause site, with and
-   without AutoBoxCacheMax. Decides the E1-vs-E2 production relevance argument.
+4. [x] E4 `exp-morphism-probe` DONE (worktree agent-a161b3ee09690d980, commit 2718475ebd). Verdict: the
+   cost IS morphism-dependent. Bimorphic clause site costs kernel2 +480,046 B/op (= +24 B per answer: the
+   Continue2 outcome stops being scalar-replaced at two classes) in both JVM configs, and +23% time even
+   with boxing free. The old kernel shows zero bimorphism penalty in any cell: per-call-site expansion makes
+   every clause site monomorphic by construction. Also: kernel2 mono/default is bimodal across forks (~490
+   vs 1100-3100us: the JIT-unstable mode is the stateful row's noisy band), and kernel2's best cell (boxes
+   free, mono, 468us) is still 1.7x the old kernel's equivalent (271us), so box elision is necessary but
+   not sufficient. Evidence favors the per-call-site inline family (E2) or any design removing the
+   per-answer allocation structurally rather than via EA across a shared site.
 
 Acceptance for whichever design is adopted: full KernelBench + ProtoKernelBench on both kernels, same
 session, -f 3 on movers, tables shown, every row at or under 1.05x or the row is an open defect.
