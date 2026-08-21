@@ -277,8 +277,18 @@ object `<` extends Implicits:
             f10(h10)
         end handle
 
+        // the settled arm stays in the caller's compilation on purpose: a value that never suspended has
+        // its result born in the caller's own map expansion, and delivering it through the non-inline
+        // interpreter boundary makes that box a real allocation (measured 14 B and 3ns per settled eval).
+        // Unnesting here instead lets escape analysis finish the job, and only a node graph pays the eval.
+        // Observationally the interpreter does exactly this for a settled value: unnest, empty stack, return
         inline def eval(using S =:= Any): A =
-            Eval(self.asInstanceOf[A < Any]).asInstanceOf[A]
+            // bound once, for the reason evalNow binds once
+            val v = self
+            v match
+                case _: Kyo[?, ?] => Eval(v.asInstanceOf[A < Any]).asInstanceOf[A]
+                case _            => Nested.unnest(v)
+        end eval
 
         // bound once: `self` is inline, so every occurrence re-expands the receiver expression, and two
         // occurrences here would build `v.map(f)` twice and run `f` twice on the settled path

@@ -50,6 +50,21 @@ class KernelBench:
     def evalFixedOverhead: Int =
         ((seed: Int < Any).map(_ + 1)).eval
 
+    /** The fixed floor made readable: the single-shot row sits at ~10ns, inside the harness's own
+      * resolution, so its cross-kernel ratio carries no signal. This runs the same path a thousand
+      * times per invocation and reports per eval; the seed varies per step and the results
+      * accumulate, so no iteration can be hoisted or folded away.
+      */
+    @Benchmark
+    @OperationsPerInvocation(1000)
+    def evalFixedOverheadBatch: Int =
+        var acc = 0
+        var i   = 0
+        while i < 1000 do
+            acc += (((seed + i): Int < Any).map(_ + 1)).eval
+            i += 1
+        acc
+
     /** Pure fusion: 396 cache-resident steps inside one safepoint window. Expect zero
       * allocation and every mapLoop site inlined hot into one C2 region.
       */
