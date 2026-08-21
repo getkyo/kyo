@@ -42,11 +42,7 @@ final private[kyo] class Stack:
             case f if f eq Arrow.Id =>
                 ()
             case f: Arrow.Chain[?, ?, ?, ?] =>
-                val n = count(f, 0)
-                ensure(n)
-                head -= n
-                fill(f, 0)
-                resolveFrom(n - 1)
+                resolveFrom(flatten(f) - 1)
             case f =>
                 ensure(1)
                 head -= 1
@@ -78,24 +74,55 @@ final private[kyo] class Stack:
         end match
     end resolve
 
-    @tailrec private def count(f: Arrow[?, ?, ?], n: Int): Int =
-        f match
-            case c: Arrow.Chain[?, ?, ?, ?] => count(c.b, if c.a eq Arrow.Id then n else n + 1)
-            case f if f eq Arrow.Id         => n
-            case _                          => n + 1
-
-    @tailrec private def fill(f: Arrow[?, ?, ?], i: Int): Unit =
-        f match
-            case c: Arrow.Chain[?, ?, ?, ?] =>
-                if c.a eq Arrow.Id then
-                    fill(c.b, i)
-                else
-                    put((head + i) & mask, c.a)
-                    fill(c.b, i + 1)
-            case f if f eq Arrow.Id =>
-                ()
-            case f =>
-                put((head + i) & mask, f)
+    /** Writes every link of `f` into the entries below `head`, leaving no chain among them.
+      *
+      * A chain is a tree, so flattening it is a walk that has to remember where it has been. The buffer is
+      * that memory: the region reserved below `head` holds the flattened links growing down from `head`,
+      * and the arrows still to visit growing up from the far end. The two only meet when the region is too
+      * small for both, which is what the retry is for, so the walk is a loop and nothing is allocated to
+      * hold it.
+      *
+      * `a` is pushed before `b` so `b` is visited first, which writes the links right to left and leaves
+      * the leftmost at the top of the stack, the order `resolveFrom` and `pop` expect.
+      *
+      * Returns how many links were written; `head` has already moved by that much.
+      */
+    private def flatten(f: Arrow[?, ?, ?]): Int =
+        var cap  = 8
+        var done = -1
+        while done < 0 do
+            ensure(cap)
+            val base = head - cap
+            var w    = 0
+            var s    = 1
+            var fits = true
+            entries(base & mask) = f
+            while s > 0 && fits do
+                s -= 1
+                val x = entries((base + s) & mask)
+                x match
+                    case c: Arrow.Chain[?, ?, ?, ?] =>
+                        if w + s + 2 > cap then fits = false
+                        else
+                            entries((base + s) & mask) = c.a
+                            entries((base + s + 1) & mask) = c.b
+                            s += 2
+                    case x if x eq Arrow.Id => ()
+                    case x =>
+                        if w + s + 1 > cap then fits = false
+                        else
+                            w += 1
+                            put((head - w) & mask, x)
+                end match
+            end while
+            if fits then
+                head -= w
+                done = w
+            else cap <<= 1
+            end if
+        end while
+        done
+    end flatten
 
     def pop(): Arrow[?, ?, ?] =
         val i = head & mask
@@ -155,7 +182,8 @@ final private[kyo] class Stack:
     def dump[A, B, S](pos: Int): Arrow[A, B, S] = dump(pos, true)
 
     private def dump[A, B, S](pos: Int, wrap: Boolean): Arrow[A, B, S] =
-        @tailrec def loop(i: Int, acc: Arrow[Any, Any, Any], handlers: Boolean): Arrow[Any, Any, Any] =
+        var sawHandler = false
+        @tailrec def loop(i: Int, acc: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
             if i < 0 then acc
             else
                 val idx = (head + i) & mask
@@ -166,18 +194,22 @@ final private[kyo] class Stack:
                         case e => e
                 entries(idx) = null
                 states(idx) = Absent
-                val below =
-                    acc match
-                        case c: Arrow.Chain[?, ?, ?, ?] if wrap && !handlers && !(c.b eq Arrow.Id) => new Arrow.Chain(c, Arrow.id)
-                        case _                                                                     => acc
-                val link =
-                    e match
-                        case c: Arrow.Chain[?, ?, ?, ?] if below eq Arrow.Id => new Arrow.Chain(c, Arrow.id)
-                        case _                                               => e.chain(below)
-                loop(i - 1, link.asInstanceOf[Arrow[Any, Any, Any]], handlers || e.isInstanceOf[Handler[?, ?, ?, ?]])
-        val k = loop(pos - 1, Arrow.id, false)
+                if e.isInstanceOf[Handler[?, ?, ?, ?]] then sawHandler = true
+                // an entry is never a chain, so every link has a transform on its left and what this builds
+                // is Chain(transform, Chain(transform, ...)) the whole way down
+                loop(i - 1, e.chain(acc).asInstanceOf[Arrow[Any, Any, Any]])
+        val k = loop(pos - 1, Arrow.id)
         head += pos
-        k.asInstanceOf[Arrow[A, B, S]]
+        // the one place a chain is allowed on the left, and it happens once for the finished capture rather
+        // than at every link: a handler-free capture is wrapped so pushing it back is one deferral instead
+        // of a walk that would flatten it link by link
+        val out =
+            if wrap && !sawHandler then
+                k match
+                    case c: Arrow.Chain[?, ?, ?, ?] if !(c.b eq Arrow.Id) => new Arrow.Chain(c, Arrow.id)
+                    case _                                                => k
+            else k
+        out.asInstanceOf[Arrow[A, B, S]]
     end dump
 
     def dump[A, B, S](): Arrow[A, B, S] =

@@ -102,19 +102,18 @@ class StackTest extends AnyFreeSpec:
             assert(stack.pop() eq c)
         }
 
-        // push walks the right spine only, so the left-nested link lands as one entry. That is not a
-        // gap: the eval's done branch matches a Chain entry and re-defers it, which brings it back
-        // through the deferral arm and flattens it then. A capture built by dump is right-nested
-        // already, so this shape only arises from a user chaining onto an existing chain
-        "a left-nested chain keeps the nested link as one entry" in {
+        // a chain never survives as an entry, whichever way it nests. The entries are what dump folds back
+        // into an arrow, and a chain among them puts a chain on that arrow's left, where applying it defers
+        // instead of running the transform
+        "a left-nested chain is flattened fully" in {
             val stack = new Stack
             val a     = transform
             val b     = transform
             val c     = transform
-            val inner = a.chain(b)
-            stack.push(inner.chain(c))
-            assert(stack.size == 2)
-            assert(stack.pop() eq inner)
+            stack.push(a.chain(b).chain(c))
+            assert(stack.size == 3)
+            assert(stack.pop() eq a)
+            assert(stack.pop() eq b)
             assert(stack.pop() eq c)
         }
 
@@ -314,13 +313,15 @@ class StackTest extends AnyFreeSpec:
             assert(k(10).eval == 12)
         }
 
-        "a handler-free capture is denormalized so pushing it back stays bounded" in {
+        // a handler-free capture is still wrapped, but a wrap is not a way back onto the stack as one entry:
+        // pushing it flattens it link by link, so the stack it returns to holds what it held before
+        "a handler-free capture is wrapped and pushes back link by link" in {
             val stack = new Stack
             (0 until 5).foreach(_ => stack.push(transform))
             val k     = stack.dump[Int, Int, Any](5)
             val other = new Stack
             other.push(k)
-            assert(other.size == 2)
+            assert(other.size == 5)
             assert(k(0).eval == 5)
         }
 

@@ -337,15 +337,6 @@ object Eval:
                                             EffectTrace.attach(ex, h, tail, stack)
                                             throw ex
                                 loop(next)
-                            case c: Chain[Any, ?, Any, EX & S] @unchecked =>
-                                val tail = stack.dump[Any, Any, EX & S]()
-                                val next =
-                                    try c(curr, tail)
-                                    catch
-                                        case ex: Throwable =>
-                                            EffectTrace.attach(ex, c, tail, stack)
-                                            throw ex
-                                loop(next)
                             // after the common entries, for the reason the node match orders its own arms:
                             // a value leaving a computation with no bindings in it must not pay a test for one
                             case _: Binding[?, ?, ?, ?] =>
