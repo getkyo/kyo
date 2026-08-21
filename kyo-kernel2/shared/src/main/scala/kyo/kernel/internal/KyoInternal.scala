@@ -1,6 +1,7 @@
 package kyo.kernel.internal
 
 import kyo.Arrow
+import kyo.Arrow.Region
 import kyo.Arrow.Transform
 import kyo.Frame
 import kyo.Maybe
@@ -71,7 +72,7 @@ object Kyo:
     // the node is also the entry that marks the scope: identity on the completing path, since a value
     // flowing back through is what ends the scope, and the recovery the unwind asks on the way down.
     // Nothing else has to be allocated when the eval enters one
-    abstract private[kyo] class Catching[A, S] extends Kyo[A, S], Transform[A, A, Any], Recover[A, S]:
+    abstract private[kyo] class Catching[A, S] extends Kyo[A, S], Region[A, A, Any], Recover[A, S]:
         // a method, for the reason a deferral's payload is one: the guarded body has to run when the
         // evaluator reads it and not when the node is built, or `catching { throw ... }` throws before
         // anything guards it. Abstract rather than a by-name constructor parameter, which would store the
@@ -110,7 +111,7 @@ object Kyo:
       * providing the value means, and a read instantiates `S` as `E & S`, which is what requiring it means. A
       * read with a default takes neither, so a computation that reads one names no effect at all.
       */
-    abstract private[kyo] class Binding[V, E <: ContextEffect[V], A, S] extends Kyo[A, S], Transform[A, A, Any]:
+    abstract private[kyo] class Binding[V, E <: ContextEffect[V], A, S] extends Kyo[A, S], Region[A, A, Any]:
 
         /** What a read matches against, or absent for a scope that binds no name.
           *

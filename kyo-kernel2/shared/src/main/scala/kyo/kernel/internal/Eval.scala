@@ -4,6 +4,7 @@ import kyo.Arrow
 // unqualified so the inlined eval does not select these from Arrow.type at an expansion site
 // outside package kyo, where they are not accessible. See the note in Pending.scala
 import kyo.Arrow.Chain
+import kyo.Arrow.Step
 import kyo.Arrow.Transform
 import kyo.Frame
 import kyo.Maybe
@@ -197,7 +198,7 @@ object Eval:
                                         discard(stack.pop())
                                         loop(
                                             new Defer[Loop.Outcome[OX[CX] < (EX & S), BX], BX, BX, EX & S]
-                                                with Transform[Loop.Outcome[OX[CX] < (EX & S), BX], BX, EX & S]:
+                                                with Step[Loop.Outcome[OX[CX] < (EX & S), BX], BX, EX & S]:
                                                 def frame = Frame.internal
                                                 def value = clause
                                                 def contA = this
@@ -240,7 +241,7 @@ object Eval:
                                         discard(stack.pop())
                                         loop(
                                             new Defer[Loop.Outcome2[StateX, OX[CX] < (EX & S), BX], BX, BX, EX & S]
-                                                with Transform[Loop.Outcome2[StateX, OX[CX] < (EX & S), BX], BX, EX & S]:
+                                                with Step[Loop.Outcome2[StateX, OX[CX] < (EX & S), BX], BX, EX & S]:
                                                 def frame = Frame.internal
                                                 def value = clause
                                                 def contA = this

@@ -4,6 +4,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kyo.Arrow
 // unqualified so an inline expansion does not select it from Arrow.type at a site outside package kyo,
 // where it is not accessible. See the note in Pending.scala
+import kyo.Arrow.Region
 import kyo.Arrow.Transform
 import kyo.Frame
 import kyo.Result
@@ -25,7 +26,7 @@ import scala.util.control.NoStackTrace
   * not retry it.
   */
 final private[kyo] class Finalizer[A, B](release: (A, Result[Nothing, B]) => Any < Any, resource: A)
-    extends AtomicBoolean with Transform[B, B, Any]:
+    extends AtomicBoolean with Region[B, B, Any]:
 
     def frame = Frame.internal
 

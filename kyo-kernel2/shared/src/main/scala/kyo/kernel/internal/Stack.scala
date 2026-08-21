@@ -179,10 +179,20 @@ final private[kyo] class Stack:
         loop(0)
     end find
 
-    def dump[A, B, S](pos: Int): Arrow[A, B, S] = dump(pos, true)
-
-    private def dump[A, B, S](pos: Int, wrap: Boolean): Arrow[A, B, S] =
-        var sawHandler = false
+    /** Folds the entries above `pos` into one arrow, normalized as far as their kinds allow.
+      *
+      * A run of steps becomes an `AndThen`, which is the shape the entries themselves have: pushing one back
+      * stores it as a single entry rather than taking it apart, so a continuation folded here and re-attached
+      * on every answer is built once instead of rebuilt each time.
+      *
+      * A region cannot be a link of an `AndThen`, so reaching one ends the normalized run and everything from
+      * there down is a `Chain`. That is what keeps a handler, a binding and a finalizer visible: a chain is
+      * taken apart on the way back in, so the region lands as its own entry where the scans can find it.
+      */
+    def dump[A, B, S](pos: Int): Arrow[A, B, S] =
+        // the fold walks the entries deepest first, so the arrow it accumulates is untyped in the middle:
+        // one array holds every kind of entry and the types line up only at the two ends. The casts are the
+        // erasure the ring buffer already imposes, and they are the same ones the loop carried before
         @tailrec def loop(i: Int, acc: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
             if i < 0 then acc
             else
@@ -194,22 +204,17 @@ final private[kyo] class Stack:
                         case e => e
                 entries(idx) = null
                 states(idx) = Absent
-                if e.isInstanceOf[Handler[?, ?, ?, ?]] then sawHandler = true
-                // an entry is never a chain, so every link has a transform on its left and what this builds
-                // is Chain(transform, Chain(transform, ...)) the whole way down
-                loop(i - 1, e.chain(acc).asInstanceOf[Arrow[Any, Any, Any]])
+                val link =
+                    e match
+                        case s: Arrow.Step[Any, Any, Any] @unchecked =>
+                            acc match
+                                case c: Arrow.Cont[Any, Any, Any] @unchecked => new Arrow.AndThen(s, c)
+                                case _                                       => e.chain(acc)
+                        case _ => e.chain(acc)
+                loop(i - 1, link.asInstanceOf[Arrow[Any, Any, Any]])
         val k = loop(pos - 1, Arrow.id)
         head += pos
-        // the one place a chain is allowed on the left, and it happens once for the finished capture rather
-        // than at every link: a handler-free capture is wrapped so pushing it back is one deferral instead
-        // of a walk that would flatten it link by link
-        val out =
-            if wrap && !sawHandler then
-                k match
-                    case c: Arrow.Chain[?, ?, ?, ?] if !(c.b eq Arrow.Id) => new Arrow.Chain(c, Arrow.id)
-                    case _                                                => k
-            else k
-        out.asInstanceOf[Arrow[A, B, S]]
+        k.asInstanceOf[Arrow[A, B, S]]
     end dump
 
     def dump[A, B, S](): Arrow[A, B, S] =
@@ -221,7 +226,7 @@ final private[kyo] class Stack:
             if i == size || i == reach || e.isInstanceOf[Handler[?, ?, ?, ?]] || e.isInstanceOf[Recover[?, ?]] then i
             else boundary(i + 1)
         end boundary
-        dump[A, B, S](boundary(0), false)
+        dump[A, B, S](boundary(0))
     end dump
 
     def truncate(n: Int): Unit =

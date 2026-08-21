@@ -36,7 +36,7 @@ object Arrow:
 
     @nowarn
     inline def apply[A, B, S](inline f: A => B < S)(using _frame: Frame): Arrow[A, B, S] =
-        new Transform[A, B, S]:
+        new TransformBase[A, B, S]:
             def frame                = _frame
             override def apply(v: A) = f(v)
             def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]) =
@@ -55,7 +55,7 @@ object Arrow:
 
     @nowarn
     inline def recursive[A, B, S](inline f: (Arrow[A, B, S], A) => B < S)(using _frame: Frame): Arrow[A, B, S] =
-        new Transform[A, B, S]:
+        new TransformBase[A, B, S]:
             def frame                = _frame
             override def apply(v: A) = f(this, v)
             def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]) =
@@ -82,7 +82,31 @@ object Arrow:
         override def toString: String = s"Arrow(${frame.position.show}, ${frame.snippetShort})"
     end Transform
 
-    /** `Transform` as a class, for the sites that mint a standalone arrow.
+    /** A plain transformation: one link, and nothing on the stack ever looks for it.
+      *
+      * `Transform` says only that something is a single link. That is true of a map body and equally true of a
+      * handler, a binding and a finalizer, but the latter are found by scanning the entries: `Stack.find` looks
+      * for a handler, `lookup` and `resolve` for a binding, the drain for a finalizer. Fold one of those into an
+      * arrow and the scan stops finding it.
+      *
+      * A `Step` carries no such obligation, so a run of them can be held folded as a single entry. That is what
+      * `AndThen` is, and its head being a `Step` is what keeps a region out of it.
+      *
+      * A trait rather than a class because six sites fuse a step onto a `Kyo` node, and `Kyo` is a class.
+      */
+    private[kyo] trait Step[-A, B, -S] extends Transform[A, B, S]
+
+    /** A region marker: one link whose presence among the entries is what makes it work.
+      *
+      * `Handler`, `Catching`, `Binding` and `Finalizer`. Deliberately not a `Step`, so the type system keeps it
+      * out of an `AndThen` and it cannot be folded out of sight.
+      *
+      * A trait for the same reason `Step` is: `Finalizer` extends `AtomicBoolean` and `Catching` and `Binding`
+      * extend `Kyo`, so none of them can take a second superclass.
+      */
+    private[kyo] trait Region[-A, B, -S] extends Transform[A, B, S]
+
+    /** `Step` as a class, for the sites that mint a standalone arrow.
       *
       * A mixin forwarder is emitted into every class that mixes a trait in, for each concrete trait member not
       * already implemented in a superclass. Since `Arrow` and `Transform` are both traits, an anonymous
@@ -92,7 +116,41 @@ object Arrow:
       * `Transform` stays a trait because the sites that fuse an arrow into a `Kyo` node mix it onto that node's
       * class, and those cannot take a second superclass.
       */
-    abstract private[kyo] class TransformBase[-A, B, -S] extends Transform[A, B, S]
+    abstract private[kyo] class TransformBase[-A, B, -S] extends Step[A, B, S]
+
+    /** A normalized continuation: an `AndThen` or an `Id`, and nothing else.
+      *
+      * Sealed to exactly those two, so a value of this type is a straight run of steps ending in identity, all
+      * the way down rather than only at the head. That is the property the stack relies on to hold one whole:
+      * it is already in the shape the entries want, so flattening it would rebuild what was just built, and
+      * there is nothing inside it for a scan to miss.
+      */
+    sealed private[kyo] trait Cont[-A, +B, -S] extends Arrow[A, B, S]
+
+    /** A straight chain of transformations, built once by `dump` and thereafter pointed at.
+      *
+      * The head is a `Step` and the tail is another normalized continuation, so neither a region nor an
+      * arbitrary nesting can occur inside one. Contrast `Chain`, which is how a computation accumulates while
+      * it is being built and is deliberately unnormalized so that accumulating stays O(1) per combinator.
+      */
+    final private[kyo] class AndThen[-A, B, +C, -S](
+        val t: Step[A, B, S],
+        val cont: Cont[B, C, S]
+    ) extends Cont[A, C, S]:
+        type X = B
+        def head  = t
+        def tail  = cont
+        def frame = Frame.internal
+
+        // both peel the first step off rather than deferring with the whole run, which is what a chain does.
+        // A chain can defer with itself because pushing it takes it apart again; this is stored whole, on
+        // purpose, so deferring with itself would push the same run back and arrive here again having made no
+        // progress
+        def apply(v: A)                                    = Effect.defer(v, t, cont)
+        def apply[D, S2](v: A < S2, next: Arrow[C, D, S2]) = Effect.defer(v, t, cont.chain(next))
+
+        override def toString: String = s"Arrow.AndThen($t, $cont)"
+    end AndThen
 
     // the evaluator flattens a chain onto its stack, so it sees the two halves
     private[kyo] class Chain[-A, B, +C, -S](
@@ -136,7 +194,7 @@ object Arrow:
 
     end Chain
 
-    private[Arrow] class Id[A] extends Arrow[A, A, Any]:
+    private[Arrow] class Id[A] extends Cont[A, A, Any]:
         type X = A
         def head                      = this
         def tail                      = this

@@ -304,6 +304,11 @@ object EffectTrace:
                     case c: Arrow.Chain[?, ?, ?, ?] =>
                         push(c.b)
                         push(c.a)
+                    case a: Arrow.AndThen[?, ?, ?, ?] =>
+                        // a folded run of steps, walked for the same reason a chain is: each link carries the
+                        // site of the combinator that made it, and the run holds them in order
+                        push(a.cont)
+                        push(a.t)
                     case a: Arrow[?, ?, ?] =>
                         frame(a.frame)
                 end match

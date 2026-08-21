@@ -41,7 +41,7 @@ object `<` extends Implicits:
         @nowarn("msg=anonymous")
         inline def flatMap[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
             def arrow =
-                new Transform[A, B, S2]:
+                new TransformBase[A, B, S2]:
                     def frame                                          = _frame
                     def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]) = run(v, next)
             def run[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S2 & S3) =
@@ -63,7 +63,7 @@ object `<` extends Implicits:
         @nowarn("msg=anonymous")
         inline def andThen[B, S2](inline f: => B < S2)(using inline _frame: Frame): B < (S & S2) =
             def arrow =
-                new Transform[A, B, S2]:
+                new TransformBase[A, B, S2]:
                     def frame                                          = _frame
                     def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]) = run(v, next)
             def run[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S2 & S3) =
@@ -85,7 +85,7 @@ object `<` extends Implicits:
         @nowarn("msg=anonymous")
         inline def unit(using inline _frame: Frame): Unit < S =
             def arrow =
-                new Transform[A, Unit, Any]:
+                new TransformBase[A, Unit, Any]:
                     def frame                                             = _frame
                     def apply[C, S3](v: A < S3, next: Arrow[Unit, C, S3]) = run(v, next)
             def run[C, S3](v: A < S3, next: Arrow[Unit, C, S3]): C < S3 =
@@ -107,7 +107,7 @@ object `<` extends Implicits:
         @nowarn("msg=anonymous")
         inline def flatten[B, S2](using ev: A <:< (B < S2), inline _frame: Frame): B < (S & S2) =
             def arrow =
-                new Transform[A, B, S2]:
+                new TransformBase[A, B, S2]:
                     def frame                                          = _frame
                     def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]) = run(v, next)
             def run[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S2 & S3) =
