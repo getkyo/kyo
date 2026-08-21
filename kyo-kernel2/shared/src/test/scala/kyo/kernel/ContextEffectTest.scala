@@ -2,6 +2,7 @@ package kyo.kernel
 
 import kyo.Const
 import kyo.Maybe
+import kyo.Result
 import kyo.Tag
 import kyo.kernel.internal.Eval
 import org.scalatest.freespec.AnyFreeSpec
@@ -171,7 +172,7 @@ class ContextEffectTest extends AnyFreeSpec:
     "release" - {
 
         def held[A, S](value: Int, onRelease: Int => Unit)(v: A < (Count & S)): A < S =
-            ContextEffect.handle(Tag[Count], value, (_: Int) => value, release = Maybe((i: Int) => onRelease(i)))(v)
+            ContextEffect.handle(Tag[Count], value, (_: Int) => value, release = Maybe((i: Int, _: Result[Nothing, A]) => onRelease(i)))(v)
 
         "runs when the extent ends" in {
             var released = Maybe.empty[Int]
@@ -220,7 +221,7 @@ class ContextEffectTest extends AnyFreeSpec:
                 Tag[Count],
                 1,
                 (_: Int) => 1,
-                release = Maybe((_: Int) => Effect.defer { released = true })
+                release = Maybe((_: Int, _: Result[Nothing, Int]) => Effect.defer { released = true })
             )(count.map(_ + 1))
             assert(Eval(v) == 2)
             assert(released)

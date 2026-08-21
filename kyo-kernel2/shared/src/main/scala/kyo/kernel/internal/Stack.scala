@@ -3,6 +3,7 @@ package kyo.kernel.internal
 import kyo.Arrow
 import kyo.Maybe
 import kyo.Maybe.*
+import kyo.Result
 import kyo.Span
 import kyo.Tag
 import kyo.bug
@@ -19,7 +20,7 @@ final private[kyo] class Stack:
 
     // outstanding releases, held apart from the entries so a fold cannot bury one: `dump` merges runs of
     // entries into a chain, and a release that ended up inside one would be invisible to the drain
-    private var finalizers = Array.fill[Maybe[Finalizer[?]]](8)(Absent)
+    private var finalizers = Array.fill[Maybe[Finalizer[?, ?]]](8)(Absent)
     private var pending    = 0
 
     def isEmpty: Boolean = head == tail
@@ -66,8 +67,13 @@ final private[kyo] class Stack:
     private def resolve(i: Int): Unit =
         val idx = (head + i) & mask
         entries(idx) match
-            case b: Kyo.Binding[Any, ?, ?, ?] @unchecked =>
-                b.bound.foreach(f => states(idx) = Present(f(lookup(i + 1, b.key))))
+            case b: Kyo.Binding[v, e, ?, ?] @unchecked =>
+                // a scope that binds no name has nothing bound around it to derive from, and what a lookup
+                // returns is typed by the slot it came from rather than by this binding
+                b.bound.foreach { f =>
+                    val outer = b.tag.fold(Absent)(k => lookup(i + 1, k)).asInstanceOf[Maybe[v]]
+                    states(idx) = Present(f(outer))
+                }
             case _ => ()
         end match
     end resolve
@@ -123,14 +129,17 @@ final private[kyo] class Stack:
       * Stops at the first match, which is what makes an inner binding shadow an outer one, and reads the
       * value the entry resolved when it was installed rather than resolving again.
       */
-    def lookup(t: Tag[Any]): Maybe[Any] = lookup(0, t)
+    def lookup[E](t: Tag[E]): Maybe[Any] = lookup(0, t)
 
-    @tailrec private def lookup(i: Int, t: Tag[Any]): Maybe[Any] =
+    // the entry's own effect type is bound by the pattern rather than erased, so the tags compare at the
+    // types they were written with. What comes back is untyped because the slots are: one array holds the
+    // values of every binding on this stack
+    @tailrec private def lookup[E](i: Int, t: Tag[E]): Maybe[Any] =
         if i == size then Absent
         else
             entries((head + i) & mask) match
-                case b: Kyo.Binding[?, ?, ?, ?] if b.key =:= t => state[Any](i)
-                case _                                         => lookup(i + 1, t)
+                case b: Kyo.Binding[?, e, ?, ?] @unchecked if b.tag.exists(_ =:= t) => state[Any](i)
+                case _                                                              => lookup(i + 1, t)
 
     def find[A](t: Tag[A]): Int =
         val n = size
@@ -219,11 +228,11 @@ final private[kyo] class Stack:
         Span.fromUnsafe(arr)
     end snapshotStates
 
-    def snapshotFinalizers(): Span[Finalizer[?]] =
-        val arr = new Array[Finalizer[?]](pending)
+    def snapshotFinalizers(): Span[Finalizer[?, ?]] =
+        val arr = new Array[Finalizer[?, ?]](pending)
         var i   = 0
         while i < pending do
-            arr(i) = finalizers(i).getOrElse(null.asInstanceOf[Finalizer[?]])
+            arr(i) = finalizers(i).getOrElse(null.asInstanceOf[Finalizer[?, ?]])
             i += 1
         Span.fromUnsafe(arr)
     end snapshotFinalizers
@@ -236,7 +245,7 @@ final private[kyo] class Stack:
       * The states are written alongside the entries rather than through `put`, which would reinitialize a
       * stateful handler's slot from its initial state and lose the state the park was holding.
       */
-    def restore(es: Span[Arrow[?, ?, ?]], sts: Span[Maybe[Any]], fins: Span[Finalizer[?]]): Unit =
+    def restore(es: Span[Arrow[?, ?, ?]], sts: Span[Maybe[Any]], fins: Span[Finalizer[?, ?]]): Unit =
         val n = es.size
         if n > 0 then
             ensure(n)
@@ -274,14 +283,14 @@ final private[kyo] class Stack:
         var out = Maybe.empty[Any]
         while out.isEmpty && !isEmpty do
             pop() match
-                case f: Finalizer[?] => f.run()
-                case r: Recover      => out = r.panic(ex)
-                case _               => ()
+                case f: Finalizer[?, ?] => f.run(Result.panic(ex))
+                case r: Recover         => out = r.panic(ex)
+                case _                  => ()
         end while
         out
     end unwind
 
-    def pushFinalizer(f: Finalizer[?]): Unit =
+    def pushFinalizer(f: Finalizer[?, ?]): Unit =
         // drop the run of releases on top that have already run, so an eval that brackets many resources one
         // after another holds one entry rather than one per bracket. Only the eval reaches this, on its own
         // thread and while the stack is live, which is why the finalizer itself does not remove its own entry:
@@ -292,7 +301,7 @@ final private[kyo] class Stack:
             finalizers(pending) = Absent
         end while
         if pending == finalizers.length then
-            val arr = Array.fill[Maybe[Finalizer[?]]](pending * 2)(Absent)
+            val arr = Array.fill[Maybe[Finalizer[?, ?]]](pending * 2)(Absent)
             var i   = 0
             while i < pending do
                 arr(i) = finalizers(i)
@@ -320,20 +329,26 @@ final private[kyo] class Stack:
       *   the exception the eval is already unwinding with, or null if it is completing normally
       */
     def drainFinalizers(failure: Throwable | Null): Unit =
-        var first: Throwable | Null = null
-        while pending > 0 do
-            pending -= 1
-            val f = finalizers(pending)
-            finalizers(pending) = Absent
-            try f.foreach(_.run())
-            catch
-                case ex: Throwable =>
-                    if failure ne null then failure.addSuppressed(ex)
-                    else if first eq null then first = ex
-                    else first.addSuppressed(ex)
-            end try
-        end while
-        if (failure eq null) && (first ne null) then throw first
+        if pending > 0 then
+            var first: Throwable | Null = null
+            // what the releases are told: the failure the eval is leaving with, or that their extent was
+            // abandoned, which is what an eval completing while a continuation went unresumed means
+            // at `Nothing`, since `Result` is covariant in its value and each release expects its own
+            val outcome = Result.panic[Nothing, Nothing](if failure ne null then failure else Finalizer.Abandoned)
+            while pending > 0 do
+                pending -= 1
+                val f = finalizers(pending)
+                finalizers(pending) = Absent
+                try f.foreach(_.run(outcome))
+                catch
+                    case ex: Throwable =>
+                        if failure ne null then failure.addSuppressed(ex)
+                        else if first eq null then first = ex
+                        else first.addSuppressed(ex)
+                end try
+            end while
+            if (failure eq null) && (first ne null) then throw first
+        end if
     end drainFinalizers
 
     def clear(): Unit =

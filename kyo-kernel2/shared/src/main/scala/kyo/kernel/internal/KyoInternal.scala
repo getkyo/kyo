@@ -5,6 +5,7 @@ import kyo.Arrow.Transform
 import kyo.Frame
 import kyo.Maybe
 import kyo.Maybe.*
+import kyo.Result
 import kyo.Span
 import kyo.Tag
 import kyo.kernel.*
@@ -54,10 +55,10 @@ object Kyo:
     // Everything here is a value already in hand at the moment of parking, and there is one site that builds
     // one, so a class with fields is a class rather than an anonymous subclass of one
     final private[kyo] class Park[+A, -S](
-        val value: Any < Any,
+        val value: A < S,
         val entries: Span[Arrow[?, ?, ?]],
         val states: Span[Maybe[Any]],
-        val finalizers: Span[Finalizer[?]]
+        val finalizers: Span[Finalizer[?, ?]]
     ) extends Kyo[A, S]:
         override def toString: String = render(value)
     end Park
@@ -71,19 +72,19 @@ object Kyo:
     // the node is also the entry that marks the scope: identity on the completing path, since a value
     // flowing back through is what ends the scope, and the recovery the unwind asks on the way down.
     // Nothing else has to be allocated when the eval enters one
-    abstract private[kyo] class Catching[A, S] extends Kyo[A, S], Transform[Any, Any, Any], Recover:
+    abstract private[kyo] class Catching[A, S] extends Kyo[A, S], Transform[A, A, Any], Recover:
         // a method, for the reason a deferral's payload is one: the guarded body has to run when the
         // evaluator reads it and not when the node is built, or `catching { throw ... }` throws before
         // anything guards it. Abstract rather than a by-name constructor parameter, which would store the
         // thunk in a field and read it through a pointer at every use
         def value: A < S
 
-        override def apply(v: Any): Any < Any = v
+        override def apply(v: A): A < Any = v
 
-        def apply[C, S2](v: Any < S2, next: Arrow[Any, C, S2]): C < S2 =
+        def apply[C, S2](v: A < S2, next: Arrow[A, C, S2]): C < S2 =
             v match
-                case kyo: Kyo[Any, S2] @unchecked => Effect.defer(kyo, this, next)
-                case _                            => next(apply(Nested.unnest[Any](v)), Arrow.id)
+                case kyo: Kyo[A, S2] @unchecked => Effect.defer(kyo, this, next)
+                case _                          => next(apply(Nested.unnest[A](v)), Arrow.id)
 
         override def toString: String = render(value)
     end Catching
@@ -110,15 +111,15 @@ object Kyo:
       * providing the value means, and a read instantiates `S` as `E & S`, which is what requiring it means. A
       * read with a default takes neither, so a computation that reads one names no effect at all.
       */
-    abstract private[kyo] class Binding[V, E <: ContextEffect[V], A, S] extends Kyo[A, S], Transform[Any, Any, Any]:
+    abstract private[kyo] class Binding[V, E <: ContextEffect[V], A, S] extends Kyo[A, S], Transform[A, A, Any]:
 
-        def tag: Tag[E]
-
-        /** What a read matches against, erased, which is the equality the previous kernel keyed its context
-          * map by. Read here rather than at the walk, where the node's type is a wildcard and `Tag`'s
-          * extension methods cannot infer their receiver.
+        /** What a read matches against, or absent for a scope that binds no name.
+          *
+          * A resource is the case with no name: it is a value scoped to an extent, which is a binding in
+          * every respect except that nothing looks it up. Saying that with `Absent` keeps it unreadable by
+          * construction, rather than by every reader agreeing not to look.
           */
-        final def key: Tag[Any] = tag.erased
+        def tag: Maybe[Tag[E]]
 
         /** What this binds, given what the enclosing scope binds, or absent where this only reads. */
         def bound: Maybe[Maybe[V] => V]
@@ -148,7 +149,7 @@ object Kyo:
           * `release` rather than `finalize`, which would sit on top of `Object.finalize`, and the same word
           * `Arrow.Bracket` already uses for it.
           */
-        def release: Maybe[V => Any < Any] = Absent
+        def release: Maybe[(V, Result[Nothing, A]) => Any < Any] = Absent
 
         /** Where the value flows: the bound body for a bind, the read's continuation for a read.
           *
@@ -158,15 +159,15 @@ object Kyo:
         def resume(held: Maybe[V]): A < (E & S)
 
         // identity on the way out: this holds a stack position so the extent ends where the value flows back
-        override def apply(v: Any): Any < Any = v
+        override def apply(v: A): A < Any = v
 
-        def apply[C, S2](v: Any < S2, next: Arrow[Any, C, S2]): C < S2 =
+        def apply[C, S2](v: A < S2, next: Arrow[A, C, S2]): C < S2 =
             v match
-                case kyo: Kyo[Any, S2] @unchecked => Effect.defer(kyo, this, next)
-                case _                            => next(apply(Nested.unnest[Any](v)), Arrow.id)
+                case kyo: Kyo[A, S2] @unchecked => Effect.defer(kyo, this, next)
+                case _                          => next(apply(Nested.unnest[A](v)), Arrow.id)
 
         override def toString: String =
-            s"Kyo(${if bound.isDefined then "bind" else "read"} ${tag.show}, ${frame.position.show})"
+            s"Kyo(${if bound.isDefined then "bind" else "read"} ${tag.fold("anonymous")(_.show)}, ${frame.position.show})"
     end Binding
 
     abstract private[kyo] class Handle[E <: ArrowEffect[?, ?], A, B, +C, -S] extends Kyo[C, S]:

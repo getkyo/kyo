@@ -1,6 +1,5 @@
 package kyo.kernel.internal
 
-import java.util.concurrent.atomic.AtomicBoolean
 import kyo.Arrow
 // unqualified so the inlined eval does not select these from Arrow.type at an expansion site
 // outside package kyo, where they are not accessible. See the note in Pending.scala
@@ -10,6 +9,7 @@ import kyo.Arrow.Transform
 import kyo.Frame
 import kyo.Maybe
 import kyo.Maybe.*
+import kyo.Result
 import kyo.Tag
 import kyo.bug
 import kyo.discard
@@ -28,39 +28,6 @@ import scala.annotation.nowarn
 import scala.annotation.static
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
-
-/** A release that has not run yet, together with the arrow that runs it.
-  *
-  * One object fills three roles. It is the entry a stack holds, so an eval that throws or abandons a
-  * continuation can still release. It is the arrow spliced after the bracket's `use`, so an eval that
-  * completes releases at the point the use ends rather than at the boundary. And it is the flag that makes
-  * those two paths exclusive, which they have to be because both can be reached for the same resource.
-  *
-  * Atomic rather than a plain `var`: a captured continuation can be resumed on one thread while the eval
-  * that created it drains on another, so the two paths genuinely race.
-  *
-  * The flag is set before the release runs, so a release that throws still counts as run and the drain does
-  * not retry it.
-  */
-final private[kyo] class Finalizer[A](release: Arrow[A, Any, Any], resource: A)
-    extends AtomicBoolean with Transform[Any, Any, Any]:
-
-    def frame = Frame.internal
-
-    def run(): Unit =
-        if compareAndSet(false, true) then discard(Eval(release(resource)))
-
-    override def apply(v: Any): Any < Any =
-        run()
-        v
-
-    // defers on a pending input: while the value has not settled the use has not finished, and the release
-    // is owed only once it has
-    def apply[C, S2](v: Any < S2, next: Arrow[Any, C, S2]): C < S2 =
-        v match
-            case kyo: Kyo[Any, S2] @unchecked => Effect.defer(kyo, this, next)
-            case _                            => next(apply(Nested.unnest[Any](v)), Arrow.id)
-end Finalizer
 
 /** A scope that answers its own failure.
   *
@@ -177,17 +144,25 @@ object Eval:
 
         @tailrec def loop(curr: Any < Nothing): Any =
             curr match
-                case kyo: Defer[?, ?, A, S] @unchecked =>
+                case kyo: Defer[a, b, A, S] @unchecked =>
                     // the poll lives here rather than at the top of the loop because a stop drains the budget,
                     // so every combinator starts deferring and this arm is reached on the next operation. The
                     // stop function is polled at the same cadence, which is often enough: nothing runs long
                     // without deferring, since a fused chain is bounded by the depth guard and hitting it is
                     // itself a deferral
-                    if armed && stop() then park(curr)
+                    //
+                    // never in front of a binding: a resource whose scope has not been installed yet is owed
+                    // by nobody, so a slice that ended here would be holding one that no drain can find. The
+                    // payload is read once and the park carries what was read, so a by-name payload does not
+                    // run a second time on the way back
+                    val v = kyo.value
+                    if armed && !v.isInstanceOf[Binding[?, ?, ?, ?]] && stop() then
+                        park(Effect.defer[a, b, A, S](v, kyo.contA, kyo.contB))
                     else
                         stack.push(kyo.contB)
                         stack.push(kyo.contA)
-                        loop(kyo.value)
+                        loop(v)
+                    end if
                 case kyo: Park[?, ?] =>
                     // resuming is putting the parked stack back and carrying on from the value it held. The
                     // entries go above whatever this eval already pushed, so a handler installed around the
@@ -199,24 +174,28 @@ object Eval:
                     // through pops it, which is what makes the scope end; a failure finds it on the way down
                     stack.push(kyo)
                     loop(kyo.value)
-                case kyo: Binding[Any, ?, ?, ?] @unchecked =>
+                case kyo: Binding[v, ?, ?, ?] @unchecked =>
                     // a bind marks its own extent by going on the stack, and installing it is what resolves
                     // what it holds against what is bound below. A read marks nothing and only needs the
                     // innermost binding of its tag, or absent where none binds it
                     if kyo.bound.isDefined then
                         stack.push(kyo)
-                        val held = stack.state[Any](0)
+                        // the slot is where the install left it, read back at the binding's own value type:
+                        // the array holds every binding's value, so its element type is the erasure, not this
+                        val held = stack.state[v](0)
                         // a binding that owes something on the way out owes it exactly as a bracket does, so
                         // it is a `Finalizer`: above the binding, so it runs where the extent ends, and in
                         // the drain, so it still runs when the extent is abandoned rather than left
                         kyo.release.foreach { release =>
-                            val fin = new Finalizer(Arrow(release), held.getOrElse(bug("bound value missing")))
+                            val fin = new Finalizer(release, held.getOrElse(bug("bound value missing")))
                             stack.pushFinalizer(fin)
                             stack.push(fin)
                         }
                         loop(kyo.resume(held))
                     else
-                        loop(kyo.resume(stack.lookup(kyo.key)))
+                        // what a lookup returns is typed by the slots it walked, which hold every binding's
+                        // value on this stack, so the read's own value type is asserted here
+                        loop(kyo.resume(kyo.tag.fold(Maybe.empty)(stack.lookup).asInstanceOf[Maybe[v]]))
                 case kyo: Suspend[IX, OX, EX, CX, A, S] @unchecked =>
                     stack.push(kyo.cont)
                     val pos = stack.find(kyo.tag)
@@ -466,7 +445,7 @@ object Eval:
                 var i = p.finalizers.size
                 while i > 0 do
                     i -= 1
-                    p.finalizers(i).run()
+                    p.finalizers(i).run(Result.panic(Finalizer.Abandoned))
             case _ => ()
 
 end Eval

@@ -3,6 +3,7 @@ package kyo.kernel
 import kyo.Frame
 import kyo.Maybe
 import kyo.Maybe.*
+import kyo.Result
 import kyo.Tag
 import kyo.bug
 // unqualified so the inline expansions do not select it from Kyo.type at a site outside package kyo,
@@ -46,7 +47,7 @@ object ContextEffect:
     )(using inline _frame: Frame): B < (E & S) =
         new Binding[A, E, B, E & S]:
             def frame = _frame
-            def tag   = effectTag
+            def tag   = Maybe(effectTag)
             def bound = Absent
             def resume(held: Maybe[A]) =
                 f(held.getOrElse(bug(s"Missing value for context effect '${effectTag.show}'")))
@@ -72,7 +73,7 @@ object ContextEffect:
     )(using inline _frame: Frame): B < S =
         new Binding[A, E, B, S]:
             def frame                  = _frame
-            def tag                    = effectTag
+            def tag                    = Maybe(effectTag)
             def bound                  = Absent
             def resume(held: Maybe[A]) = f(held.getOrElse(default))
 
@@ -107,7 +108,7 @@ object ContextEffect:
         inline ifDefined: A => A,
         inline fork: A => Maybe[A] < S = (a: A) => Maybe(a),
         inline join: (A, A) => A < S = (held: A, _: A) => held,
-        inline release: Maybe[A => Any < Any] = Absent
+        inline release: Maybe[(A, Result[Nothing, B]) => Any < Any] = Absent
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
         // named apart from the members below, which would shadow the parameters inside the class body
         def onFork(held: A)            = fork(held)
@@ -115,7 +116,7 @@ object ContextEffect:
         def onRelease                  = release
         new Binding[A, E, B, S]:
             def frame                             = _frame
-            def tag                               = effectTag
+            def tag                               = Maybe(effectTag)
             val bound                             = Maybe((outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined))
             override def fork(held: A)            = onFork(held)
             override def join(held: A, forked: A) = onJoin(held, forked)

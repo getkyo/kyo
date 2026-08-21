@@ -105,7 +105,12 @@ object Arrow:
       */
     trait Bracket[-A, B, -S] extends Transform[A, B, S]:
         def use: Arrow[A, B, S]
-        def release: Arrow[A, Any, Any]
+
+        /** Takes the outcome as well as the resource: the value where the extent completed, the exception
+          * where it failed, and `Finalizer.Abandoned` where it never ended because a continuation was
+          * dropped. A function rather than an arrow, since it takes two things and the eval hands both.
+          */
+        def release: (A, Result[Nothing, B]) => Any < Any
 
         /** Always defers, and the eval calls `use` rather than coming back through here.
           *

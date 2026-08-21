@@ -5,6 +5,7 @@ import kyo.Arrow
 // outside package kyo, where they are not accessible. See the note in Pending.scala
 import kyo.Arrow.Bracket
 import kyo.Frame
+import kyo.Result
 import kyo.kernel.internal.*
 import kyo.kernel.internal.Kyo.Catching
 import kyo.kernel.internal.Kyo.Defer
@@ -86,9 +87,16 @@ object Effect:
       *
       * The release takes no effects. It has to be able to run where nothing is installed to answer for it,
       * which is what an eval that is ending can offer.
+      *
+      * This form's release only wants the resource, and delegates to the one that also takes the outcome.
       */
+    inline def bracket[A, B, S](inline acquire: A < S)(inline release: A => Any < Any)(
+        inline use: A => B < S
+    )(using inline _frame: Frame): B < S =
+        bracket(acquire)((a: A, _: Result[Nothing, B]) => release(a))(use)
+
     @nowarn("msg=anonymous")
-    inline def bracket[A, B, S](inline acquire: A < S)(inline _release: A => Any < Any)(
+    inline def bracket[A, B, S](inline acquire: A < S)(inline _release: (A, Result[Nothing, B]) => Any < Any)(
         inline _use: A => B < S
     )(using inline _frame: Frame): B < S =
         // the parameters are named apart from the members below rather than bound to locals first: `Arrow`
@@ -103,7 +111,7 @@ object Effect:
             def contA   = this
             def contB   = Arrow.id[B]
             val use     = Arrow(_use)
-            val release = Arrow(_release)
+            val release = _release
         end new
     end bracket
 

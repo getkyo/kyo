@@ -4,6 +4,7 @@ import kyo.Arrow
 import kyo.Const
 import kyo.Frame
 import kyo.Maybe
+import kyo.Result
 import kyo.Tag
 import kyo.discard
 import kyo.kernel.*
@@ -420,7 +421,10 @@ class StackTest extends AnyFreeSpec:
 
     "finalizers" - {
         def finalizer(ran: () => Unit) =
-            new Finalizer[Unit](Arrow[Unit, Any, Any](_ => ran()), ())
+            new Finalizer[Unit, Any]((_, _) => ran(), ())
+
+        // what a release is told where the extent it belonged to never ended
+        val abandoned = Result.panic[Nothing, Any](Finalizer.Abandoned)
 
         "hold until drained" in {
             val s = Stack.borrow()
@@ -450,7 +454,7 @@ class StackTest extends AnyFreeSpec:
             var n = 0
             val f = finalizer(() => n += 1)
             s.pushFinalizer(f)
-            f.run()
+            f.run(abandoned)
             assert(n == 1)
             s.drainFinalizers(null)
             assert(n == 1)
@@ -465,7 +469,7 @@ class StackTest extends AnyFreeSpec:
             while i < 100 do
                 val f = finalizer(() => ())
                 s.pushFinalizer(f)
-                f.run()
+                f.run(abandoned)
                 assert(s.outstanding == 1)
                 i += 1
             end while
@@ -478,7 +482,7 @@ class StackTest extends AnyFreeSpec:
             s.pushFinalizer(held)
             val done = finalizer(() => ())
             s.pushFinalizer(done)
-            done.run()
+            done.run(abandoned)
             s.pushFinalizer(finalizer(() => ()))
             // the released one in the middle is gone, the one still owed is not
             assert(s.outstanding == 2)
