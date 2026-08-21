@@ -162,39 +162,6 @@ object Eval:
                         stack.push(kyo.contA)
                         loop(v)
                     end if
-                case kyo: Park[?, ?] =>
-                    // resuming is putting the parked stack back and carrying on from the value it held. The
-                    // entries go above whatever this eval already pushed, so a handler installed around the
-                    // parked computation sits below its regions and answers what they do not
-                    stack.restore(kyo.entries, kyo.states, kyo.finalizers)
-                    loop(kyo.value)
-                case kyo: Catching[?, ?] =>
-                    // the entry marks where the scope ends, and the body runs above it. A value flowing back
-                    // through pops it, which is what makes the scope end; a failure finds it on the way down
-                    stack.push(kyo)
-                    loop(kyo.value)
-                case kyo: Binding[v, ?, ?, ?] @unchecked =>
-                    // a bind marks its own extent by going on the stack, and installing it is what resolves
-                    // what it holds against what is bound below. A read marks nothing and only needs the
-                    // innermost binding of its tag, or absent where none binds it
-                    if kyo.bound.isDefined then
-                        stack.push(kyo)
-                        // the slot is where the install left it, read back at the binding's own value type:
-                        // the array holds every binding's value, so its element type is the erasure, not this
-                        val held = stack.state[v](0)
-                        // a binding that owes something on the way out owes it exactly as a bracket does, so
-                        // it is a `Finalizer`: above the binding, so it runs where the extent ends, and in
-                        // the drain, so it still runs when the extent is abandoned rather than left
-                        kyo.release.foreach { release =>
-                            val fin = new Finalizer(release, held.getOrElse(bug("bound value missing")))
-                            stack.pushFinalizer(fin)
-                            stack.push(fin)
-                        }
-                        loop(kyo.resume(held))
-                    else
-                        // what a lookup returns is typed by the slots it walked, which hold every binding's
-                        // value on this stack, so the read's own value type is asserted here
-                        loop(kyo.resume(kyo.tag.fold(Maybe.empty)(stack.lookup).asInstanceOf[Maybe[v]]))
                 case kyo: Suspend[IX, OX, EX, CX, A, S] @unchecked =>
                     stack.push(kyo.cont)
                     val pos = stack.find(kyo.tag)
@@ -312,6 +279,42 @@ object Eval:
                     stack.push(kyo.cont)
                     stack.push(kyo.handler)
                     loop(kyo.value)
+                // the three arms below are last on purpose: a match tests in order, so every deferral,
+                // operation and region above would pay a failed test for each of them. These are the rare
+                // shapes, and a computation that never parks, recovers or binds must not pay for them
+                case kyo: Park[?, ?] =>
+                    // resuming is putting the parked stack back and carrying on from the value it held. The
+                    // entries go above whatever this eval already pushed, so a handler installed around the
+                    // parked computation sits below its regions and answers what they do not
+                    stack.restore(kyo.entries, kyo.states, kyo.finalizers)
+                    loop(kyo.value)
+                case kyo: Catching[?, ?] =>
+                    // the entry marks where the scope ends, and the body runs above it. A value flowing back
+                    // through pops it, which is what makes the scope end; a failure finds it on the way down
+                    stack.push(kyo)
+                    loop(kyo.value)
+                case kyo: Binding[v, ?, ?, ?] @unchecked =>
+                    // a bind marks its own extent by going on the stack, and installing it is what resolves
+                    // what it holds against what is bound below. A read marks nothing and only needs the
+                    // innermost binding of its tag, or absent where none binds it
+                    if kyo.bound.isDefined then
+                        stack.push(kyo)
+                        // the slot is where the install left it, read back at the binding's own value type:
+                        // the array holds every binding's value, so its element type is the erasure, not this
+                        val held = stack.state[v](0)
+                        // a binding that owes something on the way out owes it exactly as a bracket does, so
+                        // it is a `Finalizer`: above the binding, so it runs where the extent ends, and in
+                        // the drain, so it still runs when the extent is abandoned rather than left
+                        kyo.release.foreach { release =>
+                            val fin = new Finalizer(release, held.getOrElse(bug("bound value missing")))
+                            stack.pushFinalizer(fin)
+                            stack.push(fin)
+                        }
+                        loop(kyo.resume(held))
+                    else
+                        // what a lookup returns is typed by the slots it walked, which hold every binding's
+                        // value on this stack, so the read's own value type is asserted here
+                        loop(kyo.resume(kyo.tag.fold(Maybe.empty)(stack.lookup).asInstanceOf[Maybe[v]]))
                 case _ =>
                     val r = Nested.unnest[Any](curr)
                     if !stack.isEmpty then
@@ -334,10 +337,6 @@ object Eval:
                                             EffectTrace.attach(ex, h, tail, stack)
                                             throw ex
                                 loop(next)
-                            case _: Binding[?, ?, ?, ?] =>
-                                // an extent ending: the entry is identity, so the value carries on to
-                                // whatever stands below it, and there is nothing to fold a continuation for
-                                loop(curr)
                             case c: Chain[Any, ?, Any, EX & S] @unchecked =>
                                 val tail = stack.dump[Any, Any, EX & S]()
                                 val next =
@@ -347,6 +346,12 @@ object Eval:
                                             EffectTrace.attach(ex, c, tail, stack)
                                             throw ex
                                 loop(next)
+                            // after the common entries, for the reason the node match orders its own arms:
+                            // a value leaving a computation with no bindings in it must not pay a test for one
+                            case _: Binding[?, ?, ?, ?] =>
+                                // an extent ending: the entry is identity, so the value carries on to
+                                // whatever stands below it, and there is nothing to fold a continuation for
+                                loop(curr)
                             case head =>
                                 val tail = stack.dump[Any, Any, EX & S]()
                                 val next =
