@@ -294,39 +294,53 @@ private[completion] object AnthropicCompletion extends Completion:
                         case Present(SystemMessage(c)) => (Present(c), fitted.drop(1))
                         case _                         => (Absent, fitted)
                 val mapped =
-                    body.map {
-                        case UserMessage(content, Present(image)) =>
-                            Message(
-                                Role.User.name,
-                                List(
-                                    Content("text", text = Present(content)),
-                                    Content("image", source = Present(Source("base64", "image/jpeg", image.base64)))
+                    body.zipWithIndex.map { (message, index) =>
+                        message match
+                            case UserMessage(content, Present(image)) =>
+                                Message(
+                                    Role.User.name,
+                                    List(
+                                        Content("text", text = Present(content)),
+                                        Content("image", source = Present(Source("base64", "image/jpeg", image.base64)))
+                                    )
                                 )
-                            )
-                        case UserMessage(content, _) =>
-                            Message(Role.User.name, List(Content("text", text = Present(content))))
-                        case AssistantMessage(content, calls) =>
-                            Message(
-                                Role.Assistant.name,
-                                List(Content("text", text = Present(content))).filter(_.text.exists(_.nonEmpty))
-                                    ++ calls.map(call =>
-                                        Content(
-                                            "tool_use",
-                                            id = Present(call.id.id),
-                                            name = Present(call.function),
-                                            input = Json.decode[Structure.Value](call.arguments).toMaybe
-                                        )
-                                    ).toList
-                            )
-                        case ToolMessage(callId, content) =>
-                            Message(
-                                Role.User.name,
-                                List(Content("tool_result", tool_use_id = Present(callId.id), content = Present(content)))
-                            )
-                        case SystemMessage(content) =>
-                            // Residual only: the transform converts every non-leading system message, so this
-                            // fires just for a system message not at the start (no leading system prompt to lift).
-                            Message(Role.User.name, List(Content("text", text = Present(systemReminder(content)))))
+                            case UserMessage(content, _) =>
+                                Message(Role.User.name, List(Content("text", text = Present(content))))
+                            case AssistantMessage(content, calls) =>
+                                Message(
+                                    Role.Assistant.name,
+                                    List(Content("text", text = Present(content))).filter(_.text.exists(_.nonEmpty))
+                                        ++ calls.map(call =>
+                                            Content(
+                                                "tool_use",
+                                                id = Present(call.id.id),
+                                                name = Present(call.function),
+                                                input = Json.decode[Structure.Value](call.arguments).toMaybe
+                                            )
+                                        ).toList
+                                )
+                            case ToolMessage(callId, content) =>
+                                Message(
+                                    Role.User.name,
+                                    List(Content("tool_result", tool_use_id = Present(callId.id), content = Present(content)))
+                                )
+                            case SystemMessage(content) =>
+                                // A system message that is not the lifted one. How it rides is the entry's
+                                // declared fact, applied here rather than decided here: the variant states
+                                // the placement it allows, so no combination of declared facts builds a
+                                // request the endpoint rejects, and an endpoint with a different rule adds
+                                // its own case instead of this impl growing a positional branch.
+                                val ridesAsSystem = config.midConversationSystem match
+                                    case Config.MidConversationSystem.Unsupported              => false
+                                    case Config.MidConversationSystem.AcceptedAfterOpeningTurn => index > 0
+                                if ridesAsSystem then
+                                    Message(Role.System.name, List(Content("text", text = Present(content))))
+                                else
+                                    Message(
+                                        Role.User.name,
+                                        List(Content("text", text = Present(systemReminder(content))))
+                                    )
+                                end if
                     }.toList
                 // Anthropic rejects consecutive same-role messages, so merge adjacent ones (e.g. the separate user
                 // messages from parallel tool results) by concatenating their content blocks into one message.
