@@ -3,7 +3,6 @@ package kyo.kernel.internal
 import kyo.Arrow
 // unqualified so the inlined eval does not select these from Arrow.type at an expansion site
 // outside package kyo, where they are not accessible. See the note in Pending.scala
-import kyo.Arrow.Bracket
 import kyo.Arrow.Chain
 import kyo.Arrow.Transform
 import kyo.Frame
@@ -335,6 +334,10 @@ object Eval:
                                             EffectTrace.attach(ex, h, tail, stack)
                                             throw ex
                                 loop(next)
+                            case _: Binding[?, ?, ?, ?] =>
+                                // an extent ending: the entry is identity, so the value carries on to
+                                // whatever stands below it, and there is nothing to fold a continuation for
+                                loop(curr)
                             case c: Chain[Any, ?, Any, EX & S] @unchecked =>
                                 val tail = stack.dump[Any, Any, EX & S]()
                                 val next =
@@ -342,26 +345,6 @@ object Eval:
                                     catch
                                         case ex: Throwable =>
                                             EffectTrace.attach(ex, c, tail, stack)
-                                            throw ex
-                                loop(next)
-                            case b: Bracket[Any, Any, EX & S] @unchecked =>
-                                // the input is the acquired resource and it has settled by here, so the
-                                // release is owed from this point on. Registering before `use` runs is what
-                                // makes the throwing and the abandoning paths recoverable; the same object
-                                // goes into the continuation, so a use that completes releases there rather
-                                // than waiting for the drain
-                                // the entry also holds a stack position, so an unwind finds it in the order it
-                                // was owed: chained into the continuation instead, it is only on the stack
-                                // when `use` suspends, and a `use` that throws outright would be found by the
-                                // drain alone, which runs after any recovery rather than before it
-                                val fin = new Finalizer(b.release, Nested.unnest[Any](curr))
-                                stack.pushFinalizer(fin)
-                                stack.push(fin)
-                                val next =
-                                    try b.use(curr, Arrow.id)
-                                    catch
-                                        case ex: Throwable =>
-                                            EffectTrace.attach(ex, b, Arrow.id[Any], stack)
                                             throw ex
                                 loop(next)
                             case head =>

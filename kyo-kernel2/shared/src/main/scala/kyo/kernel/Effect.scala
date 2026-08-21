@@ -1,12 +1,14 @@
 package kyo.kernel
 
 import kyo.Arrow
-// unqualified so the inline expansions do not select these from Arrow.type or Kyo.type at a site
-// outside package kyo, where they are not accessible. See the note in Pending.scala
-import kyo.Arrow.Bracket
 import kyo.Frame
+import kyo.Maybe
+import kyo.Maybe.*
 import kyo.Result
 import kyo.kernel.internal.*
+// unqualified so the inline expansions do not select these from Kyo.type at a site outside package kyo,
+// where they are not accessible. See the note in Pending.scala
+import kyo.kernel.internal.Kyo.Binding
 import kyo.kernel.internal.Kyo.Catching
 import kyo.kernel.internal.Kyo.Defer
 import scala.annotation.nowarn
@@ -44,24 +46,14 @@ object Effect:
                 def contA = a
                 def contB = b
 
-    // Surface the previous kernels carry that this one does not yet. Kept as signatures so the
-    // gap is visible here rather than only in a parked test.
-
     /** Wraps a computation with error handling: `f` runs if a non-fatal exception escapes `v`, whether during the initial evaluation or
       * during any later effect operation.
       *
-      * Shape below is the old kernel's, which is CPS: `catchingLoop` walks the computation and rebuilds each suspension with its
-      * continuation wrapped, so resuming inside the region is inside the try. This kernel has no continuation to rebuild at construction
-      * time; the eval holds continuations on its stack and applies them one at a time, and a try inside a single arrow's `apply` guards
-      * that one application rather than the rest of the region.
+      * The scope is a stack entry the eval consults while unwinding, so a throw from anything above it lands here, including one raised
+      * while the body is being built and one raised after a resumption. It stops applying where the scope ends: a value flowing back
+      * through the entry pops it, so a throw after the computation completes is not this scope's.
       *
-      * What the guard actually needs is to be a stack entry the eval consults while unwinding, so a throw from anything above it lands
-      * here. That is the same mechanism a bracket's release needs, and the Bracket design introduces it (reviews/BRACKET-PARK-DESIGN.md).
-      * Designing catching before that mechanism exists would duplicate it, so the signature is recorded and the implementation waits.
-      *
-      * The tracing contract this owes, established while porting EffectTrace: `EffectTrace.splice` currently runs only at the eval
-      * boundary, which assumes an exception is observed only there. This handler is a second observation point, so it has to attach and
-      * splice before calling `f`, or the handler sees frames in the carrier that are not in the stack trace.
+      * Fatal errors pass untouched, which is the previous kernel's rule.
       */
     @nowarn("msg=anonymous")
     inline def catching[A, S, B >: A, S2](inline v: => A < S)(
@@ -80,13 +72,18 @@ object Effect:
 
     /** Acquires a resource, uses it, and releases it, with the release running whether or not the use completes.
       *
-      * The bracket is the acquire followed by an arrow that carries the release, so the arrow is reached only
-      * once the acquire has settled: an acquire that never completes owes nothing, and one that completes owes
-      * the release from that moment. An eval that completes runs it where the use ends; one that throws, or
-      * that ends holding a continuation a clause never applied, runs it at the boundary.
+      * A resource is a value scoped to an extent, which is what a binding is, so this is one: the acquire's
+      * result is bound for the extent of `use`, and the binding carries the release. An eval that completes
+      * runs it where the use ends; one that throws runs it on the way down; one that ends holding a
+      * continuation a clause never applied runs it at the boundary. The binding is unnamed, so nothing can
+      * read the resource out of it: `use` is handed it directly and no tag exists to look it up by.
+      *
+      * The binding is built once the acquire settles, and the eval never stops in front of a binding, so no
+      * slice can end between the resource existing and the scope that owes it being installed.
       *
       * The release takes no effects. It has to be able to run where nothing is installed to answer for it,
-      * which is what an eval that is ending can offer.
+      * which is what an eval that is ending can offer. It is told how the extent ended, so it can commit on a
+      * value, roll back on a failure, and tell either from an extent that was abandoned.
       *
       * This form's release only wants the resource, and delegates to the one that also takes the outcome.
       */
@@ -99,20 +96,25 @@ object Effect:
     inline def bracket[A, B, S](inline acquire: A < S)(inline _release: (A, Result[Nothing, B]) => Any < Any)(
         inline _use: A => B < S
     )(using inline _frame: Frame): B < S =
-        // the parameters are named apart from the members below rather than bound to locals first: `Arrow`
-        // takes its function inline, so handing it a local would cost a call through the lambda at every
-        // application instead of expanding the body into the arrow
+        // the parameters are named apart from the members below rather than bound to locals first: a local
+        // would cost a call through the lambda at every application instead of expanding the body here
         //
-        // the deferral of the acquire and the arrow that consumes it are one object, as a suspension and its
-        // continuation are in suspendWith: the node's own first continuation is the bracket
-        new Defer[A, B, B, S] with Bracket[A, B, S]:
-            def frame   = _frame
-            def value   = acquire
-            def contA   = this
-            def contB   = Arrow.id[B]
-            val use     = Arrow(_use)
-            val release = _release
-        end new
+        // the binding is built once the acquire settles, and the eval never stops in front of a binding, so
+        // no slice can end between the resource existing and the scope that owes it being installed
+        //
+        // not fused into the deferral the way the previous shape was: as a pending entry a resource's binding
+        // takes the resource and answers with the use's result, while an installed one is the identity its
+        // extent ends at, and one object cannot be typed for both without erasing to `Any`. Fusing would also
+        // make `Binding` a trait, which puts mixin forwarders at every binding and every read
+        acquire.map { resource =>
+            new Binding[A, Nothing, B, S]:
+                def frame                  = _frame
+                def tag                    = Absent
+                val bound                  = Maybe((_: Maybe[A]) => resource)
+                override val release       = Maybe(_release)
+                def resume(held: Maybe[A]) = _use(resource)
+            end new
+        }
     end bracket
 
 end Effect

@@ -94,34 +94,6 @@ object Arrow:
       */
     abstract private[kyo] class TransformBase[-A, B, -S] extends Transform[A, B, S]
 
-    /** An arrow from an acquired resource, carrying the release that owes it.
-      *
-      * The input is the resource, so a bracket is `acquire` followed by this arrow: the arrow is reached only
-      * once the acquire has settled, which answers "did the acquire complete" by construction rather than by
-      * inspecting a suspended computation.
-      *
-      * `release` sits at row `Any` so it can run where nothing is installed to answer for it, which is what an
-      * eval that is ending or a park that is being abandoned can offer.
-      */
-    trait Bracket[-A, B, -S] extends Transform[A, B, S]:
-        def use: Arrow[A, B, S]
-
-        /** Takes the outcome as well as the resource: the value where the extent completed, the exception
-          * where it failed, and `Finalizer.Abandoned` where it never ended because a continuation was
-          * dropped. A function rather than an arrow, since it takes two things and the eval hands both.
-          */
-        def release: (A, Result[Nothing, B]) => Any < Any
-
-        /** Always defers, and the eval calls `use` rather than coming back through here.
-          *
-          * The eval is the only site that registers the release, so `use` must not be reachable without
-          * passing it. Deferring makes an application anywhere else a value that has to be evaluated, and
-          * the eval's own arm never calls this method, so there is no cycle.
-          */
-        def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]) =
-            Effect.defer(v, this, next)
-    end Bracket
-
     // the evaluator flattens a chain onto its stack, so it sees the two halves
     private[kyo] class Chain[-A, B, +C, -S](
         val a: Arrow[A, B, S],

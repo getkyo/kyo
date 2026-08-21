@@ -4,11 +4,13 @@ import kyo.Arrow
 import kyo.Const
 import kyo.Frame
 import kyo.Maybe
+import kyo.Maybe.*
 import kyo.Tag
 import kyo.discard
 import kyo.kernel.internal.Eval
 import kyo.kernel.internal.Kyo
 import org.scalatest.freespec.AnyFreeSpec
+import scala.annotation.tailrec
 
 class EffectTest extends AnyFreeSpec:
 
@@ -622,6 +624,38 @@ class EffectTest extends AnyFreeSpec:
             val v = Effect.bracket(Effect.defer(0))(_ => count += 1)(r => chain(1000, r))
             assert(Eval(v) == 1000)
             assert(count == 1)
+        }
+
+        // the eval never stops in front of a binding, so a slice cannot end between the acquire settling and
+        // the scope that owes the resource being installed. Stopping at every step is what would find such a
+        // window: the release must run once, at the end, and never while the remainder is still resumable
+        "a slice stopping at every step releases once, at the end" in {
+            var released = 0
+            val v: Int < Any =
+                Effect.bracket(Effect.defer(1))(_ => released += 1)(r => Effect.defer(r + 1).map(_ + 1))
+
+            def sliceOnce(v: Int < Any): Int < Any =
+                var budget = 1
+                Eval.partial(
+                    v,
+                    () =>
+                        budget -= 1
+                        budget < 0
+                )
+            end sliceOnce
+
+            @tailrec def run(v: Int < Any, steps: Int): (Int, Int) =
+                v.evalNow match
+                    case Present(a) => (a, steps)
+                    case Absent =>
+                        assert(released == 0)
+                        assert(steps < 100)
+                        run(sliceOnce(v), steps + 1)
+
+            val (result, steps) = run(v, 0)
+            assert(result == 3)
+            assert(steps > 1)
+            assert(released == 1)
         }
 
         "deeply nested brackets release in bounded stack" in {

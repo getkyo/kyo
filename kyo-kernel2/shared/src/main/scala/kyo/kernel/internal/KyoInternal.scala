@@ -65,9 +65,8 @@ object Kyo:
 
     /** A scope that answers its own failure.
       *
-      * A node rather than an arrow, which is where it parts company with `Bracket`: a bracket's arrow exists
-      * so the acquire settles before anything is owed, and that is what answers "did the acquire complete"
-      * by construction. Nothing has to settle before a recovery is owed, so it is installed on the way in.
+      * Installed on the way in, unlike a resource's scope, which waits for its acquire to settle before
+      * anything is owed. Nothing has to settle before a recovery is owed.
       */
     // the node is also the entry that marks the scope: identity on the completing path, since a value
     // flowing back through is what ends the scope, and the recovery the unwind asks on the way down.
@@ -146,8 +145,7 @@ object Kyo:
           * The eval turns it into a `Finalizer` when the entry is installed, which is what makes it run once
           * whether the extent is left, unwound past, or abandoned with the continuation that held it.
           *
-          * `release` rather than `finalize`, which would sit on top of `Object.finalize`, and the same word
-          * `Arrow.Bracket` already uses for it.
+          * `release` rather than `finalize`, which would sit on top of `Object.finalize`.
           */
         def release: Maybe[(V, Result[Nothing, A]) => Any < Any] = Absent
 
