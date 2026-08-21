@@ -20,9 +20,13 @@ Goal, user's words: fully green against kyo-kernel. A red row means the kernel i
 
 ## Explorations in flight (isolated worktrees, results pending)
 
-1. [ ] E1 `exp-stateful-register`: HandlerLoopState state as eval-loop register, slot as spill.
-   Mechanism evidenced: per-answer box escapes via putState array store; AutoBoxCacheMax=20000 takes the row
-   612 to 235 while kyo-kernel moves 144 to 136. Risk: win may not survive megamorphic h.run (E4 tests this).
+1. [x] E1 `exp-stateful-register` DONE, NEGATIVE, do not adopt (branch exp-e1-register, commits ed39151070
+   + a1e4fae07a, worktree agent-a56067a70d1a89b4a). The register removed the array-store escape and the row
+   did not move (543 to 541us, B/op byte-identical): the load-bearing escape is the box being returned
+   through h.run, a virtual call the JIT does not inline, not the slot store. Three non-target rows paid
+   5-7% for the spill machinery: the cost floor of any register protocol in the shared loop. Implementation
+   was clean (979 tests green, full spill inventory) and the falsification is the deliverable. With E4,
+   the evidence now triangulates on the statically bound clause call as the old kernel's actual advantage.
 2. [ ] E2 `exp-inline-drive`: per-call-site inline settled loop for handleLoopState, kyo-kernel style,
    bailing to the shared region. Must also measure compile-time cost (HandleSites fixture, kernel2 currently
    0.50x). Open question: the soundness guard for applying the continuation without the stack.
