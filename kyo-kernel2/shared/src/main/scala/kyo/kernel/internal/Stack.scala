@@ -45,10 +45,32 @@ final private[kyo] class Stack:
                 ensure(n)
                 head -= n
                 fill(f, 0)
+                resolveFrom(n - 1)
             case f =>
                 ensure(1)
                 head -= 1
                 put(head & mask, f)
+                resolve(0)
+
+    /** Resolves what each binding in a freshly installed run holds, outermost first.
+      *
+      * A binding is a function of what is bound below it, so the entry below has to hold its own value
+      * before the one above can be resolved against it. `fill` writes a chain innermost first, which is the
+      * opposite order, so this walks back down.
+      */
+    @tailrec private def resolveFrom(i: Int): Unit =
+        if i >= 0 then
+            resolve(i)
+            resolveFrom(i - 1)
+
+    private def resolve(i: Int): Unit =
+        val idx = (head + i) & mask
+        entries(idx) match
+            case b: Kyo.Binding[Any, ?, ?, ?] @unchecked =>
+                b.bound.foreach(f => states(idx) = Present(f(lookup(i + 1, b.key))))
+            case _ => ()
+        end match
+    end resolve
 
     @tailrec private def count(f: Arrow[?, ?, ?], n: Int): Int =
         f match
@@ -95,6 +117,20 @@ final private[kyo] class Stack:
     // how many releases are held. Only a test reads this, to pin that an eval running one bracket after
     // another does not accumulate entries for the ones that already ran
     private[kernel] def outstanding: Int = pending
+
+    /** What the innermost binding holds for a tag, absent where nothing binds it.
+      *
+      * Stops at the first match, which is what makes an inner binding shadow an outer one, and reads the
+      * value the entry resolved when it was installed rather than resolving again.
+      */
+    def lookup(t: Tag[Any]): Maybe[Any] = lookup(0, t)
+
+    @tailrec private def lookup(i: Int, t: Tag[Any]): Maybe[Any] =
+        if i == size then Absent
+        else
+            entries((head + i) & mask) match
+                case b: Kyo.Binding[?, ?, ?, ?] if b.key =:= t => state[Any](i)
+                case _                                         => lookup(i + 1, t)
 
     def find[A](t: Tag[A]): Int =
         val n = size
@@ -212,6 +248,10 @@ final private[kyo] class Stack:
                 states(idx) = sts(i)
                 i += 1
             end while
+            // the states come back as they were, which is what a stateful region needs, and then the
+            // bindings resolve again: what one holds is a function of what is bound below it, and below it
+            // now is whatever this eval had already installed
+            resolveFrom(n - 1)
         end if
         var i = 0
         while i < fins.size do

@@ -275,6 +275,10 @@ object EffectTrace:
                                 push(h.cont)
                                 push(h.handler)
                                 pushValue(h.value)
+                            case b: Kyo.Binding[?, ?, ?, ?] =>
+                                // its payload takes what is bound, which this walk does not have, so the
+                                // node contributes its own site and nothing under it
+                                frame(b.frame)
                             case d: Kyo.Defer[?, ?, ?, ?] =>
                                 push(d.contB)
                                 push(d.contA)

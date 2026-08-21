@@ -87,6 +87,72 @@ object Kyo:
         override def toString: String = render(value)
     end Catching
 
+    /** A value bound for the extent of a computation, or a read of one.
+      *
+      * One node serves both, discriminated by `bound`: `Present` binds and marks the extent it applies to,
+      * `Absent` reads whatever is bound. A bind is its own stack entry, as a recovery is, so the binding
+      * lasts exactly as long as the entry: it leaves on every path that unwinds past it, it travels inside a
+      * dumped continuation the way a region does, and a park snapshots it with everything else. A read marks
+      * no extent, so it is pushed nowhere.
+      *
+      * What it binds is a function of what the enclosing scope binds, not a value, and the consumers force
+      * that. Every `Local` shares one tag and one map, and each `let` binds `_.updated(this, value)` over
+      * what is already there, so a binding that replaced would drop every local bound outside it. The
+      * previous kernel resolved that function at each continuation crossing, since its context travelled as
+      * an argument. Here it is resolved when the entry is installed and the result lives in the entry's state
+      * slot, which makes both properties that matter hold: a read is a walk to the innermost matching entry
+      * and a field read, never an allocation, and a scope re-entered under a different enclosing binding
+      * resolves against that one, which is what a continuation captured inside a binding and resumed
+      * elsewhere depends on.
+      *
+      * `E` places the effect rather than carrying it: a bind takes the node's row to `S`, which is what
+      * providing the value means, and a read instantiates `S` as `E & S`, which is what requiring it means. A
+      * read with a default takes neither, so a computation that reads one names no effect at all.
+      */
+    abstract private[kyo] class Binding[V, E <: ContextEffect[V], A, S] extends Kyo[A, S], Transform[Any, Any, Any]:
+
+        def tag: Tag[E]
+
+        /** What a read matches against, erased, which is the equality the previous kernel keyed its context
+          * map by. Read here rather than at the walk, where the node's type is a wildcard and `Tag`'s
+          * extension methods cannot infer their receiver.
+          */
+        final def key: Tag[Any] = tag.erased
+
+        /** What this binds, given what the enclosing scope binds, or absent where this only reads. */
+        def bound: Maybe[Maybe[V] => V]
+
+        /** What a computation crossing a boundary inherits from this binding, or absent where it inherits
+          * nothing.
+          *
+          * The same shape as `bound`, and for the same reason: a child resolves it against what it has bound
+          * rather than carrying the parent's resolution, which is what makes an inherited `Local` merge into
+          * the child's map instead of replacing it.
+          *
+          * Inheriting by default, and a binding that must not cross says so here. That keeps the marker out
+          * of the kernel: nothing type-tests for a non-inheritable effect, each binding answers for itself.
+          */
+        def inherit: Maybe[Maybe[V] => V] = bound
+
+        /** Where the value flows: the bound body for a bind, the read's continuation for a read.
+          *
+          * A method rather than an arrow, so neither use allocates one and the node is the only object
+          * either costs.
+          */
+        def resume(held: Maybe[V]): A < (E & S)
+
+        // identity on the way out: this holds a stack position so the extent ends where the value flows back
+        override def apply(v: Any): Any < Any = v
+
+        def apply[C, S2](v: Any < S2, next: Arrow[Any, C, S2]): C < S2 =
+            v match
+                case kyo: Kyo[Any, S2] @unchecked => Effect.defer(kyo, this, next)
+                case _                            => next(apply(Nested.unnest[Any](v)), Arrow.id)
+
+        override def toString: String =
+            s"Kyo(${if bound.isDefined then "bind" else "read"} ${tag.show}, ${frame.position.show})"
+    end Binding
+
     abstract private[kyo] class Handle[E <: ArrowEffect[?, ?], A, B, +C, -S] extends Kyo[C, S]:
         // the pending type rather than `Kyo`, and a method rather than a field, so a region can hold its body
         // unforced: the eval reads this after the handler is on the stack, which is what lets a recovering
@@ -109,12 +175,15 @@ object Kyo:
             else
                 v match
                     case k: Suspend[?, ?, ?, ?, ?, ?] => k.toString
-                    case k: Defer[?, ?, ?, ?]         => loop(k.value, fuel - 1)
-                    case k: Handle[?, ?, ?, ?, ?]     => loop(k.value, fuel - 1)
-                    case k: Park[?, ?]                => loop(k.value, fuel - 1)
-                    case k: Catching[?, ?]            => loop(k.value, fuel - 1)
-                    case n: Nested[?]                 => loop(n.value, fuel - 1)
-                    case settled                      => s"Kyo($settled)"
+                    // its payload takes what is bound, which a rendering does not have, so the node names
+                    // itself and stops there
+                    case k: Binding[?, ?, ?, ?]   => k.toString
+                    case k: Defer[?, ?, ?, ?]     => loop(k.value, fuel - 1)
+                    case k: Handle[?, ?, ?, ?, ?] => loop(k.value, fuel - 1)
+                    case k: Park[?, ?]            => loop(k.value, fuel - 1)
+                    case k: Catching[?, ?]        => loop(k.value, fuel - 1)
+                    case n: Nested[?]             => loop(n.value, fuel - 1)
+                    case settled                  => s"Kyo($settled)"
         loop(v, 64)
     end render
 

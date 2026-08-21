@@ -18,6 +18,7 @@ import kyo.kernel.Loop.Outcome
 import kyo.kernel.internal.Handler.HandlerCont
 import kyo.kernel.internal.Handler.HandlerLoop
 import kyo.kernel.internal.Handler.HandlerLoopState
+import kyo.kernel.internal.Kyo.Binding
 import kyo.kernel.internal.Kyo.Catching
 import kyo.kernel.internal.Kyo.Defer
 import kyo.kernel.internal.Kyo.Handle
@@ -198,6 +199,15 @@ object Eval:
                     // through pops it, which is what makes the scope end; a failure finds it on the way down
                     stack.push(kyo)
                     loop(kyo.value)
+                case kyo: Binding[Any, ?, ?, ?] @unchecked =>
+                    // a bind marks its own extent by going on the stack, and installing it is what resolves
+                    // what it holds against what is bound below. A read marks nothing and only needs the
+                    // innermost binding of its tag, or absent where none binds it
+                    if kyo.bound.isDefined then
+                        stack.push(kyo)
+                        loop(kyo.resume(stack.state(0)))
+                    else
+                        loop(kyo.resume(stack.lookup(kyo.key)))
                 case kyo: Suspend[IX, OX, EX, CX, A, S] @unchecked =>
                     stack.push(kyo.cont)
                     val pos = stack.find(kyo.tag)
