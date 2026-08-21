@@ -1126,8 +1126,8 @@ class BrowserMutationTest extends BrowserTest:
             ).andThen {
                 Scope.run {
                     for
-                        tmp1 <- Path.tempScoped("kyo-setFiles-a-", ".txt")
-                        tmp2 <- Path.tempScoped("kyo-setFiles-b-", ".txt")
+                        tmp1 <- Path.temp("kyo-setFiles-a-", ".txt")
+                        tmp2 <- Path.temp("kyo-setFiles-b-", ".txt")
                         _    <- tmp1.write("alpha")
                         _    <- tmp2.write("beta")
                         paths = Chunk(tmp1, tmp2)
@@ -1185,8 +1185,8 @@ class BrowserMutationTest extends BrowserTest:
             ).andThen {
                 Scope.run {
                     for
-                        tmp1 <- Path.tempScoped("kyo-setFiles-seq-a-", ".txt")
-                        tmp2 <- Path.tempScoped("kyo-setFiles-seq-b-", ".txt")
+                        tmp1 <- Path.temp("kyo-setFiles-seq-a-", ".txt")
+                        tmp2 <- Path.temp("kyo-setFiles-seq-b-", ".txt")
                         _    <- tmp1.write("alpha")
                         _    <- tmp2.write("beta")
                         // Use an explicit List[Path] to exercise the widened Seq parameter type.

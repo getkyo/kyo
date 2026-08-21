@@ -406,20 +406,15 @@ object Jsonl:
 
     /** Writes `values` as JSONL to `path`, folding the stream chunk by chunk.
       *
-      * The one write implementation the module has, so [[write]] and [[append]] differ in `appending` alone and neither can grow behavior
-      * the other does not have. Each chunk of values is encoded by `Json.Lines.encodeAllBytes`, the same call [[encode]] streams, and is
-      * written straight out, so what is held at any moment is one chunk of encoded bytes however many values the stream has.
+      * The one write implementation behind [[write]] and [[append]], which differ in `appending` alone.
       *
-      * The open carries no bytes and happens before the fold. It is what makes the file's existence, and for [[write]] its emptiness, a
-      * fact about the call rather than about whether the stream produced anything: writing an empty stream empties the file and appending
-      * an empty stream still creates it, exactly as writing or appending one record does. It also creates the parent directory.
+      * The file is opened before the first chunk is pulled, so its existence, and for [[write]] its emptiness, is a fact about the call
+      * rather than about whether the stream produced anything. Missing parent directories are created when `createFolders` is set. One
+      * handle is held for the whole fold rather than one per chunk, and it is finished before it is closed, so a failure part way through
+      * keeps the records already written rather than removing the file.
       *
-      * One handle is held across the whole fold, so a stream of any length costs one open and one close rather than one of each per chunk.
-      * The fold runs under `Abort.run[Any]` inside the bracket rather than outside it, which is what makes the close happen on every exit:
-      * `Sync.acquireReleaseWith` releases when its body completes or panics but not when it aborts, and a stream's own values can abort for
-      * reasons that have nothing to do with the file. Reifying every outcome into a `Result` first leaves the bracket a computation that
-      * always completes, and the outcome is re-raised once the handle is closed. What a failure leaves behind is the records already
-      * written, which is what a JSONL consumer wants: a prefix of a JSONL file is a JSONL file.
+      * Why the fold is bracketed as it is, and which failures that bracketing does and does not reach, is recorded under "Bounded memory on
+      * both directions" in `kyo-schema-json/CONTRIBUTING.md`. That is an invariant for maintainers rather than part of this contract.
       */
     private def writeAll[A, S](path: Path, values: Stream[A, S], appending: Boolean, createFolders: Boolean)(
         using
@@ -430,9 +425,16 @@ object Jsonl:
     ): Unit < (S & Sync & Abort[FileWriteException]) =
         Sync.acquireReleaseWith(
             // Unsafe: `openWrite` is the only surface that hands back a channel a fold can keep writing to.
-            // The handle never leaves this method, and the bracket below owns its close.
-            Sync.Unsafe.defer(Abort.get(path.unsafe.openWrite(append = appending, createFolders = createFolders)))
-        )(handle => Sync.Unsafe.defer(handle.close())) { handle =>
+            // The handle never leaves this method, and the bracket below owns its release.
+            Sync.Unsafe.defer(Abort.get(path.unsafe.openWrite(appending, Path.WriteOptions(createFolders = createFolders))))
+        ) { handle =>
+            // Unsafe: finishes and closes the write handle. `close` runs even when `finish` throws,
+            // so a failing fsync reports itself without also leaking the handle it was fsyncing.
+            Sync.Unsafe.defer {
+                try handle.finish()
+                finally handle.close()
+            }
+        } { handle =>
             Abort.run[Any] {
                 values.foreachChunk { chunk =>
                     // Unsafe: the same handle, bridged straight back into Sync and Abort on every chunk.

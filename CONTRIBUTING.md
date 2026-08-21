@@ -386,13 +386,13 @@ This is guidance for new and changed code. Existing APIs that thread byte counts
 
 **kyo-system** (file system, OS processes, and environment):
 
-| Kyo primitive   | Purpose                | Notes                                                                          |
-| --------------- | ---------------------- | ------------------------------------------------------------------------------ |
-| `Path`          | File system operations | Immutable, cross-platform; construct with `/`, effect-tracked read/write       |
-| `Command`       | OS process launch      | Builds and runs external processes; `spawn`, `text`, `waitFor`                 |
-| `Process`       | Running process handle | `stdout`, `stderr`, `waitFor`, `destroy`                                       |
-| `System`        | Environment/properties | Type-safe access with custom `Parser`s                                         |
-| `FileException` | File I/O errors        | Sealed hierarchy: `FileReadException`, `FileWriteException`, `FileFsException` |
+| Kyo primitive         | Purpose                | Notes                                                                                   |
+| --------------------- | ---------------------- | --------------------------------------------------------------------------------------- |
+| `Path`                | File system operations | Immutable, cross-platform; construct with `/`, effect-tracked read/write                  |
+| `Command`             | OS process launch      | Builds and runs external processes; `spawn`, `text`, `waitFor`                            |
+| `Process`             | Running process handle | `stdout`, `stderr`, `waitFor`, `destroy`                                                  |
+| `System`              | Environment/properties | Type-safe access with custom `Parser`s                                                    |
+| `FileSystemException` | File I/O errors        | Sealed hierarchy: `FileReadException`, `FileWriteException`, `FileStructureException`     |
 
 Accept generic collections in public APIs, use `Chunk` internally:
 ```scala

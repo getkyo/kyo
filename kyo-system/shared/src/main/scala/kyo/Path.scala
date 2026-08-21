@@ -8,7 +8,7 @@ import kyo.internal.PathPlatformSpecific
   *
   * Path provides a unified API for file operations across JVM, Scala.js (Node.js), and Scala Native. Every I/O operation is tracked in the
   * type system: reads carry `Abort[FileReadException]`, writes carry `Abort[FileWriteException]`, and directory mutations carry
-  * `Abort[FileFsException]`. This means the compiler enforces that callers handle (or propagate) every possible failure mode.
+  * `Abort[FileStructureException]`. This means the compiler enforces that callers handle (or propagate) every possible failure mode.
   *
   * Paths are constructed via the `/` operator or the `apply` factory:
   *
@@ -23,15 +23,15 @@ import kyo.internal.PathPlatformSpecific
   * val lines: Stream[String, Scope & Sync & Abort[FileReadException]] = config.readLinesStream
   * }}}
   *
-  * Inspection methods (`exists`, `isDirectory`, `isRegularFile`, `isSymbolicLink`) return `false` for inaccessible paths rather than
-  * failing, so they require only `Sync` and not `Abort`.
+  * Inspection methods (`isDirectory`, `isRegularFile`, `isSymbolicLink`) return `false` for inaccessible paths rather than failing, so they
+  * require only `Sync` and not `Abort`. `exists` answers `false` for an absent path and fails only when the filesystem refuses the question.
   *
   * **Streaming operations** (`readStream`, `readBytesStream`, `readLinesStream`, `walk`, `tail`, `tailBytes`) return `Stream` values
   * that carry `Scope` in their effect type. The underlying OS resource (file handle, directory handle) is acquired when the stream
   * starts and released when the enclosing `Scope` closes, whether by normal completion, error, or cancellation.
   *
   * @see
-  *   [[FileException]] for the typed error hierarchy
+  *   [[FileSystemException]] for the typed error hierarchy
   * @see
   *   [[kyo.Path.Unsafe]] for the abstract platform-specific implementation class
   */
@@ -74,6 +74,77 @@ object Path extends PathPlatformSpecific:
           */
         case Offset(bytes: Long)
     end Origin
+
+    /** Configures file writes and appends.
+      *
+      * `createFolders` creates missing parent directories when enabled. When disabled, an absent
+      * parent fails with [[FileNotFoundException]] and the target remains absent.
+      *
+      * @param createFolders
+      *   whether missing parent directories may be created
+      */
+    final case class WriteOptions(createFolders: Boolean = true) derives CanEqual
+
+    /** Selects whether a move or copy may replace its target.
+      *
+      * [[Never]] fails with [[FileAlreadyExistsException]] when the target exists. [[Existing]]
+      * replaces an existing target according to the backend's normal move or copy semantics.
+      *
+      * This policy is shared by [[MoveOptions]] and [[CopyOptions]].
+      */
+    enum Replace derives CanEqual:
+        case Never
+        case Existing
+
+    /** Selects the atomicity guarantee required from a move.
+      *
+      * [[Allowed]] permits the backend's normal move operation. [[Required]] requires the backend
+      * or platform to guarantee an atomic move and otherwise fails with
+      * [[FileAtomicMoveUnsupportedException]] before changing either path.
+      *
+      * This policy applies only to [[MoveOptions]].
+      */
+    enum Atomicity derives CanEqual:
+        case Allowed
+        case Required
+
+    /** Configures a move operation.
+      *
+      * Replacement and atomicity are explicit policies. Parent directories are created by default.
+      *
+      * @param replace
+      *   target replacement policy
+      * @param atomicity
+      *   required move atomicity
+      * @param createFolders
+      *   whether missing target parents may be created
+      */
+    final case class MoveOptions(
+        replace: Replace = Replace.Never,
+        atomicity: Atomicity = Atomicity.Allowed,
+        createFolders: Boolean = true
+    ) derives CanEqual
+
+    /** Configures a copy operation.
+      *
+      * Link following, replacement, attribute copying, and parent creation are carried together so
+      * call sites do not rely on positional Boolean arguments.
+      *
+      * @param followLinks
+      *   whether symbolic links are followed
+      * @param replace
+      *   target replacement policy
+      * @param copyAttributes
+      *   whether supported source attributes are copied
+      * @param createFolders
+      *   whether missing target parents may be created
+      */
+    final case class CopyOptions(
+        followLinks: Boolean = true,
+        replace: Replace = Replace.Never,
+        copyAttributes: Boolean = false,
+        createFolders: Boolean = true
+    ) derives CanEqual
 
     /** Platform separator between path entries in classpath-style joined strings.
       *
@@ -169,12 +240,12 @@ object Path extends PathPlatformSpecific:
         // --- Inspection ---
 
         /** Returns `true` if this path exists in the file system (following symbolic links). */
-        def exists(using Frame): Boolean < Sync =
-            Sync.Unsafe.defer(self.unsafe.exists())
+        def exists(using Frame): Boolean < (Sync & Abort[FileReadException]) =
+            Sync.Unsafe.defer(Abort.get(self.unsafe.exists()))
 
         /** Returns `true` if this path exists, optionally following symbolic links. */
-        def exists(followLinks: Boolean)(using Frame): Boolean < Sync =
-            Sync.Unsafe.defer(self.unsafe.exists(followLinks))
+        def exists(followLinks: Boolean)(using Frame): Boolean < (Sync & Abort[FileReadException]) =
+            Sync.Unsafe.defer(Abort.get(self.unsafe.exists(followLinks)))
 
         /** Returns `true` if this path is a directory. */
         def isDirectory(using Frame): Boolean < Sync =
@@ -195,7 +266,7 @@ object Path extends PathPlatformSpecific:
           * path-under-root validation: compare `path.realPath` against `root.realPath` instead
           * of relying on syntactic checks (which miss symlinks that point outside the root).
           */
-        def realPath(using Frame): Path < (Sync & Abort[FileException]) =
+        def realPath(using Frame): Path < (Sync & Abort[FileReadException]) =
             Sync.Unsafe.defer(Abort.get(self.unsafe.realPath()))
 
         /** Returns this path resolved to its canonical real path, but only if that real path is contained
@@ -213,12 +284,12 @@ object Path extends PathPlatformSpecific:
           * call `(root / userInput).confinedTo(root)` to obtain a path that is statically known to live
           * under the root, defending against symlink escapes.
           */
-        def confinedTo(root: Path)(using Frame): Path < (Sync & Abort[FileException]) =
+        def confinedTo(root: Path)(using Frame): Path < (Sync & Abort[FileReadException]) =
             Sync.Unsafe.defer {
                 Abort.get(root.unsafe.realPath()).map { rootReal =>
                     Abort.get(self.unsafe.realPath()).map { selfReal =>
-                        if selfReal.parts.take(rootReal.parts.size) == rootReal.parts then (selfReal: Path < Abort[FileException])
-                        else Abort.fail[FileException](FileAccessDeniedException(selfReal))
+                        if selfReal.parts.take(rootReal.parts.size) == rootReal.parts then (selfReal: Path < Abort[FileReadException])
+                        else Abort.fail[FileReadException](FileAccessDeniedException(selfReal))
                     }
                 }
             }
@@ -280,7 +351,7 @@ object Path extends PathPlatformSpecific:
             Stream {
                 Scope.acquireRelease(
                     Sync.Unsafe.defer(Abort.get(self.unsafe.openRead()))
-                )(handle => Sync.Unsafe.defer(handle.close())).map { handle =>
+                )(handle => Sync.Unsafe.defer(handle.close())).map { handle => // Unsafe: closes the read handle at Scope exit
                     val rawBuf      = new Array[Byte](capacity)
                     val decoder     = charset.newDecoder()
                     val maxTrailing = math.ceil(charset.newEncoder().maxBytesPerChar()).toInt
@@ -288,6 +359,7 @@ object Path extends PathPlatformSpecific:
                         java.nio.ByteBuffer.allocate(capacity + maxTrailing) // extra space for incomplete trailing multi-byte sequence
                     val outBuf = java.nio.CharBuffer.allocate(math.ceil(capacity * decoder.maxCharsPerByte()).toInt)
                     Loop.foreach {
+                        // Unsafe: bridges read-handle chunk reads into the Sync tier.
                         Sync.Unsafe.defer {
                             val result = handle.readChunk(rawBuf)
                             if result.isEof then
@@ -333,8 +405,9 @@ object Path extends PathPlatformSpecific:
             Stream {
                 Scope.acquireRelease(
                     Sync.Unsafe.defer(Abort.get(self.unsafe.openRead()))
-                )(handle => Sync.Unsafe.defer(handle.close())).map { handle =>
+                )(handle => Sync.Unsafe.defer(handle.close())).map { handle => // Unsafe: closes the read handle at Scope exit
                     Loop.foreach {
+                        // Unsafe: bridges read-handle chunk reads into the Sync tier.
                         Sync.Unsafe.defer {
                             val buf    = new Array[Byte](capacity)
                             val result = handle.readChunk(buf)
@@ -359,8 +432,9 @@ object Path extends PathPlatformSpecific:
             Stream {
                 Scope.acquireRelease(
                     Sync.Unsafe.defer(Abort.get(self.unsafe.openReadLines(charset)))
-                )(handle => Sync.Unsafe.defer(handle.close())).map { handle =>
+                )(handle => Sync.Unsafe.defer(handle.close())).map { handle => // Unsafe: closes the read handle at Scope exit
                     Loop.foreach {
+                        // Unsafe: bridges the line-read handle into the Sync tier.
                         Sync.Unsafe.defer {
                             handle.readLine() match
                                 case Absent        => Loop.done
@@ -464,37 +538,41 @@ object Path extends PathPlatformSpecific:
 
         // --- Write ---
 
-        /** Writes `value` to the file, creating parent directories when `createFolders = true` (the default). */
-        def write(value: String, createFolders: Boolean = true)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.write(value, createFolders)))
+        /** Writes `value` to the file according to `options`. */
+        def write(value: String, options: WriteOptions = WriteOptions())(using Frame): Unit < (Sync & Abort[FileWriteException]) =
+            Sync.Unsafe.defer(Abort.get(self.unsafe.write(value, options)))
 
         /** Writes raw bytes to the file. */
-        def writeBytes(value: Span[Byte], createFolders: Boolean = true)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.writeBytes(value, createFolders)))
+        def writeBytes(value: Span[Byte], options: WriteOptions = WriteOptions())(using Frame): Unit < (Sync & Abort[FileWriteException]) =
+            Sync.Unsafe.defer(Abort.get(self.unsafe.writeBytes(value, options)))
 
         /** Writes a collection of lines to the file.
           *
           * Each line is written followed by the platform line separator (including the last line), so `writeLines(Chunk("a", "b"))`
           * produces `"a\nb\n"` on Unix. Use `write(lines.mkString(lineSep))` if you need to control trailing newline behavior.
           */
-        def writeLines(value: Chunk[String], createFolders: Boolean = true)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.writeLines(value, createFolders)))
+        def writeLines(value: Chunk[String], options: WriteOptions = WriteOptions())(using
+            Frame
+        ): Unit < (Sync & Abort[FileWriteException]) =
+            Sync.Unsafe.defer(Abort.get(self.unsafe.writeLines(value, options)))
 
-        /** Appends `value` to the file, creating parent directories when `createFolders = true`. */
-        def append(value: String, createFolders: Boolean = true)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.append(value, createFolders)))
+        /** Appends `value` to the file according to `options`. */
+        def append(value: String, options: WriteOptions = WriteOptions())(using Frame): Unit < (Sync & Abort[FileWriteException]) =
+            Sync.Unsafe.defer(Abort.get(self.unsafe.append(value, options)))
 
         /** Appends raw bytes to the file. */
-        def appendBytes(value: Span[Byte], createFolders: Boolean = true)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.appendBytes(value, createFolders)))
+        def appendBytes(value: Span[Byte], options: WriteOptions = WriteOptions())(using Frame): Unit < (Sync & Abort[FileWriteException]) =
+            Sync.Unsafe.defer(Abort.get(self.unsafe.appendBytes(value, options)))
 
         /** Appends a collection of lines to the file.
           *
           * Each line is written followed by the platform line separator (including the last line), so `appendLines(Chunk("a", "b"))`
           * produces `"a\nb\n"` on Unix. Use `write(lines.mkString(lineSep))` if you need to control trailing newline behavior.
           */
-        def appendLines(value: Chunk[String], createFolders: Boolean = true)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.appendLines(value, createFolders)))
+        def appendLines(value: Chunk[String], options: WriteOptions = WriteOptions())(using
+            Frame
+        ): Unit < (Sync & Abort[FileWriteException]) =
+            Sync.Unsafe.defer(Abort.get(self.unsafe.appendLines(value, options)))
 
         /** Truncates the file to at most `size` bytes. */
         def truncate(size: Long)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
@@ -510,72 +588,83 @@ object Path extends PathPlatformSpecific:
         // --- Directory / structure ---
 
         /** Creates this path as a directory (including all missing parent directories). */
-        def mkDir(using Frame): Unit < (Sync & Abort[FileFsException]) =
+        def mkDir(using Frame): Unit < (Sync & Abort[FileStructureException]) =
             Sync.Unsafe.defer(Abort.get(self.unsafe.mkDir()))
 
         /** Creates this path as an empty file (parent directories created if missing). */
-        def mkFile(using Frame): Unit < (Sync & Abort[FileFsException]) =
+        def mkFile(using Frame): Unit < (Sync & Abort[FileStructureException]) =
             Sync.Unsafe.defer(Abort.get(self.unsafe.mkFile()))
 
         /** Lists all direct children of this directory. */
-        def list(using Frame): Chunk[Path] < (Sync & Abort[FileFsException]) =
+        def list(using Frame): Chunk[Path] < (Sync & Abort[FileStructureException]) =
             Sync.Unsafe.defer(Abort.get(self.unsafe.list()))
 
-        /** Lists direct children of this directory whose names match `glob`. */
-        def list(glob: String)(using Frame): Chunk[Path] < (Sync & Abort[FileFsException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.list(glob)))
+        /** Lists direct children of this directory whose names match `glob`, comparing case-sensitively. */
+        def list(glob: Glob)(using Frame): Chunk[Path] < (Sync & Abort[FileStructureException]) =
+            Sync.Unsafe.defer(Abort.get(self.unsafe.list(glob, Glob.CaseSensitivity.Sensitive)))
+
+        /** Lists direct children of this directory whose names match `glob` under `caseSensitivity`. */
+        def list(glob: Glob, caseSensitivity: Glob.CaseSensitivity)(using Frame): Chunk[Path] < (Sync & Abort[FileStructureException]) =
+            Sync.Unsafe.defer(Abort.get(self.unsafe.list(glob, caseSensitivity)))
 
         /** Streams all entries under this directory tree (unlimited depth, not following links). */
-        def walk(using Frame): Stream[Path, Sync & Scope & Abort[FileFsException]] =
+        def walk(using Frame): Stream[Path, Sync & Scope & Abort[FileStructureException]] =
             walk(Int.MaxValue, followLinks = false)
 
         /** Streams all entries under this directory tree up to `maxDepth`, optionally following symbolic links. */
         def walk(maxDepth: Int = Int.MaxValue, followLinks: Boolean = false)(using
             Frame
-        ): Stream[Path, Sync & Scope & Abort[FileFsException]] =
+        ): Stream[Path, Sync & Scope & Abort[FileStructureException]] =
+            walkWhere(maxDepth, followLinks)(_ => true)
+
+        private def walkWhere(maxDepth: Int, followLinks: Boolean)(matches: Path => Boolean)(using
+            Frame
+        ): Stream[Path, Sync & Scope & Abort[FileStructureException]] =
             Stream {
                 Scope.acquireRelease(
                     Sync.Unsafe.defer(Abort.get(self.unsafe.openWalk(maxDepth, followLinks)))
-                )(handle => Sync.Unsafe.defer(handle.close())).map { handle =>
+                )(handle => Sync.Unsafe.defer(handle.close())).map { handle => // Unsafe: closes the walk handle at Scope exit
                     Loop.foreach {
+                        // Unsafe: bridges walk-handle iteration into the Sync tier.
                         Sync.Unsafe.defer {
                             handle.next() match
-                                case Absent        => Loop.done
-                                case Present(path) => Emit.valueWith(Chunk(path))(Loop.continue)
+                                case Absent => Loop.done
+                                case Present(path) =>
+                                    if matches(path) then Emit.valueWith(Chunk(path))(Loop.continue)
+                                    else Loop.continue
                         }
                     }
                 }
             }
 
+        /** Streams entries under this directory tree whose relative paths match `glob`, comparing case-sensitively. */
+        def walk(glob: Glob)(using Frame): Stream[Path, Sync & Scope & Abort[FileStructureException]] =
+            walk(glob, Glob.CaseSensitivity.Sensitive)
+
+        /** Streams entries under this directory tree whose relative paths match `glob` under `caseSensitivity`. */
+        def walk(glob: Glob, caseSensitivity: Glob.CaseSensitivity)(using
+            Frame
+        ): Stream[Path, Sync & Scope & Abort[FileStructureException]] =
+            walkWhere(Int.MaxValue, followLinks = false)(path => glob.matches(path.parts.drop(self.parts.size), caseSensitivity))
+
         /** Moves this path to `to`. */
-        def move(
-            to: Path,
-            replaceExisting: Boolean = false,
-            atomicMove: Boolean = false,
-            createFolders: Boolean = true
-        )(using Frame): Unit < (Sync & Abort[FileFsException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.move(to, replaceExisting, atomicMove, createFolders)))
+        def move(to: Path, options: MoveOptions = MoveOptions())(using Frame): Unit < (Sync & Abort[FileStructureException]) =
+            Sync.Unsafe.defer(Abort.get(self.unsafe.move(to, options)))
 
         /** Copies this path to `to`. */
-        def copy(
-            to: Path,
-            followLinks: Boolean = true,
-            replaceExisting: Boolean = false,
-            copyAttributes: Boolean = false,
-            createFolders: Boolean = true
-        )(using Frame): Unit < (Sync & Abort[FileFsException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.copy(to, followLinks, replaceExisting, copyAttributes, createFolders)))
+        def copy(to: Path, options: CopyOptions = CopyOptions())(using Frame): Unit < (Sync & Abort[FileStructureException]) =
+            Sync.Unsafe.defer(Abort.get(self.unsafe.copy(to, options)))
 
         /** Deletes this path if it exists. Returns `true` if it was deleted, `false` if it did not exist. */
-        def remove(using Frame): Boolean < (Sync & Abort[FileFsException]) =
+        def remove(using Frame): Boolean < (Sync & Abort[FileStructureException]) =
             Sync.Unsafe.defer(Abort.get(self.unsafe.remove()))
 
         /** Deletes this path, raising `FileNotFoundException` if it does not exist. */
-        def removeExisting(using Frame): Unit < (Sync & Abort[FileFsException]) =
+        def removeExisting(using Frame): Unit < (Sync & Abort[FileStructureException]) =
             Sync.Unsafe.defer(Abort.get(self.unsafe.removeExisting()))
 
         /** Recursively deletes this path and all of its contents. */
-        def removeAll(using Frame): Unit < (Sync & Abort[FileFsException]) =
+        def removeAll(using Frame): Unit < (Sync & Abort[FileStructureException]) =
             Sync.Unsafe.defer(Abort.get(self.unsafe.removeAll()))
 
         /** Returns the underlying `Unsafe` implementation for direct use in unsafe code. */
@@ -591,7 +680,9 @@ object Path extends PathPlatformSpecific:
       * different working dir) take effect on the next access. Use with `path.ancestors` for
       * "find the project root containing X" style lookups.
       */
-    def cwd(using Frame): Path < Sync = Sync.Unsafe.defer(cwdPath)
+    def cwd(using Frame): Path < Sync =
+        // Unsafe: bridges platform cwd lookup into the Sync tier.
+        Sync.Unsafe.defer(cwdPath)
 
     /** Well-known base directories for the current OS (cache, config, data, etc.). */
     lazy val basePaths: BasePaths = platformBasePaths
@@ -722,6 +813,7 @@ object Path extends PathPlatformSpecific:
         val capacity = readBufferCapacity(bufferSize)
         Stream {
             Scope.acquireRelease(
+                // Unsafe: closes the read handle at Scope exit
                 Sync.Unsafe.defer(Abort.get(self.unsafe.openRead()))
             )(handle => Sync.Unsafe.defer(handle.close())).map { handle =>
                 // Unsafe: the read handle is a single-consumer cursor owned by this stream, so its
@@ -759,6 +851,7 @@ object Path extends PathPlatformSpecific:
                                             Async.sleep(pollDelay)
                                                 .andThen(Loop.continue(pos, state))
                                         case Observed.Unreadable(error) =>
+                                            // The handle can no longer be measured, so the stream fails instead of idling.
                                             Abort.error(error)
                                 }
                             }
@@ -836,12 +929,20 @@ object Path extends PathPlatformSpecific:
 
         // --- Inspection ---
 
-        def exists()(using AllowUnsafe): Boolean
-        def exists(followLinks: Boolean)(using AllowUnsafe): Boolean
+        def exists()(using AllowUnsafe, Frame): Result[FileInvalidPathException | FileAccessDeniedException | FileIOException, Boolean]
+        def exists(followLinks: Boolean)(using
+            AllowUnsafe,
+            Frame
+        )
+            : Result[FileInvalidPathException | FileAccessDeniedException | FileIOException, Boolean]
         def isDirectory()(using AllowUnsafe): Boolean
         def isRegularFile()(using AllowUnsafe): Boolean
         def isSymbolicLink()(using AllowUnsafe): Boolean
-        def realPath()(using AllowUnsafe, Frame): Result[FileException, Path]
+        def realPath()(using
+            AllowUnsafe,
+            Frame
+        )
+            : Result[FileInvalidPathException | FileNotFoundException | FileAccessDeniedException | FileIOException, Path]
 
         // --- Read ---
 
@@ -860,56 +961,62 @@ object Path extends PathPlatformSpecific:
 
         // --- Write ---
 
-        def write(value: String, createFolders: Boolean = true)(using AllowUnsafe, Frame): Result[FileWriteException, Unit]
-        def writeBytes(value: Span[Byte], createFolders: Boolean = true)(using AllowUnsafe, Frame): Result[FileWriteException, Unit]
+        def write(value: String, options: WriteOptions = WriteOptions())(using AllowUnsafe, Frame): Result[FileWriteException, Unit]
+        def writeBytes(value: Span[Byte], options: WriteOptions = WriteOptions())(using
+            AllowUnsafe,
+            Frame
+        ): Result[FileWriteException, Unit]
 
         /** Writes a collection of lines to the file.
           *
           * Each line is written followed by the platform line separator (including the last line), so `writeLines(Chunk("a", "b"))`
           * produces `"a\nb\n"` on Unix. Use `write(lines.mkString(lineSep))` if you need to control trailing newline behavior.
           */
-        def writeLines(value: Chunk[String], createFolders: Boolean = true)(using AllowUnsafe, Frame): Result[FileWriteException, Unit]
-        def append(value: String, createFolders: Boolean = true)(using AllowUnsafe, Frame): Result[FileWriteException, Unit]
-        def appendBytes(value: Span[Byte], createFolders: Boolean = true)(using AllowUnsafe, Frame): Result[FileWriteException, Unit]
+        def writeLines(value: Chunk[String], options: WriteOptions = WriteOptions())(using
+            AllowUnsafe,
+            Frame
+        ): Result[FileWriteException, Unit]
+        def append(value: String, options: WriteOptions = WriteOptions())(using AllowUnsafe, Frame): Result[FileWriteException, Unit]
+        def appendBytes(value: Span[Byte], options: WriteOptions = WriteOptions())(using
+            AllowUnsafe,
+            Frame
+        ): Result[FileWriteException, Unit]
 
         /** Appends a collection of lines to the file.
           *
           * Each line is written followed by the platform line separator (including the last line), so `appendLines(Chunk("a", "b"))`
           * produces `"a\nb\n"` on Unix. Use `write(lines.mkString(lineSep))` if you need to control trailing newline behavior.
           */
-        def appendLines(value: Chunk[String], createFolders: Boolean = true)(using AllowUnsafe, Frame): Result[FileWriteException, Unit]
+        def appendLines(value: Chunk[String], options: WriteOptions = WriteOptions())(using
+            AllowUnsafe,
+            Frame
+        ): Result[FileWriteException, Unit]
         def truncate(size: Long)(using AllowUnsafe, Frame): Result[FileWriteException, Unit]
         def setLastModified(epochMs: Long)(using AllowUnsafe, Frame): Result[FileWriteException, Unit]
 
         // --- Directory / structure ---
 
-        def list()(using AllowUnsafe, Frame): Result[FileFsException, Chunk[Path]]
-        def list(glob: String)(using AllowUnsafe, Frame): Result[FileFsException, Chunk[Path]]
-        def mkDir()(using AllowUnsafe, Frame): Result[FileFsException, Unit]
-        def mkFile()(using AllowUnsafe, Frame): Result[FileFsException, Unit]
-        def move(to: Path, replaceExisting: Boolean = false, atomicMove: Boolean = false, createFolders: Boolean = true)(using
+        def list()(using AllowUnsafe, Frame): Result[FileStructureException, Chunk[Path]]
+        def list(glob: Glob, caseSensitivity: Glob.CaseSensitivity)(using AllowUnsafe, Frame): Result[FileStructureException, Chunk[Path]]
+        def mkDir()(using AllowUnsafe, Frame): Result[FileStructureException, Unit]
+        def mkFile()(using AllowUnsafe, Frame): Result[FileStructureException, Unit]
+        def move(to: Path, options: MoveOptions = MoveOptions())(using
             AllowUnsafe,
             Frame
-        ): Result[FileFsException, Unit]
-        def copy(
-            to: Path,
-            followLinks: Boolean = true,
-            replaceExisting: Boolean = false,
-            copyAttributes: Boolean = false,
-            createFolders: Boolean = true
-        )(using AllowUnsafe, Frame): Result[FileFsException, Unit]
-        def remove()(using AllowUnsafe, Frame): Result[FileFsException, Boolean]
-        def removeExisting()(using AllowUnsafe, Frame): Result[FileFsException, Unit]
-        def removeAll()(using AllowUnsafe, Frame): Result[FileFsException, Unit]
+        ): Result[FileStructureException, Unit]
+        def copy(to: Path, options: CopyOptions = CopyOptions())(using AllowUnsafe, Frame): Result[FileStructureException, Unit]
+        def remove()(using AllowUnsafe, Frame): Result[FileStructureException, Boolean]
+        def removeExisting()(using AllowUnsafe, Frame): Result[FileStructureException, Unit]
+        def removeAll()(using AllowUnsafe, Frame): Result[FileStructureException, Unit]
 
         // --- Walk handle (abstract; the platform provides the resource management) ---
 
-        def openWalk(maxDepth: Int, followLinks: Boolean)(using AllowUnsafe, Frame): Result[FileFsException, Path.WalkHandle]
+        def openWalk(maxDepth: Int, followLinks: Boolean)(using AllowUnsafe, Frame): Result[FileStructureException, Path.WalkHandle]
 
         // --- Streaming write handles ---
 
         /** Opens a write handle for streaming byte or string output. The caller must close the handle via `Scope.acquireRelease`. */
-        def openWrite(append: Boolean, createFolders: Boolean)(using AllowUnsafe, Frame): Result[FileWriteException, Path.WriteHandle]
+        def openWrite(append: Boolean, options: WriteOptions)(using AllowUnsafe, Frame): Result[FileWriteException, Path.WriteHandle]
 
         /** Lifts this `Unsafe` value back into the safe `Path` opaque type. */
         def safe: Path = this
@@ -926,7 +1033,17 @@ object Path extends PathPlatformSpecific:
         /** Writes a string to the channel using the given charset. */
         def writeString(s: String, charset: Charset)(using AllowUnsafe, Frame): Result[FileWriteException, Unit]
 
-        /** Closes the channel, releasing all OS resources. */
+        /** Marks the write channel as successfully completed: flushes buffered bytes to stable storage
+          * and fsyncs when the platform supports it. After `finish()`, [[close]] releases OS resources
+          * without deleting the file.
+          *
+          * WARNING: if [[close]] is called without a prior `finish()`, the platform implementation
+          * deletes the partial entry (the delete-on-close-without-finish contract the stream sinks rely
+          * on). Always call `finish()` before scope exit when the written content must be retained.
+          */
+        def finish()(using AllowUnsafe): Unit
+
+        /** Closes the channel, releasing all OS resources. Contract: if `finish()` was never called, remove the partial entry. */
         def close()(using AllowUnsafe): Unit
     end WriteHandle
 
@@ -951,13 +1068,9 @@ object Path extends PathPlatformSpecific:
         end extension
     end ReadResult
 
-    /** An open read channel returned by `Path.Unsafe.openRead`. Platform implementations provide the concrete class.
-      *
-      * A handle is a single-consumer stateful resource: it carries a positional read cursor and a retained scan
-      * buffer, so it must never be shared across fibers or threads.
-      */
+    /** An open read channel returned by `Path.Unsafe.openRead`. Platform implementations provide the concrete class. */
     abstract private[kyo] class ReadHandle:
-        /** Reads up to `buffer.length` bytes into `buffer`. Returns a `ReadResult` that is either `Eof` or a positive byte count. */
+        /** Reads up to `buffer.length` bytes into `buffer`. Returns a `ReadResult` -- either `Eof` or a positive byte count. */
         def readChunk(buffer: Array[Byte])(using AllowUnsafe): ReadResult
 
         /** Sets the channel position to `offset` bytes from the start of the file. */

@@ -22,8 +22,9 @@ final private[machine] class LinuxCgroup(h: MachineHandles, s: MachineSampler)(u
     // controller name, reconciled with /proc/self/cgroup for THIS process's cgroup-relative path. The
     // conventional /sys/fs/cgroup is the last-resort fallback, used only when mountinfo carries no cgroup
     // mount. Resolved ONCE, at construction; the layout does not change for the process lifetime.
-    private val root   = resolveV2Mount().getOrElse(FallbackRoot)
-    private val v2     = Path(root + "/cgroup.controllers").unsafe.exists()
+    private val root = resolveV2Mount().getOrElse(FallbackRoot)
+    private val v2 =
+        Path(root + "/cgroup.controllers").unsafe.exists()(using summon[AllowUnsafe], Frame.internal).getOrThrow
     private val dir    = if v2 then resolveV2Dir() else root
     private val v1Dirs = if v2 then Map.empty[String, String] else resolveV1Dirs()
 
@@ -36,8 +37,9 @@ final private[machine] class LinuxCgroup(h: MachineHandles, s: MachineSampler)(u
         else v1Dirs.get("cpu").orElse(v1Dirs.get("cpuacct")).getOrElse(root + "/cpu,cpuacct")
 
     /** The resolved cgroup directory, and whether it carries the PSI files. Read by the pressure reader. */
-    val v2Dir: String          = dir
-    val hasV2Pressure: Boolean = v2 && Path(dir + "/cpu.pressure").unsafe.exists()
+    val v2Dir: String = dir
+    val hasV2Pressure: Boolean =
+        v2 && Path(dir + "/cpu.pressure").unsafe.exists()(using summon[AllowUnsafe], Frame.internal).getOrThrow
 
     private val usageSlot =
         s.openSlot(Path(if v2 then memDir + "/memory.current" else memDir + "/memory.usage_in_bytes"))

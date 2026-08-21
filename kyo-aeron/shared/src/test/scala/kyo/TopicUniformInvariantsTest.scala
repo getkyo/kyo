@@ -51,8 +51,8 @@ class TopicUniformInvariantsTest extends Test:
         }
     }
 
-    // The assertion runs outside Topic.run so the Sync.ensure teardown (including dir.removeAll)
-    // has already completed by the time the temp dir is listed.
+    // The assertion runs outside Topic.run so the driver teardown and the scoped temp-dir finalizer
+    // have already completed by the time the temp dir is listed.
     //
     // The temp dir is shared with the other leaves of this suite, which open their own embedded
     // drivers under the same name prefix and hold those directories for as long as they run, so an
@@ -64,8 +64,8 @@ class TopicUniformInvariantsTest extends Test:
         val settleAttempts = 100
         // Inability to list the temp dir is a platform limitation, not a leak.
         def embeddedDirs(using Frame): Set[Path] < Async =
-            Abort.recover[FileFsException](_ => Chunk.empty[Path]) {
-                Path.basePaths.tmp.list("kyo-aeron-embedded*")
+            Abort.recover[FileStructureException](_ => Chunk.empty[Path]) {
+                Path.basePaths.tmp.list(glob"kyo-aeron-embedded*")
             }.map(_.toSet)
         for
             before <- embeddedDirs
@@ -73,7 +73,7 @@ class TopicUniformInvariantsTest extends Test:
                 if i >= n then Loop.done
                 else
                     // An empty body still exercises the full embedded() lifecycle (alloc dir, start
-                    // driver, teardown driver, removeAll dir) and needs no subscriber.
+                    // driver, teardown driver, finalize temp dir) and needs no subscriber.
                     Topic.run(()).andThen(Loop.continue)
             }
             leaked <- Loop.indexed { i =>

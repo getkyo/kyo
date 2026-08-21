@@ -33,17 +33,20 @@ private[kyo] object NodeFs extends js.Object:
     def truncateSync(path: String, len: Double): Unit                                          = js.native
     def openSync(path: String, flags: String): Int                                             = js.native
     def readSync(fd: Int, buffer: Uint8Array, offset: Int, length: Int, position: Double): Int = js.native
-    // Declared without the trailing position argument, which is the whole point: Node then writes at the
-    // file description's own cursor, the only offset `O_APPEND` acts on. A positioned overload would make
-    // that a per-call-site decision, and getting it wrong is silent data loss on a descriptor opened to
-    // append, so the positioned form is deliberately absent.
-    def writeSync(fd: Int, buffer: Uint8Array, offset: Int, length: Int): Int = js.native
-    def closeSync(fd: Int): Unit                                              = js.native
-    def fstatSync(fd: Int): NodeStats                                         = js.native
-    def symlinkSync(target: String, path: String): Unit                       = js.native
-    def mkdtempSync(prefix: String): String                                   = js.native
-    def writeFileSync(path: String, data: String): Unit                       = js.native
-    def utimesSync(path: String, atime: Double, mtime: Double): Unit          = js.native
+    // Declared without a trailing position argument, which is the whole point: Node then writes at the
+    // file description's own cursor, the only offset `O_APPEND` acts on. `NodeWriteHandle` must call this
+    // overload, since a positioned write on a descriptor opened to append is silent data loss.
+    def writeSync(fd: Int, buffer: Uint8Array, offset: Int, length: Int): Int     = js.native
+    def writeSync(fd: Int, data: String, position: Double, encoding: String): Int = js.native
+    def closeSync(fd: Int): Unit                                                  = js.native
+    def fsyncSync(fd: Int): Unit                                                  = js.native
+    def fstatSync(fd: Int): NodeStats                                             = js.native
+    def symlinkSync(target: String, path: String): Unit                           = js.native
+    def readlinkSync(path: String): String                                        = js.native
+    def mkdtempSync(prefix: String): String                                       = js.native
+    def writeFileSync(path: String, data: String): Unit                           = js.native
+    def utimesSync(path: String, atime: Double, mtime: Double): Unit              = js.native
+    def lutimesSync(path: String, atime: Double, mtime: Double): Unit             = js.native
 end NodeFs
 
 @js.native
@@ -53,6 +56,8 @@ trait NodeStats extends js.Object:
     def isSymbolicLink(): Boolean = js.native
     def size: Double              = js.native
     def mtimeMs: Double           = js.native
+    def dev: Double               = js.native
+    def ino: Double               = js.native
 end NodeStats
 
 @js.native
@@ -62,7 +67,6 @@ private[kyo] object NodePath extends js.Object:
     def resolve(paths: String*): String   = js.native
     def isAbsolute(path: String): Boolean = js.native
     def join(paths: String*): String      = js.native
-    def basename(path: String): String    = js.native
     def dirname(path: String): String     = js.native
     def sep: String                       = js.native
     def delimiter: String                 = js.native
@@ -87,34 +91,56 @@ end NodeCrypto
 private[kyo] object NodeError:
 
     /** Extracts the Node.js error code from a js.JavaScriptException */
-    private def codeOf(e: js.JavaScriptException): String =
+    private[kyo] def codeOf(e: js.JavaScriptException): String =
         val err = e.exception.asInstanceOf[js.Dynamic]
         val c   = err.code
         if js.isUndefined(c) then "UNKNOWN" else c.asInstanceOf[String]
     end codeOf
+
+    def isMissing(e: js.JavaScriptException): Boolean =
+        val code = codeOf(e)
+        code == "ENOENT" || code == "ENOTDIR"
 
     def translateRead(path: Path, e: js.JavaScriptException)(using Frame): FileReadException =
         codeOf(e) match
             case "ENOENT"           => FileNotFoundException(path)
             case "EACCES" | "EPERM" => FileAccessDeniedException(path)
             case "EISDIR"           => FileIsADirectoryException(path)
-            case _                  => FileIOException(path, new IOException(e.getMessage))
+            case "EINVAL"           => FileInvalidPathException(path.toString, FileSystemOperation.Read)
+            case _                  => FileIOException(path, FileSystemOperation.Read, e)
+
+    def translateExists(path: Path, e: js.JavaScriptException)(using
+        Frame
+    )
+        : FileInvalidPathException | FileAccessDeniedException | FileIOException =
+        codeOf(e) match
+            case "EACCES" | "EPERM" => FileAccessDeniedException(path)
+            case "EINVAL"           => FileInvalidPathException(path.toString, FileSystemOperation.Exists)
+            case _                  => FileIOException(path, FileSystemOperation.Exists, e)
+
+    def translateMove(source: Path, target: Path, atomicity: Path.Atomicity, e: js.JavaScriptException)(using
+        Frame
+    ): FileStructureException =
+        if atomicity == Path.Atomicity.Required && codeOf(e) == "EXDEV" then FileAtomicMoveUnsupportedException(source, target)
+        else translateFs(source, FileSystemOperation.Move, e)
 
     def translateWrite(path: Path, e: js.JavaScriptException)(using Frame): FileWriteException =
         codeOf(e) match
             case "ENOENT"           => FileNotFoundException(path)
             case "EACCES" | "EPERM" => FileAccessDeniedException(path)
             case "EISDIR"           => FileIsADirectoryException(path)
-            case _                  => FileIOException(path, new IOException(e.getMessage))
+            case "EINVAL"           => FileInvalidPathException(path.toString, FileSystemOperation.Write)
+            case _                  => FileIOException(path, FileSystemOperation.Write, e)
 
-    def translateFs(path: Path, e: js.JavaScriptException)(using Frame): FileFsException =
+    def translateFs(path: Path, operation: FileSystemOperation, e: js.JavaScriptException)(using Frame): FileStructureException =
         codeOf(e) match
             case "ENOENT"           => FileNotFoundException(path)
             case "EACCES" | "EPERM" => FileAccessDeniedException(path)
             case "ENOTDIR"          => FileNotADirectoryException(path)
             case "EEXIST"           => FileAlreadyExistsException(path)
             case "ENOTEMPTY"        => FileDirectoryNotEmptyException(path)
-            case _                  => FileIOException(path, new IOException(e.getMessage))
+            case "EINVAL"           => FileInvalidPathException(path.toString, operation)
+            case _                  => FileIOException(path, operation, e)
 
 end NodeError
 
@@ -155,21 +181,25 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
 
     // --- Inspection ---
 
-    def exists()(using AllowUnsafe): Boolean =
-        try NodeFs.existsSync(pathStr)
-        catch case _: js.JavaScriptException => false
+    def exists()(using AllowUnsafe, Frame): Result[FileInvalidPathException | FileAccessDeniedException | FileIOException, Boolean] =
+        exists(followLinks = true)
 
-    def exists(followLinks: Boolean)(using AllowUnsafe): Boolean =
-        if followLinks then
-            try
+    def exists(followLinks: Boolean)(using
+        AllowUnsafe,
+        Frame
+    )
+        : Result[FileInvalidPathException | FileAccessDeniedException | FileIOException, Boolean] =
+        try
+            if followLinks then
                 discard(NodeFs.statSync(pathStr))
-                true
-            catch case _: js.JavaScriptException => false
-        else
-            try
+            else
                 discard(NodeFs.lstatSync(pathStr))
-                true
-            catch case _: js.JavaScriptException => false
+            end if
+            Result.succeed(true)
+        catch
+            case e: js.JavaScriptException if NodeError.isMissing(e) => Result.succeed(false)
+            case e: js.JavaScriptException                           => Result.fail(NodeError.translateExists(safe, e))
+            case e: Throwable                                        => Result.panic(e)
 
     def isDirectory()(using AllowUnsafe): Boolean =
         try NodeFs.statSync(pathStr).isDirectory()
@@ -183,11 +213,23 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
         try NodeFs.lstatSync(pathStr).isSymbolicLink()
         catch case _: js.JavaScriptException => false
 
-    def realPath()(using AllowUnsafe, Frame): Result[FileException, Path] =
+    def realPath()(using
+        AllowUnsafe,
+        Frame
+    )
+        : Result[FileInvalidPathException | FileNotFoundException | FileAccessDeniedException | FileIOException, Path] =
         try Result.succeed(Path(NodeFs.realpathSync(pathStr)))
         catch
-            case e: js.JavaScriptException => Result.fail(NodeError.translateFs(safe, e))
-            case e: Throwable              => Result.panic(e)
+            case e: js.JavaScriptException =>
+                val failure: FileInvalidPathException | FileNotFoundException | FileAccessDeniedException | FileIOException =
+                    NodeError.translateRead(safe, e) match
+                        case value: FileNotFoundException     => value
+                        case value: FileAccessDeniedException => value
+                        case value: FileInvalidPathException  => value
+                        case value: FileIOException           => value
+                        case _                                => FileIOException(safe, FileSystemOperation.RealPath, e)
+                Result.fail(failure)
+            case e: Throwable => Result.panic(e)
 
     // --- Read ---
 
@@ -245,45 +287,50 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
     def stat()(using AllowUnsafe, Frame): Result[FileReadException, kyo.Path.PathStat] =
         catchRead {
             val s = NodeFs.statSync(pathStr)
-            kyo.Path.PathStat(s.mtimeMs.toLong, s.size.toLong)
+            // Rounded, not truncated. Node converts a modification time to a double count of
+            // seconds inside libuv before the syscall, so a value the caller set as 987654 ms is
+            // stored as 987653999000 ns and read back as 987653.999. Truncating reports 987653, a
+            // millisecond before both the instant the filesystem holds and the one that was asked
+            // for. Rounding reports the nearest millisecond to what is stored, which recovers it.
+            kyo.Path.PathStat(math.round(s.mtimeMs), s.size.toLong)
         }
 
     // --- Write ---
 
-    def write(value: String, createFolders: Boolean)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
+    def write(value: String, options: Path.WriteOptions)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
         catchWrite {
-            if createFolders then ensureParent()
+            if options.createFolders then ensureParent()
             NodeFs.writeFileSync(pathStr, value, js.Dynamic.literal(encoding = "utf8"))
         }
 
-    def writeBytes(value: Span[Byte], createFolders: Boolean)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
+    def writeBytes(value: Span[Byte], options: Path.WriteOptions)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
         catchWrite {
-            if createFolders then ensureParent()
+            if options.createFolders then ensureParent()
             NodeFs.writeFileSync(pathStr, bytesToUint8Array(value.toArray))
         }
 
-    def writeLines(value: Chunk[String], createFolders: Boolean)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
+    def writeLines(value: Chunk[String], options: Path.WriteOptions)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
         catchWrite {
-            if createFolders then ensureParent()
+            if options.createFolders then ensureParent()
             val content = value.mkString("\n") + "\n"
             NodeFs.writeFileSync(pathStr, content, js.Dynamic.literal(encoding = "utf8"))
         }
 
-    def append(value: String, createFolders: Boolean)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
+    def append(value: String, options: Path.WriteOptions)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
         catchWrite {
-            if createFolders then ensureParent()
+            if options.createFolders then ensureParent()
             NodeFs.appendFileSync(pathStr, value, js.Dynamic.literal(encoding = "utf8"))
         }
 
-    def appendBytes(value: Span[Byte], createFolders: Boolean)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
+    def appendBytes(value: Span[Byte], options: Path.WriteOptions)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
         catchWrite {
-            if createFolders then ensureParent()
+            if options.createFolders then ensureParent()
             NodeFs.appendFileSync(pathStr, bytesToUint8Array(value.toArray))
         }
 
-    def appendLines(value: Chunk[String], createFolders: Boolean)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
+    def appendLines(value: Chunk[String], options: Path.WriteOptions)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
         catchWrite {
-            if createFolders then ensureParent()
+            if options.createFolders then ensureParent()
             val content = value.mkString("\n") + "\n"
             NodeFs.appendFileSync(pathStr, content, js.Dynamic.literal(encoding = "utf8"))
         }
@@ -303,20 +350,20 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
 
     // --- Directory / structure ---
 
-    def mkDir()(using AllowUnsafe, Frame): Result[FileFsException, Unit] =
-        catchFs {
+    def mkDir()(using AllowUnsafe, Frame): Result[FileStructureException, Unit] =
+        catchFs(FileSystemOperation.Create) {
             NodeFs.mkdirSync(pathStr, js.Dynamic.literal(recursive = true))
         }
 
-    def mkFile()(using AllowUnsafe, Frame): Result[FileFsException, Unit] =
-        catchFs {
+    def mkFile()(using AllowUnsafe, Frame): Result[FileStructureException, Unit] =
+        catchFs(FileSystemOperation.Create) {
             ensureParent()
             if !NodeFs.existsSync(pathStr) then
                 NodeFs.writeFileSync(pathStr, "")
         }
 
-    def list()(using AllowUnsafe, Frame): Result[FileFsException, Chunk[Path]] =
-        catchFs {
+    def list()(using AllowUnsafe, Frame): Result[FileStructureException, Chunk[Path]] =
+        catchFs(FileSystemOperation.List) {
             val entries = NodeFs.readdirSync(pathStr)
             val sep     = NodePath.sep
             Chunk.from(entries.toSeq.map { name =>
@@ -324,56 +371,71 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
             })
         }
 
-    def list(glob: String)(using AllowUnsafe, Frame): Result[FileFsException, Chunk[Path]] =
-        catchFs {
-            val entries = NodeFs.readdirSync(pathStr)
-            val sep     = NodePath.sep
-            val pattern = PathDirectories.globToRegex(glob)
-            Chunk.from(entries.toSeq.filter(pattern.matches).map { name =>
-                (new NodePathUnsafe(pathStr + sep + name)).safe
-            })
-        }
+    def list(glob: Glob, caseSensitivity: Glob.CaseSensitivity)(using AllowUnsafe, Frame): Result[FileStructureException, Chunk[Path]] =
+        list().map(_.filter(path => glob.matches(Chunk(path.parts.last), caseSensitivity)))
 
-    def move(to: Path, replaceExisting: Boolean, atomicMove: Boolean, createFolders: Boolean)(using
+    def move(to: Path, options: Path.MoveOptions)(using
         AllowUnsafe,
         Frame
-    ): Result[FileFsException, Unit] =
-        catchFs {
+    ): Result[FileStructureException, Unit] =
+        try
             val toStr = to.unsafe.show
-            if createFolders then ensureParentOf(toStr)
-            if !replaceExisting && NodeFs.existsSync(toStr) then
+            if options.createFolders then ensureParentOf(toStr)
+            if options.replace == Path.Replace.Never && NodeFs.existsSync(toStr) then
                 // Throw to trigger catchFs error translation
                 throw js.JavaScriptException(
                     js.Dynamic.literal(code = "EEXIST", message = s"File already exists: $toStr")
                 )
             end if
             NodeFs.renameSync(pathStr, toStr)
-        }
+            Result.succeed(())
+        catch
+            case e: js.JavaScriptException => Result.fail(NodeError.translateMove(safe, to, options.atomicity, e))
+            case e: Throwable              => Result.panic(e)
 
-    def copy(to: Path, followLinks: Boolean, replaceExisting: Boolean, copyAttributes: Boolean, createFolders: Boolean)(using
+    def copy(to: Path, options: Path.CopyOptions)(using
         AllowUnsafe,
         Frame
-    ): Result[FileFsException, Unit] =
-        catchFs {
+    ): Result[FileStructureException, Unit] =
+        catchFs(FileSystemOperation.Copy) {
             val toStr = to.unsafe.show
-            if createFolders then ensureParentOf(toStr)
-            val stat = NodeFs.lstatSync(pathStr)
-            if stat.isDirectory() then
-                if replaceExisting || !NodeFs.existsSync(toStr) then
+            if options.createFolders then ensureParentOf(toStr)
+            val targetExists = existsNoFollow(toStr)
+            if targetExists && options.replace == Path.Replace.Never then
+                throw js.JavaScriptException(js.Dynamic.literal(code = "EEXIST", message = s"File already exists: $toStr"))
+            val linkStat   = NodeFs.lstatSync(pathStr)
+            val sourceStat = if options.followLinks then NodeFs.statSync(pathStr) else linkStat
+            if linkStat.isSymbolicLink() && !options.followLinks then
+                if targetExists then
+                    val targetStat = NodeFs.lstatSync(toStr)
+                    if targetStat.isDirectory() then NodeFs.rmdirSync(toStr)
+                    else NodeFs.unlinkSync(toStr)
+                end if
+                NodeFs.symlinkSync(NodeFs.readlinkSync(pathStr), toStr)
+                if options.copyAttributes then
+                    val epochSec = linkStat.mtimeMs / 1000.0
+                    NodeFs.lutimesSync(toStr, epochSec, epochSec)
+            else if sourceStat.isDirectory() then
+                if !targetExists then NodeFs.mkdirSync(toStr, js.Dynamic.literal(recursive = false))
+                else if !NodeFs.lstatSync(toStr).isDirectory() then
+                    NodeFs.unlinkSync(toStr)
                     NodeFs.mkdirSync(toStr, js.Dynamic.literal(recursive = false))
             else
-                val flags = if replaceExisting then 0 else 1
-                NodeFs.copyFileSync(pathStr, toStr, flags)
+                NodeFs.copyFileSync(pathStr, toStr, 0)
+            end if
+            if options.copyAttributes && !(linkStat.isSymbolicLink() && !options.followLinks) then
+                val epochSec = sourceStat.mtimeMs / 1000.0
+                NodeFs.utimesSync(toStr, epochSec, epochSec)
             end if
         }
 
-    def remove()(using AllowUnsafe, Frame): Result[FileFsException, Boolean] =
+    def remove()(using AllowUnsafe, Frame): Result[FileStructureException, Boolean] =
         try
             if !NodeFs.existsSync(pathStr) then Result.succeed(false)
             else
                 val stat = NodeFs.lstatSync(pathStr)
                 if stat.isDirectory() then
-                    // Use rmdirSync for directories — it throws ENOTEMPTY for non-empty dirs.
+                    // Use rmdirSync for directories because it throws ENOTEMPTY for non-empty dirs.
                     // rmSync without recursive raises EISDIR on some platforms.
                     NodeFs.rmdirSync(pathStr)
                 else
@@ -381,22 +443,22 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
                 end if
                 Result.succeed(true)
         catch
-            case e: js.JavaScriptException => Result.fail(NodeError.translateFs(safe, e))
+            case e: js.JavaScriptException => Result.fail(NodeError.translateFs(safe, FileSystemOperation.Remove, e))
             case e: Throwable              => Result.panic(e)
 
-    def removeExisting()(using AllowUnsafe, Frame): Result[FileFsException, Unit] =
-        catchFs {
+    def removeExisting()(using AllowUnsafe, Frame): Result[FileStructureException, Unit] =
+        catchFs(FileSystemOperation.Remove) {
             val stat = NodeFs.lstatSync(pathStr)
             if stat.isDirectory() then
-                // Use rmdirSync for directories — it throws ENOTEMPTY for non-empty dirs.
+                // Use rmdirSync for directories because it throws ENOTEMPTY for non-empty dirs.
                 NodeFs.rmdirSync(pathStr)
             else
                 NodeFs.unlinkSync(pathStr)
             end if
         }
 
-    def removeAll()(using AllowUnsafe, Frame): Result[FileFsException, Unit] =
-        catchFs {
+    def removeAll()(using AllowUnsafe, Frame): Result[FileStructureException, Unit] =
+        catchFs(FileSystemOperation.Remove) {
             if NodeFs.existsSync(pathStr) then
                 val stat = NodeFs.lstatSync(pathStr)
                 if stat.isDirectory() then
@@ -408,8 +470,8 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
 
     // --- Walk handle ---
 
-    def openWalk(maxDepth: Int, followLinks: Boolean)(using AllowUnsafe, Frame): Result[FileFsException, Path.WalkHandle] =
-        catchFs {
+    def openWalk(maxDepth: Int, followLinks: Boolean)(using AllowUnsafe, Frame): Result[FileStructureException, Path.WalkHandle] =
+        catchFs(FileSystemOperation.Walk) {
             // Validate that the root path exists before opening the walk handle.
             // lstatSync throws ENOENT if the path does not exist.
             discard(NodeFs.lstatSync(pathStr))
@@ -418,9 +480,9 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
 
     // --- Open write handle ---
 
-    def openWrite(append: Boolean, createFolders: Boolean)(using AllowUnsafe, Frame): Result[FileWriteException, Path.WriteHandle] =
+    def openWrite(append: Boolean, options: Path.WriteOptions)(using AllowUnsafe, Frame): Result[FileWriteException, Path.WriteHandle] =
         catchWrite {
-            if createFolders then ensureParent()
+            if options.createFolders then ensureParent()
             val flags = if append then "a" else "w"
             val fd    = NodeFs.openSync(pathStr, flags)
             new NodeWriteHandle(fd, safe)
@@ -448,6 +510,17 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
             NodeFs.mkdirSync(parent, js.Dynamic.literal(recursive = true))
     end ensureParentOf
 
+    private def existsNoFollow(target: String): Boolean =
+        try
+            discard(NodeFs.lstatSync(target))
+            true
+        catch
+            case e: js.JavaScriptException =>
+                val code = e.exception.asInstanceOf[js.Dynamic].selectDynamic("code")
+                if !js.isUndefined(code) && code.asInstanceOf[String] == "ENOENT" then false
+                else throw e
+    end existsNoFollow
+
     private def catchRead[A](expr: => A)(using Frame): Result[FileReadException, A] =
         try Result.succeed(expr)
         catch
@@ -460,10 +533,10 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
             case e: js.JavaScriptException => Result.fail(NodeError.translateWrite(safe, e))
             case e: Throwable              => Result.panic(e)
 
-    private def catchFs[A](expr: => A)(using Frame): Result[FileFsException, A] =
+    private def catchFs[A](operation: FileSystemOperation)(expr: => A)(using Frame): Result[FileStructureException, A] =
         try Result.succeed(expr)
         catch
-            case e: js.JavaScriptException => Result.fail(NodeError.translateFs(safe, e))
+            case e: js.JavaScriptException => Result.fail(NodeError.translateFs(safe, operation, e))
             case e: Throwable              => Result.panic(e)
 
 end NodePathUnsafe
@@ -621,6 +694,8 @@ end NodeWalkHandle
   */
 final private[kyo] class NodeWriteHandle(fd: Int, path: Path) extends Path.WriteHandle:
 
+    private var finished = false
+
     def writeBytes(chunk: Chunk[Byte])(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
         try
             val arr   = chunk.toArray
@@ -643,8 +718,18 @@ final private[kyo] class NodeWriteHandle(fd: Int, path: Path) extends Path.Write
     def writeString(s: String, charset: Charset)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
         writeBytes(Chunk.from(s.getBytes(charset)))
 
+    def finish()(using AllowUnsafe): Unit =
+        NodeFs.fsyncSync(fd) // fsync: bytes are durable before the logical-completion flag
+        finished = true
+
     def close()(using AllowUnsafe): Unit =
         NodeFs.closeSync(fd)
+        if !finished then
+            // Unsafe: removes the partially-written file if finish() was never called
+            if NodeFs.existsSync(path.unsafe.show) then
+                NodeFs.unlinkSync(path.unsafe.show)
+        end if
+    end close
 
 end NodeWriteHandle
 
@@ -702,10 +787,11 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
         end if
     end make
 
-    def temp(
+    def tempUnscoped(
         prefix: String = "kyo",
         suffix: String = ".tmp"
-    )(using Frame): Path < (Sync & Abort[FileFsException]) =
+    )(using Frame): Path < (Sync & Abort[FileStructureException]) =
+        // Unsafe: bridges Node temp-file creation into the Sync tier.
         Sync.Unsafe.defer {
             Abort.get {
                 try
@@ -716,16 +802,14 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
                     Result.succeed(new NodePathUnsafe(tmpPath).safe)
                 catch
                     case e: js.JavaScriptException =>
-                        Result.fail(FileIOException(
-                            make(Chunk(prefix + suffix)),
-                            new IOException(e.getMessage)
-                        ))
+                        Result.fail(FileIOException(make(Chunk(prefix + suffix)), FileSystemOperation.Create, e))
             }
         }
 
-    def tempDir(
+    def tempDirUnscoped(
         prefix: String = "kyo"
-    )(using Frame): Path < (Sync & Abort[FileFsException]) =
+    )(using Frame): Path < (Sync & Abort[FileStructureException]) =
+        // Unsafe: bridges Node temp-directory creation into the Sync tier.
         Sync.Unsafe.defer {
             Abort.get {
                 try
@@ -734,10 +818,7 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
                     Result.succeed(new NodePathUnsafe(created).safe)
                 catch
                     case e: js.JavaScriptException =>
-                        Result.fail(FileIOException(
-                            make(Chunk(prefix)),
-                            new IOException(e.getMessage)
-                        ))
+                        Result.fail(FileIOException(make(Chunk(prefix)), FileSystemOperation.Create, e))
             }
         }
 
@@ -748,11 +829,11 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
       * @param suffix
       *   suffix for the temp file name (default `".tmp"`)
       */
-    override def tempScoped(
+    override def temp(
         prefix: String = "kyo",
         suffix: String = ".tmp"
-    )(using Frame): Path < (Sync & Scope & Abort[FileFsException]) =
-        super.tempScoped(prefix, suffix)
+    )(using Frame): Path < (Sync & Scope & Abort[FileStructureException]) =
+        super.temp(prefix, suffix)
 
     /** Generates a random identifier using the Node.js crypto module (avoids java.security.SecureRandom). */
     private def randomId(): String =

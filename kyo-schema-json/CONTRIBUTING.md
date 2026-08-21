@@ -269,7 +269,7 @@ copies each encoded value and its newline into it exactly once, and is written
 straight out. What is held at any moment is one chunk of encoded bytes,
 regardless of how many values the stream has.
 
-Three details of `writeAll` are contracts rather than incidental:
+Four details of `writeAll` are contracts rather than incidental:
 
 - **One handle across the whole fold**, so a stream of any length costs one open
   and one close rather than one of each per chunk. `kyo-system` exposes no `Path`
@@ -281,6 +281,10 @@ Three details of `writeAll` are contracts rather than incidental:
   the file. Reifying every outcome into a `Result` first leaves the bracket a
   computation that always completes; the outcome is re-raised after the close.
   Moving that `Abort.run` outward leaks the file handle on an aborting stream.
+- **The release finishes the handle before closing it**, on every exit including
+  a failure part way, and closes it even when finishing throws. A write handle
+  closed without `finish` is removed, which is exactly the rollback this surface
+  must not do.
 - **The open happens before the fold and carries no bytes**, which is what makes
   the file's existence, and for `write` its emptiness, a fact about the call
   rather than about whether the stream produced anything. Writing an empty

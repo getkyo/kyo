@@ -17,7 +17,7 @@ class HttpContainerBackendTest extends BasePodTest:
             Sync.defer(value)
     end FixedUUIDGenerator
 
-    private def claimLegacyFixture(using Frame): (UUID, Path, Path) < (Sync & Abort[FileFsException]) =
+    private def claimLegacyFixture(using Frame): (UUID, Path, Path) < (Sync & Scope & Abort[FileReadException | FileStructureException]) =
         val uuid = UUID.v5(
             UUID.nil,
             Span.fromUnsafe(uniqueName("copyto-legacy-fixture").getBytes("UTF-8"))
@@ -26,8 +26,15 @@ class HttpContainerBackendTest extends BasePodTest:
             val parent        = claimed.parent.getOrElse(throw new IllegalStateException("temporary directory must have a parent"))
             val exact         = parent / s"kyo-copyto-${uuid.show}"
             val missingSource = parent / s"kyo-copyto-missing-${uuid.show}"
-            Abort.run[FileFsException](
-                claimed.move(exact, replaceExisting = false, atomicMove = true, createFolders = false)
+            Abort.run[FileStructureException](
+                claimed.move(
+                    exact,
+                    Path.MoveOptions(
+                        replace = Path.Replace.Never,
+                        atomicity = Path.Atomicity.Required,
+                        createFolders = false
+                    )
+                )
             ).map {
                 case Result.Success(_) =>
                     missingSource.exists.map { sourceExists =>
@@ -88,7 +95,7 @@ class HttpContainerBackendTest extends BasePodTest:
         "scoped UUID temp directories do not overwrite or delete the exact legacy staging path" in {
             claimLegacyFixture.map { (uuid, foreignPath, missingSource) =>
                 val sentinel = foreignPath / "sentinel"
-                Sync.ensure(foreignPath.removeAll.unit) {
+                Sync.ensure(Abort.run[FileStructureException](foreignPath.removeAll).unit) {
                     sentinel.write("foreign fixture").andThen {
                         val generator = new FixedUUIDGenerator(uuid)
                         val backend   = new HttpContainerBackend("/unused.sock")

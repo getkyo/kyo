@@ -42,7 +42,9 @@ private[kyo] object ClasspathFingerprint:
 
     // Produce a raw-bytes hash for a single classpath entry.
     private def hashEntry(entry: kyo.Path)(using Frame): Array[Byte] < (Sync & Async & Abort[Doctest.Error]) =
-        entry.exists.flatMap { exists =>
+        Abort.recover[FileReadException](e => Abort.fail(Doctest.Error.IoError(entry, "exists", e))) {
+            entry.exists
+        }.flatMap { exists =>
             if !exists then
                 // Missing entry: hash the path string itself so presence vs absence is detectable.
                 sha256Bytes(entry.toString.getBytes("UTF-8"))
@@ -61,7 +63,7 @@ private[kyo] object ClasspathFingerprint:
     // Walk requires Scope; we run that scope locally (Scope.run introduces Async in the row).
     private def hashDirectory(dir: kyo.Path)(using Frame): Array[Byte] < (Sync & Async & Abort[Doctest.Error]) =
         Scope.run {
-            Abort.recover[FileFsException](e => Abort.fail(Doctest.Error.IoError(dir, "walk", e))) {
+            Abort.recover[FileStructureException](e => Abort.fail(Doctest.Error.IoError(dir, "walk", e))) {
                 dir.walk.run
             }
         }.flatMap { allPaths =>
