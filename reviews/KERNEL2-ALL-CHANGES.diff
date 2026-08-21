@@ -1,0 +1,1177 @@
+diff --git a/kyo-kernel/bench/src/main/scala/kyo/kernel/bench/KernelBench.scala b/kyo-kernel/bench/src/main/scala/kyo/kernel/bench/KernelBench.scala
+index 401dd61954..422cf5b7b3 100644
+--- a/kyo-kernel/bench/src/main/scala/kyo/kernel/bench/KernelBench.scala
++++ b/kyo-kernel/bench/src/main/scala/kyo/kernel/bench/KernelBench.scala
+@@ -51,6 +51,22 @@ class KernelBench:
+     def evalFixedOverhead: Int =
+         ((seed: Int < Any).map(_ + 1)).eval
+ 
++    /** The fixed floor made readable: the single-shot row sits at ~10ns, inside the harness's own
++      * resolution, so its cross-kernel ratio carries no signal. This runs the same path a thousand
++      * times per invocation and reports per eval; the seed varies per step and the results
++      * accumulate, so no iteration can be hoisted or folded away.
++      */
++    @Benchmark
++    @OperationsPerInvocation(1000)
++    def evalFixedOverheadBatch: Int =
++        var acc = 0
++        var i   = 0
++        while i < 1000 do
++            acc += (((seed + i): Int < Any).map(_ + 1)).eval
++            i += 1
++        acc
++    end evalFixedOverheadBatch
++
+     @Benchmark
+     def fusionAllocatesNothing: Int =
+         def loop(i: Int): Int < Any =
+@@ -262,6 +278,26 @@ class KernelBench:
+         ArrowEffect.handleLoop(Tag[Ask], 0, loop0(0))([X] => (_, state, cont) => Loop.continue(state + 1, cont(1))).eval
+     end statefulAnswersPaySuccessor
+ 
++    @Benchmark
++    def statefulTwiceMono: Int =
++        def loop0(i: Int): Int < Ask =
++            if i > Depth then i
++            else ask.map(a => loop0(i + a))
++        def run(): Int =
++            ArrowEffect.handleLoop(Tag[Ask], 0, loop0(0))([X] => (_, state, cont) => Loop.continue(state + 1, cont(1))).eval
++        run() + run()
++    end statefulTwiceMono
++
++    @Benchmark
++    def statefulTwiceBi: Int =
++        def loop0(i: Int): Int < Ask =
++            if i > Depth then i
++            else ask.map(a => loop0(i + a))
++        val first  = ArrowEffect.handleLoop(Tag[Ask], 0, loop0(0))([X] => (_, state, cont) => Loop.continue(state + 1, cont(1))).eval
++        val second = ArrowEffect.handleLoop(Tag[Ask], 0, loop0(0))([X] => (_, state, cont) => Loop.continue(state + 1, cont(1))).eval
++        first + second
++    end statefulTwiceBi
++
+     @Benchmark
+     def trailingMapsStayLinear: Int =
+         def loop(i: Int): Int < Ask =
+diff --git a/kyo-kernel2/jvm/src/jmh/scala/kyo/kernel/bench/KernelBench.scala b/kyo-kernel2/jvm/src/jmh/scala/kyo/kernel/bench/KernelBench.scala
+index 20cc8522d6..30c38659c6 100644
+--- a/kyo-kernel2/jvm/src/jmh/scala/kyo/kernel/bench/KernelBench.scala
++++ b/kyo-kernel2/jvm/src/jmh/scala/kyo/kernel/bench/KernelBench.scala
+@@ -50,6 +50,21 @@ class KernelBench:
+     def evalFixedOverhead: Int =
+         ((seed: Int < Any).map(_ + 1)).eval
+ 
++    /** The fixed floor made readable: the single-shot row sits at ~10ns, inside the harness's own
++      * resolution, so its cross-kernel ratio carries no signal. This runs the same path a thousand
++      * times per invocation and reports per eval; the seed varies per step and the results
++      * accumulate, so no iteration can be hoisted or folded away.
++      */
++    @Benchmark
++    @OperationsPerInvocation(1000)
++    def evalFixedOverheadBatch: Int =
++        var acc = 0
++        var i   = 0
++        while i < 1000 do
++            acc += (((seed + i): Int < Any).map(_ + 1)).eval
++            i += 1
++        acc
++
+     /** Pure fusion: 396 cache-resident steps inside one safepoint window. Expect zero
+       * allocation and every mapLoop site inlined hot into one C2 region.
+       */
+@@ -337,6 +352,45 @@ class KernelBench:
+         ).eval
+     end statefulAnswersPaySuccessor
+ 
++    /** The stateful row twice through ONE call site: one anon clause class, so the eval's clause
++      * dispatch stays monomorphic, at exactly twice statefulAnswersPaySuccessor's work. The baseline
++      * for statefulTwiceBi.
++      */
++    @Benchmark
++    def statefulTwiceMono: Int =
++        def loop0(i: Int): Int < Ask =
++            if i > Depth then i
++            else ask.map(a => loop0(i + a))
++        def run(): Int =
++            ArrowEffect.handleLoopState(Tag[Ask], 0, loop0(0))(
++                [X] => (state, _) => Loop.continue(state + 1, 1: Int < Any),
++                (_, a) => a
++            ).eval
++        run() + run()
++    end statefulTwiceMono
++
++    /** The same total work through TWO textually distinct call sites: two anon clause classes, so
++      * the eval's clause dispatch is bimorphic within the fork. Any delta against statefulTwiceMono
++      * is the price of losing the monomorphic profile at the shared dispatch.
++      */
++    @Benchmark
++    def statefulTwiceBi: Int =
++        def loop0(i: Int): Int < Ask =
++            if i > Depth then i
++            else ask.map(a => loop0(i + a))
++        val first =
++            ArrowEffect.handleLoopState(Tag[Ask], 0, loop0(0))(
++                [X] => (state, _) => Loop.continue(state + 1, 1: Int < Any),
++                (_, a) => a
++            ).eval
++        val second =
++            ArrowEffect.handleLoopState(Tag[Ask], 0, loop0(0))(
++                [X] => (state, _) => Loop.continue(state + 1, 1: Int < Any),
++                (_, a) => a
++            ).eval
++        first + second
++    end statefulTwiceBi
++
+     /** Issue 531's shape: a for comprehension leaves a trailing map after each recursive effect
+       * step, so the pending chain grows by one transform per level and re-attaches on every
+       * answer. Expect linear cost, about 75ns and 250 bytes per level (the level's suspension,
+diff --git a/kyo-kernel2/shared/src/main/scala/kyo/Arrow.scala b/kyo-kernel2/shared/src/main/scala/kyo/Arrow.scala
+index c0900d4f17..f30a4b16be 100644
+--- a/kyo-kernel2/shared/src/main/scala/kyo/Arrow.scala
++++ b/kyo-kernel2/shared/src/main/scala/kyo/Arrow.scala
+@@ -149,9 +149,15 @@ object Arrow:
+         // both peel the first step off rather than deferring with the whole run, which is what a chain does.
+         // A chain can defer with itself because pushing it takes it apart again; this is stored whole, on
+         // purpose, so deferring with itself would push the same run back and arrive here again having made no
+-        // progress
+-        def apply(v: A)                                    = Effect.defer(v, t, cont)
+-        def apply[D, S2](v: A < S2, next: Arrow[C, D, S2]) = Effect.defer(v, t, cont.chain(next))
++        // progress.
++        //
++        // The peeled step is applied directly rather than through a deferral: the eval's round trip for
++        // `Effect.defer(v, t, cont)` ends in exactly `t(v, cont)` (push cont, push t, settled delivery), so
++        // this is the same law without the node, and the step's own apply carries the budget check that
++        // makes it safe. The payload handling is unchanged: the same lift the deferring form applied to `v`
++        // fires on the same argument here
++        def apply(v: A)                                    = t(v, cont)
++        def apply[D, S2](v: A < S2, next: Arrow[C, D, S2]) = t(v, cont.chain(next))
+ 
+         override def toString: String = s"Arrow.AndThen($t, $cont)"
+     end AndThen
+@@ -166,6 +172,10 @@ object Arrow:
+         def tail = b
+ 
+         def frame = Frame.internal
++        // a chain applies by deferring, never by running its head: the tail may carry a region (that is
++        // what makes it a Chain rather than an AndThen), and the eval's round trip installs the tail's
++        // entries on the stack before the head runs, so a failure in the head finds its scope. Running the
++        // head here would run it with the scope absent; EffectTest's "failure in map" pins exactly that
+         def apply(v: A) =
+             Effect.defer(v, a, b)
+         def apply[D, S2](v: A < S2, next: Arrow[C, D, S2]) =
+diff --git a/kyo-kernel2/shared/src/main/scala/kyo/kernel/ArrowEffect.scala b/kyo-kernel2/shared/src/main/scala/kyo/kernel/ArrowEffect.scala
+index 28a25042a7..6010468638 100644
+--- a/kyo-kernel2/shared/src/main/scala/kyo/kernel/ArrowEffect.scala
++++ b/kyo-kernel2/shared/src/main/scala/kyo/kernel/ArrowEffect.scala
+@@ -13,6 +13,13 @@ import kyo.kernel.internal.*
+ import kyo.kernel.internal.Handler.HandlerCont
+ import kyo.kernel.internal.Handler.HandlerLoop
+ import kyo.kernel.internal.Handler.HandlerLoopState
++import kyo.kernel.internal.Handler.Out
++import kyo.kernel.internal.Handler.answersLoop
++import kyo.kernel.internal.Handler.answersLoopState
++import kyo.kernel.internal.Handler.answerStep
++import kyo.kernel.internal.Handler.answerStepState
++import kyo.kernel.internal.Handler.nextAnswer
++import kyo.kernel.internal.Handler.resuspend
+ import kyo.kernel.internal.Kyo.Handle
+ import kyo.kernel.internal.Kyo.Suspend
+ import scala.annotation.nowarn
+@@ -98,6 +105,18 @@ object ArrowEffect:
+                             def tag                  = effectTag
+                             def run[C](input: I[C])  = handle[C](input)
+                             override def apply(a: A) = onDone(a)
++                            // the answer bodies are the eval layer's templates, expanded here with the
++                            // clause statically bound; see Handler.answerStep and Handler.answersLoop
++                            override def answer[C](input: I[C], out: Out): Any =
++                                answerStep[I, O, E, A, B, S, C](handle, input, out)
++                            override def answers[C](
++                                input0: I[C],
++                                k0: Arrow[Any, Any, Any],
++                                armed: Boolean,
++                                stop: () => Boolean,
++                                out: Out
++                            ): Any =
++                                answersLoop[I, O, E, A, B, S, C](effectTag, handle, input0, k0, armed, stop, out)
+                     def cont = Arrow.id[B]
+             case _ => onDone(Nested.unnest(v))
+         end match
+@@ -124,6 +143,19 @@ object ArrowEffect:
+                             def initialState                   = state
+                             def run[C](st: State, input: I[C]) = handle[C](st, input)
+                             def apply(st: State, a: A)         = onDone(st, a)
++                            // the answer bodies are the eval layer's templates, expanded here with the
++                            // clause statically bound; see Handler.answerStepState and Handler.answersLoopState
++                            override def answer[C](st: State, input: I[C], out: Out): Any =
++                                answerStepState[I, O, E, A, B, S, State, C](handle, st, input, out)
++                            override def answers[C](
++                                state0: State,
++                                input0: I[C],
++                                k0: Arrow[Any, Any, Any],
++                                armed: Boolean,
++                                stop: () => Boolean,
++                                out: Out
++                            ): Any =
++                                answersLoopState[I, O, E, A, B, S, State, C](effectTag, handle, state0, input0, k0, armed, stop, out)
+                     def cont = Arrow.id[B]
+             case _ => onDone(state, Nested.unnest(v))
+         end match
+@@ -202,6 +234,18 @@ object ArrowEffect:
+                             def tag                  = effectTag
+                             def run[X](input: I[X])  = handle[X](input)
+                             override def apply(a: A) = onDone(a)
++                            // the answer bodies are the eval layer's templates, expanded here with the
++                            // clause statically bound; see Handler.answerStep and Handler.answersLoop
++                            override def answer[C](input: I[C], out: Out): Any =
++                                answerStep[I, O, E, A, B, S, C](handle, input, out)
++                            override def answers[C](
++                                input0: I[C],
++                                k0: Arrow[Any, Any, Any],
++                                armed: Boolean,
++                                stop: () => Boolean,
++                                out: Out
++                            ): Any =
++                                answersLoop[I, O, E, A, B, S, C](effectTag, handle, input0, k0, armed, stop, out)
+                     def cont                 = this
+                     override def apply(b: B) = f(b)
+                     def apply[D, S3](b: B < S3, next: Arrow[C, D, S3]): D < (S & S2 & S3) =
+@@ -238,6 +282,19 @@ object ArrowEffect:
+                             def initialState                   = state
+                             def run[X](st: State, input: I[X]) = handle[X](st, input)
+                             def apply(st: State, a: A)         = onDone(st, a)
++                            // the answer bodies are the eval layer's templates, expanded here with the
++                            // clause statically bound; see Handler.answerStepState and Handler.answersLoopState
++                            override def answer[C](st: State, input: I[C], out: Out): Any =
++                                answerStepState[I, O, E, A, B, S, State, C](handle, st, input, out)
++                            override def answers[C](
++                                state0: State,
++                                input0: I[C],
++                                k0: Arrow[Any, Any, Any],
++                                armed: Boolean,
++                                stop: () => Boolean,
++                                out: Out
++                            ): Any =
++                                answersLoopState[I, O, E, A, B, S, State, C](effectTag, handle, state0, input0, k0, armed, stop, out)
+                     def cont                 = this
+                     override def apply(b: B) = f(b)
+                     def apply[D, S3](b: B < S3, next: Arrow[C, D, S3]): D < (S & S2 & S3) =
+diff --git a/kyo-kernel2/shared/src/main/scala/kyo/kernel/Pending.scala b/kyo-kernel2/shared/src/main/scala/kyo/kernel/Pending.scala
+index 4997fb9c7e..d63a278519 100644
+--- a/kyo-kernel2/shared/src/main/scala/kyo/kernel/Pending.scala
++++ b/kyo-kernel2/shared/src/main/scala/kyo/kernel/Pending.scala
+@@ -277,8 +277,18 @@ object `<` extends Implicits:
+             f10(h10)
+         end handle
+ 
++        // the settled arm stays in the caller's compilation on purpose: a value that never suspended has
++        // its result born in the caller's own map expansion, and delivering it through the non-inline
++        // interpreter boundary makes that box a real allocation (measured 14 B and 3ns per settled eval).
++        // Unnesting here instead lets escape analysis finish the job, and only a node graph pays the eval.
++        // Observationally the interpreter does exactly this for a settled value: unnest, empty stack, return
+         inline def eval(using S =:= Any): A =
+-            Eval(self.asInstanceOf[A < Any]).asInstanceOf[A]
++            // bound once, for the reason evalNow binds once
++            val v = self
++            v match
++                case _: Kyo[?, ?] => Eval(v.asInstanceOf[A < Any]).asInstanceOf[A]
++                case _            => Nested.unnest(v)
++        end eval
+ 
+         // bound once: `self` is inline, so every occurrence re-expands the receiver expression, and two
+         // occurrences here would build `v.map(f)` twice and run `f` twice on the settled path
+diff --git a/kyo-kernel2/shared/src/main/scala/kyo/kernel/internal/Eval.scala b/kyo-kernel2/shared/src/main/scala/kyo/kernel/internal/Eval.scala
+index 736863b992..15367c69fa 100644
+--- a/kyo-kernel2/shared/src/main/scala/kyo/kernel/internal/Eval.scala
++++ b/kyo-kernel2/shared/src/main/scala/kyo/kernel/internal/Eval.scala
+@@ -149,48 +149,106 @@ object Eval:
+         kyo: Suspend[IX, OX, EX, CX, AX, SX],
+         pos: Int
+     ): Any < Nothing =
++        val out = stack.out
+         val ran =
+-            try h.run(kyo.input)
++            try h.answer(kyo.input, out)
+             catch
+                 case ex: Throwable =>
+                     attachThrow(ex, kyo, Arrow.id[Any], stack)
+-        ran match
+-            case clause: Kyo[Loop.Outcome[OX[CX] < (EX & SX), BX], SX] @unchecked =>
+-                val k = stack.dump[OX[CX], AX, EX & SX](pos)
+-                discard(stack.pop())
+-                new Defer[Loop.Outcome[OX[CX] < (EX & SX), BX], BX, BX, EX & SX]
+-                    with Step[Loop.Outcome[OX[CX] < (EX & SX), BX], BX, EX & SX]:
+-                    def frame = Frame.internal
+-                    def value = clause
+-                    def contA = this
+-                    def contB = Arrow.id[BX]
+-                    override def apply(o: Loop.Outcome[OX[CX] < (EX & SX), BX]) =
+-                        o match
+-                            case r: Loop.Continue[OX[CX] < (EX & SX)] @unchecked =>
+-                                Effect.defer(r._1.map(a => k(a)), h)
+-                            case v => v.asInstanceOf[BX]
+-                    def apply[D, S2](o: Loop.Outcome[OX[CX] < (EX & SX), BX] < S2, next: Arrow[BX, D, S2])
+-                        : D < (EX & SX & S2) =
+-                        o match
+-                            case kyo: Kyo[Loop.Outcome[OX[CX] < (EX & SX), BX], S2] @unchecked =>
+-                                Effect.defer(kyo, this, next)
+-                            case _ => next(apply(Nested.unnest(o)), Arrow.id)
+-                end new
+-            case o =>
+-                Nested.unnest[Any](o) match
+-                    case r: Loop.Continue[OX[CX] < (EX & SX)] @unchecked =>
+-                        r._1 match
+-                            case _: Kyo[OX[CX], EX & SX] @unchecked =>
+-                                val k = stack.dump[OX[CX], AX, EX & SX](pos)
+-                                r._1.map(a => k(a))
+-                            case _ => r._1
+-                    case _ =>
+-                        stack.truncate(pos + 1)
+-                        o
++        out.kind match
++            case 1 =>
++                val r = ran.asInstanceOf[OX[CX] < (EX & SX)]
++                r match
++                    case _: Kyo[OX[CX], EX & SX] @unchecked =>
++                        val k = stack.dump[OX[CX], AX, EX & SX](pos)
++                        r.map(a => k(a))
++                    case _ => r
++                end match
++            case 2 =>
++                clauseSuspendedLoop(stack, h, ran.asInstanceOf[Kyo[Loop.Outcome[OX[CX] < (EX & SX), BX], SX]], pos)
++            case _ =>
++                stack.truncate(pos + 1)
++                ran.asInstanceOf[Any < Nothing]
+         end match
+     end dispatchLoop
+ 
+-    /** The stateful sibling of [[dispatchLoop]]; the state slot updates stay inside. */
++    /** The stateless fast path, [[dispatchLoopStateFast]] without the state lane. */
++    private def dispatchLoopFast(
++        stack: Stack,
++        h: HandlerLoop[IX, OX, EX, AX, BX, SX],
++        kyo: Suspend[IX, OX, EX, CX, AX, SX],
++        k: Arrow[Any, Any, Any],
++        armed: Boolean,
++        stop: () => Boolean
++    ): Any < Nothing =
++        val out = stack.out
++        val ran =
++            try h.answers(kyo.input, k, armed, stop, out)
++            catch
++                case ex: Throwable =>
++                    if (out.cont ne null) && !(out.cont eq Arrow.Id) then stack.push(out.cont)
++                    attachThrow(ex, kyo, Arrow.id[Any], stack)
++        out.kind match
++            case 1 =>
++                if out.cont eq null then ran.asInstanceOf[Any < Nothing]
++                else
++                    stack.push(out.cont)
++                    val r = ran.asInstanceOf[OX[CX] < (EX & SX)]
++                    r match
++                        case _: Kyo[OX[CX], EX & SX] @unchecked =>
++                            val k2 = stack.dump[OX[CX], AX, EX & SX](if out.cont eq Arrow.Id then 0 else 1)
++                            r.map(a => k2(a))
++                        case _ => r
++                    end match
++            case 2 =>
++                val pos2 = if (out.cont ne null) && !(out.cont eq Arrow.Id) then
++                    stack.push(out.cont)
++                    1
++                else 0
++                clauseSuspendedLoop(stack, h, ran.asInstanceOf[Kyo[Loop.Outcome[OX[CX] < (EX & SX), BX], SX]], pos2)
++            case _ =>
++                stack.truncate(1)
++                ran.asInstanceOf[Any < Nothing]
++        end match
++    end dispatchLoopFast
++
++    /** The stateless sibling of [[clauseSuspended]]. */
++    @nowarn("msg=anonymous")
++    private def clauseSuspendedLoop(
++        stack: Stack,
++        h: HandlerLoop[IX, OX, EX, AX, BX, SX],
++        clause: Kyo[Loop.Outcome[OX[CX] < (EX & SX), BX], SX],
++        pos: Int
++    ): Any < Nothing =
++        val k = stack.dump[OX[CX], AX, EX & SX](pos)
++        discard(stack.pop())
++        new Defer[Loop.Outcome[OX[CX] < (EX & SX), BX], BX, BX, EX & SX]
++            with Step[Loop.Outcome[OX[CX] < (EX & SX), BX], BX, EX & SX]:
++            def frame = Frame.internal
++            def value = clause
++            def contA = this
++            def contB = Arrow.id[BX]
++            override def apply(o: Loop.Outcome[OX[CX] < (EX & SX), BX]) =
++                o match
++                    case r: Loop.Continue[OX[CX] < (EX & SX)] @unchecked =>
++                        Effect.defer(r._1.map(a => k(a)), h)
++                    case v => v.asInstanceOf[BX]
++            def apply[D, S2](o: Loop.Outcome[OX[CX] < (EX & SX), BX] < S2, next: Arrow[BX, D, S2])
++                : D < (EX & SX & S2) =
++                o match
++                    case kyo: Kyo[Loop.Outcome[OX[CX] < (EX & SX), BX], S2] @unchecked =>
++                        Effect.defer(kyo, this, next)
++                    case _ => next(apply(Nested.unnest(o)), Arrow.id)
++        end new
++    end clauseSuspendedLoop
++
++    /** The stateful sibling of [[dispatchLoop]]; the state slot updates stay inside.
++      *
++      * The clause call and the outcome destructuring live in the handler's own `answer` method, which the
++      * call site generated with the clause statically bound: the outcome is consumed where it is born, so
++      * no allocation crosses the virtual call. What crosses instead is the answer as the return value and
++      * the state and branch through the stack's out-cell, which this dispatch reads back.
++      */
+     @nowarn("msg=anonymous")
+     private def dispatchLoopState(
+         stack: Stack,
+@@ -198,52 +256,116 @@ object Eval:
+         kyo: Suspend[IX, OX, EX, CX, AX, SX],
+         pos: Int
+     ): Any < Nothing =
+-        val s = stack.state(pos).getOrElse(h.initialState)
++        val s   = stack.state(pos).getOrElse(h.initialState)
++        val out = stack.out
+         val ran =
+-            try h.run(s, kyo.input)
++            try h.answer(s, kyo.input, out)
+             catch
+                 case ex: Throwable =>
+                     attachThrow(ex, kyo, Arrow.id[Any], stack)
+-        ran match
+-            case clause: Kyo[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], SX] @unchecked =>
+-                val k = stack.dump[OX[CX], AX, EX & SX](pos)
+-                discard(stack.pop())
+-                new Defer[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], BX, BX, EX & SX]
+-                    with Step[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], BX, EX & SX]:
+-                    def frame = Frame.internal
+-                    def value = clause
+-                    def contA = this
+-                    def contB = Arrow.id[BX]
+-                    override def apply(o: Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX]) =
+-                        o match
+-                            case r: Loop.Continue2[StateX, OX[CX] < (EX & SX)] @unchecked =>
+-                                Effect.defer(r._2.map(a => k(a)), HandlerLoopState(h, r._1))
+-                            case v => v.asInstanceOf[BX]
+-                    def apply[D, S2](
+-                        o: Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX] < S2,
+-                        next: Arrow[BX, D, S2]
+-                    ): D < (EX & SX & S2) =
+-                        o match
+-                            case kyo: Kyo[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], S2] @unchecked =>
+-                                Effect.defer(kyo, this, next)
+-                            case _ => next(apply(Nested.unnest(o)), Arrow.id)
+-                end new
+-            case o =>
+-                Nested.unnest[Any](o) match
+-                    case r: Loop.Continue2[StateX, OX[CX] < (EX & SX)] @unchecked =>
+-                        stack.putState(pos, r._1)
+-                        r._2 match
+-                            case _: Kyo[OX[CX], EX & SX] @unchecked =>
+-                                val k = stack.dump[OX[CX], AX, EX & SX](pos)
+-                                r._2.map(a => k(a))
+-                            case _ => r._2
+-                        end match
+-                    case _ =>
+-                        stack.truncate(pos + 1)
+-                        o
++        out.kind match
++            case 1 => // answered: the region continues with the returned value
++                stack.putState(pos, out.state.asInstanceOf[StateX])
++                val r = ran.asInstanceOf[OX[CX] < (EX & SX)]
++                r match
++                    case _: Kyo[OX[CX], EX & SX] @unchecked =>
++                        val k = stack.dump[OX[CX], AX, EX & SX](pos)
++                        r.map(a => k(a))
++                    case _ => r
++                end match
++            case 2 => // the clause itself suspended: dispatch it outside the region and re-enter on its outcome
++                clauseSuspended(stack, h, ran.asInstanceOf[Kyo[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], SX]], pos)
++            case _ => // finished: the clause completed the region
++                stack.truncate(pos + 1)
++                ran.asInstanceOf[Any < Nothing]
+         end match
+     end dispatchLoopState
+ 
++    /** The stateful fast path: the handler at the top of the stack with its continuation in hand, so the
++      * generated answer loop can run with the state in a local. Every bail arrives here with the state
++      * committed to the cell; the slot and, where owed, the continuation entry are restored before the
++      * eval carries on, so a capture, a park or a failure observes exactly what the general path leaves.
++      */
++    private def dispatchLoopStateFast(
++        stack: Stack,
++        h: HandlerLoopState[IX, OX, EX, AX, BX, SX, StateX],
++        kyo: Suspend[IX, OX, EX, CX, AX, SX],
++        k: Arrow[Any, Any, Any],
++        armed: Boolean,
++        stop: () => Boolean
++    ): Any < Nothing =
++        val s   = stack.state(0).getOrElse(h.initialState)
++        val out = stack.out
++        val ran =
++            try h.answers(s, kyo.input, k, armed, stop, out)
++            catch
++                case ex: Throwable =>
++                    // the loop committed before rethrowing; make the slot and the entry current
++                    stack.putState(0, out.state.asInstanceOf[StateX])
++                    if (out.cont ne null) && !(out.cont eq Arrow.Id) then stack.push(out.cont)
++                    attachThrow(ex, kyo, Arrow.id[Any], stack)
++        out.kind match
++            case 1 =>
++                stack.putState(0, out.state.asInstanceOf[StateX])
++                if out.cont eq null then ran.asInstanceOf[Any < Nothing]
++                else
++                    // the generic body answered once and handed the continuation back: reattach it, then
++                    // deliver the way the general path would
++                    stack.push(out.cont)
++                    val r = ran.asInstanceOf[OX[CX] < (EX & SX)]
++                    r match
++                        case _: Kyo[OX[CX], EX & SX] @unchecked =>
++                            val k2 = stack.dump[OX[CX], AX, EX & SX](if out.cont eq Arrow.Id then 0 else 1)
++                            r.map(a => k2(a))
++                        case _ => r
++                    end match
++                end if
++            case 2 =>
++                val pos2 = if (out.cont ne null) && !(out.cont eq Arrow.Id) then
++                    stack.push(out.cont)
++                    1
++                else 0
++                clauseSuspended(stack, h, ran.asInstanceOf[Kyo[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], SX]], pos2)
++            case _ =>
++                stack.truncate(1)
++                ran.asInstanceOf[Any < Nothing]
++        end match
++    end dispatchLoopStateFast
++
++    /** The re-entry a suspended clause owes: its outcome dispatched outside the region, resuming through
++      * the folded continuation on a continue and completing past it on a done.
++      */
++    @nowarn("msg=anonymous")
++    private def clauseSuspended(
++        stack: Stack,
++        h: HandlerLoopState[IX, OX, EX, AX, BX, SX, StateX],
++        clause: Kyo[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], SX],
++        pos: Int
++    ): Any < Nothing =
++        val k = stack.dump[OX[CX], AX, EX & SX](pos)
++        discard(stack.pop())
++        new Defer[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], BX, BX, EX & SX]
++            with Step[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], BX, EX & SX]:
++            def frame = Frame.internal
++            def value = clause
++            def contA = this
++            def contB = Arrow.id[BX]
++            override def apply(o: Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX]) =
++                o match
++                    case r: Loop.Continue2[StateX, OX[CX] < (EX & SX)] @unchecked =>
++                        Effect.defer(r._2.map(a => k(a)), HandlerLoopState(h, r._1))
++                    case v => v.asInstanceOf[BX]
++            def apply[D, S2](
++                o: Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX] < S2,
++                next: Arrow[BX, D, S2]
++            ): D < (EX & SX & S2) =
++                o match
++                    case kyo: Kyo[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], S2] @unchecked =>
++                        Effect.defer(kyo, this, next)
++                    case _ => next(apply(Nested.unnest(o)), Arrow.id)
++        end new
++    end clauseSuspended
++
+     @nowarn("msg=anonymous")
+     private def apply[A, S](v: A < S, armed: Boolean, stop: () => Boolean): Any =
+         val stack = Stack.borrow()
+@@ -302,9 +424,43 @@ object Eval:
+                                         case ex: Throwable => attachThrow(ex, kyo, k, stack)
+                                 loop(next)
+                             case h: HandlerLoop[IX, OX, EX, AX, BX, SX] @unchecked =>
+-                                loop(dispatchLoop(stack, h, kyo, pos))
++                                // same gate as the stateful case below
++                                if pos == 0 then
++                                    loop(dispatchLoopFast(stack, h, kyo, Arrow.id[Any].asInstanceOf[Arrow[Any, Any, Any]], armed, stop))
++                                else if pos == 1 && stack.entry(0).isInstanceOf[Arrow.Step[
++                                        ?,
++                                        ?,
++                                        ?
++                                    ]] && !stack.entry(0).isInstanceOf[Arrow.Region[?, ?, ?]]
++                                then
++                                    val k = stack.pop().asInstanceOf[Arrow[Any, Any, Any]]
++                                    loop(dispatchLoopFast(stack, h, kyo, k, armed, stop))
++                                else
++                                    loop(dispatchLoop(stack, h, kyo, pos))
+                             case h: HandlerLoopState[IX, OX, EX, AX, BX, SX, StateX] @unchecked =>
+-                                loop(dispatchLoopState(stack, h, kyo, pos))
++                                // the answer loop needs the continuation in hand: a run of zero or one
++                                // plain entries above the handler is exactly the entry just pushed for
++                                // this suspension, or nothing when the suspension was bare. A region
++                                // entry stays where the scans need it, so it takes the general path
++                                if pos == 0 then
++                                    loop(dispatchLoopStateFast(
++                                        stack,
++                                        h,
++                                        kyo,
++                                        Arrow.id[Any].asInstanceOf[Arrow[Any, Any, Any]],
++                                        armed,
++                                        stop
++                                    ))
++                                else if pos == 1 && stack.entry(0).isInstanceOf[Arrow.Step[
++                                        ?,
++                                        ?,
++                                        ?
++                                    ]] && !stack.entry(0).isInstanceOf[Arrow.Region[?, ?, ?]]
++                                then
++                                    val k = stack.pop().asInstanceOf[Arrow[Any, Any, Any]]
++                                    loop(dispatchLoopStateFast(stack, h, kyo, k, armed, stop))
++                                else
++                                    loop(dispatchLoopState(stack, h, kyo, pos))
+                         end match
+                     end if
+                 case kyo: Handle[EX, ?, ?, A, S] @unchecked =>
+diff --git a/kyo-kernel2/shared/src/main/scala/kyo/kernel/internal/Handler.scala b/kyo-kernel2/shared/src/main/scala/kyo/kernel/internal/Handler.scala
+index 068eedd1e1..d7d719997a 100644
+--- a/kyo-kernel2/shared/src/main/scala/kyo/kernel/internal/Handler.scala
++++ b/kyo-kernel2/shared/src/main/scala/kyo/kernel/internal/Handler.scala
+@@ -1,6 +1,8 @@
+ package kyo.kernel.internal
+ 
+ import kyo.Arrow
++import kyo.Loop.Continue
++import kyo.Loop.Continue2
+ import kyo.Loop.Outcome
+ import kyo.Loop.Outcome2
+ import kyo.Tag
+@@ -26,17 +28,376 @@ end Handler
+ // Public object, private[kyo] members: see the note on Safepoint for the accessor the other shape emits.
+ object Handler:
+ 
++    /** How a stateful answer crossed back, carried without an allocation.
++      *
++      * A clause's outcome bundles the new state with the answer, and returning that bundle through a
++      * virtual call is a heap allocation per answer that escape analysis cannot remove once more than one
++      * handler class exists (the morphism probe measured the loss at exactly one object per answer). The
++      * cell splits the bundle: the answer travels as the return value, the state and the branch taken
++      * travel here. One cell per stack, reused; only the eval and the generated answer method ever touch
++      * it, and the user's clause receives only its declared arguments, so nothing user-written can reach
++      * it. Everything it holds is on its way into the state slot or the eval's own dispatch, so it is
++      * never the only copy of anything.
++      */
++    final private[kyo] class Out:
++        private[kyo] var kind: Int  = 0
++        private[kyo] var state: Any = null
++        // stage 2 lanes: the continuation a bailing answer loop hands back unconsumed, and the input the
++        // decompose hook reports for the next iteration. Both hold references already in hand, never a
++        // fresh allocation, and neither survives past the dispatch that wrote it
++        private[kyo] var cont: Arrow[Any, Any, Any] = null
++        private[kyo] var input: Any                 = null
++    end Out
++
++    // the erased shapes the two hooks below build and match; the node classes are not nameable at the
++    // expansion sites that need them, so the matching lives here, kernel side, behind two small calls
++    private type AnyK[X] = Any
++
++    /** Splits `v` into a same-tag suspension's input and effective continuation, where it has that shape.
++      *
++      * Returns 1 with `out.input` and `out.cont` set when it does; 0 when `v` is not that shape and was
++      * not touched; 2 when `v` was a deferral whose payload had to be read to decide and did not match:
++      * the payload is a by-name that must not run twice, so `out.input` then carries an equivalent
++      * deferral rebuilt over the value read, and the caller continues with that instead of `v`.
++      */
++    private[kyo] def nextAnswer(t: Tag[Any], v: Any, out: Out): Int =
++        v match
++            case kyo: Kyo.Suspend[AnyK, AnyK, Nothing, Any, Any, Any] @unchecked if kyo.tag.erased =:= t =>
++                out.input = kyo.input
++                out.cont = kyo.cont.asInstanceOf[Arrow[Any, Any, Any]]
++                1
++            case d: Kyo.Defer[Any, Any, Any, Any] @unchecked =>
++                val v0 = d.value
++                v0 match
++                    case kyo: Kyo.Suspend[AnyK, AnyK, Nothing, Any, Any, Any] @unchecked
++                        if kyo.tag.erased =:= t && (d.contB eq Arrow.Id) =>
++                        val sc = kyo.cont.asInstanceOf[Arrow[Any, Any, Any]]
++                        val ca = d.contA.asInstanceOf[Arrow[Any, Any, Any]]
++                        if sc eq Arrow.Id then
++                            out.input = kyo.input
++                            out.cont = ca
++                            1
++                        else if ca eq Arrow.Id then
++                            out.input = kyo.input
++                            out.cont = sc
++                            1
++                        else
++                            // composing the two would allocate per answer; hand back what was read instead
++                            out.input = Effect.defer(v0, d.contA, d.contB)
++                            2
++                        end if
++                    case _ =>
++                        out.input = Effect.defer(v0, d.contA, d.contB)
++                        2
++                end match
++            case _ => 0
++
++    /** Rebuilds the suspension a bailing answer loop still owes: the input under the tag, with the
++      * continuation attached, exactly what the loop consumed to get where it is.
++      */
++    private[kyo] def resuspend(t: Tag[Any], in: Any, k: Arrow[Any, Any, Any]): Any =
++        new Kyo.Suspend[AnyK, AnyK, Nothing, Any, Any, Any]:
++            def frame = kyo.Frame.internal
++            def tag   = t.asInstanceOf[Tag[Nothing]]
++            def input = in
++            def cont  = k
++
++    /** The per-answer templates the region combinators expand.
++      *
++      * The text lives here because the protocol is the eval's: what the cell means, when state commits,
++      * how a bail re-enters the eval. The combinator expansions wire their clause into these and stay
++      * wiring. Each call site still emits its own copy with the clause statically bound, which is the
++      * mechanism the design exists for; only the source location is shared. The loops are flag-driven
++      * rather than early-returning because an inline body cannot `return`.
++      */
++    inline def answerStep[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, C](
++        inline handle: [X] => I[X] => Outcome[O[X] < (E & S), B] < S,
++        input: I[C],
++        out: Out
++    ): Any =
++        handle[C](input) match
++            case kyo: Kyo[Outcome[O[C] < (E & S), B], S] @unchecked =>
++                out.kind = 2
++                kyo
++            case c: Continue[O[C] < (E & S)] @unchecked =>
++                out.kind = 1
++                c._1
++            case o =>
++                out.kind = 3
++                o
++
++    inline def answersLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, C](
++        inline effectTag: Tag[E],
++        inline handle: [X] => I[X] => Outcome[O[X] < (E & S), B] < S,
++        input0: I[C],
++        k0: Arrow[Any, Any, Any],
++        armed: Boolean,
++        stop: () => Boolean,
++        out: Out
++    ): Any =
++        var in: Any                 = input0
++        var k: Arrow[Any, Any, Any] = k0
++        var n: Int                  = 128
++        var result: Any             = null
++        var running                 = true
++        while running do
++            if armed && stop() then
++                out.kind = 1
++                out.cont = null
++                result = Effect.defer(resuspend(effectTag.erased, in, k).asInstanceOf[Any < Any], Arrow.id[Any])
++                running = false
++            else
++                val o =
++                    try handle[C](in.asInstanceOf[I[C]])
++                    catch
++                        case ex: Throwable =>
++                            out.kind = 1
++                            out.cont = k
++                            throw ex
++                o match
++                    case kyo: Kyo[Outcome[O[C] < (E & S), B], S] @unchecked =>
++                        out.kind = 2
++                        out.cont = k
++                        result = kyo
++                        running = false
++                    case c: Continue[O[C] < (E & S)] @unchecked =>
++                        val ans = c._1
++                        ans match
++                            case ansKyo: Kyo[?, ?] @unchecked =>
++                                out.kind = 1
++                                out.cont = null
++                                result = ans.map(a => k(a))
++                                running = false
++                            case _ =>
++                                val next =
++                                    try k(Nested.unnest[Any](ans))
++                                    catch
++                                        case ex: Throwable =>
++                                            out.kind = 1
++                                            out.cont = k
++                                            throw ex
++                                n -= 1
++                                if n <= 0 then
++                                    out.kind = 1
++                                    out.cont = null
++                                    result = Effect.defer(next, Arrow.id[Any])
++                                    running = false
++                                else
++                                    nextAnswer(effectTag.erased, next, out) match
++                                        case 1 =>
++                                            in = out.input
++                                            k = out.cont
++                                        case 2 =>
++                                            out.kind = 1
++                                            out.cont = null
++                                            result = out.input
++                                            running = false
++                                        case _ =>
++                                            out.kind = 1
++                                            out.cont = null
++                                            result = next
++                                            running = false
++                                end if
++                        end match
++                    case o2 =>
++                        out.kind = 3
++                        out.cont = null
++                        result = o2
++                        running = false
++                end match
++        end while
++        result
++    end answersLoop
++
++    inline def answerStepState[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State, C](
++        inline handle: [X] => (State, I[X]) => Outcome2[State, O[X] < (E & S), B] < S,
++        st: State,
++        input: I[C],
++        out: Out
++    ): Any =
++        handle[C](st, input) match
++            case kyo: Kyo[Outcome2[State, O[C] < (E & S), B], S] @unchecked =>
++                out.kind = 2
++                kyo
++            case c: Continue2[State, O[C] < (E & S)] @unchecked =>
++                out.kind = 1
++                out.state = c._1
++                c._2
++            case o =>
++                out.kind = 3
++                o
++
++    inline def answersLoopState[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State, C](
++        inline effectTag: Tag[E],
++        inline handle: [X] => (State, I[X]) => Outcome2[State, O[X] < (E & S), B] < S,
++        state0: State,
++        input0: I[C],
++        k0: Arrow[Any, Any, Any],
++        armed: Boolean,
++        stop: () => Boolean,
++        out: Out
++    ): Any =
++        var st: State               = state0
++        var in: Any                 = input0
++        var k: Arrow[Any, Any, Any] = k0
++        var n: Int                  = 128
++        var result: Any             = null
++        var running                 = true
++        while running do
++            if armed && stop() then
++                out.kind = 1
++                out.state = st
++                out.cont = null
++                result = Effect.defer(resuspend(effectTag.erased, in, k).asInstanceOf[Any < Any], Arrow.id[Any])
++                running = false
++            else
++                val o =
++                    try handle[C](st, in.asInstanceOf[I[C]])
++                    catch
++                        case ex: Throwable =>
++                            out.kind = 1
++                            out.state = st
++                            out.cont = k
++                            throw ex
++                o match
++                    case kyo: Kyo[Outcome2[State, O[C] < (E & S), B], S] @unchecked =>
++                        out.kind = 2
++                        out.state = st
++                        out.cont = k
++                        result = kyo
++                        running = false
++                    case c: Continue2[State, O[C] < (E & S)] @unchecked =>
++                        st = c._1
++                        val ans = c._2
++                        ans match
++                            case ansKyo: Kyo[?, ?] @unchecked =>
++                                out.kind = 1
++                                out.state = st
++                                out.cont = null
++                                result = ans.map(a => k(a))
++                                running = false
++                            case _ =>
++                                val next =
++                                    try k(Nested.unnest[Any](ans))
++                                    catch
++                                        case ex: Throwable =>
++                                            out.kind = 1
++                                            out.state = st
++                                            out.cont = k
++                                            throw ex
++                                n -= 1
++                                if n <= 0 then
++                                    out.kind = 1
++                                    out.state = st
++                                    out.cont = null
++                                    result = Effect.defer(next, Arrow.id[Any])
++                                    running = false
++                                else
++                                    nextAnswer(effectTag.erased, next, out) match
++                                        case 1 =>
++                                            in = out.input
++                                            k = out.cont
++                                        case 2 =>
++                                            out.kind = 1
++                                            out.state = st
++                                            out.cont = null
++                                            result = out.input
++                                            running = false
++                                        case _ =>
++                                            out.kind = 1
++                                            out.state = st
++                                            out.cont = null
++                                            result = next
++                                            running = false
++                                end if
++                        end match
++                    case o2 =>
++                        out.kind = 3
++                        out.cont = null
++                        result = o2
++                        running = false
++                end match
++        end while
++        result
++    end answersLoopState
++
++    private[kyo] object Out:
++        // the branch the answer took: the clause answered and the region continues, the clause itself
++        // suspended, or the clause completed the region
++        inline def Answered: Int  = 1
++        inline def Suspended: Int = 2
++        inline def Finished: Int  = 3
++    end Out
++
+     abstract private[kyo] class HandlerCont[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Handler[E, A, B, S]:
+         def run[X](input: I[X], cont: Arrow[O[X], A, E & S]): A < (E & S)
+ 
+     abstract private[kyo] class HandlerLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Handler[E, A, B, S]:
+         def run[X](input: I[X]): Outcome[O[X] < (E & S), B] < S
+ 
++        /** The stateless siblings of [[HandlerLoopState.answer]] and [[HandlerLoopState.answers]]: same
++          * protocol through the same cell, no state lane.
++          */
++        def answer[X](input: I[X], out: Out): Any =
++            run(input) match
++                case kyo: Kyo[Outcome[O[X] < (E & S), B], S] @unchecked =>
++                    out.kind = Out.Suspended
++                    kyo
++                case c: Continue[O[X] < (E & S)] @unchecked =>
++                    out.kind = Out.Answered
++                    c._1
++                case o =>
++                    out.kind = Out.Finished
++                    o
++
++        def answers[X](input: I[X], k: Arrow[Any, Any, Any], armed: Boolean, stop: () => Boolean, out: Out): Any =
++            out.cont = k
++            answer(input, out)
++    end HandlerLoop
++
+     abstract private[kyo] class HandlerLoopState[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State] extends Handler[E, A, B, S]:
+         def initialState: State
+         def run[X](state: State, input: I[X]): Outcome2[State, O[X] < (E & S), B] < S
+         def apply(state: State, v: A): B < S
+         final override def apply(v: A): B < S = apply(initialState, v)
++
++        /** Runs the clause and takes its outcome apart, in the class the call site generated.
++          *
++          * The eval used to do both: call `run` and destructure the `Outcome2`, which made the outcome an
++          * allocation crossing a virtual call. Here the clause call and the destructuring compile together
++          * in the per-call-site class, so the outcome is born and consumed in one method and a JIT can
++          * erase it regardless of how many handler classes the program has. The answer returns as the
++          * value; the state and the branch taken go through `out`.
++          *
++          * The return type is the eval's own currency: the three branches return the region's answer, the
++          * suspended clause, and the completed value, which only the eval's dispatch tells apart, by the
++          * branch recorded in `out`.
++          *
++          * This body is the generic form; the expansion in `ArrowEffect.handleLoopState` overrides it with
++          * the clause statically bound.
++          */
++        def answer[X](state: State, input: I[X], out: Out): Any =
++            run(state, input) match
++                case kyo: Kyo[Outcome2[State, O[X] < (E & S), B], S] @unchecked =>
++                    out.kind = Out.Suspended
++                    kyo
++                case c: Continue2[State, O[X] < (E & S)] @unchecked =>
++                    out.kind = Out.Answered
++                    out.state = c._1
++                    c._2
++                case o =>
++                    out.kind = Out.Finished
++                    o
++
++        /** Consecutive settled answers with the state in a local, while the region's next step keeps being
++          * a suspension of its own tag; the expansion overrides this with the clause statically bound so
++          * the per-answer box is born and dies inside one compiled method. This generic body answers once
++          * and hands the continuation back unconsumed, which is the same protocol a bailing loop uses, so
++          * the eval treats both alike.
++          */
++        def answers[X](state: State, input: I[X], k: Arrow[Any, Any, Any], armed: Boolean, stop: () => Boolean, out: Out): Any =
++            out.cont = k
++            answer(state, input, out)
+     end HandlerLoopState
+ 
+     private[kyo] object HandlerLoopState:
+@@ -50,6 +411,11 @@ object Handler:
+                 def initialState                      = state
+                 def run[X](state: State, input: I[X]) = h.run(state, input)
+                 def apply(state: State, v: A)         = h.apply(state, v)
++                // the wrap changes only what the region starts from; the per-site answer bodies, with
++                // their statically bound clause, must survive a clause suspension's re-entry
++                override def answer[X](state: State, input: I[X], out: Out) = h.answer(state, input, out)
++                override def answers[X](state: State, input: I[X], k: Arrow[Any, Any, Any], armed: Boolean, stop: () => Boolean, out: Out) =
++                    h.answers(state, input, k, armed, stop, out)
+     end HandlerLoopState
+ 
+ end Handler
+diff --git a/kyo-kernel2/shared/src/main/scala/kyo/kernel/internal/Stack.scala b/kyo-kernel2/shared/src/main/scala/kyo/kernel/internal/Stack.scala
+index f5e2869b26..4b31f7c0d8 100644
+--- a/kyo-kernel2/shared/src/main/scala/kyo/kernel/internal/Stack.scala
++++ b/kyo-kernel2/shared/src/main/scala/kyo/kernel/internal/Stack.scala
+@@ -23,6 +23,11 @@ final private[kyo] class Stack:
+     private var finalizers = Array.fill[Maybe[Finalizer[?, ?]]](8)(Absent)
+     private var pending    = 0
+ 
++    // the out-parameter a stateful answer reports through, one per stack so it is pooled with it. Only the
++    // eval and the handler's generated answer method touch it, within one dispatch; nothing it holds
++    // survives past the dispatch that wrote it
++    private[kernel] val out = new Handler.Out
++
+     def isEmpty: Boolean = head == tail
+ 
+     def size: Int = tail - head
+diff --git a/kyo-kernel2/shared/src/test/scala/kyo/kernel/ArrowEffectTest.scala b/kyo-kernel2/shared/src/test/scala/kyo/kernel/ArrowEffectTest.scala
+index 84f5345e03..d862c745b9 100644
+--- a/kyo-kernel2/shared/src/test/scala/kyo/kernel/ArrowEffectTest.scala
++++ b/kyo-kernel2/shared/src/test/scala/kyo/kernel/ArrowEffectTest.scala
+@@ -7,6 +7,7 @@ import kyo.Tag
+ import kyo.kernel.internal.Eval
+ import org.scalatest.freespec.AnyFreeSpec
+ import scala.annotation.tailrec
++import scala.collection.mutable.ListBuffer
+ 
+ class ArrowEffectTest extends AnyFreeSpec:
+ 
+@@ -1656,4 +1657,118 @@ class ArrowEffectTest extends AnyFreeSpec:
+         }
+     }
+ 
++    // The answer fast path hands the clause call to a method the call site generated and reports the
++    // outcome through a per-stack cell. The cell is interpreter mutability, and the kernel's invariant is
++    // that everything escaping the eval is a complete value, correct under multi-shot; these pins are the
++    // hostile axes of that concession, not construction arguments.
++    "the answer fast path" - {
++
++        "a capture across the fast path is multi-shot, including across threads" in {
++            var kref: Arrow[Unit, Int, Any] = null
++            val body: Int < (Ask & Say) =
++                ask.map(a => ask.map(b => say("x").andThen(ask.map(c => a + b + c))))
++            val region: Int < Say =
++                ArrowEffect.handleLoopState(Tag[Ask], 0, body)(
++                    [C] => (n, _) => Loop.continue(n + 1, n: Int < Any),
++                    (n, a) => n * 1000 + a
++                )
++            val r0 = Eval(ArrowEffect.handleCont(Tag[Say], region)(
++                [C] =>
++                    (_, cont) =>
++                        kref = cont.asInstanceOf[Arrow[Unit, Int, Any]]
++                        cont(())
++                ,
++                a => a
++            ))
++            assert(r0 == 3003)
++            // two replays on this thread: each must run the captured region independently
++            assert(Eval(kref(())) == 3003)
++            assert(Eval(kref(())) == 3003)
++            // and one on another thread: the capture is a complete value, not a view of this eval
++            @volatile var tr = 0
++            val t            = new Thread(() => tr = Eval(kref(())))
++            t.start()
++            t.join()
++            assert(tr == 3003)
++        }
++
++        "a clause keeps only the values it was given" in {
++            val seen = ListBuffer[(Int, String)]()
++            def run(): Int =
++                Eval(ArrowEffect.handleLoopState(Tag[Ask], 0, ask.map(a => ask.map(b => ask.map(c => a + b + c))))(
++                    [C] =>
++                        (n, i) =>
++                            seen += ((n, i.toString))
++                            Loop.continue(n + 1, n: Int < Any)
++                    ,
++                    (n, a) => n * 1000 + a
++                ))
++            assert(run() == 3003)
++            val snapshot = seen.toList
++            assert(snapshot == List((0, "()"), (1, "()"), (2, "()")))
++            // a second eval must not disturb what the first clause stored: the arguments were plain
++            // values, not aliases of live kernel state
++            assert(run() == 3003)
++            assert(seen.toList.take(3) == snapshot)
++            assert(seen.toList.drop(3) == snapshot)
++        }
++
++        "a clause can run a full eval of its own mid-loop" in {
++            def innerRun(): Int =
++                Eval(ArrowEffect.handleLoopState(Tag[Ask], 100, ask.map(a => ask.map(b => a + b)))(
++                    [C] => (n, _) => Loop.continue(n + 1, n: Int < Any),
++                    (n, a) => n + a
++                ))
++            val r = Eval(ArrowEffect.handleLoopState(Tag[Ask], 0, ask.map(a => ask.map(b => a + b)))(
++                [C] =>
++                    (n, _) =>
++                        val i = innerRun()
++                        Loop.continue(n + 1, (n + i): Int < Any)
++                ,
++                (n, a) => n * 100000 + a
++            ))
++            // inner: answers 100 and 101, state 102, sum 201, done 102 + 201; outer answers 0 and 1
++            // shifted by it
++            assert(r == 200607)
++        }
++
++        "a throw after settled answers recovers with every commit already made" in {
++            val states = ListBuffer[Int]()
++            case class Boom() extends RuntimeException
++            def loop(i: Int): Int < Ask =
++                if i > 5 then i else ask.map(a => if a == 2 then throw Boom() else loop(i + 1))
++            val region: Int < Any =
++                ArrowEffect.handleLoopState(Tag[Ask], 0, loop(0))(
++                    [C] =>
++                        (n, _) =>
++                            states += n
++                            Loop.continue(n + 1, n: Int < Any)
++                    ,
++                    (n, a) => a
++                )
++            val r = Eval(Effect.catching(region)(_ => -1))
++            assert(r == -1)
++            // the throw happened applying the continuation after the third answer: all three clause
++            // runs, each with the state the previous commit produced, are visible
++            assert(states.toList == List(0, 1, 2))
++        }
++
++        "a park taken mid answer loop resumes in a fresh full eval" in {
++            def countdown(i: Int): Int < Ask =
++                if i == 0 then 0 else ask.map(a => countdown(i - a))
++            val region: Int < Any =
++                ArrowEffect.handleLoopState(Tag[Ask], 0, countdown(100))(
++                    [C] =>
++                        (n, _) =>
++                            if n == 10 then kyo.discard(internal.Safepoint.stop(Thread.currentThread()))
++                            Loop.continue(n + 1, 1: Int < Any)
++                    ,
++                    (n, a) => n + a
++                )
++            val first = Eval.partial(region)
++            assert(first.evalNow == Maybe.Absent)
++            assert(Eval(first) == 100)
++        }
++    }
++
+ end ArrowEffectTest
