@@ -71,7 +71,7 @@ object Kyo:
     // the node is also the entry that marks the scope: identity on the completing path, since a value
     // flowing back through is what ends the scope, and the recovery the unwind asks on the way down.
     // Nothing else has to be allocated when the eval enters one
-    abstract private[kyo] class Catching[A, S] extends Kyo[A, S], Transform[A, A, Any], Recover:
+    abstract private[kyo] class Catching[A, S] extends Kyo[A, S], Transform[A, A, Any], Recover[A, S]:
         // a method, for the reason a deferral's payload is one: the guarded body has to run when the
         // evaluator reads it and not when the node is built, or `catching { throw ... }` throws before
         // anything guards it. Abstract rather than a by-name constructor parameter, which would store the

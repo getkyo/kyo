@@ -276,7 +276,7 @@ object ArrowEffect:
         new Handle[E, A, B, B, S]:
             def value = v
             val handler =
-                new HandlerCont[I, O, E, A, B, S] with Recover:
+                new HandlerCont[I, O, E, A, B, S] with Recover[B, S]:
                     def frame                                            = _frame
                     def tag                                              = effectTag
                     def run[C](input: I[C], cont: Arrow[O[C], A, E & S]) = handle[C](input, cont)

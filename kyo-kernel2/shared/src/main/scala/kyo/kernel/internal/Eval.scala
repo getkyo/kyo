@@ -44,7 +44,7 @@ import scala.util.control.NonFatal
   * with it, and a scope that never ran owes no recovery, where a resource already acquired still owes its
   * release.
   */
-private[kyo] trait Recover:
+private[kyo] trait Recover[+A, -S]:
 
     /** The answer to a failure, or absent for one this must not answer.
       *
@@ -56,7 +56,7 @@ private[kyo] trait Recover:
       * the boundary is no longer the only one, so a handler that reads the carrier has to see what a handler
       * at the boundary would. The previous kernel owed the same and paid it the same way.
       */
-    final def panic(ex: Throwable): Maybe[Any < Nothing] =
+    final def panic(ex: Throwable): Maybe[A < S] =
         if !NonFatal(ex) then Maybe.empty
         else
             // spliced, not attached. The frames were reconstructed where the failure happened, by the arm
@@ -68,8 +68,8 @@ private[kyo] trait Recover:
             Maybe(recover(ex))
     end panic
 
-    /** The computation the eval carries on from. */
-    def recover(ex: Throwable): Any < Nothing
+    /** The computation the eval carries on from, at the type the scope ends at. */
+    def recover(ex: Throwable): A < S
 
 end Recover
 

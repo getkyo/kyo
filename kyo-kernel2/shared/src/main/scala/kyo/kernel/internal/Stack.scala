@@ -186,7 +186,7 @@ final private[kyo] class Stack:
             // a recovery bounds a fold as a region does. Folded in, it leaves the stack, and the failure it
             // guards against happens while the folded continuation's own argument is being evaluated, before
             // anything applies it: the scope would be off the stack exactly when it is needed
-            if i == size || i == reach || e.isInstanceOf[Handler[?, ?, ?, ?]] || e.isInstanceOf[Recover] then i
+            if i == size || i == reach || e.isInstanceOf[Handler[?, ?, ?, ?]] || e.isInstanceOf[Recover[?, ?]] then i
             else boundary(i + 1)
         end boundary
         dump[A, B, S](boundary(0), false)
@@ -284,7 +284,7 @@ final private[kyo] class Stack:
         while out.isEmpty && !isEmpty do
             pop() match
                 case f: Finalizer[?, ?] => f.run(Result.panic(ex))
-                case r: Recover         => out = r.panic(ex)
+                case r: Recover[?, ?]   => out = r.panic(ex)
                 case _                  => ()
         end while
         out
