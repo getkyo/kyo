@@ -13,6 +13,23 @@ import scala.jdk.CollectionConverters.*
 
 final private[kyo] class JvmProcessUnsafe(private[internal] val jp: JProcess) extends Process.Unsafe:
 
+    // Stop actions for the fibers feeding this process's stdin. Retained so a feed ends with the
+    // process rather than running on after it, which is what an unheld feed does.
+    private val inputFeeds = new java.util.concurrent.ConcurrentLinkedQueue[() => Unit]()
+
+    private[internal] def registerInputFeed(stop: () => Unit): Unit = discard(inputFeeds.add(stop))
+
+    /** Stops every stdin feed. Idempotent, and safe to call after the process has already exited:
+      * a feed can still be parked reading its source even when the child is gone.
+      */
+    override def stopInputFeeds()(using AllowUnsafe): Unit =
+        var stop = inputFeeds.poll()
+        while stop != null do
+            stop()
+            stop = inputFeeds.poll()
+        end while
+    end stopInputFeeds
+
     def waitFor()(using AllowUnsafe, Frame): Fiber.Unsafe[ExitCode, Any] =
         val p = Promise.Unsafe.init[ExitCode, Any]()
         discard(jp.onExit().whenComplete { (exitedProcess, error) =>
@@ -259,43 +276,81 @@ final private[kyo] class JvmCommandUnsafe(
         end match
     end toJProcessBuilder
 
-    /** Feeds an InputStream into a process's stdin on a daemon thread, closing when done. */
-    private def feedInputStream(is: InputStream, processStdin: OutputStream): Unit =
-        val t = new Thread(() =>
-            try
-                val buf = new Array[Byte](8192)
-                var n   = is.read(buf)
-                while n >= 0 do
-                    processStdin.write(buf, 0, n)
-                    n = is.read(buf)
-                processStdin.close()
-            catch
-                case _: IOException => ()
-            finally
-                try is.close()
-                catch case _: IOException => ()
-        )
-        t.setDaemon(true)
-        t.start()
+    /** Closes a stream, ignoring the failure a second close or an already-broken stream reports. */
+    private def closeQuietly(closeable: java.io.Closeable): Unit =
+        try closeable.close()
+        catch case _: IOException => ()
+
+    /** Feeds an InputStream into a process's stdin on a carrier fiber, closing when done.
+      *
+      * Returns the stop action so the caller can retain it and end the feed. A feed that nothing
+      * holds cannot be cancelled: interrupting the fiber that spawned the process would leave it
+      * reading its source and writing to the child for as long as the source produced bytes.
+      *
+      * The read blocks, so the carrier parks in it and the scheduler's `BlockingMonitor` drains
+      * that worker's queue to the others, the sanctioned-blocking pattern kyo-net's stdio pumps
+      * use. The monitor also dispatches `Thread.interrupt()` to a parked carrier whose fiber was
+      * interrupted, so the stop action's interrupt reaches a read already parked, not only the
+      * safepoint each loop step leaves between reads. Closing the streams covers a source that
+      * ignores the interrupt, and closes what the feed owns even when the fiber ends before its
+      * own close runs.
+      */
+    private def feedInputStream(is: InputStream, processStdin: OutputStream)(using AllowUnsafe, Frame): () => Unit =
+        val buf = new Array[Byte](8192)
+        // Unsafe: spawns the pump from outside the effect system, where spawn() runs.
+        val feed = Fiber.Unsafe.init {
+            Loop.foreach {
+                Sync.defer {
+                    try
+                        val n = is.read(buf)
+                        if n < 0 then
+                            processStdin.close()
+                            Loop.done
+                        else
+                            processStdin.write(buf, 0, n)
+                            Loop.continue
+                        end if
+                    catch
+                        // A stop interrupts the carrier and closes the streams underneath the read
+                        // and the write, so both exceptions are the ordinary way a feed ends rather
+                        // than a failure to report. Catching the interrupt here also keeps it off
+                        // the scheduler worker the carrier is mounted on.
+                        case _: IOException          => Loop.done
+                        case _: InterruptedException => Loop.done
+                    end try
+                }
+            }.andThen(Sync.defer(closeQuietly(is)))
+        }
+        () =>
+            discard(feed.interrupt())
+            // Closing both ends releases a read or a write already parked, which no interrupt can
+            // reach, and closing the source is what the feed itself does when it ends on its own.
+            closeQuietly(is)
+            closeQuietly(processStdin)
     end feedInputStream
 
-    /** Drains a Stream[Byte, Sync] into a process's stdin on a daemon thread, closing when done.
+    /** Drains a Stream[Byte, Sync] into a process's stdin on a carrier fiber, closing when done.
       *
-      * The stream is evaluated eagerly (it is Sync-only), then the bytes are written in a background thread so that the caller (spawn) is
-      * not blocked by the write.
+      * The stream is evaluated eagerly (it is Sync-only), then the bytes are written on a carrier fiber so that the caller (spawn) is not
+      * blocked by the write. Returns the stop action for the same reason as [[feedInputStream]].
       */
-    private def feedStream(stream: Stream[Byte, Sync], processStdin: OutputStream)(using AllowUnsafe, Frame): Unit =
+    private def feedStream(stream: Stream[Byte, Sync], processStdin: OutputStream)(using AllowUnsafe, Frame): () => Unit =
         val chunk = Abort.run[Nothing](Sync.Unsafe.run(stream.run)).eval.getOrThrow
         val bytes = chunk.toArray
-        val t = new Thread(() =>
-            try
-                processStdin.write(bytes)
-                processStdin.close()
-            catch
-                case _: IOException => ()
-        )
-        t.setDaemon(true)
-        t.start()
+        // Unsafe: spawns the pump from outside the effect system, where spawn() runs.
+        val feed = Fiber.Unsafe.init {
+            Sync.defer {
+                try
+                    processStdin.write(bytes)
+                    processStdin.close()
+                catch
+                    case _: IOException          => ()
+                    case _: InterruptedException => ()
+            }
+        }
+        () =>
+            discard(feed.interrupt())
+            closeQuietly(processStdin)
     end feedStream
 
     /** Reads all bytes from an InputStream and closes it. */
@@ -372,20 +427,22 @@ final private[kyo] class JvmCommandUnsafe(
                                 val proc = new JvmProcessUnsafe(jp)
                                 // Feed stdin if needed
                                 stdinStream match
-                                    case Present(s) => feedStream(s, jp.getOutputStream)
+                                    case Present(s) => proc.registerInputFeed(feedStream(s, jp.getOutputStream))
                                     case Absent =>
                                         stdinSource match
-                                            case Process.Input.FromStream(is) => feedInputStream(is, jp.getOutputStream)
-                                            case Process.Input.Inherit        => ()
-                                            case Process.Input.Pipe           => ()
+                                            case Process.Input.FromStream(is) =>
+                                                proc.registerInputFeed(feedInputStream(is, jp.getOutputStream))
+                                            case Process.Input.Inherit => ()
+                                            case Process.Input.Pipe    => ()
                                 end match
                                 Result.succeed(proc)
                             catch
                                 case e: IOException => Result.fail(translateIOException(e, args.headMaybe.getOrElse("")))
                 else
                     // Pipeline spawn — delegate to `sh -c "cmd1 | cmd2 | ..."` so the OS
-                    // kernel handles inter-process piping directly. This avoids daemon thread
-                    // deadlocks on Scala Native where blocking I/O in threads is unreliable.
+                    // kernel handles inter-process piping directly. This avoids the pump-per-stage
+                    // deadlocks on Scala Native, where blocking I/O off the calling thread is
+                    // unreliable.
                     def shellEscape(a: String): String = "'" + a.replace("'", "'\\''") + "'"
                     val shellCmd                       = chain.map(_.args.map(shellEscape).mkString(" ")).mkString(" | ")
 
@@ -417,12 +474,13 @@ final private[kyo] class JvmCommandUnsafe(
                         val jp   = pb.start()
                         val proc = new JvmProcessUnsafe(jp)
                         firstCmd.stdinStream match
-                            case Present(s) => feedStream(s, jp.getOutputStream)
+                            case Present(s) => proc.registerInputFeed(feedStream(s, jp.getOutputStream))
                             case Absent =>
                                 firstCmd.stdinSource match
-                                    case Process.Input.FromStream(is) => feedInputStream(is, jp.getOutputStream)
-                                    case Process.Input.Inherit        => ()
-                                    case Process.Input.Pipe           => ()
+                                    case Process.Input.FromStream(is) =>
+                                        proc.registerInputFeed(feedInputStream(is, jp.getOutputStream))
+                                    case Process.Input.Inherit => ()
+                                    case Process.Input.Pipe    => ()
                                 end match
                         end match
                         Result.succeed(proc)
@@ -442,15 +500,31 @@ final private[kyo] class JvmCommandUnsafe(
             case Result.Panic(ex) =>
                 p.completeDiscard(Result.panic(ex))
             case Result.Success(proc: JvmProcessUnsafe) =>
-                discard(proc.jp.onExit().whenComplete { (exitedProcess, error) =>
-                    if error != null then
-                        p.completeDiscard(Result.panic(error))
-                    else
-                        try
-                            val bytes = readAll(exitedProcess.getInputStream)
-                            p.completeDiscard(Result.succeed(new String(bytes, StandardCharsets.UTF_8)))
-                        catch
-                            case e: IOException => p.completeDiscard(Result.panic(e))
+                // Drained while the process runs, and completed at end of stream rather than at exit.
+                //
+                // Reading only after onExit deadlocks any child that writes more than the pipe
+                // buffer, roughly 64KB: the child blocks on write, so it never exits, so onExit
+                // never fires, so the read that would unblock it never starts. Process.scala
+                // documents this hazard for the stdout-plus-stderr case; it was reproduced here on
+                // a single stream.
+                //
+                // End of stream is the right completion point for this operation: it yields the
+                // output text and does not report exit status, and the child closes stdout when it
+                // exits. The onExit handler remains only to surface a spawn failure, and completing
+                // an already-completed promise is a no-op, so whichever arrives first wins.
+                val out = proc.jp.getInputStream
+                // Unsafe: bridges a blocking pipe read from outside the effect system. The carrier
+                // parks in the read and the scheduler's `BlockingMonitor` drains that worker's
+                // queue to the others; the read ends at end of stream, which the child reaches by
+                // exiting.
+                discard(Fiber.Unsafe.init {
+                    Sync.defer {
+                        try p.completeDiscard(Result.succeed(new String(readAll(out), StandardCharsets.UTF_8)))
+                        catch case e: IOException => p.completeDiscard(Result.panic(e))
+                    }
+                })
+                discard(proc.jp.onExit().whenComplete { (_, error) =>
+                    if error != null then p.completeDiscard(Result.panic(error))
                 })
         end match
         p
