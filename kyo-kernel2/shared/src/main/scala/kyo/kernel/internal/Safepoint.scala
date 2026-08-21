@@ -25,6 +25,12 @@ object Safepoint:
 
     private inline def LineStride = 8
 
+    // the two state bits live here rather than on `State` so `enter` can read them without naming `State`.
+    // Naming it there makes the expansion load the module and reach the depth array through an accessor,
+    // which is bytecode `enter` pays for at every settled map step
+    private inline def DepthGuard = 1 << 15
+    private inline def Armed      = 1 << 30
+
     final private class Stop(val thread: Thread)
 
     @static private val Slots      = slotCount()
@@ -48,28 +54,16 @@ object Safepoint:
         )
 
     private[kyo] object State:
-        private inline def DepthGuard = 1 << 15
-        private inline def Armed      = 1 << 30
 
         private val Initial: State = DepthGuard | period()
 
         private[Safepoint] def init: State = Initial
 
         extension (self: State)
-            private[Safepoint] inline def enterInto(slot: Int): Boolean =
-                val s2 = self - 1
-                if (s2 & DepthGuard) == DepthGuard then
-                    depths(slot) = s2
-                    true
-                else enterPark(slot, self)
-                end if
-            end enterInto
-
-            private[Safepoint] inline def decrementDepth: State = self + 1
-            private[Safepoint] inline def drained: State        = (self & Armed) | DepthGuard
-            private[Safepoint] inline def reset: State          = (self & Armed) | Initial
-            private[Safepoint] inline def armed: State          = self | Armed
-            private[Safepoint] inline def isArmed: Boolean      = (self & Armed) != 0
+            private[Safepoint] inline def drained: State   = (self & Armed) | DepthGuard
+            private[Safepoint] inline def reset: State     = (self & Armed) | Initial
+            private[Safepoint] inline def armed: State     = self | Armed
+            private[Safepoint] inline def isArmed: Boolean = (self & Armed) != 0
         end extension
     end State
 
@@ -118,8 +112,18 @@ object Safepoint:
         end if
     end resolve
 
+    // written out rather than delegating to an extension on `State`: this runs at every settled map step, and
+    // its bytecode size decides whether a caller can inline it. `DepthGuard` is a single bit, so testing it
+    // against zero is the same test in fewer instructions than comparing it back to the mask
     @static def enter(slot: Slot): Boolean =
-        depths(slot).enterInto(slot)
+        val s  = depths(slot)
+        val s2 = s - 1
+        if (s2 & DepthGuard) != 0 then
+            depths(slot) = s2
+            true
+        else enterPark(slot, s)
+        end if
+    end enter
 
     @static private def enterPark(slot: Slot, s: State): Boolean =
         depths(slot) = s.drained
@@ -127,7 +131,11 @@ object Safepoint:
     end enterPark
 
     @static def exit(slot: Slot): Unit =
-        depths(slot) = depths(slot).decrementDepth
+        // written out for the reason `enter` is: naming the extension makes the expansion load `State`'s module
+        // and hold the array and index on the operand stack across it, which reads as too deep to inline
+        val s = depths(slot)
+        depths(slot) = s + 1
+    end exit
 
     @static def save(slot: Slot): State =
         val d = depths(slot)
