@@ -51,17 +51,13 @@ class ChromeDownloaderTest extends BaseBrowserTest:
 
     // ---- version override path is reflected in the cached directory ----
 
-    /** Creates a temp directory that auto-deletes when the enclosing scope closes. */
-    private def tempDirScoped(prefix: String)(using Frame): Path < (Scope & Sync & Abort[FileStructureException]) =
-        Path.tempDir(prefix)
-
     /** Builds a [[System]] override whose env returns `KYO_BROWSER_CACHE = cacheDir.unsafe.show`. OS/arch fall back to the host. */
     private def systemWithCache(cacheDir: Path)(os: OS, arch: Arch): System =
         fakeSystem(envOverrides = Map("KYO_BROWSER_CACHE" -> cacheDir.unsafe.show), os = os, arch = arch)
 
     "ensure(version) resolves a cacheDir that embeds the requested version (no download required)" in {
         Scope.run {
-            tempDirScoped("kyo-cd-vover-").map { tmp =>
+            Path.tempDir("kyo-cd-vover-").map { tmp =>
                 // Pre-create a fake executable for whichever platform this host is on so that `ensure` short-circuits
                 // (no network access).
                 for
@@ -92,7 +88,7 @@ class ChromeDownloaderTest extends BaseBrowserTest:
 
     "ensure(Chrome build) resolves a cacheDir under 'chrome-{v}-{platform}' (separate from chrome-headless-shell)" in {
         Scope.run {
-            tempDirScoped("kyo-cd-fullchrome-").map { tmp =>
+            Path.tempDir("kyo-cd-fullchrome-").map { tmp =>
                 for
                     os       <- System.operatingSystem
                     arch     <- System.architecture
@@ -355,7 +351,7 @@ class ChromeDownloaderTest extends BaseBrowserTest:
 
     "ensure() reuses the cached binary on the second call (downloader counter does not advance)" in {
         Scope.run {
-            tempDirScoped("kyo-cd-reuse-").map { tmp =>
+            Path.tempDir("kyo-cd-reuse-").map { tmp =>
                 for
                     os       <- System.operatingSystem
                     arch     <- System.architecture
