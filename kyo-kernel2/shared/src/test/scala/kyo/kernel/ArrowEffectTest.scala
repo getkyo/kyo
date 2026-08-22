@@ -1972,6 +1972,51 @@ class ArrowEffectTest extends AnyFreeSpec:
             end try
         }
 
+        "a throwing deferred payload after an answer does not re-run the consumed continuation" in {
+            case class Boom() extends RuntimeException
+            var contRuns = 0
+            val body: Int < Ask =
+                ask.map { a =>
+                    contRuns += 1
+                    Effect.defer((throw Boom()): Int).map(_ + a)
+                }
+            val region: Int < Any = ArrowEffect.handleLoop(Tag[Ask], body)(
+                [C] => _ => Loop.continue(1: Int < Any),
+                a => a
+            )
+            assert(Eval(Effect.catching(region)(_ => -1)) == -1)
+            // the answers loop consumed the continuation before the payload threw; whatever the
+            // exception lane pushed back must be discarded by the unwind, never re-executed
+            assert(contRuns == 1)
+        }
+
+        "a stop arriving during eager construction inside a slice reifies and parks the chain" in {
+            // a mapped step builds a long strict chain while the slice runs; a stop lodged midway
+            // must make the remaining construction reify from that point and the slice park, with
+            // the completed prefix preserved
+            var built = 0
+            val v: Int < Any =
+                Effect.defer(0).map { z =>
+                    var acc: Int < Any = z
+                    var i              = 0
+                    while i < 100 do
+                        acc = acc.map { x =>
+                            built += 1
+                            if built == 50 then kyo.discard(internal.Safepoint.stop(Thread.currentThread()))
+                            x + 1
+                        }
+                        i += 1
+                    end while
+                    acc
+                }
+            val p = Eval.partial(v)
+            assert(p.evalNow.isEmpty)
+            // the fiftieth step lodged the stop; construction reified within a step or two of it
+            assert(built >= 50 && built <= 52, s"built=$built")
+            assert(Eval(p) == 100)
+            assert(built == 100)
+        }
+
         "a boxed answer crosses the answers loop unopened" in {
             val payload: Int < Say = say("p").map(_ => 7)
             val region: (Int < Say) < Any =
