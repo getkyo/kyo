@@ -80,7 +80,7 @@ object Loop:
       * @tparam O
       *   The type of the final value if completing
       */
-    opaque type Outcome[A, O] = O | Continue[A]
+    opaque type Outcome[A, +O] = O | Continue[A]
 
     /** Represents the result of a loop iteration with two state values.
       *
@@ -91,7 +91,7 @@ object Loop:
       * @tparam O
       *   The type of the final value if completing
       */
-    opaque type Outcome2[A, B, O] = O | Continue2[A, B]
+    opaque type Outcome2[A, B, +O] = O | Continue2[A, B]
 
     /** Represents the result of a loop iteration with three state values.
       *
@@ -104,7 +104,7 @@ object Loop:
       * @tparam O
       *   The type of the final value if completing
       */
-    opaque type Outcome3[A, B, C, O] = O | Continue3[A, B, C]
+    opaque type Outcome3[A, B, C, +O] = O | Continue3[A, B, C]
 
     /** Represents the result of a loop iteration with four state values.
       *
@@ -119,7 +119,7 @@ object Loop:
       * @tparam O
       *   The type of the final value if completing
       */
-    opaque type Outcome4[A, B, C, D, O] = O | Continue4[A, B, C, D]
+    opaque type Outcome4[A, B, C, D, +O] = O | Continue4[A, B, C, D]
 
     private val _continueUnit: Continue[Unit] =
         new Continue:
