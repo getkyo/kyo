@@ -705,7 +705,7 @@ class PendingTest extends AnyFreeSpec:
         def drainedBudget[A](f: => A): A =
             val slot  = Safepoint.get()
             val saved = Safepoint.save(slot)
-            while Safepoint.enter(slot, kyo.Frame.internal) do ()
+            while Safepoint.enter(slot) do ()
             try f
             finally Safepoint.restore(slot, saved)
         end drainedBudget

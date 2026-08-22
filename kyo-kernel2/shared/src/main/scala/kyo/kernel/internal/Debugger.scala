@@ -23,21 +23,25 @@ import scala.annotation.static
   */
 abstract private[kyo] class Debugger:
 
-    /** Whether this strict application may run inline; false routes it through the eval.
+    /** Whether a strict application may run inline; false routes it through the eval, where the
+      * stack-aware hooks see it with its frame.
       *
-      * Consulted only within an eval's extent: the eval drains its slot at entry while a session is
-      * installed, so every strict application there lands on the cold path where this gate lives, and
-      * `enter`'s hot path stays byte-identical for everyone else. Strict construction outside any eval
-      * runs unobserved, the same carve-out between-slices semantics already draw.
+      * Frameless on purpose: two shapes that carried a frame to the strict path were rejected by the
+      * board, since even the operand alone taxed every call site. A session that wants frames routes
+      * the application and reads them at `onDefer`. Consulted only within an eval's extent: the eval
+      * drains its slot at entry while a session is installed, so every strict application there lands
+      * on the cold path where this gate lives, and `enter`'s hot path stays byte-identical for
+      * everyone else. Strict construction outside any eval runs unobserved, the same carve-out
+      * between-slices semantics already draw.
       *
       * Consulted twice for a routed application: at the application site, and again when the eval
       * delivers the settled payload back into the step (the step's own apply carries the gate). A
-      * session that refuses a frame must therefore allow the delivery retry, or the step defers against
-      * its own refusal forever; the usual shape is a per-thread toggle that refuses, lets the step
-      * surface at `onDefer`, and allows the next consult. While a session allows applications, the depth
-      * guard does not bound strict recursion; a debugger that runs the program pays the program's shape.
+      * session that refuses must therefore allow the delivery retry, or the step defers against its
+      * own refusal forever; the usual shape is a per-thread toggle that refuses, lets the step surface
+      * at `onDefer`, and allows the next consult. While a session allows applications, the depth guard
+      * does not bound strict recursion; a debugger that runs the program pays the program's shape.
       */
-    def enter(frame: Frame): Boolean = true
+    def enterStrict(): Boolean = true
 
     /** A step about to run; the returned value replaces the payload. The type parameters keep the eval
       * cast-free: a swapping session asserts conformance inside its own implementation instead.

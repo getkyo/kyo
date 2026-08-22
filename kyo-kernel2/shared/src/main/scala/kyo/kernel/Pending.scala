@@ -27,7 +27,7 @@ object `<` extends Implicits:
                     def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]) = run(v, next)
             def run[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S2 & S3) =
                 var slot: Safepoint.Slot = -1
-                val shouldDefer          = v.isInstanceOf[Kyo[?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot, _frame) }
+                val shouldDefer          = v.isInstanceOf[Kyo[?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
                 if shouldDefer then Effect.defer(v, arrow, next)
                 else
                     val out = next.head(f(Nested.unnest(v)), next.tail)
@@ -50,7 +50,7 @@ object `<` extends Implicits:
                         Effect.defer(kyo, arrow, next)
                     case _ =>
                         val slot = Safepoint.get()
-                        if !Safepoint.enter(slot, _frame) then
+                        if !Safepoint.enter(slot) then
                             Effect.defer(v, arrow, next)
                         else
                             val out = next.head(f(Nested.unnest(v)), next.tail)
@@ -72,7 +72,7 @@ object `<` extends Implicits:
                         Effect.defer(kyo, arrow, next)
                     case _ =>
                         val slot = Safepoint.get()
-                        if !Safepoint.enter(slot, _frame) then
+                        if !Safepoint.enter(slot) then
                             Effect.defer(v, arrow, next)
                         else
                             val out = next.head(f, next.tail)
@@ -94,7 +94,7 @@ object `<` extends Implicits:
                         Effect.defer(kyo, arrow, next)
                     case _ =>
                         val slot = Safepoint.get()
-                        if !Safepoint.enter(slot, _frame) then
+                        if !Safepoint.enter(slot) then
                             Effect.defer(v, arrow, next)
                         else
                             val out = next.head((), next.tail)
@@ -116,7 +116,7 @@ object `<` extends Implicits:
                         Effect.defer(kyo, arrow, next)
                     case _ =>
                         val slot = Safepoint.get()
-                        if !Safepoint.enter(slot, _frame) then
+                        if !Safepoint.enter(slot) then
                             Effect.defer(v, arrow, next)
                         else
                             val out = next.head(ev(Nested.unnest(v)), next.tail)

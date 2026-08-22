@@ -193,14 +193,14 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
                 (0 until probeCount).map { i =>
                     Thread.ofVirtual().start(() =>
                         val slot = Safepoint.get()
-                        discard(Safepoint.enter(slot, kyo.Frame.internal))
-                        discard(Safepoint.enter(slot, kyo.Frame.internal))
-                        discard(Safepoint.enter(slot, kyo.Frame.internal))
+                        discard(Safepoint.enter(slot))
+                        discard(Safepoint.enter(slot))
+                        discard(Safepoint.enter(slot))
                         probesReady.countDown()
                         discard(holdersDead.await(60, TimeUnit.SECONDS))
                         consumed(i) = Safepoint.consumeStopped(Safepoint.get())
                         var extra = 0
-                        while Safepoint.enter(Safepoint.get(), kyo.Frame.internal) do extra += 1
+                        while Safepoint.enter(Safepoint.get()) do extra += 1
                         remaining(i) = extra
                     )
                 }
@@ -230,7 +230,7 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
         val ready             = new CountDownLatch(1)
         val done              = new CountDownLatch(1)
         val v = Thread.ofVirtual().start(() =>
-            entered = Safepoint.enter(Safepoint.get(), kyo.Frame.internal)
+            entered = Safepoint.enter(Safepoint.get())
             ready.countDown()
             discard(done.await(30, TimeUnit.SECONDS))
         )
@@ -267,10 +267,10 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
                 def burn(n: Int): Int < Any =
                     if n == 0 then 0 else (0: Int < Any).map(_ => burn(n - 1))
                 val slot = Safepoint.get()
-                enterFirst = Safepoint.enter(slot, kyo.Frame.internal)
+                enterFirst = Safepoint.enter(slot)
                 Safepoint.exit(slot)
                 Safepoint.restore(slot, Safepoint.save(slot))
-                enterAfter = Safepoint.enter(slot, kyo.Frame.internal)
+                enterAfter = Safepoint.enter(slot)
                 Safepoint.exit(slot)
                 stoppedResult = Safepoint.consumeStopped(slot)
                 // `Eval.apply` returns the value directly; the old kernel's `run` returned `A < S`
@@ -300,13 +300,13 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
                     val slot = Safepoint.get()
                     var i    = 0
                     while i < 1000 do
-                        if !Safepoint.enter(slot, kyo.Frame.internal) then discard(failures.incrementAndGet())
+                        if !Safepoint.enter(slot) then discard(failures.incrementAndGet())
                         Safepoint.exit(slot)
                         i += 1
                     end while
                     val saved = Safepoint.save(Safepoint.get())
                     Safepoint.restore(slot, saved)
-                    if !Safepoint.enter(slot, kyo.Frame.internal) then discard(failures.incrementAndGet())
+                    if !Safepoint.enter(slot) then discard(failures.incrementAndGet())
                     Safepoint.exit(slot)
                 )
             }

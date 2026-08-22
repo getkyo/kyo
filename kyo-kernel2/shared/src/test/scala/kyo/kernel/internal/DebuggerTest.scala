@@ -16,23 +16,24 @@ class DebuggerTest extends AnyFreeSpec:
     def answered[A](v: A < Ask): A < Any =
         ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, cont) => cont(41), a => a)
 
-    // records every event; routing follows the documented protocol: a refused frame allows the
-    // delivery retry through a per-thread toggle, so a routed step surfaces once and then runs
-    class Recording(route: Frame => Boolean = _ => false) extends Debugger:
+    // records every event; routing follows the documented protocol: a refusal allows the delivery
+    // retry through a per-thread toggle, so a routed step surfaces once at onDefer and then runs.
+    // The gate is frameless; frames arrive with the routed step
+    class Recording(route: Boolean = false) extends Debugger:
         val events = ListBuffer.empty[(String, String)]
         private val allowNext = new ThreadLocal[Boolean]:
             override def initialValue = false
-        override def enter(frame: Frame): Boolean =
-            events += (("enter", frame.position.show))
+        override def enterStrict(): Boolean =
+            events += (("enter", ""))
             if allowNext.get() then
                 allowNext.set(false)
                 true
-            else if route(frame) then
+            else if route then
                 allowNext.set(true)
                 false
             else true
             end if
-        end enter
+        end enterStrict
         override def onDefer[A, S](stack: Stack, frame: Frame, value: A < S): A < S =
             events += (("defer", frame.position.show))
             value
@@ -58,32 +59,28 @@ class DebuggerTest extends AnyFreeSpec:
     def chain: Int < Any = Effect.defer((1: Int < Any).map(_ + 1).map(_ * 2))
 
     "enter observes strict applications inside the eval" in {
-        val d = new Recording(route = _ => false)
+        val d = new Recording(route = false)
         session(d)(assert(Eval(chain) == 4))
         assert(d.events.exists(_._1 == "enter"))
     }
 
     "full-trace mode routes every strict step through the eval" in {
-        val d = new Recording(route = _ => true)
+        val d = new Recording(route = true)
         session(d)(assert(Eval(chain) == 4))
         assert(d.events.count(_._1 == "defer") >= 2)
     }
 
-    "selective routing surfaces only the matching frame" in {
-        // one construction site, so the probed frame position and the routed one are the same
-        val probe = new Recording(route = _ => false)
-        session(probe)(discard(Eval(chain)))
-        val positions = probe.events.collect { case ("enter", p) => p }.distinct
-        assert(positions.size >= 1)
-        val target = positions.head
-        val d      = new Recording(route = f => f.position.show == target)
+    "routed steps surface with their call-site frames at onDefer" in {
+        // the gate is frameless; a session that wants frames routes and reads them here, so the
+        // chain's construction position must appear among the routed steps' frames
+        val d = new Recording(route = true)
         session(d)(assert(Eval(chain) == 4))
-        val routed = d.events.collect { case ("defer", p) => p }.filter(_ == target)
-        assert(routed.nonEmpty)
+        val positions = d.events.collect { case ("defer", p) => p }
+        assert(positions.exists(_.contains("DebuggerTest.scala")))
     }
 
     "strict construction outside an eval is not consulted" in {
-        val d = new Recording(route = _ => false)
+        val d = new Recording(route = false)
         session(d) {
             val v = (1: Int < Any).map(_ + 1)
             assert(d.events.isEmpty)
@@ -92,7 +89,7 @@ class DebuggerTest extends AnyFreeSpec:
     }
 
     "an onDefer swap replaces the payload of a routed step" in {
-        val d = new Recording(route = _ => true):
+        val d = new Recording(route = true):
             // the swap asserts conformance on its own side, which is the typed contract's point
             override def onDefer[A, S](stack: Stack, frame: Frame, value: A < S): A < S =
                 if value.equals(1) then 10.asInstanceOf[A < S] else value
@@ -100,7 +97,7 @@ class DebuggerTest extends AnyFreeSpec:
     }
 
     "an onDeliver swap replaces the delivered value" in {
-        val d = new Recording(route = _ => true):
+        val d = new Recording(route = true):
             override def onDeliver[A](stack: Stack, frame: Frame, value: A): A =
                 if value.equals(2) then 20.asInstanceOf[A] else value
         // 1 + 1 delivers 2 into the trailing map, swapped to 20, times 2
@@ -108,14 +105,14 @@ class DebuggerTest extends AnyFreeSpec:
     }
 
     "suspensions report their input" in {
-        val d = new Recording(route = _ => false)
+        val d = new Recording(route = false)
         session(d)(assert(Eval(answered(ask.map(_ + 1))) == 42))
         assert(d.events.exists(_._1 == "suspend"))
     }
 
     "a session routes handler answers through the general paths" in {
         var deliveries = 0
-        val d = new Recording(route = _ => false):
+        val d = new Recording(route = false):
             override def fastPathsAllowed = false
             override def onDeliver[A](stack: Stack, frame: Frame, value: A): A =
                 deliveries += 1
@@ -125,7 +122,7 @@ class DebuggerTest extends AnyFreeSpec:
     }
 
     "uninstall stops the stream" in {
-        val d = new Recording(route = _ => false)
+        val d = new Recording(route = false)
         session(d)(discard(Eval((1: Int < Any).map(_ + 1))))
         val n = d.events.size
         assert(Eval((1: Int < Any).map(_ + 1)) == 2)
@@ -133,7 +130,7 @@ class DebuggerTest extends AnyFreeSpec:
     }
 
     "an eval that began before install never observes the stack hooks" in {
-        val d = new Recording(route = _ => false)
+        val d = new Recording(route = false)
         val v: Int < Any =
             Effect.defer {
                 Debugger.install(d)
@@ -147,7 +144,7 @@ class DebuggerTest extends AnyFreeSpec:
     }
 
     "a park and resume inside a session keeps the stream and the result" in {
-        val d = new Recording(route = _ => false)
+        val d = new Recording(route = false)
         session(d) {
             val v: Int < Any =
                 Effect.defer {
@@ -163,7 +160,7 @@ class DebuggerTest extends AnyFreeSpec:
 
     "a routed bracket still releases exactly once" in {
         var released = 0
-        val d        = new Recording(route = _ => true)
+        val d        = new Recording(route = true)
         session(d) {
             val v = Effect.bracket(Effect.defer(1))(_ => released += 1)(r => (r + 1: Int < Any).map(_ * 2))
             assert(Eval(v) == 4)

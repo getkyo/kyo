@@ -131,27 +131,30 @@ object Safepoint:
     // written out rather than delegating to an extension on `State`: this runs at every settled map step, and
     // its bytecode size decides whether a caller can inline it. `DepthGuard` is a single bit, so testing it
     // against zero is the same test in fewer instructions than comparing it back to the mask.
-    // The debugger costs this method only the frame passthrough: a session drains its eval's slot, so
-    // every strict application lands in `enterPark`, and the consult lives entirely on that cold path.
-    // An earlier shape consulted the hook here and the board rejected it: the body grew from 30 to 44
-    // bytes and the strict-fusion rows paid up to 4x through their callers' inlining budgets
-    @static def enter(slot: Slot, frame: Frame): Boolean =
+    // The debugger costs this method nothing: a session drains its eval's slot, so every strict
+    // application lands in `enterPark`, and the frameless consult lives entirely on that cold path.
+    // Two earlier shapes were rejected by the board: consulting the hook here grew the body from 30 to
+    // 44 bytes, and even a frame parameter alone kept the strict-fusion rows up to 4x over baseline
+    // through the operand stamped at every call site
+    @static def enter(slot: Slot): Boolean =
         val s  = depths(slot)
         val s2 = s - 1
         if (s2 & DepthGuard) != 0 then
             depths(slot) = s2
             true
-        else enterPark(slot, s, frame)
+        else enterPark(slot, s)
         end if
     end enter
 
-    @static private def enterPark(slot: Slot, s: State, frame: Frame): Boolean =
+    @static private def enterPark(slot: Slot, s: State): Boolean =
         val d = Debugger.get
-        if (d ne Debugger.Noop) && d.enter(frame) then
+        if (d ne Debugger.Noop) && d.enterStrict() then
             // an allowed application proceeds without touching the drained state, so the next one
-            // lands here again: per-application consult is the session's contract. The depth guard
-            // does not bound strict recursion while a session allows it; a debugger that runs the
-            // program is expected to pay the program's shape
+            // lands here again: per-application consult is the session's contract. The consult is
+            // frameless, since carrying a frame here costs every call site an operand; a session
+            // that wants frames routes the application and reads them at onDefer. The depth guard
+            // does not bound strict recursion while a session allows applications; a debugger that
+            // runs the program is expected to pay the program's shape
             true
         else
             depths(slot) = s.drained
