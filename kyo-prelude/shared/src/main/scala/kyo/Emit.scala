@@ -92,9 +92,9 @@ object Emit:
         fr: Frame
     )[A, VR, S](v: A < (Emit[V] & Emit[VR] & S))(using reduce: Reducible[Emit[VR]]): (Chunk[V], A) < (reduce.SReduced & S) =
         reduce:
-            ArrowEffect.handleLoop(tag, Chunk.empty[V], v)(
-                handle = [C] => (input, state, cont) => Loop.continue(state.append(input), cont(())),
-                done = (state, res) => (state, res)
+            ArrowEffect.handleLoopState(tag, Chunk.empty[V], v)(
+                [C] => (state, input) => Loop.continue(state.append(input), ()),
+                (state, res) => (state, res)
             )
 
     /** Runs an Emit effect, folding over the emitted values.
@@ -115,11 +115,9 @@ object Emit:
         reduce: Reducible[Emit[VR]]
     ): (A, B) < (reduce.SReduced & S & S2) =
         reduce:
-            ArrowEffect.handleLoop(tag, acc, v)(
-                handle = [C] =>
-                    (input, state, cont) =>
-                        f(state, input).map(a => Loop.continue(a, cont(()))),
-                done = (state, res) => (state, res)
+            ArrowEffect.handleLoopState(tag, acc, v)(
+                [C] => (state, input) => f(state, input).map(a => Loop.continue(a, ())),
+                (state, res) => (state, res)
             )
 
     /** Runs an Emit effect, discarding all emitted values.
@@ -133,8 +131,9 @@ object Emit:
         using Frame
     )[A, VR, S](v: A < (Emit[V] & Emit[VR] & S))(using tag: Tag[Emit[V]], reduce: Reducible[Emit[VR]]): A < (reduce.SReduced & S) =
         reduce:
-            ArrowEffect.handle(tag, v)(
-                handle = [C] => (input, cont) => cont(())
+            ArrowEffect.handleLoop(tag, v)(
+                [C] => _ => Loop.continue(()),
+                a => a
             )
 
     /** Runs an Emit effect, allowing custom handling of each emitted value.
@@ -153,8 +152,9 @@ object Emit:
         reduce: Reducible[Emit[VR]]
     ): A < (reduce.SReduced & S & S2) =
         reduce[A, S & S2]:
-            ArrowEffect.handle(tag, v)(
-                [C] => (input, cont) => f(input).map(_ => cont(()))
+            ArrowEffect.handleLoop(tag, v)(
+                [C] => input => f(input).map(_ => Loop.continue(())),
+                a => a
             )
 
     /** Runs an Emit effect, allowing custom handling of each emitted value with a boolean result determining whether to continue.
@@ -173,13 +173,14 @@ object Emit:
         reduce: Reducible[Emit[VR]]
     ): A < (reduce.SReduced & S & S2) =
         reduce:
-            ArrowEffect.handleLoop(tag, true, v)(
+            ArrowEffect.handleLoopState(tag, true, v)(
                 [C] =>
-                    (input, cond, cont) =>
+                    (cond, input) =>
                         if cond then
-                            f(input).map(c => Loop.continue(c, cont(())))
+                            f(input).map(c => Loop.continue(c, ()))
                         else
-                            Loop.continue(cond, cont(()))
+                            Loop.continue(cond, ()),
+                (_, res) => res
             )
 
     /** Runs an Emit effect, capturing only the first emitted value and returning a continuation.
