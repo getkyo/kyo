@@ -4,6 +4,17 @@ Goal, user's words: fully green against kyo-kernel. A red row means the kernel i
 
 ## Standing status
 
+- 2026-08-21 overnight, user-directed pivot: cross-library comparison DONE. Six boards (kernel2,
+  old kernel, ZIO 2.1.26, cats-effect 3.7.0, zio-blocks-async 0.0.51, turbolift 0.126.0) in one
+  same-session run; tables, fidelity labels, sensitivity checks in
+  `reviews/CROSSLIB-BENCH-RESULTS.md` (raw JSONs `reviews/bench/crosslib-0821-*.json`, chain:
+  CROSSLIB-BENCH-REQUIREMENTS, CROSSLIB-BENCH-PLAN, CROSSLIB-API-GROUND-TRUTH). Headline: kernel2
+  beats every external on the eager/fused/stateful families; the suspension/handler-crossing
+  cluster loses to Turbolift (suspension 4.4x, foreign 7.5x) and partly ZIO, the same rows that are
+  red vs the old kernel, confirming the round-three targets. Boards gained rows (entryFloorBatch,
+  dynamicChainOf{Maps,Binds}StaysLinear, adopted from zio-blocks' AsyncChainBench) and loop starts
+  now read through the seed field (anti-folding, drift-checked 0.97-1.03x vs gate2). Isolate
+  reintroduction remains the interrupted pending task.
 - Tree: `11cd77a348`, clean, 976 tests green on JVM. ADOPTED at gate strength (same-session
   three-board run, no regression, worst internal mover 1.02x): F3 settled-eval fast path
   (`ff7c08817c`: evalFixedOverheadBatch 0 B/op, 0.17x of kyo-kernel) and F2-L1 fold-peel
