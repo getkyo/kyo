@@ -335,15 +335,15 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
       */
     def dropWhilePure[VV >: V](f: VV => Boolean)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S] =
         Stream(
-            ArrowEffect.handleLoop(tag, true, emit)(
+            ArrowEffect.handleLoopState(tag, true, emit)(
                 [C] =>
-                    (input, state, cont) =>
+                    (state, input) =>
                         if state then
                             val chunk = input.dropWhile(f)
-                            if chunk.isEmpty then Loop.continue(true, cont(()))
-                            else Emit.valueWith(chunk)(Loop.continue(false, cont(())))
+                            if chunk.isEmpty then Loop.continue(true, ())
+                            else Emit.valueWith(chunk)(Loop.continue(false, ()))
                         else
-                            Emit.valueWith(input)(Loop.continue(false, cont(())))
+                            Emit.valueWith(input)(Loop.continue(false, ()))
             )
         )
 
@@ -356,16 +356,16 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
       */
     def dropWhile[VV >: V, S2](f: VV => Boolean < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S & S2] =
         Stream(
-            ArrowEffect.handleLoop(tag, true, emit)(
+            ArrowEffect.handleLoopState(tag, true, emit)(
                 [C] =>
-                    (input, state, cont) =>
+                    (state, input) =>
                         if state then
                             Kyo.dropWhile(input)(f).map { c =>
-                                if c.isEmpty then Loop.continue(true, cont(()))
-                                else Emit.valueWith(c)(Loop.continue(false, cont(())))
+                                if c.isEmpty then Loop.continue(true, ())
+                                else Emit.valueWith(c)(Loop.continue(false, ()))
                             }
                         else
-                            Emit.valueWith(input)(Loop.continue(false, cont(())))
+                            Emit.valueWith(input)(Loop.continue(false, ()))
             )
         )
 
@@ -380,10 +380,10 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
         Stream(
             ArrowEffect.handleLoop(tag, emit)(
                 [C] =>
-                    (input, cont) =>
+                    input =>
                         Kyo.filter(input)(f).map { c =>
-                            if c.isEmpty then Loop.continue(cont(()))
-                            else Emit.valueWith(c)(Loop.continue(cont(())))
+                            if c.isEmpty then Loop.continue
+                            else Emit.valueWith(c)(Loop.continue)
                     }
             )
         )
@@ -392,10 +392,10 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
         Stream(
             ArrowEffect.handleLoop(tag, emit)(
                 [C] =>
-                    (input, cont) =>
+                    input =>
                         val c = input.filter(f)
-                        if c.isEmpty then Loop.continue(cont(()))
-                        else Emit.valueWith(c)(Loop.continue(cont(())))
+                        if c.isEmpty then Loop.continue
+                        else Emit.valueWith(c)(Loop.continue)
             )
         )
 
@@ -428,9 +428,9 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
         Stream(
             ArrowEffect.handleLoop(tag, emit)(
                 [C] =>
-                    (input, cont) =>
+                    input =>
                         Kyo.collect(input)(f).map { c =>
-                            Emit.valueWith(c)(Loop.continue(cont(())))
+                            Emit.valueWith(c)(Loop.continue)
                     }
             )
         )
@@ -443,10 +443,10 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
         Stream(
             ArrowEffect.handleLoop(tag, emit)(
                 [C] =>
-                    (input, cont) =>
+                    input =>
                         val c = input.map(f).collect({ case Present(v) => v })
-                        if c.isEmpty then Loop.continue(cont(()))
-                        else Emit.valueWith(c)(Loop.continue(cont(())))
+                        if c.isEmpty then Loop.continue
+                        else Emit.valueWith(c)(Loop.continue)
             )
         )
 
@@ -466,7 +466,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
         Stream(
             ArrowEffect.handleLoop(tag, emit)(
                 [C] =>
-                    (input, cont) =>
+                    input =>
                         Kyo.foreach(input)(f)
                             .map(_.takeWhile(_.isDefined).collect({ case Present(v) => v }))
                             .map { c =>
@@ -474,7 +474,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                                 else
                                     Emit.valueWith(c) {
                                         if c.size != input.size then Loop.done
-                                        else Loop.continue(cont(()))
+                                        else Loop.continue
                                     }
                         }
             )
@@ -488,13 +488,13 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
         Stream(
             ArrowEffect.handleLoop(tag, emit)(
                 [C] =>
-                    (input, cont) =>
+                    input =>
                         val c = input.map(f).takeWhile(_.isDefined).collect({ case Present(v) => v })
                         if c.isEmpty && c.size != input.size then Loop.done
                         else
                             Emit.valueWith(c):
                                 if c.size != input.size then Loop.done
-                                else Loop.continue(cont(()))
+                                else Loop.continue
                         end if
             )
         )
