@@ -97,6 +97,15 @@ object ArrowEffect:
         end match
     end handleCont
 
+    /** [[handleCont]] with the region's value as the result. */
+    inline def handleCont[I[_], O[_], E <: ArrowEffect[I, O], A, S](
+        inline effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        inline handle: [C] => (I[C], Arrow[O[C], A, E & S]) => A < (E & S)
+    )(using inline _frame: Frame): A < S =
+        handleCont(effectTag, v)(handle, a => a)
+
     @nowarn("msg=anonymous")
     inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](
         inline effectTag: Tag[E],
@@ -132,6 +141,15 @@ object ArrowEffect:
             case _ => onDone(Nested.unnest(v))
         end match
     end handleLoop
+
+    /** [[handleLoop]] with the region's value as the result. */
+    inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, S](
+        inline effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        inline handle: [C] => I[C] => Loop.Outcome[O[C] < (E & S), A] < S
+    )(using inline _frame: Frame): A < S =
+        handleLoop(effectTag, v)(handle, a => a)
 
     @nowarn("msg=anonymous")
     inline def handleLoopState[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State](

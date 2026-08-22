@@ -131,14 +131,14 @@ object Batch:
         // Transforms effect suspensions into an item.
         // Captures the continuation in the `Item` objects for `ToExpand` and `Expanded` cases.
         def capture(v: Item < (Batch & S)): Item < S =
-            ArrowEffect.handle(Tag[Batch], v) {
+            ArrowEffect.handleCont(Tag[Batch], v)(
                 [C] =>
                     (input, cont) =>
                         val contAny = cont.asInstanceOf[ContAny[A, S]]
                         input match
                             case Call(v, source) => Expanded(v, source.asInstanceOf[SourceAny[S]], contAny)
                             case Eval(v)         => ToExpand(v, contAny)
-            }
+            )
 
         // Expands any `Batch.eval` calls, capturing items for each element in the sequence.
         // Returns a `Chunk[Chunk[A]]` to reduce `map` calls.
@@ -208,6 +208,8 @@ object Batch:
             case ToExpand(op: Seq[Any], cont: ContAny[A, S])
             case Expanded(value: Any, source: SourceAny[S], cont: ContAny[A, S])
 
-        type ContAny[A, S] = Any < (Batch & S) => (ToExpand[A, S] | Expanded[A, S] | A) < (Batch & S)
+        // the captured continuation is kernel2's Arrow: a complete value applied strictly at the two
+        // call sites, so the multi-shot replay discipline the kernel guarantees carries the batching
+        type ContAny[A, S] = Arrow[Any, ToExpand[A, S] | Expanded[A, S] | A, Batch & S]
     end internal
 end Batch
