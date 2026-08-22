@@ -630,10 +630,15 @@ object Eval:
         finally
             // before the stack is pooled, and outside the catch above, so a release still runs when the
             // eval is leaving on an exception. One whose use completed already ran through its arrow and
-            // is a no-op here
-            stack.drainFinalizers(failure)
-            Stack.release(stack)
-            Safepoint.restore(slot, saved)
+            // is a no-op here.
+            //
+            // the drain deliberately throws on the completing path when a release failed, so the two
+            // statements that must run on every exit stand in their own finally: the caller's safepoint
+            // state comes back whatever the drain does, and the stack is pooled emptied either way
+            try stack.drainFinalizers(failure)
+            finally
+                Stack.release(stack)
+                Safepoint.restore(slot, saved)
         end try
     end apply
 
@@ -651,11 +656,25 @@ object Eval:
         v match
             case p: Park[?, ?] =>
                 // backwards, since index zero is the outermost: a resource acquired inside another is
-                // released before it
-                var i = p.finalizers.size
+                // released before it.
+                //
+                // guarded the way the stack's drain is: a release that throws never stops the ones after
+                // it. There is no failure in flight to attach to, so the first failure is rethrown once
+                // every release was attempted, with the later ones suppressed on it
+                val outcome                 = Result.panic[Nothing, Nothing](Finalizer.Abandoned)
+                var first: Maybe[Throwable] = Absent
+                var i                       = p.finalizers.size
                 while i > 0 do
                     i -= 1
-                    p.finalizers(i).foreach(_.run(Result.panic(Finalizer.Abandoned)))
+                    try p.finalizers(i).foreach(_.run(outcome))
+                    catch
+                        case ex: Throwable =>
+                            first match
+                                case Present(fst) => if ex ne fst then fst.addSuppressed(ex)
+                                case _            => first = Present(ex)
+                    end try
+                end while
+                first.foreach(throw _)
             case _ => ()
 
 end Eval

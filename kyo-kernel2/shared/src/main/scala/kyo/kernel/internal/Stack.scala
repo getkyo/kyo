@@ -407,11 +407,13 @@ final private[kyo] class Stack:
                 try f.foreach(_.run(outcome))
                 catch
                     case ex: Throwable =>
+                        // identity-guarded: a release that rethrows the exception it was told about must
+                        // not self-suppress, which `addSuppressed` rejects with its own throw
                         failure match
-                            case Present(fail) => fail.addSuppressed(ex)
+                            case Present(fail) => if ex ne fail then fail.addSuppressed(ex)
                             case _ =>
                                 first match
-                                    case Present(fst) => fst.addSuppressed(ex)
+                                    case Present(fst) => if ex ne fst then fst.addSuppressed(ex)
                                     case _            => first = Present(ex)
                 end try
             end while

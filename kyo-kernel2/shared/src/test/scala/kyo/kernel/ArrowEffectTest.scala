@@ -1954,22 +1954,42 @@ class ArrowEffectTest extends AnyFreeSpec:
         }
 
         "a throwing release in a nested eval does not disarm the enclosing slice" in {
-            // a nested full eval whose boundary drain throws must still restore the caller's
-            // safepoint state: a stop delivered right after it must park the enclosing slice
+            // a nested full eval clears the slot's armed bit on entry (save installs a fresh
+            // state) and owes it back through the restore in its finally; a boundary drain that
+            // throws must not skip that restore. The disarm is observable through strict
+            // construction: with the armed bit lost, a pending stop stops draining the budget,
+            // so an eager chain runs past the stop instead of reifying at it. The body sits in
+            // a deferred payload so the whole scenario runs inside the armed slice
             val inner: Int < Ask =
                 Effect.bracket(Effect.defer(1))(_ => throw new IllegalStateException("release"))(_ => ask.map(_ + 1))
             val dropped: Int < Any =
                 ArrowEffect.handleCont(Tag[Ask], inner)([C] => (_, _) => -1, a => a)
+            var built = 0
             val outer: Int < Any =
-                (1: Int < Any).map { _ =>
+                Effect.defer {
                     try kyo.discard(Eval(dropped))
                     catch case _: IllegalStateException => ()
-                    kyo.discard(internal.Safepoint.stop(Thread.currentThread()))
-                    1
-                }.map(_ + 41)
+                    0
+                }.map { z =>
+                    var acc: Int < Any = z
+                    var i              = 0
+                    while i < 100 do
+                        acc = acc.map { x =>
+                            built += 1
+                            if built == 50 then kyo.discard(internal.Safepoint.stop(Thread.currentThread()))
+                            x + 1
+                        }
+                        i += 1
+                    end while
+                    acc
+                }
             val p = Eval.partial(outer)
             assert(p.evalNow.isEmpty)
-            assert(Eval(p) == 42)
+            // the armed bit came back from the nested eval, so the stop reified construction
+            // within a step or two of where it lodged
+            assert(built >= 50 && built <= 52, s"built=$built")
+            assert(Eval(p) == 100)
+            assert(built == 100)
         }
 
         "a throwing release on the completing path leaves the caller's safepoint state intact" in {
