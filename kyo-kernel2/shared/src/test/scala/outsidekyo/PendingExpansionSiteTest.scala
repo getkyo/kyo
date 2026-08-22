@@ -220,7 +220,7 @@ class PendingExpansionSiteTest extends AnyFreeSpec:
         }
 
         "handleLoop" in {
-            val v = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([C] => _ => Loop.continue(3: Int < Any), a => a)
+            val v = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([C] => _ => Loop.continue(3))
             assert(Eval(v) == 4)
         }
 
@@ -230,8 +230,10 @@ class PendingExpansionSiteTest extends AnyFreeSpec:
         }
 
         "handleLoopState" in {
-            val v = ArrowEffect.handleLoopState(Tag[Ask], 7, ask.map(_ + 1))(
-                [C] => (state, _) => Loop.continue(state + 1, state: Int < Any),
+            // a done clause that computes leaves the result type to the expected type, as the
+            // previous kernel's signatures did
+            val v: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 7, ask.map(_ + 1))(
+                [C] => (state, _) => Loop.continue(state + 1, state),
                 (state, a) => a * 100 + state
             )
             assert(Eval(v) == 808)
@@ -239,30 +241,30 @@ class PendingExpansionSiteTest extends AnyFreeSpec:
 
         "handleLoopState without a done clause" in {
             val v = ArrowEffect.handleLoopState(Tag[Ask], 7, ask.map(_ + 1))(
-                [C] => (state, _) => Loop.continue(state + 1, state: Int < Any)
+                [C] => (state, _) => Loop.continue(state + 1, state)
             )
             assert(Eval(v) == 8)
         }
 
         "handleContWith" in {
-            val v = ArrowEffect.handleContWith(Tag[Ask], ask.map(_ + 1))(
+            val v: Int < Any = ArrowEffect.handleContWith(Tag[Ask], ask.map(_ + 1))(
                 [C] => (_, cont) => cont(2),
                 a => a
-            )(b => b * 10)
+            )((b: Int) => b * 10)
             assert(Eval(v) == 30)
         }
 
         "handleLoopWith" in {
-            val v = ArrowEffect.handleLoopWith(Tag[Ask], ask.map(_ + 1))(
-                [C] => _ => Loop.continue(3: Int < Any),
+            val v: Int < Any = ArrowEffect.handleLoopWith(Tag[Ask], ask.map(_ + 1))(
+                [C] => _ => Loop.continue(3),
                 a => a
-            )(b => b * 10)
+            )((b: Int) => b * 10)
             assert(Eval(v) == 40)
         }
 
         "handleLoopStateWith" in {
-            val v = ArrowEffect.handleLoopStateWith(Tag[Ask], 7, ask.map(_ + 1))(
-                [C] => (state, _) => Loop.continue(state + 1, state: Int < Any),
+            val v: Int < Any = ArrowEffect.handleLoopStateWith(Tag[Ask], 7, ask.map(_ + 1))(
+                [C] => (state, _) => Loop.continue(state + 1, state),
                 (state, a) => a + state
             )(b => b * 10)
             // the clause answers 7 and advances the state to 8, so the body settles at 8 and the done

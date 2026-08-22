@@ -23,10 +23,10 @@ class EffectTraceTest extends AnyFreeSpec:
 
     // row-generic, so a region can be handled while another effect stays open
     def answerAsk[A, S](value: Int)(v: A < (Ask & S)): A < S =
-        ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value: Int < Any), a => a)
+        ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value))
 
     def dropSay[A, S](v: A < (Say & S)): A < S =
-        ArrowEffect.handleLoop(Tag[Say], v)([C] => _ => Loop.continue((): Unit < Any), a => a)
+        ArrowEffect.handleLoop(Tag[Say], v)([C] => _ => Loop.continue(()))
 
     def carrier(ex: Throwable): Option[EffectTrace] =
         ex.getSuppressed.collectFirst { case t: EffectTrace => t }
@@ -230,10 +230,10 @@ class EffectTraceTest extends AnyFreeSpec:
 
         "a fused region names the body, then the region" in {
             val fused: Int < Any =
-                ArrowEffect.handleLoopWith[Const[Unit], Const[Int], Ask, Int, Int, Any](Tag[Ask], innerStep(ask))(
-                    [C] => _ => Loop.continue(1: Int < Any),
+                ArrowEffect.handleLoopWith[Const[Unit], Const[Int], Ask, Int, Int, Any, Any](Tag[Ask], innerStep(ask))(
+                    [C] => _ => Loop.continue(1),
                     a => a
-                )(_ + 1)
+                )((_: Int) + 1)
             val ex  = intercept[Boom](Eval(fused))
             val els = carrier(ex).get.elements.toList
             assert(els.exists(_.getMethodName == "innerStep"))

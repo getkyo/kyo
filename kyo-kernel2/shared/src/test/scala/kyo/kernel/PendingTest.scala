@@ -219,7 +219,7 @@ class PendingTest extends AnyFreeSpec:
         val r: Int < Any = ArrowEffect.handleLoopWith(Tag[Give], give)(
             [C] => _ => Loop.continue(settled(inner)),
             a => settled(a)
-        ) { b =>
+        ) { (b: Int < Ask) =>
             got = b
             9
         }

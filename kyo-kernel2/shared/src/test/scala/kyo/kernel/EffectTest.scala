@@ -171,7 +171,7 @@ class EffectTest extends AnyFreeSpec:
                 case _: RuntimeException => "caught"
             }
 
-            val result = ArrowEffect.handleCont(Tag[TestEffect1], effect)([C] => (input, cont) => cont(input.toString), a => a)
+            val result = ArrowEffect.handleCont(Tag[TestEffect1], effect)([C] => (input, cont) => cont(input.toString))
 
             assert(result.eval == "caught")
         }
@@ -192,8 +192,7 @@ class EffectTest extends AnyFreeSpec:
 
         "failure in a map after a region" in {
             val region = ArrowEffect.handleLoop(Tag[TestEffect1], testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
-                [C] => input => Loop.continue(input.toString: String < Any),
-                a => a
+                [C] => input => Loop.continue(input.toString)
             )
             val effect = Effect.catching {
                 region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s)
@@ -203,32 +202,26 @@ class EffectTest extends AnyFreeSpec:
             assert(effect.eval == "caught")
         }
 
-        // A first-operation region answers once and carries the resumed remainder out through Loop.done, so
-        // its clause needs the continuation in hand. That is handleFirst, which this kernel does not have:
-        // handleCont keeps the region installed and handleLoopState answers with a value, and neither
-        // substitutes. Parked with the rest of that family.
-        //
-        // "failure in a map after a first region" in {
-        //     val region =
-        //         ArrowEffect.handleLoop(Tag[TestEffect1], (), testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
-        //             done = (_, a) => (a: String < TestEffect1),
-        //             handle = [C] => (input, _, cont) => cont(input.toString).map(Loop.done(_))
-        //         )
-        //     val effect = Effect.catching {
-        //         region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s)
-        //     } {
-        //         case _: RuntimeException => "caught"
-        //     }
-        //     val result = ArrowEffect.handleCont(Tag[TestEffect1], effect)([C] => (input, cont) => cont(input.toString), a => a)
-        //     assert(result.eval == "caught")
-        // }
+        "failure in a map after a first region" in {
+            val region =
+                ArrowEffect.handleFirst(Tag[TestEffect1], testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
+                    handle = [C] => (input, cont) => cont(input.toString),
+                    done = a => (a: String < TestEffect1)
+                )
+            val effect = Effect.catching {
+                region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s)
+            } {
+                case _: RuntimeException => "caught"
+            }
+            val result = ArrowEffect.handleCont(Tag[TestEffect1], effect)([C] => (input, cont) => cont(input.toString))
+            assert(result.eval == "caught")
+        }
 
         "failure in a map after a stateful region" in {
             val region = ArrowEffect.handleLoopState(Tag[TestEffect1], 7, testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
                 // the old stateful clause applied a continuation it was handed; this one hands the answer
                 // back in the outcome and the region resumes with it
-                [C] => (state, input) => Loop.continue(state + 1, (input * state).toString: String < Any),
-                (_, a) => a
+                [C] => (state, input) => Loop.continue(state + 1, (input * state).toString)
             )
             val effect = Effect.catching {
                 region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s)
@@ -242,15 +235,14 @@ class EffectTest extends AnyFreeSpec:
             val effect = Effect.catching {
                 testEffect1(3).map { prefix =>
                     val region = ArrowEffect.handleLoopState(Tag[TestEffect1], 7, testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
-                        [C] => (state, input) => Loop.continue(state + 1, (input * state).toString: String < Any),
-                        (_, a) => a
+                        [C] => (state, input) => Loop.continue(state + 1, (input * state).toString)
                     )
                     region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else prefix + s)
                 }
             } {
                 case _: RuntimeException => "caught"
             }
-            val result = ArrowEffect.handleCont(Tag[TestEffect1], effect)([C] => (input, cont) => cont(input.toString), a => a)
+            val result = ArrowEffect.handleCont(Tag[TestEffect1], effect)([C] => (input, cont) => cont(input.toString))
             assert(result.eval == "caught")
         }
 
@@ -268,8 +260,7 @@ class EffectTest extends AnyFreeSpec:
             val region = ArrowEffect.handleLoopState(Tag[TestEffect1], 7, body)(
                 // the old stateful clause applied a continuation it was handed; this one hands the answer
                 // back in the outcome and the region resumes with it
-                [C] => (state, input) => Loop.continue(state + 1, (input * state).toString: String < Any),
-                (_, a) => a
+                [C] => (state, input) => Loop.continue(state + 1, (input * state).toString)
             )
             val effect = Effect.catching {
                 region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s)
@@ -287,7 +278,7 @@ class EffectTest extends AnyFreeSpec:
                 case _: RuntimeException => box(fallback)
             }
             val inner   = boxed.eval
-            val handled = ArrowEffect.handleCont(Tag[TestEffect1], inner)([C] => (input, cont) => cont(input.toString), a => a)
+            val handled = ArrowEffect.handleCont(Tag[TestEffect1], inner)([C] => (input, cont) => cont(input.toString))
             intercept[RuntimeException](handled.eval)
         }
 
@@ -300,8 +291,7 @@ class EffectTest extends AnyFreeSpec:
                 testEffect1(2).map(b => a + b)
             }
             val region = ArrowEffect.handleLoopState(Tag[TestEffect1], 7, body)(
-                [C] => (state, input) => Loop.continue(state + 1, (input * state).toString: String < Any),
-                (_, a) => a
+                [C] => (state, input) => Loop.continue(state + 1, (input * state).toString)
             )
             val effect = Effect.catching {
                 region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s)
@@ -317,8 +307,7 @@ class EffectTest extends AnyFreeSpec:
             val region = ArrowEffect.handleLoopState(Tag[TestEffect1], 7, testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
                 // the old stateful clause applied a continuation it was handed; this one hands the answer
                 // back in the outcome and the region resumes with it
-                [C] => (state, input) => Loop.continue(state + 1, (input * state).toString: String < Any),
-                (_, a) => a
+                [C] => (state, input) => Loop.continue(state + 1, (input * state).toString)
             )
             val effect = Effect.catching(region) {
                 case _: RuntimeException => "caught"
@@ -940,7 +929,7 @@ class EffectTest extends AnyFreeSpec:
                     if a == "10" then throw boom else a.length
                 }
             val handled: Int < Any =
-                ArrowEffect.handleCont(Tag[TestEffect1], v)([C] => (input, cont) => cont(input.toString), a => a)
+                ArrowEffect.handleCont(Tag[TestEffect1], v)([C] => (input, cont) => cont(input.toString))
             assert(intercept[RuntimeException](Eval(handled)) eq boom)
             assert(out.equals(Result.panic(boom)))
         }

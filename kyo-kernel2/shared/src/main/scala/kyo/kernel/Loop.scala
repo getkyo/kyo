@@ -141,7 +141,8 @@ object Loop:
       * whose expected type is pending (`O[C] < (E & S)`), and only a pending return lets that
       * expected type reach the argument when the call sits behind another combinator's lambda,
       * where a raw return is typed before the conversion and the answer's type is minimized. The
-      * value itself is the same raw `Continue`: it extends nothing but `Serializable`, so it is
+      * row is `Any` because the outcome itself is settled, which conforms to every expected row.
+      * The value is the same raw `Continue`: it extends nothing but `Serializable`, so it is
       * valid union currency as-is and the cast asserts exactly what the lift would have produced.
       *
       * @param v
@@ -165,11 +166,11 @@ object Loop:
       *   The second state value
       */
     @nowarn("msg=anonymous")
-    inline def continue[A, B, O, S](inline v1: A, inline v2: B): Outcome2[A, B, O] < S =
+    inline def continue[A, B, O](inline v1: A, inline v2: B): Outcome2[A, B, O] < Any =
         (new Continue2[A, B]:
             val _1 = v1
             val _2 = v2
-        ).asInstanceOf[Outcome2[A, B, O] < S]
+        ).asInstanceOf[Outcome2[A, B, O] < Any]
 
     /** Creates an outcome signaling continuation with three state values.
       *
