@@ -3,6 +3,7 @@ package kyo.kernel
 import kyo.Arrow
 import kyo.Const
 import kyo.Maybe
+import kyo.Result
 import kyo.Tag
 import kyo.kernel.internal.Eval
 import org.scalatest.freespec.AnyFreeSpec
@@ -1928,29 +1929,52 @@ class ArrowEffectTest extends AnyFreeSpec:
             assert(outerSaw == List("s", "s+", "s++"))
         }
 
-        "a clause throw meets the same scopes on every dispatch path" in {
+        "a clause throw escapes the region on every dispatch path" in {
             case class Boom() extends RuntimeException
-            // a Catching standing between the suspension and the handler: whether it answers the
-            // clause's throw must not depend on which handler family dispatched the clause
+            // the clause-scope law: the clause is the handler's code, outside the region it serves,
+            // so its throw is answerable only by scopes wrapping the handler call. A Catching
+            // standing between the suspension and the handler is passed over on every dispatch path
             val body: Int < Ask = Effect.catching(ask.map(_ + 1))(_ => -1)
             def viaLoop: Int < Any =
                 ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => throw Boom(), a => a)
             def viaCont: Int < Any =
                 ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, _) => throw Boom(), a => a)
-            val l = Eval(Effect.catching(viaLoop)(_ => -2))
-            val c = Eval(Effect.catching(viaCont)(_ => -2))
-            assert(l == c)
+            assert(Eval(Effect.catching(viaLoop)(_ => -2)) == -2)
+            assert(Eval(Effect.catching(viaCont)(_ => -2)) == -2)
         }
 
-        "a clause throw meets the same scopes on the fast and general cont paths" in {
+        "a clause throw escapes the region on the fast and general cont paths" in {
             case class Boom() extends RuntimeException
             def run(body: Int < Ask): Int =
                 Eval(Effect.catching(
                     ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, _) => throw Boom(), a => a)
                 )(_ => -2))
             // a bare suspension takes the pos gate; a mapped one takes the general dump path. The
-            // clause's failure surface must not depend on which one dispatched it
-            assert(run(ask) == run(ask.map(_ + 1)))
+            // clause's failure escapes to the exterior on both
+            assert(run(ask) == -2)
+            assert(run(ask.map(_ + 1)) == -2)
+        }
+
+        "a clause throw releases the interior brackets it escapes" in {
+            // release-yes, recover-no: the escape runs the interior releases with the failure while
+            // passing over interior recoveries, on both the standing-interior path (loop general)
+            // and the folded-interior path (cont general)
+            def probe(handle: (Int < Ask) => Int < Any): (Int, Boolean) =
+                var sawPanic = false
+                val body: Int < Ask =
+                    Effect.bracket[Int, Int, Ask](Effect.defer(1))((_, r) =>
+                        r match
+                            case Result.Panic(ex) => sawPanic = ex.getMessage == "clause-boom"
+                            case _                => ()
+                    )(_ => ask.map(_ + 1))
+                val out = Eval(Effect.catching(handle(body))(_ => -2))
+                (out, sawPanic)
+            end probe
+            def boom(): Nothing = throw new RuntimeException("clause-boom")
+            val loopSide        = probe(b => ArrowEffect.handleLoop(Tag[Ask], b)([C] => _ => boom(), a => a))
+            val contSide        = probe(b => ArrowEffect.handleCont(Tag[Ask], b)([C] => (_, _) => boom(), a => a))
+            assert(loopSide == ((-2, true)))
+            assert(contSide == ((-2, true)))
         }
 
         "a throwing release in a nested eval does not disarm the enclosing slice" in {

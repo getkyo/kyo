@@ -355,6 +355,25 @@ final private[kyo] class Stack:
             case Absent     => throw current
     end unwind
 
+    /** Pops `n` entries for a failure that must leave the region rather than be answered inside it:
+      * releases run with the failure, recoveries are passed over, and a release that throws is suppressed
+      * onto the failure rather than replacing it. What stands below the popped run is left for the normal
+      * unwind to consult.
+      */
+    def escape(n: Int, ex: Throwable): Unit =
+        var i = n
+        while i > 0 && !isEmpty do
+            i -= 1
+            pop() match
+                case f: Finalizer[?, ?] =>
+                    try f.run(Result.panic(ex))
+                    catch
+                        case t: Throwable => if t ne ex then ex.addSuppressed(t)
+                case _ => ()
+            end match
+        end while
+    end escape
+
     def pushFinalizer(f: Finalizer[?, ?]): Unit =
         // drop the run of releases on top that have already run, so an eval that brackets many resources one
         // after another holds one entry rather than one per bracket. Only the eval reaches this, on its own

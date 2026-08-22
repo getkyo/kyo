@@ -18,6 +18,7 @@ import kyo.kernel.Loop.Outcome
 import kyo.kernel.internal.Handler.HandlerCont
 import kyo.kernel.internal.Handler.HandlerLoop
 import kyo.kernel.internal.Handler.HandlerLoopState
+import kyo.kernel.internal.Handler.Out
 import kyo.kernel.internal.Kyo.Binding
 import kyo.kernel.internal.Kyo.Catching
 import kyo.kernel.internal.Kyo.Defer
@@ -166,7 +167,12 @@ object Eval:
             try h.answer(kyo.input, out)
             catch
                 case ex: Throwable =>
-                    attachThrow(ex, kyo, Arrow.id[Any], stack)
+                    // a clause's failure escapes the region: the trace is attached before the escape
+                    // pops the entries it describes, the interior releases and is passed over, and the
+                    // handler entry stays for the normal unwind
+                    EffectTrace.attach(ex, kyo, Arrow.id[Any], stack)
+                    stack.escape(pos, ex)
+                    throw ex
         out.kind match
             case 1 =>
                 val r = ran.asInstanceOf[OX[CX] < (EX & SX)]
@@ -198,7 +204,17 @@ object Eval:
             try h.answers(kyo.input, k, armed, slot, out)
             catch
                 case ex: Throwable =>
-                    if (out.cont ne null) && !(out.cont eq Arrow.Id) then stack.push(out.cont)
+                    // a clause throw escapes the region the continuation carries; a continuation
+                    // application's throw is the region body's and the interior participates. The loop's
+                    // k can hold a dumped, region-bearing chain via nextAnswer, so the escape is not
+                    // merely defensive
+                    if (out.cont ne null) && !(out.cont eq Arrow.Id) then
+                        if out.kind == Out.ClauseThrew then
+                            val before = stack.size
+                            stack.push(out.cont)
+                            stack.escape(stack.size - before, ex)
+                        else stack.push(out.cont)
+                    end if
                     attachThrow(ex, kyo, Arrow.id[Any], stack)
         out.kind match
             case 1 =>
@@ -241,7 +257,15 @@ object Eval:
             try h.answers(kyo.input, k, armed, slot, out)
             catch
                 case ex: Throwable =>
-                    if (out.cont ne null) && !(out.cont eq Arrow.Id) then stack.push(out.cont)
+                    // same split as the loop fast paths: a clause throw escapes what k carries, a
+                    // continuation application's throw re-attaches it for the interior to answer
+                    if (out.cont ne null) && !(out.cont eq Arrow.Id) then
+                        if out.kind == Out.ClauseThrew then
+                            val before = stack.size
+                            stack.push(out.cont)
+                            stack.escape(stack.size - before, ex)
+                        else stack.push(out.cont)
+                    end if
                     attachThrow(ex, kyo, Arrow.id[Any], stack)
         ran.asInstanceOf[Any < Nothing]
     end dispatchContFast
@@ -296,7 +320,10 @@ object Eval:
             try h.answer(s, kyo.input, out)
             catch
                 case ex: Throwable =>
-                    attachThrow(ex, kyo, Arrow.id[Any], stack)
+                    // same escape as the stateless general path: the clause's failure leaves the region
+                    EffectTrace.attach(ex, kyo, Arrow.id[Any], stack)
+                    stack.escape(pos, ex)
+                    throw ex
         out.kind match
             case 1 => // answered: the region continues with the returned value
                 stack.putState(pos, out.state.asInstanceOf[StateX])
@@ -334,9 +361,16 @@ object Eval:
             try h.answers(s, kyo.input, k, armed, slot, out)
             catch
                 case ex: Throwable =>
-                    // the loop committed before rethrowing; make the slot and the entry current
+                    // the loop committed before rethrowing; make the slot and the entry current. Then the
+                    // same split as the stateless fast path: a clause throw escapes what k carries
                     stack.putState(0, out.state.asInstanceOf[StateX])
-                    if (out.cont ne null) && !(out.cont eq Arrow.Id) then stack.push(out.cont)
+                    if (out.cont ne null) && !(out.cont eq Arrow.Id) then
+                        if out.kind == Out.ClauseThrew then
+                            val before = stack.size
+                            stack.push(out.cont)
+                            stack.escape(stack.size - before, ex)
+                        else stack.push(out.cont)
+                    end if
                     attachThrow(ex, kyo, Arrow.id[Any], stack)
         out.kind match
             case 1 =>
@@ -493,7 +527,18 @@ object Eval:
                                     val next =
                                         try h.run(kyo.input, k)
                                         catch
-                                            case ex: Throwable => attachThrow(ex, kyo, k, stack)
+                                            case ex: Throwable =>
+                                                // the clause's failure escapes the region: the folded
+                                                // interior releases with it rather than being discarded,
+                                                // and its recoveries are passed over. The push flattens
+                                                // k back to entries; the size delta is exactly what it
+                                                // carried, and the handler entry below stays for the
+                                                // normal unwind
+                                                EffectTrace.attach(ex, kyo, k, stack)
+                                                val before = stack.size
+                                                stack.push(k)
+                                                stack.escape(stack.size - before, ex)
+                                                throw ex
                                     loop(next)
                             case h: HandlerLoop[IX, OX, EX, AX, BX, SX] @unchecked =>
                                 // same gate as the stateful case below

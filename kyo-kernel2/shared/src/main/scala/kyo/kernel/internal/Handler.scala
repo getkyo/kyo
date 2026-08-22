@@ -151,7 +151,7 @@ object Handler:
                     try handle[C](in.asInstanceOf[I[C]])
                     catch
                         case ex: Throwable =>
-                            out.kind = 1
+                            out.kind = Out.ClauseThrew
                             out.cont = k
                             throw ex
                 o match
@@ -255,7 +255,7 @@ object Handler:
                     try handle[C](st, in.asInstanceOf[I[C]])
                     catch
                         case ex: Throwable =>
-                            out.kind = 1
+                            out.kind = Out.ClauseThrew
                             out.state = st
                             out.cont = k
                             throw ex
@@ -353,7 +353,7 @@ object Handler:
                     try handle[C](in.asInstanceOf[I[C]], k.asInstanceOf[Arrow[O[C], A, E & S]])
                     catch
                         case ex: Throwable =>
-                            out.kind = 1
+                            out.kind = Out.ClauseThrew
                             out.cont = k
                             throw ex
                 n -= 1
@@ -388,6 +388,11 @@ object Handler:
         inline def Answered: Int  = 1
         inline def Suspended: Int = 2
         inline def Finished: Int  = 3
+        // the exception lane's discriminator: a clause that threw, as opposed to a continuation
+        // application that threw. A clause's failure escapes the region (the interior entries release
+        // and are passed over), where a continuation's failure is the region body's and the interior
+        // participates; only the dispatch catches read this, alongside the rethrow
+        inline def ClauseThrew: Int = 4
     end Out
 
     abstract private[kyo] class HandlerCont[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Handler[E, A, B, S]:
@@ -400,7 +405,12 @@ object Handler:
         def answers[X](input: I[X], k: Arrow[Any, Any, Any], armed: Boolean, slot: Safepoint.Slot, out: Out): Any =
             out.kind = Out.Answered
             out.cont = k
-            run(input, k.asInstanceOf[Arrow[O[X], A, E & S]])
+            try run(input, k.asInstanceOf[Arrow[O[X], A, E & S]])
+            catch
+                case ex: Throwable =>
+                    out.kind = Out.ClauseThrew
+                    throw ex
+            end try
         end answers
     end HandlerCont
 
@@ -424,7 +434,13 @@ object Handler:
 
         def answers[X](input: I[X], k: Arrow[Any, Any, Any], armed: Boolean, slot: Safepoint.Slot, out: Out): Any =
             out.cont = k
-            answer(input, out)
+            try answer(input, out)
+            catch
+                case ex: Throwable =>
+                    out.kind = Out.ClauseThrew
+                    throw ex
+            end try
+        end answers
     end HandlerLoop
 
     abstract private[kyo] class HandlerLoopState[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State] extends Handler[E, A, B, S]:
@@ -469,7 +485,14 @@ object Handler:
           */
         def answers[X](state: State, input: I[X], k: Arrow[Any, Any, Any], armed: Boolean, slot: Safepoint.Slot, out: Out): Any =
             out.cont = k
-            answer(state, input, out)
+            try answer(state, input, out)
+            catch
+                case ex: Throwable =>
+                    out.kind = Out.ClauseThrew
+                    out.state = state
+                    throw ex
+            end try
+        end answers
     end HandlerLoopState
 
     private[kyo] object HandlerLoopState:
