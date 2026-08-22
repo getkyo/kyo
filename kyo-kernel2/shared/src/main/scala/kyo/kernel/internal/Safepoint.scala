@@ -75,41 +75,56 @@ object Safepoint:
     @static def get(): Slot =
         val thread = Thread.currentThread()
         val h      = home(thread)
-        if slots.get(h) eq thread then h
+        // plain on purpose, and this probe runs at every settled step. Only this thread installs its
+        // own reference (the claim CAS), and a plain read cannot see anything older than its own
+        // write, so a hit proves ownership without an acquire. What it can miss is a stopper's
+        // Thread-to-Stop exchange, which only delays the slow path below by cache propagation
+        if slots.getPlain(h) eq thread then h
         else resolve(thread, h)
     end get
 
     @static private def resolve(thread: Thread, h: Int): Slot =
-        @tailrec def claim(i: Int, probes: Int): Int =
-            if probes == Slots then Overflowed
-            else
-                val idx   = i & (Slots - 1)
-                val entry = slots.get(idx)
-                val free =
-                    (entry eq null) || {
-                        entry match
-                            case owner: Thread => !owner.isAlive
-                            case pending: Stop => !pending.thread.isAlive
-                    }
-                if !free then claim(i + 1, probes + 1)
-                else if slots.compareAndSet(idx, entry, thread) then
-                    depths(idx) = State.init
-                    idx
-                else claim(i, probes)
-                end if
-        end claim
+        // slow path, so the read is volatile again: confirm what is actually in the slot before acting
+        slots.get(h) match
+            case s: Stop if s.thread eq thread =>
+                // a stop pending on the home slot, handled where it is observed: drain so an armed
+                // slice defers at once and its poll parks it. Observation only: consumption stays
+                // with the partial eval's poll, so a nested plain eval cannot eat an enclosing
+                // slice's preemption, and an unarmed thread keeps the stop for its next slice
+                if depths(h).isArmed then depths(h) = depths(h).drained
+                h
+            case _ =>
+                @tailrec def claim(i: Int, probes: Int): Int =
+                    if probes == Slots then Overflowed
+                    else
+                        val idx   = i & (Slots - 1)
+                        val entry = slots.get(idx)
+                        val free =
+                            (entry eq null) || {
+                                entry match
+                                    case owner: Thread => !owner.isAlive
+                                    case pending: Stop => !pending.thread.isAlive
+                            }
+                        if !free then claim(i + 1, probes + 1)
+                        else if slots.compareAndSet(idx, entry, thread) then
+                            depths(idx) = State.init
+                            idx
+                        else claim(i, probes)
+                        end if
+                end claim
 
-        val cached = local.get()
-        if cached ne null then
-            val slot = cached.intValue()
-            if depths(slot).isArmed && slots.get(slot).isInstanceOf[Stop] then
-                depths(slot) = depths(slot).drained
-            slot
-        else
-            val slot = claim(h, 0)
-            local.set(Integer.valueOf(slot))
-            slot
-        end if
+                val cached = local.get()
+                if cached ne null then
+                    val slot = cached.intValue()
+                    if depths(slot).isArmed && slots.get(slot).isInstanceOf[Stop] then
+                        depths(slot) = depths(slot).drained
+                    slot
+                else
+                    val slot = claim(h, 0)
+                    local.set(Integer.valueOf(slot))
+                    slot
+                end if
+        end match
     end resolve
 
     // written out rather than delegating to an extension on `State`: this runs at every settled map step, and
@@ -175,6 +190,13 @@ object Safepoint:
                 end if
         thread.isAlive() && loop(home(thread), 0)
     end stop
+
+    /** Whether a stop is pending on the slot, without taking it: the poll's read. The sentinel
+      * stays in the slot, so every decision point that asks sees the same answer until the slice
+      * boundary consumes it.
+      */
+    @static private[kyo] def stopped(slot: Slot): Boolean =
+        slots.get(slot).isInstanceOf[Stop]
 
     @static private[kyo] def consumeStopped(slot: Slot): Boolean =
         slots.get(slot) match

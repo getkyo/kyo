@@ -112,7 +112,14 @@ object Eval:
     private[kyo] def partial[A](v: A < Any, stop: () => Boolean = neverStop): A < Any =
         val slot = Safepoint.get()
         if Safepoint.consumeStopped(slot) then v
-        else apply(v, armed = true, () => Safepoint.consumeStopped(slot) || stop()).asInstanceOf[A < Any]
+        else
+            // the poll only reads: the sentinel stays in the slot, so the answers-loop bail and the
+            // park check both see it, however many times they ask. It is consumed once, at the slice
+            // boundary in the finally: park, completion, and failure all satisfy the stop there, so
+            // no stale sentinel survives to short-circuit the next slice
+            try apply(v, armed = true, () => Safepoint.stopped(slot) || stop()).asInstanceOf[A < Any]
+            finally discard(Safepoint.consumeStopped(slot))
+        end if
     end partial
 
     // shared so a full evaluation and a partial one cannot drift apart. `armed` gates the poll rather than
