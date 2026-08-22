@@ -141,6 +141,33 @@ TransformBase, f statically bound, Safepoint.enter-gated local execution) is the
 - Delete Arrow2.scala (design sketch, committed deliberately, must not land).
 - Isolate/fork-transfer design doc (Park as the transfer vehicle, binding walk primitive): discussed and
   shaped with the user, waiting until the perf campaign clears.
+- CanLift inlining question, user's TODO removed from source 2026-08-22, mirrored here verbatim so
+  the ask survives the marker: "do these need to be inlined? I worry about compilation time. Btw
+  let's port/fix the compilation time benchs and run them" (kyo-compile-bench exists in the build;
+  porting/fixing it against kernel2 and measuring the CanLift givens inline-vs-not is the item).
+- 2026-08-22 audit payload DONE (f4bc64cfe8, tests only): all T1-T11 plus the five strengthenings
+  plus the failure-and-bracket matrix. Eight deliberate reds, each a reproduced defect: F1
+  release-throw-in-unwind loses failure and recovery, F1b recovery-throw suppression, F2
+  acquire-window abandonment leak, F4 clause-throw scope divergence (ruling request at
+  reviews/KERNEL2-CLAUSE-THROW-RULING.md, awaiting one line: A or B), F6 drain throw skips
+  Safepoint.restore, F6b nested form disarms the enclosing slice, F7 finalizeResources aborts
+  remaining releases on a throw (new, beyond the audit), F8 trace carrier dedup races under
+  concurrent attach (new). Green highlights: the slice-boundary stop design held under the revived
+  cross-thread contract test and a 50-run answers-loop race; T3's Out-cell arrangement did not
+  trip, a nastier arrangement owed. Inexpressible since the stop-function removal, recorded: the
+  T2 every-position abandonment walk and the T3 throwing-stop companion. Fixes are the next
+  campaign, severity order F1/F2 first, F4 blocked on the ruling.
+- JS-specific Safepoint, parked by the user's call 2026-08-22 ("I think JS would be better served
+  via a different Safepoint impl?" / "add a parked item for js-specific Safepoint"): the stop
+  function was removed from Eval.partial; Safepoint is now the single preemption authority, polled
+  as Safepoint.stopped(slot). On JVM/Native the scheduler delivers stops through the thread
+  mechanism (Safepoint.stop(thread), pinned cross-thread). JS has no second thread, so its
+  preemption must be a self-computed deadline: a JS-only Safepoint implementation with the same
+  surface, plain vars instead of the atomic shims a single-threaded runtime cannot need, and
+  stopped(slot) reading a deadline the scheduler arms before the slice (armDeadline-style,
+  private[kyo]). Carries a build question: JVM and Native share the threaded implementation, so
+  Safepoint moves to a jvm-native shared source dir if the build has the precedent, else two
+  copies kept textually parallel. Blocked on nothing; parked until the IOTask integration needs it.
 - Null-to-Maybe audit, user's words 2026-08-22: "check where we use null in the kernel, we should
   migrate to Maybe if there's no significant cost, let's do that as a follow up after this
   optimization". Scoped by grep: the Out cell lanes (cont/state/input, Handler.scala), Stack's
