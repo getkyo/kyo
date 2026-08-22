@@ -1,6 +1,7 @@
 package kyo.kernel.internal
 
 import java.util.concurrent.atomic.AtomicReferenceArray
+import kyo.Frame
 import kyo.StaticFlag
 import scala.annotation.static
 import scala.annotation.tailrec
@@ -129,13 +130,19 @@ object Safepoint:
 
     // written out rather than delegating to an extension on `State`: this runs at every settled map step, and
     // its bytecode size decides whether a caller can inline it. `DepthGuard` is a single bit, so testing it
-    // against zero is the same test in fewer instructions than comparing it back to the mask
-    @static def enter(slot: Slot): Boolean =
+    // against zero is the same test in fewer instructions than comparing it back to the mask.
+    // The debugger's gate sits behind the budget test, and a refusal leaves the slot untouched: draining
+    // it the way an exhausted budget does would de-fuse every application after the routed one, where the
+    // hook's contract is to route exactly the application it refused. The no-op hook's constant true folds
+    // the branch away
+    @static def enter(slot: Slot, frame: Frame): Boolean =
         val s  = depths(slot)
         val s2 = s - 1
         if (s2 & DepthGuard) != 0 then
-            depths(slot) = s2
-            true
+            if Debugger.get.enter(frame) then
+                depths(slot) = s2
+                true
+            else false
         else enterPark(slot, s)
         end if
     end enter

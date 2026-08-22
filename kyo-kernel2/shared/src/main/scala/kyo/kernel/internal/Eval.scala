@@ -443,6 +443,9 @@ object Eval:
         // resolved before the nested defs below, which poll it; saved and armed further down, in the
         // order the budget install requires
         val slot = Safepoint.get()
+        // the session's debugger, read once per eval: the arms call through it, and the no-op's
+        // identity bodies devirtualize and inline to nothing outside a session
+        val debugger = Debugger.get
 
         /** The slice, as a value that resumes it.
           *
@@ -493,8 +496,10 @@ object Eval:
                     // whose scope has not been installed yet is owed by nobody, so a slice that ended here
                     // would be holding one that no drain can find; `parkable` walks to the payload's first
                     // receiver to see the step coming. The payload is read once and the park carries what
-                    // was read, so a by-name payload does not run a second time on the way back
-                    val v = kyo.value
+                    // was read, so a by-name payload does not run a second time on the way back.
+                    // The debugger sees the step about to run and may replace the payload; for a routed
+                    // map the contA is the map arrow carrying its call-site frame
+                    val v = debugger.onDefer(stack, kyo.contA.frame, kyo.value)
                     if armed && Safepoint.stopped(slot) && parkable(v, kyo.contA, kyo.contB) then
                         park(Effect.defer[a, b, A, S](v, kyo.contA, kyo.contB))
                     else
@@ -503,6 +508,7 @@ object Eval:
                         loop(v)
                     end if
                 case kyo: Suspend[IX, OX, EX, CX, AX, SX] @unchecked =>
+                    debugger.onSuspend(stack, kyo.frame, kyo.input)
                     stack.push(kyo.cont)
                     val pos = stack.find(kyo.tag)
                     if pos < 0 then unhandled(kyo, stack)
@@ -511,10 +517,11 @@ object Eval:
                             case h: HandlerCont[IX, OX, EX, AX, BX, SX] @unchecked =>
                                 // same gate as the loop families below: fast only when the handler is
                                 // on top, or under exactly one plain entry, which is then the same
-                                // continuation dump would have handed back bare
-                                if pos == 0 then
+                                // continuation dump would have handed back bare, and no session wants
+                                // the general, eval-visible paths
+                                if pos == 0 && debugger.fastPathsAllowed then
                                     loop(dispatchContFast(stack, h, kyo, Arrow.id[Any].asInstanceOf[Arrow[Any, Any, Any]], armed, slot))
-                                else if pos == 1 && stack.entry(0).isInstanceOf[Arrow.Step[
+                                else if pos == 1 && debugger.fastPathsAllowed && stack.entry(0).isInstanceOf[Arrow.Step[
                                         ?,
                                         ?,
                                         ?
@@ -542,9 +549,9 @@ object Eval:
                                     loop(next)
                             case h: HandlerLoop[IX, OX, EX, AX, BX, SX] @unchecked =>
                                 // same gate as the stateful case below
-                                if pos == 0 then
+                                if pos == 0 && debugger.fastPathsAllowed then
                                     loop(dispatchLoopFast(stack, h, kyo, Arrow.id[Any].asInstanceOf[Arrow[Any, Any, Any]], armed, slot))
-                                else if pos == 1 && stack.entry(0).isInstanceOf[Arrow.Step[
+                                else if pos == 1 && debugger.fastPathsAllowed && stack.entry(0).isInstanceOf[Arrow.Step[
                                         ?,
                                         ?,
                                         ?
@@ -559,7 +566,7 @@ object Eval:
                                 // plain entries above the handler is exactly the entry just pushed for
                                 // this suspension, or nothing when the suspension was bare. A region
                                 // entry stays where the scans need it, so it takes the general path
-                                if pos == 0 then
+                                if pos == 0 && debugger.fastPathsAllowed then
                                     loop(dispatchLoopStateFast(
                                         stack,
                                         h,
@@ -568,7 +575,7 @@ object Eval:
                                         armed,
                                         slot
                                     ))
-                                else if pos == 1 && stack.entry(0).isInstanceOf[Arrow.Step[
+                                else if pos == 1 && debugger.fastPathsAllowed && stack.entry(0).isInstanceOf[Arrow.Step[
                                         ?,
                                         ?,
                                         ?
@@ -627,8 +634,17 @@ object Eval:
                         // value on this stack, so the read's own value type is asserted here
                         loop(kyo.resume(kyo.tag.fold(Maybe.empty)(stack.lookup).asInstanceOf[Maybe[v]]))
                 case _ =>
-                    val r = Nested.unnest[Any](curr)
+                    var r = Nested.unnest[Any](curr)
                     if !stack.isEmpty then
+                        // the debugger sees the value about to flow into the receiving entry and may
+                        // replace it; a swap re-enters the union exactly once through nest, which wraps
+                        // a computation payload and passes a raw value through, the contract the lift's
+                        // emission keeps. Identity returns leave both locals untouched
+                        var cu = curr
+                        val r2 = debugger.onDeliver(stack, stack.entry(0).frame, r)
+                        if r2.asInstanceOf[AnyRef] ne r.asInstanceOf[AnyRef] then
+                            r = r2
+                            cu = Nested.nest[Any, Any](r2).asInstanceOf[Any < Nothing]
                         val s = stack.state[StateX](0)
                         stack.pop() match
                             case h: HandlerLoopState[IX, OX, EX, AX, BX, S, StateX] @unchecked =>
@@ -640,7 +656,7 @@ object Eval:
                             case h: Handler[EX, AX, BX, S] @unchecked =>
                                 val tail = stack.dump[BX, Any, EX & S]()
                                 val next =
-                                    try h(curr.asInstanceOf[AX < (EX & S)], tail)
+                                    try h(cu.asInstanceOf[AX < (EX & S)], tail)
                                     catch
                                         case ex: Throwable => attachThrow(ex, h, tail, stack)
                                 loop(next)
@@ -649,11 +665,11 @@ object Eval:
                             case _: Binding[?, ?, ?, ?] =>
                                 // an extent ending: the entry is identity, so the value carries on to
                                 // whatever stands below it, and there is nothing to fold a continuation for
-                                loop(curr)
+                                loop(cu)
                             case head =>
                                 val tail = stack.dump[Any, Any, EX & S]()
                                 val next =
-                                    try head.asInstanceOf[Arrow[Any, ?, EX & S]](curr, tail)
+                                    try head.asInstanceOf[Arrow[Any, ?, EX & S]](cu, tail)
                                     catch
                                         case ex: Throwable => attachThrow(ex, head, tail, stack)
                                 loop(next)

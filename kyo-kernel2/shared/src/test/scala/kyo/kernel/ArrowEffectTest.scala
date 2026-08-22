@@ -2025,8 +2025,8 @@ class ArrowEffectTest extends AnyFreeSpec:
                 ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, _) => -1, a => a)
             val slot = internal.Safepoint.get()
             // put the slot in a state distinct from a fresh one, so a skipped restore is visible
-            kyo.discard(internal.Safepoint.enter(slot))
-            kyo.discard(internal.Safepoint.enter(slot))
+            kyo.discard(internal.Safepoint.enter(slot, kyo.Frame.internal))
+            kyo.discard(internal.Safepoint.enter(slot, kyo.Frame.internal))
             try
                 val before = internal.Safepoint.save(slot)
                 internal.Safepoint.restore(slot, before)

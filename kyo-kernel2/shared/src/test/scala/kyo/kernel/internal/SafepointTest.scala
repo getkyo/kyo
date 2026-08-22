@@ -33,13 +33,13 @@ class SafepointTest extends AnyFreeSpec:
     "the budget flows through enter, exit, save, and restore" in {
         val slot  = Safepoint.get()
         val saved = Safepoint.save(slot)
-        assert(Safepoint.enter(slot))
+        assert(Safepoint.enter(slot, kyo.Frame.internal))
         Safepoint.exit(slot)
         var entered = 0
-        while Safepoint.enter(slot) do entered += 1
+        while Safepoint.enter(slot, kyo.Frame.internal) do entered += 1
         assert(entered == Period)
         Safepoint.reset(slot)
-        assert(Safepoint.enter(slot))
+        assert(Safepoint.enter(slot, kyo.Frame.internal))
         Safepoint.exit(slot)
         Safepoint.restore(slot, saved)
     }
