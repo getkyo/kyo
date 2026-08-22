@@ -14,9 +14,10 @@ import scala.annotation.nowarn
   * modifications only affect the specified scope and automatically revert when the computation exits that scope. This scoping behavior
   * makes `Local` ideal for contextual information that varies within different parts of your application.
   *
-  * `Local` comes in two variants: regular (inheritable) and non-inheritable. Regular locals pass their values across asynchronous
-  * boundaries, similar to inheritable thread locals, while non-inheritable locals do not, starting with the default value in new async
-  * contexts.
+  * Each local carries its own strategy for crossing fork boundaries: what a forked computation receives (everything, nothing, or a
+  * transformation of the current value) and what the parent holds once a fork ends. The default strategy inherits the value into forks and
+  * keeps the parent's own value on join, matching inheritable thread locals; `init(default)(fork = _ => Absent)` is a local that never
+  * crosses, matching non-inheritable ones.
   *
   * This effect useful for managing request context information, tracing and logging context, temporary configuration overrides, and user or
   * tenant context. Choose `Local` when you have context that always has a sensible default value and may need to be modified temporarily.
@@ -26,7 +27,7 @@ import scala.annotation.nowarn
   *   The type of the local value
   *
   * @see
-  *   [[kyo.Local.init]], [[kyo.Local.initNoninheritable]] for creating Local instances
+  *   [[kyo.Local.init]] for creating Local instances
   * @see
   *   [[kyo.Local#get]], [[kyo.Local#use]] for retrieving values
   * @see
@@ -39,12 +40,19 @@ abstract class Local[A] extends Serializable:
     /** The default value for this Local. */
     def default: A
 
+    /** What a computation forked from a scope holding this local receives; Absent for a value that must not cross. */
+    def fork(value: A): Maybe[A]
+
+    /** What this local holds once a fork ends, given what the parent held and what the fork ended with. */
+    def join(held: A, forked: A): A
+
     /** Retrieves the current value of this Local.
       *
       * @return
       *   An effect that produces the current value
       */
-    def get(using Frame): A < Any
+    def get(using Frame): A < Any =
+        ContextEffect.suspendWith(Tag[State], Map.empty)(_.getOrElse(this, default).asInstanceOf[A])
 
     /** Applies a function to the current value of this Local.
       *
@@ -53,7 +61,8 @@ abstract class Local[A] extends Serializable:
       * @return
       *   An effect that produces the result of applying the function
       */
-    def use[B, S](f: A => B < S)(using Frame): B < S
+    def use[B, S](f: A => B < S)(using Frame): B < S =
+        ContextEffect.suspendWith(Tag[State], Map.empty)(map => f(map.getOrElse(this, default).asInstanceOf[A]))
 
     /** Runs an effect with a temporarily modified local value.
       *
@@ -64,7 +73,14 @@ abstract class Local[A] extends Serializable:
       * @return
       *   The result of running the effect with the modified value
       */
-    def let[B, S](value: A)(v: B < S)(using Frame): B < S
+    def let[B, S](value: A)(v: B < S)(using Frame): B < S =
+        ContextEffect.handle(
+            Tag[State],
+            Map.empty[Local[?], AnyRef].updated(this, value.asInstanceOf[AnyRef]),
+            _.updated(this, value.asInstanceOf[AnyRef]),
+            fork = forkMap,
+            join = joinMap
+        )(v)
 
     /** Runs an effect with an updated local value.
       *
@@ -75,68 +91,85 @@ abstract class Local[A] extends Serializable:
       * @return
       *   The result of running the effect with the updated value
       */
-    def update[B, S](f: A => A)(v: B < S)(using Frame): B < S
+    def update[B, S](f: A => A)(v: B < S)(using Frame): B < S =
+        ContextEffect.handle(
+            Tag[State],
+            Map(this -> f(default).asInstanceOf[AnyRef]),
+            map => map.updated(this, f(map.getOrElse(this, default).asInstanceOf[A]).asInstanceOf[AnyRef]),
+            fork = forkMap,
+            join = joinMap
+        )(v)
 end Local
 
 /** Companion object for Local, providing utility methods for creating Local instances. */
 object Local:
 
-    /** Creates a new regular Local instance with the given default value.
+    /** Creates a new Local instance with the given default value.
       *
-      * Regular locals are similar to inheritable thread locals, where child fibers inherit the value from their parent fiber.
+      * The value is inherited by forked computations, and the parent keeps its own value when a fork ends,
+      * matching inheritable thread locals.
       *
       * @param defaultValue
       *   The default value for the Local
       * @return
-      *   A new regular Local instance
+      *   A new Local instance
       */
     @nowarn("msg=anonymous")
     inline def init[A](inline defaultValue: A): Local[A] =
-        new Base[A, State]:
-            def tag             = Tag[State]
-            lazy val default: A = defaultValue
+        new Local[A]:
+            lazy val default: A            = defaultValue
+            def fork(value: A): Maybe[A]   = Maybe(value)
+            def join(held: A, forked: A): A = held
 
-    /** Creates a new non-inheritable Local instance with the given default value.
+    /** Creates a new Local instance with the given default value and fork-boundary strategy.
       *
-      * It's similar to Java's non-inheritable thread locals, where child fibers always start with the default value and do not inherit from
-      * their parent fiber.
+      * `forkValue` decides what a forked computation receives: the value itself to inherit it, a
+      * transformation of it, or `Absent` for a local that must not cross, which is what non-inheritable
+      * thread locals say. `joinValue` decides what the parent holds once a fork ends, defaulting to keeping
+      * its own value.
       *
       * @param defaultValue
       *   The default value for the Local
+      * @param forkValue
+      *   What a forked computation receives, given the current value
+      * @param joinValue
+      *   What the parent holds after a fork ends, given its value and the fork's final value
       * @return
-      *   A new isolated Local instance
+      *   A new Local instance carrying the strategy
       */
     @nowarn("msg=anonymous")
-    inline def initNoninheritable[A](inline defaultValue: A): Local[A] =
-        new Base[A, NoninheritableState]:
-            def tag             = Tag[NoninheritableState]
-            lazy val default: A = defaultValue
+    inline def init[A](inline defaultValue: A)(
+        inline forkValue: A => Maybe[A],
+        inline joinValue: (A, A) => A = (held: A, _: A) => held
+    ): Local[A] =
+        new Local[A]:
+            lazy val default: A             = defaultValue
+            def fork(value: A): Maybe[A]    = forkValue(value)
+            def join(held: A, forked: A): A = joinValue(held, forked)
 
     object internal:
 
-        sealed private[kyo] trait State               extends ContextEffect[Map[Local[?], AnyRef]]
-        sealed private[kyo] trait NoninheritableState extends ContextEffect[Map[Local[?], AnyRef]] with ContextEffect.Noninheritable
+        sealed private[kyo] trait State extends ContextEffect[Map[Local[?], AnyRef]]
 
-        sealed abstract class Base[A, E <: ContextEffect[Map[Local[?], AnyRef]]] extends Local[A]:
+        // every binding of the shared tag installs these, so a fork through any local's scope asks each
+        // local for its own crossing, and a join asks each held local against what the fork ended with
+        private[kyo] val forkMap: Map[Local[?], AnyRef] => Maybe[Map[Local[?], AnyRef]] =
+            map =>
+                Maybe {
+                    map.foldLeft(Map.empty[Local[?], AnyRef]) { case (acc, (local, value)) =>
+                        local.asInstanceOf[Local[AnyRef]].fork(value) match
+                            case Maybe.Present(v) => acc.updated(local, v)
+                            case Maybe.Absent     => acc
+                    }
+                }
 
-            def tag: Tag[E]
-
-            def get(using Frame) =
-                ContextEffect.suspendWith(tag, Map.empty)(_.getOrElse(this, default).asInstanceOf[A])
-
-            def use[B, S](f: A => B < S)(using Frame) =
-                ContextEffect.suspendWith(tag, Map.empty)(map => f(map.getOrElse(this, default).asInstanceOf[A]))
-
-            def let[B, S](value: A)(v: B < S)(using Frame) =
-                ContextEffect.handle(tag, Map.empty[Local[?], AnyRef].updated(this, value), _.updated(this, value.asInstanceOf[AnyRef]))(v)
-
-            def update[B, S](f: A => A)(v: B < S)(using Frame) =
-                ContextEffect.handle(
-                    tag,
-                    Map(this -> f(default)),
-                    map => map.updated(this, f(map.getOrElse(this, default).asInstanceOf[A]).asInstanceOf[AnyRef])
-                )(v)
-        end Base
+        private[kyo] val joinMap: (Map[Local[?], AnyRef], Map[Local[?], AnyRef]) => Map[Local[?], AnyRef] =
+            (held, forked) =>
+                held.map { case (local, value) =>
+                    forked.get(local) match
+                        case Some(fv) => local -> local.asInstanceOf[Local[AnyRef]].join(value, fv)
+                        case None     => local -> value
+                }
     end internal
 
 end Local
