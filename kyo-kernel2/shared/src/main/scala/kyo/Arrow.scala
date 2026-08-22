@@ -122,6 +122,23 @@ object Arrow:
       */
     abstract private[kyo] class TransformBase[-A, B, -S] extends Step[A, B, S]
 
+    /** The step a bracket's pending acquire settles into: applying it is what turns the resource into the
+      * scope that owes its release, so the eval must never end a slice between the two. The eval's park
+      * guard refuses to park a settled value about to flow into one of these, and the apply below runs
+      * without the budget gate: with a stop pending the budget stays drained, so a gated apply would defer
+      * against that refusal forever. The body allocates one node and runs no user code, which is what makes
+      * skipping the gate safe.
+      */
+    abstract private[kyo] class BindingStep[A, B, -S] extends TransformBase[A, B, S]:
+        // re-abstracted: the settled arm below calls it, and the inherited delegation through
+        // `this(v, id)` would recurse
+        override def apply(v: A): B < S
+        def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]): C < (S & S2) =
+            v match
+                case kyo: Kyo[A, S2] @unchecked => Effect.defer(kyo, this, next)
+                case _                          => next(apply(Nested.unnest(v)), Arrow.id)
+    end BindingStep
+
     /** A normalized continuation: an `AndThen` or an `Id`, and nothing else.
       *
       * Sealed to exactly those two, so a value of this type is a straight run of steps ending in identity, all

@@ -1,13 +1,14 @@
 package kyo.kernel
 
 import kyo.Arrow
+// unqualified so the inline expansions do not select these from Kyo.type or Arrow.type at a site
+// outside package kyo, where they are not accessible. See the note in Pending.scala
+import kyo.Arrow.BindingStep
 import kyo.Frame
 import kyo.Maybe
 import kyo.Maybe.*
 import kyo.Result
 import kyo.kernel.internal.*
-// unqualified so the inline expansions do not select these from Kyo.type at a site outside package kyo,
-// where they are not accessible. See the note in Pending.scala
 import kyo.kernel.internal.Kyo.Binding
 import kyo.kernel.internal.Kyo.Catching
 import kyo.kernel.internal.Kyo.Defer
@@ -99,22 +100,43 @@ object Effect:
         // the parameters are named apart from the members below rather than bound to locals first: a local
         // would cost a call through the lambda at every application instead of expanding the body here
         //
-        // the binding is built once the acquire settles, and the eval never stops in front of a binding, so
-        // no slice can end between the resource existing and the scope that owes it being installed
+        // the binding is built once the acquire settles, through a `BindingStep` rather than a map: the
+        // step is what the eval's park guard recognizes, so no slice can end between the resource existing
+        // and the scope that owes it being installed, and its apply skips the budget gate so a pending
+        // stop cannot defer the bind against that refusal. A settled acquire binds right here: the
+        // resource already exists, and the Binding node is the value
         //
         // not fused into the deferral the way the previous shape was: as a pending entry a resource's binding
         // takes the resource and answers with the use's result, while an installed one is the identity its
         // extent ends at, and one object cannot be typed for both without erasing to `Any`. Fusing would also
         // make `Binding` a trait, which puts mixin forwarders at every binding and every read
-        acquire.map { resource =>
-            new Binding[A, Nothing, B, S]:
-                def frame                  = _frame
-                def tag                    = Absent
-                val bound                  = Maybe((_: Maybe[A]) => resource)
-                override val release       = Maybe(_release)
-                def resume(held: Maybe[A]) = _use(resource)
-            end new
-        }
+        //
+        // the two Binding constructions are textual copies, kept parallel on purpose
+        val acq = acquire // bound once: `acquire` is inline and two reads would build it twice
+        acq match
+            case kyo: Kyo[A, S] @unchecked =>
+                Effect.defer(
+                    kyo,
+                    new BindingStep[A, B, S]:
+                        def frame = _frame
+                        override def apply(resource: A): B < S =
+                            new Binding[A, Nothing, B, S]:
+                                def frame                  = _frame
+                                def tag                    = Absent
+                                val bound                  = Maybe((_: Maybe[A]) => resource)
+                                override val release       = Maybe(_release)
+                                def resume(held: Maybe[A]) = _use(resource)
+                )
+            case _ =>
+                val resource = Nested.unnest[A](acq)
+                new Binding[A, Nothing, B, S]:
+                    def frame                  = _frame
+                    def tag                    = Absent
+                    val bound                  = Maybe((_: Maybe[A]) => resource)
+                    override val release       = Maybe(_release)
+                    def resume(held: Maybe[A]) = _use(resource)
+                end new
+        end match
     end bracket
 
 end Effect

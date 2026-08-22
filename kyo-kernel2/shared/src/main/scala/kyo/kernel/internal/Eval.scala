@@ -141,6 +141,15 @@ object Eval:
         // reaching here has no handler anywhere and never will
         attachThrow(bug.exception(s"unhandled suspension: ${kyo.tag}"), kyo, Arrow.id[Any], stack)
 
+    /** The first link a delivered value reaches: a chain delivers through its head, a folded run through its
+      * first step, anything else is itself the receiver.
+      */
+    @tailrec private def receiver(a: Arrow[?, ?, ?]): Arrow[?, ?, ?] =
+        a match
+            case c: Chain[?, ?, ?, ?]         => receiver(c.a)
+            case c: Arrow.AndThen[?, ?, ?, ?] => receiver(c.t)
+            case _                            => a
+
     /** The looping region's dispatch, returning what the eval runs next. Every branch of the arm it came
       * from ended in the loop, so the extraction is the arm with each of those calls replaced by its
       * argument; the dumps, pops and truncations stay inside.
@@ -420,6 +429,23 @@ object Eval:
                 new Park[Any, Any](curr.asInstanceOf[Any < Any], es, sts, fins)
         end park
 
+        /** Whether a slice may end in front of this deferral. Consulted only with a stop already pending.
+          * It may not when the payload is a binding, or a settled value whose first receiver is the step
+          * that binds it: either way a resource would exist that no drain can find, so the eval carries it
+          * the one step further into the scope that owes it, which parks itself.
+          */
+        def parkable(v: Any, contA: Arrow[?, ?, ?], contB: Arrow[?, ?, ?]): Boolean =
+            !v.isInstanceOf[Binding[?, ?, ?, ?]] && {
+                v.isInstanceOf[Kyo[?, ?]] || {
+                    val r =
+                        if !(contA eq Arrow.Id) then receiver(contA)
+                        else if !(contB eq Arrow.Id) then receiver(contB)
+                        else if !stack.isEmpty then receiver(stack.entry(0))
+                        else Arrow.Id
+                    !r.isInstanceOf[Arrow.BindingStep[?, ?, ?]]
+                }
+            }
+
         @tailrec def loop(curr: Any < Nothing): Any =
             curr match
                 case kyo: Defer[a, b, A, S] @unchecked =>
@@ -429,12 +455,13 @@ object Eval:
                     // without deferring, since a fused chain is bounded by the depth guard and hitting it is
                     // itself a deferral
                     //
-                    // never in front of a binding: a resource whose scope has not been installed yet is owed
-                    // by nobody, so a slice that ended here would be holding one that no drain can find. The
-                    // payload is read once and the park carries what was read, so a by-name payload does not
-                    // run a second time on the way back
+                    // never in front of a binding, nor in front of the step that builds one: a resource
+                    // whose scope has not been installed yet is owed by nobody, so a slice that ended here
+                    // would be holding one that no drain can find; `parkable` walks to the payload's first
+                    // receiver to see the step coming. The payload is read once and the park carries what
+                    // was read, so a by-name payload does not run a second time on the way back
                     val v = kyo.value
-                    if armed && !v.isInstanceOf[Binding[?, ?, ?, ?]] && Safepoint.stopped(slot) then
+                    if armed && Safepoint.stopped(slot) && parkable(v, kyo.contA, kyo.contB) then
                         park(Effect.defer[a, b, A, S](v, kyo.contA, kyo.contB))
                     else
                         stack.push(kyo.contB)
@@ -543,7 +570,13 @@ object Eval:
                             stack.pushFinalizer(fin)
                             stack.push(fin)
                         }
-                        loop(kyo.resume(held))
+                        // a stop that was refused in front of the binding is honored here: the scope is
+                        // installed and its release is where a drain can find it, so the slice may end.
+                        // Only a binding that owes a release refuses the earlier park, so only that one
+                        // owes this one; the resume stays unread and runs on the slice that comes back
+                        if armed && kyo.release.isDefined && Safepoint.stopped(slot) then
+                            park(Effect.deferInline(kyo.resume(held)).asInstanceOf[Any < Nothing])
+                        else loop(kyo.resume(held))
                     else
                         // what a lookup returns is typed by the slots it walked, which hold every binding's
                         // value on this stack, so the read's own value type is asserted here
