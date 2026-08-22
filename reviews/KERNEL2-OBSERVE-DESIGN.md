@@ -215,3 +215,47 @@ Emacs); JDWP is the wrong layer (bytecode stepping) and CDP is JS-runtime-specif
 2. ~~Nesting~~: moot; the hook is global and single.
 3. ~~Arguments vs produced values~~: `onSuspend` carries the operation input, the other two carry
    the flowing value; both directions covered by the site split.
+
+## Strict pure execution: the correction and the visibility levers
+
+An earlier revision claimed a small safepoint period de-fuses strict execution. Wrong twice: the
+budget is a depth meter (enter/exit balanced, shallow strict chains never exhaust it at any
+period), and strict `.map` applications run inline at the expansion site without ever reaching
+the eval, so the eval-arm hooks see none of them. The levers that actually exist:
+
+- **The drained state.** `Safepoint.enter` fails when the slot's budget is drained, and the
+  map expansions consult enter on every settled application, so a drained slot makes every
+  strict step defer into a node the eval sees with frame, value, and stack. The debugger drives
+  this per thread from outside; its eval-arm hook re-drains after each reset (the depth guard's
+  own discipline). No change to `enter` itself: a check inside enter was considered and adds
+  nothing the drained state does not already provide, while costing a branch in the hottest
+  method during attached-idle debugging.
+- **The expansion-site hook** (the upgrade path, if ever needed): a
+  `if Debugger.enabled then Debugger.step(_frame, v)` in the settled-run branch of the map
+  expansions. Frame and value are in scope there, so breakpoints in strict code become cheap
+  without de-fusing. The cost is per-call-site bytecode (~10 bytes stamped into every map site;
+  dead branches still count against callers' inlining budgets even though C2 folds them), which
+  is the axis the kernel treats as a design property; if measurement rejects it, the fallback is
+  a compile-time flag (zero production bytes, debugging requires building the app with the flag,
+  the classic -g model, and the flag lives in the app's build since that is where map expands).
+
+### The recommended operating model
+
+- **Not attached**: nothing near any hot path; the eval-arm hooks fold away under the StaticFlag;
+  enter, map, the dispatch gates, and Stack are untouched.
+- **Attached, idle**: strict execution at full fused speed; nothing observes, nothing pays.
+- **Breakpoints armed or stepping**: the debugged threads' slots are held drained; every step
+  surfaces at `onDefer`; the breakpoint check is one identity-hash frame lookup per step.
+  Execution is de-fused and slow exactly while a human is debugging, which is how managed
+  debuggers behave generally (the JVM deopts methods containing breakpoints for the same
+  reason).
+- Pause: `Safepoint.stop` parks sliced execution (non-blocking, kyo-native); a bare synchronous
+  Eval blocks in the hook. Stepping semantics (in/over/out) come from `stack.size` plus the hook
+  site, at combinator granularity; inside a single lambda body the JVM debugger takes over. A
+  strict-mode pause reports the breakpoint frame plus the JVM thread stack until execution
+  re-enters the eval.
+
+Net kernel footprint: the StaticFlag, `Debugger.current`, and the three flag-gated eval-arm
+hooks. Everything else is the kyo-debug module's (session state, DAP protocol over a
+Content-Length-framed JSON TCP socket the editor attaches to, JDWP-style, started from the
+property at class init).
