@@ -1771,4 +1771,112 @@ class ArrowEffectTest extends AnyFreeSpec:
         }
     }
 
+    "the cont answer fast path" - {
+
+        "a clause may apply its continuation twice in one answer" in {
+            val r = Eval(ArrowEffect.handleCont(Tag[Ask], ask.map(a => a * 10))(
+                [C] => (_, cont) => cont(1).map(x => cont(2).map(y => x * 1000 + y)),
+                a => a
+            ))
+            assert(r == 10020)
+        }
+
+        "a mid-loop continuation applied twice replays the tail independently" in {
+            def loop(i: Int): Int < Ask =
+                if i > 3 then i else ask.map(a => loop(i + a))
+            var count = 0
+            val r = Eval(ArrowEffect.handleCont(Tag[Ask], loop(0))(
+                [C] =>
+                    (_, cont) =>
+                        count += 1
+                        if count == 2 then cont(1).map(x => cont(1).map(y => x + y))
+                        else cont(1)
+                ,
+                a => a
+            ))
+            // the second answer's clause runs the tail twice; each replay re-enters the clause for
+            // the remaining suspensions, so the region completes at 4 + 4 after six clause runs
+            assert(r == 8)
+            assert(count == 6)
+        }
+
+        "a hoarded fast-path continuation replays after the region finished" in {
+            var kref: Arrow[Int, Int, Any] = null
+            def loop(i: Int): Int < Ask =
+                if i > 3 then i else ask.map(a => loop(i + a))
+            val r0 = Eval(ArrowEffect.handleCont(Tag[Ask], loop(0))(
+                [C] =>
+                    (_, cont) =>
+                        kref = cont.asInstanceOf[Arrow[Int, Int, Any]]
+                        cont(1)
+                ,
+                a => a
+            ))
+            assert(r0 == 4)
+            // the last capture is the settled tail: a complete value, replayable twice and on
+            // another thread, never a view of the answers loop it was handed out from
+            assert(Eval(kref(1)) == 4)
+            assert(Eval(kref(1)) == 4)
+            @volatile var tr = 0
+            val t            = new Thread(() => tr = Eval(kref(1)))
+            t.start()
+            t.join()
+            assert(tr == 4)
+        }
+
+        "a clause can run a full eval of its own mid-loop" in {
+            def innerRun(): Int =
+                Eval(ArrowEffect.handleCont(Tag[Ask], ask.map(a => ask.map(b => a + b)))(
+                    [C] => (_, cont) => cont(7),
+                    a => a
+                ))
+            def loop(i: Int): Int < Ask =
+                if i > 3 then i else ask.map(a => loop(i + a))
+            val r = Eval(ArrowEffect.handleCont(Tag[Ask], loop(0))(
+                [C] => (_, cont) => cont(innerRun() / 14),
+                a => a
+            ))
+            assert(r == 4)
+        }
+
+        "a throw while applying the continuation recovers after the answers made" in {
+            val seen = ListBuffer[Int]()
+            case class Boom() extends RuntimeException
+            def loop(i: Int): Int < Ask =
+                if i > 5 then i else ask.map(a => if i == 2 then throw Boom() else loop(i + a))
+            val region: Int < Any =
+                ArrowEffect.handleCont(Tag[Ask], loop(0))(
+                    [C] =>
+                        (_, cont) =>
+                            seen += seen.size
+                            cont(1)
+                    ,
+                    a => a
+                )
+            assert(Eval(Effect.catching(region)(_ => -1)) == -1)
+            // three answers ran before the third continuation application threw
+            assert(seen.toList == List(0, 1, 2))
+        }
+
+        "a park taken mid answer loop resumes in a fresh full eval" in {
+            def countdown(i: Int): Int < Ask =
+                if i == 0 then 0 else ask.map(a => countdown(i - a))
+            var n = 0
+            val region: Int < Any =
+                ArrowEffect.handleCont(Tag[Ask], countdown(100))(
+                    [C] =>
+                        (_, cont) =>
+                            n += 1
+                            if n == 10 then kyo.discard(internal.Safepoint.stop(Thread.currentThread()))
+                            cont(1)
+                    ,
+                    a => a
+                )
+            val first = Eval.partial(region)
+            assert(first.evalNow == Maybe.Absent)
+            assert(Eval(first) == 0)
+            assert(n == 100)
+        }
+    }
+
 end ArrowEffectTest
