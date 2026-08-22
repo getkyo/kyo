@@ -210,12 +210,13 @@ object Handler:
     end answersLoop
 
     inline def answerStepState[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State, C](
-        inline handle: [X] => (State, I[X]) => Outcome2[State, O[X] < (E & S), B] < S,
+        inline handle: [X] => (State, I[X]) => Outcome2[State, O[X] < (E & S), B] | (Outcome2[State, O[X] < (E & S), B] < S),
         st: State,
         input: I[C],
         out: Out
     ): Any =
-        handle[C](st, input) match
+        // a raw outcome is the lifted union's first arm, so the two branches are one representation
+        handle[C](st, input).asInstanceOf[Outcome2[State, O[C] < (E & S), B] < S] match
             case kyo: Kyo[Outcome2[State, O[C] < (E & S), B], S] @unchecked =>
                 out.kind = 2
                 kyo
@@ -229,7 +230,7 @@ object Handler:
 
     inline def answersLoopState[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State, C](
         inline effectTag: Tag[E],
-        inline handle: [X] => (State, I[X]) => Outcome2[State, O[X] < (E & S), B] < S,
+        inline handle: [X] => (State, I[X]) => Outcome2[State, O[X] < (E & S), B] | (Outcome2[State, O[X] < (E & S), B] < S),
         state0: State,
         input0: I[C],
         k0: Arrow[Any, Any, Any],
@@ -252,7 +253,8 @@ object Handler:
                 running = false
             else
                 val o =
-                    try handle[C](st, in.asInstanceOf[I[C]])
+                    // a raw outcome is the lifted union's first arm: one representation, either branch
+                    try handle[C](st, in.asInstanceOf[I[C]]).asInstanceOf[Outcome2[State, O[C] < (E & S), B] < S]
                     catch
                         case ex: Throwable =>
                             out.kind = Out.ClauseThrew

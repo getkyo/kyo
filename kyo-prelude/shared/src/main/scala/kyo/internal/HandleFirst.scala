@@ -19,9 +19,9 @@ private[kyo] object HandleFirst:
     final private class Done(val a: Any)
     final private class Suspended(val input: Any, val cont: kyo.Arrow[Any, Any, Any])
 
-    def apply[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](tag: Tag[E], v: A < (E & S))(
-        handle: [C] => (I[C], O[C] => A < (E & S)) => B < S2,
-        done: A => B < S2
+    inline def apply[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](tag: Tag[E], v: A < (E & S))(
+        inline handle: [C] => (I[C], O[C] => A < (E & S)) => B < S2,
+        inline done: A => B < S2
     )(using Frame): B < (S & S2) =
         val first: Any < S =
             ArrowEffect.handleCont(tag, v.map(a => new Done(a): Any))(

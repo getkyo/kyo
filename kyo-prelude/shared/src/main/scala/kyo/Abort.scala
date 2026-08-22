@@ -217,10 +217,9 @@ object Abort:
             )(
                 [C] => (input, _) => input,
                 r => r
-            )(
-                ex =>
-                    if ct <:< ConcreteTag[Throwable] && ct.accepts(ex) then Result.Failure(ex.asInstanceOf[E])
-                    else Result.Panic(ex)
+            )(ex =>
+                if ct <:< ConcreteTag[Throwable] && ct.accepts(ex) then Result.Failure(ex.asInstanceOf[E])
+                else Result.Panic(ex)
             ).map {
                 case err: Error[Any] @unchecked if !(err.isPanic || err.failure.exists(ct.accepts)) =>
                     Abort.error(err.asInstanceOf[Error[ER]])

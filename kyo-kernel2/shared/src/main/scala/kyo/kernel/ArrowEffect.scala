@@ -25,7 +25,10 @@ import kyo.kernel.internal.Kyo.Handle
 import kyo.kernel.internal.Kyo.Suspend
 import scala.annotation.nowarn
 
-abstract class ArrowEffect[I[_], O[_]] extends Effect
+// variance as the previous kernel declared it: an effect that consumes narrower inputs or produces
+// wider outputs is substitutable, which is what lets Abort[-E], Emit[-V], and Poll[+V] put their own
+// variance on the parameters they pass through Const
+abstract class ArrowEffect[-I[_], +O[_]] extends Effect
 
 object ArrowEffect:
 
@@ -157,7 +160,12 @@ object ArrowEffect:
         state: State,
         v: A < (E & S)
     )(
-        inline handle: [C] => (State, I[C]) => Loop.Outcome2[State, O[C] < (E & S), B] < S,
+        // the union gives the typer a conversion-free branch: a pure outcome propagates the
+        // expected answer type into the continue call, so a raw answer lifts at the argument
+        // (CanLift-guarded, nest-once preserved), where the plain `< S` form types the argument
+        // before the conversion and a raw answer's type is minimized. Both branches are one
+        // representation, since a raw outcome is the lifted union's first arm
+        inline handle: [C] => (State, I[C]) => Loop.Outcome2[State, O[C] < (E & S), B] | (Loop.Outcome2[State, O[C] < (E & S), B] < S),
         inline done: (State, A) => B < S
     )(using inline _frame: Frame): B < S =
         def onDone(s: State, v: A) = done(s, v)
@@ -167,11 +175,13 @@ object ArrowEffect:
                     def value = v
                     val handler =
                         new HandlerLoopState[I, O, E, A, B, S, State]:
-                            def frame                          = _frame
-                            def tag                            = effectTag
-                            def initialState                   = state
-                            def run[C](st: State, input: I[C]) = handle[C](st, input)
-                            def apply(st: State, a: A)         = onDone(st, a)
+                            def frame        = _frame
+                            def tag          = effectTag
+                            def initialState = state
+                            // a raw outcome is the lifted union's first arm: one representation
+                            def run[C](st: State, input: I[C]) =
+                                handle[C](st, input).asInstanceOf[Loop.Outcome2[State, O[C] < (E & S), B] < S]
+                            def apply(st: State, a: A) = onDone(st, a)
                             // the answer bodies are the eval layer's templates, expanded here with the
                             // clause statically bound; see Handler.answerStepState and Handler.answersLoopState
                             override def answer[C](st: State, input: I[C], out: Out): Any =

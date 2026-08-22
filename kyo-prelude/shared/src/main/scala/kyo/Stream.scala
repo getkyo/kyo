@@ -694,59 +694,74 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
         t3: Tag[Emit[Chunk[(VV, V2)]]],
         f: Frame
     ): Stream[(VV, V2), S & S2] =
+        // the outcome type is pinned by the typed constructors below: the handle branches type
+        // first and leave the done type unconstrained, inference minimizes it to Nothing, and the
+        // done branches then cannot produce their Unit
+        type ZipOutcome = Loop.Outcome4[Unit < (Emit[Chunk[VV]] & S), Chunk[VV], Unit < (Emit[Chunk[V2]] & S2), Chunk[V2], Unit]
+        def continueBoth(
+            e1: Unit < (Emit[Chunk[VV]] & S),
+            l1: Chunk[VV],
+            e2: Unit < (Emit[Chunk[V2]] & S2),
+            l2: Chunk[V2]
+        ): ZipOutcome = Loop.continue(e1, l1, e2, l2)
+        def zipDone: ZipOutcome = Loop.done(())
         Stream:
-            Loop(emit: Unit < (Emit[Chunk[VV]] & S), Chunk.empty[VV], other.emit, Chunk.empty[V2]):
-                (emit1, leftovers1, emit2, leftovers2) =>
-                    HandleFirst(t1, emit1)(
-                        handle = [C] =>
-                            (vals1: Chunk[VV], cont1) =>
-                                val allVals1 = leftovers1 ++ vals1
-                                HandleFirst(t2, emit2)(
-                                    handle = [C] =>
-                                        (vals2: Chunk[V2], cont2) =>
-                                            val allVals2      = leftovers2 ++ vals2
-                                            val zippedVals    = allVals1.zip(allVals2)
-                                            val newLeftovers1 = allVals1.drop(zippedVals.length)
-                                            val newLeftovers2 = allVals2.drop(zippedVals.length)
-                                            if zippedVals.nonEmpty then
-                                                Emit.valueWith(zippedVals):
-                                                    Loop.continue(cont1(()), newLeftovers1, cont2(()), newLeftovers2)
-                                            else Loop.continue(cont1(()), newLeftovers1, cont2(()), newLeftovers2)
-                                            end if
-                                    ,
-                                    done = _ =>
-                                        if leftovers2.isEmpty then Loop.done(())
-                                        else
-                                            val zippedVals    = allVals1.zip(leftovers2)
-                                            val newLeftovers1 = allVals1.drop(zippedVals.length)
-                                            val newLeftovers2 = leftovers2.drop(zippedVals.length)
-                                            if zippedVals.nonEmpty then
-                                                Emit.valueWith(zippedVals):
-                                                    Loop.continue(cont1(()), newLeftovers1, emit2, newLeftovers2)
-                                            else Loop.continue(cont1(()), newLeftovers1, emit2, newLeftovers2)
-                                            end if
+            Loop[Unit < (Emit[Chunk[VV]] & S), Chunk[VV], Unit < (Emit[Chunk[V2]] & S2), Chunk[V2], Unit, Emit[Chunk[(VV, V2)]] & S & S2](
+                emit,
+                Chunk.empty[VV],
+                other.emit,
+                Chunk.empty[V2]
+            ): (emit1, leftovers1, emit2, leftovers2) =>
+                HandleFirst(t1, emit1)(
+                    handle = [C] =>
+                        (vals1: Chunk[VV], cont1) =>
+                            val allVals1 = leftovers1 ++ vals1
+                            HandleFirst(t2, emit2)(
+                                handle = [C] =>
+                                    (vals2: Chunk[V2], cont2) =>
+                                        val allVals2      = leftovers2 ++ vals2
+                                        val zippedVals    = allVals1.zip(allVals2)
+                                        val newLeftovers1 = allVals1.drop(zippedVals.length)
+                                        val newLeftovers2 = allVals2.drop(zippedVals.length)
+                                        if zippedVals.nonEmpty then
+                                            Emit.valueWith(zippedVals):
+                                                continueBoth(cont1(()), newLeftovers1, cont2(()), newLeftovers2)
+                                        else continueBoth(cont1(()), newLeftovers1, cont2(()), newLeftovers2)
+                                        end if
+                                ,
+                                done = _ =>
+                                    if leftovers2.isEmpty then zipDone
+                                    else
+                                        val zippedVals    = allVals1.zip(leftovers2)
+                                        val newLeftovers1 = allVals1.drop(zippedVals.length)
+                                        val newLeftovers2 = leftovers2.drop(zippedVals.length)
+                                        if zippedVals.nonEmpty then
+                                            Emit.valueWith(zippedVals):
+                                                continueBoth(cont1(()), newLeftovers1, emit2, newLeftovers2)
+                                        else continueBoth(cont1(()), newLeftovers1, emit2, newLeftovers2)
+                                        end if
+                        )
+                    ,
+                    done = _ =>
+                        if leftovers1.isEmpty then zipDone
+                        else
+                            HandleFirst(t2, emit2)(
+                                handle = [C] =>
+                                    (vals2: Chunk[V2], cont2) =>
+                                        val allVals2      = leftovers2 ++ vals2
+                                        val zippedVals    = leftovers1.zip(allVals2)
+                                        val newLeftovers1 = leftovers1.drop(zippedVals.length)
+                                        val newLeftovers2 = allVals2.drop(zippedVals.length)
+                                        if zippedVals.nonEmpty then
+                                            Emit.valueWith(zippedVals):
+                                                Loop.continue(emit1, newLeftovers1, cont2(()), newLeftovers2)
+                                        else Loop.continue(emit1, newLeftovers1, cont2(()), newLeftovers2)
+                                        end if
+                                ,
+                                done = _ =>
+                                    zipDone
                             )
-                        ,
-                        done = _ =>
-                            if leftovers1.isEmpty then Loop.done(())
-                            else
-                                HandleFirst(t2, emit2)(
-                                    handle = [C] =>
-                                        (vals2: Chunk[V2], cont2) =>
-                                            val allVals2      = leftovers2 ++ vals2
-                                            val zippedVals    = leftovers1.zip(allVals2)
-                                            val newLeftovers1 = leftovers1.drop(zippedVals.length)
-                                            val newLeftovers2 = allVals2.drop(zippedVals.length)
-                                            if zippedVals.nonEmpty then
-                                                Emit.valueWith(zippedVals):
-                                                    Loop.continue(emit1, newLeftovers1, cont2(()), newLeftovers2)
-                                            else Loop.continue(emit1, newLeftovers1, cont2(()), newLeftovers2)
-                                            end if
-                                    ,
-                                    done = _ =>
-                                        Loop.done(())
-                                )
-                    )
+                )
 
     end zip
 
@@ -958,7 +973,7 @@ object Stream:
         Stream[V, S]:
             Loop.foreach:
                 v.map {
-                    case Maybe.Present(seq) => Emit.valueWith(Chunk.from(seq))(Loop.continue(Kyo.unit))
+                    case Maybe.Present(seq) => Emit.valueWith(Chunk.from(seq))(Loop.continue)
                     case Maybe.Absent       => Emit.valueWith(Chunk.empty[V])(Loop.done)
                 }
         .rechunk(chunkSize)

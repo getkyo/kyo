@@ -89,7 +89,7 @@ object Check:
       */
     def runChunk[A, S](v: A < (Check & S))(using Frame): (Chunk[CheckFailed], A) < S =
         ArrowEffect.handleLoopState(Tag[Check], Chunk.empty[CheckFailed], v)(
-            [C] => (state, input) => Loop.continue(state.append(input), Kyo.unit),
+            [C] => (state, input) => Loop.continue(state.append(input), ()),
             (state, result) => (state, result)
         )
 
