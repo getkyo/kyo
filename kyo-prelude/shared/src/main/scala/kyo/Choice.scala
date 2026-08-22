@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.debug.Debug
+import kyo.internal.HandleFirst
 import kyo.kernel.*
 
 /** Represents non-deterministic computations with multiple possible outcomes.
@@ -122,7 +122,7 @@ object Choice:
                         if pending.isEmpty then Loop.done
                         else
                             Kyo.foreach(pending) { v =>
-                                ArrowEffect.handleFirst(Tag[Choice], v)(
+                                HandleFirst(Tag[Choice], v)(
                                     handle = [C] => (input, cont) => Chunk.from(input).map(cont),
                                     done = r => Chunk(r: A < (Choice & S))
                                 )

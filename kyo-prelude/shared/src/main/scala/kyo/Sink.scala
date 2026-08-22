@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.internal.HandleFirst
 import kyo.kernel.ArrowEffect
 import scala.annotation.nowarn
 
@@ -41,12 +42,12 @@ sealed abstract class Sink[-V, +A, -S] extends Serializable:
     final def zip[VV <: V, B, S2](other: Sink[VV, B, S2])(using tag: Tag[Poll[Chunk[VV]]], f: Frame): Sink[VV, (A, B), S & S2] =
         Sink:
             Loop((poll: A < (Poll[Chunk[VV]] & S), other.poll)): (pollA, pollB) =>
-                ArrowEffect.handleFirst(tag, pollA)(
+                HandleFirst(tag, pollA)(
                     handle = [C] =>
                         (_, contA) =>
                             Poll.andMap[Chunk[VV]]: polledValue =>
                                 val nextA = contA(polledValue)
-                                ArrowEffect.handleFirst(tag, pollB)(
+                                HandleFirst(tag, pollB)(
                                     handle = [C] =>
                                         (_, contB) =>
                                             val nextB = contB(polledValue)
@@ -58,7 +59,7 @@ sealed abstract class Sink[-V, +A, -S] extends Serializable:
                             )
                     ,
                     done = a =>
-                        ArrowEffect.handleFirst(tag, pollB)(
+                        HandleFirst(tag, pollB)(
                             handle = [C] =>
                                 (_, contB) =>
                                     Poll.andMap[Chunk[VV]]: polledValue =>
@@ -193,10 +194,10 @@ sealed abstract class Sink[-V, +A, -S] extends Serializable:
         fr: Frame
     ): A < (S & S2) =
         Loop(stream.emit, poll: A < (Poll[Chunk[VV]] & S)) { (emit, poll) =>
-            ArrowEffect.handleFirst(pollTag, poll)(
+            HandleFirst(pollTag, poll)(
                 handle = [C] =>
                     (_, pollCont) =>
-                        ArrowEffect.handleFirst(emitTag, emit)(
+                        HandleFirst(emitTag, emit)(
                             handle = [C2] =>
                                 (emitted, emitCont) =>
                                     Loop.continue(emitCont(()), pollCont(Maybe(emitted))),

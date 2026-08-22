@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.internal.HandleFirst
 import kyo.internal.Reducible
 import kyo.kernel.*
 
@@ -197,7 +198,7 @@ object Emit:
         reduce: Reducible[Emit[VR]]
     ): (Maybe[V], () => A < (Emit[V | VR] & S)) < (reduce.SReduced & S) =
         reduce:
-            ArrowEffect.handleFirst(tag, v)(
+            HandleFirst(tag, v)(
                 handle = [C] =>
                     (input, cont) =>
                         // Effect found, return the input an continuation

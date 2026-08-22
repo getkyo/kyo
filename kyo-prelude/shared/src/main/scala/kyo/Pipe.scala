@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.internal.HandleFirst
 import kyo.kernel.ArrowEffect
 import scala.annotation.nowarn
 import scala.annotation.targetName
@@ -244,10 +245,10 @@ sealed abstract class Pipe[-A, +B, -S] extends Serializable:
     ): Stream[B, S & S1] =
         Stream:
             Loop(stream.emit, pollEmit: Unit < (Poll[Chunk[AA]] & Emit[Chunk[B]] & S)) { (emit, poll) =>
-                ArrowEffect.handleFirst(pollTag, poll)(
+                HandleFirst(pollTag, poll)(
                     handle = [C] =>
                         (_, pollCont) =>
-                            ArrowEffect.handleFirst(emitTag, emit)(
+                            HandleFirst(emitTag, emit)(
                                 handle = [C2] =>
                                     (emitted, emitCont) =>
                                         Loop.continue(emitCont(()), pollCont(Maybe(emitted))),

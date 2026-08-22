@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.debug.Debug
+import kyo.internal.HandleFirst
 import kyo.kernel.ArrowEffect
 import scala.annotation.nowarn
 import scala.annotation.publicInBinary
@@ -527,13 +527,13 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
     @targetName("changesMaybe")
     def changes[VV >: V](first: Maybe[VV])(using tag: Tag[Emit[Chunk[VV]]], frame: Frame, ce: CanEqual[VV, VV]): Stream[VV, S] =
         Stream(
-            ArrowEffect.handleLoop(tag, first, emit)(
+            ArrowEffect.handleLoopState(tag, first, emit)(
                 [C] =>
-                    (input, state, cont) =>
+                    (state, input) =>
                         val c        = input.changes(state)
                         val newState = if c.isEmpty then state else Maybe(c.last)
                         Emit.valueWith(c) {
-                            Loop.continue(newState, cont(()))
+                            Loop.continue(newState, ())
                     }
             )
         )
@@ -555,19 +555,19 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
     def rechunk[VV >: V](chunkSize: Int)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S] =
         Stream[VV, S]:
             val _chunkSize = chunkSize max 1
-            ArrowEffect.handleLoop(tag, Chunk.empty[VV], emit.andThen(Emit.value(Chunk.empty[VV])))(
+            ArrowEffect.handleLoopState(tag, Chunk.empty[VV], emit.andThen(Emit.value(Chunk.empty[VV])))(
                 [C] =>
-                    (input, buffer, cont) =>
+                    (buffer, input) =>
                         if input.isEmpty && buffer.nonEmpty then
-                            Emit.valueWith(buffer)(Loop.continue(Chunk.empty, cont(())))
+                            Emit.valueWith(buffer)(Loop.continue(Chunk.empty, ()))
                         else
                             val combined = buffer.concat(input)
                             if combined.size < _chunkSize then
-                                Loop.continue(combined, cont(()))
+                                Loop.continue(combined, ())
                             else
                                 Loop(combined: Chunk[VV]) { current =>
                                     if current.size < _chunkSize then
-                                        Loop.done(Loop.continue(current, cont(())))
+                                        Loop.done(Loop.continue(current, ()))
                                     else
                                         Emit.valueWith(current.take(_chunkSize)) {
                                             Loop.continue(current.dropLeft(_chunkSize))
@@ -627,11 +627,9 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
         tag: Tag[Emit[Chunk[VV]]],
         frame: Frame
     ): A < S =
-        ArrowEffect.handleLoop(tag, acc, emit)(
-            handle = [C] =>
-                (input, state, cont) =>
-                    Loop.continue(input.foldLeft(state)(f), cont(())),
-            done = (state, _) => state
+        ArrowEffect.handleLoopState(tag, acc, emit)(
+            [C] => (state, input) => Loop.continue(input.foldLeft(state)(f), ()),
+            (state, _) => state
         )
 
     /** Runs the stream and folds over its values using the given effectful function and initial accumulator.
@@ -644,11 +642,9 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
       *   The final accumulated value
       */
     def fold[VV >: V, A, S2](acc: A)(f: (A, VV) => A < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): A < (S & S2) =
-        ArrowEffect.handleLoop(tag, acc, emit)(
-            handle = [C] =>
-                (input, state, cont) =>
-                    Kyo.foldLeft(input)(state)(f).map(Loop.continue(_, cont(()))),
-            done = (state, _) => state
+        ArrowEffect.handleLoopState(tag, acc, emit)(
+            [C] => (state, input) => Kyo.foldLeft(input)(state)(f).map(Loop.continue(_, ())),
+            (state, _) => state
         )
 
     /** Runs the stream and collects all emitted values into a single chunk.
@@ -657,11 +653,9 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
       *   A chunk containing all values emitted by the stream
       */
     def run[VV >: V](using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Chunk[VV] < S =
-        ArrowEffect.handleLoop(tag, Chunk.empty[Chunk[VV]], emit)(
-            handle = [C] =>
-                (input, state, cont) =>
-                    Loop.continue(state.append(input), cont(())),
-            done = (state, _) => state.flattenChunk
+        ArrowEffect.handleLoopState(tag, Chunk.empty[Chunk[VV]], emit)(
+            [C] => (state, input) => Loop.continue(state.append(input), ()),
+            (state, _) => state.flattenChunk
         )
 
     /** Split the stream into a chunk that contains the first n elements of the stream, and the rest of the stream as a new stream.
@@ -703,11 +697,11 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
         Stream:
             Loop(emit: Unit < (Emit[Chunk[VV]] & S), Chunk.empty[VV], other.emit, Chunk.empty[V2]):
                 (emit1, leftovers1, emit2, leftovers2) =>
-                    ArrowEffect.handleFirst(t1, emit1)(
+                    HandleFirst(t1, emit1)(
                         handle = [C] =>
                             (vals1: Chunk[VV], cont1) =>
                                 val allVals1 = leftovers1 ++ vals1
-                                ArrowEffect.handleFirst(t2, emit2)(
+                                HandleFirst(t2, emit2)(
                                     handle = [C] =>
                                         (vals2: Chunk[V2], cont2) =>
                                             val allVals2      = leftovers2 ++ vals2
@@ -736,7 +730,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                         done = _ =>
                             if leftovers1.isEmpty then Loop.done(())
                             else
-                                ArrowEffect.handleFirst(t2, emit2)(
+                                HandleFirst(t2, emit2)(
                                     handle = [C] =>
                                         (vals2: Chunk[V2], cont2) =>
                                             val allVals2      = leftovers2 ++ vals2

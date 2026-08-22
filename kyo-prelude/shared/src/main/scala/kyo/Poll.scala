@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.internal.HandleFirst
 import kyo.internal.Reducible
 import kyo.kernel.ArrowEffect
 
@@ -167,7 +168,7 @@ object Poll:
         reduce: Reducible[Poll[VR]]
     ): Either[A, Maybe[V] => A < (Poll[V & VR] & S)] < (reduce.SReduced & S) =
         reduce:
-            ArrowEffect.handleFirst(tag, v)(
+            HandleFirst(tag, v)(
                 handle = [C] =>
                     (input, cont) =>
                         // Effect found, return the input an continuation
@@ -211,12 +212,12 @@ object Poll:
             reducePoll:
                 // Start by handling the first emission
                 Loop(emit, poll) { (emit, poll) =>
-                    ArrowEffect.handleFirst(emitTag, emit)(
+                    HandleFirst(emitTag, emit)(
                         handle = [C] =>
                             (emitted, emitCont) =>
                                 // Once we have an emitted value, handle the first poll operation
                                 // This creates the demand-driven cycle between emit and poll
-                                ArrowEffect.handleFirst(pollTag, poll)(
+                                HandleFirst(pollTag, poll)(
                                     handle = [C2] =>
                                         (_, pollCont) =>
                                             // Continue the emit-poll cycle:
