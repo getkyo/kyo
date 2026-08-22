@@ -275,11 +275,11 @@ final private[kyo] class Stack:
         Span.fromUnsafe(arr)
     end snapshotStates
 
-    def snapshotFinalizers(): Span[Finalizer[?, ?]] =
-        val arr = new Array[Finalizer[?, ?]](pending)
+    def snapshotFinalizers(): Span[Maybe[Finalizer[?, ?]]] =
+        val arr = new Array[Maybe[Finalizer[?, ?]]](pending)
         var i   = 0
         while i < pending do
-            arr(i) = finalizers(i).getOrElse(null.asInstanceOf[Finalizer[?, ?]])
+            arr(i) = finalizers(i)
             i += 1
         Span.fromUnsafe(arr)
     end snapshotFinalizers
@@ -292,7 +292,7 @@ final private[kyo] class Stack:
       * The states are written alongside the entries rather than through `put`, which would reinitialize a
       * stateful handler's slot from its initial state and lose the state the park was holding.
       */
-    def restore(es: Span[Arrow[?, ?, ?]], sts: Span[Maybe[Any]], fins: Span[Finalizer[?, ?]]): Unit =
+    def restore(es: Span[Arrow[?, ?, ?]], sts: Span[Maybe[Any]], fins: Span[Maybe[Finalizer[?, ?]]]): Unit =
         val n = es.size
         if n > 0 then
             ensure(n)
@@ -311,7 +311,7 @@ final private[kyo] class Stack:
         end if
         var i = 0
         while i < fins.size do
-            pushFinalizer(fins(i))
+            fins(i).foreach(pushFinalizer)
             i += 1
     end restore
 
@@ -373,15 +373,15 @@ final private[kyo] class Stack:
       * dropped: a release that cannot run is a real error, and silence there is invisible resource loss.
       *
       * @param failure
-      *   the exception the eval is already unwinding with, or null if it is completing normally
+      *   the exception the eval is already unwinding with, or Absent if it is completing normally
       */
-    def drainFinalizers(failure: Throwable | Null): Unit =
+    def drainFinalizers(failure: Maybe[Throwable]): Unit =
         if pending > 0 then
-            var first: Throwable | Null = null
+            var first: Maybe[Throwable] = Absent
             // what the releases are told: the failure the eval is leaving with, or that their extent was
             // abandoned, which is what an eval completing while a continuation went unresumed means
             // at `Nothing`, since `Result` is covariant in its value and each release expects its own
-            val outcome = Result.panic[Nothing, Nothing](if failure ne null then failure else Finalizer.Abandoned)
+            val outcome = Result.panic[Nothing, Nothing](failure.getOrElse(Finalizer.Abandoned))
             while pending > 0 do
                 pending -= 1
                 val f = finalizers(pending)
@@ -389,12 +389,15 @@ final private[kyo] class Stack:
                 try f.foreach(_.run(outcome))
                 catch
                     case ex: Throwable =>
-                        if failure ne null then failure.addSuppressed(ex)
-                        else if first eq null then first = ex
-                        else first.addSuppressed(ex)
+                        failure match
+                            case Present(fail) => fail.addSuppressed(ex)
+                            case _ =>
+                                first match
+                                    case Present(fst) => fst.addSuppressed(ex)
+                                    case _            => first = Present(ex)
                 end try
             end while
-            if (failure eq null) && (first ne null) then throw first
+            if failure.isEmpty then first.foreach(throw _)
         end if
     end drainFinalizers
 

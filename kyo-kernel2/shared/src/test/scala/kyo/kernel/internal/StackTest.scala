@@ -434,7 +434,7 @@ class StackTest extends AnyFreeSpec:
             s.pushFinalizer(finalizer(() => n += 1))
             assert(s.outstanding == 2)
             assert(n == 0)
-            s.drainFinalizers(null)
+            s.drainFinalizers(Maybe.empty)
             assert(n == 2)
             assert(s.outstanding == 0)
             Stack.release(s)
@@ -445,7 +445,7 @@ class StackTest extends AnyFreeSpec:
             var order = List.empty[String]
             s.pushFinalizer(finalizer(() => order :+= "outer"))
             s.pushFinalizer(finalizer(() => order :+= "inner"))
-            s.drainFinalizers(null)
+            s.drainFinalizers(Maybe.empty)
             assert(order == List("inner", "outer"))
             Stack.release(s)
         }
@@ -457,7 +457,7 @@ class StackTest extends AnyFreeSpec:
             s.pushFinalizer(f)
             f.run(abandoned)
             assert(n == 1)
-            s.drainFinalizers(null)
+            s.drainFinalizers(Maybe.empty)
             assert(n == 1)
             Stack.release(s)
         }
@@ -497,7 +497,7 @@ class StackTest extends AnyFreeSpec:
             s.pushFinalizer(finalizer(() => throw new IllegalStateException("inner")))
             val message =
                 try
-                    s.drainFinalizers(null)
+                    s.drainFinalizers(Maybe.empty)
                     Maybe.empty[String]
                 catch case ex: IllegalStateException => Maybe(ex.getMessage)
             assert(message == Maybe("inner"))
@@ -509,7 +509,7 @@ class StackTest extends AnyFreeSpec:
             val s       = Stack.borrow()
             val failure = new UnsupportedOperationException("body")
             s.pushFinalizer(finalizer(() => throw new IllegalStateException("release")))
-            s.drainFinalizers(failure)
+            s.drainFinalizers(Maybe(failure))
             assert(failure.getSuppressed.toList.map(_.getMessage) == List("release"))
             Stack.release(s)
         }
@@ -520,7 +520,7 @@ class StackTest extends AnyFreeSpec:
             s.pushFinalizer(finalizer(() => n += 1))
             s.clear()
             assert(s.outstanding == 0)
-            s.drainFinalizers(null)
+            s.drainFinalizers(Maybe.empty)
             assert(n == 0)
             Stack.release(s)
         }

@@ -584,7 +584,7 @@ object Eval:
         if armed then Safepoint.arm(slot)
         // recorded so the drain below can tell an eval that is leaving on an exception from one that is
         // completing, and attach a failing release to the former rather than replacing it
-        var failure: Throwable | Null = null
+        var failure: Maybe[Throwable] = Absent
         try
             // a recovery answers a failure with the value the computation carries on from, so a throw is not
             // always the end: the unwind either produces that value, and this goes round again, or it does
@@ -607,7 +607,7 @@ object Eval:
                         stack.unwind(ex) match
                             case Present(next) => curr = next.asInstanceOf[Any < Nothing]
                             case Absent =>
-                                failure = ex
+                                failure = Present(ex)
                                 // every throw that carries frames has already had them reconstructed at the
                                 // site that ran the user code, so this only rewrites the exception's own trace
                                 EffectTrace.splice(ex)
@@ -642,7 +642,7 @@ object Eval:
                 var i = p.finalizers.size
                 while i > 0 do
                     i -= 1
-                    p.finalizers(i).run(Result.panic(Finalizer.Abandoned))
+                    p.finalizers(i).foreach(_.run(Result.panic(Finalizer.Abandoned)))
             case _ => ()
 
 end Eval

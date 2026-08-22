@@ -59,7 +59,7 @@ object Kyo:
         val value: A < S,
         val entries: Span[Arrow[?, ?, ?]],
         val states: Span[Maybe[Any]],
-        val finalizers: Span[Finalizer[?, ?]]
+        val finalizers: Span[Maybe[Finalizer[?, ?]]]
     ) extends Kyo[A, S]:
         override def toString: String = render(value)
     end Park
