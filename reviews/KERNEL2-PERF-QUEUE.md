@@ -4,7 +4,13 @@ Goal, user's words: fully green against kyo-kernel. A red row means the kernel i
 
 ## Standing status
 
-- Tree: `26f14ecdd4`, clean, 976 tests green on JVM.
+- Tree: `11cd77a348`, clean, 976 tests green on JVM. ADOPTED at gate strength (same-session
+  three-board run, no regression, worst internal mover 1.02x): F3 settled-eval fast path
+  (`ff7c08817c`: evalFixedOverheadBatch 0 B/op, 0.17x of kyo-kernel) and F2-L1 fold-peel
+  (`11cd77a348`: trailing 618us = 888x faster than kyo-kernel, RunOnly 3.40x to 2.93x,
+  fusionAfterSuspension 2.59x to 2.36x; the 240,026 B/op drop is exactly one 24-byte Defer per
+  level). F1 remains parked on its branch pending user review.
+- Previous baseline: `26f14ecdd4`.
 - Landed this campaign, each measured: arm reorder (`b86a1cdf1a`), Safepoint enter/exit under the inline
   threshold (`9dcec36058`), flatten + normalized dump (`89fff362f4`), the Step/Region hierarchy split with
   AndThen (`e845ffb589`), Step as its own Cont (`12fd7f3dec`), eval dispatch extraction (`26f14ecdd4`,
