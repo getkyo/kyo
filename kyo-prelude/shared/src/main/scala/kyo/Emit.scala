@@ -94,7 +94,7 @@ object Emit:
     )[A, VR, S](v: A < (Emit[V] & Emit[VR] & S))(using reduce: Reducible[Emit[VR]]): (Chunk[V], A) < (reduce.SReduced & S) =
         reduce:
             ArrowEffect.handleLoopState(tag, Chunk.empty[V], v)(
-                [C] => (state, input) => Loop.continue(state.append(input), ()),
+                [C] => (state, input) => Loop.continue(state.append(input), Kyo.unit),
                 (state, res) => (state, res)
             )
 
@@ -117,7 +117,7 @@ object Emit:
     ): (A, B) < (reduce.SReduced & S & S2) =
         reduce:
             ArrowEffect.handleLoopState(tag, acc, v)(
-                [C] => (state, input) => f(state, input).map(a => Loop.continue(a, ())),
+                [C] => (state, input) => f(state, input).map(a => Loop.continue(a, Kyo.unit)),
                 (state, res) => (state, res)
             )
 
@@ -133,7 +133,7 @@ object Emit:
     )[A, VR, S](v: A < (Emit[V] & Emit[VR] & S))(using tag: Tag[Emit[V]], reduce: Reducible[Emit[VR]]): A < (reduce.SReduced & S) =
         reduce:
             ArrowEffect.handleLoop(tag, v)(
-                [C] => _ => Loop.continue
+                [C] => _ => Loop.continue(Kyo.unit)
             )
 
     /** Runs an Emit effect, allowing custom handling of each emitted value.
@@ -153,7 +153,7 @@ object Emit:
     ): A < (reduce.SReduced & S & S2) =
         reduce[A, S & S2]:
             ArrowEffect.handleLoop(tag, v)(
-                [C] => input => f(input).map(_ => Loop.continue)
+                [C] => input => f(input).map(_ => Loop.continue(Kyo.unit))
             )
 
     /** Runs an Emit effect, allowing custom handling of each emitted value with a boolean result determining whether to continue.
@@ -176,9 +176,9 @@ object Emit:
                 [C] =>
                     (cond, input) =>
                         if cond then
-                            f(input).map(c => Loop.continue(c, ()))
+                            f(input).map(c => Loop.continue(c, Kyo.unit))
                         else
-                            Loop.continue(cond, ())
+                            Loop.continue(cond, Kyo.unit)
             )
 
     /** Runs an Emit effect, capturing only the first emitted value and returning a continuation.

@@ -28,7 +28,7 @@ private[kyo] object HandleFirst:
                 [C] => (input, cont) => new Suspended(input, cont.asInstanceOf[kyo.Arrow[Any, Any, Any]])
             )
         first.map {
-            case d: Done => done(d.a.asInstanceOf[A])
+            case d: Done      => done(d.a.asInstanceOf[A])
             case s: Suspended =>
                 // the C the suspension was made at is existential here; the erased instantiation is the
                 // same liberty the kernel's own decompose hook takes

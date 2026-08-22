@@ -149,12 +149,12 @@ object Var:
                 (state, input) =>
                     input match
                         case input: Get.type =>
-                            Loop.continue(state, state)
+                            Loop.continue(state, (state: V < Any))
                         case input: Update[V] @unchecked =>
                             val nst = input(state)
-                            Loop.continue(nst, nst)
+                            Loop.continue(nst, (nst: V < Any))
                         case input: V @unchecked =>
-                            Loop.continue(input, state),
+                            Loop.continue(input, (state: V < Any)),
             done = f
         )
 

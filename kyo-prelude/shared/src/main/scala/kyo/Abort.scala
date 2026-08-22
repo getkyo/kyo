@@ -199,31 +199,34 @@ object Abort:
         reduce: Reducible[Abort[ER]]
     ): B < (S & reduce.SReduced & S2) =
         reduce {
+            // every abort under the erased tag completes the region with its error: aborts never
+            // resume, so terminating the region is their semantics whether or not this handler
+            // accepts them. Acceptance is decided after the region, where an error this handler
+            // does not accept re-raises to the enclosing one; the old kernel decided it inside
+            // dispatch through an accept filter kernel2 deliberately does not have
             ArrowEffect.handleCatching[
                 Const[Error[E]],
                 Const[Unit],
                 Abort[E],
                 Result[E, A],
-                B,
-                Abort[ER] & S,
-                Abort[ER] & S,
-                S2
+                Result[E, A],
+                Abort[ER] & S
             ](
                 erasedTag[E],
                 v.map(Result.succeed[E, A](_))
             )(
-                accept = [C] =>
-                    input =>
-                        input.isPanic ||
-                            input.asInstanceOf[Error[Any]].failure.exists(ct.accepts),
-                handle = [C] => (input, _) => input,
-                recover =
-                    case ct(fail) if ct <:< ConcreteTag[Throwable] =>
-                        continue(Result.Failure(fail))
-                    case fail =>
-                        continue(Result.Panic(fail)),
-                done = continue(_)
-            )
+                [C] => (input, _) => input,
+                r => r
+            )(
+                ex =>
+                    if ct <:< ConcreteTag[Throwable] && ct.accepts(ex) then Result.Failure(ex.asInstanceOf[E])
+                    else Result.Panic(ex)
+            ).map {
+                case err: Error[Any] @unchecked if !(err.isPanic || err.failure.exists(ct.accepts)) =>
+                    Abort.error(err.asInstanceOf[Error[ER]])
+                case r =>
+                    continue(r.asInstanceOf[Result[E, A]])
+            }
         }
 
     /** Runs an Abort effect, converting it to a Result.

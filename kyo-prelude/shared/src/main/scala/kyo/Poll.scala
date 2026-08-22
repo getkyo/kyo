@@ -148,7 +148,7 @@ object Poll:
         reduce:
             ArrowEffect.handleLoopState(tag, inputs, v)(
                 [C] =>
-                    (state, unit) => Loop.continue(state.drop(1), state.headMaybe)
+                    (state, unit) => Loop.continue(state.drop(1), (state.headMaybe: Maybe[V] < Any))
             )
 
     /** Runs a Poll effect with a single input value, stopping after the first poll operation.

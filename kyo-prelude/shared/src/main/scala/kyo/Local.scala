@@ -117,8 +117,8 @@ object Local:
     @nowarn("msg=anonymous")
     inline def init[A](inline defaultValue: A): Local[A] =
         new Local[A]:
-            lazy val default: A            = defaultValue
-            def fork(value: A): Maybe[A]   = Maybe(value)
+            lazy val default: A             = defaultValue
+            def fork(value: A): Maybe[A]    = Maybe(value)
             def join(held: A, forked: A): A = held
 
     /** Creates a new Local instance with the given default value and fork-boundary strategy.

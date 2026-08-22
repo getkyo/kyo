@@ -1,5 +1,7 @@
 package kyo
 
+import kyo.kernel.Isolate
+
 /** Represents a memoization effect for global value initialization.
   *
   * Memo is used to cache the results of expensive computations, allowing them to be reused without re-computation.

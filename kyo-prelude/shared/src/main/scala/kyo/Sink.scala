@@ -90,7 +90,7 @@ sealed abstract class Sink[-V, +A, -S] extends Serializable:
                     _ =>
                         Poll.andMap[Chunk[V2]]: maybeChunkV2 =>
                             val maybeChunkV = maybeChunkV2.map(_.map(f))
-                            Loop.continue(maybeChunkV)
+                            Loop.continue((maybeChunkV: Maybe[Chunk[VV]] < Any))
             )
 
     /** Transform a sink to consume a stream of a different element type using an effectful mapping function.
@@ -114,10 +114,10 @@ sealed abstract class Sink[-V, +A, -S] extends Serializable:
                     _ =>
                         Poll.andMap[Chunk[V2]]:
                             case Absent =>
-                                Loop.continue(Absent)
+                                Loop.continue((Absent: Maybe[Chunk[VV]] < Any))
                             case Present(chunk2) =>
                                 Kyo.foreach(chunk2)(f).map: chunk1 =>
-                                    Loop.continue(Present(chunk1))
+                                    Loop.continue((Present(chunk1): Maybe[Chunk[VV]] < Any))
             )
 
     /** Transform a sink to consume a stream of a different element type using a pure mapping function that transforms streamed chunks.
@@ -138,7 +138,7 @@ sealed abstract class Sink[-V, +A, -S] extends Serializable:
                     _ =>
                         Poll.andMap[Chunk[V2]]: maybeChunkV2 =>
                             val maybeChunkV = maybeChunkV2.map(f)
-                            Loop.continue(maybeChunkV)
+                            Loop.continue((maybeChunkV: Maybe[Chunk[VV]] < Any))
             )
 
     /** Transform a sink to consume a stream of a different element type using an effectful mapping function that transforms streamed
@@ -159,10 +159,10 @@ sealed abstract class Sink[-V, +A, -S] extends Serializable:
                 [C] =>
                     _ =>
                         Poll.andMap[Chunk[V2]]:
-                            case Absent => Loop.continue(Absent)
+                            case Absent => Loop.continue((Absent: Maybe[Chunk[VV]] < Any))
                             case Present(chunk2) =>
                                 f(chunk2).map: chunk1 =>
-                                    Loop.continue(Present(chunk1))
+                                    Loop.continue((Present(chunk1): Maybe[Chunk[VV]] < Any))
             )
 
     /** Transform a sink to produce a new output type using a function that transforms the original pipe's result.
