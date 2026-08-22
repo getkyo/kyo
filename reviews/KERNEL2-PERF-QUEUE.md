@@ -122,6 +122,13 @@ TransformBase, f statically bound, Safepoint.enter-gated local execution) is the
 - Delete Arrow2.scala (design sketch, committed deliberately, must not land).
 - Isolate/fork-transfer design doc (Park as the transfer vehicle, binding walk primitive): discussed and
   shaped with the user, waiting until the perf campaign clears.
+- Null-to-Maybe audit, user's words 2026-08-22: "check where we use null in the kernel, we should
+  migrate to Maybe if there's no significant cost, let's do that as a follow up after this
+  optimization". Scoped by grep: the Out cell lanes (cont/state/input, Handler.scala), Stack's
+  ring-buffer slot clearing and drain accumulators (Throwable | Null), Eval's dispatcher out.cont
+  protocol tests and loop locals, Safepoint's slot cache. The hot-path lanes (Out, dispatcher tests)
+  need a measured bracket per the concession discipline; the cold ones (drain accumulators, slot
+  clearing) are candidates for a direct migration. Starts after the answersCont optimization lands.
 
 ## Undiagnosed rows nobody owns yet
 
