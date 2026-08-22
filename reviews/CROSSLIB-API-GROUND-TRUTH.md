@@ -54,6 +54,26 @@ All `_3` suffixed: plain Scala 3 artifacts, no `CrossVersion.for3Use2_13` needed
   `runSync` executor, `.get` on the internal `Outcome` (throws on failure). No IO effect needed for
   pure computations.
 
+## zio-blocks own benchmark survey (async-benchmarks module, GitHub main)
+
+Their suite already benches zb against kyo, cats-effect, and parasitic Future, with the hygiene rule
+"every input is read from a @State field, never a literal". Classes and verdicts for adoption into
+the cross-library boards:
+
+| class | shape | verdict |
+|---|---|---|
+| AsyncChainBench mapN/flatMapN | build a chain of N map/flatMap nodes DYNAMICALLY (`fa = fa.map(_ + 1)` in a runtime loop over a settled value), run once | **ADOPT**: KernelBench has no settled dynamic-accumulation row, and this is exactly kernel2's Chain/AndThen accumulate-then-fold machinery. Two new rows on all six boards, N = NarrowDepth = 1000 |
+| AsyncBench succeed/map1/flatMap1 | single op on a settled value | skip: evalFixedOverheadBatch already covers the fixed floor with better resolution |
+| AsyncErrorBench | fail/catchAll/attempt/foldCause | skip: kyo's error channel (Abort) is prelude-level, not a kernel surface; the row would compare different layers |
+| AsyncSuspendedPollBench | chains over a promise-suspended value completed later | skip: fusionAfterSuspension/RunOnly covers chain-over-unanswered-suspension at comparable fidelity |
+| AsyncTrueAsyncBench, AsyncStartBench, AsyncScalingBench | true-async round trips, fiber start, thread parks | skip: the comparison is synchronous evaluation; kernel2 has no scheduler integration yet |
+| AsyncBlockBench | direct-style async/await macro shapes | skip: different programming model, no kernel2 analogue |
+
+Session consequence of the two adopted rows: they must be added to kyo-kernel2's KernelBench and
+the old-kernel mirror as well, which forces fresh same-session runs of both kyo boards alongside
+the four external boards (the kernel skill's same-session rule; the gate2 JSONs remain the
+regression record, the comparison uses the fresh session).
+
 ## ZIO 2.1.26 / cats-effect (well-known surfaces, to confirm at compile time)
 
 - ZIO: `ZIO.succeed`, `.map`, `.flatMap`; sync entry `Unsafe.unsafe(implicit u =>
