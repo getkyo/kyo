@@ -74,9 +74,7 @@ object Check:
       *   A computation that may abort with CheckFailed if any checks fail
       */
     def runAbort[A, S](v: A < (Check & S))(using Frame): A < (Abort[CheckFailed] & S) =
-        // the clause aborts, so the region's row carries Abort: instantiated explicitly, since the
-        // failure is the clause's own effect rather than one the body mentions
-        ArrowEffect.handleCont[Const[CheckFailed], Const[Unit], Check, A, Abort[CheckFailed] & S](Tag[Check], v)(
+        ArrowEffect.handleCont(Tag[Check], v)(
             [C] => (input, cont) => Abort.fail(input)
         )
 
@@ -102,7 +100,7 @@ object Check:
       */
     def runDiscard[A, S](v: A < (Check & S))(using Frame): A < S =
         ArrowEffect.handleLoop(Tag[Check], v)(
-            [C] => _ => Loop.continue(Kyo.unit)
+            [C] => _ => Loop.continue(())
         )
 
     /** Default isolate that accumulates and re-emits failures.

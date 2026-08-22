@@ -26,7 +26,7 @@ object Loop:
       * @tparam A
       *   The type of the single state value maintained between iterations
       */
-    sealed abstract class Continue[+A] extends Serializable:
+    sealed abstract class Continue[A] extends Serializable:
         private[kyo] def _1: A
 
     /** Represents the state of two values to be carried forward to the next iteration.
@@ -36,7 +36,7 @@ object Loop:
       * @tparam B
       *   The type of the second state value
       */
-    sealed abstract class Continue2[+A, +B] extends Serializable:
+    sealed abstract class Continue2[A, B] extends Serializable:
         private[kyo] def _1: A
         private[kyo] def _2: B
 
@@ -49,7 +49,7 @@ object Loop:
       * @tparam C
       *   The type of the third state value
       */
-    sealed abstract class Continue3[+A, +B, +C] extends Serializable:
+    sealed abstract class Continue3[A, B, C] extends Serializable:
         private[kyo] def _1: A
         private[kyo] def _2: B
         private[kyo] def _3: C
@@ -66,7 +66,7 @@ object Loop:
       * @tparam D
       *   The type of the fourth state value
       */
-    sealed abstract class Continue4[+A, +B, +C, +D] extends Serializable:
+    sealed abstract class Continue4[A, B, C, D] extends Serializable:
         private[kyo] def _1: A
         private[kyo] def _2: B
         private[kyo] def _3: C
@@ -80,7 +80,7 @@ object Loop:
       * @tparam O
       *   The type of the final value if completing
       */
-    opaque type Outcome[+A, +O] = O | Continue[A]
+    opaque type Outcome[A, O] = O | Continue[A]
 
     /** Represents the result of a loop iteration with two state values.
       *
@@ -91,7 +91,7 @@ object Loop:
       * @tparam O
       *   The type of the final value if completing
       */
-    opaque type Outcome2[+A, +B, +O] = O | Continue2[A, B]
+    opaque type Outcome2[A, B, O] = O | Continue2[A, B]
 
     /** Represents the result of a loop iteration with three state values.
       *
@@ -104,7 +104,7 @@ object Loop:
       * @tparam O
       *   The type of the final value if completing
       */
-    opaque type Outcome3[+A, +B, +C, +O] = O | Continue3[A, B, C]
+    opaque type Outcome3[A, B, C, O] = O | Continue3[A, B, C]
 
     /** Represents the result of a loop iteration with four state values.
       *
@@ -119,7 +119,7 @@ object Loop:
       * @tparam O
       *   The type of the final value if completing
       */
-    opaque type Outcome4[+A, +B, +C, +D, +O] = O | Continue4[A, B, C, D]
+    opaque type Outcome4[A, B, C, D, O] = O | Continue4[A, B, C, D]
 
     private val _continueUnit: Continue[Unit] =
         new Continue:
@@ -137,15 +137,27 @@ object Loop:
 
     /** Creates an outcome signaling continuation with a single state value.
       *
+      * The return type is pending on purpose: in a region clause this arity's slot is the answer,
+      * whose expected type is pending (`O[C] < (E & S)`), and only a pending return lets that
+      * expected type reach the argument when the call sits behind another combinator's lambda,
+      * where a raw return is typed before the conversion and the answer's type is minimized. The
+      * value itself is the same raw `Continue`: it extends nothing but `Serializable`, so it is
+      * valid union currency as-is and the cast asserts exactly what the lift would have produced.
+      *
       * @param v
       *   The state value to continue with
       */
     @nowarn("msg=anonymous")
-    inline def continue[A, O, S](inline v: A): Outcome[A, O] =
-        new Continue[A]:
+    inline def continue[A, O, S](inline v: A): Outcome[A, O] < S =
+        (new Continue[A]:
             val _1 = v
+        ).asInstanceOf[Outcome[A, O] < S]
 
     /** Creates an outcome signaling continuation with two state values.
+      *
+      * Pending return for the same reason as the single-value variant: in a stateful region clause
+      * the second slot is the answer, and the pending return carries the expected answer type into
+      * the argument through nested lambdas.
       *
       * @param v1
       *   The first state value
@@ -153,10 +165,11 @@ object Loop:
       *   The second state value
       */
     @nowarn("msg=anonymous")
-    inline def continue[A, B, O](inline v1: A, inline v2: B): Outcome2[A, B, O] =
-        new Continue2[A, B]:
+    inline def continue[A, B, O, S](inline v1: A, inline v2: B): Outcome2[A, B, O] < S =
+        (new Continue2[A, B]:
             val _1 = v1
             val _2 = v2
+        ).asInstanceOf[Outcome2[A, B, O] < S]
 
     /** Creates an outcome signaling continuation with three state values.
       *

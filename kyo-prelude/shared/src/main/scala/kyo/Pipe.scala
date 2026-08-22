@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.internal.HandleFirst
 import kyo.kernel.ArrowEffect
 import scala.annotation.nowarn
 import scala.annotation.targetName
@@ -46,7 +45,7 @@ sealed abstract class Pipe[-A, +B, -S] extends Serializable:
                 [C] =>
                     unit =>
                         Poll.andMap[Chunk[A1]]: maybeChunk =>
-                            Loop.continue((maybeChunk.map(_.map(f)): Maybe[Chunk[AA]] < Any))
+                            Loop.continue(maybeChunk.map(_.map(f)))
             )
 
     /** Transform a pipe to consume a stream of a different element type using an effectful mapping function.
@@ -67,10 +66,10 @@ sealed abstract class Pipe[-A, +B, -S] extends Serializable:
                 [C] =>
                     unit =>
                         Poll.andMap[Chunk[A1]]:
-                            case Absent => Loop.continue((Absent: Maybe[Chunk[AA]] < Any))
+                            case Absent => Loop.continue(Absent)
                             case Present(chunk) =>
                                 Kyo.foreach(chunk)(f).map: chunk2 =>
-                                    Loop.continue((Present(chunk2): Maybe[Chunk[AA]] < Any))
+                                    Loop.continue(Present(chunk2))
             )
 
     /** Transform a pipe to consume a stream of a different element type using a pure mapping function that transforms streamed chunks.
@@ -91,7 +90,7 @@ sealed abstract class Pipe[-A, +B, -S] extends Serializable:
                 [C] =>
                     unit =>
                         Poll.andMap[Chunk[A1]]: maybeChunk =>
-                            Loop.continue((maybeChunk.map(f): Maybe[Chunk[AA]] < Any))
+                            Loop.continue(maybeChunk.map(f))
             )
 
     /** Transform a pipe to consume a stream of a different element type using an effectful mapping function that transforms streamed
@@ -113,10 +112,10 @@ sealed abstract class Pipe[-A, +B, -S] extends Serializable:
                 [C] =>
                     unit =>
                         Poll.andMap[Chunk[A1]]:
-                            case Absent => Loop.continue((Absent: Maybe[Chunk[AA]] < Any))
+                            case Absent => Loop.continue(Absent)
                             case Present(chunk) =>
                                 f(chunk).map: chunk2 =>
-                                    Loop.continue((Present(chunk2): Maybe[Chunk[AA]] < Any))
+                                    Loop.continue(Present(chunk2))
             )
 
     /** Transform a pipe to produce a new output type using a pure function that transforms each streamed element of the original pipe's
@@ -137,7 +136,7 @@ sealed abstract class Pipe[-A, +B, -S] extends Serializable:
             ArrowEffect.handleLoop(t1, pollEmit)(
                 [C] =>
                     chunk =>
-                        Emit.valueWith(chunk.map(f))(Loop.continue(Kyo.unit))
+                        Emit.valueWith(chunk.map(f))(Loop.continue(()))
             )
 
     /** Transform a pipe to produce a new output type using an effectful function that transforms each streamed element of the original
@@ -159,7 +158,7 @@ sealed abstract class Pipe[-A, +B, -S] extends Serializable:
                 [C] =>
                     chunk =>
                         Kyo.foreach(chunk)(f).map: chunk2 =>
-                            Emit.valueWith(chunk2)(Loop.continue(Kyo.unit))
+                            Emit.valueWith(chunk2)(Loop.continue(()))
             )
 
     /** Transform a pipe to produce a new output type using a pure function that transforms each streamed chunk of the original pipe's
@@ -180,7 +179,7 @@ sealed abstract class Pipe[-A, +B, -S] extends Serializable:
             ArrowEffect.handleLoop(t1, pollEmit)(
                 [C] =>
                     chunk =>
-                        Emit.valueWith(f(chunk))(Loop.continue(Kyo.unit))
+                        Emit.valueWith(f(chunk))(Loop.continue(()))
             )
 
     /** Transform a pipe to produce a new output type using an effectful function that transforms each streamed chunk of the original pipe's
@@ -202,7 +201,7 @@ sealed abstract class Pipe[-A, +B, -S] extends Serializable:
                 [C] =>
                     chunk =>
                         f(chunk).map: chunk2 =>
-                            Emit.valueWith(chunk2)(Loop.continue(Kyo.unit))
+                            Emit.valueWith(chunk2)(Loop.continue(()))
             )
 
     /** Join to another pipe producing a new pipe that performs both pipes' transformations in sequence.
@@ -245,14 +244,14 @@ sealed abstract class Pipe[-A, +B, -S] extends Serializable:
     ): Stream[B, S & S1] =
         Stream:
             Loop(stream.emit, pollEmit: Unit < (Poll[Chunk[AA]] & Emit[Chunk[B]] & S)) { (emit, poll) =>
-                HandleFirst(pollTag, poll)(
+                ArrowEffect.handleFirst(pollTag, poll)(
                     handle = [C] =>
                         (_, pollCont) =>
-                            HandleFirst(emitTag, emit)(
+                            ArrowEffect.handleFirst(emitTag, emit)(
                                 handle = [C2] =>
                                     (emitted, emitCont) =>
                                         Loop.continue(emitCont(()), pollCont(Maybe(emitted))),
-                                done = _ => Loop.continue(Kyo.unit, pollCont(Absent))
+                                done = _ => Loop.continue((), pollCont(Absent))
                         ),
                     done = _ => Loop.done(())
                 )

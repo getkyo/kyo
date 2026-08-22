@@ -66,25 +66,31 @@ object ArrowEffect:
                     case _                             => next(apply(Nested.unnest(v)), Arrow.id)
     end suspendWith
 
+    // The row parameters come in pairs on every region combinator: S is the body's row, pinned when
+    // `v` is typed, and S2 is a free variable for whatever the clause adds beyond it. With a single
+    // row the typer commits it to the body's row before the clause is seen, so a clause that
+    // introduces its own effect (Abort in Check.runAbort, the fold function's row in Emit.runFold)
+    // cannot widen it and the site needs explicit instantiation. The previous kernel drew the same
+    // split. The internals do not know about the pair: they instantiate at S & S2.
     @nowarn("msg=anonymous")
-    inline def handleCont[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](
+    inline def handleCont[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
         inline effectTag: Tag[E],
         v: A < (E & S)
     )(
-        inline handle: [C] => (I[C], Arrow[O[C], A, E & S]) => A < (E & S),
-        inline done: A => B < S
-    )(using inline _frame: Frame): B < S =
+        inline handle: [C] => (I[C], Arrow[O[C], A, E & S & S2]) => A < (E & S & S2),
+        inline done: A => B < (S & S2)
+    )(using inline _frame: Frame): B < (S & S2) =
         def onDone(v: A) = done(v)
         v match
             case _: Kyo[A, E & S] @unchecked =>
-                new Handle[E, A, B, B, S]:
+                new Handle[E, A, B, B, S & S2]:
                     def value = v
                     val handler =
-                        new HandlerCont[I, O, E, A, B, S]:
-                            def frame                                            = _frame
-                            def tag                                              = effectTag
-                            def run[C](input: I[C], cont: Arrow[O[C], A, E & S]) = handle[C](input, cont)
-                            override def apply(a: A)                             = onDone(a)
+                        new HandlerCont[I, O, E, A, B, S & S2]:
+                            def frame                                                 = _frame
+                            def tag                                                   = effectTag
+                            def run[C](input: I[C], cont: Arrow[O[C], A, E & S & S2]) = handle[C](input, cont)
+                            override def apply(a: A)                                  = onDone(a)
                             // the answer body is the eval layer's template, expanded here with the
                             // clause statically bound; see Handler.answersCont
                             override def answers[C](
@@ -94,36 +100,36 @@ object ArrowEffect:
                                 slot: Safepoint.Slot,
                                 out: Out
                             ): Any =
-                                answersCont[I, O, E, A, B, S, C](effectTag, handle, input0, k0, armed, slot, out)
+                                answersCont[I, O, E, A, B, S & S2, C](effectTag, handle, input0, k0, armed, slot, out)
                     def cont = Arrow.id[B]
             case _ => onDone(Nested.unnest(v))
         end match
     end handleCont
 
     /** [[handleCont]] with the region's value as the result. */
-    inline def handleCont[I[_], O[_], E <: ArrowEffect[I, O], A, S](
+    inline def handleCont[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
         inline effectTag: Tag[E],
         v: A < (E & S)
     )(
-        inline handle: [C] => (I[C], Arrow[O[C], A, E & S]) => A < (E & S)
-    )(using inline _frame: Frame): A < S =
+        inline handle: [C] => (I[C], Arrow[O[C], A, E & S & S2]) => A < (E & S & S2)
+    )(using inline _frame: Frame): A < (S & S2) =
         handleCont(effectTag, v)(handle, a => a)
 
     @nowarn("msg=anonymous")
-    inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](
+    inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
         inline effectTag: Tag[E],
         v: A < (E & S)
     )(
-        inline handle: [C] => I[C] => Loop.Outcome[O[C] < (E & S), B] < S,
-        inline done: A => B < S
-    )(using inline _frame: Frame): B < S =
+        inline handle: [C] => I[C] => Loop.Outcome[O[C] < (E & S & S2), B] < (S & S2),
+        inline done: A => B < (S & S2)
+    )(using inline _frame: Frame): B < (S & S2) =
         def onDone(v: A) = done(v)
         v match
             case _: Kyo[A, E & S] @unchecked =>
-                new Handle[E, A, B, B, S]:
+                new Handle[E, A, B, B, S & S2]:
                     def value = v
                     val handler =
-                        new HandlerLoop[I, O, E, A, B, S]:
+                        new HandlerLoop[I, O, E, A, B, S & S2]:
                             def frame                = _frame
                             def tag                  = effectTag
                             def run[C](input: I[C])  = handle[C](input)
@@ -131,7 +137,7 @@ object ArrowEffect:
                             // the answer bodies are the eval layer's templates, expanded here with the
                             // clause statically bound; see Handler.answerStep and Handler.answersLoop
                             override def answer[C](input: I[C], out: Out): Any =
-                                answerStep[I, O, E, A, B, S, C](handle, input, out)
+                                answerStep[I, O, E, A, B, S & S2, C](handle, input, out)
                             override def answers[C](
                                 input0: I[C],
                                 k0: Arrow[Any, Any, Any],
@@ -139,53 +145,46 @@ object ArrowEffect:
                                 slot: Safepoint.Slot,
                                 out: Out
                             ): Any =
-                                answersLoop[I, O, E, A, B, S, C](effectTag, handle, input0, k0, armed, slot, out)
+                                answersLoop[I, O, E, A, B, S & S2, C](effectTag, handle, _frame, input0, k0, armed, slot, out)
                     def cont = Arrow.id[B]
             case _ => onDone(Nested.unnest(v))
         end match
     end handleLoop
 
     /** [[handleLoop]] with the region's value as the result. */
-    inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, S](
+    inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
         inline effectTag: Tag[E],
         v: A < (E & S)
     )(
-        inline handle: [C] => I[C] => Loop.Outcome[O[C] < (E & S), A] < S
-    )(using inline _frame: Frame): A < S =
+        inline handle: [C] => I[C] => Loop.Outcome[O[C] < (E & S & S2), A] < (S & S2)
+    )(using inline _frame: Frame): A < (S & S2) =
         handleLoop(effectTag, v)(handle, a => a)
 
     @nowarn("msg=anonymous")
-    inline def handleLoopState[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State](
+    inline def handleLoopState[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2, State](
         inline effectTag: Tag[E],
         state: State,
         v: A < (E & S)
     )(
-        // the union gives the typer a conversion-free branch: a pure outcome propagates the
-        // expected answer type into the continue call, so a raw answer lifts at the argument
-        // (CanLift-guarded, nest-once preserved), where the plain `< S` form types the argument
-        // before the conversion and a raw answer's type is minimized. Both branches are one
-        // representation, since a raw outcome is the lifted union's first arm
-        inline handle: [C] => (State, I[C]) => Loop.Outcome2[State, O[C] < (E & S), B] | (Loop.Outcome2[State, O[C] < (E & S), B] < S),
-        inline done: (State, A) => B < S
-    )(using inline _frame: Frame): B < S =
+        inline handle: [C] => (State, I[C]) => Loop.Outcome2[State, O[C] < (E & S & S2), B] < (S & S2),
+        inline done: (State, A) => B < (S & S2)
+    )(using inline _frame: Frame): B < (S & S2) =
         def onDone(s: State, v: A) = done(s, v)
         v match
             case _: Kyo[A, E & S] @unchecked =>
-                new Handle[E, A, B, B, S]:
+                new Handle[E, A, B, B, S & S2]:
                     def value = v
                     val handler =
-                        new HandlerLoopState[I, O, E, A, B, S, State]:
-                            def frame        = _frame
-                            def tag          = effectTag
-                            def initialState = state
-                            // a raw outcome is the lifted union's first arm: one representation
-                            def run[C](st: State, input: I[C]) =
-                                handle[C](st, input).asInstanceOf[Loop.Outcome2[State, O[C] < (E & S), B] < S]
-                            def apply(st: State, a: A) = onDone(st, a)
+                        new HandlerLoopState[I, O, E, A, B, S & S2, State]:
+                            def frame                          = _frame
+                            def tag                            = effectTag
+                            def initialState                   = state
+                            def run[C](st: State, input: I[C]) = handle[C](st, input)
+                            def apply(st: State, a: A)         = onDone(st, a)
                             // the answer bodies are the eval layer's templates, expanded here with the
                             // clause statically bound; see Handler.answerStepState and Handler.answersLoopState
                             override def answer[C](st: State, input: I[C], out: Out): Any =
-                                answerStepState[I, O, E, A, B, S, State, C](handle, st, input, out)
+                                answerStepState[I, O, E, A, B, S & S2, State, C](handle, st, input, out)
                             override def answers[C](
                                 state0: State,
                                 input0: I[C],
@@ -194,21 +193,79 @@ object ArrowEffect:
                                 slot: Safepoint.Slot,
                                 out: Out
                             ): Any =
-                                answersLoopState[I, O, E, A, B, S, State, C](effectTag, handle, state0, input0, k0, armed, slot, out)
+                                answersLoopState[I, O, E, A, B, S & S2, State, C](
+                                    effectTag,
+                                    handle,
+                                    _frame,
+                                    state0,
+                                    input0,
+                                    k0,
+                                    armed,
+                                    slot,
+                                    out
+                                )
                     def cont = Arrow.id[B]
             case _ => onDone(state, Nested.unnest(v))
         end match
     end handleLoopState
 
     /** The stateful region without a done clause: it completes with the body's own result and discards the final state. */
-    inline def handleLoopState[I[_], O[_], E <: ArrowEffect[I, O], A, S, State](
+    inline def handleLoopState[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2, State](
         inline effectTag: Tag[E],
         state: State,
         v: A < (E & S)
     )(
-        inline handle: [C] => (State, I[C]) => Loop.Outcome2[State, O[C] < (E & S), A] < S
-    )(using inline _frame: Frame): A < S =
+        inline handle: [C] => (State, I[C]) => Loop.Outcome2[State, O[C] < (E & S & S2), A] < (S & S2)
+    )(using inline _frame: Frame): A < (S & S2) =
         handleLoopState(effectTag, state, v)(handle, (_, a) => a)
+
+    // the one-shot region's exit token: the clause stores the operation and the dumped remainder,
+    // and returning it settled is what completes the region at the first operation. It never
+    // escapes handleFirst's expansion: the done lane unwraps it before anything else sees the
+    // value. Abstract so each expansion implements it anonymously: the captures keep the
+    // operation's own types, so a primitive input is stored unboxed
+    abstract private[kyo] class FirstSuspended:
+        def input: Any
+        def cont: Arrow[Any, Any, Any]
+
+    /** Answers only the first operation of the region, handing the clause the raw remainder.
+      *
+      * The clause receives the operation's input and the continuation with the effect still in its row:
+      * nothing has been decided about the rest of the computation, and every consumer re-handles the
+      * remainder with a fresh region, which is what the stream pipes do round by round. A body that
+      * completes without performing the effect takes `done` instead. Both lanes run outside the region.
+      *
+      * Built on [[handleCont]]: the clause completes the region at once by returning a settled token,
+      * and the region's done lane tells the two completions apart. The body enters the region unchanged,
+      * so the remainder is the body's own continuation, raw, and re-handling it round after round keeps
+      * one uniform type.
+      */
+    @nowarn("msg=anonymous")
+    inline def handleFirst[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
+        inline effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        inline handle: [C] => (I[C], Arrow[O[C], A, E & S]) => B < (S & S2),
+        inline done: A => B < (S & S2)
+    )(using inline _frame: Frame): B < (S & S2) =
+        handleCont[I, O, E, Any, B, S, S2](effectTag, v)(
+            [C] =>
+                (input0, cont0) =>
+                    new FirstSuspended:
+                        def input = input0
+                        def cont  = cont0.asInstanceOf[Arrow[Any, Any, Any]]
+            ,
+            {
+                case s: FirstSuspended =>
+                    // the C the operation was performed at is existential here; the erased instantiation
+                    // is the liberty erasure already grants. The remainder's value type is the body's own
+                    // A because the body entered the region unmapped, and its row keeps the effect
+                    // because the region ended without consuming it
+                    handle[Any](s.input.asInstanceOf[I[Any]], s.cont.asInstanceOf[Arrow[O[Any], A, E & S]])
+                case a =>
+                    done(a.asInstanceOf[A])
+            }
+        )
 
     // the *With variants take the region's continuation as a separate parameter group and fuse it
     // into the region node: the node is the arrow the region's result flows into, as suspendWith's
@@ -216,29 +273,29 @@ object ArrowEffect:
     // continuation as a map
 
     @nowarn("msg=anonymous")
-    inline def handleContWith[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](
+    inline def handleContWith[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
         using inline _frame: Frame
     )(
         inline effectTag: Tag[E],
         v: A < (E & S)
     )(
-        inline handle: [X] => (I[X], Arrow[O[X], A, E & S]) => A < (E & S),
-        inline done: A => B < S
-    )[C, S2](
-        inline f: B => C < S2
-    ): C < (S & S2) =
+        inline handle: [X] => (I[X], Arrow[O[X], A, E & S & S2]) => A < (E & S & S2),
+        inline done: A => B < (S & S2)
+    )[C, S3](
+        inline f: B => C < S3
+    ): C < (S & S2 & S3) =
         def onDone(v: A) = done(v)
         v match
             case _: Kyo[A, E & S] @unchecked =>
-                new Handle[E, A, B, C, S & S2] with Step[B, C, S & S2]:
+                new Handle[E, A, B, C, S & S2 & S3] with Step[B, C, S & S2 & S3]:
                     def frame = _frame
                     def value = v
                     val handler =
-                        new HandlerCont[I, O, E, A, B, S]:
-                            def frame                                            = _frame
-                            def tag                                              = effectTag
-                            def run[X](input: I[X], cont: Arrow[O[X], A, E & S]) = handle[X](input, cont)
-                            override def apply(a: A)                             = onDone(a)
+                        new HandlerCont[I, O, E, A, B, S & S2]:
+                            def frame                                                 = _frame
+                            def tag                                                   = effectTag
+                            def run[X](input: I[X], cont: Arrow[O[X], A, E & S & S2]) = handle[X](input, cont)
+                            override def apply(a: A)                                  = onDone(a)
                             // the answer body is the eval layer's template, expanded here with the
                             // clause statically bound; see Handler.answersCont
                             override def answers[X](
@@ -248,37 +305,37 @@ object ArrowEffect:
                                 slot: Safepoint.Slot,
                                 out: Out
                             ): Any =
-                                answersCont[I, O, E, A, B, S, X](effectTag, handle, input0, k0, armed, slot, out)
+                                answersCont[I, O, E, A, B, S & S2, X](effectTag, handle, input0, k0, armed, slot, out)
                     def cont                 = this
                     override def apply(b: B) = f(b)
-                    def apply[D, S3](b: B < S3, next: Arrow[C, D, S3]): D < (S & S2 & S3) =
+                    def apply[D, S4](b: B < S4, next: Arrow[C, D, S4]): D < (S & S2 & S3 & S4) =
                         b match
-                            case kyo: Kyo[B, S3] @unchecked => Effect.defer(kyo, this, next)
+                            case kyo: Kyo[B, S4] @unchecked => Effect.defer(kyo, this, next)
                             case _                          => next(apply(Nested.unnest(b)), Arrow.id)
             case _ => onDone(Nested.unnest(v)).map(f)
         end match
     end handleContWith
 
     @nowarn("msg=anonymous")
-    inline def handleLoopWith[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](
+    inline def handleLoopWith[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
         using inline _frame: Frame
     )(
         inline effectTag: Tag[E],
         v: A < (E & S)
     )(
-        inline handle: [X] => I[X] => Loop.Outcome[O[X] < (E & S), B] < S,
-        inline done: A => B < S
-    )[C, S2](
-        inline f: B => C < S2
-    ): C < (S & S2) =
+        inline handle: [X] => I[X] => Loop.Outcome[O[X] < (E & S & S2), B] < (S & S2),
+        inline done: A => B < (S & S2)
+    )[C, S3](
+        inline f: B => C < S3
+    ): C < (S & S2 & S3) =
         def onDone(v: A) = done(v)
         v match
             case _: Kyo[A, E & S] @unchecked =>
-                new Handle[E, A, B, C, S & S2] with Step[B, C, S & S2]:
+                new Handle[E, A, B, C, S & S2 & S3] with Step[B, C, S & S2 & S3]:
                     def frame = _frame
                     def value = v
                     val handler =
-                        new HandlerLoop[I, O, E, A, B, S]:
+                        new HandlerLoop[I, O, E, A, B, S & S2]:
                             def frame                = _frame
                             def tag                  = effectTag
                             def run[X](input: I[X])  = handle[X](input)
@@ -286,7 +343,7 @@ object ArrowEffect:
                             // the answer bodies are the eval layer's templates, expanded here with the
                             // clause statically bound; see Handler.answerStep and Handler.answersLoop
                             override def answer[C](input: I[C], out: Out): Any =
-                                answerStep[I, O, E, A, B, S, C](handle, input, out)
+                                answerStep[I, O, E, A, B, S & S2, C](handle, input, out)
                             override def answers[C](
                                 input0: I[C],
                                 k0: Arrow[Any, Any, Any],
@@ -294,38 +351,38 @@ object ArrowEffect:
                                 slot: Safepoint.Slot,
                                 out: Out
                             ): Any =
-                                answersLoop[I, O, E, A, B, S, C](effectTag, handle, input0, k0, armed, slot, out)
+                                answersLoop[I, O, E, A, B, S & S2, C](effectTag, handle, _frame, input0, k0, armed, slot, out)
                     def cont                 = this
                     override def apply(b: B) = f(b)
-                    def apply[D, S3](b: B < S3, next: Arrow[C, D, S3]): D < (S & S2 & S3) =
+                    def apply[D, S4](b: B < S4, next: Arrow[C, D, S4]): D < (S & S2 & S3 & S4) =
                         b match
-                            case kyo: Kyo[B, S3] @unchecked => Effect.defer(kyo, this, next)
+                            case kyo: Kyo[B, S4] @unchecked => Effect.defer(kyo, this, next)
                             case _                          => next(apply(Nested.unnest(b)), Arrow.id)
             case _ => onDone(Nested.unnest(v)).map(f)
         end match
     end handleLoopWith
 
     @nowarn("msg=anonymous")
-    inline def handleLoopStateWith[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State](
+    inline def handleLoopStateWith[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2, State](
         using inline _frame: Frame
     )(
         inline effectTag: Tag[E],
         state: State,
         v: A < (E & S)
     )(
-        inline handle: [X] => (State, I[X]) => Loop.Outcome2[State, O[X] < (E & S), B] < S,
-        inline done: (State, A) => B < S
-    )[C, S2](
-        inline f: B => C < S2
-    ): C < (S & S2) =
+        inline handle: [X] => (State, I[X]) => Loop.Outcome2[State, O[X] < (E & S & S2), B] < (S & S2),
+        inline done: (State, A) => B < (S & S2)
+    )[C, S3](
+        inline f: B => C < S3
+    ): C < (S & S2 & S3) =
         def onDone(s: State, v: A) = done(s, v)
         v match
             case _: Kyo[A, E & S] @unchecked =>
-                new Handle[E, A, B, C, S & S2] with Step[B, C, S & S2]:
+                new Handle[E, A, B, C, S & S2 & S3] with Step[B, C, S & S2 & S3]:
                     def frame = _frame
                     def value = v
                     val handler =
-                        new HandlerLoopState[I, O, E, A, B, S, State]:
+                        new HandlerLoopState[I, O, E, A, B, S & S2, State]:
                             def frame                          = _frame
                             def tag                            = effectTag
                             def initialState                   = state
@@ -334,7 +391,7 @@ object ArrowEffect:
                             // the answer bodies are the eval layer's templates, expanded here with the
                             // clause statically bound; see Handler.answerStepState and Handler.answersLoopState
                             override def answer[C](st: State, input: I[C], out: Out): Any =
-                                answerStepState[I, O, E, A, B, S, State, C](handle, st, input, out)
+                                answerStepState[I, O, E, A, B, S & S2, State, C](handle, st, input, out)
                             override def answers[C](
                                 state0: State,
                                 input0: I[C],
@@ -343,12 +400,22 @@ object ArrowEffect:
                                 slot: Safepoint.Slot,
                                 out: Out
                             ): Any =
-                                answersLoopState[I, O, E, A, B, S, State, C](effectTag, handle, state0, input0, k0, armed, slot, out)
+                                answersLoopState[I, O, E, A, B, S & S2, State, C](
+                                    effectTag,
+                                    handle,
+                                    _frame,
+                                    state0,
+                                    input0,
+                                    k0,
+                                    armed,
+                                    slot,
+                                    out
+                                )
                     def cont                 = this
                     override def apply(b: B) = f(b)
-                    def apply[D, S3](b: B < S3, next: Arrow[C, D, S3]): D < (S & S2 & S3) =
+                    def apply[D, S4](b: B < S4, next: Arrow[C, D, S4]): D < (S & S2 & S3 & S4) =
                         b match
-                            case kyo: Kyo[B, S3] @unchecked => Effect.defer(kyo, this, next)
+                            case kyo: Kyo[B, S4] @unchecked => Effect.defer(kyo, this, next)
                             case _                          => next(apply(Nested.unnest(b)), Arrow.id)
             case _ => onDone(state, Nested.unnest(v)).map(f)
         end match
@@ -366,43 +433,43 @@ object ArrowEffect:
       * try around the whole traversal rather than a position on a stack.
       */
     @nowarn("msg=anonymous")
-    private[kyo] inline def handleCatching[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](
+    private[kyo] inline def handleCatching[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
         inline effectTag: Tag[E],
         inline v: => A < (E & S)
     )(
-        inline handle: [C] => (I[C], Arrow[O[C], A, E & S]) => A < (E & S),
-        inline done: A => B < S
+        inline handle: [C] => (I[C], Arrow[O[C], A, E & S & S2]) => A < (E & S & S2),
+        inline done: A => B < (S & S2)
     )(
-        inline recover: Throwable => B < S
-    )(using inline _frame: Frame): B < S =
+        inline recover: Throwable => B < (S & S2)
+    )(using inline _frame: Frame): B < (S & S2) =
         // named apart from the member below, which would shadow the parameter inside the class body
         def onPanic(ex: Throwable) = recover(ex)
         // the body is not matched here, as the other regions match theirs: `value` is a method, so the eval
         // forces it once the handler is on the stack, and a body that throws while it is forced throws inside
         // the scope that guards it. `Abort.run { throw ... }` rests on that
-        new Handle[E, A, B, B, S]:
+        new Handle[E, A, B, B, S & S2]:
             def value = v
             val handler =
-                new HandlerCont[I, O, E, A, B, S] with Recover[B, S]:
-                    def frame                                            = _frame
-                    def tag                                              = effectTag
-                    def run[C](input: I[C], cont: Arrow[O[C], A, E & S]) = handle[C](input, cont)
-                    override def apply(a: A)                             = done(a)
-                    def recover(ex: Throwable)                           = onPanic(ex)
+                new HandlerCont[I, O, E, A, B, S & S2] with Recover[B, S & S2]:
+                    def frame                                                 = _frame
+                    def tag                                                   = effectTag
+                    def run[C](input: I[C], cont: Arrow[O[C], A, E & S & S2]) = handle[C](input, cont)
+                    override def apply(a: A)                                  = done(a)
+                    def recover(ex: Throwable)                                = onPanic(ex)
             def cont = Arrow.id[B]
         end new
     end handleCatching
 
     /** The recovering region without a done clause: it completes with the body's own result. */
-    private[kyo] inline def handleCatching[I[_], O[_], E <: ArrowEffect[I, O], A, S](
+    private[kyo] inline def handleCatching[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
         inline effectTag: Tag[E],
         inline v: => A < (E & S)
     )(
-        inline handle: [C] => (I[C], Arrow[O[C], A, E & S]) => A < (E & S)
+        inline handle: [C] => (I[C], Arrow[O[C], A, E & S & S2]) => A < (E & S & S2)
     )(
-        inline recover: Throwable => A < S
-    )(using inline _frame: Frame): A < S =
-        handleCatching(effectTag, v)(handle, a => a)(recover)
+        inline recover: Throwable => A < (S & S2)
+    )(using inline _frame: Frame): A < (S & S2) =
+        handleCatching[I, O, E, A, A, S, S2](effectTag, v)(handle, a => a)(recover)
 
     // Surface the previous kernels carry that this one does not yet. Kept as signatures so the
     // gap is visible here rather than only in a parked test.

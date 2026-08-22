@@ -1,6 +1,7 @@
 package kyo.kernel.internal
 
 import kyo.Arrow
+import kyo.Frame
 import kyo.Loop.Continue
 import kyo.Loop.Continue2
 import kyo.Loop.Outcome
@@ -129,6 +130,9 @@ object Handler:
     inline def answersLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, C](
         inline effectTag: Tag[E],
         inline handle: [X] => I[X] => Outcome[O[X] < (E & S), B] < S,
+        // the region's frame, threaded so the template's own composition below never summons a
+        // Frame at the expansion site
+        _frame: Frame,
         input0: I[C],
         k0: Arrow[Any, Any, Any],
         armed: Boolean,
@@ -166,7 +170,7 @@ object Handler:
                             case ansKyo: Kyo[?, ?] @unchecked =>
                                 out.kind = 1
                                 out.cont = null
-                                result = ans.map(a => k(a))
+                                result = ans.map(a => k(a))(using _frame)
                                 running = false
                             case _ =>
                                 val next =
@@ -210,13 +214,12 @@ object Handler:
     end answersLoop
 
     inline def answerStepState[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State, C](
-        inline handle: [X] => (State, I[X]) => Outcome2[State, O[X] < (E & S), B] | (Outcome2[State, O[X] < (E & S), B] < S),
+        inline handle: [X] => (State, I[X]) => Outcome2[State, O[X] < (E & S), B] < S,
         st: State,
         input: I[C],
         out: Out
     ): Any =
-        // a raw outcome is the lifted union's first arm, so the two branches are one representation
-        handle[C](st, input).asInstanceOf[Outcome2[State, O[C] < (E & S), B] < S] match
+        handle[C](st, input) match
             case kyo: Kyo[Outcome2[State, O[C] < (E & S), B], S] @unchecked =>
                 out.kind = 2
                 kyo
@@ -230,7 +233,10 @@ object Handler:
 
     inline def answersLoopState[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State, C](
         inline effectTag: Tag[E],
-        inline handle: [X] => (State, I[X]) => Outcome2[State, O[X] < (E & S), B] | (Outcome2[State, O[X] < (E & S), B] < S),
+        inline handle: [X] => (State, I[X]) => Outcome2[State, O[X] < (E & S), B] < S,
+        // the region's frame, threaded so the template's own composition below never summons a
+        // Frame at the expansion site
+        _frame: Frame,
         state0: State,
         input0: I[C],
         k0: Arrow[Any, Any, Any],
@@ -253,8 +259,7 @@ object Handler:
                 running = false
             else
                 val o =
-                    // a raw outcome is the lifted union's first arm: one representation, either branch
-                    try handle[C](st, in.asInstanceOf[I[C]]).asInstanceOf[Outcome2[State, O[C] < (E & S), B] < S]
+                    try handle[C](st, in.asInstanceOf[I[C]])
                     catch
                         case ex: Throwable =>
                             out.kind = Out.ClauseThrew
@@ -276,7 +281,7 @@ object Handler:
                                 out.kind = 1
                                 out.state = st
                                 out.cont = null
-                                result = ans.map(a => k(a))
+                                result = ans.map(a => k(a))(using _frame)
                                 running = false
                             case _ =>
                                 val next =

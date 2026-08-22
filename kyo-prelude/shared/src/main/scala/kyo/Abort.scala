@@ -201,31 +201,36 @@ object Abort:
         reduce {
             // every abort under the erased tag completes the region with its error: aborts never
             // resume, so terminating the region is their semantics whether or not this handler
-            // accepts them. Acceptance is decided after the region, where an error this handler
-            // does not accept re-raises to the enclosing one; the old kernel decided it inside
-            // dispatch through an accept filter kernel2 deliberately does not have
+            // accepts them. Acceptance is decided in the done clause, outside the region, where an
+            // error this handler does not accept re-raises to the enclosing one; the old kernel
+            // decided it inside dispatch through an accept filter kernel2 deliberately does not
+            // have. The body keeps its success wrap: `Result.succeed` boxes a nested error value
+            // into the success lane, which no later stage can do once the clause's error
+            // completion shares the region's value type. Instantiated explicitly to factor the
+            // erased row into the handled `Abort[E]` and the remainder, which inference does not do
             ArrowEffect.handleCatching[
                 Const[Error[E]],
                 Const[Unit],
                 Abort[E],
                 Result[E, A],
-                Result[E, A],
-                Abort[ER] & S
+                B,
+                Abort[ER] & S,
+                S2
             ](
                 erasedTag[E],
                 v.map(Result.succeed[E, A](_))
             )(
                 [C] => (input, _) => input,
-                r => r
+                {
+                    case err: Error[Any] @unchecked if !(err.isPanic || err.failure.exists(ct.accepts)) =>
+                        Abort.error(err.asInstanceOf[Error[ER]])
+                    case r =>
+                        continue(r.asInstanceOf[Result[E, A]])
+                }
             )(ex =>
-                if ct <:< ConcreteTag[Throwable] && ct.accepts(ex) then Result.Failure(ex.asInstanceOf[E])
-                else Result.Panic(ex)
-            ).map {
-                case err: Error[Any] @unchecked if !(err.isPanic || err.failure.exists(ct.accepts)) =>
-                    Abort.error(err.asInstanceOf[Error[ER]])
-                case r =>
-                    continue(r.asInstanceOf[Result[E, A]])
-            }
+                if ct <:< ConcreteTag[Throwable] && ct.accepts(ex) then continue(Result.Failure(ex.asInstanceOf[E]))
+                else continue(Result.Panic(ex))
+            )
         }
 
     /** Runs an Abort effect, converting it to a Result.

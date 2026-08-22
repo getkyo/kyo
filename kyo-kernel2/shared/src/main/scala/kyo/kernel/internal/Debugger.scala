@@ -30,8 +30,8 @@ abstract private[kyo] class Debugger:
       * board, since even the operand alone taxed every call site. A session that wants frames routes
       * the application and reads them at `onDefer`. Consulted only within an eval's extent: the eval
       * drains its slot at entry while a session is installed, so every strict application there lands
-      * on the cold path where this gate lives, and `enter`'s hot path stays byte-identical for
-      * everyone else. Strict construction outside any eval runs unobserved, the same carve-out
+      * on the cold path where this gate lives, and `Safepoint.enter`'s hot path stays byte-identical
+      * for everyone else. Strict construction outside any eval runs unobserved, the same carve-out
       * between-slices semantics already draw.
       *
       * Consulted twice for a routed application: at the application site, and again when the eval
@@ -41,7 +41,7 @@ abstract private[kyo] class Debugger:
       * at `onDefer`, and allows the next consult. While a session allows applications, the depth guard
       * does not bound strict recursion; a debugger that runs the program pays the program's shape.
       */
-    def enterStrict(): Boolean = true
+    def enter(): Boolean = true
 
     /** A step about to run; the returned value replaces the payload. The type parameters keep the eval
       * cast-free: a swapping session asserts conformance inside its own implementation instead.

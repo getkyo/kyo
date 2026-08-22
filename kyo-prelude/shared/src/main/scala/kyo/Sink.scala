@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.internal.HandleFirst
 import kyo.kernel.ArrowEffect
 import scala.annotation.nowarn
 
@@ -42,12 +41,12 @@ sealed abstract class Sink[-V, +A, -S] extends Serializable:
     final def zip[VV <: V, B, S2](other: Sink[VV, B, S2])(using tag: Tag[Poll[Chunk[VV]]], f: Frame): Sink[VV, (A, B), S & S2] =
         Sink:
             Loop((poll: A < (Poll[Chunk[VV]] & S), other.poll)): (pollA, pollB) =>
-                HandleFirst(tag, pollA)(
+                ArrowEffect.handleFirst(tag, pollA)(
                     handle = [C] =>
                         (_, contA) =>
                             Poll.andMap[Chunk[VV]]: polledValue =>
                                 val nextA = contA(polledValue)
-                                HandleFirst(tag, pollB)(
+                                ArrowEffect.handleFirst(tag, pollB)(
                                     handle = [C] =>
                                         (_, contB) =>
                                             val nextB = contB(polledValue)
@@ -59,7 +58,7 @@ sealed abstract class Sink[-V, +A, -S] extends Serializable:
                             )
                     ,
                     done = a =>
-                        HandleFirst(tag, pollB)(
+                        ArrowEffect.handleFirst(tag, pollB)(
                             handle = [C] =>
                                 (_, contB) =>
                                     Poll.andMap[Chunk[VV]]: polledValue =>
@@ -90,7 +89,7 @@ sealed abstract class Sink[-V, +A, -S] extends Serializable:
                     _ =>
                         Poll.andMap[Chunk[V2]]: maybeChunkV2 =>
                             val maybeChunkV = maybeChunkV2.map(_.map(f))
-                            Loop.continue((maybeChunkV: Maybe[Chunk[VV]] < Any))
+                            Loop.continue(maybeChunkV)
             )
 
     /** Transform a sink to consume a stream of a different element type using an effectful mapping function.
@@ -106,18 +105,15 @@ sealed abstract class Sink[-V, +A, -S] extends Serializable:
         fr: Frame
     ): Sink[V2, A, S & S2] =
         Sink:
-            ArrowEffect.handleLoop[Const[Unit], Const[Maybe[Chunk[VV]]], Poll[Chunk[VV]], A, S & S2 & Poll[Chunk[V2]]](
-                t1,
-                poll
-            )(
+            ArrowEffect.handleLoop(t1, poll)(
                 [C] =>
                     _ =>
                         Poll.andMap[Chunk[V2]]:
                             case Absent =>
-                                Loop.continue((Absent: Maybe[Chunk[VV]] < Any))
+                                Loop.continue(Absent)
                             case Present(chunk2) =>
                                 Kyo.foreach(chunk2)(f).map: chunk1 =>
-                                    Loop.continue((Present(chunk1): Maybe[Chunk[VV]] < Any))
+                                    Loop.continue(Present(chunk1))
             )
 
     /** Transform a sink to consume a stream of a different element type using a pure mapping function that transforms streamed chunks.
@@ -133,12 +129,12 @@ sealed abstract class Sink[-V, +A, -S] extends Serializable:
         fr: Frame
     ): Sink[V2, A, S] =
         Sink:
-            ArrowEffect.handleLoop[Const[Unit], Const[Maybe[Chunk[VV]]], Poll[Chunk[VV]], A, S & Poll[Chunk[V2]]](t1, poll)(
+            ArrowEffect.handleLoop(t1, poll)(
                 [C] =>
                     _ =>
                         Poll.andMap[Chunk[V2]]: maybeChunkV2 =>
                             val maybeChunkV = maybeChunkV2.map(f)
-                            Loop.continue((maybeChunkV: Maybe[Chunk[VV]] < Any))
+                            Loop.continue(maybeChunkV)
             )
 
     /** Transform a sink to consume a stream of a different element type using an effectful mapping function that transforms streamed
@@ -155,14 +151,14 @@ sealed abstract class Sink[-V, +A, -S] extends Serializable:
         fr: Frame
     ): Sink[V2, A, S & S2] =
         Sink:
-            ArrowEffect.handleLoop[Const[Unit], Const[Maybe[Chunk[VV]]], Poll[Chunk[VV]], A, S & S2 & Poll[Chunk[V2]]](t1, poll)(
+            ArrowEffect.handleLoop(t1, poll)(
                 [C] =>
                     _ =>
                         Poll.andMap[Chunk[V2]]:
-                            case Absent => Loop.continue((Absent: Maybe[Chunk[VV]] < Any))
+                            case Absent => Loop.continue(Absent)
                             case Present(chunk2) =>
                                 f(chunk2).map: chunk1 =>
-                                    Loop.continue((Present(chunk1): Maybe[Chunk[VV]] < Any))
+                                    Loop.continue(Present(chunk1))
             )
 
     /** Transform a sink to produce a new output type using a function that transforms the original pipe's result.
@@ -194,14 +190,14 @@ sealed abstract class Sink[-V, +A, -S] extends Serializable:
         fr: Frame
     ): A < (S & S2) =
         Loop(stream.emit, poll: A < (Poll[Chunk[VV]] & S)) { (emit, poll) =>
-            HandleFirst(pollTag, poll)(
+            ArrowEffect.handleFirst(pollTag, poll)(
                 handle = [C] =>
                     (_, pollCont) =>
-                        HandleFirst(emitTag, emit)(
+                        ArrowEffect.handleFirst(emitTag, emit)(
                             handle = [C2] =>
                                 (emitted, emitCont) =>
                                     Loop.continue(emitCont(()), pollCont(Maybe(emitted))),
-                            done = _ => Loop.continue(Kyo.unit, pollCont(Absent))
+                            done = _ => Loop.continue((), pollCont(Absent))
                     ),
                 done = a =>
                     Loop.done(a)

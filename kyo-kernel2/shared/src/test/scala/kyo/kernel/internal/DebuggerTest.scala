@@ -23,7 +23,7 @@ class DebuggerTest extends AnyFreeSpec:
         val events = ListBuffer.empty[(String, String)]
         private val allowNext = new ThreadLocal[Boolean]:
             override def initialValue = false
-        override def enterStrict(): Boolean =
+        override def enter(): Boolean =
             events += (("enter", ""))
             if allowNext.get() then
                 allowNext.set(false)
@@ -33,7 +33,7 @@ class DebuggerTest extends AnyFreeSpec:
                 false
             else true
             end if
-        end enterStrict
+        end enter
         override def onDefer[A, S](stack: Stack, frame: Frame, value: A < S): A < S =
             events += (("defer", frame.position.show))
             value

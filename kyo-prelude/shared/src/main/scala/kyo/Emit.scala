@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.internal.HandleFirst
 import kyo.internal.Reducible
 import kyo.kernel.*
 
@@ -94,7 +93,7 @@ object Emit:
     )[A, VR, S](v: A < (Emit[V] & Emit[VR] & S))(using reduce: Reducible[Emit[VR]]): (Chunk[V], A) < (reduce.SReduced & S) =
         reduce:
             ArrowEffect.handleLoopState(tag, Chunk.empty[V], v)(
-                [C] => (state, input) => Loop.continue(state.append(input), Kyo.unit),
+                [C] => (state, input) => Loop.continue(state.append(input), ()),
                 (state, res) => (state, res)
             )
 
@@ -117,7 +116,7 @@ object Emit:
     ): (A, B) < (reduce.SReduced & S & S2) =
         reduce:
             ArrowEffect.handleLoopState(tag, acc, v)(
-                [C] => (state, input) => f(state, input).map(a => Loop.continue(a, Kyo.unit)),
+                [C] => (state, input) => f(state, input).map(a => Loop.continue(a, ())),
                 (state, res) => (state, res)
             )
 
@@ -133,7 +132,7 @@ object Emit:
     )[A, VR, S](v: A < (Emit[V] & Emit[VR] & S))(using tag: Tag[Emit[V]], reduce: Reducible[Emit[VR]]): A < (reduce.SReduced & S) =
         reduce:
             ArrowEffect.handleLoop(tag, v)(
-                [C] => _ => Loop.continue(Kyo.unit)
+                [C] => _ => Loop.continue(())
             )
 
     /** Runs an Emit effect, allowing custom handling of each emitted value.
@@ -153,7 +152,7 @@ object Emit:
     ): A < (reduce.SReduced & S & S2) =
         reduce[A, S & S2]:
             ArrowEffect.handleLoop(tag, v)(
-                [C] => input => f(input).map(_ => Loop.continue(Kyo.unit))
+                [C] => input => f(input).map(_ => Loop.continue(()))
             )
 
     /** Runs an Emit effect, allowing custom handling of each emitted value with a boolean result determining whether to continue.
@@ -176,9 +175,9 @@ object Emit:
                 [C] =>
                     (cond, input) =>
                         if cond then
-                            f(input).map(c => Loop.continue(c, Kyo.unit))
+                            f(input).map(c => Loop.continue(c, ()))
                         else
-                            Loop.continue(cond, Kyo.unit)
+                            Loop.continue(cond, ())
             )
 
     /** Runs an Emit effect, capturing only the first emitted value and returning a continuation.
@@ -189,24 +188,24 @@ object Emit:
       *   A tuple containing:
       *
       *   - Maybe[V]: The first emitted value if any (None if no values were emitted)
-      *   - A continuation function that returns the remaining computation
+      *   - The continuation that resumes the remaining computation
       */
     def runFirst[V](using
         Frame
     )[A, VR, S](v: A < (Emit[V] & Emit[VR] & S))(using
         tag: Tag[Emit[V]],
         reduce: Reducible[Emit[VR]]
-    ): (Maybe[V], () => A < (Emit[V | VR] & S)) < (reduce.SReduced & S) =
+    ): (Maybe[V], Arrow[Unit, A, Emit[V | VR] & S]) < (reduce.SReduced & S) =
         reduce:
-            HandleFirst(tag, v)(
+            ArrowEffect.handleFirst(tag, v)(
                 handle = [C] =>
                     (input, cont) =>
-                        // Effect found, return the input an continuation
-                        (Maybe(input), () => cont(())),
+                        // Effect found, return the input and continuation
+                        (Maybe(input), cont),
                 done = r =>
                     // Effect not found, return empty input and a placeholder continuation
                     // that returns the result of the computation
-                    (Maybe.empty[V], () => r: A < (Emit[V] & S))
+                    (Maybe.empty[V], Arrow(_ => r: A < (Emit[V] & S)))
             )
 
     object isolate:

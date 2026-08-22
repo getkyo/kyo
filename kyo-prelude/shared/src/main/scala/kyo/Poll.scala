@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.internal.HandleFirst
 import kyo.internal.Reducible
 import kyo.kernel.ArrowEffect
 
@@ -148,30 +147,30 @@ object Poll:
         reduce:
             ArrowEffect.handleLoopState(tag, inputs, v)(
                 [C] =>
-                    (state, unit) => Loop.continue(state.drop(1), (state.headMaybe: Maybe[V] < Any))
+                    (state, unit) => Loop.continue(state.drop(1), state.headMaybe)
             )
 
     /** Runs a Poll effect with a single input value, stopping after the first poll operation.
       *
-      * This method provides a single input value to the Poll effect and stops after the first poll. It returns a continuation function that
-      * can process the Maybe[V] result of the poll
+      * This method provides a single input value to the Poll effect and stops after the first poll. It returns the continuation that
+      * consumes the Maybe[V] result of the poll
       *
       * @param v
       *   The computation requiring Poll values
       * @return
-      *   A tuple containing the acknowledgement and a continuation function that processes the poll result
+      *   Either the computation's result, or the continuation that consumes the poll result
       */
     def runFirst[V](
         using Frame
     )[A, VR, S](v: A < (Poll[V] & Poll[VR] & S))(using
         tag: Tag[Poll[V]],
         reduce: Reducible[Poll[VR]]
-    ): Either[A, Maybe[V] => A < (Poll[V & VR] & S)] < (reduce.SReduced & S) =
+    ): Either[A, Arrow[Maybe[V], A, Poll[V & VR] & S]] < (reduce.SReduced & S) =
         reduce:
-            HandleFirst(tag, v)(
+            ArrowEffect.handleFirst(tag, v)(
                 handle = [C] =>
                     (input, cont) =>
-                        // Effect found, return the input an continuation
+                        // Effect found, return the input and continuation
                         Right(cont),
                 done = r =>
                     // Effect not found, return empty input and a placeholder continuation
@@ -212,12 +211,12 @@ object Poll:
             reducePoll:
                 // Start by handling the first emission
                 Loop(emit, poll) { (emit, poll) =>
-                    HandleFirst(emitTag, emit)(
+                    ArrowEffect.handleFirst(emitTag, emit)(
                         handle = [C] =>
                             (emitted, emitCont) =>
                                 // Once we have an emitted value, handle the first poll operation
                                 // This creates the demand-driven cycle between emit and poll
-                                HandleFirst(pollTag, poll)(
+                                ArrowEffect.handleFirst(pollTag, poll)(
                                     handle = [C2] =>
                                         (_, pollCont) =>
                                             // Continue the emit-poll cycle:

@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.internal.HandleFirst
 import kyo.kernel.ArrowEffect
 import scala.annotation.nowarn
 import scala.annotation.publicInBinary
@@ -78,8 +77,8 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                 [C] =>
                     input =>
                         val c = input.map(f)
-                        if c.isEmpty then Loop.continue(Kyo.unit)
-                        else Emit.valueWith(c)(Loop.continue(Kyo.unit))
+                        if c.isEmpty then Loop.continue(())
+                        else Emit.valueWith(c)(Loop.continue(()))
             )
         )
 
@@ -110,13 +109,13 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
             ArrowEffect.handleLoop(tagV, emit)(
                 [C] =>
                     input =>
-                        if input.isEmpty then Loop.continue(Kyo.unit)
+                        if input.isEmpty then Loop.continue(())
                         else
                             val s = f(input)
                             if s.isEmpty then
-                                Loop.continue(Kyo.unit)
+                                Loop.continue(())
                             else
-                                Emit.valueWith(Chunk.from(s))(Loop.continue(Kyo.unit))
+                                Emit.valueWith(Chunk.from(s))(Loop.continue(()))
                             end if
                         end if
             )
@@ -140,9 +139,9 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                 [C] =>
                     input =>
                         if input.isEmpty then
-                            Emit.valueWith(Chunk.empty[V2])(Loop.continue(Kyo.unit))
+                            Emit.valueWith(Chunk.empty[V2])(Loop.continue(()))
                         else
-                            f(input).map(c => Emit.valueWith(Chunk.from(c))(Loop.continue(Kyo.unit)))
+                            f(input).map(c => Emit.valueWith(Chunk.from(c))(Loop.continue(())))
             )
         )
 
@@ -164,7 +163,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                 [C] =>
                     input =>
                         Kyo.foreachDiscard(input)(v => f(v).map(_.emit))
-                            .andThen(Loop.continue(Kyo.unit))
+                            .andThen(Loop.continue(()))
             )
         )
 
@@ -186,9 +185,9 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                 [C] =>
                     input =>
                         if input.isEmpty then
-                            Emit.valueWith(Chunk.empty[V2])(Loop.continue(Kyo.unit))
+                            Emit.valueWith(Chunk.empty[V2])(Loop.continue(()))
                         else
-                            f(input).map(_.emit).andThen(Loop.continue(Kyo.unit))
+                            f(input).map(_.emit).andThen(Loop.continue(()))
             )
         )
 
@@ -209,7 +208,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                 [C] =>
                     input =>
                         Kyo.foreachDiscard(input)(f).andThen:
-                            Emit.valueWith(input)(Loop.continue(Kyo.unit))
+                            Emit.valueWith(input)(Loop.continue(()))
             )
 
     /** Applies a side-effecting function to each chunk in the stream without altering them.
@@ -229,7 +228,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                 [C] =>
                     input =>
                         f(input).andThen:
-                            Emit.valueWith(input)(Loop.continue(Kyo.unit))
+                            Emit.valueWith(input)(Loop.continue(()))
             )
         )
 
@@ -251,7 +250,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                             val nst = state - c.size
                             Emit.valueWith(c)(
                                 if nst <= 0 then Loop.done(())
-                                else Loop.continue(nst, Kyo.unit)
+                                else Loop.continue(nst, ())
                         )
                 )
             )
@@ -273,11 +272,11 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                     [C] =>
                         (state, input) =>
                             if state == 0 then
-                                Emit.valueWith(input)(Loop.continue(0, Kyo.unit))
+                                Emit.valueWith(input)(Loop.continue(0, ()))
                             else
                                 val c = input.dropLeft(state)
-                                if c.isEmpty then Loop.continue(state - input.size, Kyo.unit)
-                                else Emit.valueWith(c)(Loop.continue(0, Kyo.unit))
+                                if c.isEmpty then Loop.continue(state - input.size, ())
+                                else Emit.valueWith(c)(Loop.continue(0, ()))
                 )
             )
 
@@ -297,10 +296,10 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                 [C] =>
                     (state, input) =>
                         if !state then Loop.done(())
-                        else if input.isEmpty then Loop.continue(state, Kyo.unit)
+                        else if input.isEmpty then Loop.continue(state, ())
                         else
                             val c = input.takeWhile(f)
-                            Emit.valueWith(c)(Loop.continue(c.size == input.size, Kyo.unit))
+                            Emit.valueWith(c)(Loop.continue(c.size == input.size, ()))
             )
         )
     end takeWhilePure
@@ -320,7 +319,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                         if !state then Loop.done(())
                         else
                             Kyo.takeWhile(input)(f).map { c =>
-                                Emit.valueWith(c)(Loop.continue(c.size == input.size, Kyo.unit))
+                                Emit.valueWith(c)(Loop.continue(c.size == input.size, ()))
                         }
             )
         )
@@ -340,10 +339,10 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                     (state, input) =>
                         if state then
                             val chunk = input.dropWhile(f)
-                            if chunk.isEmpty then Loop.continue(true, Kyo.unit)
-                            else Emit.valueWith(chunk)(Loop.continue(false, Kyo.unit))
+                            if chunk.isEmpty then Loop.continue(true, ())
+                            else Emit.valueWith(chunk)(Loop.continue(false, ()))
                         else
-                            Emit.valueWith(input)(Loop.continue(false, Kyo.unit))
+                            Emit.valueWith(input)(Loop.continue(false, ()))
             )
         )
 
@@ -361,11 +360,11 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                     (state, input) =>
                         if state then
                             Kyo.dropWhile(input)(f).map { c =>
-                                if c.isEmpty then Loop.continue(true, Kyo.unit)
-                                else Emit.valueWith(c)(Loop.continue(false, Kyo.unit))
+                                if c.isEmpty then Loop.continue(true, ())
+                                else Emit.valueWith(c)(Loop.continue(false, ()))
                             }
                         else
-                            Emit.valueWith(input)(Loop.continue(false, Kyo.unit))
+                            Emit.valueWith(input)(Loop.continue(false, ()))
             )
         )
 
@@ -382,8 +381,8 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                 [C] =>
                     input =>
                         Kyo.filter(input)(f).map { c =>
-                            if c.isEmpty then Loop.continue(Kyo.unit)
-                            else Emit.valueWith(c)(Loop.continue(Kyo.unit))
+                            if c.isEmpty then Loop.continue(())
+                            else Emit.valueWith(c)(Loop.continue(()))
                     }
             )
         )
@@ -394,8 +393,8 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                 [C] =>
                     input =>
                         val c = input.filter(f)
-                        if c.isEmpty then Loop.continue(Kyo.unit)
-                        else Emit.valueWith(c)(Loop.continue(Kyo.unit))
+                        if c.isEmpty then Loop.continue(())
+                        else Emit.valueWith(c)(Loop.continue(()))
             )
         )
 
@@ -430,7 +429,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                 [C] =>
                     input =>
                         Kyo.collect(input)(f).map { c =>
-                            Emit.valueWith(c)(Loop.continue(Kyo.unit))
+                            Emit.valueWith(c)(Loop.continue(()))
                     }
             )
         )
@@ -445,8 +444,8 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                 [C] =>
                     input =>
                         val c = input.map(f).collect({ case Present(v) => v })
-                        if c.isEmpty then Loop.continue(Kyo.unit)
-                        else Emit.valueWith(c)(Loop.continue(Kyo.unit))
+                        if c.isEmpty then Loop.continue(())
+                        else Emit.valueWith(c)(Loop.continue(()))
             )
         )
 
@@ -474,7 +473,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                                 else
                                     Emit.valueWith(c) {
                                         if c.size != input.size then Loop.done
-                                        else Loop.continue(Kyo.unit)
+                                        else Loop.continue(())
                                     }
                         }
             )
@@ -494,7 +493,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                         else
                             Emit.valueWith(c):
                                 if c.size != input.size then Loop.done
-                                else Loop.continue(Kyo.unit)
+                                else Loop.continue(())
                         end if
             )
         )
@@ -533,7 +532,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                         val c        = input.changes(state)
                         val newState = if c.isEmpty then state else Maybe(c.last)
                         Emit.valueWith(c) {
-                            Loop.continue(newState, Kyo.unit)
+                            Loop.continue(newState, ())
                     }
             )
         )
@@ -559,20 +558,20 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                 [C] =>
                     (buffer, input) =>
                         if input.isEmpty && buffer.nonEmpty then
-                            Emit.valueWith(buffer)(Loop.continue(Chunk.empty, Kyo.unit))
+                            Emit.valueWith(buffer)(Loop.continue(Chunk.empty, ()))
                         else
                             val combined = buffer.concat(input)
                             if combined.size < _chunkSize then
-                                Loop.continue(combined, Kyo.unit)
+                                Loop.continue(combined, ())
                             else
                                 Loop(combined: Chunk[VV]) { current =>
                                     if current.size < _chunkSize then
-                                        Loop.done(Loop.continue(current, Kyo.unit))
+                                        Loop.done(current)
                                     else
                                         Emit.valueWith(current.take(_chunkSize)) {
                                             Loop.continue(current.dropLeft(_chunkSize))
                                         }
-                                }
+                                }.map(remainder => Loop.continue(remainder, ()))
                             end if
             )
     end rechunk
@@ -584,7 +583,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
       */
     def discard[VV >: V](using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Unit < S =
         ArrowEffect.handleLoop(tag, emit)(
-            [C] => _ => Loop.continue(Kyo.unit)
+            [C] => _ => Loop.continue(())
         )
 
     /** Runs the stream and applies the given function to each emitted value.
@@ -609,9 +608,9 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
             [C] =>
                 input =>
                     if !input.isEmpty then
-                        f(input).andThen(Loop.continue(Kyo.unit))
+                        f(input).andThen(Loop.continue(()))
                     else
-                        Loop.continue(Kyo.unit)
+                        Loop.continue(())
         )
 
     /** Runs the stream and folds over its values using the given pure function and initial accumulator.
@@ -628,7 +627,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
         frame: Frame
     ): A < S =
         ArrowEffect.handleLoopState(tag, acc, emit)(
-            [C] => (state, input) => Loop.continue(input.foldLeft(state)(f), Kyo.unit),
+            [C] => (state, input) => Loop.continue(input.foldLeft(state)(f), ()),
             (state, _) => state
         )
 
@@ -643,7 +642,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
       */
     def fold[VV >: V, A, S2](acc: A)(f: (A, VV) => A < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): A < (S & S2) =
         ArrowEffect.handleLoopState(tag, acc, emit)(
-            [C] => (state, input) => Kyo.foldLeft(input)(state)(f).map(Loop.continue(_, Kyo.unit)),
+            [C] => (state, input) => Kyo.foldLeft(input)(state)(f).map(Loop.continue(_, ())),
             (state, _) => state
         )
 
@@ -654,7 +653,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
       */
     def run[VV >: V](using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Chunk[VV] < S =
         ArrowEffect.handleLoopState(tag, Chunk.empty[Chunk[VV]], emit)(
-            [C] => (state, input) => Loop.continue(state.append(input), Kyo.unit),
+            [C] => (state, input) => Loop.continue(state.append(input), ()),
             (state, _) => state.flattenChunk
         )
 
@@ -668,13 +667,13 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
     def splitAt[VV >: V](n: Int)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): (Chunk[VV], Stream[VV, S]) < S =
         Loop(emit: Unit < (Emit[Chunk[VV]] & S), Chunk.empty[VV]): (curEmit, curChunk) =>
             Emit.runFirst(curEmit).map:
-                case (Present(items), nextEmitFn) =>
+                case (Present(items), nextEmit) =>
                     val nextChunk = curChunk.concat(items)
                     if nextChunk.length < n then
-                        Loop.continue(nextEmitFn(), nextChunk)
+                        Loop.continue(nextEmit(()), nextChunk)
                     else
                         val (taken, rest) = nextChunk.splitAt(n)
-                        val restEmit      = if rest.isEmpty then nextEmitFn() else Emit.valueWith(rest)(nextEmitFn())
+                        val restEmit      = if rest.isEmpty then nextEmit(()) else Emit.valueWith(rest)(nextEmit(()))
                         Loop.done(taken -> Stream(restEmit))
                     end if
                 case (_, _) => Loop.done(curChunk -> Stream(Emit.value(Chunk.empty[VV])))
@@ -694,74 +693,59 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
         t3: Tag[Emit[Chunk[(VV, V2)]]],
         f: Frame
     ): Stream[(VV, V2), S & S2] =
-        // the outcome type is pinned by the typed constructors below: the handle branches type
-        // first and leave the done type unconstrained, inference minimizes it to Nothing, and the
-        // done branches then cannot produce their Unit
-        type ZipOutcome = Loop.Outcome4[Unit < (Emit[Chunk[VV]] & S), Chunk[VV], Unit < (Emit[Chunk[V2]] & S2), Chunk[V2], Unit]
-        def continueBoth(
-            e1: Unit < (Emit[Chunk[VV]] & S),
-            l1: Chunk[VV],
-            e2: Unit < (Emit[Chunk[V2]] & S2),
-            l2: Chunk[V2]
-        ): ZipOutcome = Loop.continue(e1, l1, e2, l2)
-        def zipDone: ZipOutcome = Loop.done(())
         Stream:
-            Loop[Unit < (Emit[Chunk[VV]] & S), Chunk[VV], Unit < (Emit[Chunk[V2]] & S2), Chunk[V2], Unit, Emit[Chunk[(VV, V2)]] & S & S2](
-                emit,
-                Chunk.empty[VV],
-                other.emit,
-                Chunk.empty[V2]
-            ): (emit1, leftovers1, emit2, leftovers2) =>
-                HandleFirst(t1, emit1)(
-                    handle = [C] =>
-                        (vals1: Chunk[VV], cont1) =>
-                            val allVals1 = leftovers1 ++ vals1
-                            HandleFirst(t2, emit2)(
-                                handle = [C] =>
-                                    (vals2: Chunk[V2], cont2) =>
-                                        val allVals2      = leftovers2 ++ vals2
-                                        val zippedVals    = allVals1.zip(allVals2)
-                                        val newLeftovers1 = allVals1.drop(zippedVals.length)
-                                        val newLeftovers2 = allVals2.drop(zippedVals.length)
-                                        if zippedVals.nonEmpty then
-                                            Emit.valueWith(zippedVals):
-                                                continueBoth(cont1(()), newLeftovers1, cont2(()), newLeftovers2)
-                                        else continueBoth(cont1(()), newLeftovers1, cont2(()), newLeftovers2)
-                                        end if
-                                ,
-                                done = _ =>
-                                    if leftovers2.isEmpty then zipDone
-                                    else
-                                        val zippedVals    = allVals1.zip(leftovers2)
-                                        val newLeftovers1 = allVals1.drop(zippedVals.length)
-                                        val newLeftovers2 = leftovers2.drop(zippedVals.length)
-                                        if zippedVals.nonEmpty then
-                                            Emit.valueWith(zippedVals):
-                                                continueBoth(cont1(()), newLeftovers1, emit2, newLeftovers2)
-                                        else continueBoth(cont1(()), newLeftovers1, emit2, newLeftovers2)
-                                        end if
-                        )
-                    ,
-                    done = _ =>
-                        if leftovers1.isEmpty then zipDone
-                        else
-                            HandleFirst(t2, emit2)(
-                                handle = [C] =>
-                                    (vals2: Chunk[V2], cont2) =>
-                                        val allVals2      = leftovers2 ++ vals2
-                                        val zippedVals    = leftovers1.zip(allVals2)
-                                        val newLeftovers1 = leftovers1.drop(zippedVals.length)
-                                        val newLeftovers2 = allVals2.drop(zippedVals.length)
-                                        if zippedVals.nonEmpty then
-                                            Emit.valueWith(zippedVals):
-                                                Loop.continue(emit1, newLeftovers1, cont2(()), newLeftovers2)
-                                        else Loop.continue(emit1, newLeftovers1, cont2(()), newLeftovers2)
-                                        end if
-                                ,
-                                done = _ =>
-                                    zipDone
+            Loop(emit: Unit < (Emit[Chunk[VV]] & S), Chunk.empty[VV], other.emit, Chunk.empty[V2]):
+                (emit1, leftovers1, emit2, leftovers2) =>
+                    ArrowEffect.handleFirst(t1, emit1)(
+                        handle = [C] =>
+                            (vals1: Chunk[VV], cont1) =>
+                                val allVals1 = leftovers1 ++ vals1
+                                ArrowEffect.handleFirst(t2, emit2)(
+                                    handle = [C] =>
+                                        (vals2: Chunk[V2], cont2) =>
+                                            val allVals2      = leftovers2 ++ vals2
+                                            val zippedVals    = allVals1.zip(allVals2)
+                                            val newLeftovers1 = allVals1.drop(zippedVals.length)
+                                            val newLeftovers2 = allVals2.drop(zippedVals.length)
+                                            if zippedVals.nonEmpty then
+                                                Emit.valueWith(zippedVals):
+                                                    Loop.continue(cont1(()), newLeftovers1, cont2(()), newLeftovers2)
+                                            else Loop.continue(cont1(()), newLeftovers1, cont2(()), newLeftovers2)
+                                            end if
+                                    ,
+                                    done = _ =>
+                                        if leftovers2.isEmpty then Loop.done(())
+                                        else
+                                            val zippedVals    = allVals1.zip(leftovers2)
+                                            val newLeftovers1 = allVals1.drop(zippedVals.length)
+                                            val newLeftovers2 = leftovers2.drop(zippedVals.length)
+                                            if zippedVals.nonEmpty then
+                                                Emit.valueWith(zippedVals):
+                                                    Loop.continue(cont1(()), newLeftovers1, emit2, newLeftovers2)
+                                            else Loop.continue(cont1(()), newLeftovers1, emit2, newLeftovers2)
+                                            end if
                             )
-                )
+                        ,
+                        done = _ =>
+                            if leftovers1.isEmpty then Loop.done(())
+                            else
+                                ArrowEffect.handleFirst(t2, emit2)(
+                                    handle = [C] =>
+                                        (vals2: Chunk[V2], cont2) =>
+                                            val allVals2      = leftovers2 ++ vals2
+                                            val zippedVals    = leftovers1.zip(allVals2)
+                                            val newLeftovers1 = leftovers1.drop(zippedVals.length)
+                                            val newLeftovers2 = allVals2.drop(zippedVals.length)
+                                            if zippedVals.nonEmpty then
+                                                Emit.valueWith(zippedVals):
+                                                    Loop.continue(emit1, newLeftovers1, cont2(()), newLeftovers2)
+                                            else Loop.continue(emit1, newLeftovers1, cont2(()), newLeftovers2)
+                                            end if
+                                    ,
+                                    done = _ =>
+                                        Loop.done(())
+                                )
+                    )
 
     end zip
 
