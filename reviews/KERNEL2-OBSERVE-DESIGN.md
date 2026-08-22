@@ -125,10 +125,49 @@ object Observe:
   are not context values, they are regions, and regions already cross.
 - The budget-drain full-fidelity mode: parked as a follow-up with its own measurement.
 
-## Open questions for the user
+## Revision after user direction: interceptor semantics, private, zero when off
+
+Two rulings from the user reshaped the first cut:
+
+1. **The node intercepts rather than observes**: `intercept(frame: Frame, value: Any): Any`, and
+   the eval continues with what it returns. Observation is interception-with-identity. Three
+   power tiers were explored: value swap (cheap, ships first), suspension-input swap (spread
+   across the dispatchers, parked until a consumer wants it), and computation injection (the
+   returned value may be a computation the eval defers into place: a single-stepping debugger,
+   but it needs a re-entrancy mask that survives parks; parked as a named follow-up). The type
+   contract is unchecked (`Any => Any` must conform to the position's type), which is one of the
+   reasons for the next point.
+2. **The whole mechanism is `private[kyo]`**, a development tool consumed by Debug; users never
+   see interceptors directly.
+
+Being a dev tool changes the cost target from "sub-noise" to "actually zero when off":
+
+- **A class-init `StaticFlag`** (`kyo.kernel.interceptor`, default false), the same pattern as
+  Safepoint's period. Every hook is `if Interceptor.enabled then ...` on a static final false:
+  C2 constant-folds the branch away, so the compiled hot paths are bit-identical to today's.
+  The debugger runs with the property set; attaching to a live process is not supported, which
+  privacy of the API already implies. On JS/Native the check remains a static-field load and
+  branch, which those platforms' perf posture tolerates.
+- **No Stack cache at all.** The `var observer` and its push/pop/resolve maintenance are
+  dropped; when enabled, the hook scans the entries for the innermost Interceptor per report,
+  O(depth) and irrelevant in debug mode. Stack stays byte-identical to today. The only always-on
+  artifact is the Interceptor arm in the eval's node match, placed with the rare shapes at the
+  tail, which an unobserved program never reaches.
+- **Fast paths stand down wholesale in debug mode**: the dispatch gates gain
+  `&& !Interceptor.enabled`, folded away when off. Debug runs take the general paths everywhere,
+  which is better tracing anyway.
+- **Full step fidelity needs no new machinery**: the safepoint period is already a StaticFlag
+  property, so the debug tool sets a tiny period and every fused step defers into the Defer arm
+  where the interceptor sees it.
+- Hook bodies live out of line in the Interceptor object so `Eval`'s method size is untouched at
+  the bytecode level; the board run still happens once to prove parity, expecting exact zero.
+
+## Open questions for the user (superseded where struck)
 
 1. Report cadence for the first cut: Defer + Suspend + settled-pop (as above), or a narrower
-   Suspend-only start (cheapest possible, still enough for Debug.trace's frame stream)?
-2. Innermost-only nesting acceptable for the first cut?
+   Suspend-only start? (Largely moot under the debug-mode framing: with fast paths standing down
+   and a small period, the three-point cadence sees everything.)
+2. ~~Innermost-only nesting acceptable for the first cut?~~ Innermost-only; the scan returns the
+   first Interceptor entry.
 3. Any need to observe values crossing INTO the extent (arguments), or only produced values, as
    sketched?
