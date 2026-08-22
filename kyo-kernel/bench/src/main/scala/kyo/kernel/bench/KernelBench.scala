@@ -67,6 +67,21 @@ class KernelBench:
         acc
     end evalFixedOverheadBatch
 
+    /** The bare entry: a settled value through eval with no transformation, so the fixed
+      * per-run cost is visible in the same units as every other row. The cross-library boards
+      * carry the same row over their own entries.
+      */
+    @Benchmark
+    @OperationsPerInvocation(1000)
+    def entryFloorBatch: Int =
+        var acc = 0
+        var i   = 0
+        while i < 1000 do
+            acc += ((seed + i): Int < Any).eval
+            i += 1
+        acc
+    end entryFloorBatch
+
     @Benchmark
     def fusionAllocatesNothing: Int =
         def loop(i: Int): Int < Any =

@@ -64,6 +64,21 @@ class KernelBench:
             acc += (((seed + i): Int < Any).map(_ + 1)).eval
             i += 1
         acc
+    end evalFixedOverheadBatch
+
+    /** The bare entry: a settled value through eval with no transformation, so the fixed
+      * per-run cost is visible in the same units as every other row. The cross-library boards
+      * carry the same row over their own entries.
+      */
+    @Benchmark
+    @OperationsPerInvocation(1000)
+    def entryFloorBatch: Int =
+        var acc = 0
+        var i   = 0
+        while i < 1000 do
+            acc += ((seed + i): Int < Any).eval
+            i += 1
+        acc
 
     /** Pure fusion: 396 cache-resident steps inside one safepoint window. Expect zero
       * allocation and every mapLoop site inlined hot into one C2 region.

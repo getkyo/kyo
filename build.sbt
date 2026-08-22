@@ -32,6 +32,8 @@ val zioVersion       = "2.1.26"
 val catsVersion      = "3.7.0"
 val oxVersion        = "1.0.5"
 val scalaTestVersion = "3.2.20"
+val zioBlocksVersion = "0.0.51"
+val turboliftVersion = "0.126.0"
 
 val compilerOptionFailDiscard = "-Wconf:msg=(unused.*value|discarded.*value|pure.*statement):error"
 
@@ -762,11 +764,15 @@ lazy val `kyo-kernel2-bench-cross` =
             // above the kernel, mid-migration) off the Test classpath that Jmh extends.
             Test / unmanagedJars := Seq.empty,
             Jmh / javaOptions := (Test / javaOptions).value.filterNot(_ == "-XX:+UseCompactObjectHeaders"),
+            // zio-blocks Async has no trampoline: flatMap over a settled value calls the
+            // continuation directly, so the depth-10000 rows recurse on the JVM stack. Applied
+            // uniformly to every class in this project; the other libraries are stack-insensitive.
+            Jmh / javaOptions += "-Xss32m",
             libraryDependencies ++= Seq(
-                "dev.zio"            %% "zio"              % "2.1.26",
-                "org.typelevel"      %% "cats-effect"      % "3.7.0",
-                "dev.zio"            %% "zio-blocks-async" % "0.0.51",
-                "io.github.marcinzh" %% "turbolift-core"   % "0.114.0"
+                "dev.zio"            %% "zio"              % zioVersion,
+                "org.typelevel"      %% "cats-effect"      % catsVersion,
+                "dev.zio"            %% "zio-blocks-async" % zioBlocksVersion,
+                "io.github.marcinzh" %% "turbolift-core"   % turboliftVersion
             )
         )
 
