@@ -88,10 +88,10 @@ object ArrowEffect:
                                 input0: I[C],
                                 k0: Arrow[Any, Any, Any],
                                 armed: Boolean,
-                                stop: () => Boolean,
+                                slot: Safepoint.Slot,
                                 out: Out
                             ): Any =
-                                answersCont[I, O, E, A, B, S, C](effectTag, handle, input0, k0, armed, stop, out)
+                                answersCont[I, O, E, A, B, S, C](effectTag, handle, input0, k0, armed, slot, out)
                     def cont = Arrow.id[B]
             case _ => onDone(Nested.unnest(v))
         end match
@@ -124,10 +124,10 @@ object ArrowEffect:
                                 input0: I[C],
                                 k0: Arrow[Any, Any, Any],
                                 armed: Boolean,
-                                stop: () => Boolean,
+                                slot: Safepoint.Slot,
                                 out: Out
                             ): Any =
-                                answersLoop[I, O, E, A, B, S, C](effectTag, handle, input0, k0, armed, stop, out)
+                                answersLoop[I, O, E, A, B, S, C](effectTag, handle, input0, k0, armed, slot, out)
                     def cont = Arrow.id[B]
             case _ => onDone(Nested.unnest(v))
         end match
@@ -163,10 +163,10 @@ object ArrowEffect:
                                 input0: I[C],
                                 k0: Arrow[Any, Any, Any],
                                 armed: Boolean,
-                                stop: () => Boolean,
+                                slot: Safepoint.Slot,
                                 out: Out
                             ): Any =
-                                answersLoopState[I, O, E, A, B, S, State, C](effectTag, handle, state0, input0, k0, armed, stop, out)
+                                answersLoopState[I, O, E, A, B, S, State, C](effectTag, handle, state0, input0, k0, armed, slot, out)
                     def cont = Arrow.id[B]
             case _ => onDone(state, Nested.unnest(v))
         end match
@@ -217,10 +217,10 @@ object ArrowEffect:
                                 input0: I[X],
                                 k0: Arrow[Any, Any, Any],
                                 armed: Boolean,
-                                stop: () => Boolean,
+                                slot: Safepoint.Slot,
                                 out: Out
                             ): Any =
-                                answersCont[I, O, E, A, B, S, X](effectTag, handle, input0, k0, armed, stop, out)
+                                answersCont[I, O, E, A, B, S, X](effectTag, handle, input0, k0, armed, slot, out)
                     def cont                 = this
                     override def apply(b: B) = f(b)
                     def apply[D, S3](b: B < S3, next: Arrow[C, D, S3]): D < (S & S2 & S3) =
@@ -263,10 +263,10 @@ object ArrowEffect:
                                 input0: I[C],
                                 k0: Arrow[Any, Any, Any],
                                 armed: Boolean,
-                                stop: () => Boolean,
+                                slot: Safepoint.Slot,
                                 out: Out
                             ): Any =
-                                answersLoop[I, O, E, A, B, S, C](effectTag, handle, input0, k0, armed, stop, out)
+                                answersLoop[I, O, E, A, B, S, C](effectTag, handle, input0, k0, armed, slot, out)
                     def cont                 = this
                     override def apply(b: B) = f(b)
                     def apply[D, S3](b: B < S3, next: Arrow[C, D, S3]): D < (S & S2 & S3) =
@@ -312,10 +312,10 @@ object ArrowEffect:
                                 input0: I[C],
                                 k0: Arrow[Any, Any, Any],
                                 armed: Boolean,
-                                stop: () => Boolean,
+                                slot: Safepoint.Slot,
                                 out: Out
                             ): Any =
-                                answersLoopState[I, O, E, A, B, S, State, C](effectTag, handle, state0, input0, k0, armed, stop, out)
+                                answersLoopState[I, O, E, A, B, S, State, C](effectTag, handle, state0, input0, k0, armed, slot, out)
                     def cont                 = this
                     override def apply(b: B) = f(b)
                     def apply[D, S3](b: B < S3, next: Arrow[C, D, S3]): D < (S & S2 & S3) =

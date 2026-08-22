@@ -132,7 +132,7 @@ object Handler:
         input0: I[C],
         k0: Arrow[Any, Any, Any],
         armed: Boolean,
-        stop: () => Boolean,
+        slot: Safepoint.Slot,
         out: Out
     ): Any =
         var in: Any                 = input0
@@ -141,7 +141,7 @@ object Handler:
         var result: Any             = null
         var running                 = true
         while running do
-            if armed && stop() then
+            if armed && Safepoint.stopped(slot) then
                 out.kind = 1
                 out.cont = null
                 result = Effect.defer(resuspend(effectTag.erased, in, k).asInstanceOf[Any < Any], Arrow.id[Any])
@@ -234,7 +234,7 @@ object Handler:
         input0: I[C],
         k0: Arrow[Any, Any, Any],
         armed: Boolean,
-        stop: () => Boolean,
+        slot: Safepoint.Slot,
         out: Out
     ): Any =
         var st: State               = state0
@@ -244,7 +244,7 @@ object Handler:
         var result: Any             = null
         var running                 = true
         while running do
-            if armed && stop() then
+            if armed && Safepoint.stopped(slot) then
                 out.kind = 1
                 out.state = st
                 out.cont = null
@@ -334,7 +334,7 @@ object Handler:
         input0: I[C],
         k0: Arrow[Any, Any, Any],
         armed: Boolean,
-        stop: () => Boolean,
+        slot: Safepoint.Slot,
         out: Out
     ): Any =
         var in: Any                 = input0
@@ -343,7 +343,7 @@ object Handler:
         var result: Any             = null
         var running                 = true
         while running do
-            if armed && stop() then
+            if armed && Safepoint.stopped(slot) then
                 out.kind = 1
                 out.cont = null
                 result = Effect.defer(resuspend(effectTag.erased, in, k).asInstanceOf[Any < Any], Arrow.id[Any])
@@ -397,7 +397,7 @@ object Handler:
           * statically bound so consecutive same-tag answers loop inside one compiled method. The
           * cell's cont lane carries the continuation for the exception path only.
           */
-        def answers[X](input: I[X], k: Arrow[Any, Any, Any], armed: Boolean, stop: () => Boolean, out: Out): Any =
+        def answers[X](input: I[X], k: Arrow[Any, Any, Any], armed: Boolean, slot: Safepoint.Slot, out: Out): Any =
             out.kind = Out.Answered
             out.cont = k
             run(input, k.asInstanceOf[Arrow[O[X], A, E & S]])
@@ -422,7 +422,7 @@ object Handler:
                     out.kind = Out.Finished
                     o
 
-        def answers[X](input: I[X], k: Arrow[Any, Any, Any], armed: Boolean, stop: () => Boolean, out: Out): Any =
+        def answers[X](input: I[X], k: Arrow[Any, Any, Any], armed: Boolean, slot: Safepoint.Slot, out: Out): Any =
             out.cont = k
             answer(input, out)
     end HandlerLoop
@@ -467,7 +467,7 @@ object Handler:
           * and hands the continuation back unconsumed, which is the same protocol a bailing loop uses, so
           * the eval treats both alike.
           */
-        def answers[X](state: State, input: I[X], k: Arrow[Any, Any, Any], armed: Boolean, stop: () => Boolean, out: Out): Any =
+        def answers[X](state: State, input: I[X], k: Arrow[Any, Any, Any], armed: Boolean, slot: Safepoint.Slot, out: Out): Any =
             out.cont = k
             answer(state, input, out)
     end HandlerLoopState
@@ -486,8 +486,15 @@ object Handler:
                 // the wrap changes only what the region starts from; the per-site answer bodies, with
                 // their statically bound clause, must survive a clause suspension's re-entry
                 override def answer[X](state: State, input: I[X], out: Out) = h.answer(state, input, out)
-                override def answers[X](state: State, input: I[X], k: Arrow[Any, Any, Any], armed: Boolean, stop: () => Boolean, out: Out) =
-                    h.answers(state, input, k, armed, stop, out)
+                override def answers[X](
+                    state: State,
+                    input: I[X],
+                    k: Arrow[Any, Any, Any],
+                    armed: Boolean,
+                    slot: Safepoint.Slot,
+                    out: Out
+                ) =
+                    h.answers(state, input, k, armed, slot, out)
     end HandlerLoopState
 
 end Handler

@@ -96,12 +96,13 @@ object Eval:
     // on the eta-expansion below. The other @static methods in this package hold local defs and anonymous
     // classes, never lambdas, which is why they compile. The module load this costs is one getstatic
     def apply[A, S](v: A < S): A =
-        apply(v, armed = false, neverStop).asInstanceOf[A]
+        apply(v, armed = false).asInstanceOf[A]
 
     /** Evaluates until the computation parks, handing back a value that resumes on a later slice.
       *
-      * A slice ends on a preemption stop or on the caller's own stop function, and the value returned carries
-      * the regions above the park intact, with their state.
+      * A slice ends on a preemption stop, and the value returned carries the regions above the park intact,
+      * with their state. Stops are Safepoint's alone: the scheduler delivers one through the slot, and the
+      * poll reads the slot, so there is no caller-supplied stop function and nothing to allocate per slice.
       *
       * The row is `Any`, the same as a full evaluation: every effect must already be handled. An operation
       * with no handler is a bug here too, not something a slice can park on and have answered later.
@@ -109,7 +110,7 @@ object Eval:
       * A stop already delivered before the slice begins ends it before it starts: the input comes straight
       * back, and the sentinel is taken so the slice after this one runs.
       */
-    private[kyo] def partial[A](v: A < Any, stop: () => Boolean = neverStop): A < Any =
+    private[kyo] def partial[A](v: A < Any): A < Any =
         val slot = Safepoint.get()
         if Safepoint.consumeStopped(slot) then v
         else
@@ -117,15 +118,10 @@ object Eval:
             // park check both see it, however many times they ask. It is consumed once, at the slice
             // boundary in the finally: park, completion, and failure all satisfy the stop there, so
             // no stale sentinel survives to short-circuit the next slice
-            try apply(v, armed = true, () => Safepoint.stopped(slot) || stop()).asInstanceOf[A < Any]
+            try apply(v, armed = true).asInstanceOf[A < Any]
             finally discard(Safepoint.consumeStopped(slot))
         end if
     end partial
-
-    // shared so a full evaluation and a partial one cannot drift apart. `armed` gates the poll rather than
-    // the poll gating itself: a call per step costs 3 to 5 percent on the hot rows because the JIT will not
-    // fold it away, and a full evaluation must not pay for a slice mechanism it cannot use
-    private val neverStop: () => Boolean = () => false
 
     // The loop is compiled as one unit, and that unit's inlining budget is what everything reached from it
     // inlines out of, boxing helpers included: at 1.4KB the budget starved and Integer.valueOf stopped
@@ -186,11 +182,11 @@ object Eval:
         kyo: Suspend[IX, OX, EX, CX, AX, SX],
         k: Arrow[Any, Any, Any],
         armed: Boolean,
-        stop: () => Boolean
+        slot: Safepoint.Slot
     ): Any < Nothing =
         val out = stack.out
         val ran =
-            try h.answers(kyo.input, k, armed, stop, out)
+            try h.answers(kyo.input, k, armed, slot, out)
             catch
                 case ex: Throwable =>
                     if (out.cont ne null) && !(out.cont eq Arrow.Id) then stack.push(out.cont)
@@ -229,11 +225,11 @@ object Eval:
         kyo: Suspend[IX, OX, EX, CX, AX, SX],
         k: Arrow[Any, Any, Any],
         armed: Boolean,
-        stop: () => Boolean
+        slot: Safepoint.Slot
     ): Any < Nothing =
         val out = stack.out
         val ran =
-            try h.answers(kyo.input, k, armed, stop, out)
+            try h.answers(kyo.input, k, armed, slot, out)
             catch
                 case ex: Throwable =>
                     if (out.cont ne null) && !(out.cont eq Arrow.Id) then stack.push(out.cont)
@@ -321,12 +317,12 @@ object Eval:
         kyo: Suspend[IX, OX, EX, CX, AX, SX],
         k: Arrow[Any, Any, Any],
         armed: Boolean,
-        stop: () => Boolean
+        slot: Safepoint.Slot
     ): Any < Nothing =
         val s   = stack.state(0).getOrElse(h.initialState)
         val out = stack.out
         val ran =
-            try h.answers(s, kyo.input, k, armed, stop, out)
+            try h.answers(s, kyo.input, k, armed, slot, out)
             catch
                 case ex: Throwable =>
                     // the loop committed before rethrowing; make the slot and the entry current
@@ -396,8 +392,14 @@ object Eval:
     end clauseSuspended
 
     @nowarn("msg=anonymous")
-    private def apply[A, S](v: A < S, armed: Boolean, stop: () => Boolean): Any =
+    // `armed` gates the poll rather than the poll gating itself: a full evaluation must not pay for a
+    // slice mechanism it cannot use, and the poll is a static read of the slot rather than a function,
+    // so a slice allocates nothing for its stop
+    private def apply[A, S](v: A < S, armed: Boolean): Any =
         val stack = Stack.borrow()
+        // resolved before the nested defs below, which poll it; saved and armed further down, in the
+        // order the budget install requires
+        val slot = Safepoint.get()
 
         /** The slice, as a value that resumes it.
           *
@@ -432,7 +434,7 @@ object Eval:
                     // payload is read once and the park carries what was read, so a by-name payload does not
                     // run a second time on the way back
                     val v = kyo.value
-                    if armed && !v.isInstanceOf[Binding[?, ?, ?, ?]] && stop() then
+                    if armed && !v.isInstanceOf[Binding[?, ?, ?, ?]] && Safepoint.stopped(slot) then
                         park(Effect.defer[a, b, A, S](v, kyo.contA, kyo.contB))
                     else
                         stack.push(kyo.contB)
@@ -450,7 +452,7 @@ object Eval:
                                 // on top, or under exactly one plain entry, which is then the same
                                 // continuation dump would have handed back bare
                                 if pos == 0 then
-                                    loop(dispatchContFast(stack, h, kyo, Arrow.id[Any].asInstanceOf[Arrow[Any, Any, Any]], armed, stop))
+                                    loop(dispatchContFast(stack, h, kyo, Arrow.id[Any].asInstanceOf[Arrow[Any, Any, Any]], armed, slot))
                                 else if pos == 1 && stack.entry(0).isInstanceOf[Arrow.Step[
                                         ?,
                                         ?,
@@ -458,7 +460,7 @@ object Eval:
                                     ]] && !stack.entry(0).isInstanceOf[Arrow.Region[?, ?, ?]]
                                 then
                                     val k = stack.pop().asInstanceOf[Arrow[Any, Any, Any]]
-                                    loop(dispatchContFast(stack, h, kyo, k, armed, stop))
+                                    loop(dispatchContFast(stack, h, kyo, k, armed, slot))
                                 else
                                     val k = stack.dump[OX[CX], AX, EX & SX](pos)
                                     val next =
@@ -469,7 +471,7 @@ object Eval:
                             case h: HandlerLoop[IX, OX, EX, AX, BX, SX] @unchecked =>
                                 // same gate as the stateful case below
                                 if pos == 0 then
-                                    loop(dispatchLoopFast(stack, h, kyo, Arrow.id[Any].asInstanceOf[Arrow[Any, Any, Any]], armed, stop))
+                                    loop(dispatchLoopFast(stack, h, kyo, Arrow.id[Any].asInstanceOf[Arrow[Any, Any, Any]], armed, slot))
                                 else if pos == 1 && stack.entry(0).isInstanceOf[Arrow.Step[
                                         ?,
                                         ?,
@@ -477,7 +479,7 @@ object Eval:
                                     ]] && !stack.entry(0).isInstanceOf[Arrow.Region[?, ?, ?]]
                                 then
                                     val k = stack.pop().asInstanceOf[Arrow[Any, Any, Any]]
-                                    loop(dispatchLoopFast(stack, h, kyo, k, armed, stop))
+                                    loop(dispatchLoopFast(stack, h, kyo, k, armed, slot))
                                 else
                                     loop(dispatchLoop(stack, h, kyo, pos))
                             case h: HandlerLoopState[IX, OX, EX, AX, BX, SX, StateX] @unchecked =>
@@ -492,7 +494,7 @@ object Eval:
                                         kyo,
                                         Arrow.id[Any].asInstanceOf[Arrow[Any, Any, Any]],
                                         armed,
-                                        stop
+                                        slot
                                     ))
                                 else if pos == 1 && stack.entry(0).isInstanceOf[Arrow.Step[
                                         ?,
@@ -501,7 +503,7 @@ object Eval:
                                     ]] && !stack.entry(0).isInstanceOf[Arrow.Region[?, ?, ?]]
                                 then
                                     val k = stack.pop().asInstanceOf[Arrow[Any, Any, Any]]
-                                    loop(dispatchLoopStateFast(stack, h, kyo, k, armed, stop))
+                                    loop(dispatchLoopStateFast(stack, h, kyo, k, armed, slot))
                                 else
                                     loop(dispatchLoopState(stack, h, kyo, pos))
                         end match
@@ -582,7 +584,6 @@ object Eval:
                     end if
         end loop
 
-        val slot  = Safepoint.get()
         val saved = Safepoint.save(slot)
         // after `save`, which installs a fresh budget and clears the armed bit as it reads. Arming makes a
         // stop drain that budget, so the next operation defers and the poll above is reached at once rather
