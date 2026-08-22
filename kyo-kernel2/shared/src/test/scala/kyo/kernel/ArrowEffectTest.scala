@@ -7,6 +7,7 @@ import kyo.Tag
 import kyo.kernel.internal.Eval
 import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
+import scala.collection.mutable.ListBuffer
 
 class ArrowEffectTest extends AnyFreeSpec:
 
@@ -1653,6 +1654,120 @@ class ArrowEffectTest extends AnyFreeSpec:
             }
             val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], ask.map(_ + 1))([C] => (_, cont) => cont(41), a => a)
             assert(Eval(r) == 42)
+        }
+    }
+
+    // The answer fast path hands the clause call to a method the call site generated and reports the
+    // outcome through a per-stack cell. The cell is interpreter mutability, and the kernel's invariant is
+    // that everything escaping the eval is a complete value, correct under multi-shot; these pins are the
+    // hostile axes of that concession, not construction arguments.
+    "the answer fast path" - {
+
+        "a capture across the fast path is multi-shot, including across threads" in {
+            var kref: Arrow[Unit, Int, Any] = null
+            val body: Int < (Ask & Say) =
+                ask.map(a => ask.map(b => say("x").andThen(ask.map(c => a + b + c))))
+            val region: Int < Say =
+                ArrowEffect.handleLoopState(Tag[Ask], 0, body)(
+                    [C] => (n, _) => Loop.continue(n + 1, n: Int < Any),
+                    (n, a) => n * 1000 + a
+                )
+            val r0 = Eval(ArrowEffect.handleCont(Tag[Say], region)(
+                [C] =>
+                    (_, cont) =>
+                        kref = cont.asInstanceOf[Arrow[Unit, Int, Any]]
+                        cont(())
+                ,
+                a => a
+            ))
+            assert(r0 == 3003)
+            // two replays on this thread: each must run the captured region independently
+            assert(Eval(kref(())) == 3003)
+            assert(Eval(kref(())) == 3003)
+            // and one on another thread: the capture is a complete value, not a view of this eval
+            @volatile var tr = 0
+            val t            = new Thread(() => tr = Eval(kref(())))
+            t.start()
+            t.join()
+            assert(tr == 3003)
+        }
+
+        "a clause keeps only the values it was given" in {
+            val seen = ListBuffer[(Int, String)]()
+            def run(): Int =
+                Eval(ArrowEffect.handleLoopState(Tag[Ask], 0, ask.map(a => ask.map(b => ask.map(c => a + b + c))))(
+                    [C] =>
+                        (n, i) =>
+                            seen += ((n, i.toString))
+                            Loop.continue(n + 1, n: Int < Any)
+                    ,
+                    (n, a) => n * 1000 + a
+                ))
+            assert(run() == 3003)
+            val snapshot = seen.toList
+            assert(snapshot == List((0, "()"), (1, "()"), (2, "()")))
+            // a second eval must not disturb what the first clause stored: the arguments were plain
+            // values, not aliases of live kernel state
+            assert(run() == 3003)
+            assert(seen.toList.take(3) == snapshot)
+            assert(seen.toList.drop(3) == snapshot)
+        }
+
+        "a clause can run a full eval of its own mid-loop" in {
+            def innerRun(): Int =
+                Eval(ArrowEffect.handleLoopState(Tag[Ask], 100, ask.map(a => ask.map(b => a + b)))(
+                    [C] => (n, _) => Loop.continue(n + 1, n: Int < Any),
+                    (n, a) => n + a
+                ))
+            val r = Eval(ArrowEffect.handleLoopState(Tag[Ask], 0, ask.map(a => ask.map(b => a + b)))(
+                [C] =>
+                    (n, _) =>
+                        val i = innerRun()
+                        Loop.continue(n + 1, (n + i): Int < Any)
+                ,
+                (n, a) => n * 100000 + a
+            ))
+            // inner: answers 100 and 101, state 102, sum 201, done 102 + 201; outer answers 0 and 1
+            // shifted by it
+            assert(r == 200607)
+        }
+
+        "a throw after settled answers recovers with every commit already made" in {
+            val states = ListBuffer[Int]()
+            case class Boom() extends RuntimeException
+            def loop(i: Int): Int < Ask =
+                if i > 5 then i else ask.map(a => if a == 2 then throw Boom() else loop(i + 1))
+            val region: Int < Any =
+                ArrowEffect.handleLoopState(Tag[Ask], 0, loop(0))(
+                    [C] =>
+                        (n, _) =>
+                            states += n
+                            Loop.continue(n + 1, n: Int < Any)
+                    ,
+                    (n, a) => a
+                )
+            val r = Eval(Effect.catching(region)(_ => -1))
+            assert(r == -1)
+            // the throw happened applying the continuation after the third answer: all three clause
+            // runs, each with the state the previous commit produced, are visible
+            assert(states.toList == List(0, 1, 2))
+        }
+
+        "a park taken mid answer loop resumes in a fresh full eval" in {
+            def countdown(i: Int): Int < Ask =
+                if i == 0 then 0 else ask.map(a => countdown(i - a))
+            val region: Int < Any =
+                ArrowEffect.handleLoopState(Tag[Ask], 0, countdown(100))(
+                    [C] =>
+                        (n, _) =>
+                            if n == 10 then kyo.discard(internal.Safepoint.stop(Thread.currentThread()))
+                            Loop.continue(n + 1, 1: Int < Any)
+                    ,
+                    (n, a) => n + a
+                )
+            val first = Eval.partial(region)
+            assert(first.evalNow == Maybe.Absent)
+            assert(Eval(first) == 100)
         }
     }
 

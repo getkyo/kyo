@@ -149,48 +149,106 @@ object Eval:
         kyo: Suspend[IX, OX, EX, CX, AX, SX],
         pos: Int
     ): Any < Nothing =
+        val out = stack.out
         val ran =
-            try h.run(kyo.input)
+            try h.answer(kyo.input, out)
             catch
                 case ex: Throwable =>
                     attachThrow(ex, kyo, Arrow.id[Any], stack)
-        ran match
-            case clause: Kyo[Loop.Outcome[OX[CX] < (EX & SX), BX], SX] @unchecked =>
-                val k = stack.dump[OX[CX], AX, EX & SX](pos)
-                discard(stack.pop())
-                new Defer[Loop.Outcome[OX[CX] < (EX & SX), BX], BX, BX, EX & SX]
-                    with Step[Loop.Outcome[OX[CX] < (EX & SX), BX], BX, EX & SX]:
-                    def frame = Frame.internal
-                    def value = clause
-                    def contA = this
-                    def contB = Arrow.id[BX]
-                    override def apply(o: Loop.Outcome[OX[CX] < (EX & SX), BX]) =
-                        o match
-                            case r: Loop.Continue[OX[CX] < (EX & SX)] @unchecked =>
-                                Effect.defer(r._1.map(a => k(a)), h)
-                            case v => v.asInstanceOf[BX]
-                    def apply[D, S2](o: Loop.Outcome[OX[CX] < (EX & SX), BX] < S2, next: Arrow[BX, D, S2])
-                        : D < (EX & SX & S2) =
-                        o match
-                            case kyo: Kyo[Loop.Outcome[OX[CX] < (EX & SX), BX], S2] @unchecked =>
-                                Effect.defer(kyo, this, next)
-                            case _ => next(apply(Nested.unnest(o)), Arrow.id)
-                end new
-            case o =>
-                Nested.unnest[Any](o) match
-                    case r: Loop.Continue[OX[CX] < (EX & SX)] @unchecked =>
-                        r._1 match
-                            case _: Kyo[OX[CX], EX & SX] @unchecked =>
-                                val k = stack.dump[OX[CX], AX, EX & SX](pos)
-                                r._1.map(a => k(a))
-                            case _ => r._1
-                    case _ =>
-                        stack.truncate(pos + 1)
-                        o
+        out.kind match
+            case 1 =>
+                val r = ran.asInstanceOf[OX[CX] < (EX & SX)]
+                r match
+                    case _: Kyo[OX[CX], EX & SX] @unchecked =>
+                        val k = stack.dump[OX[CX], AX, EX & SX](pos)
+                        r.map(a => k(a))
+                    case _ => r
+                end match
+            case 2 =>
+                clauseSuspendedLoop(stack, h, ran.asInstanceOf[Kyo[Loop.Outcome[OX[CX] < (EX & SX), BX], SX]], pos)
+            case _ =>
+                stack.truncate(pos + 1)
+                ran.asInstanceOf[Any < Nothing]
         end match
     end dispatchLoop
 
-    /** The stateful sibling of [[dispatchLoop]]; the state slot updates stay inside. */
+    /** The stateless fast path, [[dispatchLoopStateFast]] without the state lane. */
+    private def dispatchLoopFast(
+        stack: Stack,
+        h: HandlerLoop[IX, OX, EX, AX, BX, SX],
+        kyo: Suspend[IX, OX, EX, CX, AX, SX],
+        k: Arrow[Any, Any, Any],
+        armed: Boolean,
+        stop: () => Boolean
+    ): Any < Nothing =
+        val out = stack.out
+        val ran =
+            try h.answers(kyo.input, k, armed, stop, out)
+            catch
+                case ex: Throwable =>
+                    if (out.cont ne null) && !(out.cont eq Arrow.Id) then stack.push(out.cont)
+                    attachThrow(ex, kyo, Arrow.id[Any], stack)
+        out.kind match
+            case 1 =>
+                if out.cont eq null then ran.asInstanceOf[Any < Nothing]
+                else
+                    stack.push(out.cont)
+                    val r = ran.asInstanceOf[OX[CX] < (EX & SX)]
+                    r match
+                        case _: Kyo[OX[CX], EX & SX] @unchecked =>
+                            val k2 = stack.dump[OX[CX], AX, EX & SX](if out.cont eq Arrow.Id then 0 else 1)
+                            r.map(a => k2(a))
+                        case _ => r
+                    end match
+            case 2 =>
+                val pos2 = if (out.cont ne null) && !(out.cont eq Arrow.Id) then
+                    stack.push(out.cont)
+                    1
+                else 0
+                clauseSuspendedLoop(stack, h, ran.asInstanceOf[Kyo[Loop.Outcome[OX[CX] < (EX & SX), BX], SX]], pos2)
+            case _ =>
+                stack.truncate(1)
+                ran.asInstanceOf[Any < Nothing]
+        end match
+    end dispatchLoopFast
+
+    /** The stateless sibling of [[clauseSuspended]]. */
+    @nowarn("msg=anonymous")
+    private def clauseSuspendedLoop(
+        stack: Stack,
+        h: HandlerLoop[IX, OX, EX, AX, BX, SX],
+        clause: Kyo[Loop.Outcome[OX[CX] < (EX & SX), BX], SX],
+        pos: Int
+    ): Any < Nothing =
+        val k = stack.dump[OX[CX], AX, EX & SX](pos)
+        discard(stack.pop())
+        new Defer[Loop.Outcome[OX[CX] < (EX & SX), BX], BX, BX, EX & SX]
+            with Step[Loop.Outcome[OX[CX] < (EX & SX), BX], BX, EX & SX]:
+            def frame = Frame.internal
+            def value = clause
+            def contA = this
+            def contB = Arrow.id[BX]
+            override def apply(o: Loop.Outcome[OX[CX] < (EX & SX), BX]) =
+                o match
+                    case r: Loop.Continue[OX[CX] < (EX & SX)] @unchecked =>
+                        Effect.defer(r._1.map(a => k(a)), h)
+                    case v => v.asInstanceOf[BX]
+            def apply[D, S2](o: Loop.Outcome[OX[CX] < (EX & SX), BX] < S2, next: Arrow[BX, D, S2])
+                : D < (EX & SX & S2) =
+                o match
+                    case kyo: Kyo[Loop.Outcome[OX[CX] < (EX & SX), BX], S2] @unchecked =>
+                        Effect.defer(kyo, this, next)
+                    case _ => next(apply(Nested.unnest(o)), Arrow.id)
+        end new
+    end clauseSuspendedLoop
+
+    /** The stateful sibling of [[dispatchLoop]]; the state slot updates stay inside.
+      *
+      * The clause call and the outcome destructuring live in the handler's own `answer` method, which the
+      * call site generated with the clause statically bound: the outcome is consumed where it is born, so
+      * no allocation crosses the virtual call. What crosses instead is the answer as the return value and
+      * the state and branch through the stack's out-cell, which this dispatch reads back.
+      */
     @nowarn("msg=anonymous")
     private def dispatchLoopState(
         stack: Stack,
@@ -198,51 +256,115 @@ object Eval:
         kyo: Suspend[IX, OX, EX, CX, AX, SX],
         pos: Int
     ): Any < Nothing =
-        val s = stack.state(pos).getOrElse(h.initialState)
+        val s   = stack.state(pos).getOrElse(h.initialState)
+        val out = stack.out
         val ran =
-            try h.run(s, kyo.input)
+            try h.answer(s, kyo.input, out)
             catch
                 case ex: Throwable =>
                     attachThrow(ex, kyo, Arrow.id[Any], stack)
-        ran match
-            case clause: Kyo[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], SX] @unchecked =>
-                val k = stack.dump[OX[CX], AX, EX & SX](pos)
-                discard(stack.pop())
-                new Defer[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], BX, BX, EX & SX]
-                    with Step[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], BX, EX & SX]:
-                    def frame = Frame.internal
-                    def value = clause
-                    def contA = this
-                    def contB = Arrow.id[BX]
-                    override def apply(o: Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX]) =
-                        o match
-                            case r: Loop.Continue2[StateX, OX[CX] < (EX & SX)] @unchecked =>
-                                Effect.defer(r._2.map(a => k(a)), HandlerLoopState(h, r._1))
-                            case v => v.asInstanceOf[BX]
-                    def apply[D, S2](
-                        o: Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX] < S2,
-                        next: Arrow[BX, D, S2]
-                    ): D < (EX & SX & S2) =
-                        o match
-                            case kyo: Kyo[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], S2] @unchecked =>
-                                Effect.defer(kyo, this, next)
-                            case _ => next(apply(Nested.unnest(o)), Arrow.id)
-                end new
-            case o =>
-                Nested.unnest[Any](o) match
-                    case r: Loop.Continue2[StateX, OX[CX] < (EX & SX)] @unchecked =>
-                        stack.putState(pos, r._1)
-                        r._2 match
-                            case _: Kyo[OX[CX], EX & SX] @unchecked =>
-                                val k = stack.dump[OX[CX], AX, EX & SX](pos)
-                                r._2.map(a => k(a))
-                            case _ => r._2
-                        end match
-                    case _ =>
-                        stack.truncate(pos + 1)
-                        o
+        out.kind match
+            case 1 => // answered: the region continues with the returned value
+                stack.putState(pos, out.state.asInstanceOf[StateX])
+                val r = ran.asInstanceOf[OX[CX] < (EX & SX)]
+                r match
+                    case _: Kyo[OX[CX], EX & SX] @unchecked =>
+                        val k = stack.dump[OX[CX], AX, EX & SX](pos)
+                        r.map(a => k(a))
+                    case _ => r
+                end match
+            case 2 => // the clause itself suspended: dispatch it outside the region and re-enter on its outcome
+                clauseSuspended(stack, h, ran.asInstanceOf[Kyo[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], SX]], pos)
+            case _ => // finished: the clause completed the region
+                stack.truncate(pos + 1)
+                ran.asInstanceOf[Any < Nothing]
         end match
     end dispatchLoopState
+
+    /** The stateful fast path: the handler at the top of the stack with its continuation in hand, so the
+      * generated answer loop can run with the state in a local. Every bail arrives here with the state
+      * committed to the cell; the slot and, where owed, the continuation entry are restored before the
+      * eval carries on, so a capture, a park or a failure observes exactly what the general path leaves.
+      */
+    private def dispatchLoopStateFast(
+        stack: Stack,
+        h: HandlerLoopState[IX, OX, EX, AX, BX, SX, StateX],
+        kyo: Suspend[IX, OX, EX, CX, AX, SX],
+        k: Arrow[Any, Any, Any],
+        armed: Boolean,
+        stop: () => Boolean
+    ): Any < Nothing =
+        val s   = stack.state(0).getOrElse(h.initialState)
+        val out = stack.out
+        val ran =
+            try h.answers(s, kyo.input, k, armed, stop, out)
+            catch
+                case ex: Throwable =>
+                    // the loop committed before rethrowing; make the slot and the entry current
+                    stack.putState(0, out.state.asInstanceOf[StateX])
+                    if (out.cont ne null) && !(out.cont eq Arrow.Id) then stack.push(out.cont)
+                    attachThrow(ex, kyo, Arrow.id[Any], stack)
+        out.kind match
+            case 1 =>
+                stack.putState(0, out.state.asInstanceOf[StateX])
+                if out.cont eq null then ran.asInstanceOf[Any < Nothing]
+                else
+                    // the generic body answered once and handed the continuation back: reattach it, then
+                    // deliver the way the general path would
+                    stack.push(out.cont)
+                    val r = ran.asInstanceOf[OX[CX] < (EX & SX)]
+                    r match
+                        case _: Kyo[OX[CX], EX & SX] @unchecked =>
+                            val k2 = stack.dump[OX[CX], AX, EX & SX](if out.cont eq Arrow.Id then 0 else 1)
+                            r.map(a => k2(a))
+                        case _ => r
+                    end match
+                end if
+            case 2 =>
+                val pos2 = if (out.cont ne null) && !(out.cont eq Arrow.Id) then
+                    stack.push(out.cont)
+                    1
+                else 0
+                clauseSuspended(stack, h, ran.asInstanceOf[Kyo[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], SX]], pos2)
+            case _ =>
+                stack.truncate(1)
+                ran.asInstanceOf[Any < Nothing]
+        end match
+    end dispatchLoopStateFast
+
+    /** The re-entry a suspended clause owes: its outcome dispatched outside the region, resuming through
+      * the folded continuation on a continue and completing past it on a done.
+      */
+    @nowarn("msg=anonymous")
+    private def clauseSuspended(
+        stack: Stack,
+        h: HandlerLoopState[IX, OX, EX, AX, BX, SX, StateX],
+        clause: Kyo[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], SX],
+        pos: Int
+    ): Any < Nothing =
+        val k = stack.dump[OX[CX], AX, EX & SX](pos)
+        discard(stack.pop())
+        new Defer[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], BX, BX, EX & SX]
+            with Step[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], BX, EX & SX]:
+            def frame = Frame.internal
+            def value = clause
+            def contA = this
+            def contB = Arrow.id[BX]
+            override def apply(o: Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX]) =
+                o match
+                    case r: Loop.Continue2[StateX, OX[CX] < (EX & SX)] @unchecked =>
+                        Effect.defer(r._2.map(a => k(a)), HandlerLoopState(h, r._1))
+                    case v => v.asInstanceOf[BX]
+            def apply[D, S2](
+                o: Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX] < S2,
+                next: Arrow[BX, D, S2]
+            ): D < (EX & SX & S2) =
+                o match
+                    case kyo: Kyo[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], S2] @unchecked =>
+                        Effect.defer(kyo, this, next)
+                    case _ => next(apply(Nested.unnest(o)), Arrow.id)
+        end new
+    end clauseSuspended
 
     @nowarn("msg=anonymous")
     private def apply[A, S](v: A < S, armed: Boolean, stop: () => Boolean): Any =
@@ -302,9 +424,43 @@ object Eval:
                                         case ex: Throwable => attachThrow(ex, kyo, k, stack)
                                 loop(next)
                             case h: HandlerLoop[IX, OX, EX, AX, BX, SX] @unchecked =>
-                                loop(dispatchLoop(stack, h, kyo, pos))
+                                // same gate as the stateful case below
+                                if pos == 0 then
+                                    loop(dispatchLoopFast(stack, h, kyo, Arrow.id[Any].asInstanceOf[Arrow[Any, Any, Any]], armed, stop))
+                                else if pos == 1 && stack.entry(0).isInstanceOf[Arrow.Step[
+                                        ?,
+                                        ?,
+                                        ?
+                                    ]] && !stack.entry(0).isInstanceOf[Arrow.Region[?, ?, ?]]
+                                then
+                                    val k = stack.pop().asInstanceOf[Arrow[Any, Any, Any]]
+                                    loop(dispatchLoopFast(stack, h, kyo, k, armed, stop))
+                                else
+                                    loop(dispatchLoop(stack, h, kyo, pos))
                             case h: HandlerLoopState[IX, OX, EX, AX, BX, SX, StateX] @unchecked =>
-                                loop(dispatchLoopState(stack, h, kyo, pos))
+                                // the answer loop needs the continuation in hand: a run of zero or one
+                                // plain entries above the handler is exactly the entry just pushed for
+                                // this suspension, or nothing when the suspension was bare. A region
+                                // entry stays where the scans need it, so it takes the general path
+                                if pos == 0 then
+                                    loop(dispatchLoopStateFast(
+                                        stack,
+                                        h,
+                                        kyo,
+                                        Arrow.id[Any].asInstanceOf[Arrow[Any, Any, Any]],
+                                        armed,
+                                        stop
+                                    ))
+                                else if pos == 1 && stack.entry(0).isInstanceOf[Arrow.Step[
+                                        ?,
+                                        ?,
+                                        ?
+                                    ]] && !stack.entry(0).isInstanceOf[Arrow.Region[?, ?, ?]]
+                                then
+                                    val k = stack.pop().asInstanceOf[Arrow[Any, Any, Any]]
+                                    loop(dispatchLoopStateFast(stack, h, kyo, k, armed, stop))
+                                else
+                                    loop(dispatchLoopState(stack, h, kyo, pos))
                         end match
                     end if
                 case kyo: Handle[EX, ?, ?, A, S] @unchecked =>

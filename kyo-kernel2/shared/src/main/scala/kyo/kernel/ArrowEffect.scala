@@ -13,6 +13,13 @@ import kyo.kernel.internal.*
 import kyo.kernel.internal.Handler.HandlerCont
 import kyo.kernel.internal.Handler.HandlerLoop
 import kyo.kernel.internal.Handler.HandlerLoopState
+import kyo.kernel.internal.Handler.Out
+import kyo.kernel.internal.Handler.answersLoop
+import kyo.kernel.internal.Handler.answersLoopState
+import kyo.kernel.internal.Handler.answerStep
+import kyo.kernel.internal.Handler.answerStepState
+import kyo.kernel.internal.Handler.nextAnswer
+import kyo.kernel.internal.Handler.resuspend
 import kyo.kernel.internal.Kyo.Handle
 import kyo.kernel.internal.Kyo.Suspend
 import scala.annotation.nowarn
@@ -98,6 +105,18 @@ object ArrowEffect:
                             def tag                  = effectTag
                             def run[C](input: I[C])  = handle[C](input)
                             override def apply(a: A) = onDone(a)
+                            // the answer bodies are the eval layer's templates, expanded here with the
+                            // clause statically bound; see Handler.answerStep and Handler.answersLoop
+                            override def answer[C](input: I[C], out: Out): Any =
+                                answerStep[I, O, E, A, B, S, C](handle, input, out)
+                            override def answers[C](
+                                input0: I[C],
+                                k0: Arrow[Any, Any, Any],
+                                armed: Boolean,
+                                stop: () => Boolean,
+                                out: Out
+                            ): Any =
+                                answersLoop[I, O, E, A, B, S, C](effectTag, handle, input0, k0, armed, stop, out)
                     def cont = Arrow.id[B]
             case _ => onDone(Nested.unnest(v))
         end match
@@ -124,6 +143,19 @@ object ArrowEffect:
                             def initialState                   = state
                             def run[C](st: State, input: I[C]) = handle[C](st, input)
                             def apply(st: State, a: A)         = onDone(st, a)
+                            // the answer bodies are the eval layer's templates, expanded here with the
+                            // clause statically bound; see Handler.answerStepState and Handler.answersLoopState
+                            override def answer[C](st: State, input: I[C], out: Out): Any =
+                                answerStepState[I, O, E, A, B, S, State, C](handle, st, input, out)
+                            override def answers[C](
+                                state0: State,
+                                input0: I[C],
+                                k0: Arrow[Any, Any, Any],
+                                armed: Boolean,
+                                stop: () => Boolean,
+                                out: Out
+                            ): Any =
+                                answersLoopState[I, O, E, A, B, S, State, C](effectTag, handle, state0, input0, k0, armed, stop, out)
                     def cont = Arrow.id[B]
             case _ => onDone(state, Nested.unnest(v))
         end match
@@ -202,6 +234,18 @@ object ArrowEffect:
                             def tag                  = effectTag
                             def run[X](input: I[X])  = handle[X](input)
                             override def apply(a: A) = onDone(a)
+                            // the answer bodies are the eval layer's templates, expanded here with the
+                            // clause statically bound; see Handler.answerStep and Handler.answersLoop
+                            override def answer[C](input: I[C], out: Out): Any =
+                                answerStep[I, O, E, A, B, S, C](handle, input, out)
+                            override def answers[C](
+                                input0: I[C],
+                                k0: Arrow[Any, Any, Any],
+                                armed: Boolean,
+                                stop: () => Boolean,
+                                out: Out
+                            ): Any =
+                                answersLoop[I, O, E, A, B, S, C](effectTag, handle, input0, k0, armed, stop, out)
                     def cont                 = this
                     override def apply(b: B) = f(b)
                     def apply[D, S3](b: B < S3, next: Arrow[C, D, S3]): D < (S & S2 & S3) =
@@ -238,6 +282,19 @@ object ArrowEffect:
                             def initialState                   = state
                             def run[X](st: State, input: I[X]) = handle[X](st, input)
                             def apply(st: State, a: A)         = onDone(st, a)
+                            // the answer bodies are the eval layer's templates, expanded here with the
+                            // clause statically bound; see Handler.answerStepState and Handler.answersLoopState
+                            override def answer[C](st: State, input: I[C], out: Out): Any =
+                                answerStepState[I, O, E, A, B, S, State, C](handle, st, input, out)
+                            override def answers[C](
+                                state0: State,
+                                input0: I[C],
+                                k0: Arrow[Any, Any, Any],
+                                armed: Boolean,
+                                stop: () => Boolean,
+                                out: Out
+                            ): Any =
+                                answersLoopState[I, O, E, A, B, S, State, C](effectTag, handle, state0, input0, k0, armed, stop, out)
                     def cont                 = this
                     override def apply(b: B) = f(b)
                     def apply[D, S3](b: B < S3, next: Arrow[C, D, S3]): D < (S & S2 & S3) =

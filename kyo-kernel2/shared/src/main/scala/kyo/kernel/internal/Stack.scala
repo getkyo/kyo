@@ -23,6 +23,11 @@ final private[kyo] class Stack:
     private var finalizers = Array.fill[Maybe[Finalizer[?, ?]]](8)(Absent)
     private var pending    = 0
 
+    // the out-parameter a stateful answer reports through, one per stack so it is pooled with it. Only the
+    // eval and the handler's generated answer method touch it, within one dispatch; nothing it holds
+    // survives past the dispatch that wrote it
+    private[kernel] val out = new Handler.Out
+
     def isEmpty: Boolean = head == tail
 
     def size: Int = tail - head
