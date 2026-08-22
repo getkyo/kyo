@@ -2,6 +2,7 @@ package kyo
 
 import kyo.Result.Error
 import kyo.kernel.*
+import kyo.kernel.internal.Safepoint
 
 /** Pure suspension of side effects.
   *
@@ -39,8 +40,8 @@ object Sync:
       * @return
       *   The suspended computation wrapped in an Sync effect.
       */
-    inline def defer[A, S](inline f: => A < S)(using inline frame: Frame): A < (Sync & S) =
-        Effect.defer(f)
+    inline def defer[A, S](inline f: Safepoint ?=> A < S)(using inline frame: Frame): A < (Sync & S) =
+        Effect.deferInline(f)
 
     /** Ensures that a finalizer is run after the main computation, regardless of success or failure.
       *
@@ -107,12 +108,7 @@ object Sync:
     inline def ensure[A, S](f: Maybe[Error[Any]] => Any < (Sync & Abort[Throwable]))(v: => A < S)(using
         inline frame: Frame
     ): A < (Sync & S) =
-        // the kernel bracket owns the exactly-once guarantee and the outcome: Absent on
-        // success, the error when the computation aborts or throws, and the boundary's own
-        // error when a parked remainder is discarded. The finalizer's effects run through the
-        // release row in the ambient context, so locals bound around the ensure reach it;
-        // only its Abort surfaces as a throw, preserving the panic semantics
-        Effect.bracket(())((_, outcome) => Abort.run[Throwable](f(outcome).unit).map(_.getOrThrow))(_ => v)
+        Unsafe.defer(Safepoint.ensure(ex => Sync.Unsafe.evalOrThrow(f(ex)))(v))
 
     /** Retrieves a local value and applies a function that can perform side effects.
       *
@@ -138,7 +134,7 @@ object Sync:
     object Unsafe:
 
         inline def defer[A, S](inline f: AllowUnsafe ?=> A < S)(using inline frame: Frame): A < (Sync & S) =
-            Effect.defer {
+            Effect.deferInline {
                 f(using AllowUnsafe.embrace.danger)
             }
 

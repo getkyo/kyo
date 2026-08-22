@@ -4,18 +4,23 @@ import IOPromise.*
 import java.util.concurrent.locks.LockSupport
 import kyo.*
 import kyo.Result.Error
+import kyo.kernel.internal.Safepoint
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
 sealed private[kyo] trait IOPromiseBase[+E, +A]:
     self: IOPromise[E, A] =>
 
-private[kyo] class IOPromise[E, A](init: State[E, A]) extends Serializable with IOPromiseBase[E, A]:
+private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Interceptor with Serializable with IOPromiseBase[E, A]:
 
     @volatile private var state = init
 
     def this() = this(Pending())
     def this(interrupts: IOPromise[?, ?]) = this(Pending().interrupts(interrupts))
+
+    def addFinalizer(f: Maybe[Error[Any]] => Unit): Unit    = {}
+    def removeFinalizer(f: Maybe[Error[Any]] => Unit): Unit = {}
+    def enter(frame: Frame, value: Any): Boolean            = true
 
     private def compareAndSet(curr: State[E, A], next: State[E, A]): Boolean =
         IOPromisePlatformSpecific.stateHandle match
