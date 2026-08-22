@@ -78,8 +78,8 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                 [C] =>
                     input =>
                         val c = input.map(f)
-                        if c.isEmpty then Loop.continue
-                        else Emit.valueWith(c)(Loop.continue)
+                        if c.isEmpty then Loop.continue(Kyo.unit)
+                        else Emit.valueWith(c)(Loop.continue(Kyo.unit))
             )
         )
 
@@ -110,13 +110,13 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
             ArrowEffect.handleLoop(tagV, emit)(
                 [C] =>
                     input =>
-                        if input.isEmpty then Loop.continue
+                        if input.isEmpty then Loop.continue(Kyo.unit)
                         else
                             val s = f(input)
                             if s.isEmpty then
-                                Loop.continue
+                                Loop.continue(Kyo.unit)
                             else
-                                Emit.valueWith(Chunk.from(s))(Loop.continue)
+                                Emit.valueWith(Chunk.from(s))(Loop.continue(Kyo.unit))
                             end if
                         end if
             )
@@ -140,9 +140,9 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                 [C] =>
                     input =>
                         if input.isEmpty then
-                            Emit.valueWith(Chunk.empty[V2])(Loop.continue)
+                            Emit.valueWith(Chunk.empty[V2])(Loop.continue(Kyo.unit))
                         else
-                            f(input).map(c => Emit.valueWith(Chunk.from(c))(Loop.continue))
+                            f(input).map(c => Emit.valueWith(Chunk.from(c))(Loop.continue(Kyo.unit)))
             )
         )
 
@@ -164,7 +164,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                 [C] =>
                     input =>
                         Kyo.foreachDiscard(input)(v => f(v).map(_.emit))
-                            .andThen(Loop.continue)
+                            .andThen(Loop.continue(Kyo.unit))
             )
         )
 
@@ -186,9 +186,9 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                 [C] =>
                     input =>
                         if input.isEmpty then
-                            Emit.valueWith(Chunk.empty[V2])(Loop.continue)
+                            Emit.valueWith(Chunk.empty[V2])(Loop.continue(Kyo.unit))
                         else
-                            f(input).map(_.emit).andThen(Loop.continue)
+                            f(input).map(_.emit).andThen(Loop.continue(Kyo.unit))
             )
         )
 
@@ -209,7 +209,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                 [C] =>
                     input =>
                         Kyo.foreachDiscard(input)(f).andThen:
-                            Emit.valueWith(input)(Loop.continue)
+                            Emit.valueWith(input)(Loop.continue(Kyo.unit))
             )
 
     /** Applies a side-effecting function to each chunk in the stream without altering them.
@@ -229,7 +229,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                 [C] =>
                     input =>
                         f(input).andThen:
-                            Emit.valueWith(input)(Loop.continue)
+                            Emit.valueWith(input)(Loop.continue(Kyo.unit))
             )
         )
 
@@ -382,8 +382,8 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                 [C] =>
                     input =>
                         Kyo.filter(input)(f).map { c =>
-                            if c.isEmpty then Loop.continue
-                            else Emit.valueWith(c)(Loop.continue)
+                            if c.isEmpty then Loop.continue(Kyo.unit)
+                            else Emit.valueWith(c)(Loop.continue(Kyo.unit))
                     }
             )
         )
@@ -394,8 +394,8 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                 [C] =>
                     input =>
                         val c = input.filter(f)
-                        if c.isEmpty then Loop.continue
-                        else Emit.valueWith(c)(Loop.continue)
+                        if c.isEmpty then Loop.continue(Kyo.unit)
+                        else Emit.valueWith(c)(Loop.continue(Kyo.unit))
             )
         )
 
@@ -430,7 +430,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                 [C] =>
                     input =>
                         Kyo.collect(input)(f).map { c =>
-                            Emit.valueWith(c)(Loop.continue)
+                            Emit.valueWith(c)(Loop.continue(Kyo.unit))
                     }
             )
         )
@@ -445,8 +445,8 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                 [C] =>
                     input =>
                         val c = input.map(f).collect({ case Present(v) => v })
-                        if c.isEmpty then Loop.continue
-                        else Emit.valueWith(c)(Loop.continue)
+                        if c.isEmpty then Loop.continue(Kyo.unit)
+                        else Emit.valueWith(c)(Loop.continue(Kyo.unit))
             )
         )
 
@@ -474,7 +474,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                                 else
                                     Emit.valueWith(c) {
                                         if c.size != input.size then Loop.done
-                                        else Loop.continue
+                                        else Loop.continue(Kyo.unit)
                                     }
                         }
             )
@@ -494,7 +494,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                         else
                             Emit.valueWith(c):
                                 if c.size != input.size then Loop.done
-                                else Loop.continue
+                                else Loop.continue(Kyo.unit)
                         end if
             )
         )
@@ -584,7 +584,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
       */
     def discard[VV >: V](using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Unit < S =
         ArrowEffect.handleLoop(tag, emit)(
-            [C] => _ => Loop.continue
+            [C] => _ => Loop.continue(Kyo.unit)
         )
 
     /** Runs the stream and applies the given function to each emitted value.
@@ -609,9 +609,9 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
             [C] =>
                 input =>
                     if !input.isEmpty then
-                        f(input).andThen(Loop.continue)
+                        f(input).andThen(Loop.continue(Kyo.unit))
                     else
-                        Loop.continue
+                        Loop.continue(Kyo.unit)
         )
 
     /** Runs the stream and folds over its values using the given pure function and initial accumulator.
@@ -958,7 +958,7 @@ object Stream:
         Stream[V, S]:
             Loop.foreach:
                 v.map {
-                    case Maybe.Present(seq) => Emit.valueWith(Chunk.from(seq))(Loop.continue)
+                    case Maybe.Present(seq) => Emit.valueWith(Chunk.from(seq))(Loop.continue(Kyo.unit))
                     case Maybe.Absent       => Emit.valueWith(Chunk.empty[V])(Loop.done)
                 }
         .rechunk(chunkSize)
