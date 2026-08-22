@@ -582,8 +582,8 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
       *   A unit effect that runs the stream without collecting results
       */
     def discard[VV >: V](using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Unit < S =
-        ArrowEffect.handle(tag, emit)(
-            [C] => (input, cont) => cont(())
+        ArrowEffect.handleLoop(tag, emit)(
+            [C] => _ => Loop.continue(())
         )
 
     /** Runs the stream and applies the given function to each emitted value.
@@ -604,13 +604,13 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
       *   A unit effect that runs the stream and applies f to each chunk
       */
     def foreachChunk[VV >: V, S2](f: Chunk[VV] => Any < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Unit < (S & S2) =
-        ArrowEffect.handle(tag, emit)(
+        ArrowEffect.handleLoop(tag, emit)(
             [C] =>
-                (input, cont) =>
+                input =>
                     if !input.isEmpty then
-                        f(input).andThen(cont(()))
+                        f(input).andThen(Loop.continue(()))
                     else
-                        cont(())
+                        Loop.continue(())
         )
 
     /** Runs the stream and folds over its values using the given pure function and initial accumulator.
