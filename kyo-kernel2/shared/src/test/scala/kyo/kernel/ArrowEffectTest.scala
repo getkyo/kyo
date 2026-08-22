@@ -1904,6 +1904,30 @@ class ArrowEffectTest extends AnyFreeSpec:
             assert(Eval(sayRegion) == 100999)
         }
 
+        "a clause that suspends on the outer effect keeps its state lane across the shared cell" in {
+            // both regions are stateful and every dispatch travels through the one per-stack Out
+            // cell; the inner clause suspends on the outer effect, so each inner dispatch bails
+            // mid-flight, the outer dispatch commits its own state through the same cell, and the
+            // inner region rebuilds from the clause outcome. Each lane must see exactly its own
+            // sequence of states, never the other's
+            var outerSaw        = List.empty[String]
+            val body: Int < Ask = ask.map(a => ask.map(b => ask.map(c => a * 100 + b * 10 + c)))
+            val askRegion: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], "s", body)(
+                [C] => (s, _) => say(s).map(_ => Loop.continue(s + "+", s.length: Int < Any)),
+                (s, a) => if s == "s+++" then a else -1000
+            )
+            val sayRegion: Int < Any = ArrowEffect.handleLoopState(Tag[Say], 0, askRegion)(
+                [C] =>
+                    (n, msg) =>
+                        outerSaw = outerSaw :+ msg; Loop.continue(n + 1, (): Unit < Any)
+                ,
+                (n, a) => n * 1000 + a
+            )
+            // inner answers are the state's length at each dispatch: 1, 2, 3; outer counts three
+            assert(Eval(sayRegion) == 3123)
+            assert(outerSaw == List("s", "s+", "s++"))
+        }
+
         "a clause throw meets the same scopes on every dispatch path" in {
             case class Boom() extends RuntimeException
             // a Catching standing between the suspension and the handler: whether it answers the
