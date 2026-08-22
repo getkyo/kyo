@@ -148,12 +148,18 @@ object EffectTrace:
     end find
 
     private def carrierOf(ex: Throwable): EffectTrace =
-        find(ex) match
-            case Maybe.Present(carrier) => carrier
-            case Maybe.Absent =>
-                val carrier = new EffectTrace
-                ex.addSuppressed(carrier)
-                carrier
+        // the find and the add must be one step: two threads racing the first attach on a shared
+        // exception would otherwise both add a carrier. `addSuppressed` and `getSuppressed` already
+        // synchronize on the exception, so this takes the same monitor they do, held a few
+        // instructions longer; nothing user-written runs inside it
+        ex.synchronized {
+            find(ex) match
+                case Maybe.Present(carrier) => carrier
+                case Maybe.Absent =>
+                    val carrier = new EffectTrace
+                    ex.addSuppressed(carrier)
+                    carrier
+        }
 
     /** A value-position node. An arrow-position node is walked as an arrow, which is what makes a self-referential continuation slot emit
       * one frame and stop instead of re-enqueueing itself forever.
