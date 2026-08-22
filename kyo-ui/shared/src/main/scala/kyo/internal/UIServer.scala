@@ -40,18 +40,31 @@ private[kyo] object UIServer:
                 // the first reactive update touching an unchanged pseudo-styled element does not
                 // redundantly re-inject a rule the page's initial <style> block already has.
                 (_, initialRules) <- HtmlRenderer.renderWithCss(uiTree, Seq.empty)
-                exchange = wsExchange(root, ws, initialRules.map(_._1).toSet)
+                exchange = wsExchange(ws, initialRules.map(_._1).toSet)
                 sub <- ReactiveUI.subscribe(root, exchange)
                 // Session command sink: an event handler calling UI.scrollIntoView sends the op over this
                 // connection's socket, riding the same channel as the reactive updates. runPartial drops
                 // only a Closed (the socket closed, so the command is moot); a Panic propagates.
                 scrollSink = (id: String) =>
                     Abort.runPartial[Closed](ws.put(HttpWebSocket.Payload.Text(Json.encode[HtmlOp](HtmlOp.ScrollIntoView(id))))).unit
+                resolveSink = (sessionId: String, decision: Drag.Decision) =>
+                    Abort.runPartial[Closed](
+                        ws.put(HttpWebSocket.Payload.Text(Json.encode[HtmlOp](HtmlOp.ResolveDrag(sessionId, decision))))
+                    ).unit
+                files <- DragFiles.Service.init(op =>
+                    Abort.runPartial[Closed](ws.put(HttpWebSocket.Payload.Text(Json.encode[HtmlOp](op)))).unit
+                )
+                // Peer close (or any session end) fails every pending file read with Disconnected.
+                _ <- Scope.ensure(files.close())
                 _ <- UICommands.scrollSink.let(Present(scrollSink)) {
-                    Async.race(
-                        ws.stream.foreach(payload => dispatchEvent(sub.handle, payload)),
-                        ws.onPeerClose
-                    )
+                    DragCommands.resolveSink.let(Present(resolveSink)) {
+                        DragFiles.local.let(Present(files)) {
+                            Async.race(
+                                ws.stream.foreach(payload => dispatchEvent(sub.handleValidated, files, payload)),
+                                ws.onPeerClose
+                            )
+                        }
+                    }
                 }
             yield ()
         }
@@ -61,11 +74,8 @@ private[kyo] object UIServer:
             serveSession(ws, ui)
         }
 
-    private def wsExchange(root: ReactiveUI, ws: HttpWebSocket, seenClasses: Set[String])(using Frame): UIExchange =
+    private def wsExchange(ws: HttpWebSocket, seenClasses: Set[String])(using Frame): UIExchange =
         new UIExchange:
-            private def svgContextAt(path: Seq[String]): Boolean =
-                ReactiveUI.findNode(root, path).map(_.svgContext).getOrElse(false)
-
             // Pseudo-state CSS classes already carried by this connection's <style> (seeded from the
             // initial SSR page, then grown by every InjectCss this exchange sends), so a later
             // re-render reusing one of these classes never re-sends its rule. Connection-scoped: each
@@ -73,38 +83,75 @@ private[kyo] object UIServer:
             // already belongs to.
             private val sentClasses = scala.collection.mutable.Set.from(seenClasses)
 
-            def onChange(path: Seq[String], ui: UI)(using Frame): Unit < Async =
-                HtmlRenderer.renderWithCss(ui, path).map { (html, rules) =>
-                    val newRules  = rules.filterNot(r => sentClasses.contains(r._1))
-                    val finalHtml = HtmlRenderer.wrapReactiveRegion(path, svgContextAt(path), html)
-                    val replaceOp = HtmlOp.Replace(path, finalHtml)
-                    // runPartial drops only a Closed (the socket closed mid-render -> the op is moot); a Panic
-                    // propagates to the region fiber rather than being swallowed by the discard.
-                    val sendReplace =
-                        Abort.runPartial[Closed](ws.put(HttpWebSocket.Payload.Text(Json.encode[HtmlOp](replaceOp)))).unit
-                    if newRules.isEmpty then sendReplace
-                    else
-                        newRules.foreach(r => sentClasses += r._1)
-                        val injectOp = HtmlOp.InjectCss(newRules.map(_._2).mkString)
-                        // Send the new pseudo-state rule(s) before the replace that introduces the class
-                        // referencing them, so the element never paints unstyled between the two frames.
-                        Abort.runPartial[Closed](ws.put(HttpWebSocket.Payload.Text(Json.encode[HtmlOp](injectOp)))).unit
-                            .andThen(sendReplace)
-                    end if
+            def onChange(
+                region: ReactiveRegion,
+                path: Seq[String],
+                contentContext: ReactiveRegion.RegionIdentity,
+                parentContext: ReactiveRegion.ParentContext,
+                ui: UI
+            )(using Frame): Unit < Async =
+                val boundaryMode =
+                    if ReactiveRegion.owns(region, contentContext) then ReactiveRegion.BoundaryMode.Suppress
+                    else ReactiveRegion.BoundaryMode.Emit
+                HtmlRenderer.renderRegionWithCss(ui, path, contentContext, region, parentContext, boundaryMode).map {
+                    (html, rules) =>
+                        val newRules = rules.filterNot(r => sentClasses.contains(r._1))
+                        val replaceOp = region match
+                            case ReactiveRegion.HtmlRange(id) => HtmlOp.ReplaceRange(id, html)
+                            case _: ReactiveRegion.SvgElement => HtmlOp.Replace(path, HtmlRenderer.wrapReactiveRegion(region, html))
+                        // runPartial drops only a Closed (the socket closed mid-render -> the op is moot); a Panic
+                        // propagates to the region fiber rather than being swallowed by the discard.
+                        val sendReplace =
+                            Abort.runPartial[Closed](ws.put(HttpWebSocket.Payload.Text(Json.encode[HtmlOp](replaceOp)))).unit
+                        if newRules.isEmpty then sendReplace
+                        else
+                            newRules.foreach(r => sentClasses += r._1)
+                            val injectOp = HtmlOp.InjectCss(newRules.map(_._2).mkString)
+                            // Send the new pseudo-state rule(s) before the replace that introduces the class
+                            // referencing them, so the element never paints unstyled between the two frames.
+                            Abort.runPartial[Closed](ws.put(HttpWebSocket.Payload.Text(Json.encode[HtmlOp](injectOp)))).unit
+                                .andThen(sendReplace)
+                        end if
                 }
             end onChange
 
-    private def dispatchEvent(handle: (Seq[String], UIEvent) => Boolean < Async, payload: HttpWebSocket.Payload)(using
+    private def dispatchEvent(
+        handle: (Seq[String], DragProtocol.ValidatedEvent) => Boolean < Async,
+        files: DragFiles.Service,
+        payload: HttpWebSocket.Payload
+    )(using
         Frame
     ): Unit < Async =
+        def dispatch(event: UIEvent): Unit < Async =
+            DragProtocol.validateEventAndDomain(event, DragProtocol.Limits.default) match
+                // Drop and sort dispatch forks: their handlers may await lazy file reads served by later
+                // frames on this same socket loop, so running them inline would deadlock the session. The
+                // client models concurrent decisions (AwaitingDecisionAfterEnd), and session close unblocks
+                // a forked handler because the file service fails its pending reads with Disconnected.
+                case Result.Success(validated: (DragProtocol.ValidatedEvent.Drop | DragProtocol.ValidatedEvent.SortMove)) =>
+                    Fiber.initUnscoped(handle(event.path, validated).unit).unit
+                case Result.Success(validated) => handle(event.path, validated).unit
+                case _                         => ()
         payload match
             case HttpWebSocket.Payload.Text(data) =>
                 Json.decode[UIEvent](data) match
-                    case Result.Success(event) => handle(event.path, event).unit
-                    // A malformed inbound frame (DecodeException) is dropped: a buggy client must not be able to tear
-                    // down the session. A Panic is a decoder defect, not bad input, and must propagate.
-                    case Result.Failure(_) => ()
-                    case Result.Panic(ex)  => Abort.panic(ex)
+                    case Result.Success(event) => dispatch(event)
+                    // Not a bare event: the drag runtime posts ClientMessage envelopes; unwrap Event values and
+                    // route validated file transfer responses to the session's read service. A malformed inbound
+                    // frame is dropped: a buggy client must not be able to tear down the session. A Panic is a
+                    // decoder defect, not bad input, and must propagate.
+                    case Result.Failure(_) =>
+                        Json.decode[DragProtocol.ClientMessage](data) match
+                            case Result.Success(DragProtocol.ClientMessage.Event(event)) => dispatch(event)
+                            case Result.Success(message) =>
+                                DragProtocol.validate(message, DragProtocol.Limits.default) match
+                                    case Result.Success(validated) => files.deliver(validated)
+                                    case _                         => ()
+                            case Result.Failure(_) => ()
+                            case Result.Panic(ex)  => Abort.panic(ex)
+                    case Result.Panic(ex) => Abort.panic(ex)
             case HttpWebSocket.Payload.Binary(_) => ()
+        end match
+    end dispatchEvent
 
 end UIServer

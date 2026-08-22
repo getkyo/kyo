@@ -96,6 +96,32 @@ class IsolateTest extends kyo.test.Test[Any]:
         assert(interceptorCalled)
     }
 
+    "restoring exposes the complete interceptor chain in nearest-first order" in {
+        def interceptor(label: String) = new Safepoint.Interceptor:
+            def addFinalizer(f: Maybe[Error[Any]] => Unit): Unit    = ()
+            def removeFinalizer(f: Maybe[Error[Any]] => Unit): Unit = ()
+            def enter(frame: Frame, value: Any): Boolean            = true
+            override def toString: String                           = label
+
+        val outer = interceptor("outer")
+        val inner = interceptor("inner")
+        val found = Safepoint.immediate(outer) {
+            Safepoint.immediate(inner) {
+                Safepoint.get.findInterceptor { current =>
+                    if current eq outer then Present(current.toString) else Absent
+                }
+            }
+        }.eval
+        val nearest = Safepoint.immediate(outer) {
+            Safepoint.immediate(inner) {
+                Safepoint.get.findInterceptor(current => Present(current.toString))
+            }
+        }.eval
+
+        assert(found.contains("outer"))
+        assert(nearest.contains("inner"))
+    }
+
     "with non-context effect" in {
         val isolate = Isolate.derive[TestEffect1, Any, Any]
         val effect: Int < (TestEffect1 & NotContextEffect) = Isolate.internal.runDetached { (trace, context) =>

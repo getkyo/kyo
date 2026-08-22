@@ -3,6 +3,8 @@ package kyo
 import kyo.Result.Error
 import kyo.Result.Panic
 import kyo.kernel.ContextEffect
+import kyo.kernel.internal.Safepoint
+import kyo.scheduler.IOTask
 
 /** A structured effect for safe acquisition and finalization of resources.
   *
@@ -129,16 +131,32 @@ object Scope:
     def run[A, S](closeParallelism: Int)(v: A < (Scope & S))(using frame: Frame): A < (Async & S) =
         Sync.Unsafe.defer {
             val finalizer = Finalizer.Awaitable.Unsafe.init(closeParallelism)
-            ContextEffect.handle(Tag[Scope], finalizer, _ => finalizer)(v)
-                .handle(
-                    Sync.ensure(finalizer.close),
-                    Abort.run[Any]
-                ).map { result =>
-                    finalizer
-                        .close(result.error)
-                        .andThen(finalizer.await)
-                        .andThen(Abort.get(result.asInstanceOf[Result[Nothing, A]]))
-                }
+            val cleanup: IOTask.CleanupBarrier =
+                error => finalizer.close(error).andThen(finalizer.await)
+            Safepoint.get.findInterceptor {
+                case task: IOTask[?, ?, ?] => Present(task)
+                case _                     => Absent
+            } match
+                case Present(task) if task.addCleanupBarrier(cleanup) =>
+                    ContextEffect.handle(Tag[Scope], finalizer, _ => finalizer)(v)
+                        .handle(Abort.run[Any])
+                        .map { result =>
+                            cleanup(result.error)
+                                .andThen(Sync.defer(task.removeCleanupBarrier(cleanup)))
+                                .andThen(Abort.get(result.asInstanceOf[Result[Nothing, A]]))
+                        }
+                case Present(_) =>
+                    Async.never
+                case Absent =>
+                    ContextEffect.handle(Tag[Scope], finalizer, _ => finalizer)(v)
+                        .handle(
+                            Sync.ensure(finalizer.close),
+                            Abort.run[Any]
+                        ).map { result =>
+                            cleanup(result.error)
+                                .andThen(Abort.get(result.asInstanceOf[Result[Nothing, A]]))
+                        }
+            end match
         }
 
     /** Represents a finalizer for a resource. */
@@ -180,7 +198,7 @@ object Scope:
                                             promise.completeUnitDiscard
                                         else
                                             Async.foreachDiscard(tasks.reverse, parallelism) { task =>
-                                                Abort.run[Throwable](task(ex))
+                                                Abort.run[Throwable](Abort.catching[Throwable](task(ex)))
                                                     .map(_.foldError(
                                                         _ => (),
                                                         ex => Log.error("Scope finalizer failed", ex.exception)
@@ -190,7 +208,10 @@ object Scope:
                                                 .map(promise.becomeDiscard)
                             }
 
-                        def await(using Frame): Unit < Async = promise.get
+                        // Awaits through a masked view: joining the promise directly would register the awaiting
+                        // fiber's interrupt cascade on it, and an interrupt landing mid-drain would follow the
+                        // link into the finalizer fiber and abandon the finalizers that have not run yet.
+                        def await(using Frame): Unit < Async = promise.mask.map(_.get)
                 end init
             end Unsafe
         end Awaitable

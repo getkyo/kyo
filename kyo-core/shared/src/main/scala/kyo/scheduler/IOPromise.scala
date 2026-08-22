@@ -38,6 +38,8 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
                     false
                 case l: Linked[E, A] @unchecked =>
                     doneLoop(l.p)
+                case _: Interrupting[E, A] @unchecked =>
+                    false
                 case _ =>
                     true
         doneLoop(this)
@@ -50,6 +52,8 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
                     Absent
                 case l: Linked[E, A] @unchecked =>
                     pollLoop(l.p)
+                case _: Interrupting[E, A] @unchecked =>
+                    Absent
                 case r =>
                     Present(r.asInstanceOf[Result[E, A]])
         pollLoop(this)
@@ -59,11 +63,16 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
         (state: @unchecked) match
             case e: Result.Error[Any] =>
                 Present(e)
+            case Interrupting(error, _) =>
+                Present(error.asInstanceOf[Error[Any]])
             case _ =>
                 Absent
 
     final protected def isPending(): Boolean =
         state.isInstanceOf[Pending[?, ?]]
+
+    final protected def isInterrupting(): Boolean =
+        state.isInstanceOf[Interrupting[?, ?]]
 
     final def interrupts(other: IOPromise[?, ?])(using frame: Frame): Unit =
         @tailrec def interruptsLoop(promise: IOPromise[E, A]): Unit =
@@ -73,6 +82,12 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
                         interruptsLoop(promise)
                 case l: Linked[E, A] @unchecked =>
                     interruptsLoop(l.p)
+                case current: Interrupting[E, A] @unchecked =>
+                    val error =
+                        current.error match
+                            case panic: Result.Panic => panic
+                            case _                   => Result.Panic(Interrupted(frame))
+                    discard(other.interrupt(error))
                 case _ =>
                     discard(other.interrupt(Result.Panic(Interrupted(frame))))
         interruptsLoop(this)
@@ -86,14 +101,19 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
                         removeInterruptLoop(promise)
                 case l: Linked[E, A] @unchecked =>
                     removeInterruptLoop(l.p)
-                case _ =>
+                case _: Interrupting[E, A] @unchecked =>
+                case _                                =>
         removeInterruptLoop(this)
     end removeInterrupt
 
     def preInterrupt(): Boolean = true
 
-    /** Called exactly once when an interrupt completes this promise, after the state CAS, so observers it notifies already see the final
-      * state. Never fires on value completion. No-op by default; IOTask overrides it to notify the scheduler.
+    /** Allows IOTask to propagate an interrupt request before publishing its externally visible terminal result. */
+    protected def deferInterruptCompletion(): Boolean = false
+
+    /** Called exactly once after an interrupt request wins the state CAS, when ordinary completion can no longer win. A promise that defers
+      * interrupt completion remains externally pending until cleanup publishes the terminal result. Never fires on value completion. No-op
+      * by default; IOTask overrides it to notify the scheduler.
       */
     protected def onInterrupted(): Unit = {}
 
@@ -115,6 +135,8 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
                     promise.interrupt(p, e) || interruptLoop(promise, Present(e))
                 case l: Linked[E, A] @unchecked =>
                     interruptLoop(l.p, _error)
+                case _: Interrupting[E, A] @unchecked =>
+                    false
                 case _ =>
                     false
         preInterrupt() && interruptLoop(this, Absent)
@@ -125,6 +147,8 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
             p.state match
                 case l: Linked[E, A] @unchecked =>
                     compressLoop(l.p)
+                case _: Interrupting[E, A] @unchecked =>
+                    p
                 case _ =>
                     p
         compressLoop(this)
@@ -138,6 +162,8 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
                         mergeLoop(promise)
                 case l: Linked[E, A] @unchecked =>
                     mergeLoop(l.p)
+                case current: Interrupting[E, A] @unchecked =>
+                    promise.mergeInterrupting(current.error, p)
                 case v =>
                     p.flush(v.asInstanceOf[Result[E, A]])
         mergeLoop(this)
@@ -155,6 +181,8 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
                         true
                     else
                         becomeLoop(other)
+                case _: Interrupting[E, A] @unchecked =>
+                    false
                 case _ =>
                     false
         becomeLoop(other.compress())
@@ -168,6 +196,9 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
                         onCompleteLoop(promise)
                 case l: Linked[E, A] @unchecked =>
                     onCompleteLoop(l.p)
+                case current: Interrupting[E, A] @unchecked =>
+                    val next = Interrupting(current.error, current.pending.onComplete(f))
+                    if !promise.compareAndSet(current, next) then onCompleteLoop(promise)
                 case v =>
                     IOPromise.eval(discard(f(v.asInstanceOf[Result[E, A]])))
         onCompleteLoop(this)
@@ -181,6 +212,8 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
                         onInterruptLoop(promise)
                 case l: Linked[E, A] @unchecked =>
                     onInterruptLoop(l.p)
+                case current: Interrupting[E, A] @unchecked =>
+                    IOPromise.eval(discard(f(current.error)))
                 case _ =>
         onInterruptLoop(this)
     end onInterrupt
@@ -193,17 +226,54 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
       */
     protected def becomeAvailable(): Boolean =
         state match
-            case _: Pending[?, ?] => false
-            case _: Linked[?, ?]  => false
-            case v                => compareAndSet(v, Pending())
+            case _: Pending[?, ?]      => false
+            case _: Interrupting[?, ?] => false
+            case _: Linked[?, ?]       => false
+            case v                     => compareAndSet(v, Pending())
 
     final private def interrupt(p: Pending[E, A], v: Error[E]): Boolean =
-        compareAndSet(p, v) && {
-            onComplete()
-            onInterrupted()
-            p.flushInterrupt(v)
-            true
-        }
+        if deferInterruptCompletion() then
+            compareAndSet(p, Interrupting(v, Pending())) && {
+                mergeInterrupting(v, p)
+                onComplete()
+                onInterrupted()
+                true
+            }
+        else
+            compareAndSet(p, v) && {
+                onComplete()
+                onInterrupted()
+                p.flushInterrupt(v)
+                true
+            }
+
+    final private def mergeInterrupting(error: Error[E], callbacks: Pending[E, A]): Unit =
+        mergeRetainedInterrupting(Pending.requestInterrupt(callbacks, error))
+
+    @tailrec
+    final private def mergeRetainedInterrupting(retained: Pending[E, A]): Unit =
+        state match
+            case current: Interrupting[E, A] @unchecked =>
+                val next = Interrupting(current.error, current.pending.merge(retained))
+                if !compareAndSet(current, next) then mergeRetainedInterrupting(retained)
+            case result: Result[E, A] @unchecked =>
+                retained.flush(result)
+            case linked: Linked[E, A] @unchecked =>
+                linked.p.merge(retained)
+            case _: Pending[E, A] @unchecked =>
+                throw new IllegalStateException("Interrupted promise returned to Pending")
+        end match
+    end mergeRetainedInterrupting
+
+    /** Publishes an IOTask interruption after its cleanup barriers have completed. */
+    @tailrec
+    final protected def finishInterrupt(): Unit =
+        state match
+            case current: Interrupting[E, A] @unchecked =>
+                if compareAndSet(current, current.error) then current.pending.flush(current.error)
+                else finishInterrupt()
+            case _ => ()
+    end finishInterrupt
 
     final private def complete(p: Pending[E, A], v: Result[E, A]): Boolean =
         compareAndSet(p, v) && {
@@ -232,6 +302,8 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
                     p.waiters
                 case l: Linked[?, ?] =>
                     waitersLoop(l.p)
+                case Interrupting(_, pending) =>
+                    pending.waiters
                 case _ =>
                     0
         waitersLoop(this)
@@ -240,7 +312,7 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
     final def block(deadline: Clock.Deadline.Unsafe)(using frame: Frame): Result[E | Timeout, A] =
         @tailrec def blockLoop(promise: IOPromise[E, A]): Result[E | Timeout, A] =
             promise.state match
-                case _: Pending[E, A] @unchecked =>
+                case _: (Pending[E, A] | Interrupting[E, A]) @unchecked =>
                     Scheduler.get.flush()
                     object state extends (Result[E, A] => Unit):
                         @volatile
@@ -285,23 +357,24 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
 
     protected def stateString(): String =
         state match
-            case p: Pending[?, ?] => s"Pending(waiters = ${p.waiters})"
-            case l: Linked[?, ?]  => s"Linked(promise = ${l.p})"
-            case r                => s"Done(result = ${r.asInstanceOf[Result[Any, Any]].show})"
+            case p: Pending[?, ?]             => s"Pending(waiters = ${p.waiters})"
+            case Interrupting(error, pending) => s"Interrupting(error = ${error.show}, waiters = ${pending.waiters})"
+            case l: Linked[?, ?]              => s"Linked(promise = ${l.p})"
+            case r                            => s"Done(result = ${r.asInstanceOf[Result[Any, Any]].show})"
 
     override def toString =
         s"IOPromise(state = ${stateString()})"
 
 end IOPromise
-
 private[kyo] object IOPromise:
 
     abstract class StateHandle:
         def compareAndSet[E, A](promise: IOPromise[E, A], curr: State[E, A], next: State[E, A]): Boolean
 
-    type State[E, A] = Result[E, A] | Pending[E, A] | Linked[E, A]
+    type State[E, A] = Result[E, A] | Pending[E, A] | Interrupting[E, A] | Linked[E, A]
 
     final case class Linked[E, A](p: IOPromise[E, A])
+    final case class Interrupting[E, A](error: Error[E], pending: Pending[E, A])
 
     private val interruptPanic = Result.Panic(Interrupted(Frame.internal))
 
@@ -310,6 +383,13 @@ private[kyo] object IOPromise:
 
         def waiters: Int
         def interrupt(v: Error[E]): Pending[E, A]
+
+        /** One step of the deferred-interrupt walk: perform this wrapper's side effect (cascade or
+          * notification), record any completion callback to retain in `retained`, and return the next
+          * link. Driven by [[Pending.requestInterrupt]]'s tail-recursive loop, never self-recursive,
+          * so arbitrarily long waiter chains use constant stack.
+          */
+        def requestInterrupt(v: Error[E], retained: Pending.Retained[E, A]): Pending[E, A]
         def removeInterrupt(other: IOPromise[?, ?]): Pending[E, A]
         def run(v: Result[E, A]): Pending[E, A]
 
@@ -318,6 +398,9 @@ private[kyo] object IOPromise:
                 def waiters: Int = self.waiters + 1
                 def interrupt(error: Error[E]) =
                     eval(discard(f(error)))
+                    self
+                def requestInterrupt(error: Error[E], retained: Pending.Retained[E, A]) =
+                    retained.add(f)
                     self
                 def removeInterrupt(other: IOPromise[?, ?]) =
                     self.removeInterrupt(other).onComplete(f)
@@ -337,6 +420,14 @@ private[kyo] object IOPromise:
                     discard(p.interrupt(ex))
                     self
                 end interrupt
+                def requestInterrupt(error: Error[E], retained: Pending.Retained[E, A]) =
+                    val propagated =
+                        error match
+                            case panic: Result.Panic => panic
+                            case _                   => interruptPanic
+                    discard(p.interrupt(propagated))
+                    self
+                end requestInterrupt
                 def removeInterrupt(other: IOPromise[?, ?]) =
                     if p eq other then self
                     else self.removeInterrupt(other).interrupts(p)
@@ -347,6 +438,9 @@ private[kyo] object IOPromise:
         def onInterrupt(f: Error[E] => Any): Pending[E, A] =
             new Pending[E, A]:
                 def interrupt(error: Error[E]) =
+                    eval(discard(f(error)))
+                    self
+                def requestInterrupt(error: Error[E], retained: Pending.Retained[E, A]) =
                     eval(discard(f(error)))
                     self
                 def removeInterrupt(other: IOPromise[?, ?]) =
@@ -373,8 +467,11 @@ private[kyo] object IOPromise:
                     case p: Pending[E, A]          => removeInterruptsLoop(p.removeInterrupt(other), other)
 
             new Pending[E, A]:
-                def waiters: Int                            = self.waiters + tail.waiters
-                def interrupt(error: Error[E])              = interruptLoop(self, error)
+                def waiters: Int               = self.waiters + tail.waiters
+                def interrupt(error: Error[E]) = interruptLoop(self, error)
+                def requestInterrupt(error: Error[E], retained: Pending.Retained[E, A]) =
+                    Pending.requestInterruptLoop(self, error, retained)
+                    tail
                 def removeInterrupt(other: IOPromise[?, ?]) = removeInterruptsLoop(self, other)
                 def run(v: Result[E, A])                    = runLoop(self, v)
             end new
@@ -402,11 +499,44 @@ private[kyo] object IOPromise:
 
     object Pending:
         def apply[E, A](): Pending[E, A] = Empty.asInstanceOf[Pending[E, A]]
+
+        /** Collects the completion callbacks a deferred interrupt retains, in walk order. */
+        final class Retained[E, A]:
+            private val callbacks                 = ChunkBuilder.init[Result[E, A] => Any]
+            def add(f: Result[E, A] => Any): Unit = callbacks.addOne(f)
+
+            /** Rebuilds the retained chain so a later flush runs callbacks in the original order. */
+            def result(): Pending[E, A] =
+                val collected            = callbacks.result()
+                var chain: Pending[E, A] = Pending()
+                var index                = collected.size - 1
+                while index >= 0 do
+                    chain = chain.onComplete(collected(index))
+                    index -= 1
+                chain
+            end result
+        end Retained
+
+        /** Walks a whole waiter chain one requestInterrupt step at a time with constant stack. */
+        @tailrec private[IOPromise] def requestInterruptLoop[E, A](
+            p: Pending[E, A],
+            error: Error[E],
+            retained: Retained[E, A]
+        ): Unit =
+            if !(p eq Pending.Empty) then requestInterruptLoop(p.requestInterrupt(error, retained), error, retained)
+
+        /** Fires cascades and interrupt notifications now and returns the retained completion chain. */
+        private[IOPromise] def requestInterrupt[E, A](callbacks: Pending[E, A], error: Error[E]): Pending[E, A] =
+            val retained = new Retained[E, A]
+            requestInterruptLoop(callbacks, error, retained)
+            retained.result()
+        end requestInterrupt
         case object Empty extends Pending[Nothing, Nothing]:
-            def waiters: Int                            = 0
-            def interrupt(v: Error[Nothing])            = this
-            def removeInterrupt(other: IOPromise[?, ?]) = this
-            def run(v: Result[Nothing, Nothing])        = this
+            def waiters: Int                                                                      = 0
+            def interrupt(v: Error[Nothing])                                                      = this
+            def requestInterrupt(v: Error[Nothing], retained: Pending.Retained[Nothing, Nothing]) = this
+            def removeInterrupt(other: IOPromise[?, ?])                                           = this
+            def run(v: Result[Nothing, Nothing])                                                  = this
         end Empty
     end Pending
 

@@ -7,6 +7,142 @@ import kyo.kernel.internal.*
 
 class IOTaskTest extends kyo.test.Test[Any]:
 
+    "cleanup barriers" - {
+        "linearizes registration before close and drains in LIFO order" in {
+            val barriers                      = IOTask.CleanupBarriers.init()
+            val seen                          = scala.collection.mutable.ArrayBuffer.empty[Int]
+            val first: IOTask.CleanupBarrier  = _ => Sync.defer(seen += 1).unit
+            val second: IOTask.CleanupBarrier = _ => Sync.defer(seen += 2).unit
+
+            assert(barriers.add(first))
+            assert(barriers.add(second))
+            assert(barriers.size == 2)
+            val drained = barriers.close(Absent).toIndexed
+            assert(drained.size == 2)
+            assert(drained(0) eq second)
+            assert(drained(1) eq first)
+            assert(barriers.size == 0)
+            assert(!barriers.add(first))
+            assert(barriers.close(Absent).isEmpty)
+        }
+
+        "removes a normally completed barrier without retention" in {
+            val barriers                       = IOTask.CleanupBarriers.init()
+            val barrier: IOTask.CleanupBarrier = _ => ()
+            assert(barriers.add(barrier))
+            barriers.remove(barrier)
+            assert(barriers.size == 0)
+            assert(barriers.close(Absent).isEmpty)
+        }
+
+        "register and close race has one linearized owner" in {
+            Kyo.foreachDiscard(0 until 1000) { _ =>
+                for
+                    start      <- Promise.init[Unit, Any]
+                    registered <- Promise.init[Boolean, Any]
+                    drained    <- Promise.init[Chunk[IOTask.CleanupBarrier], Any]
+                    barriers                       = IOTask.CleanupBarriers.init()
+                    barrier: IOTask.CleanupBarrier = _ => ()
+                    registerFiber <-
+                        Fiber.initUnscoped(start.get.andThen(Sync.defer(registered.completeDiscard(Result.succeed(barriers.add(barrier))))))
+                    closeFiber <-
+                        Fiber.initUnscoped(start.get.andThen(Sync.defer(drained.completeDiscard(Result.succeed(barriers.close(Absent))))))
+                    _           <- start.completeUnit
+                    didRegister <- registered.get
+                    closed      <- drained.get
+                    _           <- registerFiber.getResult
+                    _           <- closeFiber.getResult
+                yield
+                    assert(didRegister == closed.contains(barrier))
+                    assert(barriers.size == 0)
+                end for
+            }
+        }
+    }
+
+    "interrupted completion" - {
+        "keeps terminal visibility pending until nested Scope cleanup completes" in {
+            for
+                entered        <- Promise.init[Unit, Any]
+                cleanupStarted <- Promise.init[Unit, Any]
+                releaseCleanup <- Promise.init[Unit, Any]
+                interruptSeen  <- Promise.init[Unit, Any]
+                completionSeen <- Promise.init[Unit, Any]
+                lateCompletion <- Promise.init[Unit, Any]
+                syncFinalized  <- kyo.AtomicBoolean.init(false)
+                fiber <- Fiber.initUnscoped {
+                    Sync.ensure(syncFinalized.set(true)) {
+                        Scope.run {
+                            Scope.ensure(cleanupStarted.completeUnitDiscard.andThen(releaseCleanup.get))
+                                .andThen(entered.completeUnitDiscard)
+                                .andThen(Async.never[Unit])
+                        }
+                    }
+                }
+                _              <- fiber.onInterrupt(_ => interruptSeen.completeUnitDiscard)
+                _              <- fiber.onComplete(_ => completionSeen.completeUnitDiscard)
+                _              <- entered.get
+                interrupted    <- fiber.interrupt
+                _              <- interruptSeen.get
+                _              <- cleanupStarted.get
+                pollBefore     <- fiber.poll
+                doneBefore     <- fiber.done
+                getWaiter      <- Fiber.initUnscoped(fiber.get)
+                getBefore      <- getWaiter.poll
+                callbackBefore <- completionSeen.poll
+                syncBefore     <- syncFinalized.get
+                _              <- fiber.onComplete(_ => lateCompletion.completeUnitDiscard)
+                lateBefore     <- lateCompletion.poll
+                _              <- releaseCleanup.completeUnit
+                _              <- completionSeen.get
+                _              <- lateCompletion.get
+                _              <- assertEventually(getWaiter.done)
+                result         <- fiber.poll
+                getAfter       <- getWaiter.poll
+                waiters        <- fiber.waiters
+            yield
+                assert(interrupted)
+                assert(pollBefore.isEmpty)
+                assert(!doneBefore)
+                assert(getBefore.isEmpty)
+                assert(callbackBefore.isEmpty)
+                assert(syncBefore)
+                assert(lateBefore.isEmpty)
+                assert(result.exists(_.isPanic))
+                assert(getAfter.exists(_.isPanic))
+                assert(waiters == 0)
+            end for
+        }
+
+        "repeated and concurrent interrupts publish one terminal callback" in {
+            for
+                entered        <- Promise.init[Unit, Any]
+                cleanupStarted <- Promise.init[Unit, Any]
+                releaseCleanup <- Promise.init[Unit, Any]
+                fiber <- Fiber.initUnscoped(Scope.run {
+                    Scope.ensure(cleanupStarted.completeUnitDiscard.andThen(releaseCleanup.get))
+                        .andThen(entered.completeUnitDiscard)
+                        .andThen(Async.never)
+                })
+                completions     <- AtomicInt.init(0)
+                interrupts      <- AtomicInt.init(0)
+                _               <- fiber.onComplete(_ => completions.incrementAndGet.unit)
+                _               <- fiber.onInterrupt(_ => interrupts.incrementAndGet.unit)
+                _               <- entered.get
+                attempts        <- Async.gather((0 until 32).map(_ => fiber.interrupt))
+                _               <- cleanupStarted.get
+                _               <- releaseCleanup.completeUnit
+                _               <- fiber.getResult
+                completionCount <- completions.get
+                interruptCount  <- interrupts.get
+            yield
+                assert(attempts.count(identity) == 1)
+                assert(completionCount == 1)
+                assert(interruptCount == 1)
+            end for
+        }
+    }
+
     "fiberTrace" - {
 
         "fiberTrace renders the live user frames of a blocked effectful fiber" in {

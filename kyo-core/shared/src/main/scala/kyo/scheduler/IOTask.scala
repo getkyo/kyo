@@ -1,11 +1,13 @@
 package kyo.scheduler
 
+import java.util.concurrent.atomic.AtomicReference
 import kyo.*
 import kyo.Result.Error
 import kyo.kernel.*
 import kyo.kernel.ArrowEffect
 import kyo.kernel.internal.*
 import kyo.scheduler.IOTask.*
+import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
 sealed private[kyo] class IOTask[Ctx, E, A] private (
@@ -15,6 +17,8 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
 ) extends IOPromise[E, A] with Task:
 
     import IOTask.frame
+
+    private val cleanupBarriers = CleanupBarriers.init()
 
     def context: Context = Context.empty
 
@@ -35,11 +39,16 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
     final override def removeFinalizer(f: Maybe[Error[Any]] => Unit) =
         finalizers = finalizers.remove(f)
 
-    // Fiber interruption is recorded by IOPromise.interrupt's CAS of the promise state to
-    // Error, the single source of truth. needsInterrupt and eval's stop check both read
-    // it, so an interrupt can never be lost to a racing scheduler-level state update.
+    private[kyo] def addCleanupBarrier(f: CleanupBarrier): Boolean =
+        cleanupBarriers.add(f)
+
+    private[kyo] def removeCleanupBarrier(f: CleanupBarrier): Unit =
+        cleanupBarriers.remove(f)
+
+    // Fiber interruption is recorded by IOPromise.interrupt's CAS to Interrupting. The result remains externally
+    // pending until this task has run its finalizers, while needsInterrupt and eval's stop check observe the request.
     final override def needsInterrupt(): Boolean =
-        !isPending()
+        isInterrupting() || !isPending()
 
     final override def fiberTrace(): String =
         val snapshot = trace
@@ -59,6 +68,8 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
     final override def onInterrupted(): Unit =
         Scheduler.get.notifyInterrupt()
 
+    final override protected def deferInterruptCompletion(): Boolean = true
+
     private inline def erasedAbortTag = Tag[Abort[Any]].asInstanceOf[Tag[Abort[E]]]
 
     private inline def locally[A](inline f: A): A = f
@@ -69,10 +80,10 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
                 Isolate.internal.restoring(trace, this) {
                     ArrowEffect.handlePartial(erasedAbortTag, Tag[Async.Join], curr, context)(
                         stop =
-                            // !isPending() is the authoritative interrupt signal: IOPromise.interrupt
-                            // CAS-completes the promise, so checking it here stops an interrupted fiber even if
-                            // the racing scheduler preemption flag was lost. Ordered after shouldPreempt() and
-                            // the deadline check so a step that stops for either of those skips the read.
+                            // needsInterrupt() is the authoritative interrupt signal: IOPromise.interrupt records
+                            // Interrupting with a CAS, so checking it here stops an interrupted fiber even if the
+                            // racing scheduler preemption flag was lost. Ordered after shouldPreempt() and the
+                            // deadline check so a step that stops for either of those skips the read.
                             shouldPreempt() || (deadline != Long.MaxValue && clock.currentMillis() > deadline) || needsInterrupt(),
                         [C] =>
                             (input, cont) =>
@@ -137,6 +148,7 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
                     if !finalizers.isEmpty then
                         finalizers.run(pollError())
                         finalizers = Finalizers.empty
+                    runCleanupBarriers(pollError())
                     if trace ne null then
                         safepoint.releaseTrace(trace)
                         trace = null.asInstanceOf[Trace]
@@ -153,6 +165,7 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
             if !finalizers.isEmpty then
                 finalizers.run(pollError())
                 finalizers = Finalizers.empty
+            runCleanupBarriers(pollError())
             if trace ne null then
                 safepoint.releaseTrace(trace)
                 trace = null.asInstanceOf[Trace]
@@ -166,13 +179,29 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
         end if
     end run
 
+    private def runCleanupBarriers(error: Maybe[Error[Any]]): Unit =
+        val barriers = cleanupBarriers.close(error).toIndexed
+        if barriers.isEmpty then finishInterrupt()
+        else
+            var cleanup: Unit < Async = ()
+            var idx                   = 0
+            while idx < barriers.size do
+                val next = barriers(idx)(error)
+                cleanup = cleanup.andThen(next)
+                idx += 1
+            end while
+            val cleanupTask = IOTask(cleanup, Trace.init, Context.empty)
+            cleanupTask.onComplete(_ => finishInterrupt())
+        end if
+    end runCleanupBarriers
+
     // Handle race when interrupted before processing Async.Join and linking interrupts.
     // Walks the interrupted remainder head-only via dispatchFirst: no Defer body is drained, so it
     // runs no user code and cannot reintroduce the Sync.ensure finalizer-drop reverted in 33bb29bd94.
-    // Bypasses the Safepoint via dispatchFirst: by the time this runs the fiber's promise is already
-    // complete (interrupt), so the preempt flag is set and handleFirst would short-circuit before
-    // reaching the matcher. Invoking joinInput(this) registers the cascade link on this IOTask so the
-    // interrupt propagates to the awaited promise.
+    // Bypasses the Safepoint via dispatchFirst: by the time this runs the fiber's interrupt request is
+    // recorded, so the preempt flag is set and handleFirst would short-circuit before reaching the matcher.
+    // Invoking joinInput(this) registers the cascade link on this IOTask so the interrupt propagates to the
+    // awaited promise.
     private def ensureInterrupt(remainder: A < (Ctx & Async & Abort[E]))(using Safepoint): Unit =
         ArrowEffect.dispatchFirst(Tag[Async.Join], remainder.asInstanceOf[Any < Async.Join]) {
             [C] => joinInput => discard(joinInput(this))
@@ -185,11 +214,54 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
         s"IOTask(id = ${hashCode()}, state = ${stateString()}, preempt = ${{ shouldPreempt() }}, finalizers = ${finalizers.size()}, curr = ${curr})"
 
 end IOTask
-
 object IOTask:
 
     private val _frame                = Frame.internal
     private inline given frame: Frame = _frame
+
+    private[kyo] type CleanupBarrier = Maybe[Error[Any]] => Unit < Async
+
+    private enum CleanupState:
+        case Open(barriers: Chunk[CleanupBarrier])
+        case Closed(error: Maybe[Error[Any]])
+
+    final private[kyo] class CleanupBarriers private ():
+        private val state = new AtomicReference[CleanupState](CleanupState.Open(Chunk.empty))
+
+        @tailrec
+        def add(barrier: CleanupBarrier): Boolean =
+            state.get() match
+                case current @ CleanupState.Open(barriers) =>
+                    val next = CleanupState.Open(barrier +: barriers)
+                    if state.compareAndSet(current, next) then true
+                    else add(barrier)
+                case _: CleanupState.Closed => false
+
+        @tailrec
+        def remove(barrier: CleanupBarrier): Unit =
+            state.get() match
+                case current @ CleanupState.Open(barriers) =>
+                    val retained = barriers.filterNot(_ eq barrier)
+                    if retained.size == barriers.size || state.compareAndSet(current, CleanupState.Open(retained)) then ()
+                    else remove(barrier)
+                case _: CleanupState.Closed => ()
+
+        @tailrec
+        def close(error: Maybe[Error[Any]]): Chunk[CleanupBarrier] =
+            state.get() match
+                case current @ CleanupState.Open(barriers) =>
+                    if state.compareAndSet(current, CleanupState.Closed(error)) then barriers
+                    else close(error)
+                case _: CleanupState.Closed => Chunk.empty
+
+        def size: Int =
+            state.get() match
+                case CleanupState.Open(barriers) => barriers.size
+                case _: CleanupState.Closed      => 0
+    end CleanupBarriers
+
+    private[kyo] object CleanupBarriers:
+        def init(): CleanupBarriers = new CleanupBarriers
 
     /** When `parent` is present, it is linked to interrupt the new task BEFORE the task is scheduled. This closes the window where the parent
       * is interrupted after a child starts but before the child is registered for interruption, orphaning the child. Doing it here, before

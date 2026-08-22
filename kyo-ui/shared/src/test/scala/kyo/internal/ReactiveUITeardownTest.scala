@@ -4,9 +4,10 @@ import kyo.*
 
 /** Teardown / cascade proof for the fully-scoped ReactiveUI subscription (Phase 2).
   *
-  * The subscription forks every reactive region via `Fiber.init` rooted at the caller's `Scope`; each region opens a
-  * per-value `Scope` (via `Signal.observe`) that owns its children. Closing the root `Scope` must cascade-interrupt
-  * every descendant region fiber and release every leaf observation.
+  * The subscription starts every reactive observer as a resource under the caller's `Scope`; the owning Scope interrupts
+  * each observer fiber and awaits its terminal result. Each region opens a per-value `Scope` (via
+  * `Signal.observe`) that owns its children. Closing the root `Scope` must cascade-interrupt every descendant region
+  * fiber, await its unwind, and release every leaf observation.
   *
   * Two complementary witnesses, both public API:
   *   - `live`: a `Scope.acquireRelease` finalizer registered in the held-open root `Scope.run`. After the root scope closes
@@ -25,11 +26,168 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
     // A no-op exchange: the teardown/cascade proof does not depend on rendered output, only on subscription liveness.
     private val stubExchange: UIExchange =
         new UIExchange:
-            def onChange(path: Seq[String], ui: UI)(using Frame): Unit < Async = ()
+            def onChange(
+                region: ReactiveRegion,
+                path: Seq[String],
+                context: ReactiveRegion.RegionIdentity,
+                parentContext: ReactiveRegion.ParentContext,
+                ui: UI
+            )(using
+                Frame
+            ): Unit < Async = ()
 
-    "bound input re-renders the latest value across back-to-back changes (convergence)".ignore(
-        "interrupt-driven Scope finalizer teardown can stall before the result is observed; known finalizer-execution-on-interrupt issue, comprehensive fix pending"
-    ) in {
+    "bound element replacement does not recursively subscribe to itself" in {
+        for
+            ref     <- Signal.initRef("")
+            renders <- AtomicInt.init(0)
+            exchange = new UIExchange:
+                def onChange(
+                    region: ReactiveRegion,
+                    path: Seq[String],
+                    context: ReactiveRegion.RegionIdentity,
+                    parentContext: ReactiveRegion.ParentContext,
+                    ui: UI
+                )(using Frame): Unit < Async = renders.incrementAndGet.unit
+            fiber <- Fiber.initUnscoped(Scope.run {
+                for
+                    root <- ReactiveUI.normalize(UI.textarea.value(ref), Seq.empty)
+                    _    <- ReactiveUI.subscribe(root, exchange)
+                    _    <- Async.never
+                yield ()
+            })
+            _              <- assertEventually(renders.get.map(_ == 1))
+            _              <- assertEventually(ref.waiters.map(_ == 1))
+            initialWaiters <- ref.waiters
+            _              <- ref.set("next")
+            _              <- assertEventually(renders.get.map(_ == 2))
+            finalRenders   <- renders.get
+            finalWaiters   <- ref.waiters
+            _              <- fiber.interrupt
+            _              <- fiber.getResult
+        yield
+            assert(initialWaiters == 1)
+            assert(finalRenders == 2)
+            assert(finalWaiters == 1)
+        end for
+    }
+
+    "nested independently bound element keeps exactly one leaf waiter" in {
+        for
+            outer <- Signal.initRef(true)
+            value <- Signal.initRef("one")
+            tree = outer.map(_ => UI.div(UI.textarea.id("nested-bound").value(value)))
+            fiber <- Fiber.initUnscoped(Scope.run {
+                for
+                    root <- ReactiveUI.normalize(tree, Seq.empty)
+                    _    <- ReactiveUI.subscribe(root, stubExchange)
+                    _    <- Async.never
+                yield ()
+            })
+            _              <- assertEventually(value.waiters.map(_ == 1))
+            initialWaiters <- value.waiters
+            _              <- value.set("two")
+            _              <- assertEventually(value.waiters.map(_ == 1))
+            updatedWaiters <- value.waiters
+            _              <- fiber.interrupt
+            _              <- fiber.getResult
+        yield
+            assert(initialWaiters == 1)
+            assert(updatedWaiters == 1)
+        end for
+    }
+
+    "root scope waits for an active reactive change and its nested finalizers" in {
+        for
+            ref              <- Signal.initRef("value")
+            exchangeEntered  <- Promise.init[Unit, Any]
+            releaseExchange  <- Promise.init[Unit, Any]
+            finalizerStarted <- Promise.init[Unit, Any]
+            releaseFinalizer <- Promise.init[Unit, Any]
+            rootFinalized    <- Promise.init[Unit, Any]
+            exchange = new UIExchange:
+                def onChange(
+                    region: ReactiveRegion,
+                    path: Seq[String],
+                    context: ReactiveRegion.RegionIdentity,
+                    parentContext: ReactiveRegion.ParentContext,
+                    ui: UI
+                )(using Frame): Unit < Async =
+                    Scope.run {
+                        Scope.ensure(finalizerStarted.completeUnitDiscard.andThen(releaseFinalizer.get))
+                            .andThen(exchangeEntered.completeUnitDiscard)
+                            .andThen(releaseExchange.get)
+                    }
+            fiber <- Fiber.initUnscoped(Scope.run {
+                for
+                    _    <- Scope.ensure(rootFinalized.completeUnitDiscard)
+                    root <- ReactiveUI.normalize(ref.map(UI.span(_)), Seq.empty)
+                    _    <- ReactiveUI.subscribe(root, exchange)
+                    _    <- Async.never
+                yield ()
+            })
+            _          <- exchangeEntered.get
+            _          <- releaseExchange.completeUnit
+            _          <- finalizerStarted.get
+            _          <- fiber.interrupt
+            doneBefore <- rootFinalized.done
+            _          <- releaseFinalizer.completeUnit
+            _          <- rootFinalized.get
+            _          <- fiber.getResult
+        yield assert(!doneBefore)
+        end for
+    }
+
+    "scope closes when a subscription is released immediately after initialization" in {
+        for
+            ref    <- Signal.initRef("value")
+            closed <- AtomicBoolean.init(false)
+            _ <- Async.race(
+                Scope.run {
+                    for
+                        root <- ReactiveUI.normalize(ref.map(UI.span(_)), Seq.empty)
+                        _    <- ReactiveUI.subscribe(root, stubExchange)
+                    yield ()
+                }.andThen(closed.set(true)),
+                Async.sleep(1.second)
+            )
+            result <- closed.get
+        yield assert(result)
+        end for
+    }
+
+    "scope close cancels a permanently blocked active change" in {
+        for
+            ref     <- Signal.initRef("value")
+            entered <- Promise.init[Unit, Any]
+            release <- Promise.init[Unit, Any]
+            closed  <- Promise.init[Unit, Any]
+            exchange = new UIExchange:
+                def onChange(
+                    region: ReactiveRegion,
+                    path: Seq[String],
+                    context: ReactiveRegion.RegionIdentity,
+                    parentContext: ReactiveRegion.ParentContext,
+                    ui: UI
+                )(using Frame): Unit < Async = entered.completeUnitDiscard.andThen(release.get)
+            fiber <- Fiber.initUnscoped(Scope.run {
+                for
+                    _    <- Scope.ensure(closed.completeUnitDiscard)
+                    root <- ReactiveUI.normalize(ref.map(UI.span(_)), Seq.empty)
+                    _    <- ReactiveUI.subscribe(root, exchange)
+                    _    <- Async.never
+                yield ()
+            })
+            _           <- entered.get
+            _           <- fiber.interrupt
+            closeResult <- Abort.run[Timeout](Async.timeout(1.second)(closed.get))
+            _           <- release.completeUnit
+            _           <- closed.get
+            _           <- fiber.getResult
+        yield assert(closeResult.isSuccess)
+        end for
+    }
+
+    "bound input re-renders the latest value across back-to-back changes (convergence)" in {
         // A SignalRef-bound input region. normalize maps the bound leaf to the constant `ui`, so the region rides the
         // SignalRef's exact register-before-read observe leaf. This proves the hardened loop is BOTH lossless and
         // churn-free WITHOUT the old deferred next-capture: two back-to-back ref edits (no wait between them) must each
@@ -43,7 +201,13 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
             // Exchange that renders each emitted input region to HTML and records it (the real onChange wire behavior).
             recordingExchange =
                 new UIExchange:
-                    def onChange(path: Seq[String], ui: UI)(using Frame): Unit < Async =
+                    def onChange(
+                        region: ReactiveRegion,
+                        path: Seq[String],
+                        context: ReactiveRegion.RegionIdentity,
+                        parentContext: ReactiveRegion.ParentContext,
+                        ui: UI
+                    )(using Frame): Unit < Async =
                         HtmlRenderer.render(ui, path).map(html => rendered.updateAndGet(_.append(html)).unit)
             tree = UI.input.id("i").value(ref)
             live <- AtomicInt.init(0)
@@ -75,9 +239,7 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
         end for
     }
 
-    "every leaf waiters == 0 after Scope closes".ignore(
-        "flaky 60s timeout on slow CI: the interrupt-driven Scope finalizer cascade is timing-sensitive; tracked with the known finalizer-teardown issues"
-    ) in {
+    "every leaf waiters == 0 after Scope closes" in {
         // Three independent reactive leaves over three retained SignalRefs. Each is a `map`-over-leaf reactive node, so
         // observe routes through the leaf's exact loop: while live each leaf has exactly one parked waiter.
         for
@@ -109,33 +271,9 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
             _ <- assertEventually(live.get.map(_ == 0))
             // Descendant witness: SET each leaf (swapping its promise, discarding the parked ghost). A leaked live region
             // fiber would re-park and keep waiters == 1; `== 0` proves every leaf observation was released by the cascade.
-            _ <- ref1.set("a2")
-            _ <- ref2.set("b2")
-            _ <- ref3.set("c2")
-            // The cascade-close finalizers only SIGNAL each observer fiber's interrupt; the actual unwind happens
-            // asynchronously on the scheduler. Under load (observed on slow linux-arm64 CI), a not-yet-unwound observer
-            // can be woken by the old promise's completion (driven by the SET above), run a no-op render iteration, and
-            // re-park on the new promise, momentarily flipping waiters from 0 to 1 between a transient-zero catch and a
-            // trailing sync read. Poll each leaf until waiters has been 0 for `stableSamples` consecutive samples: once
-            // the observer's interrupt is finally delivered it dies and waiters stays 0 indefinitely, so a sustained zero
-            // proves every observation was released, not just briefly between a wake and the cascade's late arrival. The
-            // per-test 60s timeout bounds a genuinely-leaked observer (waiters stays 1 forever) so we fail loudly.
-            stableSamples = 5
-            pollSpacing   = 10.millis
-            _ <- Loop(0) { count =>
-                for
-                    w1 <- ref1.waiters
-                    w2 <- ref2.waiters
-                    w3 <- ref3.waiters
-                    out <-
-                        if w1 != 0 || w2 != 0 || w3 != 0 then
-                            Async.sleep(pollSpacing).andThen(Loop.continue(0))
-                        else if count + 1 >= stableSamples then
-                            Kyo.lift(Loop.done[Int])
-                        else
-                            Async.sleep(pollSpacing).andThen(Loop.continue(count + 1))
-                yield out
-            }
+            _  <- ref1.set("a2")
+            _  <- ref2.set("b2")
+            _  <- ref3.set("c2")
             w1 <- ref1.waiters
             w2 <- ref2.waiters
             w3 <- ref3.waiters
@@ -143,9 +281,7 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
         end for
     }
 
-    "waiters flat across repeated re-renders".ignore(
-        "interrupt-driven Scope finalizer teardown can stall before the result is observed; known finalizer-execution-on-interrupt issue, comprehensive fix pending"
-    ) in {
+    "waiters flat across repeated re-renders" in {
         // A parent reactive region (UI.when over outerRef, kept true) whose body is a reactive child over childRef. Each
         // re-render is driven by SETTING childRef (the leaf), which both renders the new value AND swaps the leaf promise
         // (clearing the prior park's ghost), so waiters() is exact: it counts only LIVE child observations. The child
@@ -179,9 +315,7 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
         end for
     }
 
-    "nested grandchild released when the root Scope closes (transitive cascade)".ignore(
-        "interrupt-driven Scope finalizer teardown can stall before the result is observed; known finalizer-execution-on-interrupt issue, comprehensive fix pending"
-    ) in {
+    "nested grandchild released when the root Scope closes (transitive cascade)" in {
         // Three-level nesting: outer (UI.when) -> inner (UI.when) -> grandchild reactive over grandRef, all live while
         // outer and inner are true. Closing the root Scope must cascade through every level and release the grandchild's
         // observation: the old one-level interrupt missed grandchildren and left them live. This proves the transitive

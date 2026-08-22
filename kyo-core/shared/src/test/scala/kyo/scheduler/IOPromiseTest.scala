@@ -190,6 +190,107 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             assert(completed.complete(Result.succeed(1)))
             assert(completed.fired == 0)
         }
+
+        "deferred publication propagates interruption immediately and completes once" in {
+            final class DeferredPromise extends IOPromise[Nothing, Int]:
+                override protected def deferInterruptCompletion(): Boolean = true
+                def publishInterrupt(): Unit                               = finishInterrupt()
+
+            val error        = Result.Panic(new Exception("interrupted"))
+            val promise      = new DeferredPromise
+            val child        = new IOPromise[Nothing, Unit]()
+            var interrupted  = 0
+            var completed    = 0
+            var lateComplete = 0
+            promise.interrupts(child)
+            promise.onInterrupt(_ => interrupted += 1)
+            promise.onComplete(_ => completed += 1)
+
+            assert(promise.interrupt(error))
+            assert(interrupted == 1)
+            assert(child.done())
+            assert(!promise.done())
+            assert(promise.poll().isEmpty)
+            assert(promise.waiters() == 1)
+            assert(!promise.interrupt(Result.Panic(new Exception("again"))))
+
+            promise.onInterrupt(_ => interrupted += 1)
+            promise.onComplete(_ => lateComplete += 1)
+            assert(interrupted == 2)
+            assert(completed == 0)
+            assert(lateComplete == 0)
+            assert(promise.waiters() == 2)
+
+            promise.publishInterrupt()
+            promise.publishInterrupt()
+            assert(promise.done())
+            assert(promise.poll().contains(error))
+            assert(completed == 1)
+            assert(lateComplete == 1)
+            assert(promise.waiters() == 0)
+        }
+
+        "plain promise interruption remains immediately visible" in {
+            val promise   = new IOPromise[Nothing, Int]()
+            val error     = Result.Panic(new Exception("interrupted"))
+            var completed = 0
+            promise.onComplete(_ => completed += 1)
+
+            assert(promise.interrupt(error))
+            assert(promise.done())
+            assert(promise.poll().contains(error))
+            assert(completed == 1)
+            assert(promise.waiters() == 0)
+        }
+
+        "deferred interruption walks a deep waiter chain with constant stack" in {
+            // Regression: the deferred-interrupt walk recursed once per waiter wrapper, so a long
+            // chain overflowed the native stack (Scala Native SIGSEGV during suite teardown) and
+            // cost quadratic time. The walk must be loop-driven like every other chain operation.
+            final class DeferredPromise extends IOPromise[Nothing, Int]:
+                override protected def deferInterruptCompletion(): Boolean = true
+                def publishInterrupt(): Unit                               = finishInterrupt()
+
+            val depth       = 500_000
+            val error       = Result.Panic(new Exception("interrupted"))
+            val promise     = new DeferredPromise
+            val child       = new IOPromise[Nothing, Unit]()
+            var interrupted = 0
+            var completed   = 0
+            var lastOrder   = depth
+            var ordered     = true
+            promise.interrupts(child)
+            (0 until depth).foreach { index =>
+                promise.onComplete { _ =>
+                    completed += 1
+                    // Retained callbacks keep the chain's newest-first flush order.
+                    if index != lastOrder - 1 then ordered = false
+                    lastOrder = index
+                }
+            }
+            promise.onInterrupt(_ => interrupted += 1)
+
+            // Capture primitives before asserting: rendering the promise itself in an assertion
+            // diagram would walk the deep chain through the recursive waiters count.
+            val accepted           = promise.interrupt(error)
+            val childInterrupted   = child.done()
+            val pendingBefore      = !promise.done()
+            val completedBefore    = completed
+            val interruptedAtStart = interrupted
+            promise.publishInterrupt()
+            val doneAfter    = promise.done()
+            val waitersAfter = promise.waiters()
+            assert(accepted)
+            assert(interruptedAtStart == 1)
+            assert(childInterrupted)
+            assert(pendingBefore)
+            assert(completedBefore == 0)
+            assert(doneAfter)
+            assert(completed == depth)
+            assert(ordered)
+            assert(lastOrder == 0)
+            assert(waitersAfter == 0)
+        }
     }
 
     "onComplete" - {
