@@ -746,6 +746,30 @@ lazy val `kyo-kernel-bench` =
             Jmh / javaOptions := (Test / javaOptions).value.filterNot(_ == "-XX:+UseCompactObjectHeaders")
         )
 
+// Cross-library ports of KernelBench's rows (ZIO, cats-effect, zio-blocks Async, Turbolift),
+// for comparison boards against both kernels. A separate unpublished project so the external
+// dependencies never reach a published kyo artifact's pom; row names match KernelBench's so
+// result tables join by name.
+lazy val `kyo-kernel2-bench-cross` =
+    project
+        .in(file("kyo-kernel2/bench-cross"))
+        .enablePlugins(JmhPlugin)
+        .disablePlugins(MimaPlugin)
+        .settings(
+            `kyo-settings`,
+            publish / skip := true,
+            // No tests or doctests here; keep the doctest driver jars (built from the stack
+            // above the kernel, mid-migration) off the Test classpath that Jmh extends.
+            Test / unmanagedJars := Seq.empty,
+            Jmh / javaOptions := (Test / javaOptions).value.filterNot(_ == "-XX:+UseCompactObjectHeaders"),
+            libraryDependencies ++= Seq(
+                "dev.zio"            %% "zio"              % "2.1.26",
+                "org.typelevel"      %% "cats-effect"      % "3.7.0",
+                "dev.zio"            %% "zio-blocks-async" % "0.0.51",
+                "io.github.marcinzh" %% "turbolift-core"   % "0.114.0"
+            )
+        )
+
 // Compile-time benchmark: a warmed in-process dotc compiles fixture files against each
 // kernel's classes, one fixture per cost driver. The project depends only on kyo-data (for
 // the corpus classpath) and the compiler; the kernels enter as -classpath entries, so the

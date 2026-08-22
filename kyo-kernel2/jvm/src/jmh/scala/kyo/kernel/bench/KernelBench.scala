@@ -379,6 +379,35 @@ class KernelBench:
         ArrowEffect.handleCont(Tag[Ask2], inner)([X] => (_, cont) => cont(0), a => a).eval
     end foreignCrossingsPayRotation
 
+    /** Dynamic single-link application: NarrowDepth map links attached to a settled carrier in
+      * a runtime loop, one link per call site visit, then one eval. Nothing accumulates here:
+      * the settled fast arm applies each link eagerly, so expect zero allocation and
+      * arithmetic cost per link. Libraries that reify a node per link pay their interpreter on
+      * this row instead. Shape adopted from zio-blocks' AsyncChainBench.
+      */
+    @Benchmark
+    def dynamicChainOfMapsStaysLinear: Int =
+        var fa: Int < Any = seed
+        var i             = 0
+        while i < NarrowDepth do
+            fa = fa.map(_ + 1)
+            i += 1
+        fa.eval
+    end dynamicChainOfMapsStaysLinear
+
+    /** The bind spelling of dynamicChainOfMapsStaysLinear: each link lifts its result, so the
+      * settled fast arm must see through the lifted carrier as well. Same expectation.
+      */
+    @Benchmark
+    def dynamicChainOfBindsStaysLinear: Int =
+        var fa: Int < Any = seed
+        var i             = 0
+        while i < NarrowDepth do
+            fa = fa.flatMap(v => (v + 1): Int < Any)
+            i += 1
+        fa.eval
+    end dynamicChainOfBindsStaysLinear
+
 end KernelBench
 
 object KernelBench:
