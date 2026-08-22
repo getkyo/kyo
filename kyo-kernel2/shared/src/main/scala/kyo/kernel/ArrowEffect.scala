@@ -14,6 +14,7 @@ import kyo.kernel.internal.Handler.HandlerCont
 import kyo.kernel.internal.Handler.HandlerLoop
 import kyo.kernel.internal.Handler.HandlerLoopState
 import kyo.kernel.internal.Handler.Out
+import kyo.kernel.internal.Handler.answersCont
 import kyo.kernel.internal.Handler.answersLoop
 import kyo.kernel.internal.Handler.answersLoopState
 import kyo.kernel.internal.Handler.answerStep
@@ -81,6 +82,16 @@ object ArrowEffect:
                             def tag                                              = effectTag
                             def run[C](input: I[C], cont: Arrow[O[C], A, E & S]) = handle[C](input, cont)
                             override def apply(a: A)                             = onDone(a)
+                            // the answer body is the eval layer's template, expanded here with the
+                            // clause statically bound; see Handler.answersCont
+                            override def answers[C](
+                                input0: I[C],
+                                k0: Arrow[Any, Any, Any],
+                                armed: Boolean,
+                                stop: () => Boolean,
+                                out: Out
+                            ): Any =
+                                answersCont[I, O, E, A, B, S, C](effectTag, handle, input0, k0, armed, stop, out)
                     def cont = Arrow.id[B]
             case _ => onDone(Nested.unnest(v))
         end match
@@ -200,6 +211,16 @@ object ArrowEffect:
                             def tag                                              = effectTag
                             def run[X](input: I[X], cont: Arrow[O[X], A, E & S]) = handle[X](input, cont)
                             override def apply(a: A)                             = onDone(a)
+                            // the answer body is the eval layer's template, expanded here with the
+                            // clause statically bound; see Handler.answersCont
+                            override def answers[X](
+                                input0: I[X],
+                                k0: Arrow[Any, Any, Any],
+                                armed: Boolean,
+                                stop: () => Boolean,
+                                out: Out
+                            ): Any =
+                                answersCont[I, O, E, A, B, S, X](effectTag, handle, input0, k0, armed, stop, out)
                     def cont                 = this
                     override def apply(b: B) = f(b)
                     def apply[D, S3](b: B < S3, next: Arrow[C, D, S3]): D < (S & S2 & S3) =

@@ -212,6 +212,28 @@ object Eval:
         end match
     end dispatchLoopFast
 
+    /** The continuation-handler fast path: the clause consumes the continuation itself and returns
+      * region currency, so the result continues directly and the handler stays installed. Only the
+      * exception lane reads the cell's continuation, to reattach what the clause never consumed.
+      */
+    private def dispatchContFast(
+        stack: Stack,
+        h: HandlerCont[IX, OX, EX, AX, BX, SX],
+        kyo: Suspend[IX, OX, EX, CX, AX, SX],
+        k: Arrow[Any, Any, Any],
+        armed: Boolean,
+        stop: () => Boolean
+    ): Any < Nothing =
+        val out = stack.out
+        val ran =
+            try h.answers(kyo.input, k, armed, stop, out)
+            catch
+                case ex: Throwable =>
+                    if (out.cont ne null) && !(out.cont eq Arrow.Id) then stack.push(out.cont)
+                    attachThrow(ex, kyo, Arrow.id[Any], stack)
+        ran.asInstanceOf[Any < Nothing]
+    end dispatchContFast
+
     /** The stateless sibling of [[clauseSuspended]]. */
     @nowarn("msg=anonymous")
     private def clauseSuspendedLoop(
@@ -416,13 +438,27 @@ object Eval:
                     if pos < 0 then unhandled(kyo, stack)
                     else
                         stack.handler(pos) match
-                            case h: HandlerCont[IX, OX, EX, AX, ?, SX] @unchecked =>
-                                val k = stack.dump[OX[CX], AX, EX & SX](pos)
-                                val next =
-                                    try h.run(kyo.input, k)
-                                    catch
-                                        case ex: Throwable => attachThrow(ex, kyo, k, stack)
-                                loop(next)
+                            case h: HandlerCont[IX, OX, EX, AX, BX, SX] @unchecked =>
+                                // same gate as the loop families below: fast only when the handler is
+                                // on top, or under exactly one plain entry, which is then the same
+                                // continuation dump would have handed back bare
+                                if pos == 0 then
+                                    loop(dispatchContFast(stack, h, kyo, Arrow.id[Any].asInstanceOf[Arrow[Any, Any, Any]], armed, stop))
+                                else if pos == 1 && stack.entry(0).isInstanceOf[Arrow.Step[
+                                        ?,
+                                        ?,
+                                        ?
+                                    ]] && !stack.entry(0).isInstanceOf[Arrow.Region[?, ?, ?]]
+                                then
+                                    val k = stack.pop().asInstanceOf[Arrow[Any, Any, Any]]
+                                    loop(dispatchContFast(stack, h, kyo, k, armed, stop))
+                                else
+                                    val k = stack.dump[OX[CX], AX, EX & SX](pos)
+                                    val next =
+                                        try h.run(kyo.input, k)
+                                        catch
+                                            case ex: Throwable => attachThrow(ex, kyo, k, stack)
+                                    loop(next)
                             case h: HandlerLoop[IX, OX, EX, AX, BX, SX] @unchecked =>
                                 // same gate as the stateful case below
                                 if pos == 0 then

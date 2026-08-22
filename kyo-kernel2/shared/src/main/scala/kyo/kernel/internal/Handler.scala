@@ -321,6 +321,67 @@ object Handler:
         result
     end answersLoopState
 
+    /** The continuation-handler sibling of [[answersLoop]]: no outcome to destructure, because the
+      * clause consumes the continuation itself and returns region currency directly. The loop keeps
+      * answering while the region's next step is a suspension of its own tag whose continuation
+      * [[nextAnswer]] can take apart; the handler stays installed on the stack throughout, so every
+      * bail hands back a computation the eval continues with the region still positioned. The cell's
+      * cont lane is the exception lane only: it carries the continuation the clause never consumed.
+      */
+    inline def answersCont[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, C](
+        inline effectTag: Tag[E],
+        inline handle: [X] => (I[X], Arrow[O[X], A, E & S]) => A < (E & S),
+        input0: I[C],
+        k0: Arrow[Any, Any, Any],
+        armed: Boolean,
+        stop: () => Boolean,
+        out: Out
+    ): Any =
+        var in: Any                 = input0
+        var k: Arrow[Any, Any, Any] = k0
+        var n                       = 128
+        var result: Any             = null
+        var running                 = true
+        while running do
+            if armed && stop() then
+                out.kind = 1
+                out.cont = null
+                result = Effect.defer(resuspend(effectTag.erased, in, k).asInstanceOf[Any < Any], Arrow.id[Any])
+                running = false
+            else
+                val next =
+                    try handle[C](in.asInstanceOf[I[C]], k.asInstanceOf[Arrow[O[C], A, E & S]])
+                    catch
+                        case ex: Throwable =>
+                            out.kind = 1
+                            out.cont = k
+                            throw ex
+                n -= 1
+                if n <= 0 then
+                    out.kind = 1
+                    out.cont = null
+                    result = Effect.defer(next.asInstanceOf[Any < Any], Arrow.id[Any])
+                    running = false
+                else
+                    nextAnswer(effectTag.erased, next, out) match
+                        case 1 =>
+                            in = out.input
+                            k = out.cont
+                        case 2 =>
+                            out.kind = 1
+                            out.cont = null
+                            result = out.input
+                            running = false
+                        case _ =>
+                            out.kind = 1
+                            out.cont = null
+                            result = next
+                            running = false
+                end if
+        end while
+        result
+    end answersCont
+
     private[kyo] object Out:
         // the branch the answer took: the clause answered and the region continues, the clause itself
         // suspended, or the clause completed the region
@@ -331,6 +392,17 @@ object Handler:
 
     abstract private[kyo] class HandlerCont[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Handler[E, A, B, S]:
         def run[X](input: I[X], cont: Arrow[O[X], A, E & S]): A < (E & S)
+
+        /** Answers once and hands the result back; the expansion overrides this with the clause
+          * statically bound so consecutive same-tag answers loop inside one compiled method. The
+          * cell's cont lane carries the continuation for the exception path only.
+          */
+        def answers[X](input: I[X], k: Arrow[Any, Any, Any], armed: Boolean, stop: () => Boolean, out: Out): Any =
+            out.kind = Out.Answered
+            out.cont = k
+            run(input, k.asInstanceOf[Arrow[O[X], A, E & S]])
+        end answers
+    end HandlerCont
 
     abstract private[kyo] class HandlerLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Handler[E, A, B, S]:
         def run[X](input: I[X]): Outcome[O[X] < (E & S), B] < S
