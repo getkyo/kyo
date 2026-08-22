@@ -162,12 +162,56 @@ Being a dev tool changes the cost target from "sub-noise" to "actually zero when
 - Hook bodies live out of line in the Interceptor object so `Eval`'s method size is untouched at
   the bytecode level; the board run still happens once to prove parity, expecting exact zero.
 
-## Open questions for the user (superseded where struck)
+## Second revision: global-only, a kernel-resident Debugger, DAP as the protocol target
 
-1. Report cadence for the first cut: Defer + Suspend + settled-pop (as above), or a narrower
-   Suspend-only start? (Largely moot under the debug-mode framing: with fast paths standing down
-   and a small period, the three-point cadence sees everything.)
-2. ~~Innermost-only nesting acceptable for the first cut?~~ Innermost-only; the scan returns the
-   first Interceptor entry.
-3. Any need to observe values crossing INTO the extent (arguments), or only produced values, as
-   sketched?
+The user's direction moved the design to a process-global hook, which collapses it further: the
+node kind, the entry arm, the scan, and the entire propagation story disappear, because a
+debugger wants every fiber and a global hook sees every fiber degenerately. The mechanism is now:
+
+```scala
+private[kyo] object Debugger:
+    final val enabled: Boolean = StaticFlag("kyo.kernel.debugger", false) // C2-folded when off
+
+    @volatile private[kyo] var current: Hook | Null = null // installed by the debug agent
+
+    abstract private[kyo] class Hook:
+        // site-split instead of a kind argument: the three methods ARE the event classification
+        def onDefer(stack: Stack, frame: Frame, value: Any): Any    // a step about to run
+        def onSuspend(stack: Stack, frame: Frame, input: Any): Any  // an operation performed
+        def onDeliver(stack: Stack, frame: Frame, value: Any): Any  // a value flowing back
+```
+
+The hook takes the `Stack`: kernel-resident and `private[kyo]`, so there is no reason to starve
+it, and Stack access is what protocol support stands on. `Debug.trace` reimplements as a hook
+installed for the eval's duration, filtered by thread. Hooks fire from whatever thread evaluates,
+concurrently: the Debugger owns its synchronization (per-thread event buffers feeding one
+protocol writer), treats the stack as read-only during the callback, and never retains it (it is
+pooled).
+
+### Protocol target: DAP
+
+The Debug Adapter Protocol buys every editor at once (VS Code natively, IntelliJ, nvim-dap,
+Emacs); JDWP is the wrong layer (bytecode stepping) and CDP is JS-runtime-specific. The mapping:
+
+- **setBreakpoints** (file:line): filter on `frame.position`; conditional breakpoints evaluate
+  the predicate against the value.
+- **pause / breakpoint hit**: sliced execution parks via `Safepoint.stop` (a kyo-native
+  non-blocking pause: the debugger holds the park, continue resumes it); a bare synchronous Eval
+  blocks in the hook, which is how JVM debuggers suspend threads. Both mechanisms already exist.
+- **next / stepIn / stepOut**: event kind from the site-split methods, depth from `stack.size`.
+- **stackTrace / scopes / variables**: entry frames via `entry(i)` and the EffectTrace machinery;
+  handler states and ContextEffect bindings (the states array, `lookup`) are the effect-level
+  variables, rendered via `Render`.
+- **setVariable / setExpression**: the swap, directly: return a different value from the hook.
+- **threads**: kyo fibers as DAP threads once the IOTask fiber registry exists; first cut reports
+  the single eval thread.
+- **evaluate**: out of reach (no runtime Scala interpreter); value rendering plus path
+  navigation is the standard degradation.
+
+### Superseded questions
+
+1. ~~Report cadence~~: the three eval-arm sites, with fast paths standing down and a small period
+   in debug mode, see everything.
+2. ~~Nesting~~: moot; the hook is global and single.
+3. ~~Arguments vs produced values~~: `onSuspend` carries the operation input, the other two carry
+   the flowing value; both directions covered by the site split.
