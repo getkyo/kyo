@@ -9,7 +9,11 @@ Goal, user's words: fully green against kyo-kernel. A red row means the kernel i
   (`ff7c08817c`: evalFixedOverheadBatch 0 B/op, 0.17x of kyo-kernel) and F2-L1 fold-peel
   (`11cd77a348`: trailing 618us = 888x faster than kyo-kernel, RunOnly 3.40x to 2.93x,
   fusionAfterSuspension 2.59x to 2.36x; the 240,026 B/op drop is exactly one 24-byte Defer per
-  level). F1 remains parked on its branch pending user review.
+  level). F1 ADOPTED (`9370176c42`, byte-identical to the branch, 981 tests, gate passed same-session:
+  stateful 91.82 vs kyo-kernel 145.36 = 0.63x GREEN, handleLoopAnswersInPlace 0.69x GREEN, Proto
+  internal stateful 0.15x, handleLoopFuses 0.49x, emitting 0.86x, worst other mover 1.02x).
+  Remaining reds vs kyo-kernel: RunOnly 3.01x, foreign 2.71x, fusionAfterSuspension 2.37x,
+  suspension cluster ~1.4x, sharedHandler 1.22x, userTypes 1.11x — the round-three list.
 - Previous baseline: `26f14ecdd4`.
 - Landed this campaign, each measured: arm reorder (`b86a1cdf1a`), Safepoint enter/exit under the inline
   threshold (`9dcec36058`), flatten + normalized dump (`89fff362f4`), the Step/Region hierarchy split with
