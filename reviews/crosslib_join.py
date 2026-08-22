@@ -79,10 +79,13 @@ def main():
         print("|---|" + "---|" * len(labels))
         for name in all_rows:
             base_v = boards[base].get(name, (None, None))[metric]
-            ext_vals = [boards[lb][name][metric] for lb in external
+            # every measured, non-eliminated cell in the row, kernel2 included
+            measured = {lb: boards[lb][name][metric] for lb in labels
                         if name in boards[lb]
                         and boards[lb][name][metric] is not None
-                        and not (lb == "zioblocks" and name in eliminated)]
+                        and not (lb == "zioblocks" and name in eliminated)}
+            others = [v for lb, v in measured.items() if lb != base]
+            best = min(measured.values()) if measured else None
             cells = []
             for lb in labels:
                 entry = boards[lb].get(name)
@@ -91,16 +94,16 @@ def main():
                     cells.append("-")
                     continue
                 if lb == "zioblocks" and name in eliminated:
-                    cells.append(f"{fmt(v)} (JIT-eliminated)" if metric == 0 else fmt(v))
+                    cells.append(f"{fmt(v)} (JIT-eliminated)")
                     continue
                 cell = fmt(v)
                 ratio_ok = base_v is not None and (base_v > 0.01 if metric == 0 else base_v > 1)
-                if lb == base:
-                    if metric == 0 and ext_vals and base_v is not None and base_v > 0:
-                        best = min(ext_vals)
-                        cell = ("\U0001f534 " if best < base_v * 0.95 else "\U0001f7e2 ") + cell
-                elif ratio_ok:
+                if lb != base and ratio_ok:
                     cell += f" ({v / base_v:.2f}x)"
+                if best is not None and v <= best:
+                    cell = f"**{cell}**"
+                if lb == base and others and base_v is not None:
+                    cell = ("\U0001f534 " if min(others) < base_v else "\U0001f7e2 ") + cell
                 cells.append(cell)
             print(f"| {name} | " + " | ".join(cells) + " |")
 
