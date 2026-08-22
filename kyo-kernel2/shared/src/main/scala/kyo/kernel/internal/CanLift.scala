@@ -26,7 +26,6 @@ opaque type CanLift[A] = Null
 
 object CanLift:
 
-    // TODO do these need to be inlined? I worry about compilation time. Btw let's port/fix the compilation time benchs and run them
     inline given derived[A](using inline ng: NotGiven[A <:< (Any < Nothing)], inline ns: NotGiven[A <:< Singleton]): CanLift[A] = null
 
     inline given derivedCaseObject[A <: Singleton & Product](using inline ng: NotGiven[A <:< (Any < Nothing)]): CanLift[A] = null
