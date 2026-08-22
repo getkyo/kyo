@@ -100,7 +100,7 @@ object Check:
       */
     def runDiscard[A, S](v: A < (Check & S))(using Frame): A < S =
         ArrowEffect.handleLoop(Tag[Check], v)(
-            [C] => _ => Loop.continue(())
+            [C] => _ => Loop.continue
         )
 
     /** Default isolate that accumulates and re-emits failures.
