@@ -28,10 +28,10 @@ class PendingTest extends AnyFreeSpec:
     def give: (Int < Ask) < Give = ArrowEffect.suspend[Any](Tag[Give], ())
 
     def answerAsk[A](value: Int)(v: A < Ask): A < Any =
-        ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value: Int < Any), a => a)
+        ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value))
 
     def answerSay[A](v: A < Say): A < Any =
-        ArrowEffect.handleLoop(Tag[Say], v)([C] => _ => Loop.continue((): Unit < Any), a => a)
+        ArrowEffect.handleLoop(Tag[Say], v)([C] => _ => Loop.continue(()))
 
     def settled[A](v: A): A < Any = v
 
