@@ -506,19 +506,19 @@ object SqlConfig:
                     // while an `@` with nothing before it named an empty user and is Present("").
                     // The LAST `@` ends the userinfo (RFC 3986), so a password containing `@` parses whole instead
                     // of silently truncating and misreading the host.
-                    val (userInfo, hostPart): (Maybe[String], String) = authority.lastIndexOf('@') match
-                        case -1  => (Absent, authority)
+                    val (userInfo, hostPart) = authority.lastIndexOf('@') match
+                        case -1  => (Maybe.empty[String], authority)
                         case idx => (Present(authority.substring(0, idx)), authority.substring(idx + 1))
 
                     // Within a declared userinfo the colon does the same job: no colon means no password field at all,
                     // and a colon makes whatever follows it a declared credential, including the empty string, so
                     // `user:@host` said "empty password" and is Present("").
-                    val (user, password): (Maybe[String], Maybe[String]) =
+                    val (user, password) =
                         userInfo match
-                            case Absent => (Absent, Absent)
+                            case Absent => (Maybe.empty[String], Maybe.empty[String])
                             case Present(info) =>
                                 info.indexOf(':') match
-                                    case -1  => (Present(info), Absent)
+                                    case -1  => (Present(info), Maybe.empty[String])
                                     case idx => (Present(info.substring(0, idx)), Present(info.substring(idx + 1)))
 
                     hostPart.indexOf('/') match

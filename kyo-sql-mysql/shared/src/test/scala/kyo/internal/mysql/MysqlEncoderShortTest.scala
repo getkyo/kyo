@@ -201,7 +201,7 @@ class MysqlEncoderShortTest extends Test:
         case class Row(n: Short) derives CanEqual
 
         val schema = summon[SqlSchema[Row]]
-        val rows   = List(Row(Short.MaxValue), Row(Short.MinValue), Row(-1.toShort), Row(0.toShort), Row(12345.toShort))
+        val rows   = List(Row(Short.MaxValue), Row(Short.MinValue), Row((-1).toShort), Row(0.toShort), Row(12345.toShort))
 
         kyo.Kyo.foreach(rows) { row =>
             val params = rowParams(schema, row)

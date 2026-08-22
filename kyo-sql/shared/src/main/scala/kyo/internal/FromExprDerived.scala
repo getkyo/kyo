@@ -483,6 +483,15 @@ object FromExprDerived:
                     // identity coercion, strip it so field matchers see the wrapped term directly.
                     case Apply(TypeApply(Select(_, "substituteCo" | "substituteContra"), _), List(inner)) =>
                         transformTerm(inner)(owner)
+                    // A cast the inliner inserted to adapt an inlined body to its declared result type. A DSL
+                    // entry point whose result type is path-dependent on a `using` parameter
+                    // (`sum(...)(using n: AsMaybe[S]): Query[n.Out]`) expands to the construction adapted to
+                    // `n.Out`, which the inliner spells as `AggregateQuery.apply(...).$asInstanceOf$[Query[n.Out]]`.
+                    // The cast restates a static type and never touches the value, so it is stripped for the same
+                    // reason `substituteCo` is: leaving it in place puts a `Select(_, "$asInstanceOf$")` where the
+                    // field matchers expect the constructor head, and the whole statement silently fails to fold.
+                    case TypeApply(Select(inner, "asInstanceOf" | "$asInstanceOf$"), _) =>
+                        transformTerm(inner)(owner)
                     case sel @ Select(receiver, fieldName) =>
                         val resolvedReceiver = transformTerm(receiver)(owner)
                         // Peel `Inlined` / `Block` / `Typed` wrappers off the resolved receiver before
