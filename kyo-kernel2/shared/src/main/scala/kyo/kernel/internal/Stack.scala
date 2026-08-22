@@ -323,18 +323,36 @@ final private[kyo] class Stack:
       *
       * Everything above the answering recovery is discarded, which is what makes the recovery the
       * continuation: the value it produces flows into the entries that were below it.
+      *
+      * A release that throws never stops the walk: its failure is suppressed onto the one being unwound,
+      * which stays the one the recoveries are asked about. A recovery that throws replaces it: the
+      * recovery's failure is what the computation is now leaving with, the original travels on it as a
+      * suppressed exception, and the remaining scopes are asked about the new one. When no recovery
+      * answers, the walk throws the failure it ended holding rather than returning, so the caller records
+      * the failure that actually leaves.
       */
     // the answer is a pending computation, typed here as `Any` so the stack keeps knowing nothing about the
     // pending type: every other member is about arrows and slots, and the caller casts anyway
-    def unwind(ex: Throwable): Maybe[Any] =
-        var out = Maybe.empty[Any]
+    def unwind(ex: Throwable): Any =
+        var current         = ex
+        var out: Maybe[Any] = Maybe.empty
         while out.isEmpty && !isEmpty do
             pop() match
-                case f: Finalizer[?, ?] => f.run(Result.panic(ex))
-                case r: Recover[?, ?]   => out = r.panic(ex)
-                case _                  => ()
+                case f: Finalizer[?, ?] =>
+                    try f.run(Result.panic(current))
+                    catch
+                        case t: Throwable => if t ne current then current.addSuppressed(t)
+                case r: Recover[?, ?] =>
+                    try out = r.panic(current)
+                    catch
+                        case t: Throwable =>
+                            if t ne current then t.addSuppressed(current)
+                            current = t
+                case _ => ()
         end while
-        out
+        out match
+            case Present(a) => a
+            case Absent     => throw current
     end unwind
 
     def pushFinalizer(f: Finalizer[?, ?]): Unit =

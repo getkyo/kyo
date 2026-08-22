@@ -612,14 +612,19 @@ object Eval:
                     done = true
                 catch
                     case ex: Throwable =>
-                        stack.unwind(ex) match
-                            case Present(next) => curr = next.asInstanceOf[Any < Nothing]
-                            case Absent =>
-                                failure = Present(ex)
-                                // every throw that carries frames has already had them reconstructed at the
-                                // site that ran the user code, so this only rewrites the exception's own trace
-                                EffectTrace.splice(ex)
-                                throw ex
+                        // the unwind answers with a recovery's computation or throws the failure the walk
+                        // ended with: `ex` itself, or a throwing recovery's own failure with the one it
+                        // replaced suppressed on it. Either way every release the walk passed has run
+                        curr =
+                            try stack.unwind(ex).asInstanceOf[Any < Nothing]
+                            catch
+                                case fail: Throwable =>
+                                    failure = Present(fail)
+                                    // every throw that carries frames has already had them reconstructed at
+                                    // the site that ran the user code, so this only rewrites the exception's
+                                    // own trace
+                                    EffectTrace.splice(fail)
+                                    throw fail
             end while
             out
         finally
