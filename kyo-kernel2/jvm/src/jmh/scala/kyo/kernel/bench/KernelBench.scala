@@ -94,7 +94,7 @@ class KernelBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
                     .map(_ => loop(i + 1))
-        loop(0).eval
+        loop(seed - 1).eval
     end fusionAllocatesNothing
 
     /** The trampoline: the same chain past the budget (12012 steps). Expect rescue allocation
@@ -111,7 +111,7 @@ class KernelBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
                     .map(_ => loop(i + 1))
-        loop(0).eval
+        loop(seed - 1).eval
     end fusionPastBudgetPaysRescuesOnly
 
     /** Value boxing: values outside the Integer cache. Expect the delta against fusionPastBudgetPaysRescuesOnly
@@ -126,7 +126,7 @@ class KernelBench:
                     .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
                     .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
                     .map(loop)
-        loop(0).eval
+        loop(seed - 1).eval
     end uncachedValuesPayBoxingOnly
 
     /** Generic lift and unnest arms: a case class flows through the chain, nothing wraps.
@@ -143,7 +143,7 @@ class KernelBench:
                     .map(b => Box(b.value - 1)).map(b => Box(b.value - 1)).map(b => Box(b.value - 1))
                     .map(b => Box(b.value - 1))
                     .map(loop)
-        loop(Box(0)).eval.value
+        loop(Box(seed - 1)).eval.value
     end userTypesSkipKernelWrapping
 
     /** JIT region limit: 51 sites per iteration overflow C2's caller inline budget. Expect
@@ -166,7 +166,7 @@ class KernelBench:
                     .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
                     .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
                     .map(loop)
-        loop(0).eval
+        loop(seed - 1).eval
     end inlineLimitCostsTimeNotAllocation
 
     /** JIT region limit without boxing: expect zero allocation at a higher per-step time than
@@ -196,7 +196,7 @@ class KernelBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(_ => loop(i + 1))
-        loop(0).eval
+        loop(seed - 1).eval
     end inlineLimitKeepsZeroAllocation
 
     /** Fusion inside continuations: the chain runs settled after each answer. Expect
@@ -215,7 +215,7 @@ class KernelBench:
                         .map(v => (v + 1) & 63)
                         .map(_ => loop(i + 1))
                 }
-        ArrowEffect.handleCont(Tag[Ask], loop(0))([X] => (_, cont) => cont(1), a => a).eval
+        ArrowEffect.handleCont(Tag[Ask], loop(seed - 1))([X] => (_, cont) => cont(1), a => a).eval
     end continuationBodiesFuse
 
     /** Fusion after suspension, execution only: a suspension with fifty transformations chained
@@ -246,7 +246,7 @@ class KernelBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(_ => loop(i + 1))
-        ArrowEffect.handleCont(Tag[Ask], loop(0))([X] => (_, cont) => cont(1), a => a).eval
+        ArrowEffect.handleCont(Tag[Ask], loop(seed - 1))([X] => (_, cont) => cont(1), a => a).eval
     end fusionAfterSuspension
 
     /** Trampolined recursion through settled unit maps. Expect rescue pairs only, 760 bytes
@@ -258,7 +258,7 @@ class KernelBench:
             ((): Unit < Any).map { _ =>
                 if i > Depth then 0 else loop(i + 1)
             }
-        loop(0).eval
+        loop(seed - 1).eval
     end deepRecursionPaysRescuesOnly
 
     /** Suspension baseline: one suspend, answer, resume cycle per step. Expect about 48 bytes
@@ -269,7 +269,7 @@ class KernelBench:
         def loop(i: Int): Int < Ask =
             if i > Depth then i
             else ask.map(a => loop(i + a))
-        ArrowEffect.handleCont(Tag[Ask], loop(0))([X] => (_, cont) => cont(1), a => a).eval
+        ArrowEffect.handleCont(Tag[Ask], loop(seed - 1))([X] => (_, cont) => cont(1), a => a).eval
     end suspensionBaseline
 
     /** suspendWith: suspend followed by map, so the operation carries its continuation as a
@@ -280,7 +280,7 @@ class KernelBench:
         def loop(i: Int): Int < Ask =
             if i > Depth then i
             else askWith(a => loop(i + a))
-        ArrowEffect.handleCont(Tag[Ask], loop(0))([X] => (_, cont) => cont(1), a => a).eval
+        ArrowEffect.handleCont(Tag[Ask], loop(seed - 1))([X] => (_, cont) => cont(1), a => a).eval
     end suspensionFusesContinuation
 
     /** suspensionBaseline evaluated through Eval.partial, the scheduler entry: measures the partial
@@ -293,7 +293,7 @@ class KernelBench:
     //     def loop(i: Int): Int < Ask =
     //         if i > Depth then i
     //         else ask.map(a => loop(i + a))
-    //     val handled = ArrowEffect.handleCont(Tag[Ask], loop(0))([X] => (_, cont) => cont(1), a => a)
+    //     val handled = ArrowEffect.handleCont(Tag[Ask], loop(seed - 1))([X] => (_, cont) => cont(1), a => a)
     //     kyo.kernel.internal.Eval.partial(handled).eval
     // end partialSuspensionBaseline
 
@@ -319,7 +319,7 @@ class KernelBench:
         def s13(i: Int): Int < Ask = askWith(a => s14(i + a))
         def s14(i: Int): Int < Ask = askWith(a => s15(i + a))
         def s15(i: Int): Int < Ask = askWith(a => s0(i + a))
-        ArrowEffect.handleCont(Tag[Ask], s0(0))([X] => (_, cont) => cont(1), a => a).eval
+        ArrowEffect.handleCont(Tag[Ask], s0(seed - 1))([X] => (_, cont) => cont(1), a => a).eval
     end sharedHandlerPaysDispatch
 
     /** Idle handler: the fusionPastBudgetPaysRescuesOnly chain under a handler whose effect never occurs. Expect
@@ -336,7 +336,7 @@ class KernelBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
                     .map(_ => loop(i + 1))
-        ArrowEffect.handleCont(Tag[Ask], loop(0): Int < Ask)([X] => (_, cont) => cont(1), a => a).eval
+        ArrowEffect.handleCont(Tag[Ask], loop(seed - 1): Int < Ask)([X] => (_, cont) => cont(1), a => a).eval
     end idleHandlerAddsNothing
 
     /** Context provision: an answering handler resolves every operation in place. Expect
@@ -348,7 +348,7 @@ class KernelBench:
             if i > Depth then i
             else ask.map(a => loop(i + a))
         // the clause answers at the region's row, so the resumed value is ascribed pending
-        ArrowEffect.handleLoop(Tag[Ask], loop(0))([X] => _ => Loop.continue(1: Int < Any), a => a).eval
+        ArrowEffect.handleLoop(Tag[Ask], loop(seed - 1))([X] => _ => Loop.continue(1: Int < Any), a => a).eval
     end handleLoopAnswersInPlace
 
     /** State threading: the handler advances state through every answer. Expect
@@ -378,7 +378,7 @@ class KernelBench:
         def loop(i: Int): Int < Ask =
             if i > Depth then i
             else ask.map(a => loop(i + a)).map(x => x)
-        ArrowEffect.handleCont(Tag[Ask], loop(0))([X] => (_, cont) => cont(1), a => a).eval
+        ArrowEffect.handleCont(Tag[Ask], loop(seed - 1))([X] => (_, cont) => cont(1), a => a).eval
     end trailingMapsStayLinear
 
     /** Rotation: two effects alternate, so every outer operation crosses the inner handler and
@@ -390,7 +390,7 @@ class KernelBench:
         def loop(i: Int): Int < (Ask & Ask2) =
             if i > Depth then i
             else ask.map(a => ask2.map(t => loop(i + a + t)))
-        val inner = ArrowEffect.handleCont(Tag[Ask], loop(0))([X] => (_, cont) => cont(1), a => a)
+        val inner = ArrowEffect.handleCont(Tag[Ask], loop(seed - 1))([X] => (_, cont) => cont(1), a => a)
         ArrowEffect.handleCont(Tag[Ask2], inner)([X] => (_, cont) => cont(0), a => a).eval
     end foreignCrossingsPayRotation
 

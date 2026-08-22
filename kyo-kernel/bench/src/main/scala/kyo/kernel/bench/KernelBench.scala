@@ -93,7 +93,7 @@ class KernelBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
                     .map(_ => loop(i + 1))
-        loop(0).eval
+        loop(seed - 1).eval
     end fusionAllocatesNothing
 
     @Benchmark
@@ -107,7 +107,7 @@ class KernelBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
                     .map(_ => loop(i + 1))
-        loop(0).eval
+        loop(seed - 1).eval
     end fusionPastBudgetPaysRescuesOnly
 
     @Benchmark
@@ -119,7 +119,7 @@ class KernelBench:
                     .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
                     .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
                     .map(loop)
-        loop(0).eval
+        loop(seed - 1).eval
     end uncachedValuesPayBoxingOnly
 
     @Benchmark
@@ -133,7 +133,7 @@ class KernelBench:
                     .map(b => Box(b.value - 1)).map(b => Box(b.value - 1)).map(b => Box(b.value - 1))
                     .map(b => Box(b.value - 1))
                     .map(loop)
-        loop(Box(0)).eval.value
+        loop(Box(seed - 1)).eval.value
     end userTypesSkipKernelWrapping
 
     @Benchmark
@@ -153,7 +153,7 @@ class KernelBench:
                     .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
                     .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
                     .map(loop)
-        loop(0).eval
+        loop(seed - 1).eval
     end inlineLimitCostsTimeNotAllocation
 
     @Benchmark
@@ -180,7 +180,7 @@ class KernelBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(_ => loop(i + 1))
-        loop(0).eval
+        loop(seed - 1).eval
     end inlineLimitKeepsZeroAllocation
 
     @Benchmark
@@ -196,7 +196,7 @@ class KernelBench:
                         .map(v => (v + 1) & 63)
                         .map(_ => loop(i + 1))
                 }
-        ArrowEffect.handle(Tag[Ask], loop(0))([X] => (_, cont) => cont(1)).eval
+        ArrowEffect.handle(Tag[Ask], loop(seed - 1))([X] => (_, cont) => cont(1)).eval
     end continuationBodiesFuse
 
     @Benchmark
@@ -214,7 +214,7 @@ class KernelBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(_ => loop(i + 1))
-        ArrowEffect.handle(Tag[Ask], loop(0))([X] => (_, cont) => cont(1)).eval
+        ArrowEffect.handle(Tag[Ask], loop(seed - 1))([X] => (_, cont) => cont(1)).eval
     end fusionAfterSuspension
 
     @Benchmark
@@ -223,7 +223,7 @@ class KernelBench:
             ((): Unit < Any).map { _ =>
                 if i > Depth then 0 else loop(i + 1)
             }
-        loop(0).eval
+        loop(seed - 1).eval
     end deepRecursionPaysRescuesOnly
 
     @Benchmark
@@ -231,7 +231,7 @@ class KernelBench:
         def loop(i: Int): Int < Ask =
             if i > Depth then i
             else ask.map(a => loop(i + a))
-        ArrowEffect.handle(Tag[Ask], loop(0))([X] => (_, cont) => cont(1)).eval
+        ArrowEffect.handle(Tag[Ask], loop(seed - 1))([X] => (_, cont) => cont(1)).eval
     end suspensionBaseline
 
     @Benchmark
@@ -239,7 +239,7 @@ class KernelBench:
         def loop(i: Int): Int < Ask =
             if i > Depth then i
             else askWith(a => loop(i + a))
-        ArrowEffect.handle(Tag[Ask], loop(0))([X] => (_, cont) => cont(1)).eval
+        ArrowEffect.handle(Tag[Ask], loop(seed - 1))([X] => (_, cont) => cont(1)).eval
     end suspensionFusesContinuation
 
     @Benchmark
@@ -260,7 +260,7 @@ class KernelBench:
         def s13(i: Int): Int < Ask = askWith(a => s14(i + a))
         def s14(i: Int): Int < Ask = askWith(a => s15(i + a))
         def s15(i: Int): Int < Ask = askWith(a => s0(i + a))
-        ArrowEffect.handle(Tag[Ask], s0(0))([X] => (_, cont) => cont(1)).eval
+        ArrowEffect.handle(Tag[Ask], s0(seed - 1))([X] => (_, cont) => cont(1)).eval
     end sharedHandlerPaysDispatch
 
     @Benchmark
@@ -274,7 +274,7 @@ class KernelBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
                     .map(_ => loop(i + 1))
-        ArrowEffect.handle(Tag[Ask], loop(0): Int < Ask)([X] => (_, cont) => cont(1)).eval
+        ArrowEffect.handle(Tag[Ask], loop(seed - 1): Int < Ask)([X] => (_, cont) => cont(1)).eval
     end idleHandlerAddsNothing
 
     @Benchmark
@@ -282,7 +282,7 @@ class KernelBench:
         def loop(i: Int): Int < Ask =
             if i > Depth then i
             else ask.map(a => loop(i + a))
-        ArrowEffect.handleLoop(Tag[Ask], loop(0))([X] => (_, cont) => Loop.continue(cont(1))).eval
+        ArrowEffect.handleLoop(Tag[Ask], loop(seed - 1))([X] => (_, cont) => Loop.continue(cont(1))).eval
     end handleLoopAnswersInPlace
 
     @Benchmark
@@ -298,7 +298,7 @@ class KernelBench:
         def loop(i: Int): Int < Ask =
             if i > Depth then i
             else ask.map(a => loop(i + a)).map(x => x)
-        ArrowEffect.handle(Tag[Ask], loop(0))([X] => (_, cont) => cont(1)).eval
+        ArrowEffect.handle(Tag[Ask], loop(seed - 1))([X] => (_, cont) => cont(1)).eval
     end trailingMapsStayLinear
 
     @Benchmark
@@ -306,7 +306,7 @@ class KernelBench:
         def loop(i: Int): Int < (Ask & Ask2) =
             if i > Depth then i
             else ask.map(a => ask2.map(t => loop(i + a + t)))
-        val inner = ArrowEffect.handle(Tag[Ask], loop(0))([X] => (_, cont) => cont(1))
+        val inner = ArrowEffect.handle(Tag[Ask], loop(seed - 1))([X] => (_, cont) => cont(1))
         ArrowEffect.handle(Tag[Ask2], inner)([X] => (_, cont) => cont(0)).eval
     end foreignCrossingsPayRotation
 

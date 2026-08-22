@@ -91,7 +91,7 @@ class ZioBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
                     .flatMap(_ => loop(i + 1))
-        runSync(loop(0))
+        runSync(loop(seed - 1))
     end fusionAllocatesNothing
 
     @Benchmark
@@ -105,7 +105,7 @@ class ZioBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
                     .flatMap(_ => loop(i + 1))
-        runSync(loop(0))
+        runSync(loop(seed - 1))
     end fusionPastBudgetPaysRescuesOnly
 
     @Benchmark
@@ -117,7 +117,7 @@ class ZioBench:
                     .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
                     .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
                     .flatMap(loop)
-        runSync(loop(0))
+        runSync(loop(seed - 1))
     end uncachedValuesPayBoxingOnly
 
     @Benchmark
@@ -131,7 +131,7 @@ class ZioBench:
                     .map(b => Box(b.value - 1)).map(b => Box(b.value - 1)).map(b => Box(b.value - 1))
                     .map(b => Box(b.value - 1))
                     .flatMap(loop)
-        runSync(loop(Box(0))).value
+        runSync(loop(Box(seed - 1))).value
     end userTypesSkipKernelWrapping
 
     @Benchmark
@@ -140,7 +140,7 @@ class ZioBench:
             ZIO.unit.flatMap { _ =>
                 if i > Depth then ZIO.succeed(0) else loop(i + 1)
             }
-        runSync(loop(0))
+        runSync(loop(seed - 1))
     end deepRecursionPaysRescuesOnly
 
     @Benchmark
@@ -148,7 +148,7 @@ class ZioBench:
         def loop(i: Int): UIO[Int] =
             if i > Depth then ZIO.succeed(i)
             else ask.get.flatMap(a => loop(i + a))
-        runSync(loop(0))
+        runSync(loop(seed - 1))
     end suspensionBaseline
 
     /** Recorded alternative: the environment spelling (`ZIO.service` under `provideEnvironment`),
@@ -160,7 +160,7 @@ class ZioBench:
         def loop(i: Int): ZIO[Int, Nothing, Int] =
             if i > Depth then ZIO.succeed(i)
             else ZIO.service[Int].flatMap(a => loop(i + a))
-        runSync(loop(0).provideEnvironment(env))
+        runSync(loop(seed - 1).provideEnvironment(env))
     end suspensionBaselineAltEnv
 
     /** Recorded alternative: the per-run scoped install (`locally`), which is a full
@@ -171,7 +171,7 @@ class ZioBench:
         def loop(i: Int): UIO[Int] =
             if i > Depth then ZIO.succeed(i)
             else ask.get.flatMap(a => loop(i + a))
-        runSync(ask.locally(1)(loop(0)))
+        runSync(ask.locally(1)(loop(seed - 1)))
     end suspensionBaselineAltInstall
 
     /** FiberRef.getWith is defined as get.flatMap, so this row is expected to equal
@@ -182,7 +182,7 @@ class ZioBench:
         def loop(i: Int): UIO[Int] =
             if i > Depth then ZIO.succeed(i)
             else ask.getWith(a => loop(i + a))
-        runSync(loop(0))
+        runSync(loop(seed - 1))
     end suspensionFusesContinuation
 
     @Benchmark
@@ -203,7 +203,7 @@ class ZioBench:
         def s13(i: Int): UIO[Int] = ask.getWith(a => s14(i + a))
         def s14(i: Int): UIO[Int] = ask.getWith(a => s15(i + a))
         def s15(i: Int): UIO[Int] = ask.getWith(a => s0(i + a))
-        runSync(s0(0))
+        runSync(s0(seed - 1))
     end sharedHandlerPaysDispatch
 
     @Benchmark
@@ -219,7 +219,7 @@ class ZioBench:
                         .map(v => (v + 1) & 63)
                         .flatMap(_ => loop(i + 1))
                 }
-        runSync(loop(0))
+        runSync(loop(seed - 1))
     end continuationBodiesFuse
 
     @Benchmark
@@ -237,7 +237,7 @@ class ZioBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .flatMap(_ => loop(i + 1))
-        runSync(loop(0))
+        runSync(loop(seed - 1))
     end fusionAfterSuspension
 
     /** The one row where the per-run install is the substance: the ambient is installed but
@@ -254,7 +254,7 @@ class ZioBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
                     .flatMap(_ => loop(i + 1))
-        runSync(ask.locally(1)(loop(0)))
+        runSync(ask.locally(1)(loop(seed - 1)))
     end idleHandlerAddsNothing
 
     @Benchmark
@@ -262,7 +262,7 @@ class ZioBench:
         def loop(i: Int): UIO[Int] =
             if i > Depth then ZIO.succeed(i)
             else st.modify(s => (1, s + 1)).flatMap(a => loop(i + a))
-        runSync(loop(0))
+        runSync(loop(seed - 1))
     end statefulAnswersPaySuccessor
 
     @Benchmark
@@ -270,7 +270,7 @@ class ZioBench:
         def loop(i: Int): UIO[Int] =
             if i > Depth then ZIO.succeed(i)
             else ask.get.flatMap(a => loop(i + a)).map(x => x)
-        runSync(loop(0))
+        runSync(loop(seed - 1))
     end trailingMapsStayLinear
 
     /** Two FiberRefs are two keys in one fiber-local map, not two nested handler regions, so
@@ -281,7 +281,7 @@ class ZioBench:
         def loop(i: Int): UIO[Int] =
             if i > Depth then ZIO.succeed(i)
             else ask.get.flatMap(a => ask2.get.flatMap(t => loop(i + a + t)))
-        runSync(loop(0))
+        runSync(loop(seed - 1))
     end foreignCrossingsPayRotation
 
     /** Dynamic single-link application: NarrowDepth map links attached in a runtime loop, then

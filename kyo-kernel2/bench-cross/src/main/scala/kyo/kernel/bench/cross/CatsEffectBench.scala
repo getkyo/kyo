@@ -95,7 +95,7 @@ class CatsEffectBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
                     .flatMap(_ => loop(i + 1))
-        runSync(loop(0))
+        runSync(loop(seed - 1))
     end fusionAllocatesNothing
 
     @Benchmark
@@ -109,7 +109,7 @@ class CatsEffectBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
                     .flatMap(_ => loop(i + 1))
-        runSync(loop(0))
+        runSync(loop(seed - 1))
     end fusionPastBudgetPaysRescuesOnly
 
     @Benchmark
@@ -121,7 +121,7 @@ class CatsEffectBench:
                     .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
                     .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
                     .flatMap(loop)
-        runSync(loop(0))
+        runSync(loop(seed - 1))
     end uncachedValuesPayBoxingOnly
 
     @Benchmark
@@ -135,7 +135,7 @@ class CatsEffectBench:
                     .map(b => Box(b.value - 1)).map(b => Box(b.value - 1)).map(b => Box(b.value - 1))
                     .map(b => Box(b.value - 1))
                     .flatMap(loop)
-        runSync(loop(Box(0))).value
+        runSync(loop(Box(seed - 1))).value
     end userTypesSkipKernelWrapping
 
     @Benchmark
@@ -144,7 +144,7 @@ class CatsEffectBench:
             IO.unit.flatMap { _ =>
                 if i > Depth then IO.pure(0) else loop(i + 1)
             }
-        runSync(loop(0))
+        runSync(loop(seed - 1))
     end deepRecursionPaysRescuesOnly
 
     @Benchmark
@@ -152,7 +152,7 @@ class CatsEffectBench:
         def loop(i: Int): IO[Int] =
             if i > Depth then IO.pure(i)
             else ask.get.flatMap(a => loop(i + a))
-        runSync(loop(0))
+        runSync(loop(seed - 1))
     end suspensionBaseline
 
     /** Recorded alternative: the per-run install (`set` before the loop). Excluded from the
@@ -163,7 +163,7 @@ class CatsEffectBench:
         def loop(i: Int): IO[Int] =
             if i > Depth then IO.pure(i)
             else ask.get.flatMap(a => loop(i + a))
-        runSync(ask.set(1).flatMap(_ => loop(0)))
+        runSync(ask.set(1).flatMap(_ => loop(seed - 1)))
     end suspensionBaselineAltInstall
 
     /** IOLocal has no distinct read-with-continuation spelling, so this row is expected to
@@ -174,7 +174,7 @@ class CatsEffectBench:
         def loop(i: Int): IO[Int] =
             if i > Depth then IO.pure(i)
             else ask.get.flatMap(a => loop(i + a))
-        runSync(loop(0))
+        runSync(loop(seed - 1))
     end suspensionFusesContinuation
 
     @Benchmark
@@ -195,7 +195,7 @@ class CatsEffectBench:
         def s13(i: Int): IO[Int] = ask.get.flatMap(a => s14(i + a))
         def s14(i: Int): IO[Int] = ask.get.flatMap(a => s15(i + a))
         def s15(i: Int): IO[Int] = ask.get.flatMap(a => s0(i + a))
-        runSync(s0(0))
+        runSync(s0(seed - 1))
     end sharedHandlerPaysDispatch
 
     @Benchmark
@@ -211,7 +211,7 @@ class CatsEffectBench:
                         .map(v => (v + 1) & 63)
                         .flatMap(_ => loop(i + 1))
                 }
-        runSync(loop(0))
+        runSync(loop(seed - 1))
     end continuationBodiesFuse
 
     @Benchmark
@@ -229,7 +229,7 @@ class CatsEffectBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .flatMap(_ => loop(i + 1))
-        runSync(loop(0))
+        runSync(loop(seed - 1))
     end fusionAfterSuspension
 
     /** The one row where the per-run install is the substance: the ambient is installed but
@@ -246,7 +246,7 @@ class CatsEffectBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
                     .flatMap(_ => loop(i + 1))
-        runSync(ask.set(1).flatMap(_ => loop(0)))
+        runSync(ask.set(1).flatMap(_ => loop(seed - 1)))
     end idleHandlerAddsNothing
 
     @Benchmark
@@ -254,7 +254,7 @@ class CatsEffectBench:
         def loop(i: Int): IO[Int] =
             if i > Depth then IO.pure(i)
             else st.modify(s => (s + 1, 1)).flatMap(a => loop(i + a))
-        runSync(loop(0))
+        runSync(loop(seed - 1))
     end statefulAnswersPaySuccessor
 
     /** Recorded alternative: the requirements' `Ref[IO]` spelling, a shared atomic CAS per
@@ -265,7 +265,7 @@ class CatsEffectBench:
         def loop(i: Int): IO[Int] =
             if i > Depth then IO.pure(i)
             else stRef.modify(s => (s + 1, 1)).flatMap(a => loop(i + a))
-        runSync(loop(0))
+        runSync(loop(seed - 1))
     end statefulAnswersPaySuccessorAltRef
 
     @Benchmark
@@ -273,7 +273,7 @@ class CatsEffectBench:
         def loop(i: Int): IO[Int] =
             if i > Depth then IO.pure(i)
             else ask.get.flatMap(a => loop(i + a)).map(x => x)
-        runSync(loop(0))
+        runSync(loop(seed - 1))
     end trailingMapsStayLinear
 
     /** Two IOLocals are two keys in one fiber-local map, not two nested handler regions, so
@@ -284,7 +284,7 @@ class CatsEffectBench:
         def loop(i: Int): IO[Int] =
             if i > Depth then IO.pure(i)
             else ask.get.flatMap(a => ask2.get.flatMap(t => loop(i + a + t)))
-        runSync(loop(0))
+        runSync(loop(seed - 1))
     end foreignCrossingsPayRotation
 
     /** Dynamic single-link application: NarrowDepth map links attached in a runtime loop, then

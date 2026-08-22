@@ -22,6 +22,15 @@ import zio.blocks.async.*
   * why this project runs with -Xss32m, and it is a finding the results tables report rather
   * than hide: those rows measure direct Scala recursion with a type test per step, not an
   * evaluator.
+  *
+  * JIT elimination note: on the rows whose result is independent of the seed (the fusion
+  * chains and the ambient-read loops, where each level's computed value is discarded or
+  * increments by a constant), full inlining leaves pure arithmetic with a constant result and
+  * C2 deletes the entire program; those cells report a few nanoseconds and are labelled
+  * JIT-eliminated in the results tables. The rows that survive (deepRecursion, sharedHandler,
+  * trailingMaps, userTypes, the dynamic chains, the batch rows) are the zio-blocks cells that
+  * measure real work. Every other library's machinery blocks this elimination; having no
+  * machinery to measure is the honest zio-blocks answer to these rows.
   */
 @State(Scope.Benchmark)
 @BenchmarkMode(Array(Mode.AverageTime))
@@ -92,7 +101,7 @@ class ZioBlocksBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
                     .flatMap(_ => loop(i + 1))
-        loop(0).block
+        loop(seed - 1).block
     end fusionAllocatesNothing
 
     @Benchmark
@@ -106,7 +115,7 @@ class ZioBlocksBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
                     .flatMap(_ => loop(i + 1))
-        loop(0).block
+        loop(seed - 1).block
     end fusionPastBudgetPaysRescuesOnly
 
     @Benchmark
@@ -118,7 +127,7 @@ class ZioBlocksBench:
                     .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
                     .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
                     .flatMap(loop)
-        loop(0).block
+        loop(seed - 1).block
     end uncachedValuesPayBoxingOnly
 
     /** Box is not a Pollable, so `Async.succeed(Box(...))` stores the Box itself with no
@@ -135,7 +144,7 @@ class ZioBlocksBench:
                     .map(b => Box(b.value - 1)).map(b => Box(b.value - 1)).map(b => Box(b.value - 1))
                     .map(b => Box(b.value - 1))
                     .flatMap(loop)
-        loop(Box(0)).block.value
+        loop(Box(seed - 1)).block.value
     end userTypesSkipKernelWrapping
 
     /** Every step is ready, so this is 10000 frames of ordinary JVM recursion, not a
@@ -147,7 +156,7 @@ class ZioBlocksBench:
             Async.succeed(()).flatMap { _ =>
                 if i > Depth then Async.succeed(0) else loop(i + 1)
             }
-        loop(0).block
+        loop(seed - 1).block
     end deepRecursionPaysRescuesOnly
 
     @Benchmark
@@ -155,7 +164,7 @@ class ZioBlocksBench:
         def loop(i: Int): Async[Int] =
             if i > Depth then Async.succeed(i)
             else answer.flatMap(a => loop(i + a))
-        loop(0).block
+        loop(seed - 1).block
     end suspensionBaseline
 
     /** No distinct read-with-continuation spelling exists; expected to equal
@@ -166,7 +175,7 @@ class ZioBlocksBench:
         def loop(i: Int): Async[Int] =
             if i > Depth then Async.succeed(i)
             else answer.flatMap(a => loop(i + a))
-        loop(0).block
+        loop(seed - 1).block
     end suspensionFusesContinuation
 
     @Benchmark
@@ -187,7 +196,7 @@ class ZioBlocksBench:
         def s13(i: Int): Async[Int] = answer.flatMap(a => s14(i + a))
         def s14(i: Int): Async[Int] = answer.flatMap(a => s15(i + a))
         def s15(i: Int): Async[Int] = answer.flatMap(a => s0(i + a))
-        s0(0).block
+        s0(seed - 1).block
     end sharedHandlerPaysDispatch
 
     @Benchmark
@@ -203,7 +212,7 @@ class ZioBlocksBench:
                         .map(v => (v + 1) & 63)
                         .flatMap(_ => loop(i + 1))
                 }
-        loop(0).block
+        loop(seed - 1).block
     end continuationBodiesFuse
 
     /** Fidelity NONE: the chain folded at field initialization, so this measures `.block` on a
@@ -225,7 +234,7 @@ class ZioBlocksBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .flatMap(_ => loop(i + 1))
-        loop(0).block
+        loop(seed - 1).block
     end fusionAfterSuspension
 
     /** The requirements' local-var substitution; fidelity LOW. The var is method-local and dead
@@ -240,7 +249,7 @@ class ZioBlocksBench:
             else
                 s += 1
                 answer.flatMap(a => loop(i + a))
-        loop(0).block
+        loop(seed - 1).block
     end statefulAnswersPaySuccessor
 
     @Benchmark
@@ -248,7 +257,7 @@ class ZioBlocksBench:
         def loop(i: Int): Async[Int] =
             if i > Depth then Async.succeed(i)
             else answer.flatMap(a => loop(i + a)).map(x => x)
-        loop(0).block
+        loop(seed - 1).block
     end trailingMapsStayLinear
 
     /** Dynamic single-link application over a ready value: each link applies eagerly through

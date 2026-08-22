@@ -92,7 +92,7 @@ class TurboliftBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
                     .flatMap(_ => loop(i + 1))
-        loop(0).runST
+        loop(seed - 1).runST
     end fusionAllocatesNothing
 
     @Benchmark
@@ -106,7 +106,7 @@ class TurboliftBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
                     .flatMap(_ => loop(i + 1))
-        loop(0).runST
+        loop(seed - 1).runST
     end fusionPastBudgetPaysRescuesOnly
 
     @Benchmark
@@ -118,7 +118,7 @@ class TurboliftBench:
                     .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
                     .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
                     .flatMap(loop)
-        loop(0).runST
+        loop(seed - 1).runST
     end uncachedValuesPayBoxingOnly
 
     @Benchmark
@@ -132,7 +132,7 @@ class TurboliftBench:
                     .map(b => Box(b.value - 1)).map(b => Box(b.value - 1)).map(b => Box(b.value - 1))
                     .map(b => Box(b.value - 1))
                     .flatMap(loop)
-        loop(Box(0)).runST.value
+        loop(Box(seed - 1)).runST.value
     end userTypesSkipKernelWrapping
 
     @Benchmark
@@ -141,7 +141,7 @@ class TurboliftBench:
             !!.unit.flatMap { _ =>
                 if i > Depth then !!.pure(0) else loop(i + 1)
             }
-        loop(0).runST
+        loop(seed - 1).runST
     end deepRecursionPaysRescuesOnly
 
     /** Exact: a Reader operation resolved by its installed handler. */
@@ -150,7 +150,7 @@ class TurboliftBench:
         def loop(i: Int): Int !! Ask =
             if i > Depth then !!.pure(i)
             else Ask.ask.flatMap(a => loop(i + a))
-        loop(0).handleWith(askHandler).runST
+        loop(seed - 1).handleWith(askHandler).runST
     end suspensionBaseline
 
     /** Exact analogue of kyo's askWith: asksEff carries the continuation into the operation,
@@ -161,7 +161,7 @@ class TurboliftBench:
         def loop(i: Int): Int !! Ask =
             if i > Depth then !!.pure(i)
             else Ask.asksEff(a => loop(i + a))
-        loop(0).handleWith(askHandler).runST
+        loop(seed - 1).handleWith(askHandler).runST
     end suspensionFusesContinuation
 
     /** ReaderEffect.ask is a final val, so the sixteen sites share one operation node; what
@@ -186,7 +186,7 @@ class TurboliftBench:
         def s13(i: Int): Int !! Ask = Ask.asksEff(a => s14(i + a))
         def s14(i: Int): Int !! Ask = Ask.asksEff(a => s15(i + a))
         def s15(i: Int): Int !! Ask = Ask.asksEff(a => s0(i + a))
-        s0(0).handleWith(askHandler).runST
+        s0(seed - 1).handleWith(askHandler).runST
     end sharedHandlerPaysDispatch
 
     @Benchmark
@@ -202,7 +202,7 @@ class TurboliftBench:
                         .map(v => (v + 1) & 63)
                         .flatMap(_ => loop(i + 1))
                 }
-        loop(0).handleWith(askHandler).runST
+        loop(seed - 1).handleWith(askHandler).runST
     end continuationBodiesFuse
 
     @Benchmark
@@ -220,7 +220,7 @@ class TurboliftBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .flatMap(_ => loop(i + 1))
-        loop(0).handleWith(askHandler).runST
+        loop(seed - 1).handleWith(askHandler).runST
     end fusionAfterSuspension
 
     /** The handler is installed and never used; the chain is ascribed into the Ask row exactly
@@ -237,7 +237,7 @@ class TurboliftBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
                     .flatMap(_ => loop(i + 1))
-        (loop(0): Int !! Ask).handleWith(askHandler).runST
+        (loop(seed - 1): Int !! Ask).handleWith(askHandler).runST
     end idleHandlerAddsNothing
 
     /** Exact: State.update answers 1 and advances the interpreter-threaded state, matching
@@ -249,7 +249,7 @@ class TurboliftBench:
         def loop(i: Int): Int !! St =
             if i > Depth then !!.pure(i)
             else St.update(s => (1, s + 1)).flatMap(a => loop(i + a))
-        loop(0).handleWith(stHandler).runST._1
+        loop(seed - 1).handleWith(stHandler).runST._1
     end statefulAnswersPaySuccessor
 
     @Benchmark
@@ -257,7 +257,7 @@ class TurboliftBench:
         def loop(i: Int): Int !! Ask =
             if i > Depth then !!.pure(i)
             else Ask.ask.flatMap(a => loop(i + a)).map(x => x)
-        loop(0).handleWith(askHandler).runST
+        loop(seed - 1).handleWith(askHandler).runST
     end trailingMapsStayLinear
 
     /** Exact: two Reader effects under two nested handlers, so the crossings are real. */
@@ -266,7 +266,7 @@ class TurboliftBench:
         def loop(i: Int): Int !! (Ask & Ask2) =
             if i > Depth then !!.pure(i)
             else Ask.ask.flatMap(a => Ask2.ask.flatMap(t => loop(i + a + t)))
-        loop(0).handleWith(askHandler).handleWith(ask2Handler).runST
+        loop(seed - 1).handleWith(askHandler).handleWith(ask2Handler).runST
     end foreignCrossingsPayRotation
 
     /** Dynamic single-link application: NarrowDepth map links attached in a runtime loop, then
