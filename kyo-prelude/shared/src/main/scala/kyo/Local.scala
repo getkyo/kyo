@@ -27,7 +27,7 @@ import scala.annotation.nowarn
   *   The type of the local value
   *
   * @see
-  *   [[kyo.Local.init]] for creating Local instances
+  *   [[kyo.Local.init]], [[kyo.Local.initNoninheritable]] for creating Local instances
   * @see
   *   [[kyo.Local#get]], [[kyo.Local#use]] for retrieving values
   * @see
@@ -146,6 +146,19 @@ object Local:
             lazy val default: A             = defaultValue
             def fork(value: A): Maybe[A]    = forkValue(value)
             def join(held: A, forked: A): A = joinValue(held, forked)
+
+    /** Creates a new non-inheritable Local instance with the given default value.
+      *
+      * Child computations always start with the default value and do not inherit from their parent,
+      * matching non-inheritable thread locals. Shorthand for `init(defaultValue)(_ => Absent)`.
+      *
+      * @param defaultValue
+      *   The default value for the Local
+      * @return
+      *   A new non-inheritable Local instance
+      */
+    inline def initNoninheritable[A](inline defaultValue: A): Local[A] =
+        init(defaultValue)(_ => Maybe.Absent)
 
     object internal:
 
