@@ -4,6 +4,25 @@ Goal, user's words: fully green against kyo-kernel. A red row means the kernel i
 
 ## Standing status
 
+- 2026-08-22 answersCont ADOPTED at claim strength (`e8b389c241` impl, `7e00c88485` pins,
+  full -f 2 board `reviews/bench/answerscont-0822-kernel2.json` from a detached worktree at the
+  same commit): HandlerCont gains the F1 answers protocol (answersCont template, per-site clause
+  binding, eval gate at pos 0/1). suspensionBaseline 186 to 88.6 (0.48x), suspensionFuses 99.8 to
+  43.6 (0.44x, now beats turbolift's exact asksEff 49.6), continuationBodies 32.6 to 24.6 (0.75x),
+  sharedHandler 161 to 126 (0.78x), foreign 868 to 774 (0.89x); every other row inside the drift
+  band, micro rows unmoved (settled path untouched), +1.9KB/op budget-bail defers on the loop rows
+  (named). Suite 987 green including six new cont-family hostile pins mirroring the F1 block.
+  Score vs kyo-kernel: reds now 4: RunOnly 2.92x, foreign 2.50x, fusionAfterSuspension 2.40x,
+  userTypes 1.10x (sharedHandler 0.95x and continuationBodies 1.04x now at or under the bar;
+  suspension cluster green). Vs turbolift the remaining losses are suspensionBaseline 2.1x,
+  foreign, trailingMaps, sharedHandler, deepRecursion. Named next mechanisms: fusionAfterSuspension
+  and RunOnly are the pos>1 general path (chain re-fold per answer); foreign alternating tags exit
+  the answers loop every iteration; the map-over-suspension attach fix (Effect.attach, proposed) is
+  the remaining construction lever.
+- 2026-08-22 null-to-Maybe cold slices DONE (`96f6c9b625`, plan `reviews/KERNEL2-NULL-TO-MAYBE-PLAN.md`):
+  drainFinalizers takes Maybe[Throwable], Park snapshot carries Span[Maybe[Finalizer]]. Out.cont
+  Maybe bracket still pending; hot/platform/evidence nulls stay per plan.
+- Held-out Fable safety audit of the kernel running (writes reviews/KERNEL2-SAFETY-AUDIT.md).
 - 2026-08-21 overnight, user-directed pivot: cross-library comparison DONE. Six boards (kernel2,
   old kernel, ZIO 2.1.26, cats-effect 3.7.0, zio-blocks-async 0.0.51, turbolift 0.126.0) in one
   same-session run; tables, fidelity labels, sensitivity checks in
