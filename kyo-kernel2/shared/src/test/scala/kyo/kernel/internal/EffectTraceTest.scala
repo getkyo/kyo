@@ -327,22 +327,48 @@ class EffectTraceTest extends AnyFreeSpec:
         assert(msg.contains("outerStep"))
     }
 
-    // Effect.catching is not in this kernel yet. These are the previous kernel's cases that
-    // depend on it, kept as the specification for the port.
-    //
-    // "the effect frames of a throw are carried through a catching guard" in {
-    //     val ex = intercept[Boom](Eval(answerAsk(1)(Effect.catching(outerStep(ask))(e => throw e))))
-    //     assert(methods(ex).contains("innerStep"))
-    //     assert(methods(ex).contains("outerStep"))
-    //     assert(classes(ex).exists(_.startsWith("catching @ ")))
-    // }
-    //
-    // "a second crossing rewrites the spliced trace rather than duplicating it" in {
-    //     def rethrown: Int < Any = Effect.catching(Eval(answerAsk(1)(outerStep(ask))))(e => throw e)
-    //     val ex                  = intercept[Boom](Eval(rethrown))
-    //     assert(ex.getStackTrace.count(_.getMethodName == "innerStep") == 1)
-    //     assert(ex.getStackTrace.count(_.getMethodName == "outerStep") == 1)
-    //     assert(ex.getSuppressed.count(_.isInstanceOf[EffectTrace]) == 1)
-    // }
+    "the effect frames of a throw are carried through a catching guard" in {
+        val ex = intercept[Boom](Eval(answerAsk(1)(Effect.catching(outerStep(ask))(e => throw e))))
+        assert(methods(ex).contains("innerStep"))
+        assert(methods(ex).contains("outerStep"))
+        assert(classes(ex).exists(_.startsWith("catching @ ")))
+    }
+
+    "a second crossing rewrites the spliced trace rather than duplicating it" in {
+        def rethrown: Int < Any = Effect.catching {
+            val crossed: Int = Eval(answerAsk(1)(outerStep(ask)))
+            crossed
+        }(e => throw e)
+        val ex = intercept[Boom](Eval(rethrown))
+        assert(ex.getStackTrace.count(_.getMethodName == "innerStep") == 1)
+        assert(ex.getStackTrace.count(_.getMethodName == "outerStep") == 1)
+        assert(ex.getSuppressed.count(_.isInstanceOf[EffectTrace]) == 1)
+    }
+
+    "concurrent attach on a shared exception instance stays bounded and non-throwing" in {
+        // two threads throw the SAME pre-allocated exception through separate evals with distinct
+        // region stacks; the trace machinery must never throw itself, and the shared carrier must
+        // stay bounded: exactly one EffectTrace suppressed, last-writer-wins, never torn
+        val shared           = new Boom
+        @volatile var failed = false
+        def runner(): Thread = new Thread(() =>
+            var i = 0
+            while i < 10000 do
+                try discard(Eval(answerAsk(1)(ask.map(_ => (throw shared): Int))))
+                catch
+                    case b: Boom      => ()
+                    case _: Throwable => failed = true
+                end try
+                i += 1
+            end while
+        )
+        val t1 = runner()
+        val t2 = runner()
+        t1.start(); t2.start()
+        t1.join(30000); t2.join(30000)
+        assert(!t1.isAlive && !t2.isAlive)
+        assert(!failed)
+        assert(shared.getSuppressed.count(_.isInstanceOf[EffectTrace]) == 1)
+    }
 
 end EffectTraceTest

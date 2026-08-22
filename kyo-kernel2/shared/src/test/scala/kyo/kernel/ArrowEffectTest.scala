@@ -20,6 +20,10 @@ class ArrowEffectTest extends AnyFreeSpec:
     sealed trait Say extends ArrowEffect[Const[String], Const[Unit]]
     def say(s: String): Unit < Say = ArrowEffect.suspend[Any](Tag[Say], s)
 
+    // an effect whose answers are themselves pending computations, for the boxed-answer lane
+    sealed trait AskBoxed extends ArrowEffect[Const[Unit], [X] =>> Int < Say]
+    def askBoxed: (Int < Say) < AskBoxed = ArrowEffect.suspend[Any](Tag[AskBoxed], ())
+
     // holds a computation as a value: the generic parameter routes through
     // the runtime lift, which boxes pending values; the direct ascription is
     // rejected by the lift discipline
@@ -1876,6 +1880,110 @@ class ArrowEffectTest extends AnyFreeSpec:
             assert(first.evalNow == Maybe.Absent)
             assert(Eval(first) == 0)
             assert(n == 100)
+        }
+    }
+
+    "safety audit pins" - {
+
+        "a deferred payload that throws mid answer loop cannot commit another dispatch's state or continuation" in {
+            case class Boom() extends RuntimeException
+            // Say's stateful region holds an Int state, Ask's holds a String state; the body forces
+            // a deferred payload that throws, with a recovery inside both regions. Any cross-typed
+            // state or a foreign continuation answering the failure breaks the assertions
+            val body: Int < (Ask & Say) =
+                say("s").map(_ => ask.map(a => Effect.defer((throw Boom()): Int).map(_ + a)))
+            val recovered: Int < (Ask & Say) = Effect.catching(body)(_ => -1)
+            val askRegion: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], "s0", recovered)(
+                [C] => (s, _) => Loop.continue(s + "+", 1: Int < Any),
+                (s, a) => if s == "s0+" then a else -100
+            )
+            val sayRegion: Int < Any = ArrowEffect.handleLoopState(Tag[Say], 100, askRegion)(
+                [C] => (n, _) => Loop.continue(n + 1, (): Unit < Any),
+                (n, a) => n * 1000 + a
+            )
+            assert(Eval(sayRegion) == 100999)
+        }
+
+        "a clause throw meets the same scopes on every dispatch path" in {
+            case class Boom() extends RuntimeException
+            // a Catching standing between the suspension and the handler: whether it answers the
+            // clause's throw must not depend on which handler family dispatched the clause
+            val body: Int < Ask = Effect.catching(ask.map(_ + 1))(_ => -1)
+            def viaLoop: Int < Any =
+                ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => throw Boom(), a => a)
+            def viaCont: Int < Any =
+                ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, _) => throw Boom(), a => a)
+            val l = Eval(Effect.catching(viaLoop)(_ => -2))
+            val c = Eval(Effect.catching(viaCont)(_ => -2))
+            assert(l == c)
+        }
+
+        "a clause throw meets the same scopes on the fast and general cont paths" in {
+            case class Boom() extends RuntimeException
+            def run(body: Int < Ask): Int =
+                Eval(Effect.catching(
+                    ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, _) => throw Boom(), a => a)
+                )(_ => -2))
+            // a bare suspension takes the pos gate; a mapped one takes the general dump path. The
+            // clause's failure surface must not depend on which one dispatched it
+            assert(run(ask) == run(ask.map(_ + 1)))
+        }
+
+        "a throwing release in a nested eval does not disarm the enclosing slice" in {
+            // a nested full eval whose boundary drain throws must still restore the caller's
+            // safepoint state: a stop delivered right after it must park the enclosing slice
+            val inner: Int < Ask =
+                Effect.bracket(Effect.defer(1))(_ => throw new IllegalStateException("release"))(_ => ask.map(_ + 1))
+            val dropped: Int < Any =
+                ArrowEffect.handleCont(Tag[Ask], inner)([C] => (_, _) => -1, a => a)
+            val outer: Int < Any =
+                (1: Int < Any).map { _ =>
+                    try kyo.discard(Eval(dropped))
+                    catch case _: IllegalStateException => ()
+                    kyo.discard(internal.Safepoint.stop(Thread.currentThread()))
+                    1
+                }.map(_ + 41)
+            val p = Eval.partial(outer)
+            assert(p.evalNow.isEmpty)
+            assert(Eval(p) == 42)
+        }
+
+        "a throwing release on the completing path leaves the caller's safepoint state intact" in {
+            // the clause drops the continuation, so the bracket's release is owed by the drain at
+            // the eval's boundary; its throw must not skip the safepoint restore
+            val v: Int < Ask =
+                Effect.bracket(Effect.defer(1))(_ => throw new IllegalStateException("release"))(_ => ask.map(_ + 1))
+            val dropped: Int < Any =
+                ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, _) => -1, a => a)
+            val slot = internal.Safepoint.get()
+            // put the slot in a state distinct from a fresh one, so a skipped restore is visible
+            kyo.discard(internal.Safepoint.enter(slot))
+            kyo.discard(internal.Safepoint.enter(slot))
+            try
+                val before = internal.Safepoint.save(slot)
+                internal.Safepoint.restore(slot, before)
+                intercept[IllegalStateException](kyo.discard(Eval(dropped)))
+                val after = internal.Safepoint.save(slot)
+                internal.Safepoint.restore(slot, after)
+                assert(after.equals(before))
+            finally
+                internal.Safepoint.exit(slot)
+                internal.Safepoint.exit(slot)
+            end try
+        }
+
+        "a boxed answer crosses the answers loop unopened" in {
+            val payload: Int < Say = say("p").map(_ => 7)
+            val region: (Int < Say) < Any =
+                ArrowEffect.handleLoop(Tag[AskBoxed], askBoxed.map(v => box(v)))(
+                    [C] => _ => Loop.continue(box(payload): (Int < Say) < Any),
+                    a => box(a)
+                )
+            val got: Int < Say = Eval(region)
+            // exactly the lift's one level is stripped: the region result IS the boxed payload
+            assert(got.asInstanceOf[AnyRef] eq payload.asInstanceOf[AnyRef])
+            val r = Eval(ArrowEffect.handleCont(Tag[Say], got)([C] => (_, cont) => cont(()), a => a))
+            assert(r == 7)
         }
     }
 

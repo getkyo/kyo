@@ -950,11 +950,13 @@ class EvalTest extends AnyFreeSpec:
     "partial evaluation" - {
 
         "a preemption stop reifies and resumes with handler state" in {
+            var clauseRuns = 0
             def countdown(i: Int): Int < Ask =
                 if i == 0 then 0 else ask.map(a => countdown(i - a))
             val counted: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 0, countdown(100))(
                 [C] =>
                     (n, _) =>
+                        clauseRuns += 1
                         if n == 10 then discard(Safepoint.stop(Thread.currentThread()))
                         Loop.continue(n + 1, 1: Int < Any)
                 ,
@@ -962,18 +964,12 @@ class EvalTest extends AnyFreeSpec:
             )
             val first = Eval.partial(counted)
             assert(first.evalNow == Maybe.Absent)
+            // the slice stopped where the stop was lodged, not budget-periods later: the eleventh
+            // clause run raises the stop, and at most one more answer may slip through before the
+            // park lands
+            assert(clauseRuns >= 11 && clauseRuns <= 12, s"clauseRuns=$clauseRuns")
             assert(Eval.partial(first).evalNow == Maybe(100))
-        }
-
-        "the stop function ends the slice" in {
-            var steps = 0
-            val stop = () =>
-                steps += 1; steps > 50
-            def countdown(i: Int): Int < Ask =
-                if i == 0 then 0 else ask.map(a => countdown(i - a))
-            val first = Eval.partial(answerAsk(1)(countdown(1000)), stop)
-            assert(first.evalNow == Maybe.Absent)
-            assert(Eval.partial(first).evalNow == Maybe(0))
+            assert(clauseRuns == 100)
         }
 
         "partial completes when nothing stops" in {

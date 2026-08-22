@@ -92,4 +92,20 @@ class HandlerTest extends AnyFreeSpec:
         assert(r.eval == 42)
     }
 
+    "the generic cont answers commits the continuation before running the clause" in {
+        case class Boom() extends RuntimeException
+        val h = new Handler.HandlerCont[Const[Unit], Const[Int], Ask, Int, Int, Any]:
+            def frame                                                 = Frame.internal
+            def tag                                                   = Tag[Ask]
+            def run[X](input: Unit, cont: Arrow[Int, Int, Ask & Any]) = throw Boom()
+            override def apply(a: Int)                                = a
+        val out  = new Handler.Out
+        val k    = Arrow.id[Any].asInstanceOf[Arrow[Any, Any, Any]]
+        val slot = Safepoint.get()
+        intercept[Boom](discard(h.answers((), k, armed = false, slot, out)))
+        // the cell's cont lane is the exception lane: it must hold the unconsumed continuation
+        // when the clause throws, committed before the clause ran
+        assert(out.cont eq k)
+    }
+
 end HandlerTest

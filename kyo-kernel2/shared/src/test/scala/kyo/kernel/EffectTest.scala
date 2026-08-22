@@ -5,10 +5,13 @@ import kyo.Const
 import kyo.Frame
 import kyo.Maybe
 import kyo.Maybe.*
+import kyo.Result
 import kyo.Tag
 import kyo.discard
 import kyo.kernel.internal.Eval
+import kyo.kernel.internal.Finalizer
 import kyo.kernel.internal.Kyo
+import kyo.kernel.internal.Safepoint
 import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
 
@@ -292,7 +295,10 @@ class EffectTest extends AnyFreeSpec:
         // allowed to do. It takes `A < Any` now, so the park comes from a stop instead, which tests the same
         // thing more directly: the recovery is a stack entry, so it has to survive the snapshot and come back
         "catching guards a stateful region across a park" in {
-            val body = testEffect1(1).map(a => testEffect1(2).map(b => a + b))
+            val body = testEffect1(1).map { a =>
+                discard(Safepoint.stop(Thread.currentThread()))
+                testEffect1(2).map(b => a + b)
+            }
             val region = ArrowEffect.handleLoopState(Tag[TestEffect1], 7, body)(
                 [C] => (state, input) => Loop.continue(state + 1, (input * state).toString: String < Any),
                 (_, a) => a
@@ -302,12 +308,7 @@ class EffectTest extends AnyFreeSpec:
             } {
                 case _: RuntimeException => "caught"
             }
-            var steps = 0
-            val parked = Eval.partial(
-                effect,
-                () =>
-                    steps += 1; steps == 1
-            )
+            val parked = Eval.partial(effect)
             assert(parked.evalNow.isEmpty)
             assert(Eval(parked) == "caught")
         }
@@ -627,22 +628,21 @@ class EffectTest extends AnyFreeSpec:
         }
 
         // the eval never stops in front of a binding, so a slice cannot end between the acquire settling and
-        // the scope that owes the resource being installed. Stopping at every step is what would find such a
-        // window: the release must run once, at the end, and never while the remainder is still resumable
-        "a slice stopping at every step releases once, at the end" in {
+        // the scope that owes the resource being installed. A stop lodged inside the acquire parks at that
+        // exact window, and one inside the use parks mid-scope: the release must run once, at the end, and
+        // never while the remainder is still resumable
+        "a slice stopped inside a bracket releases once, at the end" in {
             var released = 0
             val v: Int < Any =
-                Effect.bracket(Effect.defer(1))(_ => released += 1)(r => Effect.defer(r + 1).map(_ + 1))
-
-            def sliceOnce(v: Int < Any): Int < Any =
-                var budget = 1
-                Eval.partial(
-                    v,
-                    () =>
-                        budget -= 1
-                        budget < 0
+                Effect.bracket(Effect.defer {
+                    discard(Safepoint.stop(Thread.currentThread()))
+                    1
+                })(_ => released += 1)(r =>
+                    Effect.defer {
+                        discard(Safepoint.stop(Thread.currentThread()))
+                        r + 1
+                    }.map(_ + 1)
                 )
-            end sliceOnce
 
             @tailrec def run(v: Int < Any, steps: Int): (Int, Int) =
                 v.evalNow match
@@ -650,7 +650,7 @@ class EffectTest extends AnyFreeSpec:
                     case Absent =>
                         assert(released == 0)
                         assert(steps < 100)
-                        run(sliceOnce(v), steps + 1)
+                        run(Eval.partial(v), steps + 1)
 
             val (result, steps) = run(v, 0)
             assert(result == 3)
@@ -697,6 +697,299 @@ class EffectTest extends AnyFreeSpec:
             val v        = Effect.bracket(acquire)(r => released :+= r)(r => r.length)
             assert(Eval(v) == 2)
             assert(released == List("a", "a!"))
+        }
+
+        "the release receives the outcome: the result on completion, the failure on a throw" in {
+            var outcomes = List.empty[Result[Nothing, Int]]
+            val ok: Int < Any =
+                Effect.bracket(Effect.defer(1))((_, r: Result[Nothing, Int]) => outcomes :+= r)(r => r + 41)
+            assert(Eval(ok) == 42)
+            val boom = new RuntimeException("boom")
+            val bad: Int < Any =
+                Effect.bracket(Effect.defer(1))((_, r: Result[Nothing, Int]) => outcomes :+= r)(_ => throw boom)
+            assert(intercept[RuntimeException](Eval(bad)) eq boom)
+            assert(outcomes == List(Result.succeed(42), Result.panic(boom)))
+        }
+
+        "nested releases run innermost first on a failure" in {
+            var order = List.empty[String]
+            val boom  = new RuntimeException("boom")
+            val v: Int < Any =
+                Effect.bracket(Effect.defer(1))(_ => order :+= "outer") { a =>
+                    Effect.bracket(Effect.defer(2))(_ => order :+= "inner") { b =>
+                        if a + b == 3 then throw boom else a + b
+                    }
+                }
+            assert(intercept[RuntimeException](Eval(v)) eq boom)
+            assert(order == List("inner", "outer"))
+        }
+
+        "a cross-thread stop parks inside a bracket and abandonment releases" in {
+            @volatile var started       = false
+            @volatile var released      = 0
+            @volatile var sawUnreleased = false
+            val t = new Thread(() =>
+                def spin(i: Int): Int < Any =
+                    ((i + 1) & 63: Int < Any).map { v =>
+                        started = true
+                        spin(v)
+                    }
+                val v: Int < Any = Effect.bracket(Effect.defer(1))(_ => released += 1)(r => spin(r))
+                val p            = Eval.partial(v)
+                sawUnreleased = released == 0 && p.evalNow.isEmpty
+                Eval.finalizeResources(p)
+            )
+            t.start()
+            while !started do ()
+            assert(Safepoint.stop(t))
+            t.join(20000)
+            assert(!t.isAlive)
+            assert(sawUnreleased)
+            assert(released == 1)
+        }
+
+        "a use that fails after a resume still releases once with the failure" in {
+            var released = 0
+            var out: Any = null
+            val boom     = new RuntimeException("late")
+            val v: Int < Any =
+                Effect.bracket(Effect.defer(1)) { (_, r: Result[Nothing, Int]) =>
+                    released += 1
+                    out = r
+                } { r =>
+                    Effect.defer {
+                        discard(Safepoint.stop(Thread.currentThread()))
+                        r
+                    }.map(x => if x == 1 then throw boom else x)
+                }
+            val p = Eval.partial(v)
+            assert(p.evalNow.isEmpty)
+            assert(released == 0)
+            assert(intercept[RuntimeException](Eval(p)) eq boom)
+            assert(released == 1)
+            assert(out.equals(Result.panic(boom)))
+        }
+
+        "a park inside nested brackets carries both releases" in {
+            var released = List.empty[String]
+            val v: Int < Any =
+                Effect.bracket(Effect.defer(1))(_ => released :+= "outer") { a =>
+                    Effect.bracket(Effect.defer(2))(_ => released :+= "inner") { b =>
+                        Effect.defer {
+                            discard(Safepoint.stop(Thread.currentThread()))
+                            a + b
+                        }.map(_ + 39)
+                    }
+                }
+            val p = Eval.partial(v)
+            assert(p.evalNow.isEmpty)
+            assert(released.isEmpty)
+            assert(Eval(p) == 42)
+            assert(released == List("inner", "outer"))
+        }
+
+        "a park evaluated twice releases its resource once" in {
+            var released = 0
+            val v: Int < Any =
+                Effect.bracket(Effect.defer(1))(_ => released += 1)(r =>
+                    Effect.defer {
+                        discard(Safepoint.stop(Thread.currentThread()))
+                        r
+                    }.map(_ + 41)
+                )
+            val p = Eval.partial(v)
+            assert(p.evalNow.isEmpty)
+            assert(Eval(p) == 42)
+            assert(Eval(p) == 42)
+            // one acquisition happened before the park, so both replays share the resource and the
+            // release runs once: run-once is the finalizer's own guard, not a replay restriction
+            assert(released == 1)
+        }
+
+        "abandoning a parked bracket releases with the abandoned outcome, and a later resume is harmless" in {
+            var released = 0
+            var out: Any = null
+            val v: Int < Any =
+                Effect.bracket(Effect.defer(1)) { (_, r: Result[Nothing, Int]) =>
+                    released += 1
+                    out = r
+                } { r =>
+                    Effect.defer {
+                        discard(Safepoint.stop(Thread.currentThread()))
+                        r
+                    }.map(_ + 41)
+                }
+            val p = Eval.partial(v)
+            assert(p.evalNow.isEmpty)
+            Eval.finalizeResources(p)
+            assert(released == 1)
+            assert(out.equals(Result.panic(Finalizer.Abandoned)))
+            assert(Eval(p) == 42)
+            assert(released == 1)
+        }
+
+        "abandoning nested parked brackets releases innermost first" in {
+            var order = List.empty[String]
+            val v: Int < Any =
+                Effect.bracket(Effect.defer(1))(_ => order :+= "outer") { a =>
+                    Effect.bracket(Effect.defer(2))(_ => order :+= "inner") { b =>
+                        Effect.defer {
+                            discard(Safepoint.stop(Thread.currentThread()))
+                            a + b
+                        }.map(_ + 39)
+                    }
+                }
+            val p = Eval.partial(v)
+            assert(p.evalNow.isEmpty)
+            Eval.finalizeResources(p)
+            assert(order == List("inner", "outer"))
+        }
+
+        "abandoning a park with no outstanding releases is a no-op" in {
+            val v: Int < Any = Effect.defer {
+                discard(Safepoint.stop(Thread.currentThread()))
+                1
+            }.map(_ + 41)
+            val p = Eval.partial(v)
+            assert(p.evalNow.isEmpty)
+            Eval.finalizeResources(p)
+            assert(Eval(p) == 42)
+        }
+
+        "abandoning a slice parked in the acquire window still releases" in {
+            // the acquire has settled when the stop parks the slice, so the resource exists; the
+            // scope that owes it has not installed yet. Abandonment must still release: a resource
+            // that was created and never freed is a leak, whatever the park's internal shape was
+            var released = 0
+            val v: Int < Any =
+                Effect.bracket(Effect.defer {
+                    discard(Safepoint.stop(Thread.currentThread()))
+                    1
+                })(_ => released += 1)(r => r + 41)
+            val p = Eval.partial(v)
+            assert(p.evalNow.isEmpty)
+            Eval.finalizeResources(p)
+            assert(released == 1)
+        }
+
+        "a release that throws during unwind does not lose the failure or the recovery" in {
+            var seen       = List.empty[String]
+            var suppressed = List.empty[String]
+            val v: Int < Any = Effect.catching {
+                Effect.bracket(Effect.defer(1))((_, _: Result[Nothing, Int]) => throw new IllegalStateException("release")) { _ =>
+                    (throw new UnsupportedOperationException("body")): Int
+                }
+            } { ex =>
+                seen :+= ex.getMessage
+                suppressed = ex.getSuppressed.toList.map(_.getMessage)
+                -1
+            }
+            assert(Eval(v) == -1)
+            assert(seen == List("body"))
+            assert(suppressed == List("release"))
+        }
+
+        "a recovery that throws surfaces its own failure with the original suppressed" in {
+            val original     = new UnsupportedOperationException("body")
+            val fromRecovery = new IllegalStateException("recovery")
+            var out: Any     = null
+            val v: Int < Any = Effect.bracket(Effect.defer(1))((_, r: Result[Nothing, Int]) => out = r) { _ =>
+                Effect.catching((throw original): Int)(_ => throw fromRecovery)
+            }
+            val ex = intercept[IllegalStateException](Eval(v))
+            assert(ex eq fromRecovery)
+            assert(ex.getSuppressed.exists(_ eq original))
+            assert(out.equals(Result.panic(fromRecovery)))
+        }
+
+        "an acquire that throws owes no release" in {
+            var released = 0
+            val boom     = new RuntimeException("acquire")
+            val v: Int < Any =
+                Effect.bracket(Effect.defer((throw boom): Int))(_ => released += 1)(r => r + 1)
+            assert(intercept[RuntimeException](Eval(v)) eq boom)
+            assert(released == 0)
+        }
+
+        "an effectful acquire whose handler fails owes no release" in {
+            var released = 0
+            val boom     = new RuntimeException("clause")
+            val v: Int < TestEffect1 =
+                Effect.bracket(testEffect1(1))(_ => released += 1)(r => r.length)
+            val handled: Int < Any =
+                ArrowEffect.handleCont(Tag[TestEffect1], v)([C] => (_, _) => throw boom, a => a)
+            assert(intercept[RuntimeException](Eval(handled)) eq boom)
+            assert(released == 0)
+        }
+
+        "an interior recovery turns the release outcome into the recovered success" in {
+            var out: Any = null
+            val v: Int < Any =
+                Effect.bracket(Effect.defer(1))((_, r: Result[Nothing, Int]) => out = r) { a =>
+                    Effect.catching((throw new RuntimeException("use")): Int)(_ => a + 41)
+                }
+            assert(Eval(v) == 42)
+            assert(out.equals(Result.succeed(42)))
+        }
+
+        "a failing use with an effectful acquire still releases with the failure" in {
+            var out: Any = null
+            val boom     = new RuntimeException("use")
+            val v: Int < TestEffect1 =
+                Effect.bracket(testEffect1(10))((_, r: Result[Nothing, Int]) => out = r) { a =>
+                    if a == "10" then throw boom else a.length
+                }
+            val handled: Int < Any =
+                ArrowEffect.handleCont(Tag[TestEffect1], v)([C] => (input, cont) => cont(input.toString), a => a)
+            assert(intercept[RuntimeException](Eval(handled)) eq boom)
+            assert(out.equals(Result.panic(boom)))
+        }
+
+        "a release that throws during abandonment does not silence the others" in {
+            var order = List.empty[String]
+            val v: Int < Any =
+                Effect.bracket(Effect.defer(1))(_ => order :+= "outer") { a =>
+                    Effect.bracket(Effect.defer(2)) { _ =>
+                        order :+= "inner"
+                        throw new IllegalStateException("inner-release")
+                    } { b =>
+                        Effect.defer {
+                            discard(Safepoint.stop(Thread.currentThread()))
+                            a + b
+                        }.map(_ + 39)
+                    }
+                }
+            val p = Eval.partial(v)
+            assert(p.evalNow.isEmpty)
+            // whatever propagates out of the abandonment, every release must have been attempted
+            try Eval.finalizeResources(p)
+            catch case _: IllegalStateException => ()
+            assert(order == List("inner", "outer"))
+        }
+
+        "an abandonment racing a resume releases exactly once" in {
+            var iterations = 0
+            while iterations < 200 do
+                val released = new java.util.concurrent.atomic.AtomicInteger
+                val v: Int < Any =
+                    Effect.bracket(Effect.defer(1))(_ => discard(released.incrementAndGet()))(r =>
+                        Effect.defer {
+                            discard(Safepoint.stop(Thread.currentThread()))
+                            r
+                        }.map(_ + 41)
+                    )
+                val p = Eval.partial(v)
+                assert(p.evalNow.isEmpty)
+                val resumer   = new Thread(() => discard(Eval(p)))
+                val abandoner = new Thread(() => Eval.finalizeResources(p))
+                resumer.start()
+                abandoner.start()
+                resumer.join(10000)
+                abandoner.join(10000)
+                assert(!resumer.isAlive && !abandoner.isAlive)
+                assert(released.get == 1)
+                iterations += 1
+            end while
         }
 
         "a release may itself bracket" in {

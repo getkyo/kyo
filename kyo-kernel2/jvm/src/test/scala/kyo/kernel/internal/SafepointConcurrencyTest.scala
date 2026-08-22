@@ -19,6 +19,9 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
         condition
     end spinUntil
 
+    sealed trait Ask extends ArrowEffect[kyo.Const[Unit], kyo.Const[Int]]
+    def ask: Int < Ask = ArrowEffect.suspend[Any](kyo.Tag[Ask], ())
+
     "a stop request from another thread is visible once and consumed" in {
         @volatile var ready         = false
         @volatile var stopDelivered = false
@@ -74,36 +77,70 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
         assert(!Safepoint.stop(target))
     }
 
-    // Waiting on partial evaluation: a stop is observable only through an eval that can hand back a
-    // parked value, which lands with the Bracket and Park work (see reviews/BRACKET-PARK-DESIGN.md).
-    // Until then the stop protocol itself is covered by the cases above and by SafepointTest.
-    //
-    // "an evaluation yields to a stop requested from another thread" in {
-    //     def burn(n: Int): Int < Any =
-    //         if n == 0 then 0 else (0: Int < Any).map(_ => burn(n - 1))
-    //     @volatile var ready   = false
-    //     @volatile var yielded = false
-    //     @volatile var done    = false
-    //     val target = new Thread(() =>
-    //         discard(Safepoint.get())
-    //         ready = true
-    //         var attempts = 0
-    //         while !yielded && attempts < 100000 do
-    //             val out = Eval.partial(burn(Period * 16))
-    //             if out.evalNow.isEmpty then yielded = true
-    //             attempts += 1
-    //         end while
-    //         done = true
-    //     )
-    //     target.start()
-    //     assert(spinUntil()(ready))
-    //     val deadline = System.currentTimeMillis() + 10000
-    //     while !done && System.currentTimeMillis() < deadline do
-    //         discard(Safepoint.stop(target))
-    //         Thread.onSpinWait()
-    //     target.join(10000)
-    //     assert(yielded)
-    // }
+    "an evaluation yields to a stop requested from another thread" in {
+        def burn(n: Int): Int < Any =
+            if n == 0 then 0 else (0: Int < Any).map(_ => burn(n - 1))
+        @volatile var ready   = false
+        @volatile var yielded = false
+        @volatile var done    = false
+        val target = new Thread(() =>
+            discard(Safepoint.get())
+            ready = true
+            var attempts = 0
+            while !yielded && attempts < 100000 do
+                val out = Eval.partial(burn(Period * 16))
+                if out.evalNow.isEmpty then yielded = true
+                attempts += 1
+            end while
+            done = true
+        )
+        target.start()
+        assert(spinUntil()(ready))
+        val deadline = System.currentTimeMillis() + 10000
+        while !done && System.currentTimeMillis() < deadline do
+            discard(Safepoint.stop(target))
+            Thread.onSpinWait()
+        target.join(10000)
+        assert(yielded)
+    }
+
+    "a stop delivered during a fast answer loop ends the slice" in {
+        // the clause answers settled values, so the loop iterates through nextAnswer without
+        // re-entering the eval; a stop delivered mid-loop must still bring the slice back pending.
+        // Repeated so the delivery lands inside the loop reliably; a run where the slice completes
+        // is only legal when the stop arrived after the last poll, which the long countdown makes
+        // vanishingly rare and the pending-count assertion tolerates
+        def countdown(i: Int): Int < Ask =
+            if i == 0 then 0 else ask.map(a => countdown(i - a))
+        var pendingRuns = 0
+        var run         = 0
+        while run < 50 do
+            @volatile var started = false
+            @volatile var pending = false
+            val target = new Thread(() =>
+                val region: Int < Any =
+                    ArrowEffect.handleLoop(kyo.Tag[Ask], countdown(5_000_000))(
+                        [C] =>
+                            _ =>
+                                started = true
+                                Loop.continue(1: Int < Any)
+                        ,
+                        a => a
+                    )
+                pending = Eval.partial(region).evalNow.isEmpty
+            )
+            target.start()
+            assert(spinUntil()(started))
+            discard(Safepoint.stop(target))
+            target.join(20000)
+            assert(!target.isAlive)
+            if pending then pendingRuns += 1
+            run += 1
+        end while
+        // a lost stop leaves the slice running to completion every time; delivery inside a five
+        // million answer loop must park the overwhelming majority of runs
+        assert(pendingRuns > 40)
+    }
 
     "a live thread that never evaluated is not stoppable" in {
         // the caller holds a claimed cell, so the probe reads a table with mixed
