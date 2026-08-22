@@ -31,7 +31,7 @@ Two mechanisms the old kernel has are **replaced rather than ported**, so they a
 ## 2. What blocks the stack, in dependency order
 
 ### 2.1 `Isolate`, and the boundary that calls `fork` / `join`
-
+FB explore how we'd implement this
 **29 files across 11 modules.** kyo-core 63 refs, kyo-flow 17, kyo-reactive-streams 11, kyo-prelude 11,
 kyo-ai 11, kyo-combinators 9, plus STM, Caliban, Actor, Offheap, Aeron.
 
@@ -50,7 +50,7 @@ Two open questions to settle when it lands, both raised and parked tonight:
   larger risk.
 
 ### 2.2 `handleLoop`'s clause reshape
-
+FB The differences in API are by design but the ordering of params should follow kyo-kernel
 **46 sites**: 39 kyo-prelude, 5 kyo-core, 1 kyo-http, 1 kyo-combinators. Every one passes the old
 `(input, state, cont)` clause and calls `cont(...)` inside `Loop.continue`. The new clause is `(state, input)`
 answering with a value, so each site drops the continuation and answers directly. Canonical example:
@@ -87,7 +87,7 @@ seven cases in `ArrowEffectTest`. Each site changes in three ways:
    and `Emit.scala:202` expose in their signatures
 
 ### 2.5 `accept`: declining an operation
-
+FB can't about just handle and suspend again if it doesn't match?
 **1 site, and it gates `Abort`.** `Abort.runWith` (`kyo-prelude/shared/src/main/scala/kyo/Abort.scala:202`)
 passes `accept = [C] => input => input.isPanic || ct.accepts(...)`, because every `Abort` raise carries the
 same erased tag and only the *value* says which handler owns it.
@@ -117,7 +117,7 @@ Grepping kyo-core's main sources for kernel APIs returns four files, and one of 
 - **`IOTask.scala` (5 calls) does not**: see below.
 
 ### 2.6 Safepoint and `IOTask`
-
+FB this is for later
 The old interceptor machinery has **no remaining consumer**: zero references to `Interceptor`,
 `Safepoint.ensure`, `immediate` or `propagating` anywhere outside `kyo-kernel` itself. `IOTask` already calls
 `Safepoint.beginSlice(deadline)` / `endSlice()`, which exist in *neither* kernel, so kyo-core is already
