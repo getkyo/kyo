@@ -3,6 +3,7 @@ package kyo.kernel
 import Isolate.internal.*
 import kyo.Ansi.*
 import kyo.Frame
+import kyo.Kyo
 import scala.quoted.*
 
 /** Provides mechanisms for handling pending effects when forking computations.
@@ -136,8 +137,11 @@ abstract class Isolate[Remove, -Keep, -Restore]:
       *   A computation with 'Restore' effects nested in the result type
       */
     def nest[A, S](v: A < (Remove & S))(using Frame): A < Restore < (Remove & Keep & S) =
+        // Kyo.lift is the deliberate nesting: at its generic position the implicit lift's runtime analysis
+        // nests the computation payload exactly once. A concrete `A < Restore` argument cannot take the
+        // conversion directly, since the lift's guard rejects syntactically pending types
         capture { state =>
-            isolate(state, v).map(r => boxed[A < Restore, Any](restore(r)))
+            isolate(state, v).map(r => Kyo.lift[A < Restore, Any](restore(r)))
         }
 
     /** Runs a computation with full state lifecycle management.
@@ -221,13 +225,6 @@ object Isolate:
     inline given [Remove, Keep, Restore <: Remove]: Isolate[Remove, Keep, Restore] = ${ deriveImpl[Remove, Keep, Restore] }
 
     private[kyo] object internal:
-
-        /** The one deliberate nesting in this file. At a generic position the implicit lift's runtime analysis
-          * nests a computation payload exactly once, which is what `nest` needs for its result value. A concrete
-          * `A < Restore` argument cannot take the conversion directly: the lift's guard rejects syntactically
-          * pending types, exactly to keep accidental nesting out of user code.
-          */
-        private[kernel] def boxed[A, S](v: A): A < S = v
 
         /** No-op isolate that performs no state management.
           *
