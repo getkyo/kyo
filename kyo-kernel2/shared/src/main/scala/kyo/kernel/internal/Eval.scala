@@ -498,8 +498,12 @@ object Eval:
                     // receiver to see the step coming. The payload is read once and the park carries what
                     // was read, so a by-name payload does not run a second time on the way back.
                     // The debugger sees the step about to run and may replace the payload; for a routed
-                    // map the contA is the map arrow carrying its call-site frame
-                    val v = debugger.onDefer(stack, kyo.contA.frame, kyo.value)
+                    // map the contA is the map arrow carrying its call-site frame. The identity guard,
+                    // here and at the other two hook sites, keeps frame reads out of the no-session
+                    // path entirely: a frame is a def the JIT cannot prove side-effect-free, and
+                    // describing a step must never run code the step itself would not have run
+                    val v0 = kyo.value
+                    val v  = if debugger ne Debugger.Noop then debugger.onDefer(stack, kyo.contA.frame, v0) else v0
                     if armed && Safepoint.stopped(slot) && parkable(v, kyo.contA, kyo.contB) then
                         park(Effect.defer[a, b, A, S](v, kyo.contA, kyo.contB))
                     else
@@ -508,7 +512,7 @@ object Eval:
                         loop(v)
                     end if
                 case kyo: Suspend[IX, OX, EX, CX, AX, SX] @unchecked =>
-                    debugger.onSuspend(stack, kyo.frame, kyo.input)
+                    if debugger ne Debugger.Noop then debugger.onSuspend(stack, kyo.frame, kyo.input)
                     stack.push(kyo.cont)
                     val pos = stack.find(kyo.tag)
                     if pos < 0 then unhandled(kyo, stack)
@@ -641,10 +645,12 @@ object Eval:
                         // a computation payload and passes a raw value through, the contract the lift's
                         // emission keeps. Identity returns leave both locals untouched
                         var cu = curr
-                        val r2 = debugger.onDeliver(stack, stack.entry(0).frame, r)
-                        if r2.asInstanceOf[AnyRef] ne r.asInstanceOf[AnyRef] then
-                            r = r2
-                            cu = Nested.nest[Any, Any](r2).asInstanceOf[Any < Nothing]
+                        if debugger ne Debugger.Noop then
+                            val r2 = debugger.onDeliver(stack, stack.entry(0).frame, r)
+                            if r2.asInstanceOf[AnyRef] ne r.asInstanceOf[AnyRef] then
+                                r = r2
+                                cu = Nested.nest[Any, Any](r2).asInstanceOf[Any < Nothing]
+                        end if
                         val s = stack.state[StateX](0)
                         stack.pop() match
                             case h: HandlerLoopState[IX, OX, EX, AX, BX, S, StateX] @unchecked =>
