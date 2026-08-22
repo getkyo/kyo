@@ -131,26 +131,41 @@ object Safepoint:
     // written out rather than delegating to an extension on `State`: this runs at every settled map step, and
     // its bytecode size decides whether a caller can inline it. `DepthGuard` is a single bit, so testing it
     // against zero is the same test in fewer instructions than comparing it back to the mask.
-    // The debugger's gate sits behind the budget test, and a refusal leaves the slot untouched: draining
-    // it the way an exhausted budget does would de-fuse every application after the routed one, where the
-    // hook's contract is to route exactly the application it refused. The no-op hook's constant true folds
-    // the branch away
+    // The debugger costs this method only the frame passthrough: a session drains its eval's slot, so
+    // every strict application lands in `enterPark`, and the consult lives entirely on that cold path.
+    // An earlier shape consulted the hook here and the board rejected it: the body grew from 30 to 44
+    // bytes and the strict-fusion rows paid up to 4x through their callers' inlining budgets
     @static def enter(slot: Slot, frame: Frame): Boolean =
         val s  = depths(slot)
         val s2 = s - 1
         if (s2 & DepthGuard) != 0 then
-            if Debugger.get.enter(frame) then
-                depths(slot) = s2
-                true
-            else false
-        else enterPark(slot, s)
+            depths(slot) = s2
+            true
+        else enterPark(slot, s, frame)
         end if
     end enter
 
-    @static private def enterPark(slot: Slot, s: State): Boolean =
-        depths(slot) = s.drained
-        false
+    @static private def enterPark(slot: Slot, s: State, frame: Frame): Boolean =
+        val d = Debugger.get
+        if (d ne Debugger.Noop) && d.enter(frame) then
+            // an allowed application proceeds without touching the drained state, so the next one
+            // lands here again: per-application consult is the session's contract. The depth guard
+            // does not bound strict recursion while a session allows it; a debugger that runs the
+            // program is expected to pay the program's shape
+            true
+        else
+            depths(slot) = s.drained
+            false
+        end if
     end enterPark
+
+    /** Exhausts the slot's budget so every strict application on this thread lands in `enterPark`,
+      * where the debugger's gate lives. Only the slot's own thread may call it: the eval drains its
+      * own slot at entry when a session is installed, which also survives `save` installing a fresh
+      * budget, since the drain runs after it.
+      */
+    @static private[kyo] def drain(slot: Slot): Unit =
+        depths(slot) = depths(slot).drained
 
     @static def exit(slot: Slot): Unit =
         // written out for the reason `enter` is: naming the extension makes the expansion load `State`'s module

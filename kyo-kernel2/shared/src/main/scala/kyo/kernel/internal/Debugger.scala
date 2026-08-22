@@ -25,11 +25,17 @@ abstract private[kyo] class Debugger:
 
     /** Whether this strict application may run inline; false routes it through the eval.
       *
-      * Consulted twice for a routed application: at the construction site, and again when the eval
+      * Consulted only within an eval's extent: the eval drains its slot at entry while a session is
+      * installed, so every strict application there lands on the cold path where this gate lives, and
+      * `enter`'s hot path stays byte-identical for everyone else. Strict construction outside any eval
+      * runs unobserved, the same carve-out between-slices semantics already draw.
+      *
+      * Consulted twice for a routed application: at the application site, and again when the eval
       * delivers the settled payload back into the step (the step's own apply carries the gate). A
       * session that refuses a frame must therefore allow the delivery retry, or the step defers against
       * its own refusal forever; the usual shape is a per-thread toggle that refuses, lets the step
-      * surface at `onDefer`, and allows the next consult.
+      * surface at `onDefer`, and allows the next consult. While a session allows applications, the depth
+      * guard does not bound strict recursion; a debugger that runs the program pays the program's shape.
       */
     def enter(frame: Frame): Boolean = true
 

@@ -53,22 +53,25 @@ class DebuggerTest extends AnyFreeSpec:
         assert(Eval((1: Int < Any).map(_ + 1).map(_ * 2)) == 4)
     }
 
-    "enter observes strict applications" in {
+    // the gate is consulted within an eval's extent, so the chains build inside a deferred payload;
+    // strict construction outside any eval runs unobserved by design
+    def chain: Int < Any = Effect.defer((1: Int < Any).map(_ + 1).map(_ * 2))
+
+    "enter observes strict applications inside the eval" in {
         val d = new Recording(route = _ => false)
-        session(d)(assert(Eval((1: Int < Any).map(_ + 1).map(_ * 2)) == 4))
+        session(d)(assert(Eval(chain) == 4))
         assert(d.events.exists(_._1 == "enter"))
     }
 
     "full-trace mode routes every strict step through the eval" in {
         val d = new Recording(route = _ => true)
-        session(d)(assert(Eval((1: Int < Any).map(_ + 1).map(_ * 2)) == 4))
+        session(d)(assert(Eval(chain) == 4))
         assert(d.events.count(_._1 == "defer") >= 2)
     }
 
     "selective routing surfaces only the matching frame" in {
         // one construction site, so the probed frame position and the routed one are the same
-        def chain: Int < Any = (1: Int < Any).map(_ + 1).map(_ * 2)
-        val probe            = new Recording(route = _ => false)
+        val probe = new Recording(route = _ => false)
         session(probe)(discard(Eval(chain)))
         val positions = probe.events.collect { case ("enter", p) => p }.distinct
         assert(positions.size >= 1)
@@ -77,6 +80,15 @@ class DebuggerTest extends AnyFreeSpec:
         session(d)(assert(Eval(chain) == 4))
         val routed = d.events.collect { case ("defer", p) => p }.filter(_ == target)
         assert(routed.nonEmpty)
+    }
+
+    "strict construction outside an eval is not consulted" in {
+        val d = new Recording(route = _ => false)
+        session(d) {
+            val v = (1: Int < Any).map(_ + 1)
+            assert(d.events.isEmpty)
+            assert(Eval(v) == 2)
+        }
     }
 
     "an onDefer swap replaces the payload of a routed step" in {

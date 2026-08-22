@@ -690,6 +690,10 @@ object Eval:
         // than up to a depth guard's worth of fused steps later. `restore` in the finally puts the caller's
         // state back, armed bit included, so a slice nested in another eval leaves no trace
         if armed then Safepoint.arm(slot)
+        // a session observes strict execution through the drained budget: every application lands in
+        // enterPark where the gate lives, and enter itself stays byte-identical for everyone else.
+        // Running after save is what makes the drain stick for this eval's whole extent
+        if debugger ne Debugger.Noop then Safepoint.drain(slot)
         // recorded so the drain below can tell an eval that is leaving on an exception from one that is
         // completing, and attach a failing release to the former rather than replacing it
         var failure: Maybe[Throwable] = Absent
