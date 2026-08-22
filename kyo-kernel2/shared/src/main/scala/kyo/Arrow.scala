@@ -18,7 +18,7 @@ sealed trait Arrow[-A, +B, -S]:
 
     def apply(v: A): B < S
 
-    def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]): C < (S & S2)
+    def apply[C, S2](v: A < S2, cont: Arrow[B, C, S2]): C < (S & S2)
 
     final def chain[C, S2](f: Arrow[B, C, S2]): Arrow[A, C, S & S2] =
         if f eq Arrow.Id then this.asInstanceOf[Arrow[A, C, S]]
@@ -39,16 +39,16 @@ object Arrow:
         new TransformBase[A, B, S]:
             def frame                = _frame
             override def apply(v: A) = f(v)
-            def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]) =
+            def apply[C, S2](v: A < S2, cont: Arrow[B, C, S2]) =
                 v match
                     case kyo: Kyo[A, S2] @unchecked =>
-                        Effect.defer(kyo, this, next)
+                        Effect.defer(kyo, this, cont)
                     case _ =>
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
-                            Effect.defer(v, this, next)
+                            Effect.defer(v, this, cont)
                         else
-                            val out = next.head(apply(Nested.unnest(v)), next.tail)
+                            val out = cont.head(apply(Nested.unnest(v)), cont.tail)
                             Safepoint.exit(slot)
                             out
                         end if
@@ -58,16 +58,16 @@ object Arrow:
         new TransformBase[A, B, S]:
             def frame                = _frame
             override def apply(v: A) = f(this, v)
-            def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]) =
+            def apply[C, S2](v: A < S2, cont: Arrow[B, C, S2]) =
                 v match
                     case kyo: Kyo[A, S2] @unchecked =>
-                        Effect.defer(kyo, this, next)
+                        Effect.defer(kyo, this, cont)
                     case _ =>
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
-                            Effect.defer(v, this, next)
+                            Effect.defer(v, this, cont)
                         else
-                            val out = next.head(apply(Nested.unnest(v)), next.tail)
+                            val out = cont.head(apply(Nested.unnest(v)), cont.tail)
                             Safepoint.exit(slot)
                             out
                         end if
@@ -133,10 +133,10 @@ object Arrow:
         // re-abstracted: the settled arm below calls it, and the inherited delegation through
         // `this(v, id)` would recurse
         override def apply(v: A): B < S
-        def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]): C < (S & S2) =
+        def apply[C, S2](v: A < S2, cont: Arrow[B, C, S2]): C < (S & S2) =
             v match
-                case kyo: Kyo[A, S2] @unchecked => Effect.defer(kyo, this, next)
-                case _                          => next(apply(Nested.unnest(v)), Arrow.id)
+                case kyo: Kyo[A, S2] @unchecked => Effect.defer(kyo, this, cont)
+                case _                          => cont(apply(Nested.unnest(v)), Arrow.id)
     end BindingStep
 
     /** A normalized continuation: an `AndThen` or an `Id`, and nothing else.
@@ -174,7 +174,7 @@ object Arrow:
         // makes it safe. The payload handling is unchanged: the same lift the deferring form applied to `v`
         // fires on the same argument here
         def apply(v: A)                                    = t(v, cont)
-        def apply[D, S2](v: A < S2, next: Arrow[C, D, S2]) = t(v, cont.chain(next))
+        def apply[D, S2](v: A < S2, cont: Arrow[C, D, S2]) = t(v, this.cont.chain(cont))
 
         override def toString: String = s"Arrow.AndThen($t, $cont)"
     end AndThen
@@ -195,8 +195,8 @@ object Arrow:
         // head here would run it with the scope absent; EffectTest's "failure in map" pins exactly that
         def apply(v: A) =
             Effect.defer(v, a, b)
-        def apply[D, S2](v: A < S2, next: Arrow[C, D, S2]) =
-            Effect.defer(v, this, next)
+        def apply[D, S2](v: A < S2, cont: Arrow[C, D, S2]) =
+            Effect.defer(v, this, cont)
 
         // a chain of any depth renders in bounded stack: the walk is a loop with a depth cap, so a
         // capture folded from a long eval stack stays printable in a debugger
@@ -232,11 +232,11 @@ object Arrow:
         def frame                     = Frame.internal
         def apply(v: A): A < Any      = v
         override def toString: String = "Arrow(identity)"
-        override def apply[C, S2](v: A < S2, next: Arrow[A, C, S2]) =
-            if next eq Id then
+        override def apply[C, S2](v: A < S2, cont: Arrow[A, C, S2]) =
+            if cont eq Id then
                 v.asInstanceOf[C < S2]
             else
-                next(v, Arrow.id)
+                cont(v, Arrow.id)
     end Id
 
     private[kyo] object Id extends Id[Any]

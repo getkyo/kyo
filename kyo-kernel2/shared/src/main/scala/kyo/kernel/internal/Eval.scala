@@ -129,12 +129,12 @@ object Eval:
     // inlining on the hot paths, which the stateful rows paid four times over. So the bulky and the cold
     // dispatches live out of line, each compiled with its own budget, and the loop keeps only the hot arms.
 
-    private def attachThrow(ex: Throwable, node: Kyo[?, ?], next: Arrow[?, ?, ?], stack: Stack): Nothing =
-        EffectTrace.attach(ex, node, next, stack)
+    private def attachThrow(ex: Throwable, node: Kyo[?, ?], cont: Arrow[?, ?, ?], stack: Stack): Nothing =
+        EffectTrace.attach(ex, node, cont, stack)
         throw ex
 
-    private def attachThrow(ex: Throwable, entry: Arrow[?, ?, ?], next: Arrow[?, ?, ?], stack: Stack): Nothing =
-        EffectTrace.attach(ex, entry, next, stack)
+    private def attachThrow(ex: Throwable, entry: Arrow[?, ?, ?], cont: Arrow[?, ?, ?], stack: Stack): Nothing =
+        EffectTrace.attach(ex, entry, cont, stack)
         throw ex
 
     private def unhandled(kyo: Suspend[IX, OX, EX, CX, AX, SX], stack: Stack): Nothing =
@@ -291,12 +291,12 @@ object Eval:
                     case r: Loop.Continue[OX[CX] < (EX & SX)] @unchecked =>
                         Effect.defer(r._1.map(a => k(a)), h)
                     case v => v.asInstanceOf[BX]
-            def apply[D, S2](o: Loop.Outcome[OX[CX] < (EX & SX), BX] < S2, next: Arrow[BX, D, S2])
+            def apply[D, S2](o: Loop.Outcome[OX[CX] < (EX & SX), BX] < S2, cont: Arrow[BX, D, S2])
                 : D < (EX & SX & S2) =
                 o match
                     case kyo: Kyo[Loop.Outcome[OX[CX] < (EX & SX), BX], S2] @unchecked =>
-                        Effect.defer(kyo, this, next)
-                    case _ => next(apply(Nested.unnest(o)), Arrow.id)
+                        Effect.defer(kyo, this, cont)
+                    case _ => cont(apply(Nested.unnest(o)), Arrow.id)
         end new
     end clauseSuspendedLoop
 
@@ -425,12 +425,12 @@ object Eval:
                     case v => v.asInstanceOf[BX]
             def apply[D, S2](
                 o: Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX] < S2,
-                next: Arrow[BX, D, S2]
+                cont: Arrow[BX, D, S2]
             ): D < (EX & SX & S2) =
                 o match
                     case kyo: Kyo[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], S2] @unchecked =>
-                        Effect.defer(kyo, this, next)
-                    case _ => next(apply(Nested.unnest(o)), Arrow.id)
+                        Effect.defer(kyo, this, cont)
+                    case _ => cont(apply(Nested.unnest(o)), Arrow.id)
         end new
     end clauseSuspended
 

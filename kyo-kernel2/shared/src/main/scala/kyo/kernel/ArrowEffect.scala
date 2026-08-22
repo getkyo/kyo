@@ -60,10 +60,10 @@ object ArrowEffect:
             def input                   = effectInput
             def cont                    = this
             override def apply(v: O[C]) = f(v)
-            def apply[D, S2](v: O[C] < S2, next: Arrow[B, D, S2]): D < (S & S2) =
+            def apply[D, S2](v: O[C] < S2, cont: Arrow[B, D, S2]): D < (S & S2) =
                 v match
-                    case kyo: Kyo[O[C], S2] @unchecked => Effect.defer(kyo, this, next)
-                    case _                             => next(apply(Nested.unnest(v)), Arrow.id)
+                    case kyo: Kyo[O[C], S2] @unchecked => Effect.defer(kyo, this, cont)
+                    case _                             => cont(apply(Nested.unnest(v)), Arrow.id)
     end suspendWith
 
     // The row parameters come in pairs on every region combinator: S is the body's row, pinned when
@@ -308,10 +308,10 @@ object ArrowEffect:
                                 answersCont[I, O, E, A, B, S & S2, X](effectTag, handle, input0, k0, armed, slot, out)
                     def cont                 = this
                     override def apply(b: B) = f(b)
-                    def apply[D, S4](b: B < S4, next: Arrow[C, D, S4]): D < (S & S2 & S3 & S4) =
+                    def apply[D, S4](b: B < S4, cont: Arrow[C, D, S4]): D < (S & S2 & S3 & S4) =
                         b match
-                            case kyo: Kyo[B, S4] @unchecked => Effect.defer(kyo, this, next)
-                            case _                          => next(apply(Nested.unnest(b)), Arrow.id)
+                            case kyo: Kyo[B, S4] @unchecked => Effect.defer(kyo, this, cont)
+                            case _                          => cont(apply(Nested.unnest(b)), Arrow.id)
             case _ => onDone(Nested.unnest(v)).map(f)
         end match
     end handleContWith
@@ -354,10 +354,10 @@ object ArrowEffect:
                                 answersLoop[I, O, E, A, B, S & S2, C](effectTag, handle, _frame, input0, k0, armed, slot, out)
                     def cont                 = this
                     override def apply(b: B) = f(b)
-                    def apply[D, S4](b: B < S4, next: Arrow[C, D, S4]): D < (S & S2 & S3 & S4) =
+                    def apply[D, S4](b: B < S4, cont: Arrow[C, D, S4]): D < (S & S2 & S3 & S4) =
                         b match
-                            case kyo: Kyo[B, S4] @unchecked => Effect.defer(kyo, this, next)
-                            case _                          => next(apply(Nested.unnest(b)), Arrow.id)
+                            case kyo: Kyo[B, S4] @unchecked => Effect.defer(kyo, this, cont)
+                            case _                          => cont(apply(Nested.unnest(b)), Arrow.id)
             case _ => onDone(Nested.unnest(v)).map(f)
         end match
     end handleLoopWith
@@ -413,10 +413,10 @@ object ArrowEffect:
                                 )
                     def cont                 = this
                     override def apply(b: B) = f(b)
-                    def apply[D, S4](b: B < S4, next: Arrow[C, D, S4]): D < (S & S2 & S3 & S4) =
+                    def apply[D, S4](b: B < S4, cont: Arrow[C, D, S4]): D < (S & S2 & S3 & S4) =
                         b match
-                            case kyo: Kyo[B, S4] @unchecked => Effect.defer(kyo, this, next)
-                            case _                          => next(apply(Nested.unnest(b)), Arrow.id)
+                            case kyo: Kyo[B, S4] @unchecked => Effect.defer(kyo, this, cont)
+                            case _                          => cont(apply(Nested.unnest(b)), Arrow.id)
             case _ => onDone(state, Nested.unnest(v)).map(f)
         end match
     end handleLoopStateWith

@@ -47,10 +47,10 @@ final private[kyo] class Finalizer[A, B](release: (A, Result[Nothing, B]) => Any
 
     // defers on a pending input: while the value has not settled the extent has not finished, and the release
     // is owed only once it has
-    def apply[C, S2](v: B < S2, next: Arrow[B, C, S2]): C < S2 =
+    def apply[C, S2](v: B < S2, cont: Arrow[B, C, S2]): C < S2 =
         v match
-            case kyo: Kyo[B, S2] @unchecked => Effect.defer(kyo, this, next)
-            case _                          => next(apply(Nested.unnest[B](v)), Arrow.id)
+            case kyo: Kyo[B, S2] @unchecked => Effect.defer(kyo, this, cont)
+            case _                          => cont(apply(Nested.unnest[B](v)), Arrow.id)
 end Finalizer
 
 private[kyo] object Finalizer:

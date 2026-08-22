@@ -11,16 +11,16 @@ import kyo.kernel.*
 
 sealed abstract private[kyo] class Handler[E <: ArrowEffect[?, ?], A, B, -S] extends Arrow.Region[A, B, S]:
     def tag: Tag[E]
-    def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]): C < (S & S2) =
+    def apply[C, S2](v: A < S2, cont: Arrow[B, C, S2]): C < (S & S2) =
         v match
             case kyo: Kyo[A, S2] @unchecked =>
-                Effect.defer(kyo, this, next)
+                Effect.defer(kyo, this, cont)
             case _ =>
                 val slot = Safepoint.get()
                 if !Safepoint.enter(slot) then
-                    Effect.defer(v, this, next)
+                    Effect.defer(v, this, cont)
                 else
-                    val out = next.head(apply(Nested.unnest(v)), next.tail)
+                    val out = cont.head(apply(Nested.unnest(v)), cont.tail)
                     Safepoint.exit(slot)
                     out
                 end if

@@ -32,10 +32,10 @@ object Effect:
             def contA = Arrow.id[A]
             def contB = Arrow.id[A]
 
-    @static def defer[A, B, S](v: A < S, next: Arrow[A, B, S]): B < S =
+    @static def defer[A, B, S](v: A < S, cont: Arrow[A, B, S]): B < S =
         new Defer[A, B, B, S]:
             def value = v
-            def contA = next
+            def contA = cont
             def contB = Arrow.id[B]
 
     @static def defer[A, B, C, S](v: A < S, a: Arrow[A, B, S], b: Arrow[B, C, S]): C < S =

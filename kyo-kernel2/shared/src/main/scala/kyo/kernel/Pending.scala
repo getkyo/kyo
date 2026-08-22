@@ -24,13 +24,13 @@ object `<` extends Implicits:
             def arrow: Arrow[A, B, S2] =
                 new TransformBase[A, B, S2]:
                     def frame                                          = _frame
-                    def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]) = run(v, next)
-            def run[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S2 & S3) =
+                    def apply[C, S3](v: A < S3, cont: Arrow[B, C, S3]) = run(v, cont)
+            def run[C, S3](v: A < S3, cont: Arrow[B, C, S3]): C < (S2 & S3) =
                 var slot: Safepoint.Slot = -1
                 val shouldDefer          = v.isInstanceOf[Kyo[?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
-                if shouldDefer then Effect.defer(v, arrow, next)
+                if shouldDefer then Effect.defer(v, arrow, cont)
                 else
-                    val out = next.head(f(Nested.unnest(v)), next.tail)
+                    val out = cont.head(f(Nested.unnest(v)), cont.tail)
                     Safepoint.exit(slot)
                     out
                 end if
@@ -43,17 +43,17 @@ object `<` extends Implicits:
             def arrow =
                 new TransformBase[A, B, S2]:
                     def frame                                          = _frame
-                    def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]) = run(v, next)
-            def run[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S2 & S3) =
+                    def apply[C, S3](v: A < S3, cont: Arrow[B, C, S3]) = run(v, cont)
+            def run[C, S3](v: A < S3, cont: Arrow[B, C, S3]): C < (S2 & S3) =
                 v match
                     case kyo: Kyo[A, S3] @unchecked =>
-                        Effect.defer(kyo, arrow, next)
+                        Effect.defer(kyo, arrow, cont)
                     case _ =>
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
-                            Effect.defer(v, arrow, next)
+                            Effect.defer(v, arrow, cont)
                         else
-                            val out = next.head(f(Nested.unnest(v)), next.tail)
+                            val out = cont.head(f(Nested.unnest(v)), cont.tail)
                             Safepoint.exit(slot)
                             out
                         end if
@@ -65,17 +65,17 @@ object `<` extends Implicits:
             def arrow =
                 new TransformBase[A, B, S2]:
                     def frame                                          = _frame
-                    def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]) = run(v, next)
-            def run[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S2 & S3) =
+                    def apply[C, S3](v: A < S3, cont: Arrow[B, C, S3]) = run(v, cont)
+            def run[C, S3](v: A < S3, cont: Arrow[B, C, S3]): C < (S2 & S3) =
                 v match
                     case kyo: Kyo[A, S3] @unchecked =>
-                        Effect.defer(kyo, arrow, next)
+                        Effect.defer(kyo, arrow, cont)
                     case _ =>
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
-                            Effect.defer(v, arrow, next)
+                            Effect.defer(v, arrow, cont)
                         else
-                            val out = next.head(f, next.tail)
+                            val out = cont.head(f, cont.tail)
                             Safepoint.exit(slot)
                             out
                         end if
@@ -87,17 +87,17 @@ object `<` extends Implicits:
             def arrow =
                 new TransformBase[A, Unit, Any]:
                     def frame                                             = _frame
-                    def apply[C, S3](v: A < S3, next: Arrow[Unit, C, S3]) = run(v, next)
-            def run[C, S3](v: A < S3, next: Arrow[Unit, C, S3]): C < S3 =
+                    def apply[C, S3](v: A < S3, cont: Arrow[Unit, C, S3]) = run(v, cont)
+            def run[C, S3](v: A < S3, cont: Arrow[Unit, C, S3]): C < S3 =
                 v match
                     case kyo: Kyo[A, S3] @unchecked =>
-                        Effect.defer(kyo, arrow, next)
+                        Effect.defer(kyo, arrow, cont)
                     case _ =>
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
-                            Effect.defer(v, arrow, next)
+                            Effect.defer(v, arrow, cont)
                         else
-                            val out = next.head((), next.tail)
+                            val out = cont.head((), cont.tail)
                             Safepoint.exit(slot)
                             out
                         end if
@@ -109,17 +109,17 @@ object `<` extends Implicits:
             def arrow =
                 new TransformBase[A, B, S2]:
                     def frame                                          = _frame
-                    def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]) = run(v, next)
-            def run[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S2 & S3) =
+                    def apply[C, S3](v: A < S3, cont: Arrow[B, C, S3]) = run(v, cont)
+            def run[C, S3](v: A < S3, cont: Arrow[B, C, S3]): C < (S2 & S3) =
                 v match
                     case kyo: Kyo[A, S3] @unchecked =>
-                        Effect.defer(kyo, arrow, next)
+                        Effect.defer(kyo, arrow, cont)
                     case _ =>
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
-                            Effect.defer(v, arrow, next)
+                            Effect.defer(v, arrow, cont)
                         else
-                            val out = next.head(ev(Nested.unnest(v)), next.tail)
+                            val out = cont.head(ev(Nested.unnest(v)), cont.tail)
                             Safepoint.exit(slot)
                             out
                         end if

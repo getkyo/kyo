@@ -81,10 +81,10 @@ object Kyo:
 
         override def apply(v: A): A < Any = v
 
-        def apply[C, S2](v: A < S2, next: Arrow[A, C, S2]): C < S2 =
+        def apply[C, S2](v: A < S2, cont: Arrow[A, C, S2]): C < S2 =
             v match
-                case kyo: Kyo[A, S2] @unchecked => Effect.defer(kyo, this, next)
-                case _                          => next(apply(Nested.unnest[A](v)), Arrow.id)
+                case kyo: Kyo[A, S2] @unchecked => Effect.defer(kyo, this, cont)
+                case _                          => cont(apply(Nested.unnest[A](v)), Arrow.id)
 
         override def toString: String = render(value)
     end Catching
@@ -160,10 +160,10 @@ object Kyo:
         // identity on the way out: this holds a stack position so the extent ends where the value flows back
         override def apply(v: A): A < Any = v
 
-        def apply[C, S2](v: A < S2, next: Arrow[A, C, S2]): C < S2 =
+        def apply[C, S2](v: A < S2, cont: Arrow[A, C, S2]): C < S2 =
             v match
-                case kyo: Kyo[A, S2] @unchecked => Effect.defer(kyo, this, next)
-                case _                          => next(apply(Nested.unnest[A](v)), Arrow.id)
+                case kyo: Kyo[A, S2] @unchecked => Effect.defer(kyo, this, cont)
+                case _                          => cont(apply(Nested.unnest[A](v)), Arrow.id)
 
         override def toString: String =
             s"Kyo(${if bound.isDefined then "bind" else "read"} ${tag.fold("anonymous")(_.show)}, ${frame.position.show})"

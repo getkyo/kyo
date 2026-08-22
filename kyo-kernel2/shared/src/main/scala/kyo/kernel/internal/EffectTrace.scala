@@ -54,20 +54,20 @@ object EffectTrace:
     /** The eval was about to run `node`: the node, everything it composes, the continuation the eval folded, and the eval stack are all
       * pending.
       */
-    def attach(ex: Throwable, node: Kyo[?, ?], next: Arrow[?, ?, ?], stack: Stack): Unit =
+    def attach(ex: Throwable, node: Kyo[?, ?], cont: Arrow[?, ?, ?], stack: Stack): Unit =
         reconstruct(ex) { builder =>
             builder.node(node)
-            builder.arrow(next)
+            builder.arrow(cont)
             builder.entries(stack)
         }
 
-    /** The eval applied `entry` with `next` folded behind it. `entry` is walked in its arrow role: the eval already took it apart onto the
+    /** The eval applied `entry` with `cont` folded behind it. `entry` is walked in its arrow role: the eval already took it apart onto the
       * stack, so its node payload, if it has one, is behind the failure rather than ahead of it.
       */
-    def attach(ex: Throwable, entry: Arrow[?, ?, ?], next: Arrow[?, ?, ?], stack: Stack): Unit =
+    def attach(ex: Throwable, entry: Arrow[?, ?, ?], cont: Arrow[?, ?, ?], stack: Stack): Unit =
         reconstruct(ex) { builder =>
             builder.arrow(entry)
-            builder.arrow(next)
+            builder.arrow(cont)
             builder.entries(stack)
         }
 
