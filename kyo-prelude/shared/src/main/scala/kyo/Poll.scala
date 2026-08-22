@@ -146,9 +146,9 @@ object Poll:
         frame: Frame
     ): A < (reduce.SReduced & S) =
         reduce:
-            ArrowEffect.handleLoop(tag, inputs, v)(
+            ArrowEffect.handleLoopState(tag, inputs, v)(
                 [C] =>
-                    (unit, state, cont) => Loop.continue(state.drop(1), cont(state.headMaybe))
+                    (state, unit) => Loop.continue(state.drop(1), state.headMaybe)
             )
 
     /** Runs a Poll effect with a single input value, stopping after the first poll operation.
