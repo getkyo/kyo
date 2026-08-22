@@ -381,9 +381,10 @@ class KernelBench:
 
     /** Dynamic single-link application: NarrowDepth map links attached to a settled carrier in
       * a runtime loop, one link per call site visit, then one eval. Nothing accumulates here:
-      * the settled fast arm applies each link eagerly, so expect zero allocation and
-      * arithmetic cost per link. Libraries that reify a node per link pay their interpreter on
-      * this row instead. Shape adopted from zio-blocks' AsyncChainBench.
+      * the settled fast arm applies each link eagerly, so expect Integer boxing only (the
+      * values leave the cache; about 14 bytes per link) and arithmetic cost per link, with no
+      * kernel allocation. Libraries that reify a node per link pay their interpreter on this
+      * row instead. Shape adopted from zio-blocks' AsyncChainBench.
       */
     @Benchmark
     def dynamicChainOfMapsStaysLinear: Int =
