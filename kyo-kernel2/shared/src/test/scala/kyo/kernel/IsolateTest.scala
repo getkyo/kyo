@@ -143,9 +143,12 @@ class IsolateTest extends AnyFreeSpec:
             assert(Eval(runA(0)(runB(0)(v))) == ((1, (2, 12))))
         }
 
-        "Contextual is a neutral element" in {
-            assert(updateA.andThen(Isolate.internal.Contextual) eq updateA)
-            assert(Isolate.internal.Contextual.andThen(updateA) eq updateA)
+        "composing with Contextual leaves the other side's management untouched" in {
+            // it is not dropped, since it manages the scope the effects are read in, but it manages no
+            // effect of its own: what the other side does is what the composition does
+            val before = Eval(runA(0)(updateA.run(setA(5).map(_ => getA))))
+            assert(Eval(runA(0)(updateA.andThen(Isolate.internal.Contextual).run(setA(5).map(_ => getA)))) == before)
+            assert(Eval(runA(0)(Isolate.internal.Contextual.andThen(updateA).run(setA(5).map(_ => getA)))) == before)
         }
     }
 
@@ -438,6 +441,14 @@ class IsolateTest extends AnyFreeSpec:
                 )
             // nothing crossed, so nothing came back to join with: the binding still holds its own
             assert(Eval(v) == 5)
+        }
+
+        "a composed isolate crosses the context too" in {
+            // what is bound around a fork crosses it whatever else the fork handles, so composing the
+            // context isolate with one that handles an effect must keep both halves
+            val composed     = Isolate.internal.Contextual.andThen(localA)
+            val (_, crossed) = Eval(runA(0)(bind1(42)(composed(read1)(Kyo.lift[Int < Any, Any](_)))))
+            assert(Eval(crossed) == 42)
         }
 
         "a fork of a fork asks the same strategies" in {

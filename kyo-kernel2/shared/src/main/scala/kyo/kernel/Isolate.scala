@@ -226,18 +226,18 @@ abstract class Isolate[Remove, -Keep, -Restore]:
       *   A new isolate handling both state managements
       */
     final def andThen[RM2, KP2, RS2](next: Isolate[RM2, KP2, RS2]): Isolate[Remove & RM2, Keep & KP2, Restore & RS2] =
-        if self eq Contextual then next.asInstanceOf[Isolate[Remove & RM2, Keep & KP2, Restore & RS2]]
-        else if next eq Contextual then self.asInstanceOf[Isolate[Remove & RM2, Keep & KP2, Restore & RS2]]
-        else
-            new Isolate[Remove & RM2, Keep & KP2, Restore & RS2]:
-                type State        = (self.State, next.State)
-                type Transform[A] = self.Transform[next.Transform[A]]
-                def capture[A, S](f: State => A < S)(using Frame) =
-                    self.capture(s1 => next.capture(s2 => f((s1, s2))))
-                def isolate[A, S](state: State, v: A < (S & (Remove & RM2)))(using Frame) =
-                    self.isolate(state._1, next.isolate(state._2, v))
-                def restore[A, S](v: Transform[A] < S)(using Frame) =
-                    next.restore(self.restore(v))
+        // neither side is dropped, not even `Contextual`: it manages the scope the effects are read in,
+        // which every composition carries too, so discarding it would leave a fork that handles something
+        // inheriting nothing. It was discardable while it did nothing, and it no longer does nothing
+        new Isolate[Remove & RM2, Keep & KP2, Restore & RS2]:
+            type State        = (self.State, next.State)
+            type Transform[A] = self.Transform[next.Transform[A]]
+            def capture[A, S](f: State => A < S)(using Frame) =
+                self.capture(s1 => next.capture(s2 => f((s1, s2))))
+            def isolate[A, S](state: State, v: A < (S & (Remove & RM2)))(using Frame) =
+                self.isolate(state._1, next.isolate(state._2, v))
+            def restore[A, S](v: Transform[A] < S)(using Frame) =
+                next.restore(self.restore(v))
 
 end Isolate
 
