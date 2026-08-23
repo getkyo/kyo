@@ -461,7 +461,9 @@ object Isolate:
           *   - restoring asks each binding's `join` what it holds now that the fork has ended, given what it
           *     holds and what the fork ended with, and writes the answers into the scopes that own them
           */
-        object Contextual extends Isolate[Any, Any, Any]:
+        // private to the kernel: it is reached through an isolate, never named. Every derived instance
+        // folds from it, so an operation that forks crosses the context by holding one
+        private[kernel] object Contextual extends Isolate[Any, Any, Any]:
 
             /** The bindings a forked computation inherits, and what each holds: what a park is made of. */
             type State = (Span[Arrow[?, ?, ?]], Span[Maybe[Any]])

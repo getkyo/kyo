@@ -631,7 +631,10 @@ object Eval:
                         // it is a `Finalizer`: above the binding, so it runs where the extent ends, and in
                         // the drain, so it still runs when the extent is abandoned rather than left
                         kyo.release.foreach { release =>
-                            val fin = new Finalizer(release, held.getOrElse(bug("bound value missing")))
+                            // the binding's frame, so the scope is named where it was opened rather than
+                            // as kernel internals: it is what a debugger reads off the entry, what a
+                            // trace sweep records, and what says which resource a re-entry refused
+                            val fin = new Finalizer(release, held.getOrElse(bug("bound value missing")), kyo.frame)
                             stack.pushFinalizer(fin)
                             stack.push(fin)
                         }

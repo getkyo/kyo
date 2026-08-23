@@ -441,8 +441,8 @@ class StackTest extends AnyFreeSpec:
     }
 
     "finalizers" - {
-        def finalizer(ran: () => Unit) =
-            new Finalizer[Unit, Any]((_, _) => ran(), ())
+        def finalizer(ran: () => Unit)(using frame: Frame) =
+            new Finalizer[Unit, Any]((_, _) => ran(), (), frame)
 
         // what a release is told where the extent it belonged to never ended
         val abandoned = Result.panic[Nothing, Any](Finalizer.Abandoned)

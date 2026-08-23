@@ -1,15 +1,11 @@
 package kyo.kernel
 
 import kyo.Arrow
-// unqualified so the inline expansions do not select it from Arrow.type at a site outside
-// package kyo, where it is not accessible. See the note in Pending.scala
 import kyo.Arrow.Step
 import kyo.Arrow.Transform
 import kyo.Frame
 import kyo.Tag
 import kyo.kernel.internal.*
-// unqualified for the same reason as Arrow.Transform above: these are private[kyo] members of
-// public objects, and a qualified selection does not resolve at an expansion site outside package kyo
 import kyo.kernel.internal.Handler.HandlerCont
 import kyo.kernel.internal.Handler.HandlerLoop
 import kyo.kernel.internal.Handler.HandlerLoopState
@@ -25,9 +21,6 @@ import kyo.kernel.internal.Kyo.Handle
 import kyo.kernel.internal.Kyo.Suspend
 import scala.annotation.nowarn
 
-// variance as the previous kernel declared it: an effect that consumes narrower inputs or produces
-// wider outputs is substitutable, which is what lets Abort[-E], Emit[-V], and Poll[+V] put their own
-// variance on the parameters they pass through Const
 abstract class ArrowEffect[-I[_], +O[_]] extends Effect
 
 object ArrowEffect:
@@ -470,34 +463,5 @@ object ArrowEffect:
         inline recover: Throwable => A < (S & S2)
     )(using inline _frame: Frame): A < (S & S2) =
         handleCatching[I, O, E, A, A, S, S2](effectTag, v)(handle, a => a)(recover)
-
-    // Surface the previous kernels carry that this one does not yet. Kept as signatures so the
-    // gap is visible here rather than only in a parked test.
-
-    /** Runs a clause against the operation a computation is currently standing on, without answering it.
-      *
-      * Parked with the IOTask integration design, which is its only caller and the only thing that can say
-      * what it should read. The reach is the open question: the previous kernel's version matched a
-      * suspension directly, and a mapped suspension was still one node, where here a map wraps it in a
-      * deferral whose payload sits behind a method that runs user code. A park holds a field and can be read;
-      * whether the rest needs marking is a decision for the design that has a use for it.
-      */
-    // private[kyo] inline def dispatchFirst[I[_], O[_], E <: ArrowEffect[I, O], A, S](
-    //     inline effectTag: Tag[E],
-    //     v: A < (E & S)
-    // )(
-    //     inline f: [C] => I[C] => Unit
-    // ): Unit
-
-    /** Answers operations while the clause allows, parking at the first it refuses so a later handler finishes the remainder.
-      *
-      * Parked with the IOTask integration design, and it needs partial evaluation to hand back a resumable value.
-      */
-    // private[kyo] inline def handlePartial[I[_], O[_], E <: ArrowEffect[I, O], A, S](
-    //     inline effectTag: Tag[E],
-    //     v: A < (E & S)
-    // )(
-    //     inline handle: [C] => (I[C], O[C] => A < (E & S)) => Maybe[A < (E & S)]
-    // )(using inline _frame: Frame): A < (E & S)
 
 end ArrowEffect

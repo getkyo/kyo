@@ -33,12 +33,23 @@ final private[kyo] class Stack:
     def size: Int = tail - head
 
     private def put(idx: Int, f: Arrow[?, ?, ?]): Unit =
-        entries(idx) = f
         f match
             case f: Handler.HandlerLoopState[?, ?, ?, ?, ?, ?, ?] =>
+                entries(idx) = f
                 states(idx) = Present(states(idx).getOrElse(f.initialState))
+            case f: Finalizer[?, ?] if f.get() =>
+                // a scope whose release already ran, being installed again: a clause applying its
+                // continuation more than once, or a holder driving a remainder its eval released. Refused
+                // where the scope is entered rather than where a value later reaches it, so it lands before
+                // the code inside the scope runs and reads what is gone. Nothing is written first, so the
+                // entry the throw leaves behind is the one that was already there.
+                //
+                // `restore` writes its entries directly and never comes through here, which is what keeps
+                // a park replay and a resume after an abandonment silent: those hold their releases rather
+                // than having run them
+                throw new Finalizer.Spent(f.frame)
             case _ =>
-                ()
+                entries(idx) = f
         end match
     end put
 
@@ -230,10 +241,12 @@ final private[kyo] class Stack:
     def dump[A, B, S](): Arrow[A, B, S] =
         @tailrec def boundary(i: Int): Int =
             val e = entries((head + i) & mask)
-            // a recovery bounds a fold as a region does. Folded in, it leaves the stack, and the failure it
-            // guards against happens while the folded continuation's own argument is being evaluated, before
-            // anything applies it: the scope would be off the stack exactly when it is needed
-            if i == size || i == reach || e.isInstanceOf[Handler[?, ?, ?, ?]] || e.isInstanceOf[Recover[?, ?]] then i
+            // every region bounds a fold. Folded in, it leaves the stack, and what it owes comes due while
+            // the folded continuation's own argument is being evaluated, before anything applies it: the
+            // scope would be off the stack exactly when it is needed. A recovery owes an answer to a
+            // failure and a finalizer owes a release, and the two are owed on the same walk. Handlers and
+            // `Catching` are regions already, so this asks less than naming them one at a time did
+            if i == size || i == reach || e.isInstanceOf[Arrow.Region[?, ?, ?]] then i
             else boundary(i + 1)
         end boundary
         dump[A, B, S](boundary(0))
@@ -412,7 +425,11 @@ final private[kyo] class Stack:
         while out.isEmpty && !isEmpty do
             pop() match
                 case f: Finalizer[?, ?] =>
-                    try f.run(Result.panic(current))
+                    // constructed rather than built through `Result.panic`, which refuses to hold a fatal
+                    // and throws instead. That refusal is right for capturing a failure as a value and
+                    // wrong here: the fatal is already leaving through this walk, the release is owed the
+                    // reason, and going through it would throw before the release ran
+                    try f.run(new Result.Panic(current))
                     catch
                         case t: Throwable => if t ne current then current.addSuppressed(t)
                 case r: Recover[?, ?] =>
@@ -439,7 +456,9 @@ final private[kyo] class Stack:
             i -= 1
             pop() match
                 case f: Finalizer[?, ?] =>
-                    try f.run(Result.panic(ex))
+                    // constructed rather than built through `Result.panic`, for the reason the unwind
+                    // above gives: the refusing constructor would throw before the release ran
+                    try f.run(new Result.Panic(ex))
                     catch
                         case t: Throwable => if t ne ex then ex.addSuppressed(t)
                 case _ => ()
@@ -491,7 +510,10 @@ final private[kyo] class Stack:
             // what the releases are told: the failure the eval is leaving with, or that their extent was
             // abandoned, which is what an eval completing while a continuation went unresumed means
             // at `Nothing`, since `Result` is covariant in its value and each release expects its own
-            val outcome = Result.panic[Nothing, Nothing](failure.getOrElse(Finalizer.Abandoned))
+            // constructed rather than built through `Result.panic`, for the reason the unwind gives: the
+            // refusing constructor would throw here, outside the loop below, and every release owed would
+            // be lost on a fatal rather than the one the eval is leaving with
+            val outcome = new Result.Panic(failure.getOrElse(Finalizer.Abandoned))
             while pending > 0 do
                 pending -= 1
                 val f = finalizers(pending)

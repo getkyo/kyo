@@ -25,10 +25,11 @@ import scala.util.control.NoStackTrace
   * The flag is set before the release runs, so a release that throws still counts as run and the drain does
   * not retry it.
   */
-final private[kyo] class Finalizer[A, B](release: (A, Result[Nothing, B]) => Any < Any, resource: A)
-    extends AtomicBoolean with Region[B, B, Any]:
-
-    def frame = Frame.internal
+final private[kyo] class Finalizer[A, B](
+    release: (A, Result[Nothing, B]) => Any < Any,
+    resource: A,
+    val frame: Frame
+) extends AtomicBoolean with Region[B, B, Any]:
 
     /** Runs the release once, telling it how the extent it belongs to ended.
       *
@@ -62,4 +63,22 @@ private[kyo] object Finalizer:
       * a value of its own rather than borrowing an error the computation never raised.
       */
     case object Abandoned extends Exception("the extent this release belonged to was abandoned") with NoStackTrace
+
+    /** Raised where an extent whose release already ran is entered again.
+      *
+      * A continuation that carries a scope can be applied after that scope ended: a clause that applies one
+      * more than once, or a holder that drives a remainder its eval already released. Either way the value
+      * flowing in would reach code holding a resource that is gone, so the entry into the scope is refused
+      * rather than the read being allowed to happen.
+      *
+      * A class rather than an object, so each throw is its own instance. This travels an unwind as the
+      * failure being carried, and the walk suppresses onto whatever it is carrying, which a shared instance
+      * would accumulate for the life of the process. It carries no `NoStackTrace` either: the frames are
+      * what say where the scope was entered again, and the splice skips anything that declines them.
+      *
+      * @param frame
+      *   where the scope was opened, which is the half a stack trace cannot show
+      */
+    final class Spent(frame: Frame)
+        extends Exception(s"the resource opened at ${frame.position.show} was released, and its scope is being entered again")
 end Finalizer
