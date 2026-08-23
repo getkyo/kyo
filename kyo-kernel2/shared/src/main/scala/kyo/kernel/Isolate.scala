@@ -8,6 +8,7 @@ import kyo.Kyo
 import kyo.Maybe
 import kyo.Maybe.*
 import kyo.Span
+import kyo.Tag
 import kyo.bug
 import kyo.kernel.internal.Kyo.Binding
 import kyo.kernel.internal.Kyo.Bindings
@@ -166,6 +167,33 @@ abstract class Isolate[Remove, -Keep, -Restore]:
     final def run[A, S](v: A < (S & Remove))(using Frame): A < (S & Remove & Keep & Restore) =
         capture(state => restore(isolate(state, v)))
 
+    /** Prepares a computation to run in an evaluation of its own, crossing everything that crosses.
+      *
+      * The two halves of isolation, in one operation. The handled effects cross through this instance, which
+      * captures their state here and restores it there; the values bound around the fork cross through the
+      * bindings themselves, each asked by its own strategy what a forked computation receives. Neither half
+      * is optional and neither is the caller's to remember, which is why this is an instance method: an
+      * operation that forks needs an isolate, and having one is what makes the crossing complete.
+      *
+      * What `f` receives is a complete value: the computation with everything it inherited attached, valid in
+      * any evaluation and on any thread, however long after this. Nothing is taken from the forking
+      * computation, which carries on with what it had.
+      *
+      * The consumer is fused rather than mapped: the node is the arrow the crossing flows into, so the
+      * crossed computation is handed straight to whoever asked for it and is never a value in its own right.
+      *
+      * @param v
+      *   The computation to prepare
+      * @param f
+      *   What consumes it, given everything it inherited attached
+      */
+    final def apply[A, S](v: A < (Remove & S))[B, S2](f: (A < (Restore & Keep & S)) => B < S2)(using
+        Frame
+    ): B < (Remove & Keep & S2) =
+        capture { state =>
+            f(isolate(state, v).map(r => restore(r)))
+        }
+
     /** Applies this isolate to a computation that requires it.
       *
       * Provides a more ergonomic way to use isolates with operations:
@@ -198,8 +226,8 @@ abstract class Isolate[Remove, -Keep, -Restore]:
       *   A new isolate handling both state managements
       */
     final def andThen[RM2, KP2, RS2](next: Isolate[RM2, KP2, RS2]): Isolate[Remove & RM2, Keep & KP2, Restore & RS2] =
-        if self eq Identity then next.asInstanceOf[Isolate[Remove & RM2, Keep & KP2, Restore & RS2]]
-        else if next eq Identity then self.asInstanceOf[Isolate[Remove & RM2, Keep & KP2, Restore & RS2]]
+        if self eq Contextual then next.asInstanceOf[Isolate[Remove & RM2, Keep & KP2, Restore & RS2]]
+        else if next eq Contextual then self.asInstanceOf[Isolate[Remove & RM2, Keep & KP2, Restore & RS2]]
         else
             new Isolate[Remove & RM2, Keep & KP2, Restore & RS2]:
                 type State        = (self.State, next.State)
@@ -218,37 +246,118 @@ object Isolate:
     /** Gets the Isolate instance for given effect types. */
     def apply[Remove, Keep, Restore](using i: Isolate[Remove, Keep, Restore]): Isolate[Remove, Keep, Restore] = i
 
-    /** Prepares a computation to run in an evaluation of its own, carrying the context that crosses.
-      *
-      * This is the untyped half of isolation, and the counterpart of the instances above. Where an
-      * `Isolate[Remove, Keep, Restore]` says how a handled effect's state crosses a fork, in types the caller
-      * writes, this says how the values bound around the fork cross: every named binding in scope is asked,
-      * through its own `fork`, what a computation forked from here receives. A binding that answers with a
-      * value is inherited, one that answers `Absent` is not, and one that answers with something else crosses
-      * as that instead, which is the whole of what the previous kernel's non-inheritable marker said and more.
-      *
-      * What comes back is a complete value: the computation with the crossed context attached to it, valid in
-      * any evaluation and on any thread. Running it installs that context first, so the computation reads what
-      * it read here, however far from here it eventually runs. Nothing is taken from the forking computation,
-      * which carries on with everything it had.
-      *
-      * Resources do not cross. A bracket's scope belongs to the computation that opened it, and a fork that
-      * inherited one would leave its owner releasing what the fork is still using; the forked computation opens
-      * its own. For the same reason the crossed value owes no releases: abandoning it releases nothing, because
-      * it holds nothing that was not already the forking computation's to release.
-      *
-      * @param v
-      *   The computation to prepare
-      * @return
-      *   A computation producing `v` with the crossed context attached
-      */
-    def apply[A, S](v: A < S)(using _frame: Frame): (A < S) < Any =
-        new Bindings[A < S, Any]:
-            def resume(bindings: Span[Binding[?, ?, ?, ?]], held: Span[Maybe[Any]]): (A < S) < Any =
-                if bindings.isEmpty then Kyo.lift[A < S, Any](v)
-                else cross(bindings, held, 0, new Array(bindings.size), new Array(bindings.size), 0, v)
+    /** The bindings whose names crossed, with what the isolation ended holding for each. */
+    private def carried[A](
+        crossed: Span[Arrow[?, ?, ?]],
+        bindings: Span[Binding[?, ?, ?, ?]],
+        held: Span[Maybe[Any]],
+        a: A
+    ): (Span[Binding[?, ?, ?, ?]], Span[Maybe[Any]], A) =
+        var count = 0
+        var i     = 0
+        while i < bindings.size do
+            if crosses(crossed, bindings(i)) then count += 1
+            i += 1
+        if count == 0 then (Span.empty, Span.empty, a)
+        else
+            val bs = new Array[Binding[?, ?, ?, ?]](count)
+            val hs = new Array[Maybe[Any]](count)
+            var w  = 0
+            i = 0
+            while i < bindings.size do
+                if crosses(crossed, bindings(i)) then
+                    bs(w) = bindings(i)
+                    hs(w) = held(i)
+                    w += 1
+                end if
+                i += 1
+            end while
+            (Span.fromUnsafe(bs), Span.fromUnsafe(hs), a)
+        end if
+    end carried
 
-    /** Asks each binding for its crossing, innermost first, and attaches what crossed to `v`.
+    private def crosses(crossed: Span[Arrow[?, ?, ?]], binding: Binding[?, ?, ?, ?]): Boolean =
+        binding.tag match
+            case Present(t) =>
+                var i   = 0
+                var out = false
+                while !out && i < crossed.size do
+                    crossed(i) match
+                        case b: Binding[?, ?, ?, ?] => out = b.tag.exists(_ =:= t.asInstanceOf[Tag[Any]])
+                        case _                      => ()
+                    i += 1
+                end while
+                out
+            case Absent => false
+
+    /** Asks each binding what it holds now that the fork has ended, and writes the answers.
+      *
+      * A recursion for the reason the fork walk is one: a strategy is a computation, so each answer is
+      * awaited before the next is asked, and each runs where its binding was defined. A name the fork did
+      * not carry is left alone, having nothing to be joined with.
+      *
+      * The writes go out together, in one visit, rather than one at a time: a strategy that reads the
+      * context would otherwise see it half joined.
+      */
+    private def join[A, S](
+        mine: Span[Binding[?, ?, ?, ?]],
+        held: Span[Maybe[Any]],
+        forked: Span[Binding[?, ?, ?, ?]],
+        forkedHeld: Span[Maybe[Any]],
+        i: Int,
+        updates: Array[Binding[?, ?, ?, ?]],
+        w: Int,
+        a: A
+    )(using _frame: Frame): A < S =
+        if i == mine.size then
+            if w == 0 then a
+            else
+                val ups = new Array[Binding[?, ?, ?, ?]](w)
+                var j   = 0
+                while j < w do
+                    ups(j) = updates(j)
+                    j += 1
+                new Bindings[A, S]:
+                    def updates                                                                    = Span.fromUnsafe(ups)
+                    def resume(bindings: Span[Binding[?, ?, ?, ?]], held: Span[Maybe[Any]]): A < S = a
+            end if
+        else
+            // erasure-forced, as in the fork walk: one span holds bindings of every value type
+            val binding = mine(i).asInstanceOf[Binding[Any, Nothing, Any, Any]]
+            held(i) match
+                case Present(h) =>
+                    // the tag is stored at the binding's own effect type; comparing it against the fork's
+                    // is the erasure the spans already impose
+                    val forkedValue =
+                        binding.tag match
+                            case Present(t) => valueOf(forked, forkedHeld, t.asInstanceOf[Tag[Any]])
+                            case Absent     => Maybe.empty[Any]
+                    forkedValue match
+                        case Present(f) =>
+                            binding.join(h, f).map { joined =>
+                                updates(w) = frozen(binding, joined)
+                                join(mine, held, forked, forkedHeld, i + 1, updates, w + 1, a)
+                            }
+                        case Absent =>
+                            join(mine, held, forked, forkedHeld, i + 1, updates, w, a)
+                    end match
+                case Absent =>
+                    join(mine, held, forked, forkedHeld, i + 1, updates, w, a)
+            end match
+        end if
+    end join
+
+    /** What the fork's bindings held for a name, absent where it carried none. */
+    private def valueOf(forked: Span[Binding[?, ?, ?, ?]], held: Span[Maybe[Any]], t: Tag[Any]): Maybe[Any] =
+        var i   = 0
+        var out = Maybe.empty[Any]
+        while out.isEmpty && i < forked.size do
+            if forked(i).tag.exists(_ =:= t) then out = held(i)
+            i += 1
+        out
+    end valueOf
+
+    /** Asks each binding for its crossing, innermost first.
       *
       * A loop written as a recursion because a crossing is a computation: each answer is awaited before the
       * next is asked, so a strategy that reads or suspends runs where it was defined, with the forking
@@ -267,10 +376,10 @@ object Isolate:
         entries: Array[Arrow[?, ?, ?]],
         states: Array[Maybe[Any]],
         w: Int,
-        v: A < S
-    )(using _frame: Frame): (A < S) < Any =
+        f: ((Span[Arrow[?, ?, ?]], Span[Maybe[Any]])) => A < S
+    )(using _frame: Frame): A < S =
         if i == bindings.size then
-            if w == 0 then Kyo.lift[A < S, Any](v)
+            if w == 0 then f((Span.empty, Span.empty))
             else
                 // trimmed by hand rather than copied through the array utilities: the slot type is opaque,
                 // so it is not one of the shapes they are written for
@@ -282,10 +391,7 @@ object Isolate:
                     sts(j) = states(j)
                     j += 1
                 end while
-                val parked = new Park[A, S](v, Span.fromUnsafe(es), Span.fromUnsafe(sts), Span.empty)
-                // the deliberate nesting: a computation handed out as a value is `Nested`-wrapped exactly
-                // once, which is what `Kyo.lift` does at its generic position. See the note in `nest`
-                Kyo.lift[A < S, Any](parked)
+                f((Span.fromUnsafe(es), Span.fromUnsafe(sts)))
             end if
         else
             // erasure-forced: one span holds the bindings of every value type, and each was written with its
@@ -298,12 +404,12 @@ object Isolate:
                             case Present(value) =>
                                 entries(w) = frozen(binding, value)
                                 states(w) = Present(value)
-                                cross(bindings, held, i + 1, entries, states, w + 1, v)
+                                cross(bindings, held, i + 1, entries, states, w + 1, f)
                             case Absent =>
-                                cross(bindings, held, i + 1, entries, states, w, v)
+                                cross(bindings, held, i + 1, entries, states, w, f)
                     }
                 case Absent =>
-                    cross(bindings, held, i + 1, entries, states, w, v)
+                    cross(bindings, held, i + 1, entries, states, w, f)
             end match
         end if
     end cross
@@ -341,17 +447,64 @@ object Isolate:
 
     private[kyo] object internal:
 
-        /** No-op isolate that performs no state management.
+        /** The isolate of the values bound around a fork, which every fork crosses whatever else it handles.
           *
-          * Used as a base case for isolate composition and when no isolation is needed.
+          * It handles no effect, which is what `Any` in all three positions says, and that makes it the neutral
+          * element of composition: what it manages is not an effect but the scope effects are read in, and every
+          * composition manages that too. The three phases are the crossing's, and the strategies are the
+          * bindings' own:
+          *
+          *   - capturing reads what is bound here and asks each binding's `fork` what a computation forked from
+          *     here receives, keeping what crosses as bindings that hold it
+          *   - isolating attaches those to the computation, so running it installs them first, and makes it end
+          *     by reading its own bindings back, which is what gives the way home something to carry
+          *   - restoring asks each binding's `join` what it holds now that the fork has ended, given what it
+          *     holds and what the fork ended with, and writes the answers into the scopes that own them
           */
-        object Identity extends Isolate[Any, Any, Any]:
-            type State        = Unit
-            type Transform[A] = A
-            def capture[A, S](f: State => A < S)(using Frame)              = f(())
-            def isolate[A, S](state: State, v: A < (S & Any))(using Frame) = v
-            def restore[A, S](v: A < S)(using Frame)                       = v
-        end Identity
+        object Contextual extends Isolate[Any, Any, Any]:
+
+            /** The bindings a forked computation inherits, and what each holds: what a park is made of. */
+            type State = (Span[Arrow[?, ?, ?]], Span[Maybe[Any]])
+
+            /** What the fork ended with: the bindings it held at the end, and its value. */
+            type Transform[A] = (Span[Binding[?, ?, ?, ?]], Span[Maybe[Any]], A)
+
+            def capture[A, S](f: State => A < S)(using Frame): A < S =
+                new Bindings[A, S]:
+                    def updates = Span.empty
+                    def resume(bindings: Span[Binding[?, ?, ?, ?]], held: Span[Maybe[Any]]): A < S =
+                        if bindings.isEmpty then f((Span.empty, Span.empty))
+                        else cross(bindings, held, 0, new Array(bindings.size), new Array(bindings.size), 0, f)
+
+            def isolate[A, S](state: State, v: A < S)(using Frame): Transform[A] < S =
+                val body =
+                    v.map(a =>
+                        new Bindings[Transform[A], S]:
+                            def updates = Span.empty
+                            def resume(bindings: Span[Binding[?, ?, ?, ?]], held: Span[Maybe[Any]]): Transform[A] < S =
+                                // only what crossed comes back. A name the isolation read without inheriting
+                                // has nothing to be joined with, and a name it bound itself belongs to the
+                                // scope that ended with it
+                                carried(state._1, bindings, held, a)
+                    )
+                if state._1.isEmpty then body
+                else new Park[Transform[A], S](body, state._1, state._2, Span.empty)
+                end if
+            end isolate
+
+            def restore[A, S](v: Transform[A] < S)(using Frame): A < S =
+                v.map { t =>
+                    val (forked, forkedHeld, a) = t
+                    if forked.isEmpty then a
+                    else
+                        new Bindings[A, S]:
+                            def updates = Span.empty
+                            def resume(mine: Span[Binding[?, ?, ?, ?]], held: Span[Maybe[Any]]): A < S =
+                                if mine.isEmpty then a
+                                else join(mine, held, forked, forkedHeld, 0, new Array(mine.size), 0, a)
+                    end if
+                }
+        end Contextual
 
         def deriveImpl[Remove: Type, Keep: Type, Restore: Type](using Quotes): Expr[Isolate[Remove, Keep, Restore]] =
             import quotes.reflect.*
@@ -419,7 +572,7 @@ object Isolate:
                 )
             end if
 
-            isolates.flatMap(_._2).foldLeft('{ Identity.asInstanceOf[Isolate[Remove, Keep, Restore]] })((prev, next) =>
+            isolates.flatMap(_._2).foldLeft('{ Contextual.asInstanceOf[Isolate[Remove, Keep, Restore]] })((prev, next) =>
                 '{ $prev.andThen($next.asInstanceOf[Isolate[Remove, Keep, Restore]]) }
             )
         end deriveImpl

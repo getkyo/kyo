@@ -611,9 +611,11 @@ object Eval:
                     stack.push(kyo)
                     loop(kyo.value)
                 case kyo: Bindings[?, ?] =>
-                    // the only read that needs the whole stack rather than one entry of it. Nothing is
-                    // installed and nothing is taken: what the bindings hold is read where they stand, and
-                    // the crossing each one decides runs above this, as the computation it answers with
+                    // the one arm that reaches the whole stack rather than one entry of it. The writes land
+                    // in the scopes that own them and the read answers what stands after, so a fold of what
+                    // came back from a fork is one visit. The strategies deciding either run above this, as
+                    // the computation it answers with
+                    stack.rebind(kyo.updates)
                     val (bs, hs) = stack.bindings()
                     loop(kyo.resume(bs, hs))
                 case kyo: Binding[v, ?, ?, ?] @unchecked =>

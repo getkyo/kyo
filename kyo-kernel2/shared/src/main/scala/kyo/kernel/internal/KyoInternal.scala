@@ -175,11 +175,22 @@ object Kyo:
       * what a fork needs: a computation about to run elsewhere inherits the context it was forked from, and
       * only the eval can say what that is.
       *
-      * The crossing itself does not happen here. Each binding decides its own through `fork`, which is a
-      * computation, so the walk that asks them is ordinary code above this read rather than a loop inside
-      * the eval. What this answers is the question every crossing policy is applied to.
+      * Writes come with the read, because the two are never far apart: what a fork ended holding is folded
+      * into what is bound here, which takes reading the one and writing the other. Neither strategy runs
+      * here. `fork` and `join` are computations, so the walks that ask them are ordinary code above this,
+      * and what this answers is the question they are applied to.
       */
     abstract private[kyo] class Bindings[A, S] extends Kyo[A, S]:
+
+        /** What the innermost binding of each name holds from here on, applied before the read below.
+          *
+          * Each entry replaces the one it names rather than standing above it, so the stack does not grow
+          * and a value written into a scope stays inside it. A name nothing binds here is dropped: there is
+          * no scope for it to belong to. Empty where nothing is written, which is every read.
+          */
+        def updates: Span[Binding[?, ?, ?, ?]]
+
+        /** What is bound once the writes above are in, and what each holds. */
         def resume(bindings: Span[Binding[?, ?, ?, ?]], held: Span[Maybe[Any]]): A < S
 
         override def toString: String = "Kyo(bindings)"

@@ -265,6 +265,38 @@ final private[kyo] class Stack:
       * is in it, and a fork that took one would leave the parent releasing what the child still holds. The
       * same absence that makes it unreadable makes it uncrossable.
       */
+    /** Puts each update in place of the innermost binding of its name, with what it holds.
+      *
+      * A write into a scope rather than a new scope: replacing the entry keeps the value inside the extent
+      * that owns it and leaves the stack the size it was, where pushing would outlive the binding it means
+      * to update and shadow it from below. What names nothing here is dropped, having no scope to update.
+      *
+      * The update holds its value outright, so the resolution a later restore runs answers with what was
+      * written rather than re-deriving what the original binding held.
+      */
+    def rebind(updates: Span[Kyo.Binding[?, ?, ?, ?]]): Unit =
+        var u = 0
+        while u < updates.size do
+            val update = updates(u)
+            update.tag.foreach { t =>
+                var i     = 0
+                var found = false
+                while !found && i < size do
+                    val idx = (head + i) & mask
+                    entries(idx) match
+                        case b: Kyo.Binding[?, ?, ?, ?] if b.tag.exists(_ =:= t) =>
+                            entries(idx) = update
+                            resolve(i)
+                            found = true
+                        case _ => ()
+                    end match
+                    i += 1
+                end while
+            }
+            u += 1
+        end while
+    end rebind
+
     def bindings(): (Span[Kyo.Binding[?, ?, ?, ?]], Span[Maybe[Any]]) =
         val n     = size
         var count = 0

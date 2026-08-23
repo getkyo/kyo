@@ -2,6 +2,7 @@ package kyo.kernel
 
 import kyo.Const
 import kyo.Frame
+import kyo.Kyo
 import kyo.Maybe
 import kyo.Maybe.*
 import kyo.Tag
@@ -142,9 +143,9 @@ class IsolateTest extends AnyFreeSpec:
             assert(Eval(runA(0)(runB(0)(v))) == ((1, (2, 12))))
         }
 
-        "Identity is a neutral element" in {
-            assert(updateA.andThen(Isolate.internal.Identity) eq updateA)
-            assert(Isolate.internal.Identity.andThen(updateA) eq updateA)
+        "Contextual is a neutral element" in {
+            assert(updateA.andThen(Isolate.internal.Contextual) eq updateA)
+            assert(Isolate.internal.Contextual.andThen(updateA) eq updateA)
         }
     }
 
@@ -156,10 +157,10 @@ class IsolateTest extends AnyFreeSpec:
         }
     }
 
-    "Identity" - {
+    "Contextual" - {
         "passes the computation through untouched" in {
             val v: Int < Any = 42
-            assert(Isolate.internal.Identity.run(v).eval == 42)
+            assert(Isolate.internal.Contextual.run(v).eval == 42)
         }
     }
 
@@ -176,7 +177,7 @@ class IsolateTest extends AnyFreeSpec:
 
             "cannot accept subtypes" in {
                 typeCheckFailure("""
-                    val isolate: Isolate[Any, Any, Any] = Isolate.internal.Identity
+                    val isolate: Isolate[Any, Any, Any] = Isolate.internal.Contextual
                     val _: Isolate[TestEffect1, Any, Any] = isolate
                 """)(
                     "Required: kyo.kernel.Isolate[IsolateTest.this.TestEffect1, Any, Any]"
@@ -297,6 +298,12 @@ class IsolateTest extends AnyFreeSpec:
 
     "apply" - {
 
+        // the crossing with no handled effects in play, so what crosses is exactly what the bindings
+        // decide. The tests below examine the crossed computation itself, so it is handed out as a value
+        // rather than consumed in place
+        def crossing[A, S](v: A < S)(using Frame): (A < S) < Any =
+            Isolate.internal.Contextual(v)(Kyo.lift[A < S, Any](_))
+
         // reads with a default, so a crossed computation can run with nothing bound and say so
         def read1: Int < Any     = ContextEffect.suspend[Int, TestEffect1](Tag[TestEffect1], -1)
         def read2: String < Any  = ContextEffect.suspend[String, TestEffect2](Tag[TestEffect2], "none")
@@ -306,27 +313,27 @@ class IsolateTest extends AnyFreeSpec:
             ContextEffect.handle(Tag[TestEffect1], value, (_: Int) => value)(v)
 
         "with nothing bound, the computation is unchanged" in {
-            val crossed = Eval(Isolate(read1))
+            val crossed = Eval(Isolate.internal.Contextual(read1)(Kyo.lift[Int < Any, Any](_)))
             assert(Eval(crossed) == -1)
         }
 
         "a bound value crosses into the computation" in {
             // the crossing is prepared inside the binding's extent and evaluated outside it: what the
             // computation reads is what was bound where it was forked, not where it runs
-            val crossed = Eval(bind1(42)(Isolate(read1)))
+            val crossed = Eval(bind1(42)(crossing(read1)))
             assert(Eval(crossed) == 42)
         }
 
         "a binding that refuses the crossing does not cross" in {
             val v = ContextEffect.handle(Tag[TestEffect1], 42, (_: Int) => 42, fork = (_: Int) => Maybe.empty[Int])(
-                Isolate(read1)
+                crossing(read1)
             )
             assert(Eval(Eval(v)) == -1)
         }
 
         "a binding crosses as what its strategy answers" in {
             val v = ContextEffect.handle(Tag[TestEffect1], 42, (_: Int) => 42, fork = (n: Int) => Maybe(n * 2))(
-                Isolate(read1)
+                crossing(read1)
             )
             assert(Eval(Eval(v)) == 84)
         }
@@ -336,7 +343,7 @@ class IsolateTest extends AnyFreeSpec:
                 ContextEffect.handle(Tag[TestEffect1], 1, (_: Int) => 1)(
                     ContextEffect.handle(Tag[TestEffect2], "a", (_: String) => "a", fork = (_: String) => Maybe.empty[String])(
                         ContextEffect.handle(Tag[TestEffect3], true, (_: Boolean) => true)(
-                            Isolate(read1.map(a => read2.map(b => read3.map(c => (a, b, c)))))
+                            crossing(read1.map(a => read2.map(b => read3.map(c => (a, b, c)))))
                         )
                     )
                 )
@@ -345,12 +352,12 @@ class IsolateTest extends AnyFreeSpec:
         }
 
         "the innermost binding of a tag is what crosses" in {
-            val v = bind1(1)(bind1(2)(Isolate(read1)))
+            val v = bind1(1)(bind1(2)(crossing(read1)))
             assert(Eval(Eval(v)) == 2)
         }
 
         "the crossed value is complete: it runs more than once, anywhere" in {
-            val crossed = Eval(bind1(7)(Isolate(read1.map(_ + 1))))
+            val crossed = Eval(bind1(7)(crossing(read1.map(_ + 1))))
             assert(Eval(crossed) == 8)
             assert(Eval(crossed) == 8)
             // and under a binding of its own, which it does not take: what crossed is frozen
@@ -358,7 +365,7 @@ class IsolateTest extends AnyFreeSpec:
         }
 
         "the forking computation keeps what it had" in {
-            val v = bind1(5)(Isolate(read1).map(crossed => read1.map(mine => (mine, Eval(crossed)))))
+            val v = bind1(5)(crossing(read1).map(crossed => read1.map(mine => (mine, Eval(crossed)))))
             assert(Eval(v) == ((5, 5)))
         }
 
@@ -366,7 +373,7 @@ class IsolateTest extends AnyFreeSpec:
             var released = false
             val v =
                 Effect.bracket(1)(_ => released = true) { _ =>
-                    Isolate(read1)
+                    crossing(read1)
                 }
             val crossed = Eval(v)
             // the bracket ended with the forking computation, and the crossed value owes nothing:
@@ -389,15 +396,53 @@ class IsolateTest extends AnyFreeSpec:
                         asked += 1
                         read3.map(flag => if flag then Maybe(n * 10) else Maybe(n))
                 )(
-                    ContextEffect.handle(Tag[TestEffect3], true, (_: Boolean) => true)(Isolate(read1))
+                    ContextEffect.handle(Tag[TestEffect3], true, (_: Boolean) => true)(crossing(read1))
                 )
             assert(Eval(Eval(v)) == 30)
             assert(asked == 1)
         }
 
+        "the fused form hands the crossing straight to its consumer" in {
+            // no step between the crossing and what reads it, and the crossed computation is never a
+            // value of its own, so nothing nests it
+            val v = bind1(11)(Isolate.internal.Contextual(read1)(crossed => Eval(crossed) + 1))
+            assert(Eval(v) == 12)
+        }
+
+        "what a fork ended holding is joined into what is bound here" in {
+            // the strategy takes the fork's value; running the isolation in place is what a join needs,
+            // since a fork nobody waits for has nothing to join into
+            val counter =
+                ContextEffect.handle(
+                    Tag[TestEffect1],
+                    1,
+                    (_: Int) => 1,
+                    join = (held: Int, forked: Int) => held + forked
+                )(
+                    Isolate.internal.Contextual.run(read1).map(_ => read1)
+                )
+            // the isolation read 1 and ended holding it, and the join added it to what is bound here
+            assert(Eval(counter) == 2)
+        }
+
+        "a binding the fork did not carry is left alone" in {
+            val v =
+                ContextEffect.handle(
+                    Tag[TestEffect1],
+                    5,
+                    (_: Int) => 5,
+                    fork = (_: Int) => Maybe.empty[Int],
+                    join = (held: Int, forked: Int) => held + forked
+                )(
+                    Isolate.internal.Contextual.run(read1).map(_ => read1)
+                )
+            // nothing crossed, so nothing came back to join with: the binding still holds its own
+            assert(Eval(v) == 5)
+        }
+
         "a fork of a fork asks the same strategies" in {
             val v = ContextEffect.handle(Tag[TestEffect1], 2, (_: Int) => 2, fork = (n: Int) => Maybe(n + 1))(
-                Isolate(Isolate(read1))
+                crossing(crossing(read1))
             )
             // the first crossing answers 3, and the crossed binding keeps the strategy, so the second
             // crossing asks it again and answers 4
