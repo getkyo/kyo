@@ -2,8 +2,17 @@ package kyo.kernel
 
 import Isolate.internal.*
 import kyo.Ansi.*
+import kyo.Arrow
 import kyo.Frame
 import kyo.Kyo
+import kyo.Maybe
+import kyo.Maybe.*
+import kyo.Span
+import kyo.bug
+import kyo.kernel.internal.Kyo.Binding
+import kyo.kernel.internal.Kyo.Bindings
+import kyo.kernel.internal.Kyo.Park
+import scala.annotation.nowarn
 import scala.quoted.*
 
 /** Provides mechanisms for handling pending effects when forking computations.
@@ -208,6 +217,112 @@ object Isolate:
 
     /** Gets the Isolate instance for given effect types. */
     def apply[Remove, Keep, Restore](using i: Isolate[Remove, Keep, Restore]): Isolate[Remove, Keep, Restore] = i
+
+    /** Prepares a computation to run in an evaluation of its own, carrying the context that crosses.
+      *
+      * This is the untyped half of isolation, and the counterpart of the instances above. Where an
+      * `Isolate[Remove, Keep, Restore]` says how a handled effect's state crosses a fork, in types the caller
+      * writes, this says how the values bound around the fork cross: every named binding in scope is asked,
+      * through its own `fork`, what a computation forked from here receives. A binding that answers with a
+      * value is inherited, one that answers `Absent` is not, and one that answers with something else crosses
+      * as that instead, which is the whole of what the previous kernel's non-inheritable marker said and more.
+      *
+      * What comes back is a complete value: the computation with the crossed context attached to it, valid in
+      * any evaluation and on any thread. Running it installs that context first, so the computation reads what
+      * it read here, however far from here it eventually runs. Nothing is taken from the forking computation,
+      * which carries on with everything it had.
+      *
+      * Resources do not cross. A bracket's scope belongs to the computation that opened it, and a fork that
+      * inherited one would leave its owner releasing what the fork is still using; the forked computation opens
+      * its own. For the same reason the crossed value owes no releases: abandoning it releases nothing, because
+      * it holds nothing that was not already the forking computation's to release.
+      *
+      * @param v
+      *   The computation to prepare
+      * @return
+      *   A computation producing `v` with the crossed context attached
+      */
+    def apply[A, S](v: A < S)(using _frame: Frame): (A < S) < Any =
+        new Bindings[A < S, Any]:
+            def resume(bindings: Span[Binding[?, ?, ?, ?]], held: Span[Maybe[Any]]): (A < S) < Any =
+                if bindings.isEmpty then Kyo.lift[A < S, Any](v)
+                else cross(bindings, held, 0, new Array(bindings.size), new Array(bindings.size), 0, v)
+
+    /** Asks each binding for its crossing, innermost first, and attaches what crossed to `v`.
+      *
+      * A loop written as a recursion because a crossing is a computation: each answer is awaited before the
+      * next is asked, so a strategy that reads or suspends runs where it was defined, with the forking
+      * computation's handlers still in place.
+      *
+      * What is built is a binding of the same name holding what crossed, rather than the one that was asked.
+      * The original derives its value from what encloses it, and re-deriving it in the evaluation that resumes
+      * the fork would answer with the forking computation's value again, discarding the crossing. Freezing it
+      * is what makes `fork` mean anything. The strategies come along, so a fork of the fork asks the same
+      * questions.
+      */
+    private def cross[A, S](
+        bindings: Span[Binding[?, ?, ?, ?]],
+        held: Span[Maybe[Any]],
+        i: Int,
+        entries: Array[Arrow[?, ?, ?]],
+        states: Array[Maybe[Any]],
+        w: Int,
+        v: A < S
+    )(using _frame: Frame): (A < S) < Any =
+        if i == bindings.size then
+            if w == 0 then Kyo.lift[A < S, Any](v)
+            else
+                // trimmed by hand rather than copied through the array utilities: the slot type is opaque,
+                // so it is not one of the shapes they are written for
+                val es  = new Array[Arrow[?, ?, ?]](w)
+                val sts = new Array[Maybe[Any]](w)
+                var j   = 0
+                while j < w do
+                    es(j) = entries(j)
+                    sts(j) = states(j)
+                    j += 1
+                end while
+                val parked = new Park[A, S](v, Span.fromUnsafe(es), Span.fromUnsafe(sts), Span.empty)
+                // the deliberate nesting: a computation handed out as a value is `Nested`-wrapped exactly
+                // once, which is what `Kyo.lift` does at its generic position. See the note in `nest`
+                Kyo.lift[A < S, Any](parked)
+            end if
+        else
+            // erasure-forced: one span holds the bindings of every value type, and each was written with its
+            // own. The value read from the slot is the one this binding put there, so the pair lines up
+            val binding = bindings(i).asInstanceOf[Binding[Any, Nothing, Any, Any]]
+            held(i) match
+                case Present(h) =>
+                    binding.fork(h).map { crossed =>
+                        crossed match
+                            case Present(value) =>
+                                entries(w) = frozen(binding, value)
+                                states(w) = Present(value)
+                                cross(bindings, held, i + 1, entries, states, w + 1, v)
+                            case Absent =>
+                                cross(bindings, held, i + 1, entries, states, w, v)
+                    }
+                case Absent =>
+                    cross(bindings, held, i + 1, entries, states, w, v)
+            end match
+        end if
+    end cross
+
+    /** A binding of the same name holding what crossed, with the strategies of the one it came from. */
+    @nowarn("msg=anonymous")
+    private def frozen(binding: Binding[Any, Nothing, Any, Any], value: Any)(using
+        _frame: Frame
+    ): Binding[Any, Nothing, Any, Any] =
+        new Binding[Any, Nothing, Any, Any]:
+            def frame                                 = _frame
+            val tag                                   = binding.tag
+            val bound                                 = Maybe((_: Maybe[Any]) => value)
+            override def fork(held: Any)              = binding.fork(held)
+            override def join(held: Any, forked: Any) = binding.join(held, forked)
+            // never reached: this is built to stand on a stack, and an entry answers a value flowing back
+            // through it with `apply`, which is identity for a binding. Only a binding the eval meets as a
+            // computation resumes, and this one is never that
+            def resume(held: Maybe[Any]) = bug("a crossed binding was evaluated rather than installed")
 
     /** Derives an Isolate instance based on available instances.
       *

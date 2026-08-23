@@ -255,6 +255,47 @@ final private[kyo] class Stack:
       * expects and the order a drain runs in. Ownership moves with the call: the arrays handed out are not
       * shared with this stack, which is free to be pooled and reused.
       */
+    /** Every named binding installed here, innermost first, with what each holds.
+      *
+      * What a computation forked from this point inherits, before any crossing policy is applied: the pair
+      * is handed out rather than the values alone, because the policy that decides the crossing lives on the
+      * binding.
+      *
+      * Anonymous bindings are left out. A resource is a scope its owner ends, not a value read by whoever
+      * is in it, and a fork that took one would leave the parent releasing what the child still holds. The
+      * same absence that makes it unreadable makes it uncrossable.
+      */
+    def bindings(): (Span[Kyo.Binding[?, ?, ?, ?]], Span[Maybe[Any]]) =
+        val n     = size
+        var count = 0
+        var i     = 0
+        while i < n do
+            entries((head + i) & mask) match
+                case b: Kyo.Binding[?, ?, ?, ?] if b.tag.isDefined => count += 1
+                case _                                             => ()
+            i += 1
+        end while
+        if count == 0 then (Span.empty, Span.empty)
+        else
+            val bs = new Array[Kyo.Binding[?, ?, ?, ?]](count)
+            val hs = new Array[Maybe[Any]](count)
+            var w  = 0
+            i = 0
+            while i < n do
+                val idx = (head + i) & mask
+                entries(idx) match
+                    case b: Kyo.Binding[?, ?, ?, ?] if b.tag.isDefined =>
+                        bs(w) = b
+                        hs(w) = states(idx)
+                        w += 1
+                    case _ => ()
+                end match
+                i += 1
+            end while
+            (Span.fromUnsafe(bs), Span.fromUnsafe(hs))
+        end if
+    end bindings
+
     def snapshotEntries(): Span[Arrow[?, ?, ?]] =
         val n   = size
         val arr = new Array[Arrow[?, ?, ?]](n)

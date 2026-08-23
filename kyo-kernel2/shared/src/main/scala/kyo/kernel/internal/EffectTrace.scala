@@ -285,6 +285,10 @@ object EffectTrace:
                                 // its payload takes what is bound, which this walk does not have, so the
                                 // node contributes its own site and nothing under it
                                 frame(b.frame)
+                            case _: Kyo.Bindings[?, ?] =>
+                                // reads the whole context, and its payload takes it, which this walk does
+                                // not have either. It carries no site of its own, so nothing is described
+                                ()
                             case d: Kyo.Defer[?, ?, ?, ?] =>
                                 push(d.contB)
                                 push(d.contA)

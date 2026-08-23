@@ -20,6 +20,7 @@ import kyo.kernel.internal.Handler.HandlerLoop
 import kyo.kernel.internal.Handler.HandlerLoopState
 import kyo.kernel.internal.Handler.Out
 import kyo.kernel.internal.Kyo.Binding
+import kyo.kernel.internal.Kyo.Bindings
 import kyo.kernel.internal.Kyo.Catching
 import kyo.kernel.internal.Kyo.Defer
 import kyo.kernel.internal.Kyo.Handle
@@ -609,6 +610,12 @@ object Eval:
                     // through pops it, which is what makes the scope end; a failure finds it on the way down
                     stack.push(kyo)
                     loop(kyo.value)
+                case kyo: Bindings[?, ?] =>
+                    // the only read that needs the whole stack rather than one entry of it. Nothing is
+                    // installed and nothing is taken: what the bindings hold is read where they stand, and
+                    // the crossing each one decides runs above this, as the computation it answers with
+                    val (bs, hs) = stack.bindings()
+                    loop(kyo.resume(bs, hs))
                 case kyo: Binding[v, ?, ?, ?] @unchecked =>
                     // a bind marks its own extent by going on the stack, and installing it is what resolves
                     // what it holds against what is bound below. A read marks nothing and only needs the

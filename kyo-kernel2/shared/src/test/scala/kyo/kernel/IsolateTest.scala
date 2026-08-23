@@ -295,4 +295,114 @@ class IsolateTest extends AnyFreeSpec:
         }
     }
 
+    "apply" - {
+
+        // reads with a default, so a crossed computation can run with nothing bound and say so
+        def read1: Int < Any     = ContextEffect.suspend[Int, TestEffect1](Tag[TestEffect1], -1)
+        def read2: String < Any  = ContextEffect.suspend[String, TestEffect2](Tag[TestEffect2], "none")
+        def read3: Boolean < Any = ContextEffect.suspend[Boolean, TestEffect3](Tag[TestEffect3], false)
+
+        def bind1[A, S](value: Int)(v: A < S)(using Frame): A < S =
+            ContextEffect.handle(Tag[TestEffect1], value, (_: Int) => value)(v)
+
+        "with nothing bound, the computation is unchanged" in {
+            val crossed = Eval(Isolate(read1))
+            assert(Eval(crossed) == -1)
+        }
+
+        "a bound value crosses into the computation" in {
+            // the crossing is prepared inside the binding's extent and evaluated outside it: what the
+            // computation reads is what was bound where it was forked, not where it runs
+            val crossed = Eval(bind1(42)(Isolate(read1)))
+            assert(Eval(crossed) == 42)
+        }
+
+        "a binding that refuses the crossing does not cross" in {
+            val v = ContextEffect.handle(Tag[TestEffect1], 42, (_: Int) => 42, fork = (_: Int) => Maybe.empty[Int])(
+                Isolate(read1)
+            )
+            assert(Eval(Eval(v)) == -1)
+        }
+
+        "a binding crosses as what its strategy answers" in {
+            val v = ContextEffect.handle(Tag[TestEffect1], 42, (_: Int) => 42, fork = (n: Int) => Maybe(n * 2))(
+                Isolate(read1)
+            )
+            assert(Eval(Eval(v)) == 84)
+        }
+
+        "every binding in scope is asked" in {
+            val v =
+                ContextEffect.handle(Tag[TestEffect1], 1, (_: Int) => 1)(
+                    ContextEffect.handle(Tag[TestEffect2], "a", (_: String) => "a", fork = (_: String) => Maybe.empty[String])(
+                        ContextEffect.handle(Tag[TestEffect3], true, (_: Boolean) => true)(
+                            Isolate(read1.map(a => read2.map(b => read3.map(c => (a, b, c)))))
+                        )
+                    )
+                )
+            // the first and third cross, the second refuses and reads its default
+            assert(Eval(Eval(v)) == ((1, "none", true)))
+        }
+
+        "the innermost binding of a tag is what crosses" in {
+            val v = bind1(1)(bind1(2)(Isolate(read1)))
+            assert(Eval(Eval(v)) == 2)
+        }
+
+        "the crossed value is complete: it runs more than once, anywhere" in {
+            val crossed = Eval(bind1(7)(Isolate(read1.map(_ + 1))))
+            assert(Eval(crossed) == 8)
+            assert(Eval(crossed) == 8)
+            // and under a binding of its own, which it does not take: what crossed is frozen
+            assert(Eval(bind1(99)(crossed)) == 8)
+        }
+
+        "the forking computation keeps what it had" in {
+            val v = bind1(5)(Isolate(read1).map(crossed => read1.map(mine => (mine, Eval(crossed)))))
+            assert(Eval(v) == ((5, 5)))
+        }
+
+        "a resource does not cross" in {
+            var released = false
+            val v =
+                Effect.bracket(1)(_ => released = true) { _ =>
+                    Isolate(read1)
+                }
+            val crossed = Eval(v)
+            // the bracket ended with the forking computation, and the crossed value owes nothing:
+            // running it releases nothing a second time
+            assert(released)
+            released = false
+            assert(Eval(crossed) == -1)
+            assert(!released)
+        }
+
+        "a crossing runs where it was defined" in {
+            // the strategy reads an effect of its own, which the forking computation's handler answers
+            var asked = 0
+            val v =
+                ContextEffect.handle(
+                    Tag[TestEffect1],
+                    3,
+                    (_: Int) => 3,
+                    fork = (n: Int) =>
+                        asked += 1
+                        read3.map(flag => if flag then Maybe(n * 10) else Maybe(n))
+                )(
+                    ContextEffect.handle(Tag[TestEffect3], true, (_: Boolean) => true)(Isolate(read1))
+                )
+            assert(Eval(Eval(v)) == 30)
+            assert(asked == 1)
+        }
+
+        "a fork of a fork asks the same strategies" in {
+            val v = ContextEffect.handle(Tag[TestEffect1], 2, (_: Int) => 2, fork = (n: Int) => Maybe(n + 1))(
+                Isolate(Isolate(read1))
+            )
+            // the first crossing answers 3, and the crossed binding keeps the strategy, so the second
+            // crossing asks it again and answers 4
+            assert(Eval(Eval(Eval(v))) == 4)
+        }
+    }
+
 end IsolateTest

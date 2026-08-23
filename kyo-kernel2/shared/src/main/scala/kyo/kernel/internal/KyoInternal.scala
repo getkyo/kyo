@@ -169,6 +169,22 @@ object Kyo:
             s"Kyo(${if bound.isDefined then "bind" else "read"} ${tag.fold("anonymous")(_.show)}, ${frame.position.show})"
     end Binding
 
+    /** A read of the whole context: every named binding in scope, with what each holds.
+      *
+      * Where a [[Binding]] read takes the innermost value bound for one tag, this takes them all, which is
+      * what a fork needs: a computation about to run elsewhere inherits the context it was forked from, and
+      * only the eval can say what that is.
+      *
+      * The crossing itself does not happen here. Each binding decides its own through `fork`, which is a
+      * computation, so the walk that asks them is ordinary code above this read rather than a loop inside
+      * the eval. What this answers is the question every crossing policy is applied to.
+      */
+    abstract private[kyo] class Bindings[A, S] extends Kyo[A, S]:
+        def resume(bindings: Span[Binding[?, ?, ?, ?]], held: Span[Maybe[Any]]): A < S
+
+        override def toString: String = "Kyo(bindings)"
+    end Bindings
+
     abstract private[kyo] class Handle[E <: ArrowEffect[?, ?], A, B, +C, -S] extends Kyo[C, S]:
         // the pending type rather than `Kyo`, and a method rather than a field, so a region can hold its body
         // unforced: the eval reads this after the handler is on the stack, which is what lets a recovering
