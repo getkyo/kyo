@@ -1510,6 +1510,30 @@ class EffectTest extends AnyFreeSpec:
         // the unwind runs finalizers with no NonFatal guard (Stack.scala:414-416) while Recover.panic
         // declines a fatal (Eval.scala:62-63), so the two arms deliberately disagree and only one of them
         // is guarded. Nothing pinned that a fatal still releases
+        "a fatal failure runs nested releases innermost first" in {
+            var order = List.empty[String]
+            val boom  = new InterruptedException("fatal")
+            val v: Int < Any =
+                Effect.bracket(Effect.defer(1))(_ => order :+= "outer") { _ =>
+                    Effect.bracket(Effect.defer(2))(_ => order :+= "inner") { _ =>
+                        (throw boom): Int
+                    }
+                }
+            assert(intercept[InterruptedException](Eval(v)) eq boom)
+            assert(order == List("inner", "outer"))
+        }
+
+        "a fatal failure thrown from a map after the acquire runs the release" in {
+            var order = List.empty[String]
+            val boom  = new InterruptedException("fatal")
+            val v: Int < Any =
+                Effect.bracket(Effect.defer(1))(_ => order :+= "release") { r =>
+                    Effect.defer(r).map(_ => (throw boom): Int)
+                }
+            assert(intercept[InterruptedException](Eval(v)) eq boom)
+            assert(order == List("release"))
+        }
+
         "a fatal failure runs the release" in {
             var order = List.empty[String]
             val boom  = new InterruptedException("fatal")
