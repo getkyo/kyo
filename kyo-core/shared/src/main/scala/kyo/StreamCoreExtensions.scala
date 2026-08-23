@@ -393,12 +393,12 @@ object StreamCoreExtensions:
                         // via semaphore
                         val handleEmit = ArrowEffect.handleLoop(t1, stream.emit)(
                             handle = [C] =>
-                                (input, cont) =>
+                                input =>
                                     // Fork async generation of chunks (with each transformation limited by semaphore)
                                     // and publish fiber to output channel. Wait for concurrency using semaphore first to
                                     // backpressure handler loop
                                     semaphore.run(Fiber.initUnscoped(Async.foreach(input)(v => semaphore.run(f(v))))).map: chunkFiber =>
-                                        channelOut.put(chunkFiber).andThen(Loop.continue(cont(())))
+                                        channelOut.put(chunkFiber).andThen(Loop.continue(()))
                         )
 
                         // Run stream handler in background, propagating errors to foreground
@@ -501,7 +501,7 @@ object StreamCoreExtensions:
                             // using semaphore as rate limiter
                             val handleEmit = ArrowEffect.handleLoop(t1, stream.emit)(
                                 handle = [C] =>
-                                    (input, cont) =>
+                                    input =>
                                         // For each element in input chunk, transform and publish each to channelOut
                                         // concurrently, limited by semaphore. Fork this collective process and publish
                                         // fiber to channelPar in order to ensure completion/interruption. Wait for
@@ -509,7 +509,7 @@ object StreamCoreExtensions:
                                         semaphore.run(Fiber.initUnscoped(
                                             Async.foreachDiscard(input)(v => semaphore.run(f(v).map(channelOut.put(_))))
                                         )).map: fiber =>
-                                            channelPar.put(fiber).andThen(Loop.continue(cont(())))
+                                            channelPar.put(fiber).andThen(Loop.continue(()))
                             ).andThen(channelPar.closeAwaitEmpty.unit)
 
                             // Drain channelPar, waiting for each fiber to complete before finishing.
@@ -613,14 +613,14 @@ object StreamCoreExtensions:
                         // via semaphore
                         val handleEmit = ArrowEffect.handleLoop(t1, stream.emit)(
                             handle = [C] =>
-                                (input, cont) =>
+                                input =>
                                     // Transform chunk in background, publishing fiber to channelOut. The outer
                                     // `semaphore.run` backpressures the handler loop; the inner one bounds the actual
                                     // transformation work to `parallel`. Without the inner gate the permit would only
                                     // span the fork (which returns immediately), leaving every chunk to transform
                                     // concurrently regardless of `parallel`.
                                     semaphore.run(Fiber.initUnscoped(semaphore.run(f(input)))).map: chunkFiber =>
-                                        channelOut.put(chunkFiber).andThen(Loop.continue(cont(())))
+                                        channelOut.put(chunkFiber).andThen(Loop.continue(()))
                         )
 
                         // Run stream handler in background, propagating errors to foreground
@@ -729,7 +729,7 @@ object StreamCoreExtensions:
                             // using semaphore as rate limiter
                             val handleEmit = ArrowEffect.handleLoop(t1, stream.emit)(
                                 handle = [C] =>
-                                    (input, cont) =>
+                                    input =>
                                         // Transform chunks and publish to channelOut in background fiber, placing
                                         // fiber in channelPar to ensure completion/interruption. The outer
                                         // `semaphore.run` backpressures the handler loop; the inner one bounds the
@@ -739,7 +739,7 @@ object StreamCoreExtensions:
                                         semaphore.run(Fiber.initUnscoped(
                                             semaphore.run(f(input).map(chunk => channelOut.put(chunk).unit))
                                         )).map: fiber =>
-                                            channelPar.put(fiber).andThen(Loop.continue(cont(())))
+                                            channelPar.put(fiber).andThen(Loop.continue(()))
                             ).andThen(channelPar.closeAwaitEmpty.unit)
 
                             // Drain channelPar, waiting for each fiber to complete before finishing.
@@ -1080,9 +1080,9 @@ object StreamCoreExtensions:
                             Sync.ensure(Fiber.initUnscoped(using Isolate[Any, Any, Any])(channel.put(Flush))):
                                 ArrowEffect.handleLoop(t1, stream.emit)(
                                     handle = [C] =>
-                                        (chunk, cont) =>
+                                        chunk =>
                                             channel.put(Data(chunk)).andThen:
-                                                Loop.continue(cont(()))
+                                                Loop.continue(())
                                 )
 
                     // Single fiber emitting a tick at constant interval
