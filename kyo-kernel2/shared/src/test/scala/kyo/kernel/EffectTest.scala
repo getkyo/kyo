@@ -1335,6 +1335,31 @@ class EffectTest extends AnyFreeSpec:
             assert(seen == List("branch 10", "branch 20"))
         }
 
+        // the mirror of the failing multi-shot cases: what breaks there is that the release point sits
+        // INSIDE the region being replayed. With the bracket enclosing the multi-shot region instead, its
+        // finalizer is below the handler, never folded into the dumped continuation, and the extent ends
+        // once, after every branch. This is the arrangement Scope.run { Choice.run { ... } } produces
+        "a bracket that encloses a multi-shot region releases after every branch" in {
+            var closed = false
+            var seen   = List.empty[String]
+            val v: Int < Any =
+                Effect.bracket(Effect.defer(1))(_ => closed = true) { r =>
+                    ArrowEffect.handleCont(
+                        Tag[Ask],
+                        ask.map { a =>
+                            seen :+= (if closed then s"branch $a after release" else s"branch $a")
+                            a + r
+                        }
+                    )(
+                        [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
+                        a => a
+                    )
+                }
+            assert(Eval(v) == 32)
+            assert(seen == List("branch 10", "branch 20"))
+            assert(closed)
+        }
+
         // The four below share one root cause, independent of the multi-shot ones above. `dump()` bounds its
         // fold at a Handler or a Recover (Stack.scala:236) and a Finalizer is neither, so a value delivered
         // into a map body or a done transform folds the finalizer away and advances head past it. If that
