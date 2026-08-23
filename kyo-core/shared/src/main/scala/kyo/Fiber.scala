@@ -4,9 +4,8 @@ import java.lang.invoke.VarHandle
 import java.util.Arrays
 import kyo.Result.Panic
 import kyo.internal.Reducible
-import kyo.kernel.internal.Context
-import kyo.kernel.internal.Safepoint
-import kyo.kernel.internal.Trace
+import kyo.kernel.ArrowEffect
+import kyo.kernel.Isolate
 import kyo.scheduler.IOPromise
 import kyo.scheduler.IOPromiseBase
 import kyo.scheduler.IOTask
@@ -171,12 +170,77 @@ object Fiber:
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): Fiber[A, reduce.SReduced & S2] < (Sync & S) =
-        Isolate.internal.runDetached((trace, context) =>
-            isolate.capture { state =>
-                val io = isolate.isolate(state, v).map(r => isolate.restore(r))
-                IOTask(io, trace, context).asInstanceOf[Fiber[A, reduce.SReduced & S2]]
-            }
-        )
+        // the crossing: the handled effects through this isolate, the values bound around the fork through
+        // their own strategies. What comes back is complete, which is what lets the scheduler run it
+        isolate(v) { crossed =>
+            // the fiber's own row is what the boundary leaves: effects the isolate restores travel with the
+            // result rather than being run here, which is what `Fiber[A, S]` carries them as
+            IOTask(boundary(crossed).asInstanceOf[Result[E, A] < Any])
+                .asInstanceOf[Fiber[A, reduce.SReduced & S2]]
+        }
+
+    /** The fiber boundary: one region answering everything the scheduler is responsible for.
+      *
+      * `Async` and `Abort` are answered together, through a tag that is the union of the two. A region's tag
+      * says which operations it answers and an operation is answered where its own tag is subsumed by it, so
+      * one entry covers both families, and every abort reaches it whatever its error type, because `Abort` is
+      * contravariant and each `Abort[E]` is an `Abort[Nothing]`.
+      *
+      * What the region produces is the fiber's result. Success and failure leave by the same door: the body's
+      * value becomes a success and an abort becomes the failure, so the scheduler completes the promise with
+      * whatever the computation evaluates to and interprets nothing.
+      *
+      * A join asks the awaited promise. A completed one resumes in place, which is what keeps a chain of
+      * ready fibers on a single slice. A pending one is told to the fiber, which ends the slice; the eval
+      * parks the remainder with the join at its head, and the wakeup resumes it into this same clause, which
+      * asks again with a fresh continuation.
+      */
+    private def boundary[E, A, S](v: A < (Abort[E] & Async & S))(using Frame): Result[E, A] < S =
+        // the row keeps what the region answers: a tag says which operations an entry answers, and the
+        // families it names are not what the type arithmetic removes. Nothing of them survives at runtime,
+        // which is what the cast below states and what lets the scheduler run the result
+
+        // the input constructor is stated: a union answers operations whose inputs have nothing in common,
+        // and the bottom type is the one that stands under both, which keeps the clause's parameter out of
+        // either member's class
+        ArrowEffect.handleCont[
+            [X] =>> Nothing,
+            [X] =>> Any,
+            Async.Join | Abort[Nothing],
+            Result[E, A],
+            Result[E, A],
+            Async & Abort[E] & S,
+            Any
+        ](
+            Tag[Async.Join | Abort[Nothing]],
+            v.map(Result.succeed[E, A](_))
+        )(
+            [C] =>
+                (input, cont) =>
+                    // the union's input is the intersection of what its members carry, which no value
+                    // inhabits: which one arrived is a question about the value, so it is asked there
+                    (input: Any) match
+                        case error: Result.Error[E] @unchecked =>
+                            error
+                        case join: Async.JoinInput[C] @unchecked =>
+                            val task = IOTask.currentTask().getOrElse(bug("a fiber's join ran outside its fiber"))
+                            // invoking it registers the interrupt cascade on the running fiber before the
+                            // promise's state is read, so an interrupt landing here cannot pass it by
+                            val awaited = join(task)
+                            awaited.poll() match
+                                case Present(r) =>
+                                    // already complete when the link was made, so the link is dropped rather
+                                    // than left to accumulate
+                                    task.removeInterrupt(awaited)
+                                    cont(r.asInstanceOf[Result[Nothing, C]])
+                                case _ =>
+                                    task.await(awaited)
+                                    cont(null.asInstanceOf[Result[Nothing, C]])
+                            end match
+            ,
+            done = r => r
+        ).asInstanceOf[Result[E, A] < S]
+    end boundary
 
     extension [A, S](self: Fiber[A, S])
         /** Checks if the Fiber is done.
@@ -412,10 +476,10 @@ object Fiber:
         ): Fiber.Unsafe[A, reduce.SReduced] =
             // Unsafe: spawns a fire-and-forget carrier without re-entering the effect system; replaces
             // the evalOrThrow + initUnscoped idiom at every kyo-net spawn site. The body may be
-            // effectful (`A < (Async & Abort[E])`): Sync.defer deconstructs it so IOTask drives the
-            // Async and Abort effects to completion inside the carrier, rather than leaving the
-            // computation as an un-run suspension (a plain value infers `E = Nothing`, unchanged).
-            IOTask(Sync.defer(v), Trace.saved(), Context.empty)
+            // effectful (`A < (Async & Abort[E])`), so it goes through the same boundary a scoped fiber
+            // does, which answers what it performs and leaves the result for the carrier to complete.
+            // Nothing crosses: an unsafe spawn takes no context from where it was made.
+            IOTask(boundary[E, A, Any](Sync.defer(v)))
                 .asInstanceOf[Fiber.Unsafe[A, reduce.SReduced]]
         end init
 
@@ -747,31 +811,28 @@ object Fiber:
                                 result.foldError(_ => (), e => this.interruptDiscard(e))
                         end State
                         val state = new State
-                        Isolate.internal.runDetached { (trace, context) =>
-                            val safepoint = Safepoint.get
-                            val parent: Maybe[IOPromise[?, ?]] =
-                                safepoint.getInterceptor() match
-                                    case p: IOPromise[?, ?] => Present(p)
-                                    case _                  => Absent
-                            @tailrec def loop(i: Int): Unit =
-                                if i < numWorkers then
-                                    def workerLoop(): Unit < (Abort[E] & Async) =
-                                        val idx = state.counter.getAndIncrement()
-                                        if idx >= size then ()
-                                        else
-                                            f(idx, items(idx)).map { value =>
-                                                state.complete(idx, value)
-                                                workerLoop()
-                                            }
-                                        end if
-                                    end workerLoop
-                                    val fiber = IOTask(workerLoop(), safepoint.copyTrace(trace), context, parent)
-                                    state.interrupts(fiber)
-                                    fiber.onComplete(state)
-                                    loop(i + 1)
-                            loop(0)
-                            state
-                        }
+                        // the fiber these workers are launched from, which is what a parent interrupt
+                        // reaches them through. What each worker inherits was decided upstream, where the
+                        // isolate captured once and attached per worker
+                        val parent: Maybe[IOPromise[?, ?]] = IOTask.currentTask()
+                        @tailrec def loop(i: Int): Unit =
+                            if i < numWorkers then
+                                def workerLoop(): Unit < (Abort[E] & Async) =
+                                    val idx = state.counter.getAndIncrement()
+                                    if idx >= size then ()
+                                    else
+                                        f(idx, items(idx)).map { value =>
+                                            state.complete(idx, value)
+                                            workerLoop()
+                                        }
+                                    end if
+                                end workerLoop
+                                val fiber = IOTask(boundary[E, Unit, Any](workerLoop()), parent)
+                                state.interrupts(fiber)
+                                fiber.onComplete(state)
+                                loop(i + 1)
+                        loop(0)
+                        state
                     }
                 end if
             end if
@@ -790,15 +851,11 @@ object Fiber:
             private inline def apply[E, A](state: Race[E, A], iterable: Iterable[A < (Abort[E] & Async)])(
                 using frame: Frame
             ): Fiber[A, Abort[E]] < Sync =
-                Isolate.internal.runDetached { (trace, context) =>
-                    val safepoint = Safepoint.get
+                Sync.defer {
                     // Read the interrupt parent once and pass it to each child (see Fiber.internal.foreachIndexed).
-                    val parent: Maybe[IOPromise[?, ?]] =
-                        safepoint.getInterceptor() match
-                            case p: IOPromise[?, ?] => Present(p)
-                            case _                  => Absent
+                    val parent: Maybe[IOPromise[?, ?]] = IOTask.currentTask()
                     foreach(iterable) { (_, v) =>
-                        val fiber = IOTask(v, safepoint.copyTrace(trace), context, parent = parent)
+                        val fiber = IOTask(boundary[E, A, Any](v), parent = parent)
                         state.onComplete(_ => fiber.interruptDiscard(Result.Panic(Interrupted(frame))))
                         fiber.onComplete(state)
                     }
@@ -901,22 +958,16 @@ object Fiber:
                             loop()
                         end apply
                     end State
-                    val state = new State
-                    Isolate.internal.runDetached { (trace, context) =>
-                        val safepoint             = Safepoint.get
-                        inline def interruptPanic = Result.Panic(Interrupted(frame))
-                        // Read the interrupt parent once and pass it to each child (see Fiber.internal.foreachIndexed).
-                        val parent: Maybe[IOPromise[?, ?]] =
-                            safepoint.getInterceptor() match
-                                case p: IOPromise[?, ?] => Present(p)
-                                case _                  => Absent
-                        foreach(iterable) { (idx, v) =>
-                            val fiber = IOTask(v, safepoint.copyTrace(trace), context, parent = parent)
-                            state.onComplete(_ => discard(fiber.interrupt(interruptPanic)))
-                            fiber.onComplete(state(idx, _))
-                        }
-                        state
+                    val state                 = new State
+                    inline def interruptPanic = Result.Panic(Interrupted(frame))
+                    // Read the interrupt parent once and pass it to each child (see Fiber.internal.foreachIndexed).
+                    val parent: Maybe[IOPromise[?, ?]] = IOTask.currentTask()
+                    foreach(iterable) { (idx, v) =>
+                        val fiber = IOTask(boundary[E, A, Any](v), parent = parent)
+                        state.onComplete(_ => discard(fiber.interrupt(interruptPanic)))
+                        fiber.onComplete(state(idx, _))
                     }
+                    state
                 }
             end if
         end gather
