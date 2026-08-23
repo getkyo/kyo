@@ -7,6 +7,7 @@ import java.util.concurrent.TimeUnit
 import kyo.Clock.Deadline
 import kyo.Clock.Stopwatch
 import kyo.internal.Reducible
+import kyo.kernel.Isolate
 import kyo.scheduler.IOPromise
 import kyo.scheduler.util.Threads
 import scala.annotation.tailrec

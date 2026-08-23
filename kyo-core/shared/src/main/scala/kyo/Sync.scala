@@ -40,7 +40,7 @@ object Sync:
       * @return
       *   The suspended computation wrapped in an Sync effect.
       */
-    inline def defer[A, S](inline f: Safepoint ?=> A < S)(using inline frame: Frame): A < (Sync & S) =
+    inline def defer[A, S](inline f: => A < S)(using inline frame: Frame): A < (Sync & S) =
         Effect.deferInline(f)
 
     /** Ensures that a finalizer is run after the main computation, regardless of success or failure.
@@ -77,9 +77,10 @@ object Sync:
     def acquireReleaseWith[A, S1](acquire: => A < (Sync & S1))(
         release: A => Any < (Sync & Abort[Throwable])
     )[B, S2](use: A => B < S2)(using Frame): B < (Sync & S1 & S2) =
-        Sync.defer(acquire).map { resource =>
-            Sync.ensure(release(resource))(use(resource))
-        }
+        // the kernel bracket is this operation: the scope installs the moment the acquire settles, with no
+        // slice able to end in between, and it owns the release from there whether the use completes,
+        // throws, or is abandoned. Only the release's own Abort surfaces, as a throw
+        Effect.bracket(acquire)(resource => Abort.runWith[Throwable](release(resource))(_.getOrThrow))(use)
 
     /** Ensures that a finalizer is run after the computation, regardless of success or failure.
       *
@@ -108,7 +109,11 @@ object Sync:
     inline def ensure[A, S](f: Maybe[Error[Any]] => Any < (Sync & Abort[Throwable]))(v: => A < S)(using
         inline frame: Frame
     ): A < (Sync & S) =
-        Unsafe.defer(Safepoint.ensure(ex => Sync.Unsafe.evalOrThrow(f(ex)))(v))
+        // the kernel bracket owns the exactly-once guarantee and the outcome: Absent on success, the
+        // error when the computation aborts or throws, and the boundary's own error when a parked
+        // remainder is discarded. The finalizer runs in the ambient context, so locals bound around
+        // the ensure reach it; only its Abort surfaces as a throw, keeping the panic semantics
+        Effect.bracket(())((_, outcome: Result[Nothing, A]) => Abort.runWith[Throwable](f(outcome.error))(_.getOrThrow))(_ => v)
 
     /** Retrieves a local value and applies a function that can perform side effects.
       *

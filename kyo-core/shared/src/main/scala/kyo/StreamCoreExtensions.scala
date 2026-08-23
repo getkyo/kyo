@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.kernel.ArrowEffect
+import kyo.kernel.Isolate
 import scala.annotation.implicitNotFound
 import scala.util.NotGiven
 

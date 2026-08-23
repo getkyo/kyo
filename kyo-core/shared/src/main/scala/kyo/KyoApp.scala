@@ -1,5 +1,7 @@
 package kyo
 
+import kyo.kernel.Isolate
+
 /** An abstract base class for Kyo applications.
   *
   * This class provides a foundation for building applications using the Kyo framework, with built-in support for logging, random number
