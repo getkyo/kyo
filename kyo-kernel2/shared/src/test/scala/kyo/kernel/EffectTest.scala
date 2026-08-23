@@ -1290,6 +1290,50 @@ class EffectTest extends AnyFreeSpec:
             assert(Eval(twice) == 36)
             assert(events == List("branch 10", "branch 20", "release inner", "release outer"))
         }
+
+        // the sibling of the held-continuation case above, with the continuation applied more than once
+        // after the drain has already run: neither application may release again
+        "a continuation held past the end of the eval and applied twice releases only once" in {
+            var count = 0
+            var stash = Maybe.empty[Arrow[Int, Int, Ask & Any]]
+            val v     = Effect.bracket(Effect.defer(1))(_ => count += 1)(r => ask.map(_ + r))
+            val dropped =
+                ArrowEffect.handleCont(Tag[Ask], v)(
+                    [C] =>
+                        (_, cont) =>
+                            stash = Maybe(cont)
+                            -1
+                    ,
+                    a => a
+                )
+            assert(Eval(dropped) == -1)
+            assert(count == 1)
+            assert(Eval(answerAsk(0)(stash.get(2))) == 3)
+            assert(Eval(answerAsk(0)(stash.get(5))) == 6)
+            assert(count == 1)
+        }
+
+        // handleFirst has its own dispatch, and Choice.runStream drives it multi-shot the same way
+        // Choice.run drives handleCont
+        "no branch of a multi-shot handleFirst clause reads a resource that was already released" in {
+            var closed             = false
+            var seen               = List.empty[String]
+            val acquire: Int < Ask = Effect.defer(1)
+            val v =
+                Effect.bracket(acquire)(_ => closed = true) { r =>
+                    ask.map { a =>
+                        seen :+= (if closed then s"branch $a after release" else s"branch $a")
+                        a + r
+                    }
+                }
+            val branches: Int < Ask =
+                ArrowEffect.handleFirst(Tag[Ask], v)(
+                    handle = [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
+                    done = a => a
+                )
+            assert(Eval(answerAsk(0)(branches)) == 32)
+            assert(seen == List("branch 10", "branch 20"))
+        }
     }
 
 end EffectTest
