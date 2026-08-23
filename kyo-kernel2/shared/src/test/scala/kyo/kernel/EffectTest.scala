@@ -1110,6 +1110,186 @@ class EffectTest extends AnyFreeSpec:
             assert(Eval(v) == -1)
             assert(events == List("clause stopped", "release 1"))
         }
+
+        // the shape Choice and Parse handlers have: one clause applies the same continuation once per
+        // branch. The suspension is inside the use, so the dumped continuation carries the extent's
+        // finalizer and every branch re-enters the same extent. One resource was acquired, so one release
+        // is owed, and it cannot come due while a branch that can still read the resource has not run
+        "a resource shared by a multi-shot clause outlives every branch" in {
+            var events             = List.empty[String]
+            val acquire: Int < Ask = Effect.defer { events :+= "acquire"; 1 }
+            val v =
+                Effect.bracket(acquire)(r => events :+= s"release $r") { r =>
+                    ask.map { a =>
+                        events :+= s"use $a with $r"
+                        a + r
+                    }
+                }
+            val twice =
+                ArrowEffect.handleCont(Tag[Ask], v)(
+                    [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
+                    a => a
+                )
+            assert(Eval(twice) == 32)
+            assert(events == List("acquire", "use 10 with 1", "use 20 with 1", "release 1"))
+        }
+
+        // the same clause shape with the suspension in the acquire instead: each branch acquires its own
+        // resource, so each owes its own release, and each release belongs at the end of its own branch
+        "a multi-shot clause that acquires per branch releases each where its branch ends" in {
+            var events = List.empty[String]
+            val v =
+                Effect.bracket(ask)(r => events :+= s"release $r") { r =>
+                    events :+= s"use $r"
+                    r * 10
+                }
+            val thrice =
+                ArrowEffect.handleCont(Tag[Ask], v)(
+                    [C] => (_, cont) => cont(1).map(a => cont(2).map(b => cont(3).map(c => a + b + c))),
+                    a => a
+                )
+            assert(Eval(thrice) == 60)
+            assert(events == List("use 1", "release 1", "use 2", "release 2", "use 3", "release 3"))
+        }
+
+        // the guarantee's observable shape, which nothing pinned before: a handler cannot discard a
+        // release, and the drain that owes it runs after every handler, so by the time it runs the
+        // handler's own continuation has already gone
+        "a discarded continuation releases after the handler's own continuation has run" in {
+            var events             = List.empty[String]
+            val acquire: Int < Ask = Effect.defer { events :+= "acquire"; 1 }
+            val v                  = Effect.bracket(acquire)(r => events :+= s"release $r")(r => ask.map(_ + r))
+            val dropped            = ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, _) => -1, a => a)
+            val after =
+                dropped.map { a =>
+                    events :+= s"after $a"
+                    a
+                }
+            assert(Eval(after) == -1)
+            assert(events == List("acquire", "after -1", "release 1"))
+        }
+
+        // a clause runs outside the region it serves, and the continuation it is handed produces the
+        // region's body result rather than the handled result: `done` is applied below the region's own
+        // entry, so a bracket the clause opens around the continuation ends before `done` runs
+        "a bracket a clause opens around the continuation releases when the body result settles" in {
+            var events       = List.empty[String]
+            val v: Int < Ask = ask.map(_ + 1)
+            val handled =
+                ArrowEffect.handleCont(Tag[Ask], v)(
+                    [C] =>
+                        (_, cont) =>
+                            Effect.bracket(Effect.defer { events :+= "clause acquire"; 41 })(_ => events :+= "clause release")(r =>
+                                cont(r)
+                        ),
+                    a =>
+                        events :+= s"done $a"
+                        a
+                )
+            assert(Eval(handled) == 42)
+            assert(events == List("clause acquire", "clause release", "done 42"))
+        }
+
+        "a bracket outside two regions releases at its own extent, not when an inner region discards" in {
+            var events = List.empty[String]
+            val v: Int < Any =
+                Effect.bracket(Effect.defer { events :+= "acquire"; 1 })(r => events :+= s"release $r") { r =>
+                    ArrowEffect.handleCont(Tag[Ask], ask.map(_ + r))([C] => (_, _) => -1, a => a).map { a =>
+                        events :+= s"inner done $a"
+                        a + 100
+                    }
+                }
+            assert(Eval(v) == 99)
+            assert(events == List("acquire", "inner done -1", "release 1"))
+        }
+
+        // both paths to the release can be reached for one resource under a multi-shot clause: the arrow
+        // on the branch that completed, and the unwind on the branch that throws. The flag has to make
+        // them exclusive, and the failure must not be swallowed by a release that is no longer owed
+        "a later branch that throws does not release again what an earlier branch released" in {
+            var events             = List.empty[String]
+            val acquire: Int < Ask = Effect.defer { events :+= "acquire"; 1 }
+            val boom               = new RuntimeException("boom")
+            val v =
+                Effect.bracket(acquire)(r => events :+= s"release $r") { r =>
+                    ask.map { a =>
+                        if a < 0 then throw boom else a + r
+                    }
+                }
+            val twice =
+                ArrowEffect.handleCont(Tag[Ask], v)(
+                    [C] => (_, cont) => cont(10).map(a => cont(-1).map(b => a + b)),
+                    a => a
+                )
+            assert(intercept[RuntimeException](Eval(twice)) eq boom)
+            assert(events == List("acquire", "release 1"))
+        }
+
+        // the ordering stated as the safety property it stands for: no branch may observe the resource
+        // after the release that closed it
+        "no branch of a multi-shot clause reads a resource that was already released" in {
+            var closed             = false
+            var seen               = List.empty[String]
+            val acquire: Int < Ask = Effect.defer(1)
+            val v =
+                Effect.bracket(acquire)(_ => closed = true) { r =>
+                    ask.map { a =>
+                        seen :+= (if closed then s"branch $a after release" else s"branch $a")
+                        a + r
+                    }
+                }
+            val twice =
+                ArrowEffect.handleCont(Tag[Ask], v)(
+                    [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
+                    a => a
+                )
+            assert(Eval(twice) == 32)
+            assert(seen == List("branch 10", "branch 20"))
+        }
+
+        // Choice.run's shape: one clause runs the same continuation once per input. Parse reaches it the
+        // same way when it explores an alternative after backtracking. Three branches, so a release that
+        // comes due at the first is visible to the two after it
+        "no branch of a Choice-shaped clause reads a resource that was already released" in {
+            var closed             = false
+            var seen               = List.empty[String]
+            val acquire: Int < Ask = Effect.defer(100)
+            val v =
+                Effect.bracket(acquire)(_ => closed = true) { r =>
+                    ask.map { a =>
+                        seen :+= (if closed then s"branch $a after release" else s"branch $a")
+                        a + r
+                    }
+                }
+            val branches =
+                ArrowEffect.handleCont(Tag[Ask], v)(
+                    [C] => (_, cont) => cont(1).map(a => cont(2).map(b => cont(3).map(c => a + b + c))),
+                    a => a
+                )
+            assert(Eval(branches) == 306)
+            assert(seen == List("branch 1", "branch 2", "branch 3"))
+        }
+
+        "nested brackets shared by a multi-shot clause both survive every branch" in {
+            var events           = List.empty[String]
+            val outer: Int < Ask = Effect.defer(1)
+            val v =
+                Effect.bracket(outer)(_ => events :+= "release outer") { o =>
+                    Effect.bracket(Effect.defer(2))(_ => events :+= "release inner") { i =>
+                        ask.map { a =>
+                            events :+= s"branch $a"
+                            a + o + i
+                        }
+                    }
+                }
+            val twice =
+                ArrowEffect.handleCont(Tag[Ask], v)(
+                    [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
+                    a => a
+                )
+            assert(Eval(twice) == 36)
+            assert(events == List("branch 10", "branch 20", "release inner", "release outer"))
+        }
     }
 
 end EffectTest
