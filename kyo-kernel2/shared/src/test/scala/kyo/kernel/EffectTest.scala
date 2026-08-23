@@ -574,8 +574,8 @@ class EffectTest extends AnyFreeSpec:
 
         // the two paths to a release, the arrow and the drain, have to be exclusive. A continuation held past
         // the end of the eval is where they meet: the drain has already run by the time the arrow is
-        // applied, and nothing orders those two events
-        "a continuation held past the end of the eval does not release again" in {
+        // applied, so the scope the continuation carries is gone and entering it again is refused
+        "a continuation held past the end of the eval refuses to run again" in {
             var count = 0
             var stash = Maybe.empty[Arrow[Int, Int, Ask & Any]]
             val v     = Effect.bracket(Effect.defer(1))(_ => count += 1)(r => ask.map(_ + r))
@@ -590,8 +590,8 @@ class EffectTest extends AnyFreeSpec:
                 )
             assert(Eval(dropped) == -1)
             assert(count == 1)
-            // the stashed continuation still holds the finalizer arrow, and applying it must not release again
-            assert(Eval(answerAsk(0)(stash.get(2))) == 3)
+            discard(intercept[Finalizer.Spent](Eval(answerAsk(0)(stash.get(2)))))
+            // refused rather than released a second time: the drain's release stands as the only one
             assert(count == 1)
         }
 
@@ -1111,11 +1111,12 @@ class EffectTest extends AnyFreeSpec:
             assert(events == List("clause stopped", "release 1"))
         }
 
-        // the shape Choice and Parse handlers have: one clause applies the same continuation once per
-        // branch. The suspension is inside the use, so the dumped continuation carries the extent's
-        // finalizer and every branch re-enters the same extent. One resource was acquired, so one release
-        // is owed, and it cannot come due while a branch that can still read the resource has not run
-        "a resource shared by a multi-shot clause outlives every branch" in {
+        // the shape a Choice handler has: one clause applies the same continuation once per branch. The
+        // suspension is inside the use, so the dumped continuation carries the extent's finalizer and every
+        // branch would re-enter the same extent. One resource was acquired, so one release is owed, and it
+        // comes due where the first branch ends: the second branch cannot have it, and is refused before it
+        // runs rather than handed a resource that is gone
+        "a resource a multi-shot clause shares is released at the first branch, and the second is refused" in {
             var events             = List.empty[String]
             val acquire: Int < Ask = Effect.defer { events :+= "acquire"; 1 }
             val v =
@@ -1130,8 +1131,9 @@ class EffectTest extends AnyFreeSpec:
                     [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                     a => a
                 )
-            assert(Eval(twice) == 32)
-            assert(events == List("acquire", "use 10 with 1", "use 20 with 1", "release 1"))
+            discard(intercept[Finalizer.Spent](Eval(twice)))
+            // the refusal lands before the second branch's body, so nothing follows the release
+            assert(events == List("acquire", "use 10 with 1", "release 1"))
         }
 
         // the same clause shape with the suspension in the acquire instead: each branch acquires its own
@@ -1203,10 +1205,10 @@ class EffectTest extends AnyFreeSpec:
             assert(events == List("acquire", "inner done -1", "release 1"))
         }
 
-        // both paths to the release can be reached for one resource under a multi-shot clause: the arrow
-        // on the branch that completed, and the unwind on the branch that throws. The flag has to make
-        // them exclusive, and the failure must not be swallowed by a release that is no longer owed
-        "a later branch that throws does not release again what an earlier branch released" in {
+        // the refusal is what the second branch meets, whatever that branch would have gone on to do. Here
+        // it would have thrown, and it never gets the chance: the scope is entered before its body runs, so
+        // the failure the branch carries is the refusal and not its own
+        "a later branch is refused before it can run, throwing branch included" in {
             var events             = List.empty[String]
             val acquire: Int < Ask = Effect.defer { events :+= "acquire"; 1 }
             val boom               = new RuntimeException("boom")
@@ -1221,12 +1223,14 @@ class EffectTest extends AnyFreeSpec:
                     [C] => (_, cont) => cont(10).map(a => cont(-1).map(b => a + b)),
                     a => a
                 )
-            assert(intercept[RuntimeException](Eval(twice)) eq boom)
+            val failure = intercept[Finalizer.Spent](Eval(twice))
+            assert(!failure.getSuppressed.contains(boom))
             assert(events == List("acquire", "release 1"))
         }
 
         // the ordering stated as the safety property it stands for: no branch may observe the resource
-        // after the release that closed it
+        // after the release that closed it. The flag is what a branch would read, and the point is that
+        // no branch ever gets far enough to read it as closed
         "no branch of a multi-shot clause reads a resource that was already released" in {
             var closed             = false
             var seen               = List.empty[String]
@@ -1243,14 +1247,14 @@ class EffectTest extends AnyFreeSpec:
                     [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                     a => a
                 )
-            assert(Eval(twice) == 32)
-            assert(seen == List("branch 10", "branch 20"))
+            discard(intercept[Finalizer.Spent](Eval(twice)))
+            assert(seen == List("branch 10"))
         }
 
-        // Choice.run's shape: one clause runs the same continuation once per input. Parse reaches it the
-        // same way when it explores an alternative after backtracking. Three branches, so a release that
-        // comes due at the first is visible to the two after it
-        "no branch of a Choice-shaped clause reads a resource that was already released" in {
+        // Choice.run's shape: one clause runs the same continuation once per input. Three branches rather
+        // than two, so the refusal is shown to stop the whole fan-out at the first re-entry rather than
+        // letting the later ones through
+        "a Choice-shaped clause is refused at its second branch" in {
             var closed             = false
             var seen               = List.empty[String]
             val acquire: Int < Ask = Effect.defer(100)
@@ -1266,11 +1270,13 @@ class EffectTest extends AnyFreeSpec:
                     [C] => (_, cont) => cont(1).map(a => cont(2).map(b => cont(3).map(c => a + b + c))),
                     a => a
                 )
-            assert(Eval(branches) == 306)
-            assert(seen == List("branch 1", "branch 2", "branch 3"))
+            discard(intercept[Finalizer.Spent](Eval(branches)))
+            assert(seen == List("branch 1"))
         }
 
-        "nested brackets shared by a multi-shot clause both survive every branch" in {
+        // two scopes in the folded continuation rather than one: both come due at the first branch, and the
+        // refusal is raised by the innermost one the re-entry reaches
+        "nested brackets shared by a multi-shot clause are refused at the second branch" in {
             var events           = List.empty[String]
             val outer: Int < Ask = Effect.defer(1)
             val v =
@@ -1287,13 +1293,13 @@ class EffectTest extends AnyFreeSpec:
                     [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                     a => a
                 )
-            assert(Eval(twice) == 36)
-            assert(events == List("branch 10", "branch 20", "release inner", "release outer"))
+            discard(intercept[Finalizer.Spent](Eval(twice)))
+            assert(events == List("branch 10", "release inner", "release outer"))
         }
 
-        // the sibling of the held-continuation case above, with the continuation applied more than once
-        // after the drain has already run: neither application may release again
-        "a continuation held past the end of the eval and applied twice releases only once" in {
+        // the sibling of the held-continuation case above, applied twice rather than once: the refusal is
+        // not a one-time state that a second attempt slips past, and neither attempt releases again
+        "a continuation held past the end of the eval refuses every time it is applied" in {
             var count = 0
             var stash = Maybe.empty[Arrow[Int, Int, Ask & Any]]
             val v     = Effect.bracket(Effect.defer(1))(_ => count += 1)(r => ask.map(_ + r))
@@ -1308,14 +1314,14 @@ class EffectTest extends AnyFreeSpec:
                 )
             assert(Eval(dropped) == -1)
             assert(count == 1)
-            assert(Eval(answerAsk(0)(stash.get(2))) == 3)
-            assert(Eval(answerAsk(0)(stash.get(5))) == 6)
+            discard(intercept[Finalizer.Spent](Eval(answerAsk(0)(stash.get(2)))))
+            discard(intercept[Finalizer.Spent](Eval(answerAsk(0)(stash.get(5)))))
             assert(count == 1)
         }
 
-        // handleFirst has its own dispatch, and Choice.runStream drives it multi-shot the same way
-        // Choice.run drives handleCont
-        "no branch of a multi-shot handleFirst clause reads a resource that was already released" in {
+        // handleFirst runs its clause in handleCont's done lane, and Choice.runStream drives it multi-shot
+        // the same way Choice.run drives handleCont, so the refusal has to reach it by that route too
+        "a multi-shot handleFirst clause is refused at its second branch" in {
             var closed             = false
             var seen               = List.empty[String]
             val acquire: Int < Ask = Effect.defer(1)
@@ -1331,8 +1337,8 @@ class EffectTest extends AnyFreeSpec:
                     handle = [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                     done = a => a
                 )
-            assert(Eval(answerAsk(0)(branches)) == 32)
-            assert(seen == List("branch 10", "branch 20"))
+            discard(intercept[Finalizer.Spent](Eval(answerAsk(0)(branches))))
+            assert(seen == List("branch 10"))
         }
 
         // why re-acquiring on re-entry cannot rescue this shape: the continuation folded from a suspension
@@ -1356,17 +1362,20 @@ class EffectTest extends AnyFreeSpec:
                     [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                     a => a
                 )
-            assert(Eval(twice) == 32)
+            discard(intercept[Finalizer.Spent](Eval(twice)))
+            // one acquire for the whole clause, and the branch that did run held it: re-entry has no
+            // channel to hand a second branch anything else, which is why refusing is the only answer
             assert(acquired == 1)
-            assert(seen == List(1, 1))
+            assert(seen == List(1))
         }
 
         // applying a folded chain only BUILDS a node (Arrow.scala:196-197): the entries are re-installed
         // when the eval reaches that node, not when the clause constructs it. So a clause can hand back
         // branch values its region never evaluates, which is what Chunk.from(input).map(cont(_)) does in
-        // Choice.runStream. Any rule that ends the extent when the capturing region completes has to
-        // answer for the branches that had not started yet
-        "a branch built inside a clause does not read a released resource when it is evaluated later" in {
+        // Choice.runStream. A single application is enough to reach this: the branch below is built once
+        // and evaluated in a later eval, by which point the drain has released, and it is refused before
+        // its body runs rather than reading what is gone
+        "a branch built inside a clause and evaluated later is refused" in {
             var closed = false
             var seen   = List.empty[String]
             var stash  = Maybe.empty[Int < Ask]
@@ -1387,8 +1396,10 @@ class EffectTest extends AnyFreeSpec:
                     a => a
                 )
             assert(Eval(built) == -1)
-            assert(Eval(answerAsk(0)(stash.get)) == 11)
-            assert(seen == List("branch 10"))
+            assert(closed)
+            discard(intercept[Finalizer.Spent](Eval(answerAsk(0)(stash.get))))
+            // the refusal lands at the install, so the branch's body never ran at all
+            assert(seen == Nil)
         }
 
         // the mirror of the failing multi-shot cases: what breaks there is that the release point sits
