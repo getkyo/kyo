@@ -1335,6 +1335,36 @@ class EffectTest extends AnyFreeSpec:
             assert(seen == List("branch 10", "branch 20"))
         }
 
+        // applying a folded chain only BUILDS a node (Arrow.scala:196-197): the entries are re-installed
+        // when the eval reaches that node, not when the clause constructs it. So a clause can hand back
+        // branch values its region never evaluates, which is what Chunk.from(input).map(cont(_)) does in
+        // Choice.runStream. Any rule that ends the extent when the capturing region completes has to
+        // answer for the branches that had not started yet
+        "a branch built inside a clause does not read a released resource when it is evaluated later" in {
+            var closed = false
+            var seen   = List.empty[String]
+            var stash  = Maybe.empty[Int < Ask]
+            val v =
+                Effect.bracket(Effect.defer(1))(_ => closed = true) { r =>
+                    ask.map { a =>
+                        seen :+= (if closed then s"branch $a after release" else s"branch $a")
+                        a + r
+                    }
+                }
+            val built =
+                ArrowEffect.handleCont(Tag[Ask], v)(
+                    [C] =>
+                        (_, cont) =>
+                            stash = Maybe(cont(10))
+                            -1
+                    ,
+                    a => a
+                )
+            assert(Eval(built) == -1)
+            assert(Eval(answerAsk(0)(stash.get)) == 11)
+            assert(seen == List("branch 10"))
+        }
+
         // the mirror of the failing multi-shot cases: what breaks there is that the release point sits
         // INSIDE the region being replayed. With the bracket enclosing the multi-shot region instead, its
         // finalizer is below the handler, never folded into the dumped continuation, and the extent ends
