@@ -1335,6 +1335,32 @@ class EffectTest extends AnyFreeSpec:
             assert(seen == List("branch 10", "branch 20"))
         }
 
+        // why re-acquiring on re-entry cannot rescue this shape: the continuation folded from a suspension
+        // INSIDE the use starts mid-use, and the resource is already closed over by the user code that
+        // `use` built. A fresh acquire would reach the binding entry but not those closures. Contrast the
+        // suspension-in-acquire case above, where the whole use is re-entered from the top and each branch
+        // really does get its own resource
+        "branches of a multi-shot clause share the resource the use closed over" in {
+            var acquired           = 0
+            var seen               = List.empty[Int]
+            val acquire: Int < Ask = Effect.defer { acquired += 1; acquired }
+            val v =
+                Effect.bracket(acquire)(_ => ()) { r =>
+                    ask.map { a =>
+                        seen :+= r
+                        a + r
+                    }
+                }
+            val twice =
+                ArrowEffect.handleCont(Tag[Ask], v)(
+                    [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
+                    a => a
+                )
+            assert(Eval(twice) == 32)
+            assert(acquired == 1)
+            assert(seen == List(1, 1))
+        }
+
         // applying a folded chain only BUILDS a node (Arrow.scala:196-197): the entries are re-installed
         // when the eval reaches that node, not when the clause constructs it. So a clause can hand back
         // branch values its region never evaluates, which is what Chunk.from(input).map(cont(_)) does in
