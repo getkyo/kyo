@@ -1334,6 +1334,97 @@ class EffectTest extends AnyFreeSpec:
             assert(Eval(answerAsk(0)(branches)) == 32)
             assert(seen == List("branch 10", "branch 20"))
         }
+
+        // The four below share one root cause, independent of the multi-shot ones above. `dump()` bounds its
+        // fold at a Handler or a Recover (Stack.scala:236) and a Finalizer is neither, so a value delivered
+        // into a map body or a done transform folds the finalizer away and advances head past it. If that
+        // body throws, both delivery arms rethrow through attachThrow (Eval.scala:676, 689), which only
+        // attaches a trace, where the clause-throw path deliberately pushes the fold back first
+        // (Eval.scala:549-553). The unwind then cannot see the release: it does not run on the way down, it
+        // runs after any recovery below it, and it is told Abandoned rather than the failure.
+
+        "a recovery outside the bracket runs after the release, which is told the failure" in {
+            var order    = List.empty[String]
+            var outcomes = List.empty[Result[Nothing, Int]]
+            val boom     = new RuntimeException("boom")
+            val v: Int < Any =
+                Effect.catching {
+                    Effect.bracket(Effect.defer(1))((_, r: Result[Nothing, Int]) =>
+                        order :+= "release"
+                        outcomes :+= r
+                    ) { r =>
+                        Effect.defer(r).map(_ => (throw boom): Int)
+                    }
+                } { _ =>
+                    order :+= "recover"
+                    -1
+                }
+            assert(Eval(v) == -1)
+            assert(order == List("release", "recover"))
+            assert(outcomes == List(Result.panic(boom)))
+        }
+
+        "nested brackets separated by a handler still release innermost first on a failure" in {
+            var order = List.empty[String]
+            val boom  = new RuntimeException("boom")
+            val v: Int < Any =
+                Effect.bracket(Effect.defer(1))(_ => order :+= "outer") { _ =>
+                    answerAsk(1) {
+                        Effect.bracket(Effect.defer(2))(_ => order :+= "inner") { i =>
+                            Effect.defer(i).map(_ => (throw boom): Int)
+                        }
+                    }
+                }
+            assert(intercept[RuntimeException](Eval(v)) eq boom)
+            assert(order == List("inner", "outer"))
+        }
+
+        "a release that throws on the completing path still runs the outer release before a recovery" in {
+            var order    = List.empty[String]
+            var outcomes = List.empty[Result[Nothing, Int]]
+            val boom     = new IllegalStateException("inner release")
+            val v: Int < Any =
+                Effect.catching {
+                    Effect.bracket(Effect.defer("outer"))((_, r: Result[Nothing, Int]) =>
+                        order :+= "outer release"
+                        outcomes :+= r
+                    ) { _ =>
+                        Effect.bracket(Effect.defer("inner"))(_ => throw boom)(_ => 1)
+                    }
+                } { _ =>
+                    order :+= "recover"
+                    -1
+                }
+            assert(Eval(v) == -1)
+            assert(order == List("outer release", "recover"))
+            assert(outcomes == List(Result.panic(boom)))
+        }
+
+        // the site a throwing handleFirst clause reaches, since handleFirst runs its clause in the done
+        // lane of handleCont (ArrowEffect.scala:244, 252-257)
+        "a done transform that throws releases the bracket below it before a recovery" in {
+            var order    = List.empty[String]
+            var outcomes = List.empty[Result[Nothing, Int]]
+            val boom     = new RuntimeException("done")
+            val v: Int < Any =
+                Effect.catching {
+                    Effect.bracket(Effect.defer(1))((_, r: Result[Nothing, Int]) =>
+                        order :+= "release"
+                        outcomes :+= r
+                    ) { r =>
+                        ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + r))(
+                            [C] => _ => Loop.continue(1: Int < Any),
+                            _ => (throw boom): Int
+                        )
+                    }
+                } { _ =>
+                    order :+= "recover"
+                    -1
+                }
+            assert(Eval(v) == -1)
+            assert(order == List("release", "recover"))
+            assert(outcomes == List(Result.panic(boom)))
+        }
     }
 
 end EffectTest
