@@ -117,31 +117,38 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                                     removeInterrupt(promise)
                                     cont(r)
                                 case Absent =>
-                                    // waiting: the operation is answered here rather than raised again, so
-                                    // the continuation goes to the completion and the slice ends with nothing
-                                    // left to run. Resuming re-wraps it, which the region being stateless
-                                    // makes sound: nothing was accumulated for the next slice to lose.
+                                    // Waiting. The operation is deliberately left unanswered: it is raised
+                                    // again behind a deferral, with a stop requested, so the eval parks in
+                                    // front of it rather than running off the end.
                                     //
-                                    // `status` is what tells `run` the remainder belongs to this completion
-                                    // and must not be cleared. It is cleared by `run`, never here, so a
-                                    // promise that is already complete and calls back inline still leaves
-                                    // `run` able to see that it parked.
+                                    // Answering without applying the continuation is how a region says the
+                                    // computation is over, and a suspended fiber is not over. The eval
+                                    // drains the finalizers on that exit, correctly, since as far as it can
+                                    // see nothing is left; the continuation meanwhile lives in this
+                                    // completion, and resuming it re-enters a bracket whose release already
+                                    // ran. Parking is what distinguishes the two, and it is the only exit
+                                    // that carries the outstanding releases out with the remainder instead
+                                    // of running them.
+                                    //
+                                    // Nothing composes over what the eval hands back, so the park stays at
+                                    // the head of `curr`, where `finalizeResources` can still find it if
+                                    // this fiber is abandoned rather than resumed.
+                                    //
+                                    // The completion only reschedules. Resuming replays this clause, and
+                                    // the poll above answers it in place the second time.
+                                    //
+                                    // `status` is what tells `run` the slice ended waiting rather than
+                                    // finished. It is cleared by `run`, never here, so a promise that
+                                    // completes inline still leaves `run` able to see that it parked.
                                     status = Present(promise)
-                                    promise.onComplete { r =>
+                                    promise.onComplete { _ =>
                                         removeInterrupt(promise)
-                                        // deferred rather than applied here: this runs on whichever thread
-                                        // completed the promise, and applying an arrow to a settled value
-                                        // calls the continuation's own function on the spot. That work
-                                        // belongs to this fiber's next slice, where `run` holds the catch
-                                        // that turns a throw into this promise's panic. On the completer's
-                                        // thread the throw would land in an unrelated fiber instead, and
-                                        // this one would be left scheduled by nobody.
-                                        // the region's own effect is what the fresh boundary below
-                                        // answers, so it is dropped from the row here
-                                        curr = boundary(Sync.defer(cont(r).asInstanceOf[Unit < (Abort[E] & Async)]))
                                         Scheduler.get.schedule(this)
                                     }
-                                    ()
+                                    discard(Safepoint.stop(Thread.currentThread()))
+                                    Effect.deferInline(
+                                        ArrowEffect.suspendWith[C](Tag[Async.Join], joinInput)(r => cont(r))
+                                    )
                             end match
                         case other =>
                             bug(s"fiber boundary received an operation it does not answer: $other")
@@ -209,11 +216,15 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                         cleared
             status match
                 case Present(_: IOPromise[?, ?]) =>
-                    // the boundary parked: it answered the join by handing the continuation to the
-                    // completion, so `curr` belongs to that completion and `next` is the empty value the
-                    // region ended with. Neither is touched here. The status is cleared here rather than in
-                    // the completion, so a promise that was already complete and called back inline still
-                    // leaves this able to see that it parked
+                    // the boundary parked on another promise: `next` is the park the eval handed back,
+                    // carrying the regions above it and the releases they still owe, and it is what the
+                    // wakeup resumes. Kept as it was handed over, not composed with anything, so `abandon`
+                    // can still see the park if this fiber is dropped instead. No result was produced and
+                    // nothing reschedules from here: the promise's completion does that.
+                    //
+                    // The status is cleared here rather than in the completion, so a promise that was
+                    // already complete and called back inline still leaves this able to see that it parked.
+                    curr = next
                     status = Absent
                     Task.Done
                 case _ =>
