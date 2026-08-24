@@ -87,8 +87,6 @@ object Eval:
     type StateX
     type SX
 
-    private inline given Frame = Frame.internal
-
     // not inline: the eval is ~555 instructions and HotSpot refuses to inline it at any call site, so an
     // inline definition bought nothing at runtime and emitted a private copy of the whole interpreter per
     // call site. PendingTest alone carried 132 of them.
@@ -180,11 +178,13 @@ object Eval:
                 r match
                     case _: Kyo[OX[CX], EX & SX] @unchecked =>
                         val k = stack.dump[OX[CX], AX, EX & SX](pos)
-                        r.map(a => k(a))
+                        // under the operation's own frame: what this composes is the region around the
+                        // answer to that operation, so the operation is where the computation still stands
+                        r.map(a => k(a))(using kyo.frame)
                     case _ => r
                 end match
             case 2 =>
-                clauseSuspendedLoop(stack, h, ran.asInstanceOf[Kyo[Loop.Outcome[OX[CX] < (EX & SX), BX], SX]], pos)
+                clauseSuspendedLoop(stack, h, ran.asInstanceOf[Kyo[Loop.Outcome[OX[CX] < (EX & SX), BX], SX]], pos, kyo.frame)
             case _ =>
                 stack.truncate(pos + 1)
                 ran.asInstanceOf[Any < Nothing]
@@ -226,7 +226,7 @@ object Eval:
                     r match
                         case _: Kyo[OX[CX], EX & SX] @unchecked =>
                             val k2 = stack.dump[OX[CX], AX, EX & SX](if out.cont eq Arrow.Id then 0 else 1)
-                            r.map(a => k2(a))
+                            r.map(a => k2(a))(using kyo.frame)
                         case _ => r
                     end match
             case 2 =>
@@ -234,7 +234,7 @@ object Eval:
                     stack.push(out.cont)
                     1
                 else 0
-                clauseSuspendedLoop(stack, h, ran.asInstanceOf[Kyo[Loop.Outcome[OX[CX] < (EX & SX), BX], SX]], pos2)
+                clauseSuspendedLoop(stack, h, ran.asInstanceOf[Kyo[Loop.Outcome[OX[CX] < (EX & SX), BX], SX]], pos2, kyo.frame)
             case _ =>
                 stack.truncate(1)
                 ran.asInstanceOf[Any < Nothing]
@@ -277,20 +277,23 @@ object Eval:
         stack: Stack,
         h: HandlerLoop[IX, OX, EX, AX, BX, SX],
         clause: Kyo[Loop.Outcome[OX[CX] < (EX & SX), BX], SX],
-        pos: Int
+        pos: Int,
+        // the operation's own frame: this deferral and the resumption below stand where that operation
+        // did, so the frame travels with them rather than being replaced by the kernel's
+        _frame: Frame
     ): Any < Nothing =
         val k = stack.dump[OX[CX], AX, EX & SX](pos)
         discard(stack.pop())
         new Defer[Loop.Outcome[OX[CX] < (EX & SX), BX], BX, BX, EX & SX]
             with Step[Loop.Outcome[OX[CX] < (EX & SX), BX], BX, EX & SX]:
-            def frame = Frame.internal
+            def frame = _frame
             val value = clause
             def contA = this
             def contB = Arrow.id[BX]
             override def apply(o: Loop.Outcome[OX[CX] < (EX & SX), BX]) =
                 o match
                     case r: Loop.Continue[OX[CX] < (EX & SX)] @unchecked =>
-                        Effect.defer(r._1.map(a => k(a)), h)
+                        Effect.defer(r._1.map(a => k(a))(using _frame), h)
                     case v => v.asInstanceOf[BX]
             def apply[D, S2](o: Loop.Outcome[OX[CX] < (EX & SX), BX] < S2, cont: Arrow[BX, D, S2])
                 : D < (EX & SX & S2) =
@@ -332,11 +335,13 @@ object Eval:
                 r match
                     case _: Kyo[OX[CX], EX & SX] @unchecked =>
                         val k = stack.dump[OX[CX], AX, EX & SX](pos)
-                        r.map(a => k(a))
+                        // under the operation's own frame: what this composes is the region around the
+                        // answer to that operation, so the operation is where the computation still stands
+                        r.map(a => k(a))(using kyo.frame)
                     case _ => r
                 end match
             case 2 => // the clause itself suspended: dispatch it outside the region and re-enter on its outcome
-                clauseSuspended(stack, h, ran.asInstanceOf[Kyo[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], SX]], pos)
+                clauseSuspended(stack, h, ran.asInstanceOf[Kyo[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], SX]], pos, kyo.frame)
             case _ => // finished: the clause completed the region
                 stack.truncate(pos + 1)
                 ran.asInstanceOf[Any < Nothing]
@@ -385,7 +390,7 @@ object Eval:
                     r match
                         case _: Kyo[OX[CX], EX & SX] @unchecked =>
                             val k2 = stack.dump[OX[CX], AX, EX & SX](if out.cont eq Arrow.Id then 0 else 1)
-                            r.map(a => k2(a))
+                            r.map(a => k2(a))(using kyo.frame)
                         case _ => r
                     end match
                 end if
@@ -394,7 +399,7 @@ object Eval:
                     stack.push(out.cont)
                     1
                 else 0
-                clauseSuspended(stack, h, ran.asInstanceOf[Kyo[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], SX]], pos2)
+                clauseSuspended(stack, h, ran.asInstanceOf[Kyo[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], SX]], pos2, kyo.frame)
             case _ =>
                 stack.truncate(1)
                 ran.asInstanceOf[Any < Nothing]
@@ -409,20 +414,22 @@ object Eval:
         stack: Stack,
         h: HandlerLoopState[IX, OX, EX, AX, BX, SX, StateX],
         clause: Kyo[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], SX],
-        pos: Int
+        pos: Int,
+        // see clauseSuspendedLoop: the operation's frame travels with its own re-entry
+        _frame: Frame
     ): Any < Nothing =
         val k = stack.dump[OX[CX], AX, EX & SX](pos)
         discard(stack.pop())
         new Defer[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], BX, BX, EX & SX]
             with Step[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], BX, EX & SX]:
-            def frame = Frame.internal
+            def frame = _frame
             val value = clause
             def contA = this
             def contB = Arrow.id[BX]
             override def apply(o: Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX]) =
                 o match
                     case r: Loop.Continue2[StateX, OX[CX] < (EX & SX)] @unchecked =>
-                        Effect.defer(r._2.map(a => k(a)), HandlerLoopState(h, r._1))
+                        Effect.defer(r._2.map(a => k(a))(using _frame), HandlerLoopState(h, r._1))
                     case v => v.asInstanceOf[BX]
             def apply[D, S2](
                 o: Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX] < S2,

@@ -94,7 +94,7 @@ object ArrowEffect:
                                 slot: Safepoint.Slot,
                                 out: Out
                             ): Any =
-                                answersCont[I, O, E, A, B, S & S2, C](effectTag, handle, input0, k0, armed, slot, out)
+                                answersCont[I, O, E, A, B, S & S2, C](effectTag, handle, _frame, input0, k0, armed, slot, out)
                     def cont = Arrow.id[B]
             case _ => onDone(Nested.unnest(v))
         end match
@@ -299,7 +299,7 @@ object ArrowEffect:
                                 slot: Safepoint.Slot,
                                 out: Out
                             ): Any =
-                                answersCont[I, O, E, A, B, S & S2, X](effectTag, handle, input0, k0, armed, slot, out)
+                                answersCont[I, O, E, A, B, S & S2, X](effectTag, handle, _frame, input0, k0, armed, slot, out)
                     def cont                 = this
                     override def apply(b: B) = f(b)
                     def apply[D, S4](b: B < S4, cont: Arrow[C, D, S4]): D < (S & S2 & S3 & S4) =

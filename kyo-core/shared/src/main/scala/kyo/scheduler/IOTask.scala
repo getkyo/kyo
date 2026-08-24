@@ -358,7 +358,15 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                         // reason either way.
                         completeDiscard(new Result.Panic(ex))
                         curr = cleared
-                        if !NonFatal(ex) then throw ex
+                        if !NonFatal(ex) then
+                            // a fatal leaves `run` without reaching the arms below, which are what release
+                            // ownership. Ownership never given up is never reclaimed: the claim at the top
+                            // would fail for good, and with it every later schedule and the interrupt
+                            // path's own claim. Nothing is left to release, so the terminal state is the
+                            // honest one to leave behind
+                            status = Done
+                            throw ex
+                        end if
                         cleared
             status match
                 case promise: IOPromise[?, ?] =>

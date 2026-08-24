@@ -96,9 +96,9 @@ object Handler:
     /** Rebuilds the suspension a bailing answer loop still owes: the input under the tag, with the
       * continuation attached, exactly what the loop consumed to get where it is.
       */
-    private[kyo] def resuspend(t: Tag[Any], in: Any, k: Arrow[Any, Any, Any]): Any =
+    private[kyo] def resuspend(t: Tag[Any], in: Any, k: Arrow[Any, Any, Any], f: Frame): Any =
         new Kyo.Suspend[AnyK, AnyK, Nothing, Any, Any, Any]:
-            def frame = kyo.Frame.internal
+            def frame = f
             def tag   = t.asInstanceOf[Tag[Nothing]]
             def input = in
             def cont  = k
@@ -148,7 +148,7 @@ object Handler:
             if armed && Safepoint.stopped(slot) then
                 out.kind = 1
                 out.cont = null
-                result = Effect.defer(resuspend(effectTag.erased, in, k).asInstanceOf[Any < Any], Arrow.id[Any])
+                result = Effect.defer(resuspend(effectTag.erased, in, k, _frame).asInstanceOf[Any < Any], Arrow.id[Any])
                 running = false
             else
                 val o =
@@ -255,7 +255,7 @@ object Handler:
                 out.kind = 1
                 out.state = st
                 out.cont = null
-                result = Effect.defer(resuspend(effectTag.erased, in, k).asInstanceOf[Any < Any], Arrow.id[Any])
+                result = Effect.defer(resuspend(effectTag.erased, in, k, _frame).asInstanceOf[Any < Any], Arrow.id[Any])
                 running = false
             else
                 val o =
@@ -338,6 +338,9 @@ object Handler:
     inline def answersCont[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, C](
         inline effectTag: Tag[E],
         inline handle: [X] => (I[X], Arrow[O[X], A, E & S]) => A < (E & S),
+        // the region's frame, threaded so the template's own composition below never summons a
+        // Frame at the expansion site, and so a suspension this loop rebuilds keeps the one it had
+        _frame: Frame,
         input0: I[C],
         k0: Arrow[Any, Any, Any],
         armed: Boolean,
@@ -353,7 +356,7 @@ object Handler:
             if armed && Safepoint.stopped(slot) then
                 out.kind = 1
                 out.cont = null
-                result = Effect.defer(resuspend(effectTag.erased, in, k).asInstanceOf[Any < Any], Arrow.id[Any])
+                result = Effect.defer(resuspend(effectTag.erased, in, k, _frame).asInstanceOf[Any < Any], Arrow.id[Any])
                 running = false
             else
                 val next =
