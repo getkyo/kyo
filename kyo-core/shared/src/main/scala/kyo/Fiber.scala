@@ -699,14 +699,14 @@ object Fiber:
       *   A Fiber that completes with the result of the first Fiber to complete
       */
     private[kyo] def race[E, A, S, S2](using
-        isolate: Isolate[S, Sync, S2]
+        isolate: Isolate[S, Abort[E] & Async, S2]
     )(
         iterable: Iterable[A < (Abort[E] & Async & S)]
     )(using Frame): Fiber[A, Abort[E] & S2] < (Sync & S) =
         internal.race(iterable)
 
     private[kyo] def raceFirst[E, A, S, S2](using
-        isolate: Isolate[S, Sync, S2]
+        isolate: Isolate[S, Abort[E] & Async, S2]
     )(
         iterable: Iterable[A < (Abort[E] & Async & S)]
     )(using Frame): Fiber[A, Abort[E] & S2] < (Sync & S) =
@@ -727,7 +727,7 @@ object Fiber:
       *   Fiber containing successful results as a Chunk (size <= max)
       */
     private[kyo] def gather[E, A, S, S2](using
-        isolate: Isolate[S, Sync, S2]
+        isolate: Isolate[S, Abort[E] & Async, S2]
     )(max: Int)(
         iterable: Iterable[A < (Abort[E] & Async & S)]
     )(
@@ -738,7 +738,7 @@ object Fiber:
     private[kyo] object internal:
 
         def foreachIndexed[E, A, B, S, S2](using
-            isolate: Isolate[S, Sync, S2]
+            isolate: Isolate[S, Abort[E] & Async, S2]
         )(
             items: Chunk.Indexed[A],
             concurrency: Int
@@ -810,14 +810,14 @@ object Fiber:
         // isolate against one captured state, and its restore travels inside the fiber the way
         // `initUnscoped` puts it there, so what comes back carries the isolated effects in its own row
         def race[E, A, S, S2](using
-            isolate: Isolate[S, Sync, S2]
+            isolate: Isolate[S, Abort[E] & Async, S2]
         )(
             iterable: Iterable[A < (Abort[E] & Async & S)]
         )(using Frame): Fiber[A, Abort[E] & S2] < (Sync & S) =
             Race.success[E, A, S, S2](iterable)
 
         def raceFirst[E, A, S, S2](using
-            Isolate[S, Sync, S2]
+            Isolate[S, Abort[E] & Async, S2]
         )(
             iterable: Iterable[A < (Abort[E] & Async & S)]
         )(using Frame): Fiber[A, Abort[E] & S2] < (Sync & S) =
@@ -833,7 +833,7 @@ object Fiber:
             // scheduled, so an interrupt arriving while they are still launching cannot orphan one
             private inline def apply[E, A, S, S2](race: Race[E, A, S2], iterable: Iterable[A < (Abort[E] & Async & S)])(
                 using
-                isolate: Isolate[S, Sync, S2],
+                isolate: Isolate[S, Abort[E] & Async, S2],
                 frame: Frame
             ): Fiber[A, Abort[E] & S2] < (Sync & S) =
                 isolate.capture { state =>
@@ -851,14 +851,14 @@ object Fiber:
 
             inline def success[E, A, S, S2](iterable: Iterable[A < (Abort[E] & Async & S)])(
                 using
-                isolate: Isolate[S, Sync, S2],
+                isolate: Isolate[S, Abort[E] & Async, S2],
                 frame: Frame
             ): Fiber[A, Abort[E] & S2] < (Sync & S) =
                 apply[E, A, S, S2](new Success[E, A, S2](iterable.size, frame), iterable)
 
             inline def first[E, A, S, S2](iterable: Iterable[A < (Abort[E] & Async & S)])(
                 using
-                isolate: Isolate[S, Sync, S2],
+                isolate: Isolate[S, Abort[E] & Async, S2],
                 frame: Frame
             ): Fiber[A, Abort[E] & S2] < (Sync & S) =
                 apply[E, A, S, S2](new First[E, A, S2](frame), iterable)
@@ -882,7 +882,7 @@ object Fiber:
         end Race
 
         def gather[E, A, S, S2](using
-            isolate: Isolate[S, Sync, S2]
+            isolate: Isolate[S, Abort[E] & Async, S2]
         )(max: Int)(
             iterable: Iterable[A < (Abort[E] & Async & S)]
         )(

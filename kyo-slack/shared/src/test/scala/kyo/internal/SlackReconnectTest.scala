@@ -121,7 +121,7 @@ class SlackReconnectTest extends kyo.test.Test[Any]:
       * test-only convenience entry.
       */
     private def runController[S](
-        using Isolate[S, Sync, S]
+        using Isolate[S, Abort[SlackException] & Async, S]
     )(
         open: () => SlackSocketEngine < (Async & Abort[SlackException]),
         config: SlackConfig,
