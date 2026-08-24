@@ -126,7 +126,7 @@ object Fiber:
       *   A Fiber representing the running computation
       */
     def init[E, A, S, S2](
-        using isolate: Isolate[S, Sync, S2]
+        using isolate: Isolate[S, Abort[E] & Async, S2]
     )(
         v: => A < (Abort[E] & Async & S)
     )(
@@ -145,7 +145,7 @@ object Fiber:
       */
     def use[E, A, S, S2](
         using
-        isolate: Isolate[S, Sync, S2],
+        isolate: Isolate[S, Abort[E] & Async, S2],
         reduce: Reducible[Abort[E]],
         frame: Frame
     )(
@@ -162,7 +162,7 @@ object Fiber:
       *   A Fiber representing the running computation
       */
     def initUnscoped[E, A, S, S2](
-        using isolate: Isolate[S, Sync, S2]
+        using isolate: Isolate[S, Abort[E] & Async, S2]
     )(
         v: => A < (Abort[E] & Async & S)
     )(
