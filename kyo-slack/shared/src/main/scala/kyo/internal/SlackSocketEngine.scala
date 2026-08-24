@@ -68,7 +68,7 @@ final private[kyo] class SlackSocketEngine private[kyo] (
       * so the handler's Web API calls resolve the bot token.
       */
     private[kyo] def receiveLoop[S](
-        using Isolate[S, Abort[SlackException] & Async, S]
+        using Isolate[S, Sync, S]
     )(
         handler: SlackEnvelope => SlackAck < (S & Async & Abort[SlackException])
     )(using Frame): Unit < (S & Async & Abort[SlackException]) =
@@ -90,7 +90,7 @@ final private[kyo] class SlackSocketEngine private[kyo] (
         }
 
     private def decodeAndDeliver[S](
-        using Isolate[S, Abort[SlackException] & Async, S]
+        using Isolate[S, Sync, S]
     )(
         handler: SlackEnvelope => SlackAck < (S & Async & Abort[SlackException]),
         frame: String
@@ -110,7 +110,7 @@ final private[kyo] class SlackSocketEngine private[kyo] (
       * acked but not re-delivered. One frame at a time, tail-recursive, no `var`.
       */
     private[kyo] def receiveLoopWithReconnect[S](
-        using Isolate[S, Abort[SlackException] & Async, S]
+        using Isolate[S, Sync, S]
     )(
         handler: SlackEnvelope => SlackAck < (S & Async & Abort[SlackException]),
         dedup: SlackReconnect.OverlapDedup,
@@ -154,7 +154,7 @@ final private[kyo] class SlackSocketEngine private[kyo] (
       * (no `envelope_id`) bypasses the dedup and delivers normally.
       */
     private def deliverWithDedup[S](
-        using Isolate[S, Abort[SlackException] & Async, S]
+        using Isolate[S, Sync, S]
     )(
         handler: SlackEnvelope => SlackAck < (S & Async & Abort[SlackException]),
         env: SlackEnvelope,
@@ -173,7 +173,7 @@ final private[kyo] class SlackSocketEngine private[kyo] (
     end deliverWithDedup
 
     private def deliverAndAck[S](
-        using Isolate[S, Abort[SlackException] & Async, S]
+        using Isolate[S, Sync, S]
     )(
         handler: SlackEnvelope => SlackAck < (S & Async & Abort[SlackException]),
         env: SlackEnvelope,
@@ -269,7 +269,7 @@ final private[kyo] class SlackSocketEngine private[kyo] (
       * acks and closes the socket and fibers after the drain (see `closeTransport`).
       */
     private[kyo] def drainBufferedInbound[S](
-        using Isolate[S, Abort[SlackException] & Async, S]
+        using Isolate[S, Sync, S]
     )(
         handler: SlackEnvelope => SlackAck < (S & Async & Abort[SlackException]),
         dedup: SlackReconnect.OverlapDedup
@@ -286,7 +286,7 @@ final private[kyo] class SlackSocketEngine private[kyo] (
         }
 
     private def drainFrame[S](
-        using Isolate[S, Abort[SlackException] & Async, S]
+        using Isolate[S, Sync, S]
     )(
         handler: SlackEnvelope => SlackAck < (S & Async & Abort[SlackException]),
         frame: String,

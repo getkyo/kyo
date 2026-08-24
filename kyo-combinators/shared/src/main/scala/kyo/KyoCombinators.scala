@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.Result.Error
-import kyo.debug.Debug
 import kyo.internal.Zippable
 import kyo.kernel.ArrowEffect
 import scala.annotation.tailrec
@@ -45,20 +44,6 @@ extension [A, S](effect: A < S)
     @targetName("zip")
     def <*>[A1, S1](next: => A1 < S1)(using frame: Frame, zippable: Zippable[A, A1]): zippable.Out < (S & S1) =
         effect.map(e => next.map(n => zippable.zip(e, n)))
-
-    /** Performs this computation and prints its result to the console.
-      *
-      * @return
-      *   A computation that produces the result of this computation
-      */
-    def debugValue(using Frame): A < S = Debug(effect)
-
-    /** Performs this computation and prints its result to the console with a detailed execution trace.
-      *
-      * @return
-      *   A computation that produces the result of this computation
-      */
-    def debugTrace(using Frame): A < S = Debug.trace(effect)
 
     /** Performs this computation after a delay.
       *

@@ -54,7 +54,7 @@ object Slack:
       * swapped in, so no socket or background fiber leaks.
       */
     def run[S](
-        using Isolate[S, Abort[SlackException] & Async, S]
+        using Isolate[S, Sync, S]
     )(config: SlackConfig)(
         handler: SlackEnvelope => SlackAck < (S & Async & Abort[SlackException])
     )(using Frame): Unit < (S & Async & Abort[SlackException] & Scope) =
@@ -129,7 +129,7 @@ object Slack:
           * currently-active engine.
           */
         def receive[S](using
-            Isolate[S, Abort[SlackException] & Async, S]
+            Isolate[S, Sync, S]
         )(
             handler: SlackEnvelope => SlackAck < (S & Async & Abort[SlackException])
         )(using Frame): Unit < (S & Async & Abort[SlackException]) =

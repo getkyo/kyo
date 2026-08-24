@@ -64,7 +64,7 @@ object ZStreams:
                 restore(ZIOs.run(Emit.runFirst(emit))).map: (maybeChunk, contFn) =>
                     maybeChunk
                         .map: chunk =>
-                            ZChunk.fromArray(chunk.toArray) -> contFn()
+                            ZChunk.fromArray(chunk.toArray) -> contFn(())
                         .toOption
 
         ZStream.unfoldChunkZIO(stream.emit)(peel)

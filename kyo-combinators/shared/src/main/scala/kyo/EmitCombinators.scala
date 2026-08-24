@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.debug.Debug
 import kyo.kernel.ArrowEffect
 import scala.annotation.tailrec
 import scala.annotation.targetName

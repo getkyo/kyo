@@ -352,24 +352,6 @@ val maybeRetry: Maybe[Order] < (Abort[OrderNotFound] & Async) =
 
 > **Note:** `when` and `unless` return `Maybe[A]`, not `Unit`. When the condition is true, `when` wraps the result in `Present`; when false, it returns `Absent`. Users coming from Cats `whenA` or ZIO `whenZIO` may expect `Unit` and lose the result. If you only care about the side-effect, follow with `.unit` (or chain into a `tap`).
 
-### `debugValue` / `debugTrace`: inline observability
-
-```scala
-import kyo.*
-
-case class Order(id: Long)
-case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
-val load: Order < (Abort[OrderNotFound] & Async) = ???
-
-val withPrint: Order < (Abort[OrderNotFound] & Async) =
-    load.debugValue
-
-val withTrace: Order < (Abort[OrderNotFound] & Async) =
-    load.debugTrace
-```
-
-`debugValue` prints the result to the console once it's computed. `debugTrace` prints the result plus an execution trace. Both pass the value through unchanged; insert into a chain for inspection without restructuring code.
-
 ## Repetition
 
 Repetition primitives are orthogonal to error handling: they re-run an effect by count, by schedule, by predicate, or forever. None of them treat failure as a reason to re-run; for that, use [`retry`](#error-handling) instead.
