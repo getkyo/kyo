@@ -5,8 +5,10 @@ import kyo.kernel.ArrowEffect
 import kyo.kernel.Effect
 import kyo.kernel.Isolate
 import kyo.kernel.internal.Eval
+import kyo.kernel.internal.Kyo
 import kyo.kernel.internal.Safepoint
 import kyo.scheduler.IOTask.*
+import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
 sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2] with Task:
@@ -23,10 +25,6 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
       * holds. A spawn that carries none prepares the body as written.
       */
     protected def prepare: Unit < (Abort[E] & Async)
-
-    // nothing here is written by user code, so there is no frame to propagate and the internal one is what
-    // the operations below are owed
-    private inline given Frame = IOTask.frame
 
     /** The remainder of this fiber, prepared and wrapped in the boundary below.
       *
@@ -113,8 +111,9 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                                     cont(null)
                                 case Present(r) =>
                                     // already complete when the thunk ran, so drop the link it pre-registered
-                                    // rather than letting it accumulate
-                                    removeInterrupt(promise)
+                                    // rather than letting it accumulate. Unlinking is bookkeeping between
+                                    // two promises with no user call behind it, so the frame is internal
+                                    removeInterrupt(promise)(using Frame.internal)
                                     cont(r)
                                 case Absent =>
                                     // Waiting. The operation is deliberately left unanswered: it is raised
@@ -142,17 +141,25 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                                     // completes inline still leaves `run` able to see that it parked.
                                     status = Present(promise)
                                     promise.onComplete { _ =>
-                                        removeInterrupt(promise)
+                                        removeInterrupt(promise)(using Frame.internal)
                                         Scheduler.get.schedule(this)
                                     }
                                     discard(Safepoint.stop(Thread.currentThread()))
-                                    ArrowEffect.suspendWith[C](Tag[Async.Join], joinInput)(r => cont(r))
+                                    // The frame is internal because a clause is never handed the frame of
+                                    // the operation it answers, and this raise is the scheduler's own. It
+                                    // is why a fiber parked on a promise reports no frame: what the eval
+                                    // stops in front of is this node, and nothing on it came from user
+                                    // code. Reporting where such a fiber stopped needs the frame carried
+                                    // to the clause, which the region protocol does not do today.
+                                    ArrowEffect.suspendWith[C](using Frame.internal)(Tag[Async.Join], joinInput)(r => cont(r))
                             end match
                         case other =>
                             bug(s"fiber boundary received an operation it does not answer: $other")
             ,
             a => a
-        ).asInstanceOf[Unit < Any]
+            // the region is the scheduler's own, built the same way for every fiber, so there is no call
+            // site to name. What a parked fiber reports comes from the operation it stopped at, not here
+        )(using Frame.internal).asInstanceOf[Unit < Any]
     end boundary
 
     /** Puts the prepared computation in place, once the spawn that built this task is fully constructed. */
@@ -181,14 +188,54 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
     final override def needsInterrupt(): Boolean =
         !isPending()
 
+    /** Where this fiber currently stands, as one rendered frame, or empty where there is none.
+      *
+      * A diagnostic, read from other threads while this one runs: the scheduler's status view asks every
+      * busy worker for it, and the leak checker prints it beside the JVM stack. So it reads fields already
+      * in hand and never anything the evaluator would have run. A deferral's payload and a recovery's body
+      * are methods on purpose, so that reading them runs user code; neither is touched here.
+      *
+      * The frame is the operation's own. Deferrals carry none worth showing, which is what leaves a fiber
+      * doing nothing but `Sync.defer` with an empty trace, and the internal frame is dropped by identity so
+      * the kernel's own plumbing never surfaces.
+      */
     final override def fiberTrace(): String =
-        val snapshot = curr
-        if isNull(snapshot) then ""
-        else
-            try snapshot.toString
-            catch case _: Throwable => ""
-        end if
-    end fiberTrace
+        try
+            currentFrame(curr) match
+                case Present(f) => render(f)
+                case Absent     => ""
+        catch case _: Throwable => ""
+
+    private def currentFrame(v: Unit < Any): Maybe[Frame] =
+        v match
+            case p: Kyo.Park[?, ?] =>
+                // A park wraps what it stopped in front of with the deferral that takes its payload by
+                // value, so the operation underneath is a reference the eval already held. Reading it runs
+                // nothing, which the by-name deferral written by user code would not allow, and that one is
+                // never what a park holds.
+                p.value match
+                    case d: Kyo.Defer[?, ?, ?, ?] => operationFrame(d.value)
+                    case other                    => operationFrame(other)
+            case other => operationFrame(other)
+
+    // the frame of the operation itself. A deferral carries none worth reporting, which is what leaves a
+    // fiber doing nothing but `Sync.defer` reading as empty, and the internal frame is dropped by identity
+    private def operationFrame(v: Any): Maybe[Frame] =
+        v match
+            case s: Kyo.Suspend[?, ?, ?, ?, ?, ?] =>
+                val f = s.frame
+                if f eq Frame.internal then Absent else Present(f)
+            case _ => Absent
+
+    private def render(f: Frame): String =
+        val at = StackTraceElement(
+            s"${f.snippetShort} @ ${f.className}",
+            f.callerName,
+            f.position.fileName,
+            f.position.lineNumber
+        )
+        s"at $at"
+    end render
 
     final def run(startMillis: Long, clock: InternalClock, deadline: Long): Task.Result =
         if !isPending() then

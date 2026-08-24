@@ -432,21 +432,39 @@ object Isolate:
         end if
     end cross
 
+    /** A frozen binding, carrying the one whose strategies it answers with.
+      *
+      * Freezing borrows the strategies rather than defining them, so freezing a frozen binding would layer
+      * one borrow on another and every crossing would leave `fork` and `join` another level to walk. A name
+      * that crosses on each of many rounds accumulates a level per round, which is a stack overflow rather
+      * than a slow walk. Naming the source keeps the next freeze starting from the binding that owns the
+      * strategies, so the borrow is one deep however many times the name crosses.
+      */
+    abstract private class Frozen extends Binding[Any, Nothing, Any, Any]:
+        def source: Binding[Any, Nothing, Any, Any]
+
     /** A binding of the same name holding what crossed, with the strategies of the one it came from. */
     @nowarn("msg=anonymous")
     private def frozen(binding: Binding[Any, Nothing, Any, Any], value: Any)(using
         _frame: Frame
     ): Binding[Any, Nothing, Any, Any] =
-        new Binding[Any, Nothing, Any, Any]:
+        val owner =
+            binding match
+                case f: Frozen => f.source
+                case b         => b
+        new Frozen:
+            def source                                = owner
             def frame                                 = _frame
-            val tag                                   = binding.tag
+            val tag                                   = owner.tag
             val bound                                 = Maybe((_: Maybe[Any]) => value)
-            override def fork(held: Any)              = binding.fork(held)
-            override def join(held: Any, forked: Any) = binding.join(held, forked)
+            override def fork(held: Any)              = owner.fork(held)
+            override def join(held: Any, forked: Any) = owner.join(held, forked)
             // never reached: this is built to stand on a stack, and an entry answers a value flowing back
             // through it with `apply`, which is identity for a binding. Only a binding the eval meets as a
             // computation resumes, and this one is never that
             def resume(held: Maybe[Any]) = bug("a crossed binding was evaluated rather than installed")
+        end new
+    end frozen
 
     /** Derives an Isolate instance based on available instances.
       *
