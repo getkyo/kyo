@@ -86,7 +86,7 @@ echo "Running build-selftest.sh..."
 # 1. podman-ci exports CI=true, SBT_TASK_LIMIT=1, and the -Xmx12G driver into the container
 make_podman_stub 0; reset_logs
 run_build --env podman-ci test JVM >/dev/null 2>&1 || true
-if podman_log_has "-e CI=true" && podman_log_has "-e SBT_TASK_LIMIT=1" && podman_log_has "JAVA_OPTS=-Xmx12G -Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
+if podman_log_has "-e CI=true" && podman_log_has "-e SBT_TASK_LIMIT=1" && podman_log_has "JAVA_OPTS=-Xmx12G -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
 then record ok "podman-ci exports CI=true, SBT_TASK_LIMIT=1, and the full CI driver opts"
 else record no "podman-ci exports CI=true, SBT_TASK_LIMIT=1, and the full CI driver opts"; fi
 
