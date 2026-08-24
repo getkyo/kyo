@@ -177,6 +177,14 @@ object Path extends PathPlatformSpecific:
     infix def /(part: Path.Part)(using Frame): Path =
         make(flattenParts(Seq(part)))
 
+    /** A handle to a service-created temporary directory. Vended by `FileSystem.Write.tempDir` so a
+      * caller removes the directory through the service that created it. Internal.
+      */
+    abstract private[kyo] class TempDirHandle:
+        def path: Path
+        def remove()(using AllowUnsafe): Unit
+    end TempDirHandle
+
     // --- Safe extension methods ---
 
     extension (self: Path)

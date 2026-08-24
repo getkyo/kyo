@@ -27,7 +27,9 @@ class PathSnapshotTest extends kyo.test.Test[Any]:
                     (root / "nested" / "b.txt").write("b").andThen {
                         root.list.map { top =>
                             (root / "nested").list.map { nested =>
-                                assert(top == Chunk(root / "a.txt", root / "nested"))
+                                // list order is unspecified: Files.list and readdirSync both report entries
+                                // in filesystem order, which differs between platforms and architectures.
+                                assert(top.toList.sortBy(_.parts.last) == List(root / "a.txt", root / "nested"))
                                 assert(nested == Chunk(root / "nested" / "b.txt"))
                                 val normalized = Chunk("root/", "root/a.txt=a", "root/nested/", "root/nested/b.txt=b")
                                 assert(normalized.mkString("\n") == PathSnapshotValues.normalizedTree)
