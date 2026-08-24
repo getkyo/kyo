@@ -146,9 +146,7 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                                         Scheduler.get.schedule(this)
                                     }
                                     discard(Safepoint.stop(Thread.currentThread()))
-                                    Effect.deferInline(
-                                        ArrowEffect.suspendWith[C](Tag[Async.Join], joinInput)(r => cont(r))
-                                    )
+                                    ArrowEffect.suspendWith[C](Tag[Async.Join], joinInput)(r => cont(r))
                             end match
                         case other =>
                             bug(s"fiber boundary received an operation it does not answer: $other")
