@@ -1337,7 +1337,7 @@ class ArrowEffectTest extends AnyFreeSpec:
         // behind one means reading that. Where the payload was handed in, which is what a `map` builds,
         // reading it costs nothing; where it is a body, reading it runs that body. One step, never more:
         // this stops at the operation the step arrives at, and applies no continuation.
-        "runs one deferred step to reach the operation behind it" in {
+        "reads through a deferral without running the body behind it" in {
             var seen  = ""
             var built = false
             val v = Effect.defer {
@@ -1345,8 +1345,18 @@ class ArrowEffectTest extends AnyFreeSpec:
                 say("hidden").map(_ => 1)
             }
             ArrowEffect.dispatchFirst(Tag[Say], v)([X] => input => seen = input)
-            assert(built)
-            assert(seen == "hidden")
+            // the body is the deferral's arrow, and nothing here applies it, so the operation it would
+            // build does not exist yet and the walk has nothing to find. Not running it is the point:
+            // this is called on a live fiber from another thread
+            assert(!built)
+            assert(seen == "")
+        }
+
+        "reads through the deferrals a map chain composes to the operation under them" in {
+            var seen = ""
+            val v    = say("shown").map(_ => 1).map(_ + 1)
+            ArrowEffect.dispatchFirst(Tag[Say], v)([X] => input => seen = input)
+            assert(seen == "shown")
         }
 
         "stops at a settled value" in {

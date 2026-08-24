@@ -496,8 +496,9 @@ object Eval:
                     // never in front of a binding, nor in front of the step that builds one: a resource
                     // whose scope has not been installed yet is owed by nobody, so a slice that ended here
                     // would be holding one that no drain can find; `parkable` walks to the payload's first
-                    // receiver to see the step coming. The payload is read once and the park carries what
-                    // was read, so a by-name payload does not run a second time on the way back.
+                    // receiver to see the step coming. Reading the payload runs nothing: it is a value in
+                    // hand, and the work a deferral holds is its arrows, so a stop the body itself raises
+                    // is seen where that arrow runs rather than here.
                     // The debugger sees the step about to run and may replace the payload; for a routed
                     // map the contA is the map arrow carrying its call-site frame. The identity guard,
                     // here and at the other two hook sites, keeps frame reads out of the no-session
