@@ -165,6 +165,53 @@ class IsolateTest extends AnyFreeSpec:
             val v: Int < Any = 42
             assert(Isolate.internal.Contextual.run(v).eval == 42)
         }
+
+        // nesting bindings of one tag is the normal case: every Scope.run and every Local.let shares its
+        // tag with the ones around it, and the inner entry shadows for its extent. A crossing must leave
+        // that shadowing intact
+        "nested bindings of one tag" - {
+            "the inner binding still answers its own value after a crossing" in {
+                val v =
+                    ContextEffect.handle(Tag[TestEffect2], "outer") {
+                        ContextEffect.handle(Tag[TestEffect2], "inner") {
+                            Isolate.internal.Contextual.run(()).map(_ => ContextEffect.suspend(Tag[TestEffect2]))
+                        }
+                    }
+                assert(v.eval == "inner")
+            }
+
+            "the inner binding still derives from the outer after a crossing" in {
+                val v =
+                    ContextEffect.handle(Tag[TestEffect1], 1) {
+                        ContextEffect.handle(Tag[TestEffect1], 0, _ + 10) {
+                            Isolate.internal.Contextual.run(()).map(_ => ContextEffect.suspend(Tag[TestEffect1]))
+                        }
+                    }
+                assert(v.eval == 11)
+            }
+
+            "every layer of a three-deep nest survives a crossing" in {
+                val v =
+                    ContextEffect.handle(Tag[TestEffect2], "outer") {
+                        ContextEffect.handle(Tag[TestEffect2], "middle") {
+                            ContextEffect.handle(Tag[TestEffect2], "inner") {
+                                Isolate.internal.Contextual.run(()).map(_ => ContextEffect.suspend(Tag[TestEffect2]))
+                            }
+                        }
+                    }
+                assert(v.eval == "inner")
+            }
+
+            "a join lands on the binding that owns it" in {
+                val v =
+                    ContextEffect.handle(Tag[TestEffect1], ifUndefined = 100, ifDefined = _ => 100, join = (h: Int, f: Int) => h + f) {
+                        ContextEffect.handle(Tag[TestEffect1], ifUndefined = 5, ifDefined = _ => 5, join = (h: Int, f: Int) => h + f) {
+                            Isolate.internal.Contextual.run(())
+                        }.map(_ => ContextEffect.suspend(Tag[TestEffect1]))
+                    }
+                assert(v.eval == 200)
+            }
+        }
     }
 
     "variance" - {
