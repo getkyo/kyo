@@ -485,4 +485,67 @@ class AITest extends kyo.test.Test[Any]:
         }
     }
 
+    "stream takes an inline input, the way gen does" - {
+
+        /** Wraps an argument JSON fragment in an OpenAI streaming chunk envelope. */
+        def argDelta(fragment: String): String =
+            val escaped = fragment.replace("\\", "\\\\").replace("\"", "\\\"")
+            s"""{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"$escaped","name":""}}]}}]}"""
+
+        val deltas = Chunk(
+            argDelta("{\"resultValue\":\"The"),
+            argDelta(" sky"),
+            argDelta(" is blue\"}")
+        )
+
+        "the inline form streams the same chunks the seeded form does" in {
+            // `gen` takes its prompt inline, so `stream` reading the same way is the whole point: the
+            // asymmetry cost a compile cycle and a README re-read, and the streaming examples all happen
+            // to show the no-input form, so it is invisible until you hit it.
+            TestCompletionServer.runStreaming { server =>
+                val config = serverConfig(server.baseUrl)
+                server.enqueueStream(deltas).andThen {
+                    LLM.run(config) {
+                        AI.stream[String]("What colour is the sky?").map(_.run.map { collected =>
+                            assert(collected == Chunk("The", " sky", " is blue"), s"got: $collected")
+                        })
+                    }
+                }
+            }
+        }
+
+        "the inline input reaches the model as a user message" in {
+            TestCompletionServer.runStreaming { server =>
+                val config = serverConfig(server.baseUrl)
+                server.enqueueStream(deltas).andThen {
+                    LLM.run(config) {
+                        AI.stream[String]("What colour is the sky?").map(_.run.andThen {
+                            server.captured.map { caps =>
+                                assert(
+                                    caps.head.body.contains("What colour is the sky?"),
+                                    s"the input must be seeded into the request; body: ${caps.head.body}"
+                                )
+                            }
+                        })
+                    }
+                }
+            }
+        }
+
+        "the instance form takes an inline input too" in {
+            TestCompletionServer.runStreaming { server =>
+                val config = serverConfig(server.baseUrl)
+                server.enqueueStream(deltas).andThen {
+                    LLM.run(config) {
+                        AI.initWith { ai =>
+                            ai.stream[String]("What colour is the sky?").map(_.run.map { collected =>
+                                assert(collected.mkString == "The sky is blue", s"got: $collected")
+                            })
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 end AITest
