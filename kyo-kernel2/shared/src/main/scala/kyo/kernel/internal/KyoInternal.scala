@@ -20,8 +20,11 @@ sealed abstract private[kyo] class Kyo[+A, -S]
 // Public object, private[kyo] members: see the note on Safepoint for the accessor the other shape emits.
 object Kyo:
 
+    // The payload is a value in hand, never a body: a deferred computation defers because its arrows have
+    // not been applied, not because reading the node runs anything. That is what lets an inspection walk
+    // through a deferral to the operation behind it without evaluating a step.
     abstract private[kyo] class Defer[A, B, +C, -S] extends Kyo[C, S]:
-        def value: A < S
+        val value: A < S
         def contA: Arrow[A, B, S]
         def contB: Arrow[B, C, S]
 

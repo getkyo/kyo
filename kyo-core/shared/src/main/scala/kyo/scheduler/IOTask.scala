@@ -219,9 +219,10 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
 
     /** The frame of the operation this fiber stands at, where it stands at one.
       *
-      * Reads fields already in hand and nothing else: the regions installed around the operation, and the
-      * park a slice ended at. A deferral is where it stops, since its payload is a body that reading would
-      * run, and that is what leaves a fiber doing nothing but `Sync.defer` reporting nothing.
+      * Reads fields already in hand and nothing else: the regions installed around the operation, the park
+      * a slice ended at, and the deferrals composed in front of it. A deferral's payload is a value, never
+      * a body, so reading it here runs none of the fiber's computation, which matters because this is
+      * called from another thread while the fiber is still live.
       */
     private def currentFrame(v: Unit < Any): Maybe[Frame] =
         @tailrec def loop(x: Any, fuel: Int): Maybe[Frame] =
@@ -233,6 +234,7 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                         if f eq Frame.internal then Absent else Present(f)
                     case h: Kyo.Handle[?, ?, ?, ?, ?] => loop(h.value, fuel - 1)
                     case p: Kyo.Park[?, ?]            => loop(p.value, fuel - 1)
+                    case d: Kyo.Defer[?, ?, ?, ?]     => loop(d.value, fuel - 1)
                     case _                            => Absent
         loop(v, 16)
     end currentFrame

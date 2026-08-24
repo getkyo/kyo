@@ -284,7 +284,7 @@ object Eval:
         new Defer[Loop.Outcome[OX[CX] < (EX & SX), BX], BX, BX, EX & SX]
             with Step[Loop.Outcome[OX[CX] < (EX & SX), BX], BX, EX & SX]:
             def frame = Frame.internal
-            def value = clause
+            val value = clause
             def contA = this
             def contB = Arrow.id[BX]
             override def apply(o: Loop.Outcome[OX[CX] < (EX & SX), BX]) =
@@ -416,7 +416,7 @@ object Eval:
         new Defer[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], BX, BX, EX & SX]
             with Step[Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX], BX, EX & SX]:
             def frame = Frame.internal
-            def value = clause
+            val value = clause
             def contA = this
             def contB = Arrow.id[BX]
             override def apply(o: Loop.Outcome2[StateX, OX[CX] < (EX & SX), BX]) =
@@ -643,7 +643,7 @@ object Eval:
                         // Only a binding that owes a release refuses the earlier park, so only that one
                         // owes this one; the resume stays unread and runs on the slice that comes back
                         if armed && kyo.release.isDefined && Safepoint.stopped(slot) then
-                            park(Effect.deferInline(kyo.resume(held)).asInstanceOf[Any < Nothing])
+                            park(Effect.deferInline(kyo.resume(held))(using kyo.frame).asInstanceOf[Any < Nothing])
                         else loop(kyo.resume(held))
                     else
                         // what a lookup returns is typed by the slots it walked, which hold every binding's

@@ -4,6 +4,7 @@ import kyo.Arrow
 // unqualified so the inline expansions do not select these from Kyo.type or Arrow.type at a site
 // outside package kyo, where they are not accessible. See the note in Pending.scala
 import kyo.Arrow.BindingStep
+import kyo.Arrow.Step
 import kyo.Frame
 import kyo.Maybe
 import kyo.Maybe.*
@@ -23,18 +24,29 @@ object Effect:
     private[kyo] def defer[A, S](f: => A < S)(using Frame): A < S =
         deferInline(f)
 
-    // the node's payload is a by-name method, so the body runs when the evaluator
-    // reads it and not when the node is built
+    /** The payload a deferred body stands on.
+      *
+      * Cast rather than lifted: a raw value is already the union's first arm, and `Unit` admits no `Boxed`
+      * subtype, so there is nothing to nest. Lifting here would summon the macro inside a core kernel file,
+      * which is the cascade that ends in a stale-symbol crash on the clean build.
+      */
+    private val unitValue: Unit < Any = ().asInstanceOf[Unit < Any]
+
+    // The body lives in the arrow, not the payload: building the node does not run it, and applying the
+    // arrow is what runs it. The node is its own step, so this is the one allocation the by-name shape
+    // was, and the payload it carries is a value already in hand.
     @nowarn("msg=anonymous")
-    private[kyo] inline def deferInline[A, S](inline f: => A < S): A < S =
-        new Defer[A, A, A, S]:
-            def value = f
-            def contA = Arrow.id[A]
-            def contB = Arrow.id[A]
+    private[kyo] inline def deferInline[A, S](inline f: => A < S)(using inline _frame: Frame): A < S =
+        new Defer[Unit, A, A, S] with Step[Unit, A, S]:
+            def frame                   = _frame
+            val value                   = unitValue
+            def contA                   = this
+            def contB                   = Arrow.id[A]
+            override def apply(v: Unit) = f
 
     @static def defer[A, B, S](v: A < S, cont: Arrow[A, B, S]): B < S =
         new Defer[A, B, B, S]:
-            def value = v
+            val value = v
             def contA = cont
             def contB = Arrow.id[B]
 
@@ -43,7 +55,7 @@ object Effect:
             defer(v, a.asInstanceOf[Arrow[A, C, S]])
         else
             new Defer[A, B, C, S]:
-                def value = v
+                val value = v
                 def contA = a
                 def contB = b
 
