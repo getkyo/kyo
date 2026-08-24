@@ -26,7 +26,7 @@ import scala.util.control.NoStackTrace
   * not retry it.
   */
 final private[kyo] class Finalizer[A, B](
-    release: (A, Result[Nothing, B]) => Any < Any,
+    release: (A, Result[Any, B]) => Any < Any,
     resource: A,
     val frame: Frame
 ) extends AtomicBoolean with Region[B, B, Any]:
@@ -38,7 +38,7 @@ final private[kyo] class Finalizer[A, B](
       * continuation nobody resumed. That last one is a real third case rather than a failure, which is what a
       * `Maybe[Error]` could not say.
       */
-    def run(outcome: Result[Nothing, B]): Unit =
+    def run(outcome: Result[Any, B]): Unit =
         if compareAndSet(false, true) then discard(Eval(release(resource, outcome)))
 
     // the value flowing out is the extent's result, which is what the release is told it completed with

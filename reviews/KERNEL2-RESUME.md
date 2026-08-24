@@ -120,3 +120,11 @@ REMAINING rollout (mechanical, mirror the done ones):
 6. Full debugger board in the worktree (mutex; checkout final commit) vs redfixes board; report
    the complete time table (alloc column from the gc reference) with the standing conventions.
 7. Commit at each green step.
+
+## Parked todos
+
+- CanLift: reject lifting a value statically typed `Any`. An erased computation re-entering the
+  kernel through the lift is nested as data and delivered unrun (the kyo-http dispatch bug fixed
+  in 7abded79a3). The macro sees the static type per summon site, so the guard only fires where
+  the type system has lost track; abstract type parameters still lift. After adding, compile the
+  whole tree to surface every site the guard catches.

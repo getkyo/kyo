@@ -563,7 +563,7 @@ object Isolate:
                                 carried(state._1, bindings, held, a)
                     )
                 if state._1.isEmpty then body
-                else new Park[Transform[A], S](body, state._1, state._2, Span.empty)
+                else new Park[Transform[A], S](body, state._1, state._2, Span.fromUnsafe(new Array[Int](state._1.size)), Span.empty)
                 end if
             end isolate
 

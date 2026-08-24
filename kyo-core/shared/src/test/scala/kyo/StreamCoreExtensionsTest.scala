@@ -831,7 +831,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                 }.unit
             }
 
-            "scope".ignore("groupedWithin does not yet close scoped resources with the same semantics as a plain stream run") in {
+            "scope" in {
                 class TestResource(var closes: Int = 0) extends java.io.Closeable:
                     def close() = closes += 1
 

@@ -144,8 +144,12 @@ class SyncTest extends kyo.test.Test[Any]:
         }
 
         "resource safety" - {
-            "runs finalizer on Abort.fail".ignore("Sync.ensure finalizer is not yet run when the computation aborts via Abort.fail") in {
-                ()
+            "runs finalizer on Abort.fail" in {
+                var called = false
+                Abort.run[String](Sync.ensure { called = true }(Abort.fail("boom"))).map { result =>
+                    assert(result == Result.fail("boom"))
+                    assert(called)
+                }
             }
 
             "runs finalizer exactly once under multiple evaluations" in {
@@ -188,9 +192,13 @@ class SyncTest extends kyo.test.Test[Any]:
                 }
             }
 
-            "error-aware ensure passes error on Abort.fail".ignore(
-                "an error-aware Sync.ensure finalizer is not yet passed the abort error on Abort.fail"
-            ) in { () }
+            "error-aware ensure passes error on Abort.fail" in {
+                var received: Maybe[Error[Any]] = Absent
+                Abort.run[String](Sync.ensure((e: Maybe[Error[Any]]) => received = e)(Abort.fail("boom"))).map { result =>
+                    assert(result == Result.fail("boom"))
+                    assert(received == Present(Result.Failure("boom")))
+                }
+            }
 
             "works without fiber context" in {
                 import AllowUnsafe.embrace.danger

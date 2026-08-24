@@ -75,6 +75,13 @@ object Sync:
       *   The result of the use computation.
       */
     def acquireReleaseWith[A, S1](acquire: => A < (Sync & S1))(
+        release: (A, Result[Any, Any]) => Any < (Sync & Abort[Throwable])
+    )[B, S2](use: A => B < S2)(using Frame): B < (Sync & S1 & S2) =
+        Effect.bracket[A, B, Sync & S1 & S2](acquire)((resource, result) =>
+            Abort.runWith[Throwable](release(resource, result))(_.getOrThrow)
+        )(use)
+
+    def acquireReleaseWith[A, S1](acquire: => A < (Sync & S1))(
         release: A => Any < (Sync & Abort[Throwable])
     )[B, S2](use: A => B < S2)(using Frame): B < (Sync & S1 & S2) =
         // the kernel bracket is this operation: the scope installs the moment the acquire settles, with no
@@ -113,7 +120,7 @@ object Sync:
         // error when the computation aborts or throws, and the boundary's own error when a parked
         // remainder is discarded. The finalizer runs in the ambient context, so locals bound around
         // the ensure reach it; only its Abort surfaces as a throw, keeping the panic semantics
-        Effect.bracket(())((_, outcome: Result[Nothing, A]) => Abort.runWith[Throwable](f(outcome.error))(_.getOrThrow))(_ => v)
+        Effect.bracket(())((_, outcome: Result[Any, A]) => Abort.runWith[Throwable](f(outcome.error))(_.getOrThrow))(_ => v)
 
     /** Retrieves a local value and applies a function that can perform side effects.
       *

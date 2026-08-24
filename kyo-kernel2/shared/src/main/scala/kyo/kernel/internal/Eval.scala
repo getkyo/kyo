@@ -467,11 +467,12 @@ object Eval:
             else
                 val es   = stack.snapshotEntries()
                 val sts  = stack.snapshotStates()
+                val mks  = stack.snapshotMarks()
                 val fins = stack.snapshotFinalizers()
                 stack.clear()
                 // the row widens from Nothing to Any: what the loop carries is a value whose effects the
                 // regions in the snapshot answer, and those travel with it
-                new Park[Any, Any](curr.asInstanceOf[Any < Any], es, sts, fins)
+                new Park[Any, Any](curr.asInstanceOf[Any < Any], es, sts, mks, fins)
         end park
 
         /** Whether a slice may end in front of this deferral. Consulted only with a stop already pending.
@@ -611,7 +612,7 @@ object Eval:
                     // resuming is putting the parked stack back and carrying on from the value it held. The
                     // entries go above whatever this eval already pushed, so a handler installed around the
                     // parked computation sits below its regions and answers what they do not
-                    stack.restore(kyo.entries, kyo.states, kyo.finalizers)
+                    stack.restore(kyo.entries, kyo.states, kyo.marks, kyo.finalizers)
                     loop(kyo.value)
                 case kyo: Catching[?, ?] =>
                     // the entry marks where the scope ends, and the body runs above it. A value flowing back
@@ -674,12 +675,16 @@ object Eval:
                         val s = stack.state[StateX](0)
                         stack.pop() match
                             case h: HandlerLoopState[IX, OX, EX, AX, BX, S, StateX] @unchecked =>
+                                if stack.outstanding > stack.regionMark(-1) then
+                                    stack.drainOrphans(stack.regionMark(-1), orphanOutcome(r))
                                 val next =
                                     try h.apply(s.getOrElse(h.initialState), r.asInstanceOf[AX])
                                     catch
                                         case ex: Throwable => attachThrow(ex, h, Arrow.id[Any], stack)
                                 loop(next)
                             case h: Handler[EX, AX, BX, S] @unchecked =>
+                                if stack.outstanding > stack.regionMark(-1) then
+                                    stack.drainOrphans(stack.regionMark(-1), orphanOutcome(r))
                                 val tail = stack.dump[BX, Any, EX & S]()
                                 val next =
                                     try h(cu.asInstanceOf[AX < (EX & S)], tail)
@@ -776,6 +781,19 @@ object Eval:
       * Only the park itself is inspected. A parked value that has been composed since holds its park inside a
       * deferral where this cannot see it, so a holder that intends to finalize must keep what it was handed.
       */
+    /** What a completing region's orphans are told, read off its completion value.
+      *
+      * Orphans exist only when a clause completed the region without resuming its continuation, so the
+      * completion in hand is the clause's. An error-shaped completion carries the reason outright:
+      * `Abort` wraps every body value in a success before handling, which makes an unboxed error at the
+      * completion the abort itself rather than a value that happens to look like one. Anything else says
+      * nothing an orphan can use, which is the abandonment case.
+      */
+    private def orphanOutcome(completion: Any): Result[Any, Nothing] =
+        completion match
+            case e: Result.Error[Any] @unchecked => e
+            case _                               => new Result.Panic(Finalizer.Abandoned)
+
     private[kyo] def finalizeResources(v: Any < Any): Unit =
         v match
             case p: Park[?, ?] =>

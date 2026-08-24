@@ -120,10 +120,10 @@ object Effect:
     inline def bracket[A, B, S](inline acquire: A < S)(inline release: A => Any < Any)(
         inline use: A => B < S
     )(using inline _frame: Frame): B < S =
-        bracket(acquire)((a: A, _: Result[Nothing, B]) => release(a))(use)
+        bracket(acquire)((a: A, _: Result[Any, B]) => release(a))(use)
 
     @nowarn("msg=anonymous")
-    inline def bracket[A, B, S](inline acquire: A < S)(inline _release: (A, Result[Nothing, B]) => Any < Any)(
+    inline def bracket[A, B, S](inline acquire: A < S)(inline _release: (A, Result[Any, B]) => Any < Any)(
         inline _use: A => B < S
     )(using inline _frame: Frame): B < S =
         // the parameters are named apart from the members below rather than bound to locals first: a local

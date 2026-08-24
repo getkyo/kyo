@@ -108,7 +108,7 @@ object ContextEffect:
         inline ifDefined: A => A,
         inline fork: A => Maybe[A] < S = (a: A) => Maybe(a),
         inline join: (A, A) => A < S = (held: A, _: A) => held,
-        inline release: Maybe[(A, Result[Nothing, B]) => Any < Any] = Absent
+        inline release: Maybe[(A, Result[Any, B]) => Any < Any] = Absent
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
         // named apart from the members below, which would shadow the parameters inside the class body
         def onFork(held: A)            = fork(held)

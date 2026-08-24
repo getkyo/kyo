@@ -13,10 +13,13 @@ import scala.annotation.tailrec
 final private[kyo] class Stack:
     private var entries = new Array[Arrow[?, ?, ?]](16)
     private var states  = Array.fill[Maybe[Any]](16)(Absent)
-    private var mask    = 15
-    private var head    = 0
-    private var tail    = 0
-    private val reach   = Safepoint.period() / 2
+    // how many releases were owed when the slot's entry was installed. Read only at a handler's slot:
+    // a region completing with more owed than when it was entered has orphaned the difference
+    private var marks = new Array[Int](16)
+    private var mask  = 15
+    private var head  = 0
+    private var tail  = 0
+    private val reach = Safepoint.period() / 2
 
     // outstanding releases, held apart from the entries so a fold cannot bury one: `dump` merges runs of
     // entries into a chain, and a release that ended up inside one would be invisible to the drain
@@ -33,6 +36,7 @@ final private[kyo] class Stack:
     def size: Int = tail - head
 
     private def put(idx: Int, f: Arrow[?, ?, ?]): Unit =
+        marks(idx) = pending
         f match
             case f: Handler.HandlerLoopState[?, ?, ?, ?, ?, ?, ?] =>
                 entries(idx) = f
@@ -166,6 +170,42 @@ final private[kyo] class Stack:
     // how many releases are held. Only a test reads this, to pin that an eval running one bracket after
     // another does not accumulate entries for the ones that already ran
     private[kernel] def outstanding: Int = pending
+
+    /** How many releases were owed when the entry at `i` was installed.
+      *
+      * Meaningful at a handler's slot, read at its completion to find what its region orphaned. `-1`
+      * reads the slot of the entry that was just popped, which the pop leaves intact.
+      *
+      * The count can be stale high: the owed array compacts spent releases lazily, so a mark recorded
+      * before a compaction can exceed the live count. That direction is safe, an orphan missed here is
+      * still drained at the boundary; a mark is never stale low, so nothing still owed is drained early.
+      */
+    def regionMark(i: Int): Int = marks((head + i) & mask)
+
+    /** Runs the releases owed above the watermark, told the given outcome.
+      *
+      * Their extents were folded into a continuation the region completing now never resumed, so nothing
+      * else can end them: the region's completion is the moment they are orphaned, and its outcome is
+      * what they are told. The guard discipline is the boundary drain's: a release that throws never
+      * stops the ones after it, and the first failure is rethrown once every release was attempted, with
+      * the later ones suppressed on it.
+      */
+    def drainOrphans(mark: Int, outcome: Result[Any, Nothing]): Unit =
+        var first: Maybe[Throwable] = Absent
+        while pending > mark do
+            pending -= 1
+            val f = finalizers(pending)
+            finalizers(pending) = Absent
+            try f.foreach(_.run(outcome))
+            catch
+                case ex: Throwable =>
+                    first match
+                        case Present(fst) => if ex ne fst then fst.addSuppressed(ex)
+                        case _            => first = Present(ex)
+            end try
+        end while
+        first.foreach(throw _)
+    end drainOrphans
 
     /** What the innermost binding holds for a tag, absent where nothing binds it.
       *
@@ -368,6 +408,16 @@ final private[kyo] class Stack:
         Span.fromUnsafe(arr)
     end snapshotStates
 
+    def snapshotMarks(): Span[Int] =
+        val n   = size
+        val arr = new Array[Int](n)
+        var i   = 0
+        while i < n do
+            arr(i) = marks((head + i) & mask)
+            i += 1
+        Span.fromUnsafe(arr)
+    end snapshotMarks
+
     def snapshotFinalizers(): Span[Maybe[Finalizer[?, ?]]] =
         val arr = new Array[Maybe[Finalizer[?, ?]]](pending)
         var i   = 0
@@ -385,8 +435,11 @@ final private[kyo] class Stack:
       * The states are written alongside the entries rather than through `put`, which would reinitialize a
       * stateful handler's slot from its initial state and lose the state the park was holding.
       */
-    def restore(es: Span[Arrow[?, ?, ?]], sts: Span[Maybe[Any]], fins: Span[Maybe[Finalizer[?, ?]]]): Unit =
+    def restore(es: Span[Arrow[?, ?, ?]], sts: Span[Maybe[Any]], ms: Span[Int], fins: Span[Maybe[Finalizer[?, ?]]]): Unit =
         val n = es.size
+        // the parked marks counted from zero, since a park snapshots the whole stack and clears it; what is
+        // already owed here stands below the restored segment, so each mark comes back shifted above it
+        val base = pending
         if n > 0 then
             ensure(n)
             head -= n
@@ -395,6 +448,7 @@ final private[kyo] class Stack:
                 val idx = (head + i) & mask
                 entries(idx) = es(i)
                 states(idx) = sts(i)
+                marks(idx) = base + ms(i)
                 i += 1
             end while
             // the states come back as they were, which is what a stateful region needs, and then the
@@ -561,15 +615,18 @@ final private[kyo] class Stack:
             while s + n > cap do cap <<= 1
             val arr = new Array[Arrow[?, ?, ?]](cap)
             val sts = Array.fill[Maybe[Any]](cap)(Absent)
+            val mks = new Array[Int](cap)
             var i   = 0
             while i < s do
                 val idx = (head + i) & mask
                 arr(i) = entries(idx)
                 sts(i) = states(idx)
+                mks(i) = marks(idx)
                 i += 1
             end while
             entries = arr
             states = sts
+            marks = mks
             mask = cap - 1
             head = 0
             tail = s

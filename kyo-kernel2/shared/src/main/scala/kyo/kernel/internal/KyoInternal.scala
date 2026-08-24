@@ -62,6 +62,7 @@ object Kyo:
         val value: A < S,
         val entries: Span[Arrow[?, ?, ?]],
         val states: Span[Maybe[Any]],
+        val marks: Span[Int],
         val finalizers: Span[Maybe[Finalizer[?, ?]]]
     ) extends Kyo[A, S]:
         override def toString: String = render(value)
@@ -151,7 +152,7 @@ object Kyo:
           *
           * `release` rather than `finalize`, which would sit on top of `Object.finalize`.
           */
-        def release: Maybe[(V, Result[Nothing, A]) => Any < Any] = Absent
+        def release: Maybe[(V, Result[Any, A]) => Any < Any] = Absent
 
         /** The binding this one stands for: itself as written, the one it descends from for a
           * kernel-derived replacement.
