@@ -75,6 +75,17 @@ class KyoAppInterruptsTest extends kyo.test.Test[Any]:
         }
     }
 
+    "a value still renders to stdout" in {
+        // The reporting split belongs to E2-18 (Session 1, `aabd61bbb2`): a run block returning a value
+        // is asking for stdout, and only a failure is a diagnostic. Asserted here because the signalled
+        // -stop branch added above sits in front of it and must not swallow the value case.
+        val runner     = new Recording
+        val (out, err) = captured(runner.report(Result.succeed(42)))
+        assert(out.contains("42"), s"a returned value belongs on stdout; got out=$out err=$err")
+        assert(err.isEmpty, s"nothing may reach stderr for a value; got: $err")
+        assert(runner.exited == Absent)
+    }
+
     "an ordinary failure still propagates, rendered to stderr rather than stdout" in {
         // stdout may be a protocol channel (an MCP stdio server, a pipeline stage); a crash report
         // written there corrupts it at the worst possible moment.

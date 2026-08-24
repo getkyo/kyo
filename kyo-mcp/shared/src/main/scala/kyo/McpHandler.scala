@@ -497,8 +497,9 @@ object McpHandler:
         // value into `structuredContent` and a text mirror, so the three coupled fields agree by
         // construction.
         //
-        // `OutInferred` comes FIRST so a body that left `Out` uninferred is reported as that, rather
-        // than as an ambiguity between two primitive schemas the author never mentioned. See its docs.
+        // `OutInferred` is required BEFORE the output schema so a body that left `Out` uninferred is
+        // reported as that, rather than as an ambiguity between two primitive schemas the author never
+        // mentioned. See its docs.
         val _ = outInferred
         val meta = ToolMeta(
             name = name,

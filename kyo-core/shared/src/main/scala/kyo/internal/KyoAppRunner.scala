@@ -35,19 +35,25 @@ trait KyoAppRunner:
       */
     protected def normalTermination(e: Throwable)(using AllowUnsafe): Maybe[Int] = Absent
 
-    /** Handles the result of a registered effect block. */
+    /** Handles the result of a registered effect block.
+      *
+      * A value is rendered to standard output and a failure to standard error. The split is what an
+      * application's stdout contract requires: stdout is the program's output, and a failure is a
+      * diagnostic about the program, not output from it. A stdio server makes the cost concrete, since a
+      * startup failure would otherwise put a non-JSON line on the very channel its host is parsing.
+      *
+      * A termination the runner treats as normal is reported by neither: it renders nothing and exits
+      * with the code [[normalTermination]] supplies. An operator stopping the process is not a fault, so
+      * rendering it and rethrowing it puts a stack-trace-shaped line on stderr for every ordinary stop.
+      */
     final protected def onResult[E, A](result: Result[E, A])(using Render[Result[E, A]], AllowUnsafe): Unit =
         result match
             case Error(e: Throwable) if normalTermination(e).nonEmpty =>
-                // A signalled stop ends quietly with the signal's conventional code. Throwing here is
-                // what put a stack-trace-shaped line on stderr for every normal stop, which trains an
-                // operator watching a supervised process to ignore that stream.
                 exitHook(normalTermination(e).getOrElse(0))
             case _ =>
-                // Failures are rendered to stderr, never stdout: an application whose stdout is a
-                // protocol channel (an MCP stdio server, a pipeline stage) would otherwise have its
-                // channel corrupted by its own crash report, which is the worst moment to lose it.
-                if !result.exists(().equals(_)) then scala.Console.err.println(result.show)
+                if !result.exists(().equals(_)) then
+                    if result.isError then Console.live.unsafe.printLineErr(result.show)
+                    else Console.live.unsafe.printLine(result.show)
                 result match
                     case Error(e: Throwable) => throw e
                     case Error(_)            => exitHook(1)
