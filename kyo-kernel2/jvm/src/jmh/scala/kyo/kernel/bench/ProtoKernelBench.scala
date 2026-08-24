@@ -64,6 +64,17 @@ class ProtoKernelBench:
         Eval(loop(0))
     end uncachedValuesPayBoxingOnly
 
+    // the NarrowBind shape from kyo-bench's arena: a deferred suspension then a bind, every step.
+    // The rows above recurse over settled values, which fusion keeps allocation-free; this one pays
+    // the deferral per step, which is what everyday Sync.defer code does
+    @Benchmark
+    def deferBindPerStep: Int =
+        def loop(i: Int): Int < Any =
+            if i > NarrowDepth then i
+            else Effect.defer(i + 1).map(loop)
+        Eval(loop(0))
+    end deferBindPerStep
+
     @Benchmark
     def deepRecursionPaysRescuesOnly: Int =
         def loop(i: Int): Int < Any =
