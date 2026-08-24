@@ -1295,9 +1295,6 @@ class ArrowEffectTest extends AnyFreeSpec:
     }
      */
 
-    // Parked with the removal of ArrowEffect.dispatchFirst: the operation
-    // inspection returns with the IOTask integration design. Restore then.
-    /*
     "dispatchFirst" - {
         "runs the clause on the standing operation" in {
             var seen = ""
@@ -1321,7 +1318,10 @@ class ArrowEffectTest extends AnyFreeSpec:
         "peels a stateless and a stateful region node" in {
             var seen = ""
             val inner =
-                ArrowEffect.handleLoopState(Tag[Ask], 0, say("deep").map(_ => ask))([X] => (state, _) => Loop.continue(state + 1, state), (_, a) => a)
+                ArrowEffect.handleLoopState(Tag[Ask], 0, say("deep").map(_ => ask))(
+                    [X] => (state, _) => Loop.continue(state + 1, state),
+                    (_, a) => a
+                )
             val outer = ArrowEffect.handleCont(Tag[Ask], inner: Int < (Ask & Say))([X] => (_, cont) => cont(1), a => a)
             ArrowEffect.dispatchFirst(Tag[Say], outer)([X] => input => seen = input)
             assert(seen == "deep")
@@ -1333,16 +1333,20 @@ class ArrowEffectTest extends AnyFreeSpec:
             assert(!ran)
         }
 
-        "stops at a deferred step without running its body" in {
-            var ran   = false
+        // A deferral is where a computation keeps what it has not done yet, and reaching the operation
+        // behind one means reading that. Where the payload was handed in, which is what a `map` builds,
+        // reading it costs nothing; where it is a body, reading it runs that body. One step, never more:
+        // this stops at the operation the step arrives at, and applies no continuation.
+        "runs one deferred step to reach the operation behind it" in {
+            var seen  = ""
             var built = false
             val v = Effect.defer {
                 built = true
                 say("hidden").map(_ => 1)
             }
-            ArrowEffect.dispatchFirst(Tag[Say], v)([X] => _ => ran = true)
-            assert(!ran)
-            assert(!built)
+            ArrowEffect.dispatchFirst(Tag[Say], v)([X] => input => seen = input)
+            assert(built)
+            assert(seen == "hidden")
         }
 
         "stops at a settled value" in {
@@ -1362,7 +1366,6 @@ class ArrowEffectTest extends AnyFreeSpec:
             assert(seen == 1)
         }
     }
-     */
 
     "handleCatching" - {
         "answers operations when nothing fails" in {

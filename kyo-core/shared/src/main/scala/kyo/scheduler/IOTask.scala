@@ -24,7 +24,14 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
       * restored effects out of the row the scheduler has to answer and puts them in the value the promise
       * holds. A spawn that carries none prepares the body as written.
       */
-    protected def prepare: Unit < (Abort[E] & Async)
+    /** This fiber's computation, already wrapped in the boundary below.
+      *
+      * Each spawn builds its own, because what it hands the boundary and how it completes this task differ:
+      * one has a body and answers with its value, the other has a crossing and answers with what the
+      * restore makes of it. Both give the boundary the body itself rather than a step composed onto it, so
+      * nothing stands between the region and the body's first operation.
+      */
+    protected def prepared: Unit < Any
 
     /** The remainder of this fiber, prepared and wrapped in the boundary below.
       *
@@ -64,7 +71,7 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
       * abort completes this promise, a ready join resumes in place, and a pending one parks this task: all
       * three are scheduling, and all three need state that is nobody else's business.
       */
-    private def boundary(v: Unit < (Abort[E] & Async)): Unit < Any =
+    protected def boundary[P](v: P < (Abort[E] & Async))(complete: P => Unit): Unit < Any =
         // The region is typed at Unit because a fiber answers with its promise, not with a value: every way
         // out of here completes this task or hands the continuation to something that will, so there is
         // nothing for the region to carry and nothing after it to run.
@@ -87,7 +94,7 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         // region answered them. Nothing is left behind: every abort reaches the clause, `Async.Join` is the
         // tag itself, and `Sync` is a marker that nothing suspends on, `Sync.defer` being a deferral the
         // eval runs on its own.
-        ArrowEffect.handleCont[[X] =>> Any, [X] =>> Any, ArrowEffect[[X] =>> Any, [X] =>> Any], Unit, Unit, Abort[E] & Async, Any](
+        ArrowEffect.handleCont[[X] =>> Any, [X] =>> Any, ArrowEffect[[X] =>> Any, [X] =>> Any], P, Unit, Abort[E] & Async, Any](
             Tag[Async.Join & Abort[Any]].asInstanceOf[Tag[ArrowEffect[[X] =>> Any, [X] =>> Any]]],
             v
         )(
@@ -100,8 +107,13 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                         case error: Result.Error[E] @unchecked =>
                             // no stop is needed to end the slice: answering without applying the
                             // continuation is what discards the rest of the computation, so the region
-                            // completes here and the eval has nothing left to carry on with
+                            // completes here and the eval has nothing left to carry on with.
+                            //
+                            // The region carries what the body produces, and an abort produces none of it,
+                            // so what the clause answers with is never read: the done lane below asks
+                            // whether this task is still pending, and this arm has just settled it.
                             completeDiscard(error)
+                            null.asInstanceOf[P]
                         case joinInput: Async.JoinInput[C] @unchecked =>
                             // invoking it registers the interrupt cascade on this task before the promise's
                             // state is read, so an interrupt landing in between still reaches what is awaited
@@ -153,7 +165,9 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                         case other =>
                             bug(s"fiber boundary received an operation it does not answer: $other")
             ,
-            a => a
+            // the body reached its end, so this is where the fiber answers. Guarded because the abort arm
+            // above settles the task itself and answers with a value that stands for nothing
+            p => if isPending() then complete(p) else ()
             // the region is the scheduler's own, built the same way for every fiber, so there is no call
             // site to name. What a parked fiber reports comes from the operation it stopped at, not here
         )(using Frame.internal).asInstanceOf[Unit < Any]
@@ -161,7 +175,7 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
 
     /** Puts the prepared computation in place, once the spawn that built this task is fully constructed. */
     private def install(): Unit =
-        curr = boundary(prepare)
+        curr = prepared
 
     private def stopSlice(): Unit =
         status match
@@ -357,8 +371,8 @@ object IOTask:
     ): IOTask[E, A, S2] =
         start(
             new IOTask[E, A, S2]:
-                protected def prepare =
-                    isolate.isolate(state, body).map(t => completeDiscard(Result.succeed(isolate.restore(t))))
+                protected def prepared =
+                    boundary(isolate.isolate(state, body))(t => completeDiscard(Result.succeed(isolate.restore(t))))
             ,
             parent,
             runtime
@@ -376,7 +390,7 @@ object IOTask:
     ): IOTask[E, A, Any] =
         start(
             new IOTask[E, A, Any]:
-                protected def prepare = body.map(a => completeDiscard(Result.succeed(a)))
+                protected def prepared = boundary(body)(a => completeDiscard(Result.succeed(a)))
             ,
             parent,
             runtime

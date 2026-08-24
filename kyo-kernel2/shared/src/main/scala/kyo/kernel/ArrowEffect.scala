@@ -436,8 +436,13 @@ object ArrowEffect:
       * of the fiber on the way to finding it would be running a computation that was just cancelled.
       *
       * It sees through what stands in front of an operation without being one: the regions installed around
-      * it, and the park a slice ended at. It stops at a deferral, whose payload is a body that reading would
-      * run, and at a settled value, since neither is an operation standing at anything.
+      * it, the park a slice ended at, and a deferral. It stops at a settled value, which stands at nothing.
+      *
+      * Reading a deferral's payload is a field read where one was handed in, which is what a `map` over a
+      * suspension builds, and there the operation underneath is reached for nothing. Where the payload is a
+      * body, `Sync.defer` and its kin, reading it runs that body: one step of the computation, never more,
+      * since this stops at the operation that step arrives at. That is the price of finding the operation
+      * behind a deferral at all, and the two are the same node here.
       */
     private[kyo] def dispatchFirst[I[_], O[_], E <: ArrowEffect[I, O], A, S](
         effectTag: Tag[E],
@@ -452,6 +457,7 @@ object ArrowEffect:
                         if kyo.tag <:< effectTag then f[Any](kyo.input)
                     case h: Kyo.Handle[?, ?, ?, ?, ?] => loop(h.value, fuel - 1)
                     case p: Kyo.Park[?, ?]            => loop(p.value, fuel - 1)
+                    case d: Kyo.Defer[?, ?, ?, ?]     => loop(d.value, fuel - 1)
                     case _                            => ()
         loop(v, 16)
     end dispatchFirst
