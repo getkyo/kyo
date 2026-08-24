@@ -35,9 +35,13 @@ private[kyo] object McpEngine:
         val logLevelRef = AtomicRef.Unsafe.init[McpServer.LogLevel](McpServer.LogLevel.Info)(using AllowUnsafe.embrace.danger).safe
         // Unsafe: AtomicRef for resource subscription set; initialized to empty per §3.4.
         val subscriptionsRef = AtomicRef.Unsafe.init[Set[McpResourceUri]](Set.empty)(using AllowUnsafe.embrace.danger).safe
-        // Unsafe: forward reference holding the live McpServer.Unsafe so each dispatch can
-        // bind it into Mcp.local. Populated synchronously after JsonRpcHandler.initUnscoped completes.
-        val serverRef = AtomicRef.Unsafe.init[Maybe[McpServer.Unsafe]](Absent)(using AllowUnsafe.embrace.danger).safe
+        // Forward reference holding the live McpServer.Unsafe so each dispatch can bind it into
+        // Mcp.local. A promise rather than a slot: it is completed right after JsonRpcHandler.initUnscoped
+        // returns, but that call has already started the dispatch loop, so a request arriving in between
+        // must WAIT for the server rather than find it missing. Unsafe: constructed outside an effect,
+        // like the sibling refs above.
+        val serverRef =
+            Fiber.Promise.Unsafe.init[McpServer.Unsafe, Any]()(using AllowUnsafe.embrace.danger).safe
 
         val catalog = McpCatalog(userHandlers)
 
@@ -350,9 +354,9 @@ private[kyo] object McpEngine:
 
             end unsafe
 
-            // Publish the live server into the forward reference so each dispatch can bind it into
-            // Mcp.local. Unsafe: synchronous write of forward reference immediately after construction.
-            serverRef.unsafe.set(Present(unsafe))(using AllowUnsafe.embrace.danger)
+            // Publish the live server, releasing any dispatch already waiting on it. Unsafe: synchronous
+            // completion of the forward reference immediately after construction.
+            serverRef.unsafe.completeDiscard(Result.succeed(unsafe))(using AllowUnsafe.embrace.danger)
             unsafe
         }
     end initServer
