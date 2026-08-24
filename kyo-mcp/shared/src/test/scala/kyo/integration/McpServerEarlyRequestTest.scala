@@ -21,7 +21,7 @@ import kyo.*
   * engine is not possible, so the evidence for the fix is structural rather than empirical: dispatch now
   * waits on the reference, and the code that could answer "McpServer not initialised" no longer exists.
   */
-class McpEarlyRequestTest extends Test:
+class McpServerEarlyRequestTest extends Test:
 
     case class Query(sql: String) derives Schema, CanEqual
     case class Rows(count: Int) derives Schema, CanEqual
@@ -103,4 +103,4 @@ class McpEarlyRequestTest extends Test:
         }
     }
 
-end McpEarlyRequestTest
+end McpServerEarlyRequestTest
