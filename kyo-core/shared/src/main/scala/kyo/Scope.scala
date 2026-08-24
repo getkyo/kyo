@@ -152,15 +152,8 @@ object Scope:
 
         object Awaitable:
             object Unsafe:
-                // TEMPORARY DIAGNOSTIC LOGGING
-                private val diagIds = new java.util.concurrent.atomic.AtomicInteger
-                private def diag(msg: String): Unit =
-                    java.lang.System.err.println(s"[fin] $msg thread=${Thread.currentThread().getName}")
-
                 def init(parallelism: Int)(using frame: Frame, u: AllowUnsafe): Awaitable =
                     new Awaitable:
-                        val diagId = diagIds.incrementAndGet()
-                        diag(s"create id=$diagId at=${frame.position.show}")
                         val queue = Queue.Unbounded.Unsafe.init[Maybe[Error[Any]] => Any < (Async & Abort[Throwable])](
                             Access.MultiProducerSingleConsumer
                         )
@@ -169,7 +162,6 @@ object Scope:
                         def ensure(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): Unit < Sync =
                             Sync.Unsafe.defer {
                                 if !queue.offer(v).contains(true) then
-                                    diag(s"ENSURE-FAILED id=$diagId createdAt=${frame.position.show}")
                                     Abort.panic(new Closed(
                                         "Finalizer",
                                         frame,
@@ -181,7 +173,6 @@ object Scope:
 
                         def close(ex: Maybe[Error[Any]])(using Frame): Unit < Sync =
                             Sync.Unsafe.defer {
-                                diag(s"close id=$diagId")
                                 queue.close() match
                                     case Absent => ()
                                     case Present(tasks) =>
@@ -197,7 +188,6 @@ object Scope:
                                             }
                                                 .handle(Fiber.initUnscoped[Nothing, Unit, Any, Any])
                                                 .map(promise.becomeDiscard)
-                                end match
                             }
 
                         def await(using Frame): Unit < Async = promise.get

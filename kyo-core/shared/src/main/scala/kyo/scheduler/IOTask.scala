@@ -60,6 +60,15 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
       */
     @volatile private var status = Maybe.empty[Thread | IOPromise[?, ?]]
 
+    /** The frame of the join a park stopped at, for the unlink the wakeup performs.
+      *
+      * The wakeup is armed by `run` rather than by the boundary (see the park arm below), and the frame the
+      * unlink is written under belongs to the join, which only the boundary is holding. So the boundary
+      * leaves it here. Written and read by the same thread within one slice, which is why it is a plain var
+      * next to a volatile one: nothing outside that slice looks at it.
+      */
+    private var joinFrame: Frame = Frame.internal
+
     /** The fiber boundary: one region answering everything the scheduler is responsible for.
       *
       * `Async.Join` and `Abort` are answered together through a tag that is the union of the two. A region's
@@ -150,11 +159,19 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                                     // `status` is what tells `run` the slice ended waiting rather than
                                     // finished. It is cleared by `run`, never here, so a promise that
                                     // completes inline still leaves `run` able to see that it parked.
+                                    //
+                                    // The wakeup is deliberately NOT armed here. What it makes runnable is
+                                    // the remainder, and the remainder does not exist yet: it is the park
+                                    // the eval builds while unwinding out of this clause, and only `run`
+                                    // ever holds it. Arming here publishes this task to the scheduler while
+                                    // `curr` still holds the previous slice, so a completion landing in the
+                                    // window hands another worker a remainder that has already been
+                                    // resumed, and the two restore the same park: same regions, same
+                                    // outstanding releases. One completes and runs them, the other then
+                                    // re-enters a scope whose release is spent. So `run` arms it, once the
+                                    // remainder is stored.
                                     status = Present(promise)
-                                    promise.onComplete { _ =>
-                                        removeInterrupt(promise)(using joinInput.frame)
-                                        Scheduler.get.schedule(this)
-                                    }
+                                    joinFrame = joinInput.frame
                                     discard(Safepoint.stop(Thread.currentThread()))
                                     // under the frame the join was written at, which the input carries
                                     // for this. A clause is never handed the frame of what it answers, so
@@ -285,7 +302,7 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                         if !NonFatal(ex) then throw ex
                         cleared
             status match
-                case Present(_: IOPromise[?, ?]) =>
+                case Present(promise: IOPromise[?, ?]) =>
                     // the boundary parked on another promise: `next` is the park the eval handed back,
                     // carrying the regions above it and the releases they still owe, and it is what the
                     // wakeup resumes. Kept as it was handed over, not composed with anything, so `abandon`
@@ -294,8 +311,23 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                     //
                     // The status is cleared here rather than in the completion, so a promise that was
                     // already complete and called back inline still leaves this able to see that it parked.
+                    //
+                    // The three statements are ordered, and the order is the whole point. The remainder is
+                    // stored first, because it is what a resumption runs. The status is cleared next, so a
+                    // resumption that starts the instant the wakeup is armed finds this task between slices
+                    // rather than still waiting. Only then is the wakeup armed, which is what publishes this
+                    // task to the scheduler: after it, another worker may be inside `run` before this call
+                    // returns, and everything it reads is already written.
+                    //
+                    // Nothing is lost by arming late. A promise that completed while the eval was unwinding
+                    // is settled by the time `onComplete` reaches it, and a settled promise runs the
+                    // callback on this thread instead of storing it, so the reschedule still happens.
                     curr = next
                     status = Absent
+                    promise.onComplete { _ =>
+                        removeInterrupt(promise)(using joinFrame)
+                        Scheduler.get.schedule(this)
+                    }
                     Task.Done
                 case _ =>
                     status = Absent

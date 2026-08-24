@@ -39,12 +39,7 @@ final private[kyo] class Finalizer[A, B](
       * `Maybe[Error]` could not say.
       */
     def run(outcome: Result[Nothing, B]): Unit =
-        if compareAndSet(false, true) then
-            // TEMPORARY DIAGNOSTIC LOGGING
-            java.lang.System.err.println(
-                s"[kfin] release id=${java.lang.System.identityHashCode(this)} at=${frame.position.show} outcome=$outcome thread=${Thread.currentThread().getName}"
-            )
-            discard(Eval(release(resource, outcome)))
+        if compareAndSet(false, true) then discard(Eval(release(resource, outcome)))
 
     // the value flowing out is the extent's result, which is what the release is told it completed with
     override def apply(v: B): B < Any =

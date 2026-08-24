@@ -11,7 +11,6 @@ import scala.annotation.static
 import scala.annotation.tailrec
 
 final private[kyo] class Stack:
-    private val owner   = Thread.currentThread()
     private var entries = new Array[Arrow[?, ?, ?]](16)
     private var states  = Array.fill[Maybe[Any]](16)(Absent)
     private var mask    = 15
@@ -48,17 +47,7 @@ final private[kyo] class Stack:
                 // `restore` writes its entries directly and never comes through here, which is what keeps
                 // a park replay and a resume after an abandonment silent: those hold their releases rather
                 // than having run them
-                // TEMPORARY DIAGNOSTIC LOGGING
-                java.lang.System.err.println(
-                    s"[kfin] SPENT id=${java.lang.System.identityHashCode(f)} at=${f.frame.position.show} thread=${Thread.currentThread().getName} owner=${owner}"
-                )
                 throw new Finalizer.Spent(f.frame)
-            case f: Finalizer[?, ?] =>
-                // TEMPORARY DIAGNOSTIC LOGGING
-                java.lang.System.err.println(
-                    s"[kfin] install id=${java.lang.System.identityHashCode(f)} at=${f.frame.position.show} thread=${Thread.currentThread().getName} owner=${owner}"
-                )
-                entries(idx) = f
             case _ =>
                 entries(idx) = f
         end match
@@ -604,7 +593,7 @@ private[kyo] object Stack:
         new ThreadLocal[Pool]:
             override def initialValue() = new Pool
 
-    def borrow(): Stack = new Stack // local.get().borrow()
+    def borrow(): Stack = local.get().borrow()
 
-    def release(s: Stack): Unit = () // local.get().release(s)
+    def release(s: Stack): Unit = local.get().release(s)
 end Stack

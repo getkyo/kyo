@@ -64,8 +64,6 @@ object Kyo:
         val states: Span[Maybe[Any]],
         val finalizers: Span[Maybe[Finalizer[?, ?]]]
     ) extends Kyo[A, S]:
-        // TEMPORARY DIAGNOSTIC: records the first resumption, so a second one can be reported
-        val diagRestored              = new java.util.concurrent.atomic.AtomicReference[String](null)
         override def toString: String = render(value)
     end Park
 
