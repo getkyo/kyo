@@ -202,14 +202,33 @@ class IsolateTest extends AnyFreeSpec:
                 assert(v.eval == "inner")
             }
 
-            "a join lands on the binding that owns it" in {
+            "a merging join updates the layer that was visible at the fork" in {
                 val v =
                     ContextEffect.handle(Tag[TestEffect1], ifUndefined = 100, ifDefined = _ => 100, join = (h: Int, f: Int) => h + f) {
                         ContextEffect.handle(Tag[TestEffect1], ifUndefined = 5, ifDefined = _ => 5, join = (h: Int, f: Int) => h + f) {
-                            Isolate.internal.Contextual.run(())
-                        }.map(_ => ContextEffect.suspend(Tag[TestEffect1]))
+                            Isolate.internal.Contextual.run(()).map(_ => ContextEffect.suspend(Tag[TestEffect1]))
+                        }
                     }
-                assert(v.eval == 200)
+                assert(v.eval == 10)
+            }
+
+            "a join never reaches a scope that did not own the crossing" in {
+                val v =
+                    ContextEffect.handle(Tag[TestEffect1], ifUndefined = 1, ifDefined = _ => 1, join = (h: Int, f: Int) => h + f) {
+                        ContextEffect.handle(Tag[TestEffect1], ifUndefined = 2, ifDefined = _ => 2, join = (h: Int, f: Int) => h + f) {
+                            Isolate.internal.Contextual.nest(())
+                        }.map { nested =>
+                            ContextEffect.handle(
+                                Tag[TestEffect1],
+                                ifUndefined = 10,
+                                ifDefined = _ => 10,
+                                join = (h: Int, f: Int) => h + f
+                            ) {
+                                nested.map(_ => ContextEffect.suspend(Tag[TestEffect1]))
+                            }
+                        }
+                    }
+                assert(v.eval == 10)
             }
         }
     }

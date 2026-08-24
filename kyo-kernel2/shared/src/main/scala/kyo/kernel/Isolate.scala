@@ -264,55 +264,72 @@ object Isolate:
     /** Gets the Isolate instance for given effect types. */
     def apply[Remove, Keep, Restore](using i: Isolate[Remove, Keep, Restore]): Isolate[Remove, Keep, Restore] = i
 
-    /** The bindings whose names crossed, with what the isolation ended holding for each. */
+    /** The bindings whose crossings came back, with what the isolation ended holding for each.
+      *
+      * Each ending binding is matched to the crossed entry it descends from, by origin rather than by tag:
+      * two bindings of one tag are the normal case, and a tag would carry a binding the crossing never
+      * held. Both spans stand innermost first with their order preserved, so each search starts where the
+      * previous match ended and two entries of one origin pair in order.
+      */
     private def carried[A](
         crossed: Span[Arrow[?, ?, ?]],
         bindings: Span[Binding[?, ?, ?, ?]],
         held: Span[Maybe[Any]],
         a: A
     ): (Span[Binding[?, ?, ?, ?]], Span[Maybe[Any]], A) =
-        var count = 0
-        var i     = 0
+        val bs     = new Array[Binding[?, ?, ?, ?]](crossed.size)
+        val hs     = new Array[Maybe[Any]](crossed.size)
+        var w      = 0
+        var cursor = 0
+        var i      = 0
         while i < bindings.size do
-            if crosses(crossed, bindings(i)) then count += 1
+            val j = crossedIndex(crossed, bindings(i).origin, cursor)
+            if j >= 0 then
+                bs(w) = bindings(i)
+                hs(w) = held(i)
+                w += 1
+                cursor = j + 1
+            end if
             i += 1
-        if count == 0 then (Span.empty, Span.empty, a)
+        end while
+        if w == 0 then (Span.empty, Span.empty, a)
+        else if w == crossed.size then (Span.fromUnsafe(bs), Span.fromUnsafe(hs), a)
         else
-            val bs = new Array[Binding[?, ?, ?, ?]](count)
-            val hs = new Array[Maybe[Any]](count)
-            var w  = 0
-            i = 0
-            while i < bindings.size do
-                if crosses(crossed, bindings(i)) then
-                    bs(w) = bindings(i)
-                    hs(w) = held(i)
-                    w += 1
-                end if
-                i += 1
+            val bs2 = new Array[Binding[?, ?, ?, ?]](w)
+            val hs2 = new Array[Maybe[Any]](w)
+            var j   = 0
+            while j < w do
+                bs2(j) = bs(j)
+                hs2(j) = hs(j)
+                j += 1
             end while
-            (Span.fromUnsafe(bs), Span.fromUnsafe(hs), a)
+            (Span.fromUnsafe(bs2), Span.fromUnsafe(hs2), a)
         end if
     end carried
 
-    private def crosses(crossed: Span[Arrow[?, ?, ?]], binding: Binding[?, ?, ?, ?]): Boolean =
-        binding.tag match
-            case Present(t) =>
-                var i   = 0
-                var out = false
-                while !out && i < crossed.size do
-                    crossed(i) match
-                        case b: Binding[?, ?, ?, ?] => out = b.tag.exists(_ =:= t.asInstanceOf[Tag[Any]])
-                        case _                      => ()
-                    i += 1
-                end while
-                out
-            case Absent => false
+    /** Where the crossed entries hold the one descending from the origin, or -1 where none does. */
+    private def crossedIndex(crossed: Span[Arrow[?, ?, ?]], origin: Binding[?, ?, ?, ?], from: Int): Int =
+        var i   = from
+        var out = -1
+        while out < 0 && i < crossed.size do
+            crossed(i) match
+                case b: Binding[?, ?, ?, ?] if b.origin eq origin => out = i
+                case _                                            => ()
+            i += 1
+        end while
+        out
+    end crossedIndex
 
     /** Asks each binding what it holds now that the fork has ended, and writes the answers.
       *
       * A recursion for the reason the fork walk is one: a strategy is a computation, so each answer is
-      * awaited before the next is asked, and each runs where its binding was defined. A name the fork did
-      * not carry is left alone, having nothing to be joined with.
+      * awaited before the next is asked, and each runs where its binding was defined. A binding whose
+      * crossing did not come back is left alone, having nothing to be joined with.
+      *
+      * Each binding is paired with the fork's entry descending from it, by origin rather than by tag: two
+      * bindings of one tag are the normal case, and a tag would hand an answer to a scope that never
+      * crossed. Both spans stand innermost first with their order preserved, so each search starts where
+      * the previous match ended.
       *
       * The writes go out together, in one visit, rather than one at a time: a strategy that reads the
       * context would otherwise see it half joined.
@@ -323,6 +340,7 @@ object Isolate:
         forked: Span[Binding[?, ?, ?, ?]],
         forkedHeld: Span[Maybe[Any]],
         i: Int,
+        cursor: Int,
         updates: Array[Binding[?, ?, ?, ?]],
         w: Int,
         a: A
@@ -344,36 +362,34 @@ object Isolate:
             val binding = mine(i).asInstanceOf[Binding[Any, Nothing, Any, Any]]
             held(i) match
                 case Present(h) =>
-                    // the tag is stored at the binding's own effect type; comparing it against the fork's
-                    // is the erasure the spans already impose
-                    val forkedValue =
-                        binding.tag match
-                            case Present(t) => valueOf(forked, forkedHeld, t.asInstanceOf[Tag[Any]])
-                            case Absent     => Maybe.empty[Any]
-                    forkedValue match
-                        case Present(f) =>
-                            binding.join(h, f).map { joined =>
-                                updates(w) = frozen(binding, joined)
-                                join(mine, held, forked, forkedHeld, i + 1, updates, w + 1, a)
-                            }
-                        case Absent =>
-                            join(mine, held, forked, forkedHeld, i + 1, updates, w, a)
-                    end match
+                    val j = forkedIndex(forked, binding.origin, cursor)
+                    if j < 0 then join(mine, held, forked, forkedHeld, i + 1, cursor, updates, w, a)
+                    else
+                        forkedHeld(j) match
+                            case Present(f) =>
+                                binding.join(h, f).map { joined =>
+                                    updates(w) = frozen(binding, joined)
+                                    join(mine, held, forked, forkedHeld, i + 1, j + 1, updates, w + 1, a)
+                                }
+                            case Absent =>
+                                join(mine, held, forked, forkedHeld, i + 1, j + 1, updates, w, a)
+                        end match
+                    end if
                 case Absent =>
-                    join(mine, held, forked, forkedHeld, i + 1, updates, w, a)
+                    join(mine, held, forked, forkedHeld, i + 1, cursor, updates, w, a)
             end match
         end if
     end join
 
-    /** What the fork's bindings held for a name, absent where it carried none. */
-    private def valueOf(forked: Span[Binding[?, ?, ?, ?]], held: Span[Maybe[Any]], t: Tag[Any]): Maybe[Any] =
-        var i   = 0
-        var out = Maybe.empty[Any]
-        while out.isEmpty && i < forked.size do
-            if forked(i).tag.exists(_ =:= t) then out = held(i)
+    /** Where the fork's bindings hold the one descending from the origin, or -1 where none does. */
+    private def forkedIndex(forked: Span[Binding[?, ?, ?, ?]], origin: Binding[?, ?, ?, ?], from: Int): Int =
+        var i   = from
+        var out = -1
+        while out < 0 && i < forked.size do
+            if forked(i).origin eq origin then out = i
             i += 1
         out
-    end valueOf
+    end forkedIndex
 
     /** Asks each binding for its crossing, innermost first.
       *
@@ -415,33 +431,55 @@ object Isolate:
             // erasure-forced: one span holds the bindings of every value type, and each was written with its
             // own. The value read from the slot is the one this binding put there, so the pair lines up
             val binding = bindings(i).asInstanceOf[Binding[Any, Nothing, Any, Any]]
-            held(i) match
-                case Present(h) =>
-                    binding.fork(h).map { crossed =>
-                        crossed match
-                            case Present(value) =>
-                                entries(w) = frozen(binding, value)
-                                states(w) = Present(value)
-                                cross(bindings, held, i + 1, entries, states, w + 1, f)
-                            case Absent =>
-                                cross(bindings, held, i + 1, entries, states, w, f)
-                    }
-                case Absent =>
-                    cross(bindings, held, i + 1, entries, states, w, f)
-            end match
+            if shadowed(entries, w, binding) then cross(bindings, held, i + 1, entries, states, w, f)
+            else
+                held(i) match
+                    case Present(h) =>
+                        binding.fork(h).map { crossed =>
+                            crossed match
+                                case Present(value) =>
+                                    entries(w) = frozen(binding, value)
+                                    states(w) = Present(value)
+                                    cross(bindings, held, i + 1, entries, states, w + 1, f)
+                                case Absent =>
+                                    cross(bindings, held, i + 1, entries, states, w, f)
+                        }
+                    case Absent =>
+                        cross(bindings, held, i + 1, entries, states, w, f)
+                end match
+            end if
         end if
     end cross
+
+    /** Whether a crossing for this name was already taken, which the innermost occurrence was.
+      *
+      * A fork inherits what it can read, and a read takes the innermost binding of a name, so the walk
+      * keeps the first occurrence it meets and drops the ones it shadows: the child could never read them,
+      * and an extent ending is what discards its layer, so nothing joins them back either.
+      */
+    private def shadowed(entries: Array[Arrow[?, ?, ?]], w: Int, binding: Binding[?, ?, ?, ?]): Boolean =
+        binding.tag match
+            case Present(t) =>
+                var i   = 0
+                var out = false
+                while !out && i < w do
+                    entries(i) match
+                        case b: Binding[?, ?, ?, ?] => out = b.tag.exists(_ =:= t.asInstanceOf[Tag[Any]])
+                        case _                      => ()
+                    i += 1
+                end while
+                out
+            case Absent => false
 
     /** A frozen binding, carrying the one whose strategies it answers with.
       *
       * Freezing borrows the strategies rather than defining them, so freezing a frozen binding would layer
       * one borrow on another and every crossing would leave `fork` and `join` another level to walk. A name
       * that crosses on each of many rounds accumulates a level per round, which is a stack overflow rather
-      * than a slow walk. Naming the source keeps the next freeze starting from the binding that owns the
+      * than a slow walk. Naming the origin keeps the next freeze starting from the binding that owns the
       * strategies, so the borrow is one deep however many times the name crosses.
       */
-    abstract private class Frozen extends Binding[Any, Nothing, Any, Any]:
-        def source: Binding[Any, Nothing, Any, Any]
+    abstract private class Frozen(override val origin: Binding[Any, Nothing, Any, Any]) extends Binding[Any, Nothing, Any, Any]
 
     /** A binding of the same name holding what crossed, with the strategies of the one it came from. */
     @nowarn("msg=anonymous")
@@ -450,10 +488,9 @@ object Isolate:
     ): Binding[Any, Nothing, Any, Any] =
         val owner =
             binding match
-                case f: Frozen => f.source
+                case f: Frozen => f.origin
                 case b         => b
-        new Frozen:
-            def source                                = owner
+        new Frozen(owner):
             def frame                                 = _frame
             val tag                                   = owner.tag
             val bound                                 = Maybe((_: Maybe[Any]) => value)
@@ -539,7 +576,7 @@ object Isolate:
                             def updates = Span.empty
                             def resume(mine: Span[Binding[?, ?, ?, ?]], held: Span[Maybe[Any]]): A < S =
                                 if mine.isEmpty then a
-                                else join(mine, held, forked, forkedHeld, 0, new Array(mine.size), 0, a)
+                                else join(mine, held, forked, forkedHeld, 0, 0, new Array(mine.size), 0, a)
                     end if
                 }
         end Contextual

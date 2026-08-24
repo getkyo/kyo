@@ -153,6 +153,16 @@ object Kyo:
           */
         def release: Maybe[(V, Result[Nothing, A]) => Any < Any] = Absent
 
+        /** The binding this one stands for: itself as written, the one it descends from for a
+          * kernel-derived replacement.
+          *
+          * Two bindings of one tag are the normal case, nested scopes of one effect and every local, so a
+          * name cannot say which entry a crossing or a write-back means. Identity can: what a fork carries
+          * and what a join writes back both keep the binding they came from, and the walks that pair them
+          * compare this rather than the tag.
+          */
+        def origin: Binding[?, ?, ?, ?] = this
+
         /** Where the value flows: the bound body for a bind, the read's continuation for a read.
           *
           * A method rather than an arrow, so neither use allocates one and the node is the only object
@@ -185,11 +195,13 @@ object Kyo:
       */
     abstract private[kyo] class Bindings[A, S] extends Kyo[A, S]:
 
-        /** What the innermost binding of each name holds from here on, applied before the read below.
+        /** What the binding each update descends from holds from here on, applied before the read below.
           *
-          * Each entry replaces the one it names rather than standing above it, so the stack does not grow
-          * and a value written into a scope stays inside it. A name nothing binds here is dropped: there is
-          * no scope for it to belong to. Empty where nothing is written, which is every read.
+          * Each update replaces the entry it descends from rather than standing above it, so the stack does
+          * not grow and a value written into a scope stays inside it. The entry is found by origin rather
+          * than by name: two bindings of one tag are the normal case, and a name would land every write on
+          * the innermost. An update whose binding is gone is dropped: there is no scope for it to belong
+          * to. Empty where nothing is written, which is every read.
           */
         def updates: Span[Binding[?, ?, ?, ?]]
 
