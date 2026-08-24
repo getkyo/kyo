@@ -109,4 +109,42 @@ class JsonRpcErrorTest extends JsonRpcTest:
         assert(decoded.data == Present(Structure.Value.Str("details")))
     }
 
+    "the wire message is the registered message, with the code only in `code`" - {
+
+        "an application error does not fold its code into its message" in {
+            val err = JsonRpcCustomError(-40001, "read-only-violation")
+            assert(err.code == -40001)
+            assert(
+                err.message == "read-only-violation",
+                s"JSON-RPC carries `code` as its own field; repeating it in `message` is duplication: ${err.message}"
+            )
+        }
+
+        "an implementation error does not fold its code into its message" in {
+            val err = JsonRpcImplementationError(-32050, "backend unavailable", Absent)
+            assert(err.code == -32050)
+            assert(err.message == "backend unavailable", s"got: ${err.message}")
+        }
+
+        "a wire round trip is idempotent for an application error" in {
+            // `fromWire` re-enters the same constructor with whatever `message` arrived. Any prefix the
+            // constructor adds is therefore re-applied on every hop, so a message that survives one round
+            // trip unchanged is the only shape that survives a proxy or a reverse call.
+            val original = JsonRpcCustomError(-40001, "read-only-violation")
+            val once     = JsonRpcError.fromWire(original.code, original.message, original.data)
+            val twice    = JsonRpcError.fromWire(once.code, once.message, once.data)
+            assert(once.message == "read-only-violation", s"after one hop: ${once.message}")
+            assert(twice.message == "read-only-violation", s"after two hops: ${twice.message}")
+            assert(twice.code == -40001)
+        }
+
+        "a wire round trip is idempotent for an implementation error" in {
+            val original = JsonRpcImplementationError(-32050, "backend unavailable", Absent)
+            val once     = JsonRpcError.fromWire(original.code, original.message, original.data)
+            val twice    = JsonRpcError.fromWire(once.code, once.message, once.data)
+            assert(once.message == "backend unavailable", s"after one hop: ${once.message}")
+            assert(twice.message == "backend unavailable", s"after two hops: ${twice.message}")
+        }
+    }
+
 end JsonRpcErrorTest
