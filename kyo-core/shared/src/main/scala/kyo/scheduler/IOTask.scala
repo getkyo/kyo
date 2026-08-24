@@ -71,11 +71,14 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         // out of here completes this task or hands the continuation to something that will, so there is
         // nothing for the region to carry and nothing after it to run.
         //
-        // The input constructor is the bottom type. A union answers operations whose inputs have nothing in
-        // common, and `Nothing` is what stands under both, which keeps the clause's parameter out of either
-        // member's class and off the intersection's erasure. The output has to go the other way, to a
-        // supertype of both: a join answers `Result[Nothing, C]` and an abort answers `Unit`, and `Any` is
-        // what covers the two.
+        // The constructors are `Any` and the union tag is cast onto the region that describes. Spelling the
+        // bound honestly is what fails: a region is contravariant in its input constructor, so a
+        // constructor standing under two families that carry unrelated inputs can only be the bottom type,
+        // which type checks and then leaves the clause holding a `Nothing` that no arriving value inhabits.
+        // The cast is confined to the tag, and the tag is the union unchanged. It is what selects
+        // operations, so the region still answers `Async.Join` and `Abort` and nothing besides; what the
+        // constructors give up is only the clause's ability to state which of the two it is looking at,
+        // which the match below establishes anyway.
         //
         // `Abort[E] & Async` rides in the region's `S` and is dropped from the row afterwards. Both are
         // answered here, and neither can say so in `E`, because a row is contravariant while both of these
@@ -86,8 +89,8 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         // region answered them. Nothing is left behind: every abort reaches the clause, `Async.Join` is the
         // tag itself, and `Sync` is a marker that nothing suspends on, `Sync.defer` being a deferral the
         // eval runs on its own.
-        ArrowEffect.handleCont[[X] =>> Nothing, [X] =>> Any, Async.Join | Abort[Nothing], Unit, Unit, Abort[E] & Async, Any](
-            Tag[Async.Join | Abort[Nothing]],
+        ArrowEffect.handleCont[[X] =>> Any, [X] =>> Any, ArrowEffect[[X] =>> Any, [X] =>> Any], Unit, Unit, Abort[E] & Async, Any](
+            Tag[Async.Join | Abort[Nothing]].asInstanceOf[Tag[ArrowEffect[[X] =>> Any, [X] =>> Any]]],
             v
         )(
             [C] =>
@@ -95,13 +98,13 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                     // one clause for two families, discriminated by what the operation carries: an abort's
                     // input is the error it is failing with, a join's is the thunk that hands over the
                     // promise once this task is linked to it
-                    (input: Any) match
+                    input match
                         case error: Result.Error[E] @unchecked =>
                             // no stop is needed to end the slice: answering without applying the
                             // continuation is what discards the rest of the computation, so the region
                             // completes here and the eval has nothing left to carry on with
                             completeDiscard(error)
-                        case joinInput: Async.JoinInput[Any] @unchecked =>
+                        case joinInput: Async.JoinInput[C] @unchecked =>
                             // invoking it registers the interrupt cascade on this task before the promise's
                             // state is read, so an interrupt landing in between still reaches what is awaited
                             val promise = joinInput(this)
@@ -133,7 +136,9 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                                         // that turns a throw into this promise's panic. On the completer's
                                         // thread the throw would land in an unrelated fiber instead, and
                                         // this one would be left scheduled by nobody.
-                                        curr = boundary(Sync.defer(cont(r)))
+                                        // the region's own effect is what the fresh boundary below
+                                        // answers, so it is dropped from the row here
+                                        curr = boundary(Sync.defer(cont(r).asInstanceOf[Unit < (Abort[E] & Async)]))
                                         Scheduler.get.schedule(this)
                                     }
                                     ()
