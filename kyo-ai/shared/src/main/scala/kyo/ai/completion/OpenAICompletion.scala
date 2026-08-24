@@ -382,8 +382,8 @@ private[completion] object OpenAICompletion extends Completion:
                                 // compelled by tool_choice:"required"), so a required optional field is schema
                                 // pressure, not grammar enforcement.
                                 if p.name == Completion.resultToolName then
-                                    StrictSchema.requireAll(resultSchema.getOrElse(Json.jsonSchema(using p.inputSchema)))
-                                else Json.jsonSchema(using p.inputSchema)
+                                    StrictSchema.requireAll(resultSchema.getOrElse(p.wireInputSchema))
+                                else p.wireInputSchema
                             ToolDef(FunctionDef(p.description, p.name, false, params))
                         }.toList)
                 // A configured temperature reaches the wire only when the entry declares the model accepts it.
