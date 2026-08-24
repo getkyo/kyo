@@ -713,7 +713,17 @@ object LLM:
                             ai.updateContext(_.systemMessage(
                                 s"Your previous tool call was rejected: ${rejected.detail}. Produce a valid " +
                                     "tool call whose arguments are well-formed JSON matching the schema exactly."
-                            )).andThen((Completion.Reply(Chunk.empty, Completion.StopReason.Completed), true))
+                            // The rejection WAS a wire round trip the observers are about to see. Feeding
+                            // it forward with the default empty usage reports it as zero turns, so a turn
+                            // that was paid for vanishes from the spend a budget guard reads.
+                            )).andThen((
+                                Completion.Reply(
+                                    Chunk.empty,
+                                    Completion.StopReason.Completed,
+                                    AIStats.empty.copy(turns = 1)
+                                ),
+                                true
+                            ))
                         }
                     case other => Abort.get(other).map(r => (r, false))
                 }

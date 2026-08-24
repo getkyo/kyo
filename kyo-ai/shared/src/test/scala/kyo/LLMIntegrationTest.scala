@@ -471,4 +471,34 @@ class LLMIntegrationTest extends BaseAITest:
             yield ()
     }
 
+    "report what the turn spent" - runBackends { backend =>
+        // The README promises that every completed model turn reports what it spent, and the budget
+        // guardrail it documents is built on `reply.usage.totalTokens`. A backend that reports zero does
+        // not read as "unsupported", it reads as a free turn: the guardrail adds nothing every turn and
+        // silently never fires, which is worse than having no guardrail. So the assertion is per backend
+        // and it is on the number, not on the field being present.
+        for
+            result <- Abort.run[AIException] {
+                Observe.withStats(AI.gen[String]("Reply with exactly the word: ok"))
+            }
+            statsAndAnswer <- unwrap(backend, result)
+            (stats, _) = statsAndAnswer
+            _ = assert(
+                stats.inputTokens > 0,
+                s"${backend.label} reported no input tokens for a completed turn: $stats"
+            )
+            _ = assert(
+                stats.outputTokens > 0,
+                s"${backend.label} reported no output tokens for a completed turn: $stats"
+            )
+            _ = assert(
+                stats.totalTokens == stats.inputTokens + stats.outputTokens,
+                s"${backend.label} totalTokens must be the sum it documents: $stats"
+            )
+            // A turn that produced a reply is at least one turn. Zero here is the other way the spend
+            // proxy lies when the token counts are missing.
+            _ = assert(stats.turns >= 1, s"${backend.label} reported $stats turns for a completed turn")
+        yield ()
+    }
+
 end LLMIntegrationTest
