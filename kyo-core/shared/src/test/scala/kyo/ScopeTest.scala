@@ -807,27 +807,6 @@ class ScopeTest extends kyo.test.Test[Any]:
             }
         }
 
-        "PROBE: log the stream of the failing acquire" in {
-            val d = new kyo.kernel.internal.Debugger:
-                override def onDefer[A, S](stack: kyo.kernel.internal.Stack, frame: Frame, value: A < S): A < S =
-                    println(s"[dbg] defer    ${frame.position.show}  value=$value")
-                    value
-                override def onSuspend[A](stack: kyo.kernel.internal.Stack, frame: Frame, input: A): Unit =
-                    println(s"[dbg] suspend  ${frame.position.show}  input=$input")
-                override def onDeliver[A](stack: kyo.kernel.internal.Stack, frame: Frame, value: A): A =
-                    println(s"[dbg] deliver  ${frame.position.show}  value=$value")
-                    value
-            val r = TestResource(1)
-            kyo.kernel.internal.Debugger.install(d)
-            Scope.acquire(Fiber.initUnscoped(r).map(_.get))
-                .handle(Scope.run, Abort.run)
-                .map { out =>
-                    kyo.kernel.internal.Debugger.uninstall()
-                    println(s"[dbg] out=$out closes=${r.closes}")
-                    assert(r.closes == 1)
-                }
-        }
-
         "a resource acquired inside a fork is released with the enclosing extent" in {
             val r = TestResource(1)
             Fiber.initUnscoped(Scope.acquire(r).map(_.id)).map(_.get)
