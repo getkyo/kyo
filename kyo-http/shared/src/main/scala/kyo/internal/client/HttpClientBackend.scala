@@ -373,8 +373,6 @@ final private[kyo] class HttpClientBackend private (
 
     /** Stream request body in chunked transfer encoding format. Launched as a background IOTask. */
     private def streamRequestBody(conn: HttpConnection, bodyStream: Stream[Span[Byte], Async])(using AllowUnsafe, Frame): Unit =
-        import kyo.kernel.internal.Context
-        import kyo.kernel.internal.Trace
         import kyo.scheduler.IOTask
         val computation: Unit < Async =
             // The whole write is wrapped in a single Abort.run[Closed]: the first Closed (connection torn
@@ -397,7 +395,7 @@ final private[kyo] class HttpClientBackend private (
                     conn.transport.outbound.safe.put(TerminalChunk)
                 }
             }.unit
-        discard(IOTask(computation, Trace.init, Context.empty))
+        discard(IOTask.unscoped(computation))
     end streamRequestBody
 
     // -- Buffered response body reading --
@@ -583,7 +581,7 @@ final private[kyo] class HttpClientBackend private (
             // that the consumer hasn't read yet.
             val decodedCh = Channel.Unsafe.init[Span[Byte]](4)
             // Start the chunked decoder in a background fiber
-            discard(kyo.scheduler.IOTask(
+            discard(kyo.scheduler.IOTask.unscoped(
                 // Malformed framing (HttpMalformedBodyException) and an over-limit control plane
                 // (HttpPayloadTooLargeException) are caught here alongside Closed: the decoded channel is closed,
                 // ending the consumer's stream at the fault rather than propagating an uncaught abort.
@@ -595,9 +593,7 @@ final private[kyo] class HttpClientBackend private (
                     conn.http1.chunkedDecoderState
                 ))
                     .unit
-                    .andThen(decodedCh.safe.closeAwaitEmpty),
-                kyo.kernel.internal.Trace.init,
-                kyo.kernel.internal.Context.empty
+                    .andThen(decodedCh.safe.closeAwaitEmpty)
             ))
             decodedCh.safe.streamUntilClosed()
         else if parsed.contentLength > 0 then

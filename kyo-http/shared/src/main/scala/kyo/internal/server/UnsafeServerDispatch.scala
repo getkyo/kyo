@@ -11,8 +11,6 @@ import kyo.internal.codec.*
 import kyo.internal.http1.*
 import kyo.internal.util.*
 import kyo.internal.websocket.*
-import kyo.kernel.internal.Context
-import kyo.kernel.internal.Trace
 import kyo.net.internal.util.GrowableByteBuffer
 import kyo.scheduler.IOTask
 import scala.annotation.tailrec
@@ -359,7 +357,7 @@ private[kyo] object UnsafeServerDispatch:
                 // subtype, structurally different from that alias even though both erase to the same runtime object. The alias is transparent
                 // only inside kyo.Fiber's own defining scope, so exposing the scheduled task as the Fiber.Unsafe[Unit, Any] the inflight slot
                 // holds needs this erased-boundary cast. Safe: the task runs serveRequest (a Unit computation) and settles only with its result.
-                val fiber = IOTask(serveRequest(router, endpoint, lookup, streamCtx, request, config), Trace.init, Context.empty)
+                val fiber = IOTask.unscoped(serveRequest(router, endpoint, lookup, streamCtx, request, config))
                     .asInstanceOf[Fiber.Unsafe[Unit, Any]]
                 inflightHandler.set(Present(fiber))
                 // Recheck: the watcher may have already fired (and seen Absent, or a prior completed fiber)
@@ -406,7 +404,7 @@ private[kyo] object UnsafeServerDispatch:
         // handler must be able to read it via req.query, exactly as a non-upgrade request can.
         val url  = HttpUrl(Absent, "", 0, request.pathAsString, request.queryRawString)
         val conn = new ChannelBackedStream(streamCtx.inbound, streamCtx.outbound)
-        discard(IOTask(
+        discard(IOTask.unscoped(
             Abort.run[Any](
                 WebSocketCodec.acceptUpgrade(conn, headers, wsHandler.wsConfig).andThen {
                     serveWebSocket(conn, streamCtx.inbound, streamCtx.outbound, wsHandler, headers, url)
@@ -417,9 +415,7 @@ private[kyo] object UnsafeServerDispatch:
                 case Result.Panic(t) =>
                     Log.error("UnsafeServerDispatch: HttpWebSocket upgrade panic", t)
                 case Result.Success(_) => Kyo.unit
-            }.unit,
-            Trace.init,
-            Context.empty
+            }.unit
         ))
     end dispatchWebSocket
 
