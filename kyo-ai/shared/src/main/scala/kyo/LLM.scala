@@ -77,52 +77,52 @@ object LLM:
         end match
     end crossRunFailure
 
-    /** Threads `State` through `ArrowEffect.handleLoop`, interpreting each op. NOT inline. */
+    /** Threads `State` through `ArrowEffect.handleLoopState`, interpreting each op. NOT inline. */
     private[kyo] def runWith[A, S, B, S2](state: State)(v: A < (LLM & S))(
         done: (State, A) => B < S2
     )(using Frame): B < (S & S2 & Async & Abort[AIGenException]) =
-        ArrowEffect.handleLoop[Op, Id, LLM, A, B, S, S2 & Async & Abort[AIGenException], State](Tag[LLM], state, v)(
+        ArrowEffect.handleLoopState[Op, Id, LLM, A, B, S, S2 & Async & Abort[AIGenException], State](Tag[LLM], state, v)(
             handle = [C] =>
-                (input: Op[C], state: State, cont) =>
+                (state: State, input: Op[C]) =>
                     input match
                         // The panic is the arm's result, so it rides runWith's residual Abort row (not the
                         // LLM continuation), aborting the whole computation.
                         case _ if crossRunFailure(input, state).nonEmpty =>
                             Abort.panic(crossRunFailure(input, state).get)
                         case op: Op.Read =>
-                            Loop.continue(state, cont(state.contextOf(op.target)))
+                            Loop.continue(state, state.contextOf(op.target))
                         case op: Op.Add =>
-                            Loop.continue(state.withContext(op.target, state.contextOf(op.target).add(op.message)), cont(()))
+                            Loop.continue(state.withContext(op.target, state.contextOf(op.target).add(op.message)), ())
                         case op: Op.Set =>
-                            Loop.continue(state.withContext(op.target, op.context), cont(()))
+                            Loop.continue(state.withContext(op.target, op.context), ())
                         case _: Op.Init.type =>
                             // Mint with the next id from the threaded State (no global counter), stamped with
                             // this run's owner; prune GC'd slots on the way.
                             val ai = new AI(state.nextId, state.owner)
-                            Loop.continue(state.pruned.copy(nextId = state.nextId + 1).withContext(ai, Context.empty), cont(ai))
+                            Loop.continue(state.pruned.copy(nextId = state.nextId + 1).withContext(ai, Context.empty), ai)
                         case _: Op.Env.type =>
-                            Loop.continue(state, cont(state.env))
+                            Loop.continue(state, state.env)
                         case op: Op.SetEnv =>
-                            Loop.continue(state.copy(env = op.env), cont(state.env))
+                            Loop.continue(state.copy(env = op.env), state.env)
                         case op: Op.Discard =>
-                            Loop.continue(state.without(op.target), cont(()))
+                            Loop.continue(state.without(op.target), ())
                         case _: Op.GetState.type =>
-                            Loop.continue(state, cont(state))
+                            Loop.continue(state, state)
                         case op: Op.SetState =>
                             // Restoring a snapshot must never lower the id counter: ids stay monotonic so a
                             // slot key is never reused (a rollback keeps the high-water id).
-                            Loop.continue(op.state.copy(nextId = math.max(state.nextId, op.state.nextId)), cont(()))
+                            Loop.continue(op.state.copy(nextId = math.max(state.nextId, op.state.nextId)), ())
                         case op: Op.GetSession =>
-                            Loop.continue(state, cont(state.sessionOf(op.target)))
+                            Loop.continue(state, state.sessionOf(op.target))
                         case op: Op.SetSession =>
-                            Loop.continue(state.withSession(op.target, op.session), cont(()))
+                            Loop.continue(state.withSession(op.target, op.session), ())
                         case op: Op.Gen[C] @unchecked =>
                             // The eval loop is itself an LLM computation (reads config, appends replies, runs
                             // tools), so a nested runWith against the live state discharges those ops and
                             // threads the updated state back; Async & Abort enter here and ride out on run's
                             // residual.
                             runWith(state)(genLoop(op.target, op.schema))((s, c) => (s, c))
-                                .map((s, c) => Loop.continue(s, cont(c)))
+                                .map((s, c) => Loop.continue(s, c))
                         case op: Op.Stream[C] @unchecked =>
                             // The SSE projection is itself an LLM computation (reads config, assembles the
                             // result-tool/context), so a nested runWith discharges those ops; on full
@@ -130,7 +130,7 @@ object LLM:
                             // element-emit Tag captured at the suspend site, since the handler's C is abstract
                             // and the Tag cannot be re-derived here.
                             runWith(state)(streamAgainst(op.target, op.schema)(using summon[Frame], op.emitTag))((s, c) => (s, c))
-                                .map((s, c) => Loop.continue(s, cont(c)))
+                                .map((s, c) => Loop.continue(s, c))
             ,
             done = (state, a) => done(state, a)
         )

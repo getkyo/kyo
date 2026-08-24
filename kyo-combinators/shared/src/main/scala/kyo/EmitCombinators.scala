@@ -44,7 +44,7 @@ extension [A, B, S](effect: B < (Emit[A] & S))
         tag: Tag[Emit[A]],
         f: Frame
     ): B < (S & S1) =
-        ArrowEffect.handle(tag, effect):
+        ArrowEffect.handleCont(tag, effect):
             [C] =>
                 (a, cont) =>
                     fn(a).andThen(cont(()))
@@ -72,15 +72,15 @@ extension [A, B, S](effect: B < (Emit[A] & S))
         fr: Frame,
         at: Tag[Emit[Chunk[A]]]
     ): B < (Emit[Chunk[A]] & S) =
-        ArrowEffect.handleLoop(tag, Chunk.empty[A], effect)(
+        ArrowEffect.handleLoopState(tag, Chunk.empty[A], effect)(
             [C] =>
-                (v, buffer, cont) =>
+                (buffer, v) =>
                     val b2 = buffer.append(v)
                     if b2.size >= chunkSize then
                         Emit.valueWith(b2):
-                            Loop.continue(Chunk.empty, cont(()))
+                            Loop.continue(Chunk.empty, ())
                     else
-                        Loop.continue(b2, cont(()))
+                        Loop.continue(b2, ())
                     end if
             ,
             (buffer, v) =>
