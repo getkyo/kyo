@@ -33,8 +33,12 @@ object Effect:
     private val unitValue: Unit < Any = ().asInstanceOf[Unit < Any]
 
     // The body lives in the arrow, not the payload: building the node does not run it, and applying the
-    // arrow is what runs it. The node is its own step, so this is the one allocation the by-name shape
-    // was, and the payload it carries is a value already in hand.
+    // arrow is what runs it. That is the same deferral by a different carrier, and it leaves the payload a
+    // value already in hand, which is what lets an inspection read it without running a step.
+    //
+    // The node is its own step, the shape the outcome dispatchers already use, so the arrow costs no
+    // allocation of its own and this stays exactly what the by-name form was: one object. The applying
+    // body is the one `Arrow.apply` mints, since a standalone arrow is what this is.
     @nowarn("msg=anonymous")
     private[kyo] inline def deferInline[A, S](inline f: => A < S)(using inline _frame: Frame): A < S =
         new Defer[Unit, A, A, S] with Step[Unit, A, S]:
@@ -43,6 +47,19 @@ object Effect:
             def contA                   = this
             def contB                   = Arrow.id[A]
             override def apply(v: Unit) = f
+            def apply[C, S2](v: Unit < S2, cont: Arrow[A, C, S2]) =
+                v match
+                    case kyo: Kyo[Unit, S2] @unchecked =>
+                        defer(kyo, this, cont)
+                    case _ =>
+                        val slot = Safepoint.get()
+                        if !Safepoint.enter(slot) then
+                            defer(v, this, cont)
+                        else
+                            val out = cont.head(apply(Nested.unnest(v)), cont.tail)
+                            Safepoint.exit(slot)
+                            out
+                        end if
 
     @static def defer[A, B, S](v: A < S, cont: Arrow[A, B, S]): B < S =
         new Defer[A, B, B, S]:
