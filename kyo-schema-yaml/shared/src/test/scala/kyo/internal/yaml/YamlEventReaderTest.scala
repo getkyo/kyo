@@ -135,6 +135,19 @@ class YamlEventReaderTest extends kyo.test.Test[Any]:
                 durationValue = reader("PT2H3M").duration()
             )
 
+            println(s"DIAG observed: ${observed.toSeqMap}")
+            println(s"DIAG expected: ${(
+                    longValue = 9007199254740993L,
+                    floatValue = 1.25f,
+                    shortValue = 123.toShort,
+                    byteValue = 12.toByte,
+                    charValue = 'K',
+                    bytesValue = bytes.toSeq,
+                    bigIntValue = BigInt("123456789012345678901234567890"),
+                    bigDecimalValue = BigDecimal("12345.6789"),
+                    instantValue = java.time.Instant.parse("2026-06-01T12:34:56Z"),
+                    durationValue = java.time.Duration.parse("PT2H3M")
+                ).toSeqMap}")
             assert(observed.toSeqMap == (
                 longValue = 9007199254740993L,
                 floatValue = 1.25f,
