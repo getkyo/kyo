@@ -4,8 +4,8 @@ import java.lang.invoke.VarHandle
 import java.util.Arrays
 import kyo.Result.Panic
 import kyo.internal.Reducible
-import kyo.kernel.ArrowEffect
 import kyo.kernel.Isolate
+import kyo.kernel.internal.Safepoint
 import kyo.scheduler.IOPromise
 import kyo.scheduler.IOPromiseBase
 import kyo.scheduler.IOTask
@@ -170,77 +170,12 @@ object Fiber:
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): Fiber[A, reduce.SReduced & S2] < (Sync & S) =
-        // the crossing: the handled effects through this isolate, the values bound around the fork through
-        // their own strategies. What comes back is complete, which is what lets the scheduler run it
-        isolate(v) { crossed =>
-            // the fiber's own row is what the boundary leaves: effects the isolate restores travel with the
-            // result rather than being run here, which is what `Fiber[A, S]` carries them as
-            IOTask(boundary(crossed).asInstanceOf[Result[E, A] < Any])
-                .asInstanceOf[Fiber[A, reduce.SReduced & S2]]
+        // only the capture happens here: the task holds the isolate and does the crossing itself, so what it
+        // is handed is the body as written. Deliberately unparented, which is what makes it unscoped; the
+        // internal spawners below do the opposite and link the running task
+        isolate.capture { state =>
+            IOTask(isolate)(state, v).asInstanceOf[Fiber[A, reduce.SReduced & S2]]
         }
-
-    /** The fiber boundary: one region answering everything the scheduler is responsible for.
-      *
-      * `Async` and `Abort` are answered together, through a tag that is the union of the two. A region's tag
-      * says which operations it answers and an operation is answered where its own tag is subsumed by it, so
-      * one entry covers both families, and every abort reaches it whatever its error type, because `Abort` is
-      * contravariant and each `Abort[E]` is an `Abort[Nothing]`.
-      *
-      * What the region produces is the fiber's result. Success and failure leave by the same door: the body's
-      * value becomes a success and an abort becomes the failure, so the scheduler completes the promise with
-      * whatever the computation evaluates to and interprets nothing.
-      *
-      * A join asks the awaited promise. A completed one resumes in place, which is what keeps a chain of
-      * ready fibers on a single slice. A pending one is told to the fiber, which ends the slice; the eval
-      * parks the remainder with the join at its head, and the wakeup resumes it into this same clause, which
-      * asks again with a fresh continuation.
-      */
-    private def boundary[E, A, S](v: A < (Abort[E] & Async & S))(using Frame): Result[E, A] < S =
-        // the row keeps what the region answers: a tag says which operations an entry answers, and the
-        // families it names are not what the type arithmetic removes. Nothing of them survives at runtime,
-        // which is what the cast below states and what lets the scheduler run the result
-
-        // the input constructor is stated: a union answers operations whose inputs have nothing in common,
-        // and the bottom type is the one that stands under both, which keeps the clause's parameter out of
-        // either member's class
-        ArrowEffect.handleCont[
-            [X] =>> Nothing,
-            [X] =>> Any,
-            Async.Join | Abort[Nothing],
-            Result[E, A],
-            Result[E, A],
-            Async & Abort[E] & S,
-            Any
-        ](
-            Tag[Async.Join | Abort[Nothing]],
-            v.map(Result.succeed[E, A](_))
-        )(
-            [C] =>
-                (input, cont) =>
-                    // the union's input is the intersection of what its members carry, which no value
-                    // inhabits: which one arrived is a question about the value, so it is asked there
-                    (input: Any) match
-                        case error: Result.Error[E] @unchecked =>
-                            error
-                        case join: Async.JoinInput[C] @unchecked =>
-                            val task = IOTask.currentTask().getOrElse(bug("a fiber's join ran outside its fiber"))
-                            // invoking it registers the interrupt cascade on the running fiber before the
-                            // promise's state is read, so an interrupt landing here cannot pass it by
-                            val awaited = join(task)
-                            awaited.poll() match
-                                case Present(r) =>
-                                    // already complete when the link was made, so the link is dropped rather
-                                    // than left to accumulate
-                                    task.removeInterrupt(awaited)
-                                    cont(r.asInstanceOf[Result[Nothing, C]])
-                                case _ =>
-                                    task.await(awaited)
-                                    cont(null.asInstanceOf[Result[Nothing, C]])
-                            end match
-            ,
-            done = r => r
-        ).asInstanceOf[Result[E, A] < S]
-    end boundary
 
     extension [A, S](self: Fiber[A, S])
         /** Checks if the Fiber is done.
@@ -476,10 +411,14 @@ object Fiber:
         ): Fiber.Unsafe[A, reduce.SReduced] =
             // Unsafe: spawns a fire-and-forget carrier without re-entering the effect system; replaces
             // the evalOrThrow + initUnscoped idiom at every kyo-net spawn site. The body may be
-            // effectful (`A < (Async & Abort[E])`), so it goes through the same boundary a scoped fiber
-            // does, which answers what it performs and leaves the result for the carrier to complete.
-            // Nothing crosses: an unsafe spawn takes no context from where it was made.
-            IOTask(boundary[E, A, Any](Sync.defer(v)))
+            // effectful (`A < (Async & Abort[E])`): Sync.defer deconstructs it so IOTask drives the
+            // Async and Abort effects to completion inside the carrier, rather than leaving the
+            // computation as an un-run suspension (a plain value infers `E = Nothing`, unchanged).
+            // the body carries no effects of its own, so the isolate resolved here handles nothing and the
+            // crossing is only the bindings standing at the call. `capture`'s row is `Any` for that reason,
+            // which is what lets the state be taken here rather than asked of the caller: this returns a
+            // fiber, not a computation, so there is no outer scope to capture in
+            IOTask.unscoped(Sync.defer(v))
                 .asInstanceOf[Fiber.Unsafe[A, reduce.SReduced]]
         end init
 
@@ -759,10 +698,18 @@ object Fiber:
       * @return
       *   A Fiber that completes with the result of the first Fiber to complete
       */
-    private[kyo] def race[E, A](iterable: Iterable[A < (Abort[E] & Async)])(using Frame): Fiber[A, Abort[E]] < Sync =
+    private[kyo] def race[E, A, S, S2](using
+        isolate: Isolate[S, Sync, S2]
+    )(
+        iterable: Iterable[A < (Abort[E] & Async & S)]
+    )(using Frame): Fiber[A, Abort[E] & S2] < (Sync & S) =
         internal.race(iterable)
 
-    private[kyo] def raceFirst[E, A](iterable: Iterable[A < (Abort[E] & Async)])(using Frame): Fiber[A, Abort[E]] < Sync =
+    private[kyo] def raceFirst[E, A, S, S2](using
+        isolate: Isolate[S, Sync, S2]
+    )(
+        iterable: Iterable[A < (Abort[E] & Async & S)]
+    )(using Frame): Fiber[A, Abort[E] & S2] < (Sync & S) =
         internal.raceFirst(iterable)
 
     /** Concurrently executes effects and collects up to `max` successful results.
@@ -779,100 +726,147 @@ object Fiber:
       * @return
       *   Fiber containing successful results as a Chunk (size <= max)
       */
-    private[kyo] def gather[E, A](max: Int)(iterable: Iterable[A < (Abort[E] & Async)])(
+    private[kyo] def gather[E, A, S, S2](using
+        isolate: Isolate[S, Sync, S2]
+    )(max: Int)(
+        iterable: Iterable[A < (Abort[E] & Async & S)]
+    )(
         using frame: Frame
-    ): Fiber[Chunk[A], Abort[E]] < Sync =
+    ): Fiber[Chunk[A], Abort[E] & S2] < (Sync & S) =
         internal.gather(max)(iterable)
 
     private[kyo] object internal:
 
-        def foreachIndexed[E, A, B](items: Chunk.Indexed[A], concurrency: Int)(
-            f: (Int, A) => B < (Abort[E] & Async)
-        )(using frame: Frame): Fiber[Chunk[B], Abort[E]] < Sync =
+        def foreachIndexed[E, A, B, S, S2](using
+            isolate: Isolate[S, Sync, S2]
+        )(
+            items: Chunk.Indexed[A],
+            concurrency: Int
+        )(
+            f: (Int, A) => B < (Abort[E] & Async & S)
+        )(using frame: Frame): Fiber[Chunk[B], Abort[E] & S2] < (Sync & S) =
             val size = items.size
             if size == 0 then Fiber.succeed(Chunk.empty)
             else
                 val numWorkers = Math.min(size, concurrency)
                 if numWorkers == 1 then
-                    Fiber.initUnscoped[E, Chunk[B], Any, Any](Kyo.foreachIndexed(items)(f))
+                    Fiber.initUnscoped[E, Chunk[B], S, S2](Kyo.foreachIndexed(items)(f))
                 else
                     Sync.Unsafe.defer {
-                        class State extends IOPromise[Any, Chunk[B] < Abort[E]]
-                            with (Result[E, Unit] => Unit):
-                            val results = (new Array[Any](size)).asInstanceOf[Array[B]]
+                        // a worker's own value is Unit: what it produces travels to the promise through
+                        // `complete`, so the isolation is taken off each item rather than off the worker, and
+                        // what the array holds is the isolated form. Restoring on the worker would attach it
+                        // to the Unit nobody joins, and the forked state would be dropped
+                        class State extends IOPromise[Any, Chunk[B] < (Abort[E] & S2)]
+                            with (Result[E, Unit < S2] => Unit):
+                            val results = (new Array[Any](size)).asInstanceOf[Array[isolate.Transform[B]]]
                             val pending = AtomicInt.Unsafe.init(size)
                             val counter = AtomicInt.Unsafe.init(0)
-                            def complete(idx: Int, value: B): Unit =
+                            def complete(idx: Int, value: isolate.Transform[B]): Unit =
                                 results(idx) = value
                                 if pending.decrementAndGet() == 0 then
-                                    this.completeDiscard(Result.succeed(Chunk.fromNoCopy(results)))
+                                    // restored where the whole chunk is known, so each item's forked state
+                                    // comes back in the order the caller reads them
+                                    this.completeDiscard(Result.succeed(
+                                        Kyo.foreach(Chunk.fromNoCopy(results))(isolate.restore(_))
+                                    ))
+                                end if
                             end complete
-                            def apply(result: Result[E, Unit]): Unit =
+                            def apply(result: Result[E, Unit < S2]): Unit =
                                 result.foldError(_ => (), e => this.interruptDiscard(e))
                         end State
                         val state = new State
-                        // the fiber these workers are launched from, which is what a parent interrupt
-                        // reaches them through. What each worker inherits was decided upstream, where the
-                        // isolate captured once and attached per worker
-                        val parent: Maybe[IOPromise[?, ?]] = IOTask.currentTask()
-                        @tailrec def loop(i: Int): Unit =
-                            if i < numWorkers then
-                                def workerLoop(): Unit < (Abort[E] & Async) =
-                                    val idx = state.counter.getAndIncrement()
-                                    if idx >= size then ()
-                                    else
-                                        f(idx, items(idx)).map { value =>
-                                            state.complete(idx, value)
-                                            workerLoop()
-                                        }
-                                    end if
-                                end workerLoop
-                                val fiber = IOTask(boundary[E, Unit, Any](workerLoop()), parent)
-                                state.interrupts(fiber)
-                                fiber.onComplete(state)
-                                loop(i + 1)
-                        loop(0)
-                        state
+                        // the crossing lands here, at the one place that spawns: one captured state for all
+                        // the workers. The parent is read once and passed to each child, before any of them is
+                        // scheduled, so an interrupt landing while they are still launching cannot orphan one
+                        // that started but was not yet registered
+                        isolate.capture { captured =>
+                            val parent = IOTask.currentTask()
+                            @tailrec def loop(i: Int): Unit =
+                                if i < numWorkers then
+                                    def workerLoop(): Unit < (Abort[E] & Async) =
+                                        val idx = state.counter.getAndIncrement()
+                                        if idx >= size then ()
+                                        else
+                                            isolate.isolate(captured, f(idx, items(idx))).map { value =>
+                                                state.complete(idx, value)
+                                                workerLoop()
+                                            }
+                                        end if
+                                    end workerLoop
+                                    val fiber = IOTask(isolate)(captured, workerLoop(), parent)
+                                    state.interrupts(fiber)
+                                    fiber.onComplete(state)
+                                    loop(i + 1)
+                            loop(0)
+                            state
+                        }
                     }
                 end if
             end if
         end foreachIndexed
 
-        def race[E, A](iterable: Iterable[A < (Abort[E] & Async)])(using Frame): Fiber[A, Abort[E]] < Sync =
-            Race.success(iterable)
+        // the crossing happens here rather than at the caller: each raced computation goes through the
+        // isolate against one captured state, and its restore travels inside the fiber the way
+        // `initUnscoped` puts it there, so what comes back carries the isolated effects in its own row
+        def race[E, A, S, S2](using
+            isolate: Isolate[S, Sync, S2]
+        )(
+            iterable: Iterable[A < (Abort[E] & Async & S)]
+        )(using Frame): Fiber[A, Abort[E] & S2] < (Sync & S) =
+            Race.success[E, A, S, S2](iterable)
 
-        def raceFirst[E, A](iterable: Iterable[A < (Abort[E] & Async)])(using Frame): Fiber[A, Abort[E]] < Sync =
-            Race.first(iterable)
+        def raceFirst[E, A, S, S2](using
+            Isolate[S, Sync, S2]
+        )(
+            iterable: Iterable[A < (Abort[E] & Async & S)]
+        )(using Frame): Fiber[A, Abort[E] & S2] < (Sync & S) =
+            Race.first[E, A, S, S2](iterable)
 
-        sealed abstract private class Race[E, A](frame: Frame) extends IOPromise[E, A] with (Result[E, A] => Unit)
+        sealed abstract private class Race[E, A, S2](frame: Frame) extends IOPromise[E, A < S2] with (Result[E, A < S2] => Unit)
 
         private object Race:
 
-            private inline def apply[E, A](state: Race[E, A], iterable: Iterable[A < (Abort[E] & Async)])(
-                using frame: Frame
-            ): Fiber[A, Abort[E]] < Sync =
-                Sync.defer {
-                    // Read the interrupt parent once and pass it to each child (see Fiber.internal.foreachIndexed).
-                    val parent: Maybe[IOPromise[?, ?]] = IOTask.currentTask()
-                    foreach(iterable) { (_, v) =>
-                        val fiber = IOTask(boundary[E, A, Any](v), parent = parent)
-                        state.onComplete(_ => fiber.interruptDiscard(Result.Panic(Interrupted(frame))))
-                        fiber.onComplete(state)
+            // the crossing lands here, at the one place that spawns: one captured state for the whole race,
+            // each computation isolated against it, and its restore inside the fiber the way `initUnscoped`
+            // puts it there. The interrupt parent is read once and passed to each child, before any is
+            // scheduled, so an interrupt arriving while they are still launching cannot orphan one
+            private inline def apply[E, A, S, S2](race: Race[E, A, S2], iterable: Iterable[A < (Abort[E] & Async & S)])(
+                using
+                isolate: Isolate[S, Sync, S2],
+                frame: Frame
+            ): Fiber[A, Abort[E] & S2] < (Sync & S) =
+                isolate.capture { state =>
+                    Sync.Unsafe.defer {
+                        val parent = IOTask.currentTask()
+                        foreach(iterable) { (_, v) =>
+                            val fiber = IOTask(isolate)(state, v, parent)
+                            race.onComplete(_ => fiber.interruptDiscard(Result.Panic(Interrupted(frame))))
+                            fiber.onComplete(race)
+                        }
+                        race.asInstanceOf[Fiber[A, Abort[E] & S2]]
                     }
-                    state.asInstanceOf[Fiber[A, Abort[E]]]
                 }
             end apply
 
-            inline def success[E, A](iterable: Iterable[A < (Abort[E] & Async)])(using frame: Frame): Fiber[A, Abort[E]] < Sync =
-                apply(new Success(iterable.size, frame), iterable)
+            inline def success[E, A, S, S2](iterable: Iterable[A < (Abort[E] & Async & S)])(
+                using
+                isolate: Isolate[S, Sync, S2],
+                frame: Frame
+            ): Fiber[A, Abort[E] & S2] < (Sync & S) =
+                apply[E, A, S, S2](new Success[E, A, S2](iterable.size, frame), iterable)
 
-            inline def first[E, A](iterable: Iterable[A < (Abort[E] & Async)])(using frame: Frame): Fiber[A, Abort[E]] < Sync =
-                apply(new First(frame), iterable)
+            inline def first[E, A, S, S2](iterable: Iterable[A < (Abort[E] & Async & S)])(
+                using
+                isolate: Isolate[S, Sync, S2],
+                frame: Frame
+            ): Fiber[A, Abort[E] & S2] < (Sync & S) =
+                apply[E, A, S, S2](new First[E, A, S2](frame), iterable)
 
-            final class Success[E, A](size: Int, frame: Frame) extends Race[E, A](frame):
+            final class Success[E, A, S2](size: Int, frame: Frame) extends Race[E, A, S2](frame):
                 import AllowUnsafe.embrace.danger
                 val pending = AtomicInt.Unsafe.init(size)
-                def apply(result: Result[E, A]): Unit =
+                def apply(result: Result[E, A < S2]): Unit =
                     val last = pending.decrementAndGet() == 0
                     result.foldError(
                         v => super.completeDiscard(Result.succeed(v)),
@@ -881,21 +875,28 @@ object Fiber:
                 end apply
             end Success
 
-            final class First[E, A](frame: Frame) extends Race[E, A](frame):
-                def apply(result: Result[E, A]): Unit =
+            final class First[E, A, S2](frame: Frame) extends Race[E, A, S2](frame):
+                def apply(result: Result[E, A < S2]): Unit =
                     super.completeDiscard(result)
             end First
         end Race
 
-        def gather[E, A](max: Int)(iterable: Iterable[A < (Abort[E] & Async)])(
+        def gather[E, A, S, S2](using
+            isolate: Isolate[S, Sync, S2]
+        )(max: Int)(
+            iterable: Iterable[A < (Abort[E] & Async & S)]
+        )(
             using frame: Frame
-        ): Fiber[Chunk[A], Abort[E]] < Sync =
+        ): Fiber[Chunk[A], Abort[E] & S2] < (Sync & S) =
             val total = iterable.size
             if total == 0 || max <= 0 then Fiber.succeed(Chunk.empty)
             else
                 Sync.Unsafe.defer {
-                    class State extends IOPromise[Any, Chunk[A] < Abort[E]]
-                        with Function2[Int, Result[E, A], Unit]:
+                    // unlike foreachIndexed, what a child produces IS its fiber's value, so the restore
+                    // packed into it arrives here and the array holds pending computations. The collect
+                    // below already ran them; it now runs the restores with them
+                    class State extends IOPromise[Any, Chunk[A] < (Abort[E] & S2)]
+                        with Function2[Int, Result[E, A < S2], Unit]:
                         val results = new Array[AnyRef](max)
 
                         // Helper array to store original indices to maintain ordering
@@ -908,7 +909,7 @@ object Fiber:
                         // - higher 32 bits => failed results count (nok)
                         val packed = AtomicLong.Unsafe.init(0)
 
-                        def apply(idx: Int, result: Result[E, A]): Unit =
+                        def apply(idx: Int, result: Result[E, A < S2]): Unit =
                             @tailrec def loop(): Unit =
                                 // Atomically update both ok/nok counters using CAS
                                 val p   = packed.get()
@@ -948,7 +949,7 @@ object Fiber:
                                         completeDiscard(
                                             Result.succeed(
                                                 Kyo.collectAll(
-                                                    Chunk.fromNoCopy(results).take(size).asInstanceOf[Chunk[A < Abort[E]]]
+                                                    Chunk.fromNoCopy(results).take(size).asInstanceOf[Chunk[A < (Abort[E] & S2)]]
                                                 )
                                             )
                                         )
@@ -958,16 +959,20 @@ object Fiber:
                             loop()
                         end apply
                     end State
-                    val state                 = new State
-                    inline def interruptPanic = Result.Panic(Interrupted(frame))
-                    // Read the interrupt parent once and pass it to each child (see Fiber.internal.foreachIndexed).
-                    val parent: Maybe[IOPromise[?, ?]] = IOTask.currentTask()
-                    foreach(iterable) { (idx, v) =>
-                        val fiber = IOTask(boundary[E, A, Any](v), parent = parent)
-                        state.onComplete(_ => discard(fiber.interrupt(interruptPanic)))
-                        fiber.onComplete(state(idx, _))
+                    val state = new State
+                    // the crossing lands here, at the one place that spawns (see Fiber.internal.Race.apply)
+                    isolate.capture { captured =>
+                        import AllowUnsafe.embrace.danger
+                        inline def interruptPanic = Result.Panic(Interrupted(frame))
+                        // Read the interrupt parent once and pass it to each child (see Fiber.internal.foreachIndexed).
+                        val parent = IOTask.currentTask()
+                        foreach(iterable) { (idx, v) =>
+                            val fiber = IOTask(isolate)(captured, v, parent)
+                            state.onComplete(_ => discard(fiber.interrupt(interruptPanic)))
+                            fiber.onComplete(state(idx, _))
+                        }
+                        state
                     }
-                    state
                 }
             end if
         end gather

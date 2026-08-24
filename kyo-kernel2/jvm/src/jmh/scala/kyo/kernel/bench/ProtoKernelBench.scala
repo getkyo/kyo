@@ -124,7 +124,7 @@ class ProtoKernelBench:
         def loop(i: Int): Int < Ask =
             if i > Depth then i
             else ask.map(a => loop(i + a))
-        val r: Int < Any = ArrowEffect.handleLoopWith[[B] =>> Unit, [B] =>> Int, Ask, Int, Int, Any](Tag[Ask], loop(0))(
+        val r: Int < Any = ArrowEffect.handleLoopWith(Tag[Ask], loop(0))(
             [C] => _ => Loop.continue(1: Int < Any),
             a => a
         )(b => b + 1)

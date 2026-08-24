@@ -165,7 +165,27 @@ abstract class Isolate[Remove, -Keep, -Restore]:
       *   Result with original Remove effects handled and Restore effects available
       */
     final def run[A, S](v: A < (S & Remove))(using Frame): A < (S & Remove & Keep & Restore) =
-        capture(state => restore(isolate(state, v)))
+        capture(state => run(state, v))
+
+    /** Runs a computation against a state already captured, and brings it back.
+      *
+      * The half of [[run]] that is not the capture, for the callers that cannot have one fused in. A fork
+      * captures once and isolates many times, one per branch, so the capture is hoisted above them and each
+      * branch takes the state as given. The row is why the split matters rather than being a convenience:
+      * what this answers with has no `Remove` in it, so it is what crosses to an evaluation that cannot
+      * handle those effects, while the capture's own `Remove` stays with the computation that forked.
+      *
+      * Overridable, and the composition below is the meaning rather than the implementation: an isolate that
+      * can carry a value across without building the `Transform` between the two halves is free to say so
+      * here, and every caller gets it without the protocol changing.
+      *
+      * @param state
+      *   what [[capture]] answered with
+      * @param v
+      *   the computation to run isolated
+      */
+    def run[A, S](state: State, v: A < (S & Remove))(using Frame): A < (Keep & Restore & S) =
+        restore(isolate(state, v))
 
     /** Prepares a computation to run in an evaluation of its own, crossing everything that crosses.
       *
@@ -190,9 +210,7 @@ abstract class Isolate[Remove, -Keep, -Restore]:
     final def apply[A, S](v: A < (Remove & S))[B, S2](f: (A < (Restore & Keep & S)) => B < S2)(using
         Frame
     ): B < (Remove & Keep & S2) =
-        capture { state =>
-            f(isolate(state, v).map(r => restore(r)))
-        }
+        capture(state => f(run(state, v)))
 
     /** Applies this isolate to a computation that requires it.
       *
