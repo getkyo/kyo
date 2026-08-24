@@ -665,7 +665,11 @@ object LLM:
                 // The configured timeout is this call's deadline and covers its retries, so a slow transient
                 // that retries cannot carry the call past it. The transport install below keeps an attempt's
                 // own deadline, matching kyo-http's total-operation timeout semantics.
-                Async.timeoutWithError[AIGenException, Result[AIGenException, Completion.Reply], LLM](
+                // The deadline covers the wire call and its retries, and nothing in that body performs LLM:
+                // the context, tools, and schema are values by this point, and the repair turn that does
+                // reach for the instance runs in the map below, outside the deadline. Naming the row Any
+                // says exactly that, and spares the crossing an isolate for an effect it never carries.
+                Async.timeoutWithError[AIGenException, Result[AIGenException, Completion.Reply], Any](
                     config.timeout,
                     Result.Failure(AICompletionTimeoutException(config.provider.name, config.timeout))
                 ) {
