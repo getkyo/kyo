@@ -21,6 +21,11 @@ class ArrowEffectTest extends AnyFreeSpec:
     sealed trait Say extends ArrowEffect[Const[String], Const[Unit]]
     def say(s: String): Unit < Say = ArrowEffect.suspend[Any](Tag[Say], s)
 
+    // one effect at many type arguments, the shape Poll and Emit are handled at: two instantiations are
+    // separate handlers, and telling them apart is tag subsumption on a covariant parameter
+    sealed trait Pick[+V] extends ArrowEffect[Const[Unit], Const[V]]
+    def pick[V](using Tag[Pick[V]]): V < Pick[V] = ArrowEffect.suspend[Any](Tag[Pick[V]], ())
+
     // an effect whose answers are themselves pending computations, for the boxed-answer lane
     sealed trait AskBoxed extends ArrowEffect[Const[Unit], [X] =>> Int < Say]
     def askBoxed: (Int < Say) < AskBoxed = ArrowEffect.suspend[Any](Tag[AskBoxed], ())
@@ -441,9 +446,22 @@ class ArrowEffectTest extends AnyFreeSpec:
             assert(Eval(r) == 42)
         }
 
-        "answers operations of a subtype effect" in {
+        // a handler for the supertype leaves the subtype in the row rather than claiming to have discharged
+        // it, so the obligation is a compile error and never a suspension nothing answers at runtime
+        "a supertype handler leaves a subtype effect in the row" in {
+            val v: Int < AskSub = ArrowEffect.suspend[Any](Tag[AskSub], ()).map(_ + 1)
+            val r               = ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, cont) => cont(41), a => a)
+            assertDoesNotCompile("val fullyHandled: Int < Any = r")
+            val stillOwed: Int < AskSub = r
+            assert(Eval(ArrowEffect.handleCont(Tag[AskSub], stillOwed)([C] => (_, cont) => cont(41), a => a)) == 42)
+        }
+
+        // the handler is installed at the subtype and the computation names the supertype, which is the
+        // pairing the row itself asks for: `v: A < (E & S)` accepts a row of `Ask` for an `E` of `AskSub`
+        // because the row is contravariant
+        "a handler at a subtype effect answers a computation typed at the supertype" in {
             val v: Int < Ask = askSub.map(_ + 1)
-            val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, cont) => cont(41), a => a)
+            val r: Int < Any = ArrowEffect.handleCont(Tag[AskSub], v)([C] => (_, cont) => cont(41), a => a)
             assert(Eval(r) == 42)
         }
 
@@ -992,6 +1010,111 @@ class ArrowEffectTest extends AnyFreeSpec:
 
     // A first-operation region needs a clause that receives the continuation and
     // ends the region with its own result type. handleCont keeps the region
+    "handleFirst" - {
+
+        // the remainder reaches the clause as an arrow now, so this adapts it back to the function shape
+        // the cases below were written against
+        def handleFirst[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](effectTag: Tag[E], v: A < (E & S))(
+            handle: [X] => (I[X], O[X] => A < (E & S)) => B < (S & S2),
+            done: A => B < (S & S2)
+        ): B < (S & S2) =
+            ArrowEffect.handleFirst[I, O, E, A, B, S, S2](effectTag, v)(
+                handle = [X] => (input, cont) => handle[X](input, o => cont(o)),
+                done = done
+            )
+
+        "answers the first operation and leaves the rest unhandled" in {
+            val v     = ask.map(a => ask.map(b => a * 10 + b))
+            val first = handleFirst(Tag[Ask], v)([X] => (_, cont) => cont(4), identity)
+            val r     = ArrowEffect.handleCont(Tag[Ask], first)([X] => (_, cont) => cont(2), a => a)
+            assert(Eval(r) == 42)
+        }
+
+        "the handler stays installed until the operation arrives after a foreign crossing" in {
+            val v: Int < (Ask & Say) = say("x").map(_ => ask.map(_ + 1))
+            val first                = handleFirst(Tag[Ask], v)([X] => (_, cont) => cont(41), identity)
+            val sayHandled           = ArrowEffect.handleCont(Tag[Say], first)([X] => (_, cont) => cont(()), a => a)
+            assert(Eval(ArrowEffect.handleCont(Tag[Ask], sayHandled)([X] => (_, cont) => cont(0), a => a)) == 42)
+        }
+
+        "the done clause runs when the computation settles without the operation" in {
+            val v: Int < (Ask & Say) = say("x").map(_ => 41)
+            val first                = handleFirst(Tag[Ask], v)([X] => (_, _) => -1, _ + 1)
+            val r                    = ArrowEffect.handleCont(Tag[Say], first)([X] => (_, cont) => cont(()), a => a)
+            assert(Eval(r) == 42)
+        }
+
+        "the continuation re-enters the regions the operation was raised under" in {
+            var exits                    = 0
+            val inner: Int < (Ask & Say) = say("x").map(_ => ask.map(_ + 1))
+            val region = ArrowEffect.handleCont(Tag[Say], inner)([X] => (_, cont) => cont(()), a => a).map { a =>
+                exits += 1
+                a
+            }
+            val first = handleFirst(Tag[Ask], region)([X] => (_, cont) => cont(41), identity)
+            assert(Eval(ArrowEffect.handleCont(Tag[Ask], first)([X] => (_, cont) => cont(0), a => a)) == 42)
+            assert(exits == 1)
+        }
+
+        // the shape Poll.runFirst and Emit.runFirst are built on: the remainder leaves the region as a
+        // value with the effect still in its row, and the caller re-handles it with a fresh region
+        "the remainder is handed out as a value and re-handled after a foreign crossing" in {
+            val v: Int < (Ask & Say) = say("x").map(_ => ask.map(_ + 1))
+            val first =
+                ArrowEffect.handleFirst[Const[Unit], Const[Int], Ask, Int, Either[Int, Arrow[Int, Int, Ask & Say]], Say, Any](
+                    Tag[Ask],
+                    v
+                )(
+                    handle = [X] => (_, cont) => Right(cont),
+                    done = a => Left(a)
+                )
+            val sayHandled = ArrowEffect.handleCont(Tag[Say], first)([X] => (_, cont) => cont(()), a => a)
+            Eval(sayHandled) match
+                case Right(rest) =>
+                    val resumed  = ArrowEffect.handleCont(Tag[Ask], rest(41))([X] => (_, cont) => cont(0), a => a)
+                    val finished = ArrowEffect.handleCont(Tag[Say], resumed)([X] => (_, cont) => cont(()), a => a)
+                    assert(Eval(finished) == 42)
+                case Left(a) => fail(s"expected the remainder, got $a")
+            end match
+        }
+
+        // the shape the stream pipes reach it at: one effect at two type arguments, told apart only by
+        // tag subsumption, so the region for one of them must let the other pass to a handler further out
+        "one effect at two type arguments crosses to the outer handler" in {
+            val v: (Int, String) < (Pick[Int] & Pick[String]) =
+                pick[String].map(s => pick[Int].map(i => (i, s)))
+            val first = handleFirst(Tag[Pick[Int]], v)([X] => (_, cont) => cont(1), identity)
+            val outer = ArrowEffect.handleCont(Tag[Pick[String]], first)([X] => (_, cont) => cont("a"), a => a)
+            assert(Eval(outer) == (1, "a"))
+        }
+
+        "one effect at two type arguments hands out the remainder as a value" in {
+            val v: (Int, String) < (Pick[Int] & Pick[String]) =
+                pick[String].map(s => pick[Int].map(i => (i, s)))
+            val first =
+                ArrowEffect.handleFirst[
+                    Const[Unit],
+                    Const[Int],
+                    Pick[Int],
+                    (Int, String),
+                    Either[(Int, String), Arrow[Int, (Int, String), Pick[Int] & Pick[String]]],
+                    Pick[String],
+                    Any
+                ](Tag[Pick[Int]], v)(
+                    handle = [X] => (_, cont) => Right(cont),
+                    done = a => Left(a)
+                )
+            val outer = ArrowEffect.handleCont(Tag[Pick[String]], first)([X] => (_, cont) => cont("a"), a => a)
+            Eval(outer) match
+                case Right(rest) =>
+                    val resumed  = ArrowEffect.handleCont(Tag[Pick[Int]], rest(1))([X] => (_, cont) => cont(0), a => a)
+                    val finished = ArrowEffect.handleCont(Tag[Pick[String]], resumed)([X] => (_, cont) => cont("b"), a => a)
+                    assert(Eval(finished) == (1, "a"))
+                case Left(a) => fail(s"expected the remainder, got $a")
+            end match
+        }
+    }
+
     // installed and handleLoopState answers with a value, so the old helper
     // (built on a stateful handleLoop whose clause received the continuation)
     // has no primitive to stand on here.

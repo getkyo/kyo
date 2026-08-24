@@ -160,16 +160,19 @@ class StackTest extends AnyFreeSpec:
             assert(stack.handler(2) eq h)
         }
 
-        "a subtype suspension tag resolves a supertype handler" in {
-            val stack = new Stack
-            stack.push(askHandler)
-            assert(stack.find(Tag[AskSub]) == 0)
-        }
-
-        "a supertype suspension tag does not resolve a subtype handler" in {
+        // the handler stands below the operation, which is the same direction the row demands: handleCont
+        // takes `v: A < (E & S)`, and a contravariant row accepts that only where `E` is under the effect
+        // the computation names
+        "a subtype handler resolves a supertype suspension tag" in {
             val stack = new Stack
             stack.push(askSubHandler)
-            assert(stack.find(Tag[Ask]) == -1)
+            assert(stack.find(Tag[Ask]) == 0)
+        }
+
+        "a supertype handler does not resolve a subtype suspension tag" in {
+            val stack = new Stack
+            stack.push(askHandler)
+            assert(stack.find(Tag[AskSub]) == -1)
         }
 
         "an empty stack misses" in {

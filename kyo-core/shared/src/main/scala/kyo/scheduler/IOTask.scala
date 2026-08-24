@@ -90,7 +90,7 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         // tag itself, and `Sync` is a marker that nothing suspends on, `Sync.defer` being a deferral the
         // eval runs on its own.
         ArrowEffect.handleCont[[X] =>> Any, [X] =>> Any, ArrowEffect[[X] =>> Any, [X] =>> Any], Unit, Unit, Abort[E] & Async, Any](
-            Tag[Async.Join | Abort[Nothing]].asInstanceOf[Tag[ArrowEffect[[X] =>> Any, [X] =>> Any]]],
+            Tag[Async.Join & Abort[Any]].asInstanceOf[Tag[ArrowEffect[[X] =>> Any, [X] =>> Any]]],
             v
         )(
             [C] =>

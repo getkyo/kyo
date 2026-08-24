@@ -190,7 +190,7 @@ final private[kyo] class Stack:
             if i == n then -1
             else
                 entries((head + i) & mask) match
-                    case h: Handler[?, ?, ?, ?] if t <:< h.tag => i
+                    case h: Handler[?, ?, ?, ?] if h.tag <:< t => i
                     case _                                     => loop(i + 1)
         loop(0)
     end find
