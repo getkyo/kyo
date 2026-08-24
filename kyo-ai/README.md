@@ -152,6 +152,43 @@ val researchTools =
     )
 ```
 
+A tool's type is `Tool[S]`, where `S` is the capability set its run function needs. The input and output types are *existential*: they are held inside the value rather than in its type. That is exactly what lets `aggregate` combine tools of unrelated shapes into one value, and `Tool[S]` is the type to write when a signature needs an explicit annotation.
+
+```scala
+val annotated: Tool[Any] = researchTools
+```
+
+### Tools from an MCP server
+
+The tools above are written in Scala, so their shapes are known when you compile. A tool published by an [MCP](../kyo-mcp/README.md) server is not: the server sends its name, description and input schema over the wire, and a host has no Scala type to name for any of it. `Tool.fromMcp` turns every tool a connected server publishes into a tool this agent can call.
+
+```scala
+def answerWithServerTools(client: McpClient) =
+    Tool.fromMcp(client).map { serverTools =>
+        AI.enable(serverTools)(AI.gen[Answer]("Which country has the most customers?"))
+    }
+```
+
+Nothing there names an input or output type, because none exists to name, so this works against a server whose Scala types are not on your classpath. Each published tool becomes one tool carrying the server's own name, description and schema; a call is forwarded with the model's arguments, and the server's structured result (or its text content when it publishes no output schema) is fed back to the model. A result the server marks as an error becomes a tool failure the model sees and may retry, the same as a locally raised one.
+
+`Tool.initDynamic` is that construction without the client, for a schema you hold as a value rather than as a type.
+
+```scala
+val runSelect =
+    Tool.initDynamic(
+        "run_select",
+        Json.JsonSchema.Obj(
+            properties = List("sql" -> Json.JsonSchema.Str(description = Present("a read-only SELECT"))),
+            required = List("sql")
+        ),
+        "Run a read-only query"
+    ) { args =>
+        Structure.Value.Str(s"rows for $args")
+    }
+```
+
+The declared schema binds. It is advertised to the model verbatim, so a server's own constraints and property descriptions reach the model as published, and the arguments are checked against it before your body runs: a call missing a required field is refused with a message the model can repair from, rather than reaching a body that never agreed to receive it.
+
 The loop handles both failure modes for you, neither of which escapes the generation. If the model sends arguments that fail to decode, the runtime drops the bad call and injects a corrective system message asking the model to match the schema. If your run function throws, the failure is contained, turned into a tool-result message, and fed back so the model can read the error and retry.
 
 > **Note:** a tool whose run function uses effects needs an `Isolate[S, LLM, S]` in scope; a pure run (the common case) infers `S = Any` and needs no import. The instance form `ai.enable(tool)` layers a tool onto one instance only, on top of the scope's tools.
