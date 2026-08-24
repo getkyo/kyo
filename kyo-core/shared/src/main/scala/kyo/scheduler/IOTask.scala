@@ -203,26 +203,38 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                 case Absent     => ""
         catch case _: Throwable => ""
 
+    /** The frame of the operation this fiber stands at, where it stands at one.
+      *
+      * Reads fields already in hand and nothing else: the regions installed around the operation, and the
+      * park a slice ended at. A deferral is where it stops, since its payload is a body that reading would
+      * run, and that is what leaves a fiber doing nothing but `Sync.defer` reporting nothing.
+      */
     private def currentFrame(v: Unit < Any): Maybe[Frame] =
-        v match
-            case p: Kyo.Park[?, ?] =>
-                // A park wraps what it stopped in front of with the deferral that takes its payload by
-                // value, so the operation underneath is a reference the eval already held. Reading it runs
-                // nothing, which the by-name deferral written by user code would not allow, and that one is
-                // never what a park holds.
-                p.value match
-                    case d: Kyo.Defer[?, ?, ?, ?] => operationFrame(d.value)
-                    case other                    => operationFrame(other)
-            case other => operationFrame(other)
+        @tailrec def loop(x: Any, fuel: Int): Maybe[Frame] =
+            if fuel == 0 then Absent
+            else
+                x match
+                    case s: Kyo.Suspend[?, ?, ?, ?, ?, ?] =>
+                        val f = s.frame
+                        if f eq Frame.internal then Absent else Present(f)
+                    case h: Kyo.Handle[?, ?, ?, ?, ?] => loop(h.value, fuel - 1)
+                    case p: Kyo.Park[?, ?]            => loop(p.value, fuel - 1)
+                    case _                            => Absent
+        loop(v, 16)
+    end currentFrame
 
-    // the frame of the operation itself. A deferral carries none worth reporting, which is what leaves a
-    // fiber doing nothing but `Sync.defer` reading as empty, and the internal frame is dropped by identity
-    private def operationFrame(v: Any): Maybe[Frame] =
-        v match
-            case s: Kyo.Suspend[?, ?, ?, ?, ?, ?] =>
-                val f = s.frame
-                if f eq Frame.internal then Absent else Present(f)
-            case _ => Absent
+    /** Links the interrupt to the promise an unprocessed join would have awaited.
+      *
+      * A join registers the cascade when the boundary answers it, so an interrupt landing before the fiber
+      * ever reached that join leaves the promise it was about to wait on with nothing linking the two: the
+      * fiber is gone and the promise stays pending for whoever else holds it. Invoking the input is what
+      * registers the link, and it is the same call the boundary makes, so doing it here closes the race
+      * without running any of the computation.
+      */
+    private def ensureInterrupt(remainder: Unit < Any): Unit =
+        ArrowEffect.dispatchFirst(Tag[Async.Join], remainder.asInstanceOf[Unit < Async.Join]) {
+            [C] => joinInput => discard(joinInput(this))
+        }
 
     private def render(f: Frame): String =
         val at = StackTraceElement(
@@ -289,16 +301,22 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         end if
     end run
 
-    /** Releases what an abandoned remainder still holds.
+    /** Releases what an abandoned remainder still holds, and links what it was about to wait on.
       *
       * A parked computation carries its outstanding releases rather than running them, because whoever holds
       * it may carry on. This fiber will not: its promise is complete and nothing will resume it.
+      *
+      * The link comes first. An interrupt that arrives before the fiber reached its join finds the
+      * remainder standing in front of one, and the promise behind it has nothing tying it to this fiber
+      * yet, so registering that link here is what carries the interrupt the rest of the way.
       */
     private def abandon(): Unit =
         val remainder = curr
         curr = cleared
         status = Absent
-        if !isNull(remainder) then remainder.finalizeResources
+        if !isNull(remainder) then
+            ensureInterrupt(remainder)
+            remainder.finalizeResources
     end abandon
 
     // Drops the reference so a finished task does not retain the computation it ran. Never a signal: `curr`

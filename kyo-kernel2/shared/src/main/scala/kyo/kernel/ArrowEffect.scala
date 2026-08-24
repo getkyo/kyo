@@ -20,6 +20,7 @@ import kyo.kernel.internal.Handler.resuspend
 import kyo.kernel.internal.Kyo.Handle
 import kyo.kernel.internal.Kyo.Suspend
 import scala.annotation.nowarn
+import scala.annotation.tailrec
 
 abstract class ArrowEffect[-I[_], +O[_]] extends Effect
 
@@ -425,6 +426,36 @@ object ArrowEffect:
       * popped, or anything after it. The previous kernel covered the done clause because its recovery was a
       * try around the whole traversal rather than a position on a stack.
       */
+    /** Runs a clause against the operation a computation is standing at, without evaluating anything.
+      *
+      * Inspection rather than handling: the clause is handed the operation's input and nothing else, no
+      * continuation and no way to answer, and this returns once it has looked. Where a region would install
+      * itself and wait for the evaluator to arrive, this reads the node in hand. That is what makes it
+      * usable on a computation that must not run, a fiber being abandoned after an interrupt above all: the
+      * scheduler links the interrupt to the promise an unprocessed join would have awaited, and running any
+      * of the fiber on the way to finding it would be running a computation that was just cancelled.
+      *
+      * It sees through what stands in front of an operation without being one: the regions installed around
+      * it, and the park a slice ended at. It stops at a deferral, whose payload is a body that reading would
+      * run, and at a settled value, since neither is an operation standing at anything.
+      */
+    private[kyo] def dispatchFirst[I[_], O[_], E <: ArrowEffect[I, O], A, S](
+        effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        f: [C] => I[C] => Unit
+    ): Unit =
+        @tailrec def loop(x: Any, fuel: Int): Unit =
+            if fuel > 0 then
+                x match
+                    case kyo: Kyo.Suspend[I, O, E, Any, A, E & S] @unchecked =>
+                        if kyo.tag <:< effectTag then f[Any](kyo.input)
+                    case h: Kyo.Handle[?, ?, ?, ?, ?] => loop(h.value, fuel - 1)
+                    case p: Kyo.Park[?, ?]            => loop(p.value, fuel - 1)
+                    case _                            => ()
+        loop(v, 16)
+    end dispatchFirst
+
     @nowarn("msg=anonymous")
     private[kyo] inline def handleCatching[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
         inline effectTag: Tag[E],
