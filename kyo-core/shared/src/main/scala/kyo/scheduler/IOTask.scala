@@ -111,9 +111,8 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                                     cont(null)
                                 case Present(r) =>
                                     // already complete when the thunk ran, so drop the link it pre-registered
-                                    // rather than letting it accumulate. Unlinking is bookkeeping between
-                                    // two promises with no user call behind it, so the frame is internal
-                                    removeInterrupt(promise)(using Frame.internal)
+                                    // rather than letting it accumulate
+                                    removeInterrupt(promise)(using joinInput.frame)
                                     cont(r)
                                 case Absent =>
                                     // Waiting. The operation is deliberately left unanswered: it is raised
@@ -141,17 +140,15 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                                     // completes inline still leaves `run` able to see that it parked.
                                     status = Present(promise)
                                     promise.onComplete { _ =>
-                                        removeInterrupt(promise)(using Frame.internal)
+                                        removeInterrupt(promise)(using joinInput.frame)
                                         Scheduler.get.schedule(this)
                                     }
                                     discard(Safepoint.stop(Thread.currentThread()))
-                                    // The frame is internal because a clause is never handed the frame of
-                                    // the operation it answers, and this raise is the scheduler's own. It
-                                    // is why a fiber parked on a promise reports no frame: what the eval
-                                    // stops in front of is this node, and nothing on it came from user
-                                    // code. Reporting where such a fiber stopped needs the frame carried
-                                    // to the clause, which the region protocol does not do today.
-                                    ArrowEffect.suspendWith[C](using Frame.internal)(Tag[Async.Join], joinInput)(r => cont(r))
+                                    // under the frame the join was written at, which the input carries
+                                    // for this. A clause is never handed the frame of what it answers, so
+                                    // without it the raise would take the scheduler's own and the fiber
+                                    // would lose where it stopped
+                                    ArrowEffect.suspendWith[C](using joinInput.frame)(Tag[Async.Join], joinInput)(r => cont(r))
                             end match
                         case other =>
                             bug(s"fiber boundary received an operation it does not answer: $other")

@@ -795,17 +795,28 @@ object Async extends AsyncPlatformSpecific:
 
     abstract class JoinInput[A]:
         def apply(task: IOTask[?, ?, ?]): IOPromise[?, A]
+
+        /** Where the join was written.
+          *
+          * The scheduler raises this operation again when the promise it waits on is not ready, and a
+          * clause is never handed the frame of what it answers, so the raise would otherwise take the
+          * scheduler's own internal frame and the fiber would lose the one place it can say where it
+          * stopped.
+          */
+        def frame: Frame
+    end JoinInput
     sealed trait Join extends ArrowEffect[JoinInput, Result[Nothing, *]]
 
     private[kyo] inline def getResult[E, A](v: IOPromise[E, A])(using Frame): Result[E, A] < Async =
         useResult(v)(r => r)
 
     @scala.annotation.nowarn("msg=anonymous")
-    private[kyo] inline def useResult[E, A, B, S](v: IOPromise[E, A])(f: Result[E, A] => B < S)(using Frame): B < (S & Async) =
+    private[kyo] inline def useResult[E, A, B, S](v: IOPromise[E, A])(f: Result[E, A] => B < S)(using _frame: Frame): B < (S & Async) =
         val input = new JoinInput[A]:
             def apply(task: IOTask[?, ?, ?]): IOPromise[?, A] =
                 task.interrupts(v)
                 v
+            def frame = _frame
         ArrowEffect.suspendWith[A](Tag[Join], input)(f)
     end useResult
 
