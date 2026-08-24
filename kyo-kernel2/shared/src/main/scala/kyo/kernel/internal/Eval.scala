@@ -604,6 +604,18 @@ object Eval:
                     // resuming is putting the parked stack back and carrying on from the value it held. The
                     // entries go above whatever this eval already pushed, so a handler installed around the
                     // parked computation sits below its regions and answers what they do not
+                    // TEMPORARY DIAGNOSTIC: a park is an immutable value, so resuming one twice puts the
+                    // same finalizers on two stacks. Report it rather than guessing who holds it.
+                    val diagWho = Thread.currentThread().getName + "#" + java.lang.System.identityHashCode(stack)
+                    if !kyo.diagRestored.compareAndSet(null, diagWho) then
+                        val diagFins =
+                            (0 until kyo.finalizers.size)
+                                .map(i => kyo.finalizers(i).fold("-")(f => java.lang.System.identityHashCode(f).toString))
+                                .mkString(",")
+                        java.lang.System.err.println(
+                            s"[kpark] DOUBLE-RESTORE park=${java.lang.System.identityHashCode(kyo)} first=${kyo.diagRestored.get()} now=$diagWho nfins=${kyo.finalizers.size} fins=[$diagFins]"
+                        )
+                    end if
                     stack.restore(kyo.entries, kyo.states, kyo.finalizers)
                     loop(kyo.value)
                 case kyo: Catching[?, ?] =>
