@@ -54,9 +54,9 @@ jobs:
     # JVM full runs peak at ~95-100 min on Linux (browser/UI/caliban suites serialize under a
     # shared Chrome instance that cannot take concurrent CDP connections) and run slower on the
     # Windows pole, where runner-slot contention has pushed a full JVM run past 180 min. The binding
-    # pole is the Native aggregate build+test on the slower linux-arm64 runner: linux-x64 Native
-    # completes in ~200 min, so arm64 needs headroom well past 240 min and hit the old cap. 360 min
-    # (the GitHub-hosted job ceiling) bounds a genuine hang while giving the slowest pole real headroom.
+    # pole is Native on the slower linux-arm64 runner: a full run links every selected module
+    # (~3 min per link under the NATIVE_LINK_CPUS cap) and then runs every module's test binary.
+    # 360 min (the GitHub-hosted job ceiling) bounds a genuine hang while giving that pole headroom.
     timeout-minutes: 360
     strategy:
       fail-fast: false
@@ -80,9 +80,10 @@ jobs:
       # because .jvmopts holds no conflicting duplicates for them.
       JAVA_OPTS: "-Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
       JVM_OPTS:  "-Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
-      # Link kyo-schema-tests' native test binary in its own sbt driver before the aggregate link: its
-      # whole-program optimize runs against a fresh heap instead of a driver that has accumulated
-      # ~10 prior modules of heap and metaspace. ci-test.sh honors this only for the Native target.
+      # Link kyo-schema-tests' native test binary in its own sbt driver ahead of the link pool: its
+      # whole-program optimize needs a fresh heap and metaspace, not a driver that has already
+      # linked other modules. ci-test.sh honors this only for the Native target, and only when the
+      # run's module plan selects the module.
       NATIVE_HEAVY: "${{ matrix.target == 'Native' && 'kyo-schema-tests' || '' }}"
       # Cap the Native link drivers to 2 CPUs (-XX:ActiveProcessorCount). The scala-native
       # toolchain sizes its optimizer pool and its concurrent clang forks from
@@ -90,6 +91,13 @@ jobs:
       # the 16GB runner (kernel OOM, exit 143). ci-test.sh applies this to the nativeLink
       # invocations only; compile and the test run keep all 4 CPUs.
       NATIVE_LINK_CPUS: "${{ matrix.target == 'Native' && '2' || '' }}"
+      # Modules per sbt process in the Native link and test pools. Each batch is a fresh driver, so
+      # none carries more than 8 modules of accumulated heap and metaspace into a link or a test
+      # fork; the measured accumulation delta (+2.2G RSS) builds up around the tenth module of a
+      # shared driver. A full run pays ~8 extra sbt startups (~1 min each) per pool and, in
+      # exchange, a crash re-runs one batch instead of the whole phase. Native target only.
+      NATIVE_LINK_BATCH: "${{ matrix.target == 'Native' && '8' || '' }}"
+      NATIVE_TEST_BATCH: "${{ matrix.target == 'Native' && '8' || '' }}"
       # Below 512MB free the runner is minutes from dying WITHOUT uploading its log (observed twice
       # on Native rows). ci-monitor.sh then prints the disk attribution and TERM-kills the build,
       # converting an unattributable runner loss into a normal red job with the evidence in the log.
