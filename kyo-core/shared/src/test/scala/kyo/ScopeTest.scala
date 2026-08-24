@@ -764,4 +764,77 @@ class ScopeTest extends kyo.test.Test[Any]:
             }
         }
     }
+
+    "forks" - {
+
+        "a resource acquired outside a fork is live inside it" in {
+            val r        = TestResource(1)
+            var seenOpen = -1
+            Scope.acquire(r).map { res =>
+                Fiber.initUnscoped(Sync.defer { seenOpen = res.closes; res.id }).map(_.get)
+            }.handle(Scope.run).map { id =>
+                assert(id == 1)
+                // the fork runs inside the extent that owes the release, so it must not observe one that
+                // already ran: a child seeing a closed resource is the escape the Closed abort reports
+                assert(seenOpen == 0)
+                assert(r.closes == 1)
+            }
+        }
+
+        "a resource outlives a fork that joins inside its extent" in {
+            val r = TestResource(1)
+            Scope.acquire(r).map { res =>
+                Fiber.initUnscoped(Sync.defer(res.id)).map(_.get).map { id =>
+                    // still inside the extent after the child completed: the child ending is not the
+                    // extent ending, so nothing is owed yet
+                    assert(res.closes == 0)
+                    id
+                }
+            }.handle(Scope.run).map { id =>
+                assert(id == 1)
+                assert(r.closes == 1)
+            }
+        }
+
+        "a resource is released once when several forks used it" in {
+            val r = TestResource(1)
+            Scope.acquire(r).map { res =>
+                Kyo.foreach(Seq(1, 2, 3))(_ => Fiber.initUnscoped(Sync.defer(res.id)).map(_.get))
+            }.handle(Scope.run).map { ids =>
+                assert(ids == Seq(1, 1, 1))
+                // one extent, one release, however many children read the resource
+                assert(r.closes == 1)
+            }
+        }
+
+        "PROBE: log the stream of the failing acquire" in {
+            val d = new kyo.kernel.internal.Debugger:
+                override def onDefer[A, S](stack: kyo.kernel.internal.Stack, frame: Frame, value: A < S): A < S =
+                    println(s"[dbg] defer    ${frame.position.show}  value=$value")
+                    value
+                override def onSuspend[A](stack: kyo.kernel.internal.Stack, frame: Frame, input: A): Unit =
+                    println(s"[dbg] suspend  ${frame.position.show}  input=$input")
+                override def onDeliver[A](stack: kyo.kernel.internal.Stack, frame: Frame, value: A): A =
+                    println(s"[dbg] deliver  ${frame.position.show}  value=$value")
+                    value
+            val r = TestResource(1)
+            kyo.kernel.internal.Debugger.install(d)
+            Scope.acquire(Fiber.initUnscoped(r).map(_.get))
+                .handle(Scope.run, Abort.run)
+                .map { out =>
+                    kyo.kernel.internal.Debugger.uninstall()
+                    println(s"[dbg] out=$out closes=${r.closes}")
+                    assert(r.closes == 1)
+                }
+        }
+
+        "a resource acquired inside a fork is released with the enclosing extent" in {
+            val r = TestResource(1)
+            Fiber.initUnscoped(Scope.acquire(r).map(_.id)).map(_.get)
+                .handle(Scope.run).map { id =>
+                    assert(id == 1)
+                    assert(r.closes == 1)
+                }
+        }
+    }
 end ScopeTest

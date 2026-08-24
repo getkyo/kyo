@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.kernel.Effect
 import scala.annotation.nowarn
 
 class ChoiceTest extends kyo.test.Test[Any]:
@@ -332,6 +333,69 @@ class ChoiceTest extends kyo.test.Test[Any]:
                 assert(result._1 == 0)
                 assert(result._2 == Chunk(1, 2, 3))
             }
+        }
+    }
+
+    "brackets" - {
+
+        "a bracket outside the region releases once, after every branch" in {
+            var log = Chunk.empty[String]
+            val v =
+                Effect.bracket("res")(_ => log = log.append("release")) { _ =>
+                    Choice.run {
+                        Choice.eval(1, 2, 3).map { n =>
+                            log = log.append(s"branch$n")
+                            n
+                        }
+                    }
+                }
+            assert(v.eval == Chunk(1, 2, 3))
+            // the release belongs to an extent the region sits inside, so it is not part of what the
+            // handler replays: every branch runs against the same live resource, and the one value the
+            // region answers with is what ends the extent
+            assert(log == Chunk("branch1", "branch2", "branch3", "release"))
+        }
+
+        "a bracket outside the region is live in every branch" in {
+            var released = false
+            val v =
+                Effect.bracket(1)(_ => released = true) { res =>
+                    Choice.run {
+                        Choice.eval(1, 2, 3).map(n => (n, released))
+                    }
+                }
+            // seeing the release already run from inside a branch is the failure this pins: it would mean
+            // the extent ended on the first branch and the later ones ran against a spent resource
+            assert(v.eval == Chunk((1, false), (2, false), (3, false)))
+            assert(released)
+        }
+
+        "a bracket inside a branch releases once per branch" in {
+            var opens  = 0
+            var closes = 0
+            val v = Choice.run {
+                for
+                    n <- Choice.eval(1, 2, 3)
+                    r <- Effect.bracket({ opens += 1; n })(_ => closes += 1)(a => a * 10)
+                yield r
+            }
+            assert(v.eval == Chunk(10, 20, 30))
+            // each branch acquires its own, so replaying the continuation mints a fresh resource rather
+            // than re-entering one a previous branch already released
+            assert(opens == 3)
+            assert(closes == 3)
+        }
+
+        "a bracket acquired in a branch is released before the next branch acquires" in {
+            var log = Chunk.empty[String]
+            val v = Choice.run {
+                for
+                    n <- Choice.eval(1, 2)
+                    r <- Effect.bracket({ log = log.append(s"open$n"); n })(_ => log = log.append(s"close$n"))(a => a)
+                yield r
+            }
+            assert(v.eval == Chunk(1, 2))
+            assert(log == Chunk("open1", "close1", "open2", "close2"))
         }
     }
 
