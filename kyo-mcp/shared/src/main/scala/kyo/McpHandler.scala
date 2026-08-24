@@ -430,6 +430,33 @@ object McpHandler:
     private inline def resourceAnnotationsMaybe(a: ResourceAnnotations): Maybe[ResourceAnnotations] =
         if a == ResourceAnnotations.empty then Absent else Present(a)
 
+    /** Evidence that a handler's output type was actually inferred.
+      *
+      * A handler body whose effect row does not fit does not stop the factory from typechecking: `Out`
+      * degrades to `Any`, and the search for `Schema[Any]` then matches several primitive instances at
+      * once, so the author is shown an ambiguity between two instances their code never mentions
+      * (`durationSchema` and `intSchema`, say) instead of the effect their body actually carries. For
+      * some bodies that phantom is the only error reported and the real one is suppressed entirely.
+      *
+      * Requiring this evidence BEFORE the schema turns that into a named failure. It also rejects a
+      * handler that genuinely returns `Any`, which is correct: `Any` has no schema to advertise.
+      *
+      * This is evidence, never written by hand.
+      */
+    @scala.annotation.implicitNotFound(
+        "This handler's output type could not be inferred (it came out as Any).\n" +
+            "If another error names an effect the handler body carries, that is the cause: a handler " +
+            "body's row is closed at Async & Abort[JsonRpcResponse.Halt | E], and a body that does not " +
+            "fit leaves the output type uninferred here. Fix that error first.\n" +
+            "If the handler really does return Any, give it a concrete return type instead: Any has no " +
+            "schema to advertise."
+    )
+    final class OutInferred[Out]
+
+    object OutInferred:
+        private val instance                                                          = new OutInferred[Any]
+        given inferred[Out](using scala.util.NotGiven[Out =:= Any]): OutInferred[Out] = instance.asInstanceOf[OutInferred[Out]]
+
     // --- Factories ------------------------------------------------------------
 
     inline def tool[In](
@@ -440,12 +467,16 @@ object McpHandler:
         inSchema: Schema[In]
     )[Out, E](
         handler: In => Out < (Async & Abort[JsonRpcResponse.Halt | E])
-    )(using outSchema: Schema[Out], frame: Frame): McpHandler[In, Out, E] =
+    )(using outInferred: OutInferred[Out], outSchema: Schema[Out], frame: Frame): McpHandler[In, Out, E] =
         // `inline` so `Json.jsonSchema[In]`/`Json.jsonSchema[Out]` expand at the call site where
         // `In`/`Out` are concrete; against an abstract type parameter they yield an empty Product.
         // The advertised `outputSchema` is derived from `Out`; the lift encodes the one returned
         // value into `structuredContent` and a text mirror, so the three coupled fields agree by
         // construction.
+        //
+        // `OutInferred` comes FIRST so a body that left `Out` uninferred is reported as that, rather
+        // than as an ambiguity between two primitive schemas the author never mentioned. See its docs.
+        val _ = outInferred
         val meta = ToolMeta(
             name = name,
             description = if description.isEmpty then Absent else Present(description),
@@ -613,8 +644,10 @@ object McpHandler:
         inSchema: Schema[In]
     )[Out, E](
         handler: In => Out < (Async & Abort[JsonRpcResponse.Halt | E])
-    )(using outSchema: Schema[Out], frame: Frame): McpHandler[In, Out, E] =
+    )(using outInferred: OutInferred[Out], outSchema: Schema[Out], frame: Frame): McpHandler[In, Out, E] =
+        val _ = outInferred
         new CustomHandler[In, Out, E](method, inSchema, outSchema, handler, Chunk.empty)
+    end custom
 
     // --- Concrete handler carriers (internal) ---------------------------------
 
