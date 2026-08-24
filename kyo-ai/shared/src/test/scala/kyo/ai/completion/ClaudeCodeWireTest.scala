@@ -398,7 +398,7 @@ class ClaudeCodeWireTest extends kyo.test.Test[Any]:
         val output =
             """{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[],"usage":{"input_tokens":10,"output_tokens":4,"cache_read_input_tokens":0,"cache_creation_input_tokens":29065}}}
               |{"type":"result","subtype":"success","is_error":false,"usage":{"input_tokens":10,"output_tokens":38,"cache_read_input_tokens":5,"cache_creation_input_tokens":29065}}""".stripMargin
-        Abort.run[AIGenException](ClaudeCodeWire.turnUsage(output)).map { result =>
+        Abort.run[AIGenException](ClaudeCodeWire.turnUsage(output, 0)).map { result =>
             assert(
                 result == Result.succeed(AIStats(29080L, Present(5L), 38L, Absent, 1)),
                 s"the aggregate must win: input 10+5+29065, cached 5, output 38, one turn; got $result"
@@ -413,7 +413,7 @@ class ClaudeCodeWireTest extends kyo.test.Test[Any]:
             """{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[],"usage":{"input_tokens":10,"output_tokens":4,"cache_read_input_tokens":2,"cache_creation_input_tokens":100}}}
               |{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[],"usage":{"input_tokens":10,"output_tokens":4,"cache_read_input_tokens":2,"cache_creation_input_tokens":100}}}
               |{"type":"assistant","message":{"id":"msg_2","role":"assistant","content":[],"usage":{"input_tokens":50,"output_tokens":7,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}""".stripMargin
-        Abort.run[AIGenException](ClaudeCodeWire.turnUsage(output)).map { result =>
+        Abort.run[AIGenException](ClaudeCodeWire.turnUsage(output, 0)).map { result =>
             assert(
                 result == Result.succeed(AIStats(162L, Present(2L), 11L, Absent, 1)),
                 s"msg_1 counts once (112 in, 4 out) plus msg_2 (50 in, 7 out), one turn; got $result"
@@ -423,7 +423,7 @@ class ClaudeCodeWireTest extends kyo.test.Test[Any]:
 
     "turnUsage on output with no usage anywhere reports one turn of zeros" in {
         val output = """{"type":"system","subtype":"init","session_id":"s"}"""
-        Abort.run[AIGenException](ClaudeCodeWire.turnUsage(output)).map { result =>
+        Abort.run[AIGenException](ClaudeCodeWire.turnUsage(output, 0)).map { result =>
             assert(result == Result.succeed(AIStats(0L, Absent, 0L, Absent, 1)), s"got $result")
         }
     }

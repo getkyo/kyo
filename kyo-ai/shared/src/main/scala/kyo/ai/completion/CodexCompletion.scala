@@ -489,10 +489,15 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
                     bridge.resultCapture.get.map { captured =>
                         bridge.deferred.get.map { deferred =>
                             if captured.isDefined || deferred then
-                                interruptTurn(handler, threadId, turnId)
-                                    .andThen(Loop.done((finalText(completed, delta), turnStats(usage, requests))))
+                                interruptTurn(handler, threadId, turnId).andThen(
+                                    bridge.executed.get.map(calls =>
+                                        Loop.done((finalText(completed, delta), turnStats(usage, requests, calls.size)))
+                                    )
+                                )
                             else if isTurnCompleted(event, threadId, turnId) then
-                                Loop.done((finalText(completed, delta), turnStats(usage, requests)))
+                                bridge.executed.get.map(calls =>
+                                    Loop.done((finalText(completed, delta), turnStats(usage, requests, calls.size)))
+                                )
                             else if event.method == "thread/tokenUsage/updated" then
                                 // Keep the latest total: the ephemeral thread's aggregate IS this turn's
                                 // usage, already summed across the CLI turn's internal provider requests.
@@ -521,14 +526,18 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
 
     /** The turn's reported spend.
       *
-      * `turns` counts the provider requests the app-server made, not the single reply kyo saw. This
-      * harness runs its own tool loop inside one kyo turn, so the kyo-visible count reports 1 for a turn
-      * that made five model calls, which reads as a cheap turn rather than an opaque one. One
-      * `thread/tokenUsage/updated` arrives per provider request, so counting them reports what actually
-      * ran. A turn that saw none still ran once.
+      * `turns` must agree with the tool calls a reader can see happening. This harness runs its own tool
+      * loop inside one kyo turn, so the count of replies kyo received is 1 no matter how much ran, which
+      * reads as a cheap turn rather than an opaque one.
+      *
+      * Two observations bound it, and the larger is the honest one. The app-server emits one
+      * `thread/tokenUsage/updated` per provider request, but a turn interrupted on a captured result can
+      * end before the last of them arrives, so that count alone under-reports. Every tool call kyo was
+      * asked to run implies a model turn that produced it, plus the turn that answers with its result, so
+      * `calls + 1` is the floor. A turn that saw neither still ran once.
       */
-    private def turnStats(usage: Maybe[TokenCounts], providerRequests: Int): AIStats =
-        val turns = if providerRequests <= 0 then 1 else providerRequests
+    private def turnStats(usage: Maybe[TokenCounts], providerRequests: Int, toolCalls: Int): AIStats =
+        val turns = math.max(math.max(providerRequests, toolCalls + 1), 1)
         usage.fold(AIStats.empty.copy(turns = turns))(counts => usageStats(counts).copy(turns = turns))
     end turnStats
 

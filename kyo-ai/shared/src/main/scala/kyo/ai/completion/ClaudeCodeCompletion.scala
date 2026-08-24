@@ -97,7 +97,7 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
                         ).map { raw =>
                             bridge.resultCapture.get.map {
                                 case Present(envelope) =>
-                                    turnUsage(raw).map { usage =>
+                                    bridge.executedTools.get.map(_.size).map(calls => turnUsage(raw, calls)).map { usage =>
                                         Emit.value(Chunk[Completion.StreamElement](
                                             Completion.StreamElement.Fragment(envelope),
                                             Completion.StreamElement.Usage(usage)
@@ -139,7 +139,7 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
                     // carries duplicate tool_use ids across generations.
                     callIdSeed <- Random.nextStringAlphanumeric(12)
                     messages   <- readMessages(raw, executed, captured, callIdSeed)
-                    usage      <- turnUsage(raw)
+                    usage      <- turnUsage(raw, executed.size)
                 yield (messages, usage)
             }
         }
