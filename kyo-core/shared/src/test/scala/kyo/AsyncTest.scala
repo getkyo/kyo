@@ -1710,6 +1710,21 @@ class AsyncTest extends kyo.test.Test[Any]:
         }
     }
 
+    "abort.run around an ensure parked on a foreign promise stays pending" in {
+        for
+            never <- Promise.init[Unit, Any]
+            fiber <- Fiber.initUnscoped {
+                Abort.run[Any] {
+                    Sync.ensure(()) {
+                        never.get.andThen(1)
+                    }
+                }
+            }
+            _      <- Async.sleep(200.millis)
+            polled <- fiber.poll
+        yield assert(polled.isEmpty, s"fiber completed early with: $polled")
+    }
+
     "resource cleanup on interrupt" - {
 
         "interrupt runs Sync.ensure finalizer".onlyJvm in {

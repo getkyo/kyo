@@ -359,6 +359,13 @@ private[kyo] object UnsafeServerDispatch:
                 // holds needs this erased-boundary cast. Safe: the task runs serveRequest (a Unit computation) and settles only with its result.
                 val fiber = IOTask.unscoped(serveRequest(router, endpoint, lookup, streamCtx, request, config))
                     .asInstanceOf[Fiber.Unsafe[Unit, Any]]
+                // Nothing reads a handler fiber's result: the keep-alive onComplete below ignores it. A panic
+                // that is not a connection-lifecycle interrupt (a Closed sentinel) would vanish silently.
+                fiber.onComplete {
+                    case p: Result.Panic if !p.exception.isInstanceOf[Closed] =>
+                        Log.live.unsafe.error("UnsafeServerDispatch: handler fiber panic", p.exception)
+                    case _ => ()
+                }
                 inflightHandler.set(Present(fiber))
                 // Recheck: the watcher may have already fired (and seen Absent, or a prior completed fiber)
                 // before this fiber was registered. Consult the connection's close signal directly, not
@@ -536,9 +543,9 @@ private[kyo] object UnsafeServerDispatch:
       * `streamCtx.readBody` accesses the mutable `_bodySpan` field which is safe because the callback runs synchronously -- the body is set
       * before this method is invoked and not modified until the next request.
       */
-    private def serveRequest(
+    private def serveRequest[In, Out, E](
         router: HttpRouter,
-        endpoint: HttpHandler[?, ?, ?],
+        endpoint: HttpHandler[In, Out, E],
         lookup: RouteLookup,
         streamCtx: Http1StreamContext,
         request: ParsedRequest,
@@ -669,18 +676,24 @@ private[kyo] object UnsafeServerDispatch:
         end if
     end serveRequest
 
-    /** Runs the handler computation and encodes the response. The `handlerComputation` retains endpoint-specific types from
-      * `endpoint.serveBuffered/serveStreaming` so that `endpoint.encodeResponse` can be called with proper types.
+    /** Runs the handler computation and encodes the response.
+      *
+      * Generic over the endpoint's types so the computation keeps its pending type: erased to `Any` it
+      * would re-enter the kernel through the lift, which nests a computation as data instead of running
+      * it, and the unrun computation would be delivered as the response value.
       */
-    private def dispatchHandler(
-        handlerComputation: Any,
-        endpoint: HttpHandler[?, ?, ?],
+    private def dispatchHandler[Out, E](
+        handlerComputation: HttpResponse[Out] < (Async & Abort[E | HttpResponse.Halt]),
+        endpoint: HttpHandler[?, Out, E],
         streamCtx: Http1StreamContext,
         isHead: Boolean
     )(using Frame): Unit < Async =
+        // Abort.run[Any] rather than the precise E | Halt: E is abstract here and has no ConcreteTag. The
+        // computation parameter keeps its pending type, which is what matters: a typed pending conforms as
+        // a computation, where an erased one re-enters through the lift and is nested as data.
         Abort.run[Any](handlerComputation).map {
             case Result.Success(response) =>
-                endpoint.encodeResponseUnchecked(response)(
+                endpoint.encodeResponse(response)(
                     onEmpty = (status, hdrs) =>
                         Sync.Unsafe.defer {
                             // The Content-Length: 0 head fully frames the response: no body, and no chunked last-chunk
