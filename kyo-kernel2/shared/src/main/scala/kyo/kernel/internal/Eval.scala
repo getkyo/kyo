@@ -675,7 +675,10 @@ object Eval:
                         val s = stack.state[StateX](0)
                         stack.pop() match
                             case h: HandlerLoopState[IX, OX, EX, AX, BX, S, StateX] @unchecked =>
-                                if stack.outstanding > stack.regionMark(-1) then
+                                // a completing region orphans what it still owes, unless the completion is
+                                // handleFirst's token: that one carries the region's own continuation onward,
+                                // so what it owes is not orphaned yet and stays for the extents that resume it
+                                if stack.outstanding > stack.regionMark(-1) && !r.isInstanceOf[ArrowEffect.FirstSuspended] then
                                     stack.drainOrphans(stack.regionMark(-1), orphanOutcome(r))
                                 val next =
                                     try h.apply(s.getOrElse(h.initialState), r.asInstanceOf[AX])
@@ -683,7 +686,7 @@ object Eval:
                                         case ex: Throwable => attachThrow(ex, h, Arrow.id[Any], stack)
                                 loop(next)
                             case h: Handler[EX, AX, BX, S] @unchecked =>
-                                if stack.outstanding > stack.regionMark(-1) then
+                                if stack.outstanding > stack.regionMark(-1) && !r.isInstanceOf[ArrowEffect.FirstSuspended] then
                                     stack.drainOrphans(stack.regionMark(-1), orphanOutcome(r))
                                 val tail = stack.dump[BX, Any, EX & S]()
                                 val next =

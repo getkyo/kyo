@@ -689,13 +689,13 @@ class EffectTest extends AnyFreeSpec:
         }
 
         "the release receives the outcome: the result on completion, the failure on a throw" in {
-            var outcomes = List.empty[Result[Nothing, Int]]
+            var outcomes = List.empty[Result[Any, Int]]
             val ok: Int < Any =
-                Effect.bracket(Effect.defer(1))((_, r: Result[Nothing, Int]) => outcomes :+= r)(r => r + 41)
+                Effect.bracket(Effect.defer(1))((_, r: Result[Any, Int]) => outcomes :+= r)(r => r + 41)
             assert(Eval(ok) == 42)
             val boom = new RuntimeException("boom")
             val bad: Int < Any =
-                Effect.bracket(Effect.defer(1))((_, r: Result[Nothing, Int]) => outcomes :+= r)(_ => throw boom)
+                Effect.bracket(Effect.defer(1))((_, r: Result[Any, Int]) => outcomes :+= r)(_ => throw boom)
             assert(intercept[RuntimeException](Eval(bad)) eq boom)
             assert(outcomes == List(Result.succeed(42), Result.panic(boom)))
         }
@@ -742,7 +742,7 @@ class EffectTest extends AnyFreeSpec:
             var out: Any = null
             val boom     = new RuntimeException("late")
             val v: Int < Any =
-                Effect.bracket(Effect.defer(1)) { (_, r: Result[Nothing, Int]) =>
+                Effect.bracket(Effect.defer(1)) { (_, r: Result[Any, Int]) =>
                     released += 1
                     out = r
                 } { r =>
@@ -799,7 +799,7 @@ class EffectTest extends AnyFreeSpec:
             var released = 0
             var out: Any = null
             val v: Int < Any =
-                Effect.bracket(Effect.defer(1)) { (_, r: Result[Nothing, Int]) =>
+                Effect.bracket(Effect.defer(1)) { (_, r: Result[Any, Int]) =>
                     released += 1
                     out = r
                 } { r =>
@@ -865,7 +865,7 @@ class EffectTest extends AnyFreeSpec:
             var seen       = List.empty[String]
             var suppressed = List.empty[String]
             val v: Int < Any = Effect.catching {
-                Effect.bracket(Effect.defer(1))((_, _: Result[Nothing, Int]) => throw new IllegalStateException("release")) { _ =>
+                Effect.bracket(Effect.defer(1))((_, _: Result[Any, Int]) => throw new IllegalStateException("release")) { _ =>
                     (throw new UnsupportedOperationException("body")): Int
                 }
             } { ex =>
@@ -882,7 +882,7 @@ class EffectTest extends AnyFreeSpec:
             val original     = new UnsupportedOperationException("body")
             val fromRecovery = new IllegalStateException("recovery")
             var out: Any     = null
-            val v: Int < Any = Effect.bracket(Effect.defer(1))((_, r: Result[Nothing, Int]) => out = r) { _ =>
+            val v: Int < Any = Effect.bracket(Effect.defer(1))((_, r: Result[Any, Int]) => out = r) { _ =>
                 Effect.catching((throw original): Int)(_ => throw fromRecovery)
             }
             val ex = intercept[IllegalStateException](Eval(v))
@@ -914,7 +914,7 @@ class EffectTest extends AnyFreeSpec:
         "an interior recovery turns the release outcome into the recovered success" in {
             var out: Any = null
             val v: Int < Any =
-                Effect.bracket(Effect.defer(1))((_, r: Result[Nothing, Int]) => out = r) { a =>
+                Effect.bracket(Effect.defer(1))((_, r: Result[Any, Int]) => out = r) { a =>
                     Effect.catching((throw new RuntimeException("use")): Int)(_ => a + 41)
                 }
             assert(Eval(v) == 42)
@@ -925,7 +925,7 @@ class EffectTest extends AnyFreeSpec:
             var out: Any = null
             val boom     = new RuntimeException("use")
             val v: Int < TestEffect1 =
-                Effect.bracket(testEffect1(10))((_, r: Result[Nothing, Int]) => out = r) { a =>
+                Effect.bracket(testEffect1(10))((_, r: Result[Any, Int]) => out = r) { a =>
                     if a == "10" then throw boom else a.length
                 }
             val handled: Int < Any =
@@ -1154,10 +1154,10 @@ class EffectTest extends AnyFreeSpec:
             assert(events == List("use 1", "release 1", "use 2", "release 2", "use 3", "release 3"))
         }
 
-        // the guarantee's observable shape, which nothing pinned before: a handler cannot discard a
-        // release, and the drain that owes it runs after every handler, so by the time it runs the
-        // handler's own continuation has already gone
-        "a discarded continuation releases after the handler's own continuation has run" in {
+        // the guarantee's observable shape: a handler cannot discard a release. The region completing
+        // is what orphans it, so the release runs there, before the handler's own continuation sees the
+        // completion: what was acquired inside the region is gone by the time anything below observes it
+        "a discarded continuation releases when its region completes, before the handler's continuation" in {
             var events             = List.empty[String]
             val acquire: Int < Ask = Effect.defer { events :+= "acquire"; 1 }
             val v                  = Effect.bracket(acquire)(r => events :+= s"release $r")(r => ask.map(_ + r))
@@ -1168,7 +1168,7 @@ class EffectTest extends AnyFreeSpec:
                     a
                 }
             assert(Eval(after) == -1)
-            assert(events == List("acquire", "after -1", "release 1"))
+            assert(events == List("acquire", "release 1", "after -1"))
         }
 
         // a clause runs outside the region it serves, and the continuation it is handed produces the
@@ -1437,11 +1437,11 @@ class EffectTest extends AnyFreeSpec:
 
         "a recovery outside the bracket runs after the release, which is told the failure" in {
             var order    = List.empty[String]
-            var outcomes = List.empty[Result[Nothing, Int]]
+            var outcomes = List.empty[Result[Any, Int]]
             val boom     = new RuntimeException("boom")
             val v: Int < Any =
                 Effect.catching {
-                    Effect.bracket(Effect.defer(1))((_, r: Result[Nothing, Int]) =>
+                    Effect.bracket(Effect.defer(1))((_, r: Result[Any, Int]) =>
                         order :+= "release"
                         outcomes :+= r
                     ) { r =>
@@ -1473,11 +1473,11 @@ class EffectTest extends AnyFreeSpec:
 
         "a release that throws on the completing path still runs the outer release before a recovery" in {
             var order    = List.empty[String]
-            var outcomes = List.empty[Result[Nothing, Int]]
+            var outcomes = List.empty[Result[Any, Int]]
             val boom     = new IllegalStateException("inner release")
             val v: Int < Any =
                 Effect.catching {
-                    Effect.bracket(Effect.defer("outer"))((_, r: Result[Nothing, Int]) =>
+                    Effect.bracket(Effect.defer("outer"))((_, r: Result[Any, Int]) =>
                         order :+= "outer release"
                         outcomes :+= r
                     ) { _ =>
@@ -1496,11 +1496,11 @@ class EffectTest extends AnyFreeSpec:
         // lane of handleCont (ArrowEffect.scala:244, 252-257)
         "a done transform that throws releases the bracket below it before a recovery" in {
             var order    = List.empty[String]
-            var outcomes = List.empty[Result[Nothing, Int]]
+            var outcomes = List.empty[Result[Any, Int]]
             val boom     = new RuntimeException("done")
             val v: Int < Any =
                 Effect.catching {
-                    Effect.bracket(Effect.defer(1))((_, r: Result[Nothing, Int]) =>
+                    Effect.bracket(Effect.defer(1))((_, r: Result[Any, Int]) =>
                         order :+= "release"
                         outcomes :+= r
                     ) { r =>

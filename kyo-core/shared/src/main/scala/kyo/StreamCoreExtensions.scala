@@ -1114,12 +1114,16 @@ object StreamCoreExtensions:
                                     else
                                         Loop.done
 
-                    (for
-                        _     <- tick
-                        fiber <- push
-                        _     <- Abort.run[Closed](pull)
-                        _     <- fiber.get
-                    yield ()).handle(Scope.run, Abort.run[Closed], _.unit)
+                    // The push fork stays outside the internal scope: that Scope.run manages only the tick
+                    // timer, and a producer forked inside it would carry the internal scope as its innermost
+                    // binding, scoping the source stream's resources to this combinator instead of the
+                    // caller's ambient scope, where a plain run leaves them.
+                    push.map: fiber =>
+                        (for
+                            _ <- tick
+                            _ <- Abort.run[Closed](pull)
+                            _ <- fiber.get
+                        yield ()).handle(Scope.run, Abort.run[Closed], _.unit)
                 }
         end groupedWithin
 
