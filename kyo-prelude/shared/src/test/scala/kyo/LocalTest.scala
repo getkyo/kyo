@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.*
-import kyo.kernel.ContextEffect
 
 class LocalTest extends kyo.test.Test[Any]:
 
@@ -117,41 +116,42 @@ class LocalTest extends kyo.test.Test[Any]:
             val noninheritableLocal = Local.initNoninheritable(10)
             val inheritableLocal    = Local.init("test")
 
-            val context =
-                noninheritableLocal.let(20)(inheritableLocal.let("modified")(ContextEffect.runDetached { context =>
-                    context
+            val forked =
+                noninheritableLocal.let(20)(inheritableLocal.let("modified")(Isolate[Any, Any, Any].run {
+                    for
+                        n <- noninheritableLocal.get
+                        i <- inheritableLocal.get
+                    yield (n, i)
                 })).eval
 
-            val inheritableContext = context.get(Tag[Local.internal.State])
-            assert(!inheritableContext.contains(noninheritableLocal))
-            assert(inheritableContext.contains(inheritableLocal))
-
-            assert(!context.contains(Tag[Local.internal.NoninheritableState]))
+            assert(forked == (10, "modified"))
         }
 
         "nested boundaries" in {
             val noninheritableLocal = Local.initNoninheritable(10)
             val inheritableLocal    = Local.init("test")
 
-            val context =
+            val forked =
                 noninheritableLocal.let(20)(
                     inheritableLocal.let("outer")(
-                        ContextEffect.runDetached { outerContext =>
+                        Isolate[Any, Any, Any].run {
                             noninheritableLocal.let(30)(
                                 inheritableLocal.let("inner")(
-                                    ContextEffect.runDetached { innerContext => innerContext }
+                                    Isolate[Any, Any, Any].run {
+                                        for
+                                            n <- noninheritableLocal.get
+                                            i <- inheritableLocal.get
+                                        yield (n, i)
+                                    }
                                 )
                             )
                         }
                     )
                 ).eval
 
-            val inheritableContext = context.get(Tag[Local.internal.State])
-            assert(!inheritableContext.contains(noninheritableLocal))
-            assert(inheritableContext.contains(inheritableLocal))
-            assert(inheritableContext.get(inheritableLocal).contains("inner"))
-
-            assert(!context.contains(Tag[Local.internal.NoninheritableState]))
+            // the inner fork starts the non-inheritable local at its default again, even though the
+            // binding around it set 30, while the inheritable one carries the innermost binding across
+            assert(forked == (10, "inner"))
         }
 
     }

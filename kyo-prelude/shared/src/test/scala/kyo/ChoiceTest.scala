@@ -83,8 +83,9 @@ class ChoiceTest extends kyo.test.Test[Any]:
         end try
     }
 
-    "large number of suspensions".notNative.notWasm.pendingUntilFixed("deep Choice suspension is not yet stack-safe (issue #208)") in {
-        // https://github.com/getkyo/kyo/issues/208
+    "large number of suspensions".notNative.notWasm in {
+        // was https://github.com/getkyo/kyo/issues/208: the kernel drives suspensions on its own loop
+        // rather than the call stack, so the depth below no longer overflows
         var v = Choice.eval(1)
         for _ <- 0 until 100000 do
             v = v.map(_ => Choice.eval(1))
