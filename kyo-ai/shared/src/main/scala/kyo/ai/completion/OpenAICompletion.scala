@@ -168,6 +168,10 @@ private[completion] object OpenAICompletion extends Completion:
     /** Streams the result-envelope fragments by posting the native SSE request and projecting each line's
       * tool-call argument delta through [[parseDeltaArguments]].
       */
+    // Streams over SSE: one fragment per delta the endpoint sends, so the stream advances while
+    // the model is still producing.
+    def streamsIncrementally: Boolean = true
+
     def streamFragments(
         config: Config,
         context: Context,

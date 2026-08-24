@@ -369,6 +369,19 @@ A fully consumed stream joins the conversation: the turn is recorded once its el
 
 The stream's element row also carries `Scope` because the SSE connection is held open until the stream terminates or errors, so running it adds `Scope` to the residual. You write no SSE parsing, no fragment accumulation, no incremental-decode attempt.
 
+### Not every backend streams incrementally
+
+Whether elements arrive *as the model produces them* depends on the backend, and the difference is invisible from the stream itself. The HTTP families stream over SSE, so a chunk arrives per delta. The command harnesses (Claude Code, Codex) report a turn once it is finished, so the whole answer arrives in one piece: the elements and their order are identical and nothing fails, but time-to-first-token equals time-to-last-token, which is the number a chat UI lives on.
+
+Rather than leave that to be discovered in production feel, each backend declares it:
+
+```scala
+def rendersProgressively(config: kyo.ai.Config): Boolean =
+    config.provider.completion.streamsIncrementally
+```
+
+Read it to choose between rendering progressively and showing a pending state. A stream written against either kind is correct; only the pacing differs.
+
 ## Parallel generation
 
 `AI.gen` over `< LLM` composes with the structured-concurrency combinators (`Async.foreach`, `Async.fill`, `Async.race`) through one public given. Bring it into scope and fan out.

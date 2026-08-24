@@ -25,6 +25,11 @@ abstract private[completion] class HarnessCompletion(providerName: String) exten
                     Completion.Reply(messages, Completion.StopReason.Completed, usage)
                 )
 
+    // A command harness reports a turn's result once it is finished: the result the stream is built from
+    // arrives whole, so `streamFragments` emits one fragment and the stream one chunk. The elements are
+    // the same as on an HTTP family; only their arrival is not spread over the generation.
+    final def streamsIncrementally: Boolean = false
+
     protected def run(
         config: Config,
         context: Context,

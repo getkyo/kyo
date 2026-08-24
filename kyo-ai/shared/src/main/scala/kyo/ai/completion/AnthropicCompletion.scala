@@ -107,6 +107,10 @@ private[completion] object AnthropicCompletion extends Completion:
                         )
                 }
 
+    // Streams over SSE: one fragment per delta the endpoint sends, so the stream advances while
+    // the model is still producing.
+    def streamsIncrementally: Boolean = true
+
     def streamFragments(
         config: Config,
         context: Context,
