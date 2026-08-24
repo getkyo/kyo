@@ -14,7 +14,7 @@ class IOTaskTest extends kyo.test.Test[Any]:
             def userStep(x: Int): Int < Sync = Sync.defer(x + 1)
             def work: Unit < Async =
                 Sync.defer(1).map(userStep).map(_ => Async.use(blocker)(_ => ())).map(_ => ())
-            val iotask = IOTask(work, Trace.saved(), Context.empty)
+            val iotask = IOTask.unscoped(work)
             for
                 // Deterministic readiness witness: poll the actual property (the live trace surfacing a
                 // user frame), not a sleep. The trace is published at the suspend boundary's writeback, so
@@ -38,7 +38,7 @@ class IOTaskTest extends kyo.test.Test[Any]:
             def userStep(x: Int): Int < Sync = Sync.defer(x + 1)
             def work: Unit < Async =
                 Sync.defer(1).map(userStep).map(_ => Async.use(blocker)(_ => ())).map(_ => ())
-            val iotask = IOTask(work, Trace.saved(), Context.empty)
+            val iotask = IOTask.unscoped(work)
             for
                 _ <- assertEventually(Sync.defer(iotask.fiberTrace().contains("IOTaskTest.scala:")))
                 rendered = iotask.fiberTrace()
@@ -79,7 +79,7 @@ class IOTaskTest extends kyo.test.Test[Any]:
             def userStep(x: Int): Int < Sync = Sync.defer(x + 1)
             def work: Unit < Async =
                 Sync.defer(1).map(userStep).map(_ => Async.use(blocker)(_ => ())).map(_ => ())
-            val iotask = IOTask(work, Trace.saved(), Context.empty)
+            val iotask = IOTask.unscoped(work)
             for
                 // A forked reader hammers fiberTrace() while the worker mutates the trace: the fiber is
                 // blocked (populated trace), then resumes (writeback), then completes (run() nulls trace).
@@ -98,7 +98,7 @@ class IOTaskTest extends kyo.test.Test[Any]:
         }
 
         "fiberTrace has no effect row and is a plain String" in {
-            val iotask = IOTask(Sync.defer(()), Trace.init, Context.empty)
+            val iotask = IOTask.unscoped(Sync.defer(()))
             // Compile-shaped assertion: fiberTrace() is a bare String, with no pending effect row and no
             // AllowUnsafe capability. If it returned `String < Sync` or required AllowUnsafe this would not
             // typecheck.

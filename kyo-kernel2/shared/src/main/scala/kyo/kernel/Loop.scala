@@ -565,11 +565,17 @@ object Loop:
         @tailrec def loop(i: Int): Unit < S =
             if i >= n then ()
             else
-                run match
+                // bound at the row before it is matched, the way every other loop here takes its scrutinee
+                // as a typed parameter. Matching the inline parameter itself leaves the expansion carrying
+                // whatever the call site passed, and the exhaustivity check reads the arms against that
+                // rather than against the row
+                val v: Any < S = run
+                v match
                     case v: Kyo[?, ?] =>
                         suspended(i + 1)(v)
                     case _ =>
                         loop(i + 1)
+                end match
             end if
         end loop
         loop(0)
