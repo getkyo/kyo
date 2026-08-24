@@ -86,8 +86,8 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         // region answered them. Nothing is left behind: every abort reaches the clause, `Async.Join` is the
         // tag itself, and `Sync` is a marker that nothing suspends on, `Sync.defer` being a deferral the
         // eval runs on its own.
-        ArrowEffect.handleCont[[X] =>> Nothing, [X] =>> Any, Async.Join & Abort[Nothing], Unit, Unit, Abort[E] & Async, Any](
-            Tag[Async.Join & Abort[Nothing]],
+        ArrowEffect.handleCont[[X] =>> Nothing, [X] =>> Any, Async.Join | Abort[Nothing], Unit, Unit, Abort[E] & Async, Any](
+            Tag[Async.Join | Abort[Nothing]],
             v
         )(
             [C] =>
