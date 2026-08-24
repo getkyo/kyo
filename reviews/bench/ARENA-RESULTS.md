@@ -105,3 +105,26 @@ Cells are ops/s (higher is better) with gc.alloc.rate.norm B/op in parens. Ratio
 - Laptop run (darwin-aarch64), one fork, one thread, 4 measurement iterations: good for direction,
   not for small deltas. The CI bench runner is the reference environment.
 - No old-kernel baseline in this run: these are cross-library comparisons only, not kernel2-vs-kernel1.
+
+## Recheck (same box, second run of the kyo outlier rows)
+
+Raw data: reviews/bench/arena-kyo-recheck.json. Same params, ~40 minutes later, podman VM at ~100%
+CPU throughout and load average above 6 on both runs.
+
+| bench | run1 ops/s | run2 ops/s | delta | alloc B/op run1 | run2 |
+|---|---|---|---|---|---|
+| BlockingContentionBench.forkKyo | 13.5 | 19.7 | +45% | 333158 | 319036 |
+| BroadFlatMapBench.forkKyo | 37443 | 33750 | -10% | 913 | 912 |
+| DeepBindBench.forkKyo | 13665 | 10923 | -20% | 2755 | 2756 |
+| ForkChainedBench.forkKyo | 231 | 198 | -15% | 6002538 | 6002569 |
+| ForkJoinContentionBench.forkKyo | 171 | 67 | -61% | 13173318 | 13177395 |
+| LoggingBench.forkKyo | 33 | 35 | +6% | 1238415 | 1234248 |
+| NarrowBindBench.forkKyo | 621 | 1328 | +114% | 1519175 | 1361170 |
+
+Reading: throughput on this box swings up to 2x run to run, so no fine-grained throughput claim
+survives, the fork-family ratios included. Allocation per op reproduces to within rounding, so the
+allocation findings stand: LoggingBench and NarrowBind are real defects, and ForkJoinContention's
+alloc parity with cats says its 0.18x throughput reading was mostly load. The map-fused rows
+(DeepBindMapBench, NarrowBindMapBench) were missed by the recheck selector and remain single-run.
+Trustworthy throughput needs the CI bench runner; the old-vs-new kernel question needs an A/B
+against the old-kernel branch on a quiet machine.
