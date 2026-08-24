@@ -11,7 +11,7 @@ import java.nio.charset.Charset
   */
 object FileSystem:
 
-    trait Read[S]:
+    abstract class Read[S]:
         def defaultCaseSensitivity(using Frame): Glob.CaseSensitivity < S
 
         // inspection
@@ -75,7 +75,7 @@ object FileSystem:
         ): Chunk[Path] < (S & Abort[FileReadException | FileStructureException])
     end Read
 
-    trait Write[S] extends Read[S]:
+    abstract class Write[S] extends Read[S]:
 
         // write
         def write(path: Path, value: String, options: Path.WriteOptions)(using Frame): Unit < (S & Abort[FileWriteException])
