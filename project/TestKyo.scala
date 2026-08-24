@@ -11,10 +11,23 @@ import scala.sys.process.*
 
 /** Unified test command for CI and local use.
   *
-  * Usage: testKyo diff vs origin/main, all platforms, current Scala testKyo JVM diff vs origin/main, JVM only testKyo --all full test, all
-  * platforms testKyo --all JVM full test, JVM only testKyo --scala 2.13.18 JVM diff, Scala 2.13, JVM only (auto-discovers modules) testKyo
-  * --all --scala 2.13.18 JVM full test, Scala 2.13, JVM only testKyo origin/feature JVM diff vs specific ref, JVM only testKyo --dry-run
-  * JVM show what would run without executing
+  * Usage:
+  *   - `testKyo` diff vs origin/main, all platforms, every Scala version
+  *   - `testKyo JVM` diff vs origin/main, JVM only
+  *   - `testKyo --all Native` full test, Native only
+  *   - `testKyo --scala 2.13.18 JVM` diff, Scala 2.13, JVM only (auto-discovers modules)
+  *   - `testKyo --scala 3 --all JVM` full test, primary Scala 3 version only
+  *   - `testKyo --cross JVM` the Scala 2.x cross-build passes only
+  *   - `testKyo --phase link --scala 3 --modules kyo-dataNative,kyo-coreNative Native` link exactly those modules
+  *   - `testKyo --dry-run --plan-file /tmp/p Native` write the selected modules to /tmp/p, run nothing
+  *   - `testKyo origin/feature JVM` diff vs a specific ref
+  *   - `testKyo --dry-run JVM` show what would run without executing
+  *
+  * A run is a sequence of passes: the primary Scala version, then one per Scala 2.x cross-build
+  * version. All passes go out as ONE `;`-chained command string (per pass: version switch, module
+  * tasks, completion marker). sbt queues a submitted command string rather than running it in
+  * place, so passes submitted as separate strings are unordered against each other and their tasks
+  * run at whichever version the queue last selected.
   */
 object TestKyo {
 
@@ -24,127 +37,209 @@ object TestKyo {
     // and full-run paths both exclude them and treat any change scoped to one as "run all".
     private val aggregateProjects = Set("kyoJVM", "kyoJS", "kyoNative", "kyoWasm")
 
+    private val phases = Seq("compile-main", "compile-test", "link", "test")
+
     private def log(msg: String): Unit = println(s"[testKyo] $msg")
 
+    private val doneCommandName = "testKyoDone"
+
+    /** Prints the line that marks a pass as run to completion. Each pass chains it after its own
+      * tasks, so its absence from a run's output means the pass stopped short of its module list.
+      * scripts/ci-test.sh reads it to tell a truncated Native pass from a green one.
+      */
+    def doneCommand: Command = Command.command(doneCommandName) { state =>
+        log("completed")
+        state
+    }
+
     /** The per-module sbt task for a phase. compile-main compiles only main sources; compile-test
-      * compiles test sources (main resolved from disk); test (default) runs the tests. Running the
-      * phases as separate sbt processes keeps the driver from holding a full compile heap while test
-      * forks run, which is what over-commits the memory-constrained CI runners.
+      * compiles test sources (main resolved from disk); link links the Native test binary; test
+      * (default) runs the tests. Running the phases as separate sbt processes keeps the driver from
+      * holding a full compile heap while test forks run, which is what over-commits the
+      * memory-constrained CI runners.
       */
     private def taskFor(phase: String, name: String): String = phase match {
         case "compile-main" => s"$name/Compile/compile"
         case "compile-test" => s"$name/Test/compile"
+        case "link"         => s"$name/Test/nativeLink"
         case _              => s"$name/test"
     }
 
     private def phaseLabel(phase: String): String = phase match {
         case "compile-main" => "compiling main for"
         case "compile-test" => "compiling test for"
+        case "link"         => "linking"
         case _              => "testing"
     }
 
+    private final case class Args(
+        isAll: Boolean,
+        isDryRun: Boolean,
+        isCross: Boolean,
+        scalaArg: Option[String],
+        phase: String,
+        modules: Option[Seq[String]],
+        planFile: Option[String],
+        platform: Option[String],
+        baseRef: String
+    )
+
     def command: Command = Command.args("testKyo", "") { (state, args) =>
-        val isAll           = args.contains("--all")
-        val isDryRun        = args.contains("--dry-run")
-        val scalaIdx        = args.indexOf("--scala")
-        val scalaVersionArg = if (scalaIdx >= 0 && scalaIdx + 1 < args.length) Some(args(scalaIdx + 1)) else None
-        // Phase selects the per-module task: compile-main, compile-test, or test (default). CI runs the
-        // three phases as separate sbt processes so the driver never holds a full compile heap while test
-        // forks run (see .github/workflows/build.yml and taskFor).
-        val phaseIdx = args.indexOf("--phase")
-        val phase    = if (phaseIdx >= 0 && phaseIdx + 1 < args.length) args(phaseIdx + 1) else "test"
-
-        val remaining = args
-            .filterNot(a => a == "--all" || a == "--dry-run")
-            .filterNot(a => a == "--scala" || (scalaIdx >= 0 && args.indexOf(a) == scalaIdx + 1))
-            .filterNot(a => a == "--phase" || (phaseIdx >= 0 && args.indexOf(a) == phaseIdx + 1))
-
-        val (platformArgs, refArgs) = remaining.partition(a => platformNames.exists(_.equalsIgnoreCase(a)))
-        val platform                = platformArgs.headOption.map(a => platformNames.find(_.equalsIgnoreCase(a)).get)
-        val baseRef                 = refArgs.headOption.getOrElse("origin/main")
-
-        val extracted = Project.extract(state)
-        val scala3    = extracted.get(scalaVersion)
-
-        // Resolve --scala 2 / --scala 3 to actual versions from the build
-        val scalaVersionOpt = scalaVersionArg.map(resolveScalaVersion(_, extracted))
-        val runBothScala    = scalaVersionOpt.isEmpty
-
-        log(s"scala: ${scalaVersionOpt.getOrElse(s"$scala3 + 2.x")}, platform: ${platform.getOrElse("all")}, mode: ${if (isAll) "all"
-            else s"diff vs $baseRef"}")
-
-        // Run for the specified or primary Scala version
-        val targetScala = scalaVersionOpt.getOrElse(scala3)
-        val state1 = scalaVersionOpt match {
-            case Some(v) if v != scala3 =>
-                log(s"switching to Scala $v")
-                Command.process(s"++$v", state, msg => state.log.error(msg))
-            case _ => state
-        }
-
-        def runForScala(st: State, sv: String): State =
-            if (isAll || scalaVersionOpt.isDefined) runAll(st, platform, sv, isDryRun, phase)
-            else runDiff(st, baseRef, platform, sv, isDryRun, phase)
-
-        val state2 = runForScala(state1, targetScala)
-
-        if (runBothScala) {
-            findScala2Versions(extracted) match {
-                case Nil =>
-                    log("no Scala 2.x cross-build modules found")
-                    state2
-                case versions =>
-                    // One pass per distinct Scala 2.x version: 2.13 for the cross-build library
-                    // modules, 2.12 for the sbt plugins. This is why the regular test run also
-                    // covers the 2.12-only plugins (kyo-compat-plugin, kyo-doctest-plugin).
-                    val afterScala2 = versions.foldLeft(state2) { (st, v) =>
-                        log(s"switching to Scala $v for cross-build modules")
-                        val switched = if (isDryRun) st else Command.process(s"++$v", st, msg => st.log.error(msg))
-                        runForScala(switched, v)
-                    }
-                    log(s"restoring Scala $scala3")
-                    if (isDryRun) afterScala2 else Command.process(s"++$scala3", afterScala2, msg => afterScala2.log.error(msg))
-            }
-        } else {
-            state2
+        parseArgs(args) match {
+            case Left(err) =>
+                state.log.error(s"testKyo: $err")
+                state.fail
+            case Right(parsed) => run(state, parsed)
         }
     }
 
-    // --- Full test mode ---
+    /** Parse the command line, or return the argument error that must fail the invocation. An
+      * unknown `--flag` is an error rather than a base ref: a mistyped `--modules` silently
+      * becoming a git ref would run the wrong module set.
+      */
+    private def parseArgs(args: Seq[String]): Either[String, Args] = {
+        var isAll    = false
+        var isDryRun = false
+        var isCross  = false
+        var scalaArg = Option.empty[String]
+        var phase    = "test"
+        var modules  = Option.empty[Seq[String]]
+        var planFile = Option.empty[String]
+        var error    = Option.empty[String]
+        val rest     = collection.mutable.ListBuffer.empty[String]
 
-    private def runAll(
+        def valueAt(i: Int, flag: String): Option[String] =
+            if (i + 1 < args.length && !args(i + 1).startsWith("--")) Some(args(i + 1))
+            else {
+                error = error.orElse(Some(s"$flag requires a value"))
+                None
+            }
+
+        var i = 0
+        while (i < args.length) {
+            args(i) match {
+                case "--all" =>
+                    isAll = true; i += 1
+                case "--dry-run" =>
+                    isDryRun = true; i += 1
+                case "--cross" =>
+                    isCross = true; i += 1
+                case "--scala" =>
+                    scalaArg = valueAt(i, "--scala"); i += 2
+                case "--phase" =>
+                    phase = valueAt(i, "--phase").getOrElse(phase); i += 2
+                case "--plan-file" =>
+                    planFile = valueAt(i, "--plan-file"); i += 2
+                case "--modules" =>
+                    modules = valueAt(i, "--modules").map(_.split(",").toSeq.map(_.trim).filter(_.nonEmpty))
+                    i += 2
+                case a if a.startsWith("--") =>
+                    error = error.orElse(Some(s"unknown argument: $a")); i += 1
+                case a =>
+                    rest += a; i += 1
+            }
+        }
+
+        val (platformArgs, refArgs) = rest.toSeq.partition(a => platformNames.exists(_.equalsIgnoreCase(a)))
+        val platform                = platformArgs.headOption.map(a => platformNames.find(_.equalsIgnoreCase(a)).get)
+        val baseRef                 = refArgs.headOption.getOrElse("origin/main")
+
+        val invalid =
+            if (isCross && scalaArg.isDefined) Some("--cross and --scala select different passes; pass only one")
+            else if (isCross && modules.isDefined) Some("--cross and --modules cannot be combined")
+            else if (isAll && modules.isDefined) Some("--all and --modules cannot be combined")
+            else if (modules.exists(_.isEmpty)) Some("--modules needs a comma-separated module list")
+            else if (!phases.contains(phase)) Some(s"unknown phase '$phase', expected one of ${phases.mkString(", ")}")
+            else None
+
+        error.orElse(invalid)
+            .toLeft(Args(isAll, isDryRun, isCross, scalaArg, phase, modules, planFile, platform, baseRef))
+    }
+
+    private def run(state: State, a: Args): State = {
+        val extracted = Project.extract(state)
+        val scala3    = extracted.get(scalaVersion)
+
+        // One pass per Scala version, in execution order. --cross drops the primary pass, --scala
+        // and --modules pin a single one; the default is the primary version plus 2.13 for the
+        // cross-build library modules and 2.12 for the sbt plugins.
+        val versions =
+            if (a.isCross) findScala2Versions(extracted)
+            else a.scalaArg.map(resolveScalaVersion(_, extracted)) match {
+                case Some(v)                     => Seq(v)
+                case None if a.modules.isDefined => Seq(scala3)
+                case None                        => scala3 +: findScala2Versions(extracted)
+            }
+
+        val mode =
+            if (a.modules.isDefined) "explicit module list"
+            else if (a.isAll) "all"
+            else s"diff vs ${a.baseRef}"
+        log(s"scala: ${if (versions.isEmpty) "none" else versions.mkString(" + ")}, platform: ${a.platform.getOrElse("all")}, mode: $mode")
+
+        if (versions.isEmpty) {
+            log("no Scala 2.x cross-build modules found")
+            a.planFile.foreach(writePlan(_, Nil))
+            log("completed")
+            state
+        } else
+            selectPasses(state, a, versions) match {
+                case Left(err) =>
+                    state.log.error(s"testKyo: $err")
+                    state.fail
+                case Right(passes) =>
+                    a.planFile.foreach(writePlan(_, passes.flatMap(_._2).distinct.sorted))
+                    execute(state, a, scala3, passes)
+            }
+    }
+
+    /** The modules each pass runs, in pass order. Selection reads crossScalaVersions and the
+      * project graph, neither of which `++` changes, so every pass is resolved from the unswitched
+      * state and the whole run can go out as one ordered command chain.
+      */
+    private def selectPasses(
         state: State,
-        platform: Option[String],
-        scalaVersion: String,
-        isDryRun: Boolean = false,
-        phase: String = "test"
-    ): State = {
+        a: Args,
+        versions: Seq[String]
+    ): Either[String, Seq[(String, Seq[String])]] = {
         val extracted = Project.extract(state)
         val structure = extracted.structure
         val allRefs   = structure.allProjectRefs
 
-        val testable = allRefs.filter { ref =>
-            val name        = ref.project
-            val versions    = (ref / crossScalaVersions).get(structure.data).getOrElse(Nil)
-            val isAggregate = aggregateProjects.contains(name)
-            val platformMatch = if (isAggregate) false
-            else platform match {
+        def exists(name: String): Boolean = allRefs.exists(_.project == name)
+
+        def crossVersions(name: String): Seq[String] =
+            allRefs.find(_.project == name).flatMap(ref => (ref / crossScalaVersions).get(structure.data)).getOrElse(Nil)
+
+        def platformMatch(name: String): Boolean =
+            !aggregateProjects.contains(name) && (a.platform match {
                 case Some(p) => matchesPlatform(name, p)
                 case None    => true
-            }
-            val matchesScala = versions.contains(scalaVersion)
-            platformMatch && matchesScala
-        }
+            })
 
-        if (testable.isEmpty) {
-            log("no projects found for current Scala version and platform")
-            state
-        } else {
-            val sorted = testable.map(_.project).sorted
-            log(s"${phaseLabel(phase)} ${sorted.size} projects: ${sorted.mkString(", ")}")
-            val commands = sorted.map(name => taskFor(phase, name)).mkString("; ")
-            log(s"running: $commands")
-            if (isDryRun) state else Command.process(commands, state, msg => state.log.error(msg))
+        a.modules match {
+            case Some(names) =>
+                // An explicit list is one pass and never a filter: an unusable name fails the
+                // invocation so a batched runner cannot skip modules it believes it ran.
+                val version     = versions.head
+                val unknown     = names.filterNot(exists)
+                val offPlatform = names.filter(n => exists(n) && !platformMatch(n))
+                val offVersion  = names.filter(n => exists(n) && platformMatch(n) && !crossVersions(n).contains(version))
+                if (unknown.nonEmpty) Left(s"unknown modules: ${unknown.mkString(", ")}")
+                else if (offPlatform.nonEmpty)
+                    Left(s"modules outside platform ${a.platform.getOrElse("all")}: ${offPlatform.mkString(", ")}")
+                else if (offVersion.nonEmpty) Left(s"modules not cross-built for Scala $version: ${offVersion.mkString(", ")}")
+                else Right(Seq(version -> names.sorted))
+            case None =>
+                val restrict = if (a.isAll) None else diffSelection(state, a, allRefs, extracted)
+                Right(versions.map { v =>
+                    val eligible = allRefs.map(_.project).filter(n => platformMatch(n) && crossVersions(n).contains(v))
+                    val chosen = restrict match {
+                        case Some(selected) => eligible.filter(selected.contains)
+                        case None           => eligible
+                    }
+                    v -> chosen.sorted
+                })
         }
     }
 
@@ -154,82 +249,96 @@ object TestKyo {
     // changed lines (see buildSbtAffectedProjects), widening to all only when a changed line cannot
     // be pinned to a project. Otherwise, run only affected modules + their transitive dependents.
 
-    private def runDiff(
+    /** The modules a diff selects, before the per-pass platform and Scala filters, or None when the
+      * change is global and every module must run.
+      */
+    private def diffSelection(
         state: State,
-        baseRef: String,
-        platform: Option[String],
-        scalaVersion: String,
-        isDryRun: Boolean = false,
-        phase: String = "test"
-    ): State = {
-        val changedFiles = diffFiles(baseRef)
+        a: Args,
+        allRefs: Seq[ProjectRef],
+        extracted: Extracted
+    ): Option[Set[String]] = {
+        val changedFiles = diffFiles(a.baseRef)
         if (changedFiles.isEmpty) {
-            log(s"no changed files vs $baseRef, skipping tests")
-            return state
+            log(s"no changed files vs ${a.baseRef}, skipping tests")
+            return Some(Set.empty)
         }
 
-        log(s"${changedFiles.size} changed files vs $baseRef:")
+        log(s"${changedFiles.size} changed files vs ${a.baseRef}:")
         changedFiles.foreach(f => log(s"  $f"))
 
         if (metaBuildChanged(changedFiles)) {
             log("meta-build changed (project/ or .github/), running all modules")
-            return runAll(state, platform, scalaVersion, isDryRun, phase)
+            return None
         }
 
-        val extracted = Project.extract(state)
-        val structure = extracted.structure
-        val allRefs   = structure.allProjectRefs
-        val allNames  = allRefs.map(_.project).toSet
-        val bd        = extracted.get(buildDependencies)
+        val allNames = allRefs.map(_.project).toSet
+        val bd       = extracted.get(buildDependencies)
 
         // A build.sbt change maps to the projects whose settings changed; None means a changed
         // line could not be attributed to specific projects, so fall back to running all modules.
         val buildSbtProjects: Set[String] =
             if (!changedFiles.contains("build.sbt")) Set.empty
-            else buildSbtAffectedProjects(extracted, baseRef) match {
+            else buildSbtAffectedProjects(extracted, a.baseRef) match {
                 case Some(names) => names
-                case None        => return runAll(state, platform, scalaVersion, isDryRun, phase)
+                case None        => return None
             }
 
         val directlyChanged = (changedFiles.flatMap(fileToProjects(_, allNames)) ++ buildSbtProjects).toSet
-        val filtered = platform match {
+        val filtered = a.platform match {
             case Some(p) => directlyChanged.filter(matchesPlatform(_, p))
             case None    => directlyChanged
         }
 
         if (filtered.isEmpty) {
             log("no affected projects found, skipping tests")
-            return state
+            return Some(Set.empty)
         }
 
+        log(s"directly changed: ${filtered.toSeq.sorted.mkString(", ")}")
         val dependentMap = transitiveDependents(allRefs, bd)
-        val allAffected = filtered.flatMap { name =>
+        Some(filtered.flatMap { name =>
             allRefs.find(_.project == name) match {
                 case Some(ref) => dependentMap.getOrElse(ref, Set.empty).map(_.project) + name
                 case None      => Set(name)
             }
-        }
+        })
+    }
 
-        val toTest = (platform match {
-            case Some(p) => allAffected.filter(matchesPlatform(_, p))
-            case None    => allAffected
-        }).filter { name =>
-            allRefs.find(_.project == name).exists { ref =>
-                (ref / crossScalaVersions).get(structure.data).getOrElse(Nil).contains(scalaVersion)
+    /** Submit every pass as one `;`-chained command string: switch, tasks, completion marker, and
+      * the restore switch after the last pass that moved off the primary version. A pass that
+      * selects nothing contributes no tasks, so it prints its marker here.
+      */
+    private def execute(state: State, a: Args, scala3: String, passes: Seq[(String, Seq[String])]): State = {
+        val chain   = collection.mutable.ListBuffer.empty[String]
+        var current = scala3
+        passes.foreach { case (version, modules) =>
+            if (modules.isEmpty) {
+                log(s"Scala $version: no modules selected")
+                log("completed")
+            } else {
+                val switch = if (version == current) Nil else Seq(s"++$version")
+                val parts  = (switch ++ modules.map(taskFor(a.phase, _))) :+ doneCommandName
+                current = version
+                log(s"Scala $version, ${phaseLabel(a.phase)} ${modules.size} modules: ${modules.mkString(", ")}")
+                log(s"pass: ${parts.mkString("; ")}")
+                chain ++= parts
             }
         }
-
-        if (toTest.isEmpty) {
-            log("no testable affected projects found, skipping tests")
-            state
-        } else {
-            val sorted = toTest.toSeq.sorted
-            log(s"directly changed: ${filtered.toSeq.sorted.mkString(", ")}")
-            log(s"with dependents (${phaseLabel(phase)}): ${sorted.mkString(", ")}")
-            val commands = sorted.map(name => taskFor(phase, name)).mkString("; ")
-            log(s"running: $commands")
-            if (isDryRun) state else Command.process(commands, state, msg => state.log.error(msg))
+        if (current != scala3) {
+            log(s"restoring Scala $scala3 after the last pass")
+            chain += s"++$scala3"
         }
+        if (chain.isEmpty || a.isDryRun) state
+        else Command.process(chain.mkString("; "), state, msg => state.log.error(msg))
+    }
+
+    /** The selected modules, one per line, for the runner that partitions them into batches. */
+    private def writePlan(path: String, modules: Seq[String]): Unit = {
+        val file = new File(path)
+        Option(file.getAbsoluteFile.getParentFile).foreach(IO.createDirectory)
+        IO.writeLines(file, modules)
+        log(s"plan: ${modules.size} modules written to $path")
     }
 
     // --- Helpers ---
