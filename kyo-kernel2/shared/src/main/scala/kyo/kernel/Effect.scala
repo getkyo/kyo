@@ -14,7 +14,6 @@ import kyo.kernel.internal.Kyo.Binding
 import kyo.kernel.internal.Kyo.Catching
 import kyo.kernel.internal.Kyo.Defer
 import scala.annotation.nowarn
-import scala.annotation.static
 
 abstract class Effect private[kernel] ()
 
@@ -61,13 +60,13 @@ object Effect:
                             out
                         end if
 
-    @static def defer[A, B, S](v: A < S, cont: Arrow[A, B, S]): B < S =
+    def defer[A, B, S](v: A < S, cont: Arrow[A, B, S]): B < S =
         new Defer[A, B, B, S]:
             val value = v
             def contA = cont
             def contB = Arrow.id[B]
 
-    @static def defer[A, B, C, S](v: A < S, a: Arrow[A, B, S], b: Arrow[B, C, S]): C < S =
+    def defer[A, B, C, S](v: A < S, a: Arrow[A, B, S], b: Arrow[B, C, S]): C < S =
         if b eq Arrow.id then
             defer(v, a.asInstanceOf[Arrow[A, C, S]])
         else

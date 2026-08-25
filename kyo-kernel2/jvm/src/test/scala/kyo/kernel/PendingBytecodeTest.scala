@@ -55,20 +55,27 @@ class PendingBytecodeTest extends AnyFreeSpec:
         // MOVED, not re-baselined: this was 2 in the previous kernel2, where the emission analyzed
         // the type and proved a final class admits no nested payload, leaving a bare cast. This
         // lift has two arms, a primitive fast path and Nested.nest, so a concrete class takes the
-        // same static call a generic value takes: aload, invokestatic, areturn.
+        // same call a generic value takes.
         //
         // The cost is one union instanceof on the most common boundary in the library. Restoring
         // the elision means an emission macro that reads the type, which is machinery this lift
         // deliberately does not have. Flagged for the owner rather than decided here.
+        //
+        // 5 to 8 when Nested.nest stopped being @static: an @static symbol named in inline-expanded
+        // code crashes a downstream macro-owning module's clean build (StaleSymbolException in the
+        // suspended-unit retry run, first hit by kyo-sql), so the expansion now loads the module:
+        // getstatic MODULE$, aload, invokevirtual, areturn. Flagged for the owner with the crash
+        // evidence rather than decided as final.
         val sizes = methodBytecodeSize[TestLiftConcrete]
-        assert(sizes == Map("test" -> 5))
+        assert(sizes == Map("test" -> 8))
     }
 
     "lift of a generic value is one runtime test" in {
-        // abstract types keep the runtime Boxed test, as a single static call:
-        // aload, invokestatic Nested.nest, areturn
+        // abstract types keep the runtime Boxed test, through the module:
+        // getstatic MODULE$, aload, invokevirtual Nested.nest, areturn (8; 5 while nest was
+        // @static, dropped for the reason the concrete-class pin above records)
         val sizes = methodBytecodeSize[TestLiftGeneric]
-        assert(sizes == Map("test" -> 5))
+        assert(sizes == Map("test" -> 8))
     }
 
     private def methodBytecodeSize[A](using ct: ClassTag[A]): Map[String, Int] =

@@ -48,9 +48,11 @@ class ArrowEffectBytecodeTest extends AnyFreeSpec:
         // region stopped binding the matched body and stored the value it already had. The call site
         // still allocates twice, the region node and the handler it holds, where the old kernel's
         // region was a single node; whether the handler should fuse into the node is a design
-        // question, not a pin to adjust
+        // question, not a pin to adjust. 37 to 40 when Effect.defer stopped being @static (see the
+        // PendingBytecodeTest lift pins for the crash evidence): the expansion loads the module
+        // before the call.
         val sizes = methodBytecodeSize[TestHandleCont]
-        assert(sizes == Map("test" -> 37))
+        assert(sizes == Map("test" -> 40))
     }
 
     private def methodBytecodeSize[A](using ct: ClassTag[A]): Map[String, Int] =

@@ -1,13 +1,17 @@
 package kyo.kernel.internal
 
 import kyo.<
-import scala.annotation.static
 
 private[kyo] class Nested[+A](val value: A)
 
 // public for the same reason as Safepoint's depth guard: the implicit lift is inline and names it, and an
 // accessor here costs the hottest expansion in the kernel. The class stays private[kyo], so the wrapper
 // itself is still unnameable outside kyo.
+//
+// Plain module methods rather than `@static`: an `@static` symbol named in inline-expanded code fails
+// `bringForward` in a downstream module's suspended-unit retry run (a StaleSymbolException on that
+// module's clean build whenever it defines its own macros), while a module method survives it. The cost
+// is the module load at expansion sites.
 object Nested:
 
     /** The settled value, one nesting level stripped. Only valid where the pending case is already excluded.
@@ -20,12 +24,12 @@ object Nested:
       * The parameter is `Any` on purpose. Typed `A`, the implicit lift would be in scope at every call site, and
       * lifting a value that is already union-represented corrupts it.
       */
-    @static def unnest[A](v: Any): A =
+    def unnest[A](v: Any): A =
         v match
             case v: Nested[A] @unchecked => v.value
             case v                       => v.asInstanceOf[A]
 
-    @static def nest[A, S](v: A): A < S =
+    def nest[A, S](v: A): A < S =
         v match
             case v: (Kyo[?, ?] | Nested[?]) => Nested(v).asInstanceOf[A < S]
             case _                          => v.asInstanceOf[A < S]
