@@ -149,18 +149,27 @@ the whole diff is the ruled swap itself.
 - [x] (235) DebugTest.scala - deleted with Debug; rides the standing Debug FLAG
 
 ### kyo-core
-- [ ] (16/25/25) scheduler/IOTaskPlatformSpecific (js-wasm/jvm/native) - kernel2 integration
-- [ ] (176) jvm/StreamCompression.scala
+- [x] (16/25/25) scheduler/IOTaskPlatformSpecific (js-wasm/jvm/native) - new internal
+  machinery (per-platform status-word handle), pure additions
+- [x] (176) jvm/StreamCompression.scala - almost entirely the runFirst thunk-to-Arrow ripple;
+  rides that FLAG (collapses if the function shape is restored)
 - [x] (128) Async.scala - session work (Keep restoration, merge); docs to verify once more
-- [ ] (12) Clock.scala
+- [x] (12) Clock.scala - Isolate import only (register)
 - [x] (348) Fiber.scala - session work; align docs of unchanged members
-- [ ] (12) KyoApp.scala
-- [ ] (115) StreamCoreExtensions.scala - includes session groupedWithin fix
-- [ ] (50) Sync.scala - ensure/acquireRelease outcome widenings are session-approved
-- [ ] (29) scheduler/IOPromise.scala
-- [ ] (726) scheduler/IOTask.scala - kernel2 integration; largely new machinery
-- [ ] (26) AsyncTest.scala; (40) MeterTest.scala; (84) ScopeTest.scala;
-  (13) StreamCoreExtensionsTest.scala; (36) SyncTest.scala; (203) IOTaskTest.scala
+- [x] (12) KyoApp.scala - Isolate import only (register)
+- [x] (115) StreamCoreExtensions.scala - answer-style migration (register) + session
+  groupedWithin fix; nothing alignable
+- [x] (50) Sync.scala - defer drops the `Safepoint ?=>` leak (ruling 21: Safepoint never
+  public); ensure/acquireRelease rebuilt on Effect.bracket; new outcome-aware
+  acquireReleaseWith overload NOTED in queue
+- [x] (29) scheduler/IOPromise.scala - drops Safepoint.Interceptor (internal; kernel2 has no
+  interceptor seam, same substrate change behind the Debug flag)
+- [x] (726) scheduler/IOTask.scala - kernel2 integration, all internal (private[kyo]/
+  private[scheduler]); apply takes the session's isolate-crossing signature; new machinery
+- [x] (26) AsyncTest.scala; (40) MeterTest.scala; (84) ScopeTest.scala;
+  (13) StreamCoreExtensionsTest.scala; (36) SyncTest.scala; (203) IOTaskTest.scala - all
+  pure regression/coverage additions pinning session semantics (park, ensure-bracket,
+  contention); keep
 
 ### kyo-data
 - [x] (36) Chunk.scala; (30) Span.scala - orphaned updated additions FLAGGED (see queue);
@@ -169,9 +178,10 @@ the whole diff is the ruled swap itself.
 - [x] (45) SpanTest.scala - session fix (interceptThrown), ruled
 
 ### kyo-combinators (uniform small diffs; classify one, apply the reading to all)
-- [ ] (11) AbortCombinators; (11) AsyncCombinators; (11) ChoiceCombinators; (40)
-  EmitCombinators; (11) EnvCombinators; (33) KyoCombinators; (11) MaybeCombinators
-- [ ] (29) README.md
+- [x] (11) AbortCombinators; (11) AsyncCombinators; (11) ChoiceCombinators; (40)
+  EmitCombinators; (11) EnvCombinators; (33) KyoCombinators; (11) MaybeCombinators - all
+  Debug-deletion fallout (debugValue/debugTrace removal); rides the standing Debug FLAG
+- [x] (29) README.md - removes the debugValue/debugTrace section; rides the Debug FLAG
 
 ### kyo-compile-bench
 - [x] (78) CompileBench.scala; (51) ExpansionDump.scala; (50) CompileBenchNegativeTest.scala -
@@ -234,4 +244,8 @@ optimization-candidates/, backlog-sections/, .claude/ trees.
   joinValue)` is a new overload, the regular/non-inheritable doc model is replaced by
   per-local strategies, and `initNonInheritable` remains as shorthand for
   `init(default)(_ => Absent)`. Campaign-designed machinery; listed for visibility.
+- NOTE: Sync gains a public outcome-aware overload `acquireReleaseWith(acquire)((a, result) =>
+  release)(use)` on top of the resource-only form, both now built on Effect.bracket. The
+  checklist had recorded ensure/acquireRelease as session-approved; the new overload is listed
+  here so the approval is explicit rather than remembered.
 - (append here as the pass proceeds)
