@@ -461,6 +461,14 @@ object FromExprDerived:
         // recomputation when the same Ident is referenced from N sites). termMemo caches per-input-
         // Term substitution result (preserves referential sharing in the output, so the next
         // iteration's collector, which is visited-set guarded, walks the shared subtree once).
+        // A closure literal is `Block(List(<anonfun DefDef>), Closure(<ref to it>, _))`: the wrapper is the value
+        // itself rather than something wrapping a value, and `Closure.meth` refers to the def beside it, so the
+        // statements cannot be dropped and the term is passed through whole. Any other statement list belongs to a
+        // wrapper and is dead once substitution has run.
+        def isClosureLiteral(expr: Term): Boolean =
+            expr match
+                case _: Closure => true
+                case _          => false
         val identMemo = scala.collection.mutable.Map.empty[Symbol, Term]
         val termMemo  = new java.util.IdentityHashMap[Term, Term]()
         val Fuel      = 1000000
@@ -545,6 +553,29 @@ object FromExprDerived:
                                     case _                        => Select.copy(sel)(resolvedReceiver, fieldName)
                             case _ => Select.copy(sel)(resolvedReceiver, fieldName)
                         end match
+                    // `Inlined` and `Block` are the only terms carrying a statement list, so they are the
+                    // only ones whose rebuild runs a definition through a checked constructor: the default
+                    // `TreeMap` transforms the statements, and `ValDef.copy` / `Block.copy` assert that each
+                    // definition's owner matches where it now sits (`-Xcheck-macros`). The compiler relocates
+                    // its own inline bindings without re-owning them, so those assertions fire on definitions
+                    // this rewriter only passes through and never reads. Both wrappers are dropped instead:
+                    // pass 1 has already collected every binding, and the statement lists are dead once the
+                    // `Ident`s referencing them are substituted, which is the same reason `peel` and the
+                    // walkers' `unwrap` strip them.
+                    //
+                    // A closure literal is the exception: its statements are part of the value rather than a
+                    // wrapper around one, so it keeps the default traversal. Dropping them would strand
+                    // `Closure.meth` and destroy the redex `betaReduceFully` looks for, and skipping the body
+                    // would leave the bindings a projection inside it reads unresolved, which stops the
+                    // statement folding. That traversal rebuilds the `DefDef`, so its own check still applies,
+                    // but only to what a closure body actually holds rather than to every wrapper passed
+                    // through on the way.
+                    case in @ Inlined(_, _, expansion) =>
+                        if isClosureLiteral(expansion) then super.transformTerm(in)(owner)
+                        else transformTerm(expansion)(owner)
+                    case bl @ Block(_, expr) =>
+                        if isClosureLiteral(expr) then super.transformTerm(bl)(owner)
+                        else transformTerm(expr)(owner)
                     case other => super.transformTerm(other)(owner)
                 termMemo.put(t, result)
                 result

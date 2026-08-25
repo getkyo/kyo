@@ -1138,12 +1138,12 @@ object Sql:
               *     that the backend does not yet implement. Re-derive the schema without the unsupported structural type, or supply a
               *     custom decoder via [[SqlCodec.of]].
               */
-            inline def run(using SqlSchema[A], Frame): Chunk[A] < (Abort[SqlException] & DB) =
-                ${ kyo.internal.SqlRunMacro.runQueryImpl[A]('q) }
+            inline def run(using ev: SqlSchema[A], frame: Frame): Chunk[A] < (Abort[SqlException] & DB) =
+                ${ kyo.internal.SqlRunMacro.runQueryImpl[A]('q, 'ev, 'frame) }
 
             /** Requires compile-time AST reduction; produces a compile error if the AST is not reducible. */
-            inline def runStatic(using SqlSchema[A], Frame): Chunk[A] < (Abort[SqlException] & DB) =
-                ${ kyo.internal.SqlRunMacro.runQueryStaticImpl[A]('q) }
+            inline def runStatic(using ev: SqlSchema[A], frame: Frame): Chunk[A] < (Abort[SqlException] & DB) =
+                ${ kyo.internal.SqlRunMacro.runQueryStaticImpl[A]('q, 'ev, 'frame) }
         end extension
 
         extension [A](q: Query[A])
@@ -1221,11 +1221,17 @@ object Sql:
         inline def groupBy[N <: String & Singleton, V, FT <: Tuple](inline key: Record[F] => Column[N, V])(using
             Fields.Aux[T, FT]
         ): GroupBy[T, RewriteGrouped[FT, (N ~ Unit) *: EmptyTuple]] =
-            val ks = Chunk(key(columns))
+            // The key chunk is built at each use rather than bound to a val: a binding in an inline body is a
+            // definition, and the inline chain moves it without re-owning it, which fails the tree check when
+            // the static-SQL lift reads this query back. `key` is a column selection, so building it twice
+            // costs one extra chunk at query-construction time.
             new GroupBy[T, RewriteGrouped[FT, (N ~ Unit) *: EmptyTuple]](
                 this,
-                ks,
-                kyo.internal.SqlGroupedView.buildGroupedView[RewriteGrouped[FT, (N ~ Unit) *: EmptyTuple]](this, ks),
+                Chunk(key(columns)),
+                kyo.internal.SqlGroupedView.buildGroupedView[RewriteGrouped[FT, (N ~ Unit) *: EmptyTuple]](
+                    this,
+                    Chunk(key(columns))
+                ),
                 Maybe.empty,
                 GroupBy.Kind.Plain
             )
@@ -1535,11 +1541,17 @@ object Sql:
         inline def groupBy[N <: String & Singleton, V, FT <: Tuple](inline key: Record[F] => Column[N, V])(using
             Fields.Aux[T, FT]
         ): GroupBy[T, RewriteGrouped[FT, (N ~ Unit) *: EmptyTuple]] =
-            val ks = Chunk(key(columns))
+            // The key chunk is built at each use rather than bound to a val: a binding in an inline body is a
+            // definition, and the inline chain moves it without re-owning it, which fails the tree check when
+            // the static-SQL lift reads this query back. `key` is a column selection, so building it twice
+            // costs one extra chunk at query-construction time.
             new GroupBy[T, RewriteGrouped[FT, (N ~ Unit) *: EmptyTuple]](
                 this,
-                ks,
-                kyo.internal.SqlGroupedView.buildGroupedView[RewriteGrouped[FT, (N ~ Unit) *: EmptyTuple]](this, ks),
+                Chunk(key(columns)),
+                kyo.internal.SqlGroupedView.buildGroupedView[RewriteGrouped[FT, (N ~ Unit) *: EmptyTuple]](
+                    this,
+                    Chunk(key(columns))
+                ),
                 Maybe.empty,
                 GroupBy.Kind.Plain
             )
@@ -1929,8 +1941,8 @@ object Sql:
         extension [T, F](inline ins: Insert[T, F])
 
             /** Try the static-emission path; fall back to the runtime renderer if the AST is not reducible at compile time. */
-            inline def run(using Frame): SqlClient.InsertOutcome < (Abort[SqlException] & DB) =
-                ${ kyo.internal.SqlRunMacro.runInsertImpl[T, F]('ins) }
+            inline def run(using frame: Frame): SqlClient.InsertOutcome < (Abort[SqlException] & DB) =
+                ${ kyo.internal.SqlRunMacro.runInsertImpl[T, F]('ins, 'frame) }
 
             /** Requires compile-time AST reduction; produces a compile error if the AST is not reducible. */
             inline def runStatic(using Frame): SqlClient.InsertOutcome < (Abort[SqlException] & DB) =
@@ -2021,8 +2033,8 @@ object Sql:
         extension [T, F](inline upd: Update[T, F])
 
             /** Try the static-emission path; fall back to the runtime renderer if the AST is not reducible at compile time. */
-            inline def run(using Frame): Long < (Abort[SqlException] & DB) =
-                ${ kyo.internal.SqlRunMacro.runUpdateImpl[T, F]('upd) }
+            inline def run(using frame: Frame): Long < (Abort[SqlException] & DB) =
+                ${ kyo.internal.SqlRunMacro.runUpdateImpl[T, F]('upd, 'frame) }
 
             /** Requires compile-time AST reduction; produces a compile error if the AST is not reducible. */
             inline def runStatic(using Frame): Long < (Abort[SqlException] & DB) =
@@ -2080,8 +2092,8 @@ object Sql:
         extension [T, F](inline del: Delete[T, F])
 
             /** Try the static-emission path; fall back to the runtime renderer if the AST is not reducible at compile time. */
-            inline def run(using Frame): Long < (Abort[SqlException] & DB) =
-                ${ kyo.internal.SqlRunMacro.runDeleteImpl[T, F]('del) }
+            inline def run(using frame: Frame): Long < (Abort[SqlException] & DB) =
+                ${ kyo.internal.SqlRunMacro.runDeleteImpl[T, F]('del, 'frame) }
 
             /** Requires compile-time AST reduction; produces a compile error if the AST is not reducible. */
             inline def runStatic(using Frame): Long < (Abort[SqlException] & DB) =

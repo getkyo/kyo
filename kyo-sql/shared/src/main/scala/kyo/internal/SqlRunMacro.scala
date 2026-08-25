@@ -20,31 +20,34 @@ import scala.quoted.*
   */
 object SqlRunMacro:
 
-    def runQueryImpl[A: Type](q: Expr[Query[A]])(using Quotes): Expr[Chunk[A] < (Abort[SqlException] & DB)] =
-        val ev = summonEvidence[A](q)
+    def runQueryImpl[A: Type](q: Expr[Query[A]], ev: Expr[SqlSchema[A]], frame: Expr[Frame])(using
+        Quotes
+    ): Expr[Chunk[A] < (Abort[SqlException] & DB)] =
         SqlStaticMacro.tryImpl(widenStatement(q)) match
-            case Present(rendered) => emitQuery[A](rendered, ev)
-            // The using args are supplied explicitly because `A` is abstract in this macro, so the quote cannot resolve the evidence
-            // itself; `Frame` resolves at the splice site. No naming is threaded: the decode is positional by construction on both
-            // the static path and this fallback.
-            case Absent => '{ $q.runDynamic(using summon[Frame], $ev) }
+            case Present(rendered) => emitQuery[A](rendered, ev, frame)
+            // The using args are supplied explicitly rather than summoned in the quote: `A` is abstract in this macro, so the quote
+            // cannot resolve the evidence itself, and re-summoning the `Frame` would discard the one the caller already threaded and
+            // derive a fresh one at the splice site. No naming is threaded: the decode is positional by construction on both the
+            // static path and this fallback.
+            case Absent => '{ $q.runDynamic(using $frame, $ev) }
         end match
     end runQueryImpl
 
-    def runQueryStaticImpl[A: Type](q: Expr[Query[A]])(using Quotes): Expr[Chunk[A] < (Abort[SqlException] & DB)] =
+    def runQueryStaticImpl[A: Type](q: Expr[Query[A]], ev: Expr[SqlSchema[A]], frame: Expr[Frame])(using
+        Quotes
+    ): Expr[Chunk[A] < (Abort[SqlException] & DB)] =
         // SqlStaticMacro.impl reports the precise position and message when the AST cannot be folded.
-        val ev = summonEvidence[A](q)
-        emitQuery[A](SqlStaticMacro.impl(widenStatement(q)), ev)
+        emitQuery[A](SqlStaticMacro.impl(widenStatement(q)), ev, frame)
     end runQueryStaticImpl
 
     // --- Insert[T, F] ---
 
-    def runInsertImpl[T: Type, F: Type](ins: Expr[Insert[T, F]])(using
+    def runInsertImpl[T: Type, F: Type](ins: Expr[Insert[T, F]], frame: Expr[Frame])(using
         Quotes
     ): Expr[SqlClient.InsertOutcome < (Abort[SqlException] & DB)] =
         SqlStaticMacro.tryImpl(widenStatement(ins)) match
             case Present(rendered) => emitInsert(rendered)
-            case Absent            => '{ $ins.runDynamic(using summon[Frame]) }
+            case Absent            => '{ $ins.runDynamic(using $frame) }
 
     def runInsertStaticImpl[T: Type, F: Type](ins: Expr[Insert[T, F]])(using
         Quotes
@@ -53,10 +56,12 @@ object SqlRunMacro:
 
     // --- Update[T, F] ---
 
-    def runUpdateImpl[T: Type, F: Type](upd: Expr[Update[T, F]])(using Quotes): Expr[Long < (Abort[SqlException] & DB)] =
+    def runUpdateImpl[T: Type, F: Type](upd: Expr[Update[T, F]], frame: Expr[Frame])(using
+        Quotes
+    ): Expr[Long < (Abort[SqlException] & DB)] =
         SqlStaticMacro.tryImpl(widenStatement(upd)) match
             case Present(rendered) => emitUpdate(rendered)
-            case Absent            => '{ $upd.runDynamic(using summon[Frame]) }
+            case Absent            => '{ $upd.runDynamic(using $frame) }
 
     def runUpdateStaticImpl[T: Type, F: Type](upd: Expr[Update[T, F]])(using
         Quotes
@@ -65,10 +70,12 @@ object SqlRunMacro:
 
     // --- Delete[T, F] ---
 
-    def runDeleteImpl[T: Type, F: Type](del: Expr[Delete[T, F]])(using Quotes): Expr[Long < (Abort[SqlException] & DB)] =
+    def runDeleteImpl[T: Type, F: Type](del: Expr[Delete[T, F]], frame: Expr[Frame])(using
+        Quotes
+    ): Expr[Long < (Abort[SqlException] & DB)] =
         SqlStaticMacro.tryImpl(widenStatement(del)) match
             case Present(rendered) => emitUpdate(rendered)
-            case Absent            => '{ $del.runDynamic(using summon[Frame]) }
+            case Absent            => '{ $del.runDynamic(using $frame) }
 
     def runDeleteStaticImpl[T: Type, F: Type](del: Expr[Delete[T, F]])(using
         Quotes
@@ -95,13 +102,14 @@ object SqlRunMacro:
       */
     private def emitQuery[A: Type](
         rendered: Expr[Sql.Rendered],
-        schemaExpr: Expr[SqlSchema[A]]
+        schemaExpr: Expr[SqlSchema[A]],
+        frame: Expr[Frame]
     )(using Quotes): Expr[Chunk[A] < (Abort[SqlException] & DB)] =
         '{
             DB.state.map { state =>
                 val r = $rendered
                 r.sqlForOrFail(state.client.dialect.id).map(sql =>
-                    state.client.internalExecuteQuery[A](sql, r.params, state.config)(using summon[Frame], $schemaExpr)
+                    state.client.internalExecuteQuery[A](sql, r.params, state.config)(using $frame, $schemaExpr)
                 )
             }
         }
@@ -125,20 +133,5 @@ object SqlRunMacro:
                 r.sqlForOrFail(state.client.dialect.id).map(sql => state.client.internalExecuteInsert(sql, r.params, state.config))
             }
         }
-
-    /** The [[kyo.SqlSchema]] evidence that proves `A` is SQL-storable, or a compile error at the call site telling the caller how to make it
-      * one. The evidence is what admits `A` to a run; its carried schema (`.schema`) is the codec the decode runs through.
-      */
-    private def summonEvidence[A: Type](q: Expr[?])(using Quotes): Expr[SqlSchema[A]] =
-        import quotes.reflect.*
-        Expr.summon[SqlSchema[A]].getOrElse(
-            report.errorAndAbort(
-                s"${Type.show[A]} is not a SQL-storable result type. Add `derives SqlSchema` to ${Type.show[A]} (its fields must all be " +
-                    s"single-column SQL types), or install a `given SqlSchema.Column[${Type.show[A]}]` (Sql.jsonColumn, Sql.enumText, " +
-                    s"SqlSchema.of) for a custom single-column codec.",
-                q.asTerm.pos
-            )
-        )
-    end summonEvidence
 
 end SqlRunMacro

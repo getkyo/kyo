@@ -442,7 +442,11 @@ object OrderedDict:
 
         /** Returns a new OrderedDict containing only entries that satisfy the predicate, preserving their relative order. */
         inline def filter(inline fn: (K, V) => Boolean): OrderedDict[K, V] =
-            reduce(
+            // The type argument is pinned rather than inferred: inference runs here, where the opaque
+            // type is transparent, and would settle on the representation. The inlined body would then
+            // carry that representation as its expected type, which the caller, where OrderedDict is
+            // abstract, cannot satisfy.
+            reduce[OrderedDict[K, V]](
                 span =>
                     val n   = Span.size(span) / 2
                     val src = Span.toArrayUnsafe(span)
@@ -487,7 +491,7 @@ object OrderedDict:
 
         /** Returns a new OrderedDict with the same keys and values transformed by the given function. */
         inline def mapValues[V2](inline fn: V => V2): OrderedDict[K, V2] =
-            reduce(
+            reduce[OrderedDict[K, V2]](
                 span =>
                     val n   = Span.size(span) / 2
                     val src = Span.toArrayUnsafe(span)

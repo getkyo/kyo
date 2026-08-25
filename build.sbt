@@ -133,6 +133,12 @@ lazy val `kyo-settings` = Seq(
     scalaVersion       := scala3Version,
     crossScalaVersions := List(scala3Version),
     scalacOptions ++= scalacOptionTokens(compilerOptions).value,
+    // Re-check every macro expansion against the compiler's tree invariants. The macros kyo does ship sit
+    // where most programs land (Tag, Frame, Schema derivation, Sql `.run`, `assert`) and read trees that
+    // inline, which is pervasive, fills with the compiler's own bindings and proxies. A malformed
+    // expansion reaches users as a broken build in their code, not ours. The Scala 2.13 cross-builds (the
+    // kyo-scheduler family) do not have the flag.
+    scalacOptions ++= (if (scalaVersion.value.startsWith("3")) Seq("-Xcheck-macros") else Nil),
     Test / scalacOptions --= scalacOptionTokens(Set(ScalacOptions.warnNonUnitStatement)).value,
     // Not in CI: parallel cross-version compilations of one module format the same shared
     // sources concurrently, and the loser logs "scalafmt: failed for 1 sources" on every
@@ -727,8 +733,7 @@ lazy val `kyo-data` =
         .withKyoTest
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.lihaoyi" %%% "pprint"        % "0.9.6",
-            libraryDependencies += "dev.zio"     %%% "izumi-reflect" % "3.0.9" % Test
+            libraryDependencies += "com.lihaoyi" %%% "pprint" % "0.9.6"
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
