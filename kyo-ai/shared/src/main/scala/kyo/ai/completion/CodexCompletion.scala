@@ -415,7 +415,11 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
         handler.call[P, A](method, params)
     end requestAs
 
-    private def eventRoutes(events: Channel[RpcEvent])(using Frame): Seq[JsonRpcRoute[?, ?, ?]] =
+    // Every event this backend reads must be routed here. An unrouted notification does not arrive
+    // unhandled, it is DROPPED: the handler runs the default `minimal` unknown-method policy, whose
+    // `onUnknownNotification` is `Drop`, so the consumer downstream simply never runs and reports the
+    // absence as a legitimate zero.
+    private[completion] def eventRoutes(events: Channel[RpcEvent])(using Frame): Seq[JsonRpcRoute[?, ?, ?]] =
         Seq(
             eventRoute(events, "item/started"),
             eventRoute(events, "item/completed"),
@@ -424,6 +428,7 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
             eventRoute(events, "item/agentMessage/delta"),
             eventRoute(events, "turn/completed"),
             eventRoute(events, "thread/status/changed"),
+            eventRoute(events, "thread/tokenUsage/updated"),
             eventRoute(events, "error")
         )
     end eventRoutes
@@ -478,31 +483,39 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
         stderrTail: AtomicRef[String],
         bridge: ToolBridge
     )(using Frame): (Maybe[String], AIStats) < (Async & Abort[AIGenException | Closed]) =
-        Loop((Absent: Maybe[String], "", Maybe.empty[TokenCounts])) { (completed, delta, usage) =>
+        Loop((Absent: Maybe[String], "", Maybe.empty[TokenCounts], 0)) { (completed, delta, usage, requests) =>
             events.take.map { event =>
                 trackFollowUp(bridge, event, threadId, turnId).andThen {
                     bridge.resultCapture.get.map { captured =>
                         bridge.deferred.get.map { deferred =>
                             if captured.isDefined || deferred then
-                                interruptTurn(handler, threadId, turnId)
-                                    .andThen(Loop.done((finalText(completed, delta), turnStats(usage))))
+                                interruptTurn(handler, threadId, turnId).andThen(
+                                    bridge.executed.get.map(calls =>
+                                        Loop.done((finalText(completed, delta), turnStats(usage, requests, calls.size)))
+                                    )
+                                )
                             else if isTurnCompleted(event, threadId, turnId) then
-                                Loop.done((finalText(completed, delta), turnStats(usage)))
+                                bridge.executed.get.map(calls =>
+                                    Loop.done((finalText(completed, delta), turnStats(usage, requests, calls.size)))
+                                )
                             else if event.method == "thread/tokenUsage/updated" then
                                 // Keep the latest total: the ephemeral thread's aggregate IS this turn's
                                 // usage, already summed across the CLI turn's internal provider requests.
                                 // Tracked here rather than in eventText so the interrupt path (capture)
                                 // reports the totals that arrived before the kill.
+                                //
+                                // One notification arrives per provider request, so counting them recovers
+                                // how many model turns actually ran inside this single kyo turn.
                                 decodeEvent[TokenUsageNotification](event).map { notification =>
                                     if notification.threadId == threadId && notification.turnId == turnId then
-                                        Loop.continue((completed, delta, notification.tokenUsage.total.orElse(usage)))
-                                    else Loop.continue((completed, delta, usage))
+                                        Loop.continue((completed, delta, notification.tokenUsage.total.orElse(usage), requests + 1))
+                                    else Loop.continue((completed, delta, usage, requests))
                                 }
                             else
                                 eventText(event, threadId, turnId, stderrTail).map {
-                                    case Present(OutputText.Completed(text)) => Loop.continue((Present(text), delta, usage))
-                                    case Present(OutputText.Delta(text))     => Loop.continue((completed, delta + text, usage))
-                                    case _                                   => Loop.continue((completed, delta, usage))
+                                    case Present(OutputText.Completed(text)) => Loop.continue((Present(text), delta, usage, requests))
+                                    case Present(OutputText.Delta(text))     => Loop.continue((completed, delta + text, usage, requests))
+                                    case _                                   => Loop.continue((completed, delta, usage, requests))
                                 }
                         }
                     }
@@ -511,9 +524,22 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
         }
     end collectTurn
 
-    // A turn that saw no usage notification still ran: one turn, no numbers.
-    private def turnStats(usage: Maybe[TokenCounts]): AIStats =
-        usage.fold(AIStats.empty.copy(turns = 1))(usageStats)
+    /** The turn's reported spend.
+      *
+      * `turns` must agree with the tool calls a reader can see happening. This harness runs its own tool
+      * loop inside one kyo turn, so the count of replies kyo received is 1 no matter how much ran, which
+      * reads as a cheap turn rather than an opaque one.
+      *
+      * Two observations bound it, and the larger is the honest one. The app-server emits one
+      * `thread/tokenUsage/updated` per provider request, but a turn interrupted on a captured result can
+      * end before the last of them arrives, so that count alone under-reports. Every tool call kyo was
+      * asked to run implies a model turn that produced it, plus the turn that answers with its result, so
+      * `calls + 1` is the floor. A turn that saw neither still ran once.
+      */
+    private def turnStats(usage: Maybe[TokenCounts], providerRequests: Int, toolCalls: Int): AIStats =
+        val turns = math.max(math.max(providerRequests, toolCalls + 1), 1)
+        usage.fold(AIStats.empty.copy(turns = turns))(counts => usageStats(counts).copy(turns = turns))
+    end turnStats
 
     private def finalText(completed: Maybe[String], delta: String): Maybe[String] =
         completed match
