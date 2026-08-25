@@ -681,11 +681,16 @@ class ContainerItTest extends BasePodTest:
     // requireService — init proves readiness instead of assuming it
     //
     // Without these two gates a container that died during startup, or one whose
-    // published port has no live forwarder behind it, was handed to the caller as a
-    // healthy handle: `runHealthCheck` treated a dead container as "nothing to check"
-    // and the port wait trusted `inspect`. The caller then failed on every query
-    // against a port that refuses connections, which is how one stillborn database
-    // fixture turned into a whole failed suite.
+    // published port has nothing serving it, was handed to the caller as a healthy
+    // handle: `runHealthCheck` treated a dead container as "nothing to check" and the
+    // port wait trusted `inspect`. The caller then failed on every query against a
+    // port that answers nothing, which is how one stillborn database fixture turned
+    // into a whole failed suite.
+    //
+    // The port cases run against real forwarders here, which is what makes them worth
+    // the container: rootlessport and docker-proxy accept a connection before dialling
+    // the container, so "the connect succeeded" is not the readiness signal. Holding
+    // the connection is.
     // =========================================================================
 
     "requireService" - {
@@ -712,21 +717,25 @@ class ContainerItTest extends BasePodTest:
         }
 
         "a published port with nothing listening fails init" - runBackends {
-            // The container stays up, so only the host-side connect probe can tell that
-            // port 8080 is bound by the runtime and served by nobody.
+            // The container stays up and the runtime publishes the port, so nothing short of
+            // a host-side connection that is then dropped can tell that nobody serves it.
             val config = alpine.port(8080, 0)
                 .requireService(true)
                 .portMappingTimeout(5.seconds)
             Abort.run[ContainerException](Scope.run(Container.init(config))).map {
                 case Result.Failure(e: ContainerStartFailedException) =>
-                    assert(e.reason.contains("refuses connections"), s"expected a reachability reason, got ${e.reason}")
+                    assert(e.reason.contains("does not hold a connection"), s"expected a reachability reason, got ${e.reason}")
                 case other => fail(s"expected ContainerStartFailedException for an unserved port, got $other")
             }
         }
 
         "a published port with a live listener starts normally" - runBackends {
+            // busybox httpd rather than an `nc` loop: nc serves one connection and exits, and
+            // `echo ok | nc` hangs up as soon as it has written, which is the accept-and-drop
+            // shape the probe now (correctly) calls not-ready. httpd holds every connection
+            // until its request completes, which is what a real service does.
             val config = Container.Config("alpine")
-                .command("sh", "-c", "trap 'exit 0' TERM; while true; do echo ok | nc -l -p 8080; done")
+                .command("sh", "-c", "trap 'exit 0' TERM; busybox httpd -f -p 8080 -h /tmp")
                 .port(8080, 0)
                 .requireService(true)
                 .portMappingTimeout(60.seconds)

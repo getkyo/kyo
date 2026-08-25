@@ -835,9 +835,13 @@ object Container:
           * run) and treats an `inspect`-level port binding as the end of the port wait.
           *
           * With `true`, a container that exits before or during its health check fails startup, and every published TCP port must accept a
-          * host-side connection within [[portMappingTimeout]] before the handle is returned. Both are required for a database fixture: a
-          * stillborn engine and a bound-but-unserved port are otherwise indistinguishable from a healthy one until the first query. Set by
-          * every [[ContainerPredef]] fixture.
+          * host-side connection AND HOLD IT within [[portMappingTimeout]] before the handle is returned. Both are required for a database
+          * fixture: a stillborn engine and a bound-but-unserved port are otherwise indistinguishable from a healthy one until the first
+          * query. Set by every [[ContainerPredef]] fixture.
+          *
+          * "Holds it" is part of the contract, not an implementation detail: rootless podman's `rootlessport` and docker's `docker-proxy`
+          * accept a connection before they dial the container, so accepting proves only that the forwarder exists. A service that accepts
+          * and immediately hangs up on every connection reads as not-ready here and must leave this `false`.
           */
         requireService: Boolean,
         healthCheck: HealthCheck
@@ -2460,19 +2464,50 @@ object Container:
     private[kyo] def portProbeDeadline(mappingDeadlineMs: Long, nowMs: Long): Long =
         math.max(mappingDeadlineMs, nowMs + portProbeMinBudget.toMillis)
 
-    /** Open and immediately close a TCP connection to `host:port`, reporting whether the host accepted it. */
+    /** How long a connected probe waits to see whether the far end keeps the connection. Long enough for a userland forwarder to dial its
+      * backend, fail, and drop the connection; short enough that a served port pays it once per init.
+      */
+    private val portProbeGrace: Duration = 500.millis
+
+    /** Whether `host:port` accepts a connection AND keeps it.
+      *
+      * A bare connect is not proof of readiness, which the first CI run against real runtimes demonstrated: both rootless podman's
+      * `rootlessport` and docker's `docker-proxy` are userland forwarders that complete the TCP handshake unconditionally and only then dial
+      * the container backend. A published port with nothing listening behind it therefore accepts the connect and drops it a moment later,
+      * and a connect-only probe called that ready.
+      *
+      * So the connect is followed by a grace period watching [[kyo.net.Connection.onClosing]], which fires on a peer FIN, a reset, or a
+      * read/write teardown and consumes no inbound bytes:
+      *   - closed within the grace: the forwarder's backend dial failed, the port is NOT served;
+      *   - still open at the grace deadline: something is holding the connection, whether it spoke first (MySQL sends a greeting) or waits
+      *     for the client to (Postgres). Served.
+      *
+      * The contract this sets for `requireService` is "a published port accepts a connection and holds it". A service that accepts and
+      * instantly hangs up on every connection reads as not-ready and must not use `requireService`; no [[ContainerPredef]] fixture does
+      * that.
+      */
     private[kyo] def probeHostPort(host: String, port: Int)(using Frame): Boolean < Async =
         // Unsafe: kyo-net publishes `connect` on the unsafe tier only. The bridge is confined to this probe — the
-        // connection is closed on the success path and no handle escapes — and a host-side connect is the only
-        // proof that the runtime's port forwarder is actually serving the published port.
+        // connection is closed on every path and no handle escapes — and a host-side connect is the only proof
+        // that the runtime's port forwarder is actually serving the published port.
         Abort.run[kyo.net.NetException] {
             Sync.Unsafe.defer(kyo.net.NetPlatform.transport.connect(host, port, portProbeConnectTimeout).safe).map(_.get)
         }.map {
             case Result.Success(conn) =>
-                // The connect is the answer; the close is only hygiene. A close that fails has already lost its
-                // descriptor, and letting that escape would panic out of `init` and turn a port that DID accept a
-                // connection into a startup failure.
-                Abort.run[Throwable](Sync.Unsafe.defer(conn.close())).andThen(true)
+                // The close runs on every path, including an interrupt during the grace wait. A close that fails
+                // has already lost its descriptor, and letting that escape would panic out of `init`.
+                Sync.ensure(Abort.run[Throwable](Sync.Unsafe.defer(conn.close())).unit) {
+                    connectionHeld(conn)
+                }
+            case _ => false
+        }
+
+    private def connectionHeld(conn: kyo.net.Connection)(using Frame): Boolean < Async =
+        Abort.run[Timeout](Async.timeout(portProbeGrace)(conn.onClosing.safe.get)).map {
+            // The grace expiring with no close observed is the readiness signal.
+            case Result.Failure(_: Timeout) => true
+            // A close within the grace is the unserved-port signature. Anything else is not a proof of
+            // readiness either, and reporting false only costs the caller another attempt.
             case _ => false
         }
 
@@ -2498,7 +2533,9 @@ object Container:
                                 if now.toJava.toEpochMilli >= deadlineMs then
                                     Abort.fail[ContainerException](ContainerStartFailedException(
                                         container.id,
-                                        s"host port $hostPort is published by the runtime but refuses connections"
+                                        s"host port $hostPort is published by the runtime but does not hold a connection: " +
+                                            "the connect is refused, or the port forwarder accepts it and drops it because " +
+                                            "nothing is listening behind it"
                                     ))
                                 else
                                     Async.sleep(Duration.fromJava(java.time.Duration.ofMillis(pollMs)))

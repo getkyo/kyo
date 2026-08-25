@@ -1441,27 +1441,57 @@ class ContainerTest extends BasePodTest:
 
     "Container.probeHostPort" - {
         // Unsafe: kyo-net publishes listen/close on the unsafe tier only, and a real listener is the
-        // only way to assert the probe's two answers without a container runtime.
+        // only way to assert the probe's three outcomes without a container runtime.
         import AllowUnsafe.embrace.danger
 
-        "reports true for a port with a live listener" in {
-            Sync.defer(kyo.net.NetPlatform.transport.listen("127.0.0.1", 0, 16)(_ => ()).safe).map(_.get).map { listener =>
-                Sync.ensure(Sync.defer(listener.close())) {
-                    Container.probeHostPort("127.0.0.1", listener.port).map { reachable =>
-                        assert(reachable, s"a bound listener on port ${listener.port} must be reachable")
-                    }
+        def withListener[A](handler: kyo.net.Connection => Unit)(f: kyo.net.Listener => A < (Async & Abort[Any]))(using
+            Frame
+        ): A < (Async & Abort[Any]) =
+            Sync.defer(kyo.net.NetPlatform.transport.listen("127.0.0.1", 0, 16)(handler).safe).map(_.get).map { listener =>
+                Sync.ensure(Sync.defer(listener.close()))(f(listener))
+            }
+
+        "reports true for a listener that accepts and stays silent" in {
+            // The Postgres shape: the server waits for the client to speak first, so readiness shows
+            // up as a connection that is simply still open.
+            withListener(_ => ()) { listener =>
+                Container.probeHostPort("127.0.0.1", listener.port).map { reachable =>
+                    assert(reachable, s"a listener holding the connection on port ${listener.port} must read as ready")
+                }
+            }
+        }
+
+        "reports true for a listener that speaks first" in {
+            // The MySQL shape: the server sends a greeting and keeps the connection.
+            val greeting: kyo.net.Connection => Unit = conn =>
+                discard(conn.outbound.offer(Span("mysql-greeting".getBytes("UTF-8")*)))
+            withListener(greeting) { listener =>
+                Container.probeHostPort("127.0.0.1", listener.port).map { reachable =>
+                    assert(reachable, s"a listener that greets on port ${listener.port} must read as ready")
+                }
+            }
+        }
+
+        // Regression guard for the CI failure this probe was rewritten for. rootlessport and
+        // docker-proxy complete the TCP handshake before dialling the container, so a published port
+        // with nothing behind it accepts and then drops. A connect-only probe called that ready and
+        // handed the suite a fixture whose every query was refused.
+        "reports false for a listener that accepts and immediately drops the connection" in {
+            withListener(conn => conn.close()) { listener =>
+                Container.probeHostPort("127.0.0.1", listener.port).map { reachable =>
+                    assert(!reachable, s"port ${listener.port} accepts but holds nothing and must not read as ready")
                 }
             }
         }
 
         "reports false for a port nothing is serving" in {
-            // Bind then close: the port was real and is now free, so the connect is refused rather
-            // than black-holed, which is exactly the shape of a container whose forwarder never came up.
-            Sync.defer(kyo.net.NetPlatform.transport.listen("127.0.0.1", 0, 16)(_ => ()).safe).map(_.get).map { listener =>
+            // Bind then close: the port was real and is now free, so the connect is refused outright,
+            // which is the shape of a container whose forwarder never came up at all.
+            withListener(_ => ()) { listener =>
                 val port = listener.port
                 Sync.defer(listener.close()).andThen {
                     Container.probeHostPort("127.0.0.1", port).map { reachable =>
-                        assert(!reachable, s"port $port has no listener and must not be reported reachable")
+                        assert(!reachable, s"port $port has no listener and must not read as ready")
                     }
                 }
             }
