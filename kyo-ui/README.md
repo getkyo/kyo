@@ -344,6 +344,54 @@ If you need both a signal-driven attribute AND a chainable element method, set t
 
 When you pass either a constant `String` or a `SignalRef[String]` to `.value`, the framework wraps it in `UI.Bound[String]`: `Const(v)` or `Ref(ref)`. You normally never name this type; it surfaces in AST pattern matching (see [Pattern-matching on UI](#pattern-matching-on-ui-ast-access)).
 
+## Effectful component mounts
+
+The reactive boundaries above re-render pure `UI` values as signals change. A component that must run an *effect* to produce its UI (load data, open a subscription, read an ambient service) needs more: a node that runs `UI < (Async & Scope)`, shows something while it is pending, and gives a failure somewhere to land. `UI.mounted` is that node.
+
+`UI.mounted(effect)` lifts an effectful component into the tree as an ordinary child. The effect runs when the node attaches, inside a `Scope` tied to the node's lifetime (torn down on detach), so resources it acquires are released when the node goes away; an `Abort[Throwable]` failure is caught into the node's error state instead of propagating. The builder tunes the surrounding behavior:
+
+| Modifier | Effect |
+| --- | --- |
+| `.keyed(k)` | Continuity anchor: the live instance (its `Scope`, resources, published content) is kept across re-renders of the enclosing reactive region while an equal key is re-emitted, and torn down when the key changes or disappears. Any `CanEqual` value works; the idiomatic key is the component's singleton object, tupled with the non-`Signal` inputs the effect closed over. |
+| `.placeholder(ui)` | Content painted while the effect is pending on first mount. Defaults to an empty node. |
+| `.onError(f)` | Renders a failure of the node, receiving a `UI.MountError` (the `error` itself, a rendering-ready `message`, the node's `frame`, `path` and `key`, and a `source` saying which path it came from); the failure is also logged. The enclosing region stays alive, and a later key change re-mounts cleanly. |
+| `.whilePending(KeepLatest \| Placeholder)` | What a keyed node shows while it re-mounts: `KeepLatest` (the default) keeps the last rendered content visible as an inert frozen snapshot (its nested regions and handlers are already torn down) until the new instance publishes; `Placeholder` drops back to the placeholder, the honest choice for interactive content where a frozen-but-visible form would swallow input. On first mount the placeholder always wins. |
+
+```scala
+import UI.*
+import kyo.*
+
+def profileCard(userId: Int): UI < (Async & Scope) =
+    for name <- Signal.initRef("...")
+    yield div(h2(name), p(s"user #$userId"))
+
+val card: UI =
+    UI.mounted(profileCard(42))
+        .keyed(42)
+        .placeholder(div("loading..."))
+        .onError(e => div(s"failed: ${e.message}"))
+        .whilePending(PendingPolicy.KeepLatest)
+```
+
+A value input that should UPDATE a live instance belongs in a `Signal` parameter, not the key; a non-`Signal` value the effect captures belongs IN the key, or it is silently frozen at mount time. A duplicate key under one region renders an inline error node in the second slot rather than silently sharing one instance.
+
+### Failure after the first paint
+
+A mount can also fail *after* it has already published its UI: a background fiber it forked (a data feed, a subscription drain, a poll loop) terminates with an error. Fork those with `UI.fork` instead of `Fiber.init` and node-scope supervision covers that window: a non-interrupt failure flips the already-published node into the same error routing as an up-front failure: its `.onError` first, then a default error node.
+
+```scala
+import UI.*
+import kyo.*
+
+def liveTicker(quotes: Stream[String, Async]): UI < (Async & Scope) =
+    for
+        price <- Signal.initRef("...")
+        _     <- UI.fork(quotes.foreach(p => price.set(p)))
+    yield div(span(price))
+```
+
+At most one flip happens per instance (first failure wins), and the flip *replaces* the node's content; a component that would rather keep its content and surface the error elsewhere routes that failure to a value channel (a toast) instead of letting the fiber fail, and an `.onError` render can offer a retry by swapping the node's key. `MountError.source` tells the two windows apart: `Effect`/`Panic` mean the mount never produced content, `Fork` means it did and the feed behind it died afterwards, which is usually a different thing to say to the user. A clean interrupt, including the one that tears the node down on a key change, is never a failure. Supervision rides an inheritable `Local` the engine installs around the mount effect, so it reaches `UI.fork` calls made from inside a fiber the effect already forked that way. Participation is opt-in: a plain `Fiber.init` is still scoped to the node but its failure stays invisible to it, which is the escape hatch for a fiber the effect watches itself, and `Fiber.initUnscoped` stays fire-and-forget. Outside a mount effect, `UI.fork` is `Fiber.init`.
+
 ## Inputs and forms
 
 > **Note:** All input element factories (`UI.input`, `UI.textarea`, `UI.passwordInput`, `UI.emailInput`, `UI.telInput`, `UI.urlInput`, `UI.searchInput`, `UI.numberInput`, `UI.dateInput`, `UI.timeInput`, `UI.colorInput`, `UI.rangeInput`, `UI.fileInput`, `UI.hiddenInput`, `UI.checkbox`, `UI.radio`, `UI.dropdown`) are `Void` elements. They do not accept children; calling `.apply(children*)` on them is a compile error. Configure them through their setter methods only.
