@@ -40,13 +40,29 @@ trait KyoAppRunner:
       * A termination [[normalTermination]] recognises is reported by neither channel: it renders nothing
       * and exits with the code that supplies. An operator stopping the process is not a fault, so
       * rendering and rethrowing it puts a stack-trace-shaped line on stderr for every ordinary stop.
+      *
+      * Otherwise a value is rendered to standard output and a failure to standard error. The split is
+      * what an application's stdout contract requires: stdout is the program's output, and a failure is
+      * a diagnostic about the program, not output from it. A stdio server makes the cost of getting this
+      * wrong concrete, since every startup failure (a bad URL, a database refusing connections, a
+      * missing environment variable) put a non-JSON line on the very channel its host was parsing, and
+      * the host's first read of the connection was garbage. No discipline in the run block avoids it:
+      * this is the framework's own terminal reporting, reached by any failure the block does not catch.
+      * Every other application type wants the same split for the same reason, which is why `IOApp`
+      * reports an unhandled error to `System.err`.
+      *
+      * A `Throwable` failure is rendered here and then rethrown, so the runtime's uncaught handler
+      * reports it a second time with its stack. Both copies land on standard error, and the second
+      * carries strictly more than the first.
       */
     final protected def onResult[E, A](result: Result[E, A])(using Render[Result[E, A]], AllowUnsafe): Unit =
         result match
             case Error(e: Throwable) if normalTermination(e).nonEmpty =>
                 exitHook(normalTermination(e).getOrElse(0))
             case _ =>
-                if !result.exists(().equals(_)) then println(result.show)
+                if !result.exists(().equals(_)) then
+                    if result.isError then Console.live.unsafe.printLineErr(result.show)
+                    else Console.live.unsafe.printLine(result.show)
                 result match
                     case Error(e: Throwable) => throw e
                     case Error(_)            => exitHook(1)
