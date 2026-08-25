@@ -32,15 +32,15 @@ class InternalClockTest extends AnyFreeSpec with NonImplicitAssertions {
     "currentMillis" in {
         // A `source` AtomicLong the test moves pins the reported value exactly, with no reference to real time. `currentMillis()`
         // catching up to each set value proves the loop keeps resampling rather than latching, and gives monotonicity an exact target.
-        val source   = new AtomicLong(1_000L)
+        val source   = new AtomicLong(1000L)
         val executor = Executors.newSingleThreadExecutor(Threads("test-internal-clock"))
         val clock    = new InternalClock(executor, () => source.get())
         try {
-            assert(awaitValue(clock, 1_000L) == 1_000L, "the clock did not publish its source's initial value")
-            source.set(2_000L)
-            val advanced = awaitValue(clock, 2_000L)
-            assert(advanced == 2_000L, "the clock did not resample its source after it moved")
-            assert(advanced > 1_000L, s"the report did not move forward with the source, $advanced")
+            assert(awaitValue(clock, 1000L) == 1000L, "the clock did not publish its source's initial value")
+            source.set(2000L)
+            val advanced = awaitValue(clock, 2000L)
+            assert(advanced == 2000L, "the clock did not resample its source after it moved")
+            assert(advanced > 1000L, s"the report did not move forward with the source, $advanced")
         } finally {
             clock.stop()
             executor.shutdownNow()

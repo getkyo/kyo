@@ -193,20 +193,25 @@ the whole diff is the ruled swap itself.
 - [x] (34) kyo-ai/LLM.scala - handleLoopState/answer-style (register) + capture-row narrowing
   from the Isolate fix (session-ruled)
 - [x] (47) kyo-browser/Browser.scala - clone snapshot move, session-ruled
-- [x] kyo-direct/internal/AsyncShift.scala - one-line delta; kernel-forced
+- [x] kyo-direct/internal/AsyncShift.scala - one added @targetName("resultIntoTuple");
+  kernel-forced (the pending type's new erasure makes the two resultInto overloads clash)
 - [x] kyo-http HttpHandler/HttpClientBackend/RouteUtil/UnsafeServerDispatch - kernel-forced:
   IOTask.unscoped replaces the old (Trace, Context) constructor, RouteUtil answer-style,
   serveRequest genericized to [In, Out, E] because an Any-erased computation would re-enter
   the lift and nest as data (which is why HttpHandler's encodeResponseUnchecked is deleted);
   panic-logging onComplete NOTED in queue
-- [x] (2) kyo-jsonrpc/JsonRpcEndpointImpl.scala - trivial kernel-forced delta
+- [x] (0) kyo-jsonrpc/JsonRpcEndpointImpl.scala - RESTORED `sv.eval(using frame)` (the
+  Pending.scala eval restoration re-admits the explicit frame); zero diff
 - [x] (23) kyo-parse/Parse.scala - handleLoopState/answer-style (register) + cast design comment
-- [ ] (26) kyo-scheduler/InternalClockTest.scala
+- [x] (0) kyo-scheduler/InternalClockTest.scala - RESTORED main's plain literals (the
+  `1_000L` underscores were churn); zero diff
 - [x] kyo-slack Slack/SlackReconnect/SlackSocketEngine/SlackReconnectTest - RESTORED to main
   verbatim (zero diff): the branch had narrowed the Keep to Sync at 11 sites; the session's
   capture-row fix makes main's `Isolate[S, Abort[SlackException] & Async, S]` workable again,
   matching the kyo-core combinator restoration. Compile-unverified until sbt is cleared.
-- [ ] (18) kyo-system/PathPlatformSpecific.scala
+- [x] (0) kyo-system/PathPlatformSpecific.scala - RESTORED main's Windows-mtime
+  normalization block that the branch had dropped (a real behavior regression, not
+  kernel-related); zero diff
 - [x] (13) kyo-ui/ReactiveUITeardownTest.scala - session workaround removal, ruled
 - [ ] (138) kyo-workers/ForkQueue.scala; (25) WorkersException.scala
 - [x] (1) kyo-zio/ZStreams.scala - single line, rides the runFirst FLAG

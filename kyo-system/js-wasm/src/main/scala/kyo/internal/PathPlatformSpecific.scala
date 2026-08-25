@@ -422,6 +422,13 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
                     NodeFs.mkdirSync(toStr, js.Dynamic.literal(recursive = false))
             else
                 NodeFs.copyFileSync(pathStr, toStr, 0)
+                // Windows copies file times along with the bytes (copyFileSync goes through CopyFileExW), so the
+                // target keeps the source's mtime even when the caller asked not to preserve attributes. POSIX gives
+                // the new file the current time. Stamp `now` so `copyAttributes = false` means the same thing on
+                // every host; the copyAttributes = true branch below overwrites this with the source's mtime.
+                if !options.copyAttributes then
+                    val nowSec = js.Date.now() / 1000.0
+                    NodeFs.utimesSync(toStr, nowSec, nowSec)
             end if
             if options.copyAttributes && !(linkStat.isSymbolicLink() && !options.followLinks) then
                 val epochSec = sourceStat.mtimeMs / 1000.0

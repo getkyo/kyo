@@ -583,7 +583,7 @@ object JsonRpcEndpointImpl:
                                                                                 case Result.Success(sv) =>
                                                                                     JsonRpcResponse(
                                                                                         id,
-                                                                                        Present(sv.eval),
+                                                                                        Present(sv.eval(using frame)),
                                                                                         Absent,
                                                                                         extras
                                                                                     )
