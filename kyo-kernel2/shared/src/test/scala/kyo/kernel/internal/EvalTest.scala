@@ -773,31 +773,7 @@ class EvalTest extends AnyFreeSpec:
             assert(resume() == 1)
         }
 
-        "resumes on another thread" in {
-            var stored: Maybe[Arrow[Unit, Int, Say]] = Maybe.empty
-            val inner: Int < Say                     = stateful(ask.map(a => say("x").map(_ => ask.map(b => a * 10 + b))))
-            val r: Int < Any = ArrowEffect.handleCont(Tag[Say], inner)(
-                [C] =>
-                    (_, cont) =>
-                        stored = Maybe(cont)
-                        -1
-                ,
-                a => a
-            )
-            assert(Eval(r) == -1)
-            val k             = stored.get
-            def resume(): Int = Eval(ArrowEffect.handleCont(Tag[Say], k(()))([C] => (_, cont) => cont(()), a => a))
-            val results       = new java.util.concurrent.ConcurrentLinkedQueue[Int]()
-            val threads = (1 to 4).map(_ =>
-                new Thread(() =>
-                    results.add(resume()); ()
-                )
-            )
-            threads.foreach(_.start())
-            threads.foreach(_.join())
-            assert(List.fill(4)(results.poll()) == List(1, 1, 1, 1))
-            assert(results.isEmpty)
-        }
+        // the cross-thread resume lives in the jvm-native EvalThreadingTest: it needs real threads
 
         "resumes under a later region of the same tag, which answers the remainder" in {
             var stored: Maybe[Arrow[Int, Int, Ask]] = Maybe.empty
@@ -945,28 +921,9 @@ class EvalTest extends AnyFreeSpec:
 
     "partial evaluation" - {
 
-        "a preemption stop reifies and resumes with handler state" in {
-            var clauseRuns = 0
-            def countdown(i: Int): Int < Ask =
-                if i == 0 then 0 else ask.map(a => countdown(i - a))
-            val counted: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 0, countdown(100))(
-                [C] =>
-                    (n, _) =>
-                        clauseRuns += 1
-                        if n == 10 then discard(Safepoint.stop(Thread.currentThread()))
-                        Loop.continue(n + 1, 1)
-                ,
-                (n, a) => n + a
-            )
-            val first = Eval.partial(counted)
-            assert(first.evalNow == Maybe.Absent)
-            // the slice stopped where the stop was lodged, not budget-periods later: the eleventh
-            // clause run raises the stop, and at most one more answer may slip through before the
-            // park lands
-            assert(clauseRuns >= 11 && clauseRuns <= 12, s"clauseRuns=$clauseRuns")
-            assert(Eval.partial(first).evalNow == Maybe(100))
-            assert(clauseRuns == 100)
-        }
+        // the stop-driven tests of this section (preemption reify/resume, between-slice
+        // short-circuit, cross-thread parks, the outrun stop) live in the jvm-native
+        // EvalThreadingTest: stops are the jvm-native preemption mechanism
 
         "partial completes when nothing stops" in {
             assert(Eval.partial(answerAsk(21)(ask.map(_ * 2))).evalNow == Maybe(42))
@@ -976,71 +933,6 @@ class EvalTest extends AnyFreeSpec:
         // name unhandled effects, so an operation without a handler ended the slice and something installed
         // later answered it. `partial` takes `A < Any` now, the same row a full evaluation takes, so an
         // operation with no handler has none anywhere and is a bug at both entry points.
-
-        "a stop delivered between slices short-circuits" in {
-            val v: Int < Any = answerAsk(41)(ask.map(_ + 1))
-            discard(Safepoint.stop(Thread.currentThread()))
-            val r = Eval.partial(v)
-            assert(r.asInstanceOf[AnyRef] eq v.asInstanceOf[AnyRef])
-            assert(Eval.partial(r).evalNow == Maybe(42))
-        }
-
-        "a cross-thread stop parks a running slice" in {
-            // the suspension channel: the answers loop peeks the sentinel at each answer, bails,
-            // and the park check sees the same pending stop. Under the old consuming poll this was
-            // the lost-preemption path; the loop never terminates on its own, so parking is the
-            // only way the thread ends
-            @volatile var started = false
-            @volatile var parked  = false
-            val t = new Thread(() =>
-                def loop(i: Int): Int < Ask =
-                    ask.map { a =>
-                        started = true
-                        loop(i + a - 1)
-                    }
-                parked = Eval.partial(answerAsk(1)(loop(0))).evalNow.isEmpty
-            )
-            t.start()
-            while !started do ()
-            assert(Safepoint.stop(t))
-            t.join(20000)
-            assert(!t.isAlive)
-            assert(parked)
-        }
-
-        "a cross-thread stop parks a settled spin with no suspensions" in {
-            // the settled channel: observation through the plain home probe, the drain making the
-            // next step defer, and the park check taking the still-pending stop. No suspension
-            // anywhere; the spin only ends by parking
-            @volatile var started = false
-            @volatile var parked  = false
-            val t = new Thread(() =>
-                def loop(i: Int): Int < Any =
-                    ((i + 1) & 63: Int < Any).map { v =>
-                        started = true
-                        loop(v)
-                    }
-                parked = Eval.partial(loop(0)).evalNow.isEmpty
-            )
-            t.start()
-            while !started do ()
-            assert(Safepoint.stop(t))
-            t.join(20000)
-            assert(!t.isAlive)
-            assert(parked)
-        }
-
-        "a stop the slice outruns is consumed at the boundary" in {
-            // the stop lands after the last poll point, so the slice completes; the boundary
-            // consumes the sentinel, and the next slice runs instead of short-circuiting
-            val v: Int < Any = (1: Int < Any).map { x =>
-                discard(Safepoint.stop(Thread.currentThread()))
-                x + 41
-            }
-            assert(Eval.partial(v).evalNow == Maybe(42))
-            val w: Int < Any = answerAsk(20)(ask.map(_ * 2 + 2))
-            assert(Eval.partial(w).evalNow == Maybe(42))
-        }
     }
 
 end EvalTest

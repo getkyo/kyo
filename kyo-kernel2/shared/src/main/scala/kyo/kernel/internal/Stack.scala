@@ -7,7 +7,6 @@ import kyo.Result
 import kyo.Span
 import kyo.Tag
 import kyo.bug
-import scala.annotation.static
 import scala.annotation.tailrec
 
 final private[kyo] class Stack:
@@ -633,7 +632,7 @@ final private[kyo] class Stack:
 end Stack
 
 private[kyo] object Stack:
-    final private class Pool:
+    final private[internal] class Pool:
         private var free = new Array[Stack](4)
         private var size = 0
 
@@ -653,11 +652,7 @@ private[kyo] object Stack:
         end release
     end Pool
 
-    @static private val local: ThreadLocal[Pool] =
-        new ThreadLocal[Pool]:
-            override def initialValue() = new Pool
+    def borrow(): Stack = StackPlatformSpecific.local.get().borrow()
 
-    def borrow(): Stack = local.get().borrow()
-
-    def release(s: Stack): Unit = local.get().release(s)
+    def release(s: Stack): Unit = StackPlatformSpecific.local.get().release(s)
 end Stack

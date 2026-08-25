@@ -192,6 +192,13 @@ object Safepoint:
     @static private[kyo] def arm(slot: Slot): Unit =
         depths(slot) = depths(slot).armed
 
+    /** The scheduler's slice deadline. Preemption here comes from `stop`, delivered by a live
+      * thread, so the deadline has no carrier to check it and the call inlines to nothing. The
+      * js-wasm variant stores it; there it is the only preemption source, observed through
+      * `stopped` at the budget drains of the eval the slice arms.
+      */
+    inline def deadline(inline d: Long): Unit = ()
+
     @static private[kyo] def stop(thread: Thread): Boolean =
         @tailrec def loop(i: Int, probes: Int): Boolean =
             if probes == Slots then false

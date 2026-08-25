@@ -1820,15 +1820,10 @@ class ArrowEffectTest extends AnyFreeSpec:
                 a => a
             ))
             assert(r0 == 3003)
-            // two replays on this thread: each must run the captured region independently
+            // two replays on this thread: each must run the captured region independently. The
+            // cross-thread replay is pinned in the jvm-native ArrowEffectThreadingTest
             assert(Eval(kref(())) == 3003)
             assert(Eval(kref(())) == 3003)
-            // and one on another thread: the capture is a complete value, not a view of this eval
-            @volatile var tr = 0
-            val t            = new Thread(() => tr = Eval(kref(())))
-            t.start()
-            t.join()
-            assert(tr == 3003)
         }
 
         "a clause keeps only the values it was given" in {
@@ -1952,15 +1947,11 @@ class ArrowEffectTest extends AnyFreeSpec:
                 a => a
             ))
             assert(r0 == 4)
-            // the last capture is the settled tail: a complete value, replayable twice and on
-            // another thread, never a view of the answers loop it was handed out from
+            // the last capture is the settled tail: a complete value, replayable twice, never a
+            // view of the answers loop it was handed out from. The cross-thread replay is pinned
+            // in the jvm-native ArrowEffectThreadingTest
             assert(Eval(kref(1)) == 4)
             assert(Eval(kref(1)) == 4)
-            @volatile var tr = 0
-            val t            = new Thread(() => tr = Eval(kref(1)))
-            t.start()
-            t.join()
-            assert(tr == 4)
         }
 
         "a clause can run a full eval of its own mid-loop" in {

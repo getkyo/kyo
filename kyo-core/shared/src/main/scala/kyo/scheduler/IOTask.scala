@@ -346,6 +346,10 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         else
             val previous = IOTask.current.get()
             IOTask.current.set(this)
+            // the scheduler's slice deadline: on js-wasm it is the preemption source, checked at
+            // the budget drains until the slice boundary consumes it; on jvm-native stops carry
+            // preemption and the call inlines to nothing. Arming stays the eval's own entry step
+            Safepoint.deadline(deadline)
             val next =
                 try
                     try Eval.partial(curr)

@@ -61,19 +61,20 @@ end Debugger
 // Public object, private[kyo] members: see the note on Safepoint for the accessor the other shape emits.
 object Debugger:
 
-    // not volatile on purpose: routing correctness comes from the eval reading the debugger once at
-    // entry, not from cross-thread publication timing, and a volatile read inside Safepoint.enter is
-    // bytecode every strict call site carries
-    @static private var current: Debugger = Noop
+    // the cell lives in DebuggerPlatformSpecific: `@static` on jvm-native, a plain module var on
+    // js-wasm, where a static field initializer runs at script evaluation and could capture
+    // undefined for `Noop`. Not volatile on purpose: routing correctness comes from the eval
+    // reading the debugger once at entry, not from cross-thread publication timing, and a volatile
+    // read inside Safepoint.enter is bytecode every strict call site carries.
 
     /** Installs the debugger for the extent of a session. An eval reads it once at entry, so evals
       * already running keep what they read and a session boundary never tears mid-eval.
       */
-    @static private[kyo] def install(d: Debugger): Unit = current = d
+    @static private[kyo] def install(d: Debugger): Unit = DebuggerPlatformSpecific.current = d
 
-    @static private[kyo] def uninstall(): Unit = current = Noop
+    @static private[kyo] def uninstall(): Unit = DebuggerPlatformSpecific.current = Noop
 
-    @static private[kyo] def get: Debugger = current
+    @static private[kyo] def get: Debugger = DebuggerPlatformSpecific.current
 
     private[kyo] object Noop extends Debugger
 
