@@ -1446,6 +1446,14 @@ class ArrowEffectTest extends AnyFreeSpec:
             assert(Eval(r) == -1)
             assert(!doneRan)
         }
+
+        "a computation held as a value passes through untouched" in {
+            val payload: Int < Any   = (1: Int < Any).map(_ + 1)
+            val v: (Int < Any) < Ask = ask.map(_ => box(payload))
+            val r: (Int < Any) < Any =
+                ArrowEffect.handleCatching(Tag[Ask], v)([C] => (_, cont) => cont(0), a => box(a))(_ => box(-1))
+            assert(Eval(Eval(r)) == 2)
+        }
     }
 
     // Requires ArrowEffect.handlePartial, which is not implemented.
@@ -2161,6 +2169,59 @@ class ArrowEffectTest extends AnyFreeSpec:
             val r = Eval(ArrowEffect.handleCont(Tag[Say], got)([C] => (_, cont) => cont(()), a => a))
             assert(r == 7)
         }
+    }
+
+    // the typed-dispatch lane where the operation's answer type is the existential: the input
+    // carries C, the clause computes an O[C] from it, and nothing is Const
+    "non-Const inputs and outputs" - {
+        sealed trait CustomEffect extends ArrowEffect[List, Option]
+
+        def customEffect(input: List[Int]): Option[Int] < CustomEffect =
+            ArrowEffect.suspend[Int](Tag[CustomEffect], input)
+
+        "suspend and handle" in {
+            val effect = customEffect(List(1, 2, 3))
+            val result = ArrowEffect.handleCont(Tag[CustomEffect], effect)(
+                [C] => (input, cont) => cont(input.headOption),
+                a => a
+            )
+            assert(Eval(result) == Some(1))
+        }
+
+        "chained effects" in {
+            val effect =
+                for
+                    a <- customEffect(List(1, 2, 3))
+                    b <- customEffect(List(4, 5, 6))
+                yield (a, b)
+            val result = ArrowEffect.handleCont(Tag[CustomEffect], effect)(
+                [C] => (input, cont) => cont(input.headOption),
+                a => a
+            )
+            assert(Eval(result) == (Some(1), Some(4)))
+        }
+
+        "handle with state" in {
+            val effect =
+                for
+                    a <- customEffect(List(1, 2, 3))
+                    b <- customEffect(List(4, 5, 6))
+                yield (a, b)
+            val result = ArrowEffect.handleLoopState(Tag[CustomEffect], 0, effect)(
+                [C] => (state, input) => Loop.continue(state + 1, Some(input(state))),
+                (_, a) => a
+            )
+            assert(Eval(result) == (Some(1), Some(5)))
+        }
+    }
+
+    "two effects interleaved at depth cross regions each step" in {
+        def loop(n: Int): Int < (Ask & Say) =
+            if n == 0 then 0
+            else ask.map(a => say(a.toString).map(_ => loop(n - 1).map(_ + a)))
+        val handled = ArrowEffect.handleCont(Tag[Say], loop(1000))([C] => (_, cont) => cont(()), a => a)
+        val r       = ArrowEffect.handleCont(Tag[Ask], handled)([C] => (_, cont) => cont(1), a => a)
+        assert(Eval(r) == 1000)
     }
 
 end ArrowEffectTest

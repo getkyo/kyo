@@ -93,15 +93,29 @@ the whole diff is the ruled swap itself.
 
 ### kyo-kernel: tests
 - [x] (205) kyo/ArrowTest.scala - new file for new machinery (Arrow did not exist on main)
-- [ ] (66) kyo/KyoForeachCollTest.scala
-- [ ] (29) kyo/KyoForeachTest.scala
+- [x] (66) kyo/KyoForeachCollTest.scala - heir audit: full parity (base-class swap +
+  discard wrappers only; every assertion identical)
+- [x] (29) kyo/KyoForeachTest.scala - helpers only, no test cases; adapted 1:1
 - [x] (163) kyo/KyoTest.scala - classified: interim scalatest base, ruled renames, semantic asserts
-- [ ] (2845) kernel/ArrowEffectTest.scala - largely rewritten; verify old tests all have heirs
-- [ ] (346) kernel/ContextEffectTest.scala
-- [ ] (1551) kernel/EffectTest.scala - largely rewritten; verify old tests all have heirs
-- [ ] (672) kernel/IsolateTest.scala
-- [ ] (459) kernel/LoopTest.scala - constructor changes plus this session's battery
-- [ ] (940) kernel/PendingTest.scala
+- [x] (2845) kernel/ArrowEffectTest.scala - heir audit: 22 heirs, 9 n/a-by-design (3
+  interceptor-seam, 6 handlePartial-removal), 7 missing in 3 gaps. handleFirst deep-chain and
+  boxed pins re-enabled this session (suite folded onto the primitive); the remaining gaps
+  are AUTHORED: non-Const inputs and outputs group (3 tests), two-effects-interleaved-at-depth
+  (1000 crossings), handleCatching boxed pass-through. Compile-unverified until sbt clears.
+- [x] (346) kernel/ContextEffectTest.scala - heir audit: 11/11 full parity, plus new
+  release/default/crossing coverage
+- [x] (1551) kernel/EffectTest.scala - heir audit: all heired after this session re-enabled
+  defer-with-catching and combining-multiple-effects; detach suite parked on the missing
+  Effect.detach
+- [x] (672) kernel/IsolateTest.scala - heir audit: 24 heired, 1 n/a (interceptor restoration),
+  3 missing collapsing to one gap: a pending Keep-row arrow effect crossing the isolation
+  boundary and handled outside. AUTHORED: two run-group tests (direct and subtype-tag
+  crossing over updateA). Compile-unverified until sbt clears.
+- [x] (459) kernel/LoopTest.scala - heir audit: 73/73 full parity plus the new constructor
+  and nesting groups
+- [x] (940) kernel/PendingTest.scala - heir audit: all heired after this session re-enabled
+  TestEffect3 + multiple operations; one by-design evalNow semantic inversion documented in
+  its heir
 - [x] (166) internal/CanLiftTest.scala - heir audit done by name-and-content map: all 11 main
   cases have heirs under renamed descriptions, plus new cases (module-object rejection,
   case-object fast path); nothing missing

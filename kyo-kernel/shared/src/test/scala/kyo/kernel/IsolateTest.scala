@@ -12,10 +12,11 @@ import scala.compiletime.testing.typeCheckErrors
 
 class IsolateTest extends AnyFreeSpec:
 
-    sealed trait TestEffect1      extends ContextEffect[Int]
-    sealed trait TestEffect2      extends ContextEffect[String]
-    sealed trait TestEffect3      extends ContextEffect[Boolean]
-    sealed trait NotContextEffect extends ArrowEffect[Const[Int], Const[Int]]
+    sealed trait TestEffect1         extends ContextEffect[Int]
+    sealed trait TestEffect2         extends ContextEffect[String]
+    sealed trait TestEffect3         extends ContextEffect[Boolean]
+    sealed trait NotContextEffect    extends ArrowEffect[Const[Int], Const[Int]]
+    sealed trait NotContextEffectSub extends NotContextEffect
 
     private inline def typeCheckFailure(inline code: String)(expected: String): org.scalatest.Assertion =
         val errors = typeCheckErrors(code)
@@ -131,6 +132,25 @@ class IsolateTest extends AnyFreeSpec:
         "a local isolate keeps the enclosing state untouched" in {
             val v = localA.run(setA(100).map(_ => getA))
             assert(Eval(runA(7)(v)) == ((7, 100)))
+        }
+
+        "a pending arrow effect crosses the boundary and is handled outside" in {
+            def op(n: Int): Int < NotContextEffect = ArrowEffect.suspend[Any](Tag[NotContextEffect], n)
+            // the isolate manages CellA only: the operation suspends inside the isolation, stays
+            // pending across capture, isolation, and restore, and the handler sits outside them all
+            val v = updateA.run(setA(5).map(_ => op(10)).map(_ + 1))
+            val handled: Int < CellA =
+                ArrowEffect.handleCont(Tag[NotContextEffect], v)([C] => (input, cont) => cont(input * 2), a => a)
+            assert(Eval(runA(0)(handled)) == ((5, 21)))
+        }
+
+        "an operation raised at a subtype tag crosses and is answered outside" in {
+            def opSub(n: Int): Int < NotContextEffect =
+                ArrowEffect.suspend[Any](Tag[NotContextEffectSub].asInstanceOf[Tag[NotContextEffect]], n)
+            val v = updateA.run(setA(5).map(_ => opSub(10)).map(_ + 1))
+            val handled: Int < CellA =
+                ArrowEffect.handleCont(Tag[NotContextEffectSub], v)([C] => (input, cont) => cont(input * 2), a => a)
+            assert(Eval(runA(0)(handled)) == ((5, 21)))
         }
     }
 
