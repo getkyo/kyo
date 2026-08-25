@@ -131,6 +131,23 @@ object ContainerPredef:
         def jdbcUrl(using Frame): String < (Async & Abort[ContainerException]) =
             container.mappedPort(config.port).map(hp => Postgres.formatJdbcUrl(container.host, hp, config.database))
 
+        /** Connection URL in the `postgres://user:password@host:port/database` form.
+          *
+          * This is the URL a driver that speaks the Postgres wire protocol directly takes, kyo-sql among them, and
+          * it is the one to reach for first: `jdbcUrl` names a technology kyo-sql deliberately does not use, so
+          * pasting it into a driver that wants this scheme fails on the scheme alone. The host comes from the
+          * container handle rather than the caller, and the port is the dynamically-mapped one, so nothing about
+          * the string has to be reassembled by hand.
+          *
+          * The credentials are written literally, matching how a wire-protocol URL is parsed: the last `@` ends
+          * the userinfo and the first `:` inside it splits user from password. A username containing `:` or `@`
+          * therefore cannot be expressed in this form.
+          */
+        def url(using Frame): String < (Async & Abort[ContainerException]) =
+            container.mappedPort(config.port).map(hp =>
+                Postgres.formatUrl(container.host, hp, config.username, config.password, config.database)
+            )
+
         /** Configured database username. */
         def username: String = config.username
 
@@ -167,6 +184,10 @@ object ContainerPredef:
         private[kyo] def formatJdbcUrl(host: String, port: Int, database: String): String =
             s"jdbc:postgresql://$host:$port/$database"
 
+        /** Format a Postgres wire-protocol URL: `postgres://user:password@host:port/database`. */
+        private[kyo] def formatUrl(host: String, port: Int, user: String, password: String, database: String): String =
+            s"postgres://$user:$password@$host:$port/$database"
+
         /** Configuration for a [[Postgres]] container. Builder methods produce updated copies; the original instance is unchanged.
           *
           * @param image
@@ -179,6 +200,14 @@ object ContainerPredef:
           *   value for the `POSTGRES_DB` env var (default `"test"`)
           * @param port
           *   the in-container port Postgres listens on (default `5432`); the host port is allocated dynamically
+          * @param container
+          *   the general [[Container.Config]] this fixture layers its own settings onto, so choosing the fixture
+          *   does not cost the general surface. The fixture owns what makes it a Postgres container (image, the
+          *   `POSTGRES_*` env, the published port, the server command, the healthcheck) and applies those last;
+          *   everything else the caller sets here (a name, labels, mounts, networks, resource limits) is kept.
+          *   Setting a name or labels is what gives an `initUnscoped` container an identity to find again: a
+          *   daemon-assigned name like `relaxed_ellis` says nothing, and filtering a teardown by image can reach
+          *   another process's database running the same one.
           */
         final case class Config(
             image: ContainerImage = defaultImage,
@@ -186,12 +215,25 @@ object ContainerPredef:
             password: String = "test",
             database: String = "test",
             port: Int = defaultPort,
+            container: Container.Config = Container.Config(defaultImage),
             readinessBudget: Duration = 120.seconds
         ) derives CanEqual:
-            def image(i: ContainerImage): Config     = copy(image = i)
-            def username(u: String): Config          = copy(username = u)
-            def password(p: String): Config          = copy(password = p)
-            def database(d: String): Config          = copy(database = d)
+            def image(i: ContainerImage): Config = copy(image = i)
+            def username(u: String): Config      = copy(username = u)
+            def password(p: String): Config      = copy(password = p)
+            def database(d: String): Config      = copy(database = d)
+
+            /** Names the container, so it can be found again after the process that started it is gone. */
+            def name(n: String): Config = withContainer(_.name(n))
+
+            /** Adds one label. Labels are the precise teardown filter: an image filter matches every other
+              * container running the same image, including another process's.
+              */
+            def label(key: String, value: String): Config = withContainer(_.label(key, value))
+
+            /** Applies `f` to the general container config this fixture layers onto. */
+            def withContainer(f: Container.Config => Container.Config): Config =
+                copy(container = f(container))
             def readinessBudget(d: Duration): Config = copy(readinessBudget = d)
         end Config
 
@@ -214,9 +256,14 @@ object ContainerPredef:
         ): A < (S & Async & Abort[ContainerException] & Scope) =
             init(config).map(f)
 
-        /** Build the [[Container.Config]] for a Postgres fixture from this config. */
+        /** Build the [[Container.Config]] for a Postgres fixture from this config.
+          *
+          * The caller's own container config is the BASE and the fixture's settings are applied on top, so a
+          * field the fixture does not own survives untouched however `Container.Config` grows. `image` is taken
+          * from the fixture's own field, which is the one the builders write.
+          */
         private[kyo] def buildContainerConfig(c: Config): Container.Config =
-            Container.Config(c.image)
+            c.container.copy(image = c.image)
                 .env("POSTGRES_USER", c.username)
                 .env("POSTGRES_PASSWORD", c.password)
                 .env("POSTGRES_DB", c.database)
@@ -255,6 +302,17 @@ object ContainerPredef:
         def jdbcUrl(using Frame): String < (Async & Abort[ContainerException]) =
             container.mappedPort(config.port).map(hp => MySQL.formatJdbcUrl(container.host, hp, config.database))
 
+        /** Connection URL in the `mysql://user:password@host:port/database` form.
+          *
+          * The URL a driver that speaks the MySQL wire protocol directly takes, kyo-sql among them. See
+          * [[ContainerPredef.Postgres.url]] for why this sits next to `jdbcUrl` and how the credentials are
+          * written.
+          */
+        def url(using Frame): String < (Async & Abort[ContainerException]) =
+            container.mappedPort(config.port).map(hp =>
+                MySQL.formatUrl(container.host, hp, config.username, config.password, config.database)
+            )
+
         /** Configured database username. */
         def username: String = config.username
 
@@ -287,6 +345,10 @@ object ContainerPredef:
         private[kyo] def formatJdbcUrl(host: String, port: Int, database: String): String =
             s"jdbc:mysql://$host:$port/$database"
 
+        /** Format a MySQL wire-protocol URL: `mysql://user:password@host:port/database`. */
+        private[kyo] def formatUrl(host: String, port: Int, user: String, password: String, database: String): String =
+            s"mysql://$user:$password@$host:$port/$database"
+
         /** Configuration for a [[MySQL]] container. Builder methods produce updated copies; the original instance is unchanged.
           *
           * @param image
@@ -315,6 +377,12 @@ object ContainerPredef:
               * the baseline args, so later flags win by MySQL's last-write semantics.
               */
             serverArgs: Chunk[String] = Chunk.empty,
+            /** The general [[Container.Config]] this fixture layers its own settings onto. See
+              * [[ContainerPredef.Postgres.Config.container]]: the fixture owns image, the `MYSQL_*` env, the
+              * published port, the server args and the healthcheck, and everything else the caller sets here (a
+              * name, labels, mounts, networks, resource limits) is kept.
+              */
+            container: Container.Config = Container.Config(defaultImage),
             readinessBudget: Duration = 120.seconds
         ) derives CanEqual:
             def image(i: ContainerImage): Config        = copy(image = i)
@@ -324,7 +392,17 @@ object ContainerPredef:
             def rootPassword(p: String): Config         = copy(rootPassword = p)
             def serverArgs(args: Chunk[String]): Config = copy(serverArgs = args)
             def appendServerArgs(args: String*): Config = copy(serverArgs = serverArgs ++ Chunk.from(args))
-            def readinessBudget(d: Duration): Config    = copy(readinessBudget = d)
+
+            /** Names the container, so it can be found again after the process that started it is gone. */
+            def name(n: String): Config = withContainer(_.name(n))
+
+            /** Adds one label, the precise teardown filter an image filter cannot be. */
+            def label(key: String, value: String): Config = withContainer(_.label(key, value))
+
+            /** Applies `f` to the general container config this fixture layers onto. */
+            def withContainer(f: Container.Config => Container.Config): Config =
+                copy(container = f(container))
+            def readinessBudget(d: Duration): Config = copy(readinessBudget = d)
         end Config
 
         object Config:
@@ -409,7 +487,11 @@ object ContainerPredef:
                 (if c.password.nonEmpty then Chunk(s"-p${c.password}") else Chunk.empty) ++
                 Chunk(c.database, "-N", "-e", "SELECT 1")
             val commandLine: Chunk[String] = Chunk("mysqld") ++ defaultServerArgs ++ c.serverArgs
-            val base = Container.Config(c.image)
+            // The caller's own container config is the BASE and the fixture's settings are applied on top, so
+            // a field the fixture does not own (a name, labels, mounts, networks, limits) survives untouched
+            // however Container.Config grows. `image` comes from the fixture's own field, the one the builders
+            // write.
+            val base = c.container.copy(image = c.image)
                 .env("MYSQL_DATABASE", c.database)
                 .port(c.port, 0)
                 .command(commandLine*)
@@ -500,10 +582,24 @@ object ContainerPredef:
             image: ContainerImage = defaultImage,
             database: String = "test",
             port: Int = defaultPort,
+            /** The general [[Container.Config]] this fixture layers its own settings onto. See
+              * [[ContainerPredef.Postgres.Config.container]].
+              */
+            container: Container.Config = Container.Config(defaultImage),
             readinessBudget: Duration = 120.seconds
         ) derives CanEqual:
-            def image(i: ContainerImage): Config     = copy(image = i)
-            def database(d: String): Config          = copy(database = d)
+            def image(i: ContainerImage): Config = copy(image = i)
+            def database(d: String): Config      = copy(database = d)
+
+            /** Names the container, so it can be found again after the process that started it is gone. */
+            def name(n: String): Config = withContainer(_.name(n))
+
+            /** Adds one label, the precise teardown filter an image filter cannot be. */
+            def label(key: String, value: String): Config = withContainer(_.label(key, value))
+
+            /** Applies `f` to the general container config this fixture layers onto. */
+            def withContainer(f: Container.Config => Container.Config): Config =
+                copy(container = f(container))
             def readinessBudget(d: Duration): Config = copy(readinessBudget = d)
         end Config
 
@@ -526,9 +622,12 @@ object ContainerPredef:
         ): A < (S & Async & Abort[ContainerException] & Scope) =
             init(config).map(f)
 
-        /** Build the [[Container.Config]] for a MongoDB fixture from this config. */
+        /** Build the [[Container.Config]] for a MongoDB fixture from this config. The caller's own container
+          * config is the base and the fixture's settings are applied on top; see
+          * [[ContainerPredef.Postgres.buildContainerConfig]].
+          */
         private[kyo] def buildContainerConfig(c: Config): Container.Config =
-            Container.Config(c.image)
+            c.container.copy(image = c.image)
                 .port(c.port, 0)
                 .healthCheck(readinessLoop(Chunk("mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"), c.readinessBudget))
     end MongoDB

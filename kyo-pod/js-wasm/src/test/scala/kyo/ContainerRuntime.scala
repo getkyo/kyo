@@ -15,10 +15,23 @@ object ContainerRuntime extends ContainerRuntimeBase:
             true
         catch case _: Throwable => false
 
+    /** `execSync` runs through a shell, so a missing binary and a failing one both surface as a non-zero exit
+      * and cannot be told apart from the throw. `command -v` asks the shell the presence question directly.
+      * Where it is unavailable (a non-POSIX shell) this answers false, which falls the decision back to the
+      * socket check, the behaviour before this distinction existed.
+      */
+    private[kyo] def cliPresent(command: String): Boolean =
+        try
+            PodNodeChildProcess.execSync(s"command -v $command", js.Dynamic.literal(stdio = "pipe"))
+            true
+        catch case _: Throwable => false
+
     private[kyo] def queryPodmanMachineSockets: Seq[String] =
         try
             val output = PodNodeChildProcess.execSync(
-                "podman machine inspect --format json",
+                // No --format: `podman machine inspect` already prints JSON, and `--format` takes a Go
+                // template, so `--format json` printed the literal string "json" and JSON.parse threw.
+                "podman machine inspect",
                 js.Dynamic.literal(stdio = js.Array("pipe", "pipe", "pipe"), encoding = "utf8")
             ).asInstanceOf[String]
             val parsed = js.JSON.parse(output)

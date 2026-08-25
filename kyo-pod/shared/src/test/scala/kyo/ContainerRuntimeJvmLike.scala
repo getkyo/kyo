@@ -17,6 +17,29 @@ private[kyo] trait ContainerRuntimeJvmLike extends ContainerRuntimeBase:
         }.getOrElse(false)
     end cliExists
 
+    /** POSIX's "command not found" exit code, which a shell uses for a binary that is not on PATH. */
+    private val CommandNotFound = 127
+
+    /** Whether the `command` binary is on PATH, however it exits.
+      *
+      * The two platforms report a missing binary differently, and only one of them raises. On the JVM
+      * `ProcessBuilder.start` throws `IOException`, so the spawn answers the question. Scala Native runs the
+      * command through `/bin/sh`, so the spawn SUCCEEDS, the shell prints `command not found` and exits 127,
+      * which is what both platforms can agree on: a spawn that raises, or an exit of 127, means absent.
+      * Anything else means the binary ran, whatever it thought of its daemon, which is the distinction the
+      * availability decision rests on. Measured on Scala Native, not assumed: `exit=127, output=[/bin/sh:
+      * kyo-pod-no-such-binary: command not found]`.
+      */
+    private[kyo] def cliPresent(command: String): Boolean =
+        val pb = new java.lang.ProcessBuilder(command, "version")
+        pb.redirectErrorStream(true)
+        scala.util.Try {
+            val proc = pb.start()
+            discard(proc.getInputStream.readAllBytes())
+            proc.waitFor() != CommandNotFound
+        }.getOrElse(false)
+    end cliPresent
+
     private[kyo] def queryPodmanMachineSockets: Seq[String] =
         try
             // `--format` is a Go template, so the JSON form is `{{json .}}`; a bare `json` is emitted literally (podman

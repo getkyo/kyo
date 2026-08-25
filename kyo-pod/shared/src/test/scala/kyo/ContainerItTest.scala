@@ -55,6 +55,7 @@ class ContainerItTest extends BasePodTest:
         }
 
         "withBackendConfig(_.Shell) uses shell backend" - runRuntimes { runtime =>
+            assume(ContainerRuntime.hasCli(runtime), s"$runtime CLI is not on PATH; the Shell backend needs it")
             Container.withBackendConfig(_.Shell(runtime)) {
                 assertRuns(alpine)
             }
@@ -81,6 +82,7 @@ class ContainerItTest extends BasePodTest:
         }
 
         "auto-detect passes meter to backend" - runRuntimes { runtime =>
+            assume(ContainerRuntime.hasCli(runtime), s"$runtime CLI is not on PATH; the Shell backend needs it")
             Meter.initSemaphore(4).map { meter =>
                 Container.withBackendConfig(_.Shell(runtime, meter)) {
                     Container.init(alpine).map { c =>
@@ -97,6 +99,7 @@ class ContainerItTest extends BasePodTest:
         }
 
         "Shell with explicit command path" - runRuntimes { runtime =>
+            assume(ContainerRuntime.hasCli(runtime), s"$runtime CLI is not on PATH; the Shell backend needs it")
             val cmd = if runtime == "docker" then "docker" else "podman"
             Container.withBackendConfig(_.Shell(cmd)) {
                 assertRuns(alpine)
@@ -184,6 +187,7 @@ class ContainerItTest extends BasePodTest:
         }
 
         "nested withBackendConfig overrides outer backend" - runRuntimes { runtime =>
+            assume(ContainerRuntime.hasCli(runtime), s"$runtime CLI is not on PATH; the Shell backend needs it")
             Container.withBackendConfig(_.Shell(runtime)) {
                 val socketOpt = ContainerRuntime.findSocket(runtime)
                 if socketOpt.isEmpty then
@@ -2611,6 +2615,10 @@ class ContainerItTest extends BasePodTest:
 
     "container with mounts" - {
         "bind mount — host file visible in container" - runBackends {
+            assume(
+                ContainerRuntime.daemonSharesFilesystem,
+                "the daemon is a sibling container; a locally-written path is not the path it mounts"
+            )
             val hostDir = Path("/tmp/" + uniqueName("kyo-bind"))
             for
                 _ <- hostDir.mkDir
@@ -2641,6 +2649,10 @@ class ContainerItTest extends BasePodTest:
         }
 
         "bind mount from /tmp works on macOS" - runBackends {
+            assume(
+                ContainerRuntime.daemonSharesFilesystem,
+                "the daemon is a sibling container; a locally-written path is not the path it mounts"
+            )
             val hostDir  = Path("/tmp/" + uniqueName("kyo-tmp-bind"))
             val filename = "test-data.txt"
             for
@@ -2975,6 +2987,15 @@ class ContainerItTest extends BasePodTest:
     "copy edge cases" - {
         // CVE-2018-15664 — symlink traversal in archive path
         "copy file with unicode name roundtrip" - runBackends {
+            // The DESTINATION below is a path inside the container, but it is built with kyo.Path, which on
+            // the JVM is java.nio.file.Path and so is constrained by THIS process's sun.jnu.encoding. Under a
+            // non-UTF-8 locale (a bare Linux container sets ANSI_X3.4-1968) the name is unmappable and the
+            // construction throws before any container is involved. Cancel rather than fail: the encoding of
+            // the local JVM says nothing about whether kyo-pod round-trips the name.
+            assume(
+                scala.util.Try(Path("/tmp/" + "файл")).isSuccess,
+                "this JVM's filename encoding cannot represent a non-ASCII path (locale is not UTF-8)"
+            )
             val localPath = Path("/tmp/" + uniqueName("kyo-unicode"))
             Container.init(alpine).map { c =>
                 for
@@ -3201,6 +3222,7 @@ class ContainerItTest extends BasePodTest:
         // Volume.remove(force=true) with attached stopped container — Shell-only (consistent behavior)
         // — Shell backend must skip the pre-check and pass --force when force=true.
         "Volume.remove(force=true) with attached stopped container — Shell backend honors force flag" - runRuntimes { runtime =>
+            assume(ContainerRuntime.hasCli(runtime), s"$runtime CLI is not on PATH; the Shell backend needs it")
             Container.withBackendConfig(_.Shell(runtime)) {
                 val volName = Container.Volume.Id(uniqueName("kyo-vol-force"))
                 Scope.run {
@@ -3473,6 +3495,7 @@ class ContainerItTest extends BasePodTest:
     }
 
     "NotFound references container id, not rename target (shell backend)" - runRuntimes { runtime =>
+        assume(ContainerRuntime.hasCli(runtime), s"$runtime CLI is not on PATH; the Shell backend needs it")
         // Force shell backend. The HTTP backend passes ids explicitly to its error-mapping layer;
         // only the shell backend uses args.lastOption in mapError.
         Container.withBackendConfig(_.Shell(runtime)) {
@@ -3579,6 +3602,7 @@ class ContainerItTest extends BasePodTest:
     }
 
     "128KB single line arrives intact via logStream" - runRuntimes { runtime =>
+        assume(ContainerRuntime.hasCli(runtime), s"$runtime CLI is not on PATH; the Shell backend needs it")
         // Force shell backend where chunk boundaries are observable.
         // Container emits exactly ONE line of 128KB then a newline.
         // The line-splitting must handle lines that straddle chunk boundaries —
