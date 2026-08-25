@@ -385,40 +385,40 @@ class BrowserHistoryTest extends BrowserTest:
         }
     }
 
-    // Slow-tail XHR after load fires keeps the network busy for ~2s. Settle.Load must return well
-    // before the tail completes; NetworkIdle would block on the chatty traffic.
+    // The load listener kicks a never-completing fetch, so the network stays busy after load: a
+    // NetworkIdle settle would block on it, a correct Settle.Load returns on the load event regardless.
+    // The fetch targets a SEPARATE origin (a second server on its own port). Chrome pools sockets per
+    // origin, and a never-completing SAME-origin request entangles the reload navigation's socket group:
+    // as the reload aborts the prior page's pending request, the nav can race that teardown for a clean
+    // socket, and on a slow runner the reload's own GET / stalls past the settle budget (kyo-http drives
+    // one connection serially, so the nav cannot share the busy socket). Isolating the hung request on
+    // its own origin leaves the main origin's socket group clean, so the reload navigation always binds a
+    // fresh socket. Settle.Load is used on the initial goto too so it does not wait on the never-ending tail.
     "Browser.reload(settle = Browser.Settle.Load) returns before slow-tail XHR completes" in {
-        val html =
-            """<!doctype html><html><body><h1>chatty</h1>
-              |<script>
-              |  // After the load event, kick off a single fetch that takes ~2s to settle.
-              |  window.addEventListener('load', () => {
-              |    setTimeout(() => { fetch('/slow').catch(() => {}); }, 0);
-              |  });
-              |</script></body></html>""".stripMargin
-        val htmlBytes = Span.fromUnsafe(html.getBytes("UTF-8"))
-        val htmlHandler = HttpRoute.getRaw("/").response(_.bodyBinary).handler { _ =>
-            HttpResponse.ok(htmlBytes).addHeader("Content-Type", "text/html; charset=utf-8")
-        }
         val slowHandler = HttpRoute.getRaw("/slow").response(_.bodyBinary).handler { _ =>
-            Async.sleep(2.seconds).andThen(
+            Async.sleep(1.hour).andThen(
                 HttpResponse.ok(Span.fromUnsafe("ok".getBytes("UTF-8")))
                     .addHeader("Content-Type", "text/plain")
             )
         }
-        withLocalhostServer(htmlHandler, slowHandler) { (host, port) =>
-            withBrowser {
-                // Use Settle.Load on the initial goto too so we don't burn the budget waiting for the slow tail.
-                Browser.goto(s"http://$host:$port/", Browser.Settle.Load).andThen {
-                    Clock.now.map { start =>
+        // Bring the slow origin up first so its port is known before the page that fetches it is built.
+        withLocalhostServer(slowHandler) { (slowHost, slowPort) =>
+            val html =
+                s"""<!doctype html><html><body><h1>chatty</h1>
+                   |<script>
+                   |  window.addEventListener('load', () => {
+                   |    setTimeout(() => { fetch('http://$slowHost:$slowPort/slow').catch(() => {}); }, 0);
+                   |  });
+                   |</script></body></html>""".stripMargin
+            val htmlBytes = Span.fromUnsafe(html.getBytes("UTF-8"))
+            val htmlHandler = HttpRoute.getRaw("/").response(_.bodyBinary).handler { _ =>
+                HttpResponse.ok(htmlBytes).addHeader("Content-Type", "text/html; charset=utf-8")
+            }
+            withLocalhostServer(htmlHandler) { (host, port) =>
+                withBrowser {
+                    Browser.goto(s"http://$host:$port/", Browser.Settle.Load).andThen {
                         Browser.reload(settle = Browser.Settle.Load).andThen {
-                            Clock.now.map { end =>
-                                val elapsed = end - start
-                                assert(
-                                    elapsed < 1500.millis,
-                                    s"Expected reload(Settle.Load) to return in <1.5s but took $elapsed"
-                                )
-                            }
+                            succeed("reload(Settle.Load) returned without waiting for the never-completing /slow fetch")
                         }
                     }
                 }

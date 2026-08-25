@@ -45,6 +45,11 @@ class JsIoDriverTest extends kyo.net.Test:
     private def buffer(bytes: Array[Byte]): sjs.Dynamic =
         sjs.Dynamic.global.Buffer.from(sjs.typedarray.byteArray2Int8Array(bytes).buffer)
 
+    /** How many times a standing probe is read while its peer is open: each read resumes it once, so a latch on any is the regression.
+      * The "stays false" leaf asserts over this read count, not a clock.
+      */
+    private val liveWatchReads = 25
+
     /** Poll `cond` on the fiber scheduler (never a thread block) until it holds or `bound` elapses; returns whether it held. */
     private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
         val deadline = java.lang.System.nanoTime() + bound.toNanos
@@ -80,15 +85,25 @@ class JsIoDriverTest extends kyo.net.Test:
         val driver  = JsIoDriver.init()
         openPair().map { case (serverSock, clientSock) =>
             val handle = JsHandle.init(serverSock, driver, Frame.internal)
-            // The peer stays connected and sends nothing: resuming yields no data and no 'end', so readableEnded/destroyed stay false.
+            // The peer stays connected and sends nothing: resuming yields no data and no 'end', so readableEnded/destroyed stay false. The probe
+            // is read a fixed number of times, a count of reads rather than a stretch of wall-clock time, and every one must report false.
             assert(!driver.isPeerClosed(handle), "first isPeerClosed returns false")
-            Async.sleep(300.millis).map { _ =>
-                val stillOpen = !driver.isPeerClosed(handle)
-                discard(clientSock.destroy())
-                driver.closeHandle(handle)
-                driver.close()
-                assert(stillOpen, "isPeerClosed must stay false for a live peer that has not sent a FIN")
-                succeed
+            Loop(0) { i =>
+                if i >= liveWatchReads then Loop.done(true)
+                else if driver.isPeerClosed(handle) then Loop.done(false)
+                else Async.sleep(1.milli).andThen(Loop.continue(i + 1))
+            }.map { stayedOpen =>
+                assert(stayedOpen, "isPeerClosed must stay false for a live peer that has not sent a FIN")
+            }.andThen {
+                // Prove the probe was live, not dead: half-closing the peer now must make it observe the FIN. Without this a probe that never
+                // resumed the socket would report false just as happily, proving nothing.
+                discard(clientSock.end())
+                awaitCondition(5.seconds)(driver.isPeerClosed(handle)).map { observed =>
+                    discard(clientSock.destroy())
+                    driver.closeHandle(handle)
+                    driver.close()
+                    assert(observed, "the probe was not live: the peer FIN was never observed after the reads above")
+                }
             }
         }
     }
@@ -108,11 +123,19 @@ class JsIoDriverTest extends kyo.net.Test:
             _        <- Scope.ensure(Sync.defer(listener.close()))
             client   <- transport.connect("127.0.0.1", listener.port, config = config).safe.get
             accepted <- acceptedP.asInstanceOf[Fiber.Unsafe[kyo.net.Connection, Abort[Closed]]].safe.get
-            // Two writes with a gap so Node emits two 'data' events: one fills the cap-1 inbound, the other overflows and parks the pump.
-            _         <- Abort.run[Closed](client.outbound.safe.put(Span.fromUnsafe(Array.fill[Byte](64)(1))))
-            _         <- Async.sleep(150.millis)
-            _         <- Abort.run[Closed](client.outbound.safe.put(Span.fromUnsafe(Array.fill[Byte](64)(2))))
-            _         <- Async.sleep(150.millis)    // let the accepted-side ReadPump read both chunks and park on the put
+            // Two writes, the second sent only once the first has landed in the accepted side's inbound channel, so Node emits them as two
+            // separate 'data' events: one fills the cap-1 channel, the other overflows it and parks the pump.
+            _      <- Abort.run[Closed](client.outbound.safe.put(Span.fromUnsafe(Array.fill[Byte](64)(1))))
+            filled <- awaitCondition(5.seconds)(accepted.inbound.full().getOrElse(false))
+            _ = assert(filled, "the first chunk never reached the accepted side's inbound channel, so the second could not overflow it")
+            _ <- Abort.run[Closed](client.outbound.safe.put(Span.fromUnsafe(Array.fill[Byte](64)(2))))
+            // A pump that overflows parks by registering a put, so a pending put IS the parked state. Awaiting it guarantees the FIN below lands
+            // on a parked pump: a FIN arriving while a read is still armed takes the ordinary EOF path, leaving the grace reclaim untested.
+            parked <- awaitCondition(5.seconds)(accepted.inbound.pendingPuts().getOrElse(0) > 0)
+            _ = assert(
+                parked,
+                "the accepted-side ReadPump never parked on the full inbound channel, so the FIN below would not exercise the grace reclaim"
+            )
             _         <- Sync.defer(client.close()) // FIN with the accepted-side pump parked
             reclaimed <- awaitCondition(5.seconds)(!accepted.isOpen)
         yield assert(

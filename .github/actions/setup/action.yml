@@ -54,10 +54,9 @@ runs:
       if: ${{ contains(inputs.os, 'linux') }}
       shell: bash
       run: |
-        # The Native link phase can overcommit the 16GB runner (a large sbt driver heap plus
-        # forked clang jobs), and the stock runner swap has been observed fully exhausted right
-        # before kernel OOM kills. Extra swap turns a marginal overcommit into slowdown instead
-        # of a SIGKILL. Best-effort: a runner that cannot host the file keeps its stock swap.
+        # The Native link phase can overcommit the 16GB runner (large sbt driver heap plus forked
+        # clang jobs); extra swap turns a marginal overcommit into slowdown instead of an OOM kill.
+        # Best-effort: a runner that cannot host the file keeps its stock swap.
         for dir in /mnt "${RUNNER_TEMP:-/tmp}"; do
           swapfile="$dir/kyo-swapfile"
           if sudo fallocate -l 8G "$swapfile" 2>/dev/null \
@@ -89,20 +88,6 @@ runs:
       shell: bash
       run: bash scripts/apt-install.sh liburing-dev
 
-    # liburing is a build-time-only dependency of the kyo-net io_uring shim (kyo_uring.c), statically
-    # linked so the shipped artifact has no runtime liburing dependency. The JVM target compiles the shim
-    # via the kyo-ffi plugin's cc; the Native target links it through the Scala Native linker.
-    - name: Install liburing (Linux)
-      if: ${{ contains(inputs.os, 'linux') && (inputs.target == 'JVM' || inputs.target == 'Native') }}
-      uses: nick-fields/retry@v4
-      with:
-        max_attempts: 3
-        timeout_minutes: 5
-        retry_wait_seconds: 15
-        command: |
-          sudo apt-get update
-          sudo apt-get install -y -o Acquire::Retries=3 liburing-dev
-
     - name: Install podman (Linux)
       if: ${{ contains(inputs.os, 'linux') }}
       shell: bash
@@ -129,7 +114,15 @@ runs:
       shell: bash
       run: |
         uid="$(id -u)"
+        # Delegate cgroup controllers (notably pids) to the rootless user's systemd manager so podman
+        # can create per-container cgroups. Some runner images delegate to user slices by default and
+        # some do not; this drop-in makes it deterministic across images. It must be in place before
+        # the user manager starts, so write it, reload, then (re)start user@$uid.service to pick it up.
+        sudo mkdir -p /etc/systemd/system/user@.service.d
+        printf '[Service]\nDelegate=yes\n' | sudo tee /etc/systemd/system/user@.service.d/delegate.conf >/dev/null
+        sudo systemctl daemon-reload
         sudo loginctl enable-linger "$uid"
+        sudo systemctl restart "user@$uid.service" 2>/dev/null || true
         for _ in $(seq 1 20); do
           [ -d "/run/user/$uid" ] && break
           sleep 1
@@ -139,6 +132,9 @@ runs:
           exit 1
         fi
         export XDG_RUNTIME_DIR="/run/user/$uid"
+        # Attribution: make the delegated controller set greppable in the job log next to any
+        # container failure (the 'pids' controller must be present for per-container cgroups).
+        echo "podman cgroup delegation: user-$uid.slice controllers=[$(cat /sys/fs/cgroup/user.slice/user-$uid.slice/cgroup.controllers 2>/dev/null)]"
         # Force the runc OCI runtime. The crun shipped on the pre-20260810 runner images fails to
         # start containers with "crun: unknown version specified" (an OCI config version it
         # rejects), which fails every kyo-pod container integration test; runc accepts the config
@@ -168,6 +164,10 @@ runs:
           exit 1
         fi
         echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+        # Print podman version and cgroup manager so container failures in the log are attributable.
+        echo "podman version: $(podman --version 2>/dev/null); cgroupManager: $(podman info --format '{{.Host.CgroupManager}}' 2>/dev/null)"
+        podman info | grep -iE 'cgroup|rootless' || true
+        podman version
         # Health gate: exercises the full podman cycle (create, start, exec) and the docker
         # daemon, with per-component diagnostics, so a broken container stack fails here with a
         # named cause instead of surfacing two hours later across the kyo-pod suites (#1881).
@@ -213,10 +213,20 @@ runs:
         echo LIBPATH=%LIBPATH%>>"%GITHUB_ENV%"
         where cl
 
-    - uses: coursier/setup-action@v3.0.0
+    # coursier/setup-action is fetched from codeload like any `uses:`, and the runner retries that
+    # download only a few times with a short backoff, which a transient GitHub 429 (a rate-limit window
+    # of tens of seconds) outlasts, failing setup before any test runs. nick-fields/retry wraps `run:`
+    # commands, not a `uses:` action, so retry the action through wretry: it re-runs coursier/setup-action
+    # up to attempt_limit times with attempt_delay ms between attempts, riding out a throttled download.
+    - name: Set up JDK + sbt (coursier)
+      uses: Wandalen/wretry.action@v3.8.0
       with:
-        jvm: corretto:25
-        apps: sbt
+        action: coursier/setup-action@v3.0.0
+        with: |
+          jvm: corretto:25
+          apps: sbt
+        attempt_limit: 4
+        attempt_delay: 30000
 
     - name: Verify sbt resolves in bash (Windows)
       if: ${{ contains(inputs.os, 'windows') }}

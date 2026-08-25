@@ -1138,15 +1138,12 @@ class BrowserReadTest extends BrowserTest:
 
     "textAll returns Chunk.empty without retrying when no elements match" in {
         withBrowser {
-            // Configure a deliberately long retry budget; the fast-path must skip it entirely on the empty case.
-            Browser.withConfig(_.retrySchedule(Schedule.fixed(500.millis).take(20))) {
+            // A one-hour retry delay makes any retry a hang (caught by the suite timeout), so the empty-match fast path
+            // returning at all proves it did not retry.
+            Browser.withConfig(_.retrySchedule(Schedule.fixed(1.hour).take(20))) {
                 onPage("<div>No items</div>") {
-                    timed(Browser.textAll(Browser.Selector.css("li.item"))).map { case (elapsed, texts) =>
+                    Browser.textAll(Browser.Selector.css("li.item")).map { texts =>
                         assert(texts.isEmpty, s"Expected empty but got ${texts.size} items")
-                        assert(
-                            elapsed < 1.second,
-                            s"Expected fast-path return < 1s (no retry wait) but took ${elapsed.toMillis}ms"
-                        )
                     }
                 }
             }
@@ -1172,14 +1169,11 @@ class BrowserReadTest extends BrowserTest:
 
     "attributeAll returns Chunk.empty without retrying when no elements match" in {
         withBrowser {
-            Browser.withConfig(_.retrySchedule(Schedule.fixed(500.millis).take(20))) {
+            // One-hour retry delay: any retry hangs (caught by the suite timeout), so returning at all proves the fast path skipped retrying.
+            Browser.withConfig(_.retrySchedule(Schedule.fixed(1.hour).take(20))) {
                 onPage("<div>No links</div>") {
-                    timed(Browser.attributeAll(Browser.Selector.css("a"), "href")).map { case (elapsed, hrefs) =>
+                    Browser.attributeAll(Browser.Selector.css("a"), "href").map { hrefs =>
                         assert(hrefs.isEmpty, s"Expected empty but got ${hrefs.size} hrefs")
-                        assert(
-                            elapsed < 1.second,
-                            s"Expected fast-path return < 1s (no retry wait) but took ${elapsed.toMillis}ms"
-                        )
                     }
                 }
             }

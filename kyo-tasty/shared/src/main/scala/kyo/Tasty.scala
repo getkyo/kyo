@@ -4259,7 +4259,10 @@ object Tasty:
                     val n          = cur.name.asString
                     val nextAcc    = if n.nonEmpty then n :: acc else acc
                     val ownerIdCur = cur.ownerId
-                    if ownerIdCur == cur.id || ownerIdCur.value == -1 then nextAcc
+                    // A compound flat package name (e.g. "scala.annotation") already carries its full dotted prefix, so stop rather than
+                    // re-walk: re-prepending a same-prefix owner would double it ("scala.scala.annotation"). Simple names still walk their chain.
+                    if (cur.isInstanceOf[Symbol.Package] && n.indexOf('.') >= 0) || ownerIdCur == cur.id || ownerIdCur.value == -1 then
+                        nextAcc
                     else
                         this.symbol(ownerIdCur) match
                             case Maybe.Present(ownerSym) if ownerSym.id != cur.id && ownerSym.name.asString.nonEmpty =>

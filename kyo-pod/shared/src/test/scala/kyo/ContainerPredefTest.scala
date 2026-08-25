@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.*
 import kyo.ContainerPredef.MongoDB
 import kyo.ContainerPredef.MySQL
 import kyo.ContainerPredef.Postgres
@@ -33,6 +34,13 @@ class ContainerPredefTest extends BasePodTest:
             }
             "Postgres.Config.default == Postgres.Config()" in {
                 assert(Postgres.Config.default == Postgres.Config())
+            }
+            "readinessBudget defaults to 120s and its builder is immutable" in {
+                val base    = Postgres.Config.default
+                val updated = base.readinessBudget(30.seconds)
+                assert(base.readinessBudget == 120.seconds)
+                assert(updated.readinessBudget == 30.seconds)
+                assert(updated.port == base.port)
             }
         }
     }
@@ -68,6 +76,13 @@ class ContainerPredefTest extends BasePodTest:
             }
             "MySQL.Config.default == MySQL.Config()" in {
                 assert(MySQL.Config.default == MySQL.Config())
+            }
+            "readinessBudget defaults to 120s and its builder is immutable" in {
+                val base    = MySQL.Config.default
+                val updated = base.readinessBudget(45.seconds)
+                assert(base.readinessBudget == 120.seconds)
+                assert(updated.readinessBudget == 45.seconds)
+                assert(updated.serverArgs == base.serverArgs)
             }
         }
         "buildContainerConfig" - {
@@ -154,6 +169,27 @@ class ContainerPredefTest extends BasePodTest:
             "MongoDB.Config.default == MongoDB.Config()" in {
                 assert(MongoDB.Config.default == MongoDB.Config())
             }
+            "readinessBudget defaults to 120s and its builder is immutable" in {
+                val base    = MongoDB.Config.default
+                val updated = base.readinessBudget(90.seconds)
+                assert(base.readinessBudget == 120.seconds)
+                assert(updated.readinessBudget == 90.seconds)
+                assert(updated.port == base.port)
+            }
+        }
+    }
+
+    "readinessScript" - {
+        "embeds the configured budget as the loop deadline" in {
+            // The generated shell loop computes its end as `date +%s` plus the budget in seconds, so a fixture's
+            // readinessBudget must appear verbatim in the script. This pins the flow-through that the
+            // Container.HealthCheck closure otherwise hides (it exposes only check/schedule, not the script).
+            val script = ContainerPredef.readinessScript(Chunk("psql"), 30.seconds)
+            assert(script.contains("+30)"), s"budget seconds must reach the loop deadline; got: $script")
+        }
+        "carries a Config's readinessBudget (default 120s)" in {
+            val budget = Postgres.Config.default.readinessBudget
+            assert(ContainerPredef.readinessScript(Chunk("psql"), budget).contains("+120)"))
         }
     }
 

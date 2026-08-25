@@ -72,4 +72,21 @@ private[internal] object DaemonErrorPhrases:
       */
     val AlreadyInUse: Seq[String] = Seq("already in use")
 
+    /** Phrases matching the "container is not in the running state" condition shared by both backends.
+      *
+      * The daemon refuses a state-dependent operation (exec-create, top) on a non-running container with one of these. Podman's
+      * docker-compat shim reports them as HTTP 500 `container state improper`, which the wire status and `response` field fail to pin
+      * down, so matching the body text is the only reliable signal. The HTTP backend maps this family to
+      * [[ContainerAlreadyStoppedException]] so callers can tell a not-running condition from an opaque failure. The shell backend
+      * classifies the same strings via `ShellBackend.isDockerDaemonError` and `ErrorPatterns.AlreadyStopped`.
+      */
+    val NotRunning: Seq[String] = Seq(
+        "container state improper",
+        "can only create exec sessions on running containers",
+        "top can only be used on running containers",
+        "is not running",
+        "is already stopped",
+        "already stopped"
+    )
+
 end DaemonErrorPhrases

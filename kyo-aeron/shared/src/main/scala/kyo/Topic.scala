@@ -18,6 +18,7 @@ import kyo.internal.AeronTransport
   * does not receive messages published as a subtype.
   *
   * @see [[Topic.run]] to handle `Topic` with an embedded or external driver
+  * @see [[AeronDriver.Settings]] to tune the embedded driver's liveness timeouts via `run(settings)`
   * @see [[Topic.publish]] to publish a stream of messages
   * @see [[Topic.stream]] to subscribe to a stream of messages
   * @see [[TopicException]] for the failures publish and stream can abort with
@@ -46,7 +47,8 @@ object Topic:
       *
       * The zero-config entry point. A fresh driver and client are created before `v` runs and closed
       * when `v` finishes, normally or not. Concurrent `Topic.run` calls are isolated from one another.
-      * To use a driver you manage yourself, take the `run(aeronDir)` or `run(client)` overload.
+      * To widen or shrink the embedded driver's timeouts, take the `run(settings)` overload; to use a
+      * driver you manage yourself, take the `run(aeronDir)` or `run(client)` overload.
       *
       * @param v
       *   the computation requiring `Topic` capabilities
@@ -58,10 +60,58 @@ object Topic:
       *   [[TopicTransportFailedException]] instead.
       */
     def run[A, S](v: A < (Topic & S))(using Frame): A < (Async & S) =
+        val (livenessNs, unblockNs) = embeddedDriverTimeouts(AeronDriver.Settings.embedded)
+        runEmbedded(livenessNs, unblockNs)(v)
+
+    /** Runs `v` with an embedded driver whose liveness and publication-unblock timeouts come from
+      * `settings` instead of the [[AeronDriver.Settings.embedded]] defaults the no-arg [[run]] applies.
+      *
+      * Reach for this on a host where the default embedded timeouts do not fit: a driver conductor
+      * starved past the liveness window is read as client death, so a slower or busier host may need a
+      * wider one. Every other embedded behaviour is identical to `run(v)`.
+      *
+      * @param settings
+      *   embedded-driver timeouts; `publicationUnblockTimeout` must exceed `clientLivenessTimeout`
+      *   when both are set (non-Zero), else the call aborts [[TopicTransportFailedException]] before
+      *   any driver starts. [[Duration.Zero]] keeps Aeron's own default for that timeout.
+      * @param v
+      *   the computation requiring `Topic` capabilities
+      * @return
+      *   the computation result within `Async`, aborting [[TopicTransportFailedException]] only on
+      *   inconsistent `settings`; embedded-startup defects still surface as a panic, as in `run(v)`.
+      */
+    def run[A, S](settings: AeronDriver.Settings)(v: A < (Topic & S))(using
+        Frame
+    ): A < (Async & Abort[TopicTransportFailedException] & S) =
+        if settings.publicationUnblockTimeout != Duration.Zero &&
+            settings.publicationUnblockTimeout <= settings.clientLivenessTimeout
+        then
+            Abort.fail(TopicTransportFailedException(
+                s"publicationUnblockTimeout (${settings.publicationUnblockTimeout}) must exceed " +
+                    s"clientLivenessTimeout (${settings.clientLivenessTimeout})"
+            ))
+        else
+            val (livenessNs, unblockNs) = embeddedDriverTimeouts(settings)
+            runEmbedded(livenessNs, unblockNs)(v)
+        end if
+    end run
+
+    /** The driver-start nanos the embedded [[run]] overloads derive from `settings`, split out so the
+      * mapping is unit-testable without launching a driver.
+      */
+    private[kyo] def embeddedDriverTimeouts(settings: AeronDriver.Settings): (Long, Long) =
+        (settings.clientLivenessTimeout.toNanos, settings.publicationUnblockTimeout.toNanos)
+
+    /** Shared embedded-driver body for both `run(v)` and `run(settings)`: allocate a private
+      * directory, start a driver and client with the given timeouts, run `v`, then tear both down.
+      */
+    private def runEmbedded[A, S](clientLivenessNs: Long, publicationUnblockNs: Long)(
+        v: A < (Topic & S)
+    )(using Frame): A < (Async & S) =
         Scope.run {
             Abort.run[FileStructureException](Path.tempDir("kyo-aeron-embedded")).map {
                 case Result.Success(dir) =>
-                    AeronPlatform.embedded(dir.unsafe.show).map { runtime =>
+                    AeronPlatform.embedded(dir.unsafe.show, clientLivenessNs, publicationUnblockNs).map { runtime =>
                         // The driver deletes its own directory on close, once its conductor has
                         // stopped. The scope that owns the temp dir is the backstop for the paths
                         // that leaves behind: a driver that failed to launch, or one whose close did

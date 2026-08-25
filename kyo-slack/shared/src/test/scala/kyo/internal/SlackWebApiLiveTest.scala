@@ -31,8 +31,8 @@ class SlackWebApiLiveTest extends kyo.test.Test[Any]:
     private def withSlackServer[A](handlers: HttpHandler[?, ?, ?]*)(
         test: String => A < (Async & Abort[SlackException | HttpException] & Scope)
     )(using Frame): A < (Async & Abort[SlackException | HttpException] & Scope) =
-        HttpServer.init(0, "localhost")(handlers*).map { server =>
-            val base = s"http://localhost:${server.port}"
+        HttpServer.init(0, "127.0.0.1")(handlers*).map { server =>
+            val base = s"http://127.0.0.1:${server.port}"
             SlackWebApi.baseUrl.let(base) {
                 SlackWebApi.local.let(Present(bot))(test(base))
             }
@@ -104,8 +104,8 @@ class SlackWebApiLiveTest extends kyo.test.Test[Any]:
                 val received = req.fields.body
                 bodyRef.set(Present(received)).andThen(HttpResponse.ok(OkResp(true)))
             }
-            HttpServer.init(0, "localhost")(route).map { server =>
-                val hookUrl = s"http://localhost:${server.port}/hook"
+            HttpServer.init(0, "127.0.0.1")(route).map { server =>
+                val hookUrl = s"http://127.0.0.1:${server.port}/hook"
                 val msg = SlackMessage(
                     SlackId.ChannelId("C1"),
                     "updated",

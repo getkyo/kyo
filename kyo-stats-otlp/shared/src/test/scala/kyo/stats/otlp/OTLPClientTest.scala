@@ -11,9 +11,9 @@ class OTLPClientTest extends kyo.test.Test[Any]:
     override def config = super.config.leakCheckSockets(false)
 
     def testConfig(port: Int) = OTLPConfig(
-        endpoint = s"http://localhost:$port",
-        tracesEndpoint = s"http://localhost:$port/v1/traces",
-        metricsEndpoint = s"http://localhost:$port/v1/metrics",
+        endpoint = s"http://127.0.0.1:$port",
+        tracesEndpoint = s"http://127.0.0.1:$port/v1/traces",
+        metricsEndpoint = s"http://127.0.0.1:$port/v1/metrics",
         headers = Map.empty,
         timeout = 5.seconds,
         compression = "none",
@@ -49,7 +49,7 @@ class OTLPClientTest extends kyo.test.Test[Any]:
                     HttpResponse.ok.addField("body", ExportMetricsResponse())
                 }
             }
-            server <- HttpServer.init(0, "localhost")(traceHandler, metricHandler)
+            server <- HttpServer.init(0, "127.0.0.1")(traceHandler, metricHandler)
             config = testConfig(server.port)
             result <- test(config, traceCh, metricCh)
         yield result
@@ -271,7 +271,7 @@ class OTLPClientTest extends kyo.test.Test[Any]:
                             HttpResponse.ok.addField("body", ExportTraceResponse())
                         }
                 }
-                server <- HttpServer.init(0, "localhost")(traceHandler, defaultMetricHandler)
+                server <- HttpServer.init(0, "127.0.0.1")(traceHandler, defaultMetricHandler)
                 config = testConfig(server.port)
                 _        <- OTLPClient.sendTraces(config, mkSimpleTraceRequest(config, "retry-test"))
                 received <- traceCh.take
@@ -293,7 +293,7 @@ class OTLPClientTest extends kyo.test.Test[Any]:
                             HttpResponse.ok.addField("body", ExportTraceResponse())
                         }
                 }
-                server <- HttpServer.init(0, "localhost")(traceHandler, defaultMetricHandler)
+                server <- HttpServer.init(0, "127.0.0.1")(traceHandler, defaultMetricHandler)
                 config = testConfig(server.port)
                 _        <- OTLPClient.sendTraces(config, mkSimpleTraceRequest(config, "rate-limit-test"))
                 received <- traceCh.take
@@ -319,7 +319,7 @@ class OTLPClientTest extends kyo.test.Test[Any]:
                         )
                     }
                 }
-                server <- HttpServer.init(0, "localhost")(traceHandler, defaultMetricHandler)
+                server <- HttpServer.init(0, "127.0.0.1")(traceHandler, defaultMetricHandler)
                 config = testConfig(server.port)
                 _        <- OTLPClient.sendTraces(config, mkSimpleTraceRequest(config, "partial-test"))
                 received <- traceCh.take
@@ -463,7 +463,7 @@ class OTLPClientTest extends kyo.test.Test[Any]:
                         )
                     }
                 }
-                server <- HttpServer.init(0, "localhost")(traceHandler, metricHandler)
+                server <- HttpServer.init(0, "127.0.0.1")(traceHandler, metricHandler)
                 config = testConfig(server.port)
                 request = ExportMetricsRequest(
                     resourceMetrics = Seq(ResourceMetrics(

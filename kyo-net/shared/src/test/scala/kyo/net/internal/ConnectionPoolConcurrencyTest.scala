@@ -46,12 +46,13 @@ class ConnectionPoolConcurrencyTest extends Test:
       * full-ring drops. A `ConcurrentLinkedQueue` is used over a converter-backed set so the collector is portable to JS and Native.
       */
     private def mkPool(capacity: Int, discarded: ConcurrentLinkedQueue[Int]): ConnectionPool[NetAddress, Int] =
-        ConnectionPool.init[NetAddress, Int](
+        // Infinity timeout: no reaper, and idle-age is never compared, so the ambient clock is immaterial here.
+        Sync.Unsafe.evalOrThrow(ConnectionPool.init[NetAddress, Int](
             capacity,
             Duration.Infinity,
             _ => true,
             id => discard(discarded.add(id))
-        )
+        ))
 
     "ConnectionPool under contention" - {
 

@@ -95,10 +95,10 @@ Global / concurrentRestrictions := {
     val cores       = java.lang.Runtime.getRuntime.availableProcessors()
     val isCI        = sys.env.contains("CI")
     val testLimit   = 1 max (if (isCI) cores / 2 else math.ceil(cores * 0.8).toInt)
-    // Forked-test cap: how many forked test JVMs run concurrently. On CI we hard-cap at 2 so kyo-pod
-    // (which splits each suite into a podman fork and a docker fork via KYO_POD_RUNTIME pinning) ends
-    // up with at most one fork per daemon — strictly bounding container-daemon contention. Locally
-    // we allow up to half the cores for fast iteration; some same-daemon overlap is tolerable.
+    // Forked-test cap: how many forked test JVMs run concurrently. kyo-pod splits each suite into a
+    // podman fork and a docker fork (KYO_POD_RUNTIME pinning), so this bounds container-daemon
+    // contention. It is a numeric, daemon-blind cap (it does NOT guarantee one fork per daemon); real
+    // CI additionally serializes via SBT_TASK_LIMIT=1 (limitAll below). CI caps at 2; locally cores/2.
     val forkLimit = if (isCI) 2 else 1 max cores / 2
     Seq(
         Tags.limitAll(if (taskLimit != "0") taskLimit.toInt else cores),
@@ -201,13 +201,22 @@ lazy val `kyo-settings` = Seq(
     Test / testOptions += Tests.Argument(TestFrameworks.ScalaTest, "-oDG"),
     ThisBuild / versionScheme := Some("early-semver"),
     Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    // The process-lifetime default HttpClient is never closed, so its pool relies on the idle-expiry reaper to release
+    // sockets. Its 60s production idle timeout outlasts the leak check's 30s fd-drain window, so a connection pooled just
+    // before a fork ends would still be open at the check. Shorten it in the test fork only (production keeps 60s) so a
+    // reaped default-client connection drains well within the window. See kyo.http.client.defaultIdleTimeout.
+    Test / javaOptions += "-Dkyo.http.client.defaultIdleTimeout=2seconds",
     // Exclude generated FFI binding impls (src_managed *BindingsImpl from the kyo-ffi codegen): measuring
     // them tracks the generator, not hand-written code.
     coverageExcludedFiles := ".*src_managed.*",
-    // Compact object headers (JEP 519, a product flag in JDK 25 which the build requires) shrink the
-    // per-object header from 12-16 to 8 bytes. The test forks allocate heavily (kyo-tasty decodes 80k
-    // symbols), so this cuts heap pressure where the forks run closest to their cap.
-    Test / javaOptions += "-XX:+UseCompactObjectHeaders",
+    // Compact object headers (JEP 519) are buggy on JDK 25 under the forked test workload: heavy fiber
+    // concurrency + pervasive arraycopy (Chunk/Span) + G1GC hit JDK-8380060 and a G1 concurrent-mark
+    // metadata corruption, surfacing as a rare ClassNotFoundError for a class present on disk (the
+    // io_uring test flake). Force COH OFF in the forks explicitly so it stays off regardless of the
+    // driver's opts. The DRIVER JVM keeps COH ON (.jvmopts / CI JAVA_OPTS): it runs no forked-test
+    // workload, only compile and the Scala.js/Wasm linker, whose large graph needs COH's header
+    // savings to fit the 12 GB driver heap (without it the kyo-ui Wasm linker GC-thrashes to a hang).
+    Test / javaOptions += "-XX:-UseCompactObjectHeaders",
     // Forked test JVMs otherwise inherit no -Xmx and fall back to 25% of RAM (4GB on the 16GB CI
     // runners), too little for the heavy classpath-loading suites (kyo-tasty loads 80k-symbol
     // classpaths under globalK-way leaf concurrency). Pin an explicit fork heap on CI; with the
@@ -2740,9 +2749,13 @@ lazy val `kyo-pod` =
                     // (single-fork, no marker) are deliberately not matched (the trailing `s` distinguishes them).
                     val simpleName = test.name.split('.').last
                     val srcOpt     = testSrcDirs.flatMap(d => (d ** s"$simpleName.scala").get).headOption
+                    // Match actual CALLS to the marker-registering helpers (helper name immediately followed by `{` or `(`),
+                    // not mere textual mentions. A suite's scaladoc can reference `runBackends` (ContainerOrchestrationItTest
+                    // points readers at ContainerItTest) while the suite itself only uses the single-fork `runBackend`; a plain
+                    // `contains` check then forks that http-only suite per runtime and runs it twice against one daemon.
+                    val runtimeHelperCall = """\b(runBackendsLong|runBackends|runRuntimes)\s*[{(]""".r
                     val usesRuntimeMarkers = srcOpt.exists { f =>
-                        val src = IO.read(f)
-                        src.contains("runBackends") || src.contains("runRuntimes")
+                        runtimeHelperCall.findFirstIn(IO.read(f)).isDefined
                     }
                     val targetRuntimes = if (usesRuntimeMarkers) Seq("podman", "docker") else Seq.empty
                     if (targetRuntimes.isEmpty)

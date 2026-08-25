@@ -411,7 +411,7 @@ final private[kyo] class YamlReader private (
 
     def bytes(): Span[Byte] =
         val value = string()
-        try Span.from(java.util.Base64.getDecoder.decode(value))
+        try Span.fromUnsafe(kyo.internal.Base64s.decodeExact(value))
         catch
             case e: IllegalArgumentException => error(s"Invalid Base64: ${e.getMessage}")
     end bytes

@@ -86,7 +86,7 @@ echo "Running build-selftest.sh..."
 # 1. podman-ci exports CI=true, SBT_TASK_LIMIT=1, and the -Xmx12G driver into the container
 make_podman_stub 0; reset_logs
 run_build --env podman-ci test JVM >/dev/null 2>&1 || true
-if podman_log_has "-e CI=true" && podman_log_has "-e SBT_TASK_LIMIT=1" && podman_log_has "JAVA_OPTS=-Xmx12G -Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
+if podman_log_has "-e CI=true" && podman_log_has "-e SBT_TASK_LIMIT=1" && podman_log_has "JAVA_OPTS=-Xmx12G -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
 then record ok "podman-ci exports CI=true, SBT_TASK_LIMIT=1, and the full CI driver opts"
 else record no "podman-ci exports CI=true, SBT_TASK_LIMIT=1, and the full CI driver opts"; fi
 
@@ -179,6 +179,25 @@ if echo "$out" | grep -qF "env=direct arch=native action=test"
 then record ok "the pre-run echo is unconditional and appears before ci-test.sh runs"
 else record no "the pre-run echo is unconditional and appears before ci-test.sh runs"; fi
 
+# 13. podman-ci mirrors build.yml's Native env (heavy-module isolation + link CPU cap) for the
+# Native target only, so a local Native run reproduces the row's link staging; JVM stays clean.
+make_podman_stub 0; reset_logs
+run_build --env podman-ci test Native >/dev/null 2>&1 || true
+native_env_ok=no
+if podman_log_has "-e NATIVE_HEAVY=kyo-schema-tests" && podman_log_has "-e NATIVE_LINK_CPUS=2"; then native_env_ok=yes; fi
+reset_logs
+run_build --env podman-ci test JVM >/dev/null 2>&1 || true
+if [ "$native_env_ok" = yes ] && podman_log_lacks "NATIVE_HEAVY"
+then record ok "podman-ci Native gets NATIVE_HEAVY + NATIVE_LINK_CPUS; JVM does not"
+else record no "podman-ci Native gets NATIVE_HEAVY + NATIVE_LINK_CPUS; JVM does not"; fi
+
+# 14. a host NATIVE_HEAVY / NATIVE_LINK_CPUS value overrides the defaults into the container.
+make_podman_stub 0; reset_logs
+NATIVE_HEAVY="kyo-foo" NATIVE_LINK_CPUS=3 run_build --env podman-ci test Native >/dev/null 2>&1 || true
+if podman_log_has "-e NATIVE_HEAVY=kyo-foo" && podman_log_has "-e NATIVE_LINK_CPUS=3"
+then record ok "a host NATIVE_HEAVY / NATIVE_LINK_CPUS override reaches the container"
+else record no "a host NATIVE_HEAVY / NATIVE_LINK_CPUS override reaches the container"; fi
+
 # Negative control: a deliberately wrong check must flip FAIL to prove the harness
 # is not vacuous. Not counted in the scenario total.
 make_podman_stub 0; reset_logs
@@ -188,5 +207,5 @@ then echo "  SELFTEST-BUG: negative control passed (vacuous harness)"; FAIL=$((F
 
 echo ""
 echo "Results: $PASS/$TOTAL passed, $FAIL failed"
-[ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 12 ]
+[ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 14 ]
 exit $?

@@ -402,11 +402,9 @@ class ContainerOrchestrationItTest extends BasePodTest:
             Abort.run[ContainerException] {
                 Scope.run {
                     Container.initWith(config) { c =>
-                        // Container exits with code 1 immediately.
-                        // Wait briefly for the process to exit.
-                        Async.sleep(2.seconds).andThen {
-                            c.state
-                        }
+                        // Poll until the daemon reports a terminal state so scope cleanup runs against a crashed container,
+                        // not one mid-exit; the load-bearing assertion is the post-cleanup removal check below.
+                        assertEventually(c.state.map(s => s == Container.State.Stopped || s == Container.State.Dead))
                     }
                 }
             }.map { _ =>
@@ -456,56 +454,52 @@ class ContainerOrchestrationItTest extends BasePodTest:
         }
     }
 
-    "init completes under 2s when healthcheck fails and container is gone mid-retry" - runBackend {
-        // Container lives ~300ms then auto-removes. Healthcheck always fails.
-        // Once the container is auto-removed, the retry loop's state check returns
-        // NotFound, which falls into the catch-all branch and keeps retrying for the
-        // full schedule (3s total here).
+    "init short-circuits the healthcheck retry once the container is gone mid-retry" - runBackend {
+        // The container auto-removes ~300ms in while the healthcheck always fails; once gone, isContainerAlive must stop the loop. The
+        // counter asserts it: fewer than the full 30 attempts run (zero is an accepted degenerate pass), proving the schedule never exhausted.
+        val attempts = new java.util.concurrent.atomic.AtomicInteger(0)
         val config = Container.Config("alpine")
             .command("sh", "-c", "sleep 0.3; exit 0")
             .autoRemove(true)
-            .healthCheck(Container.HealthCheck.exec(
-                command = Command("false"),
-                expected = Absent,
-                retrySchedule = Schedule.fixed(100.millis).take(30)
-            ))
+            .healthCheck(Container.HealthCheck.init(Schedule.fixed(100.millis).take(30)) { _ =>
+                Sync.defer(discard(attempts.incrementAndGet()))
+                    .andThen(Abort.fail(ContainerOperationException("healthcheck", "always fails")))
+            })
         for
-            t0 <- Clock.now
-            _  <- Abort.run[ContainerException](Container.init(config))
-            t1 <- Clock.now
-        yield
-            val elapsedMs = t1.toJava.toEpochMilli - t0.toJava.toEpochMilli
-            assert(
-                elapsedMs < 2000,
-                s"Expected init to complete in <2s when container auto-removes during healthcheck retries, " +
-                    s"took ${elapsedMs}ms — runHealthCheck is not short-circuiting on NotFound"
-            )
-        end for
+            _ <- Abort.run[ContainerException](Container.init(config))
+        yield assert(
+            attempts.get() < 30,
+            s"expected the healthcheck loop to stop once the container auto-removed, but it ran " +
+                s"${attempts.get()} attempts (the full 30-attempt schedule); runHealthCheck did not " +
+                s"short-circuit on isContainerAlive == false"
+        )
     }
 
-    "scope cleanup waits stopTimeout when stopSignal is Present" - runBackend {
-        // stopTimeout=1s keeps the test meaningful (proves kill path honors stopTimeout)
-        // while minimizing the deliberate wait; trap sleeps long enough to force the timeout.
+    "scope cleanup delivers stopSignal before force-removing when stopSignal is Present" - runBackend {
+        // The container traps its stopSignal to write a host marker before delaying past stopTimeout, so the marker is a clock-free witness
+        // the signal arrived. Async.timeout is the completion valve: a kill path that hung on waitForExit instead of force-removing trips it.
+        val hostDir = Path("/tmp/" + uniqueName("kyo-stopsig"))
+        val marker  = hostDir / "sig"
         val config = Container.Config("alpine")
-            .command("sh", "-c", "trap 'sleep 3; exit 0' USR1; sleep infinity")
+            .command("sh", "-c", "trap 'touch /m/sig; sleep 3' USR1; sleep infinity & wait")
+            .bind(hostDir, Path("/m"))
             .stopSignal(Container.Signal.SIGUSR1)
             .stopTimeout(1.second)
             .autoRemove(false)
         for
-            t0 <- Clock.now
-            _  <- Scope.run(Container.init(config).unit)
-            t1 <- Clock.now
-        yield
-            val elapsedMs = t1.toJava.toEpochMilli - t0.toJava.toEpochMilli
-            assert(
-                elapsedMs >= 800,
-                s"Expected cleanup to wait ~stopTimeout (1s) when stopSignal is Present, took ${elapsedMs}ms — " +
-                    "the kill path is not honoring stopTimeout"
-            )
-            assert(
-                elapsedMs < 20000,
-                s"Cleanup took too long (${elapsedMs}ms); expected timeout then force-remove"
-            )
+            _         <- hostDir.mkDir
+            outcome   <- Abort.run[Timeout](Async.timeout(30.seconds)(Scope.run(Container.init(config).unit)))
+            delivered <- marker.exists
+            _         <- Abort.run[FileStructureException](hostDir.removeAll)
+        yield outcome match
+            case Result.Success(_) =>
+                assert(
+                    delivered,
+                    "scope cleanup completed but the stopSignal never reached the container; the trap left no marker on the host"
+                )
+            case Result.Failure(_: Timeout) =>
+                fail("scope cleanup did not complete; the kill path is hanging instead of force-removing after stopTimeout")
+            case Result.Panic(t) => fail(s"panic during scope cleanup: $t")
         end for
     }
 

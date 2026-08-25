@@ -4,7 +4,6 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kyo.compat.*
 import scala.concurrent.Promise
-import scala.concurrent.duration.*
 import scala.util.Failure
 import scala.util.Success
 
@@ -107,12 +106,14 @@ class FiberTest extends CompatTest:
         val t        = new RuntimeException("x")
         val c =
             CFiber.init(CIO.fail(t)).flatMap { fib =>
-                fib.onComplete {
-                    case Failure(e) => CIO.defer { observed.set(e) }
-                    case Success(_) => CIO.unit
-                }.flatMap { _ =>
-                    CIO.sleep(100.millis).flatMap { _ =>
-                        CIO.defer(observed.get)
+                CPromise.init[Unit].flatMap { fired =>
+                    fib.onComplete {
+                        case Failure(e) => CIO.defer { observed.set(e) }.flatMap(_ => fired.succeed(()).unit)
+                        case Success(_) => fired.succeed(()).unit
+                    }.flatMap { _ =>
+                        fired.get.flatMap { _ =>
+                            CIO.defer(observed.get)
+                        }
                     }
                 }
             }
@@ -129,11 +130,13 @@ class FiberTest extends CompatTest:
             CIO.defer { throw new java.lang.Error("panic") }
         val c =
             CFiber.init(body).flatMap { fib =>
-                fib.onComplete { _ =>
-                    CIO.defer { val _ = ctr.incrementAndGet() }
-                }.flatMap { _ =>
-                    CIO.sleep(200.millis).flatMap { _ =>
-                        CIO.defer(ctr.get)
+                CPromise.init[Unit].flatMap { fired =>
+                    fib.onComplete { _ =>
+                        CIO.defer { val _ = ctr.incrementAndGet() }.flatMap(_ => fired.succeed(()).unit)
+                    }.flatMap { _ =>
+                        fired.get.flatMap { _ =>
+                            CIO.defer(ctr.get)
+                        }
                     }
                 }
             }
@@ -149,11 +152,14 @@ class FiberTest extends CompatTest:
         val ctr = new java.util.concurrent.atomic.AtomicInteger(0)
         val c =
             CFiber.init(CIO.defer { 1 }).flatMap { fib =>
-                fib.onComplete { _ =>
-                    CIO.defer { throw new RuntimeException("boom-cb") }
-                }.flatMap { _ =>
-                    CIO.sleep(300.millis).flatMap { _ =>
-                        CIO.defer { val _ = ctr.incrementAndGet(); ctr.get }
+                CPromise.init[Unit].flatMap { entered =>
+                    fib.onComplete { _ =>
+                        // Signal the callback ran, THEN fail: the surrounding chain must still progress.
+                        entered.succeed(()).flatMap(_ => CIO.defer { throw new RuntimeException("boom-cb") })
+                    }.flatMap { _ =>
+                        entered.get.flatMap { _ =>
+                            CIO.defer { val _ = ctr.incrementAndGet(); ctr.get }
+                        }
                     }
                 }
             }
@@ -180,25 +186,18 @@ class FiberTest extends CompatTest:
         }
     }
 
-    "CFiber.get on already-completed fiber returns immediately" in run {
-        // Spawn CFiber.init(CIO.value(42)). Await first .get to ensure the
-        // fiber has completed; then measure the latency of a second .get.
-        val c = CFiber.init(CIO.value(42)).flatMap { fiber =>
-            fiber.get.flatMap { _ =>
-                CIO.defer(java.lang.System.nanoTime()).flatMap { before =>
-                    fiber.get.flatMap { v =>
-                        CIO.defer {
-                            val after   = java.lang.System.nanoTime()
-                            val deltaMs = (after - before) / 1_000_000L
-                            (v, deltaMs)
-                        }
-                    }
-                }
+    "CFiber.get on an already-completed fiber replays the outcome without re-running the body" in run {
+        // "Already completed" is a state, not a latency. The body increments a counter: a replayed outcome leaves it
+        // at 1, a re-run at 2; a get that never resumes surfaces through testTimeout.
+        val runs = new AtomicInteger(0)
+        val c = CFiber.init(CIO.defer { runs.incrementAndGet() }).flatMap { fiber =>
+            fiber.get.flatMap { first =>
+                fiber.get.map(second => (first, second, runs.get))
             }
         }
-        c.map { case (v, deltaMs) =>
-            assert(v == 42, s"expected 42, got $v")
-            assert(deltaMs < 100L, s"fiber.get on already-completed fiber took ${deltaMs}ms, expected < 100ms")
+        c.map { case (first, second, count) =>
+            assert(first == 1 && second == 1, s"expected both gets to yield 1, got ($first, $second)")
+            assert(count == 1, s"fiber body ran $count times, expected exactly 1")
         }
     }
     "CFiber.init(...).get returns the value" in run {
@@ -210,16 +209,16 @@ class FiberTest extends CompatTest:
     "CFiber onComplete fires with the fiber's outcome" in run {
         // Register onComplete(cb) on a fiber that succeeds with 7.
         // Assert cb fires with Success(7).
-        val stored = new java.util.concurrent.atomic.AtomicReference[scala.util.Try[Int]](null)
         val c = CFiber.init(CIO.value(7)).flatMap { fiber =>
-            fiber.onComplete { t =>
-                CIO.defer { stored.set(t) }
-            }.flatMap { _ =>
-                CIO.sleep(100.millis).map { _ => stored.get() }
+            CPromise.init[scala.util.Try[Int]].flatMap { fired =>
+                fiber.onComplete { t =>
+                    fired.succeed(t).unit
+                }.flatMap { _ =>
+                    fired.get
+                }
             }
         }
         c.map { result =>
-            assert(result != null, "onComplete callback was not invoked")
             result match
                 case scala.util.Success(v) => assert(v == 7, s"expected Success(7), got $result")
                 case other                 => fail(s"expected Success(7), got $other")
@@ -256,13 +255,15 @@ class FiberTest extends CompatTest:
             gate.future.onComplete(t => cb(t))(using scala.concurrent.ExecutionContext.parasitic)
         }
         val c = CFiber.init(body).flatMap { fib =>
-            val onCompleteCIO = fib.onComplete(_ => CIO.defer { val _ = ctr.incrementAndGet() })
-            // Counter must be 0 before running the onComplete CIO.
-            assert(ctr.get == 0, s"counter must be 0 after building onCompleteCIO, got ${ctr.get}")
-            onCompleteCIO.flatMap { _ =>
-                CIO.defer { gate.success(99) }.flatMap { _ =>
-                    CIO.sleep(100.millis).map { _ =>
-                        assert(ctr.get == 1, s"counter must be 1 after fiber completes, got ${ctr.get}")
+            CPromise.init[Unit].flatMap { fired =>
+                val onCompleteCIO = fib.onComplete(_ => CIO.defer { val _ = ctr.incrementAndGet() }.flatMap(_ => fired.succeed(()).unit))
+                // Counter must be 0 before running the onComplete CIO.
+                assert(ctr.get == 0, s"counter must be 0 after building onCompleteCIO, got ${ctr.get}")
+                onCompleteCIO.flatMap { _ =>
+                    CIO.defer { gate.success(99) }.flatMap { _ =>
+                        fired.get.map { _ =>
+                            assert(ctr.get == 1, s"counter must be 1 after fiber completes, got ${ctr.get}")
+                        }
                     }
                 }
             }

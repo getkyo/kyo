@@ -38,10 +38,10 @@ class McpResourceSubscribeTest extends Test:
                 for
                     _ <- client.subscribeResource(uri1)
                     _ <- Abort.run[McpConnectionClosedException](srv.notifyResourceUpdated(uri1))
-                    _ <- Async.sleep(50.millis)
+                    _ <- assertEventually(Sync.defer(subscribedCounter.get()(using AllowUnsafe.embrace.danger) >= 1))
                     c1 = subscribedCounter.get()(using AllowUnsafe.embrace.danger)
+                    // uri2 has no subscriber, so notifyResourceUpdated sends nothing: notSubscribedCounter stays 0, no wait needed.
                     _ <- Abort.run[McpConnectionClosedException](srv.notifyResourceUpdated(uri2))
-                    _ <- Async.sleep(50.millis)
                     c2 = notSubscribedCounter.get()(using AllowUnsafe.embrace.danger)
                     _ <- srv.closeNow
                     _ <- client.closeNow
@@ -71,11 +71,11 @@ class McpResourceSubscribeTest extends Test:
                 for
                     _ <- client.subscribeResource(uri1)
                     _ <- Abort.run[McpConnectionClosedException](srv.notifyResourceUpdated(uri1))
-                    _ <- Async.sleep(50.millis)
+                    _ <- assertEventually(Sync.defer(counter.get()(using AllowUnsafe.embrace.danger) >= 1))
                     c1 = counter.get()(using AllowUnsafe.embrace.danger)
                     _ <- client.unsubscribeResource(uri1)
+                    // After unsubscribe uri1 has no subscriber, so notifyResourceUpdated sends nothing: counter unchanged, no wait.
                     _ <- Abort.run[McpConnectionClosedException](srv.notifyResourceUpdated(uri1))
-                    _ <- Async.sleep(50.millis)
                     c2 = counter.get()(using AllowUnsafe.embrace.danger)
                     _ <- srv.closeNow
                     _ <- client.closeNow
@@ -104,8 +104,8 @@ class McpResourceSubscribeTest extends Test:
                 McpClient.initUnscoped(tc, McpInfo("nosub-test"), McpCapabilities.Client(), updatedRoute)
             ).flatMap { (srv, client) =>
                 for
+                    // subscribe=false: notifyResourceUpdated is a no-op that sends nothing, so counter stays 0 with no wait.
                     _ <- srv.notifyResourceUpdated(uri1)
-                    _ <- Async.sleep(50.millis)
                     c = counter.get()(using AllowUnsafe.embrace.danger)
                     _ <- srv.closeNow
                     _ <- client.closeNow

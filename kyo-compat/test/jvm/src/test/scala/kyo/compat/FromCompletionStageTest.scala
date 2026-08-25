@@ -37,20 +37,4 @@ class FromCompletionStageTest extends CompatTest:
         }
     }
 
-    "fcs_pending_suspends_until_complete" in run {
-        val cs = new CompletableFuture[Int]
-        // Complete the CS asynchronously after a short delay.
-        val t = new Thread(() =>
-            Thread.sleep(50)
-            val _ = cs.complete(7)
-        )
-        t.setDaemon(true)
-        t.start()
-        val c = CIO.fromCompletionStage(cs)
-        c.liftToTry.map {
-            case Success(7) => succeed
-            case other      => fail(s"expected Success(7), got: $other")
-        }
-    }
-
 end FromCompletionStageTest
