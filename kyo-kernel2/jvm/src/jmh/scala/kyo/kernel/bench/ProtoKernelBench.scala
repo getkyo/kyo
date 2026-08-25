@@ -75,6 +75,28 @@ class ProtoKernelBench:
         Eval(loop(0))
     end deferBindPerStep
 
+    // a region below the defer loop is free: the fold boundary stops at it, so the steady state folds
+    // nothing. Pinned against deferBindUnderTrailingMap, where a standing transform is not free
+    @Benchmark
+    def deferBindUnderIdleHandler: Int =
+        def loop(i: Int): Int < Any =
+            if i > NarrowDepth then i
+            else Effect.defer(i + 1).map(loop)
+        val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], loop(0): Int < Ask)([C] => (_, cont) => cont(1), a => a)
+        Eval(r)
+    end deferBindUnderIdleHandler
+
+    // a transform standing below the defer loop pays per step: every settled delivery folds it into a
+    // chain the next push takes apart, ~64 B per step of churn. This is Abort.run's overhead on defer
+    // chains, whose runWith stands map(Result.succeed) under the body; the handler itself is free
+    @Benchmark
+    def deferBindUnderTrailingMap: Int =
+        def loop(i: Int): Int < Any =
+            if i > NarrowDepth then i
+            else Effect.defer(i + 1).map(loop)
+        Eval(loop(0).map(x => x))
+    end deferBindUnderTrailingMap
+
     @Benchmark
     def deepRecursionPaysRescuesOnly: Int =
         def loop(i: Int): Int < Any =

@@ -148,3 +148,22 @@ this shape is a stable 80 B per step, already below cats' 96. The remaining 48 B
 only under Abort.run's handler machinery (evalOrThrow wraps the loop in Abort.run). Open item:
 an allocation-site profile (async-profiler alloc event) of the arena row to name the allocation
 inside the handler path.
+
+### Abort.run overhead attributed
+
+Two further pinned rows split the +48 B per step:
+
+| condition below the defer loop | B/step |
+|---|---|
+| nothing | 80 |
+| idle handler (handleCont region) | 80 |
+| Effect.catching region | 80 |
+| standing transform (a trailing map) | 144 |
+
+The handler is free: regions bound the eval's fold, so the steady state folds nothing. A standing
+transform is not a region, and every settled delivery folds it into a chain the next push takes
+apart, ~64 B per step of churn. Abort.run's runWith stands `map(Result.succeed)` under the body
+(required: it boxes a nested error value into the success lane before the clause's error completion
+shares the region's value type), which is where the arena's +48 B per step comes from. Fix
+directions, either closing most of the NarrowBind gap: a delivery fast path that applies a single
+standing entry without building and splitting a chain, or a region-shaped success wrap.
