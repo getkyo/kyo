@@ -36,6 +36,13 @@ private[net] object TlsProviderPlatform:
       */
     def engineProviderNames: Set[String] = engineProviders.map(_.name).toSet
 
+    /** True when this host can actually BUILD an in-process TLS engine, the JS/Wasm counterpart of the `jvm-native` base's member of the same
+      * name. It ranges over [[engineProviders]] rather than `registered` for the reason `engineProviderNames` does: `NodeTlsProvider`'s probe
+      * is unconditionally available because Node terminates its own TLS, so a check over `registered` reports yes on a host with no staged
+      * BoringSSL, where the koffi posix transport has no engine to build and the next `engine` call fails.
+      */
+    def hasAvailableEngine(using AllowUnsafe): Boolean = engineProviders.exists(_.probe.isAvailable)
+
     /** The selected JS/Wasm TLS provider honoring `-Dkyo.net.tls`. Reuses the SAME `IoBackend.select` as the I/O registry. Used for
       * provider-name reporting and by the Node transport (which terminates TLS itself).
       */

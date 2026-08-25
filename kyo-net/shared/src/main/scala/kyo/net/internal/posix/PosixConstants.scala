@@ -76,6 +76,10 @@ private[net] object PosixConstants:
     val ECONNABORTED: Int = if isMacOrBsd then 53 else 103
     // EBUSY is 16 on both Linux and macOS/BSD; the io_uring reap loop treats it as a transient retry condition.
     val EBUSY: Int = 16
+    // ENOSYS is what kyo_epoll.c's off-Linux stubs report: the epoll and eventfd syscalls do not exist on this platform. It names the
+    // one outcome that distinguishes "the shim is present and says no" from "the symbol was never linked", which is the difference a
+    // published Native artifact has to preserve across build hosts.
+    val ENOSYS: Int = if isMacOrBsd then 78 else 38
     // io_uring's bounded wait returns -ETIME on a timeout with no completion; the reap loop treats it as a normal empty turn.
     // io_uring is Linux-only, so the Linux value (62) is the one the driver ever sees; the macOS/BSD value (60) is kept for completeness.
     val ETIME: Int = if isMacOrBsd then 60 else 62

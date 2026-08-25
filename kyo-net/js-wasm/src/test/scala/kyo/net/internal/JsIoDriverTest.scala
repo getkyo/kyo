@@ -13,7 +13,9 @@ class JsIoDriverTest extends kyo.net.Test:
 
     import AllowUnsafe.embrace.danger
 
-    private def net: sjs.Dynamic = sjs.Dynamic.global.require("net")
+    // `NodeNet` rather than `sjs.Dynamic.global.require("net")`: this suite is shared with the Wasm backend, which links as an ES
+    // module, where `require` is not defined.
+    private def net: sjs.Dynamic = NodeNet.asInstanceOf[sjs.Dynamic]
 
     /** Open a connected loopback pair on Node. Returns (serverSocket, clientSocket); the server socket is PAUSED and wrapped in nothing yet. */
     private def openPair()(using Frame): (sjs.Dynamic, sjs.Dynamic) < (Async & Abort[Closed]) =
