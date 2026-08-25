@@ -111,11 +111,11 @@ object KyoFfiPlugin extends AutoPlugin {
         val FfiLibrary = kyo.ffi.sbt.FfiLibrary
 
         // Tasks
-        val ffiGenerate          = taskKey[Seq[File]]("Generate platform-specific impl sources from bindings.")
-        val ffiCompile           = taskKey[Seq[File]]("Compile C sources into a platform-native shared library.")
-        val ffiPackage           = taskKey[Seq[File]]("Copy the compiled library into META-INF/native/ in resources.")
-        val ffiClean             = taskKey[Unit]("Clean generated sources + compiled libs.")
-        val ffiCiWorkflow        = taskKey[File]("Emit a starter .github/workflows/ffi-native.yml template.")
+        val ffiGenerate   = taskKey[Seq[File]]("Generate platform-specific impl sources from bindings.")
+        val ffiCompile    = taskKey[Seq[File]]("Compile C sources into a platform-native shared library.")
+        val ffiPackage    = taskKey[Seq[File]]("Copy the compiled library into META-INF/native/ in resources.")
+        val ffiClean      = taskKey[Unit]("Clean generated sources + compiled libs.")
+        val ffiCiWorkflow = taskKey[File]("Emit a starter .github/workflows/ffi-native.yml template.")
         val ffiPackagingCheck = taskKey[Unit](
             "Validate the staged native resource tree: every artifact's binary format and extension match " +
                 "the platform directory it sits in, and every ffiRequiredPlatforms entry has a native for " +
@@ -335,9 +335,9 @@ object KyoFfiPlugin extends AutoPlugin {
         // Unset means the host: every producer resolves the target through
         // CCompiler.resolveTargetOsArch, so a build that never sets this behaves exactly as before.
         // The system property lets a CI matrix leg name its target without a build edit.
-        ffiTargetOsArch  := sys.props.get("kyo.ffi.targetOsArch"),
-        ffiPrebuiltDir       := None,
-        ffiPrebuiltPool      := None,
+        ffiTargetOsArch := sys.props.get("kyo.ffi.targetOsArch"),
+        ffiPrebuiltDir  := None,
+        ffiPrebuiltPool := None,
         ffiReleasePlatforms := {
             val libs = ffiLibrariesResolved.value
             // buildsOn is the same predicate ffiCompile gates on, so what a release requires cannot drift
@@ -347,7 +347,7 @@ object KyoFfiPlugin extends AutoPlugin {
             }.distinct.sorted
         },
         ffiRequiredPlatforms := Nil,
-        ffiStubLibraries := Nil,
+        ffiStubLibraries     := Nil,
         // Common system libraries that bindings may reference without the plugin
         // producing or packaging an artifact for them. Users can extend this list
         // to whitelist additional system-provided libraries.
@@ -757,8 +757,7 @@ object KyoFfiPlugin extends AutoPlugin {
         },
 
         // ffiPackage: explicit task that copies artifacts; same body as the resource generator below.
-        ffiPackage := ffiPackagedNatives.value,
-
+        ffiPackage        := ffiPackagedNatives.value,
         ffiPackagingCheck := ffiPackagingCheckTask.value,
 
         // Copy compiled artifacts (and any staged prebuilts) into the resource tree automatically.
@@ -1365,9 +1364,9 @@ object KyoFfiPlugin extends AutoPlugin {
       * `native` id with no file in the layout is precisely the broken-leg case a check should reject.
       */
     private def ffiLibraryStateManifestGenerator: Def.Initialize[Task[Seq[File]]] = Def.task {
-        val platform   = ffiTargetPlatform.value
-        val libs       = ffiLibrariesResolved.value
-        val stubs      = ffiStubLibraries.value.toSet
+        val platform = ffiTargetPlatform.value
+        val libs     = ffiLibrariesResolved.value
+        val stubs    = ffiStubLibraries.value.toSet
         val prebuilt =
             stagedPrebuilts(ffiPrebuiltDir.value, ffiPrebuiltPool.value, libs.map(_.id).toSet).map(_.libraryId).toSet
         val resManaged = (Compile / resourceManaged).value
