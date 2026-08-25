@@ -213,7 +213,10 @@ the whole diff is the ruled swap itself.
   normalization block that the branch had dropped (a real behavior regression, not
   kernel-related); zero diff
 - [x] (13) kyo-ui/ReactiveUITeardownTest.scala - session workaround removal, ruled
-- [ ] (138) kyo-workers/ForkQueue.scala; (25) WorkersException.scala
+- [x] kyo-workers ForkQueue.scala (new, `???` bodies) + WorkersException.scala (new) +
+  root kyo-workers-scheduling-design.md - FOREIGN-CAMPAIGN content (workers scheduling API
+  sketch, commit b713cf7f50), not kernel work; the ship port excludes all three. Left on
+  the branch to preserve that campaign's WIP.
 - [x] (1) kyo-zio/ZStreams.scala - single line, rides the runFirst FLAG
 
 ### Excluded from minimization (session artifacts; the ship port excludes them)
