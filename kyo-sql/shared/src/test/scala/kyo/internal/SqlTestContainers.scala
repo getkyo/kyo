@@ -46,8 +46,11 @@ import kyo.*
   * would let the next reaper delete a container this process is using. A CO-OWNER REGISTRY closes that: adopting writes an empty file named
   * for this process's pid under `<tmpdir>/kyo-sql-container-owners/<short id>/`, and the reaper spares any container with a live co-owner
   * even when its label owner is gone. The claim is written before the health probe and removed again when the probe declines, so a
-  * container this process rejected does not stay un-reapable for the rest of the run. Every failure in the registry path resolves toward
-  * sparing, the same direction as the owner-pid predicate.
+  * container this process rejected does not stay un-reapable for the rest of the run.
+  *
+  * A claim that cannot be written declines the candidate: adoption without a claim is not a small risk to accept, because the reap that
+  * follows adoption in [[initSingleton]] would then remove the very container just handed to the caller. Every OTHER failure in the
+  * registry path resolves toward sparing, the same direction as the owner-pid predicate.
   */
 private[kyo] object SqlTestContainers:
 
@@ -79,6 +82,8 @@ private[kyo] object SqlTestContainers:
             case Present(adopted) => reapOrphans.andThen(adopted)
             case Absent =>
                 reapOrphans.andThen {
+                    // A failed claim is harmless here, unlike on the adoption path: this container's own
+                    // owner label already carries this process's live pid, so every reaper spares it.
                     Container.initUnscoped(labelled(cfg, tag)).map(c => claimOwnership(c.id).andThen(c))
                 }
         }
@@ -142,18 +147,24 @@ private[kyo] object SqlTestContainers:
       * The claim precedes the verification because the verification takes time, and a concurrent reaper reading an unclaimed container
       * during that window would remove it out from under this process. Releasing on a declined candidate is what keeps that ordering from
       * pinning a container nobody wants.
+      *
+      * A claim that could not be written declines the candidate outright. Continuing unclaimed is not a small risk to accept: the reap in
+      * [[initSingleton]] runs immediately after adoption, and an adoption candidate is usually one whose label owner is already dead, so an
+      * unclaimed adoption would have this very process force-remove the container it just returned to the caller.
       */
     private def adoptCandidate(summary: Container.Summary, cfg: Container.Config)(using Frame): Maybe[Container] < Async =
         Abort.run[ContainerException] {
             summary.attach.map { attached =>
-                claimOwnership(attached.id).andThen {
-                    attached.state.map {
-                        case Container.State.Running =>
-                            Container.awaitPortsReachableWithin(attached, adoptProbeTimeout)
-                                .andThen(cfg.healthCheck.check(attached))
-                                .andThen(Present(attached))
-                        case _ => Absent
-                    }
+                claimOwnership(attached.id).map {
+                    case false => Absent
+                    case true =>
+                        attached.state.map {
+                            case Container.State.Running =>
+                                Container.awaitPortsReachableWithin(attached, adoptProbeTimeout)
+                                    .andThen(cfg.healthCheck.check(attached))
+                                    .andThen(Present(attached))
+                            case _ => Absent
+                        }
                 }
             }
         }.map {
@@ -175,12 +186,19 @@ private[kyo] object SqlTestContainers:
 
     private def ownerDir(root: Path, id: Container.Id): Path = Path(root, id.value.take(12))
 
-    /** Record this process as a co-owner of `id`. */
-    private[kyo] def claimOwnership(root: Path, id: Container.Id)(using Frame): Unit < Async =
+    /** Record this process as a co-owner of `id`, reporting whether the claim is now readable by a reaper. A caller about to rely on the
+      * claim must treat `false` as "do not adopt": an unclaimed container is one every reaper is free to remove.
+      */
+    private[kyo] def claimOwnership(root: Path, id: Container.Id)(using Frame): Boolean < Async =
         // `mkFile` creates missing parents, so the per-container directory needs no separate step.
-        Abort.run[FileStructureException](Path(ownerDir(root, id), TestProcessId.pid.toString).mkFile).unit
+        Abort.run[FileStructureException](Path(ownerDir(root, id), TestProcessId.pid.toString).mkFile).map(_.isSuccess)
 
-    /** Drop this process's co-ownership of `id`. */
+    /** Drop this process's co-ownership of `id`.
+      *
+      * A removal that fails leaves this process's pid in the registry, which spares the container for the rest of the run and lets a later
+      * run reap it once the pid is dead. That is the same direction every other uncertainty here takes, so the failure is discarded rather
+      * than raised: declining to reap costs one cycle, and the alternative would fail a leaf over registry hygiene.
+      */
     private[kyo] def releaseOwnership(root: Path, id: Container.Id)(using Frame): Unit < Async =
         Abort.run[FileStructureException](Path(ownerDir(root, id), TestProcessId.pid.toString).remove).unit
 
@@ -205,14 +223,24 @@ private[kyo] object SqlTestContainers:
         }
     end hasLiveCoOwner
 
-    /** Forget every co-owner of `id`, called once the container itself is gone. */
+    /** Forget every co-owner of `id`, called once the container itself is gone.
+      *
+      * A removal that fails leaves a directory keyed by a container id that no longer exists, and `hasLiveCoOwner` is only ever asked about
+      * ids the daemon still lists, so nothing reads it again. The failure is therefore discarded: it litters a few empty files in the temp
+      * directory and cannot change a reap decision.
+      */
     private[kyo] def forgetOwners(root: Path, id: Container.Id)(using Frame): Unit < Async =
         Abort.run[FileStructureException](ownerDir(root, id).removeAll).unit
 
-    private def claimOwnership(id: Container.Id)(using Frame): Unit < Async =
+    /** Claim `id` for this process, reporting whether a reaper can now see the claim.
+      *
+      * A platform with no temp directory has no registry, so no claim can be recorded and `false` is the truthful answer: it disables
+      * adoption there and leaves the owner-pid label as the only predicate, which is how this object behaved before the registry existed.
+      */
+    private def claimOwnership(id: Container.Id)(using Frame): Boolean < Async =
         ownerRoot.map {
             case Present(root) => claimOwnership(root, id)
-            case Absent        => Kyo.unit
+            case Absent        => false
         }
 
     private def releaseOwnership(id: Container.Id)(using Frame): Unit < Async =

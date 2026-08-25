@@ -2437,7 +2437,7 @@ object Container:
                 val deadlineMs = startedAt.toJava.toEpochMilli + container.config.portMappingTimeout.toMillis
                 waitForPortMappings(container, startedAt, deadlineMs).andThen {
                     if !container.config.requireService then ()
-                    else awaitPortsReachable(container, deadlineMs)
+                    else Clock.now.map(now => awaitPortsReachable(container, portProbeDeadline(deadlineMs, now.toJava.toEpochMilli)))
                 }
             }
 
@@ -2446,16 +2446,34 @@ object Container:
       */
     private val portProbeConnectTimeout: Duration = 2.seconds
 
+    /** The floor on what the reachability probe gets once the mapping wait is done. */
+    private val portProbeMinBudget: Duration = 5.seconds
+
+    /** The deadline the reachability probe runs under, given the shared port-readiness deadline and the time the mapping wait finished.
+      *
+      * The two waits share one [[Container.Config.portMappingTimeout]] budget, and a mapping wait that exhausts it fails on its own terms
+      * with a "ports not bound" error. What this floor prevents is the adjacent case: a binding observed a few milliseconds BEFORE the
+      * deadline would otherwise leave the probe a sliver of budget, one failed connect against a forwarder still coming up, and a
+      * "refuses connections" failure for a container that was about to be ready. The probe answers in microseconds when the port is
+      * genuinely served, so the floor costs nothing on the happy path and bounds the overrun at [[portProbeMinBudget]].
+      */
+    private[kyo] def portProbeDeadline(mappingDeadlineMs: Long, nowMs: Long): Long =
+        math.max(mappingDeadlineMs, nowMs + portProbeMinBudget.toMillis)
+
     /** Open and immediately close a TCP connection to `host:port`, reporting whether the host accepted it. */
-    private def probeHostPort(host: String, port: Int)(using Frame): Boolean < Async =
+    private[kyo] def probeHostPort(host: String, port: Int)(using Frame): Boolean < Async =
         // Unsafe: kyo-net publishes `connect` on the unsafe tier only. The bridge is confined to this probe — the
         // connection is closed on the success path and no handle escapes — and a host-side connect is the only
         // proof that the runtime's port forwarder is actually serving the published port.
         Abort.run[kyo.net.NetException] {
             Sync.Unsafe.defer(kyo.net.NetPlatform.transport.connect(host, port, portProbeConnectTimeout).safe).map(_.get)
         }.map {
-            case Result.Success(conn) => Sync.Unsafe.defer(conn.close()).andThen(true)
-            case _                    => false
+            case Result.Success(conn) =>
+                // The connect is the answer; the close is only hygiene. A close that fails has already lost its
+                // descriptor, and letting that escape would panic out of `init` and turn a port that DID accept a
+                // connection into a startup failure.
+                Abort.run[Throwable](Sync.Unsafe.defer(conn.close())).andThen(true)
+            case _ => false
         }
 
     /** Wait until every published TCP host port of `container` accepts a host-side connection, failing at `deadlineMs`.

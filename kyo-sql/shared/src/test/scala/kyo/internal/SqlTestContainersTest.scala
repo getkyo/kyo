@@ -210,9 +210,43 @@ class SqlTestContainersTest extends kyo.Test:
         "reports this process after it claims" in {
             withRegistry { root =>
                 for
-                    _    <- SqlTestContainers.claimOwnership(root, someId)
-                    live <- SqlTestContainers.hasLiveCoOwner(root, someId)
-                yield assert(live, "the claiming process must count as a live owner")
+                    claimed <- SqlTestContainers.claimOwnership(root, someId)
+                    live    <- SqlTestContainers.hasLiveCoOwner(root, someId)
+                yield
+                    assert(claimed, "a writable registry must report the claim as recorded")
+                    assert(live, "the claiming process must count as a live owner")
+            }
+        }
+
+        // The claim's return value is the whole safety interlock for adoption: the reap in
+        // initSingleton runs right after an adoption, and an adoption candidate is normally one
+        // whose label owner is already dead, so an unclaimed adoption has this process force-remove
+        // the container it just returned. A claim that cannot be written MUST say so.
+        "a claim that cannot be written reports false" in {
+            withRegistry { root =>
+                // A regular file where the per-container directory belongs: nothing can be created
+                // under it, so the claim cannot land.
+                val blocker = Path(root, someId.value.take(12))
+                for
+                    _       <- blocker.mkFile
+                    claimed <- SqlTestContainers.claimOwnership(root, someId)
+                yield assert(!claimed, "an unwritable registry must not report a recorded claim")
+                end for
+            }
+        }
+
+        "a claim under an unusable registry root reports false and leaves nothing to spare it" in {
+            withRegistry { root =>
+                // The root itself is a regular file, so neither the claim nor a later reader can see
+                // anything: claim false AND hasLiveCoOwner false is exactly the combination adoption
+                // must refuse to walk into.
+                for
+                    _       <- root.mkFile
+                    claimed <- SqlTestContainers.claimOwnership(root, someId)
+                    live    <- SqlTestContainers.hasLiveCoOwner(root, someId)
+                yield
+                    assert(!claimed, "an unusable registry root must not report a recorded claim")
+                    assert(!live, "nothing spares this container, which is why the claim must be believed")
             }
         }
 

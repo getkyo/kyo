@@ -1409,6 +1409,65 @@ class ContainerTest extends BasePodTest:
         }
     }
 
+    // =========================================================================
+    // Port readiness — the second half of requireService.
+    // =========================================================================
+
+    "Container.portProbeDeadline" - {
+        // Both readiness waits share one portMappingTimeout budget. A mapping wait that exhausts it
+        // fails on its own terms; what this floor exists for is the adjacent case, where the binding
+        // lands a few milliseconds before the deadline and the probe would otherwise get one connect
+        // against a forwarder still coming up, then report "refuses connections" for a healthy port.
+        "leaves a roomy shared deadline untouched" in {
+            val now      = 1_000_000L
+            val deadline = now + 60_000L
+            assert(Container.portProbeDeadline(deadline, now) == deadline)
+        }
+
+        "floors the probe's budget when the mapping wait finished just under the deadline" in {
+            val now      = 1_000_000L
+            val deadline = now + 10L
+            val probe    = Container.portProbeDeadline(deadline, now)
+            assert(probe > deadline, s"the probe must not inherit a 10ms budget, got ${probe - now}ms")
+            assert(probe == now + 5_000L, s"expected the 5s floor, got ${probe - now}ms")
+        }
+
+        "floors the probe's budget when the shared deadline has already passed" in {
+            val now      = 1_000_000L
+            val deadline = now - 500L
+            assert(Container.portProbeDeadline(deadline, now) == now + 5_000L)
+        }
+    }
+
+    "Container.probeHostPort" - {
+        // Unsafe: kyo-net publishes listen/close on the unsafe tier only, and a real listener is the
+        // only way to assert the probe's two answers without a container runtime.
+        import AllowUnsafe.embrace.danger
+
+        "reports true for a port with a live listener" in {
+            Sync.defer(kyo.net.NetPlatform.transport.listen("127.0.0.1", 0, 16)(_ => ()).safe).map(_.get).map { listener =>
+                Sync.ensure(Sync.defer(listener.close())) {
+                    Container.probeHostPort("127.0.0.1", listener.port).map { reachable =>
+                        assert(reachable, s"a bound listener on port ${listener.port} must be reachable")
+                    }
+                }
+            }
+        }
+
+        "reports false for a port nothing is serving" in {
+            // Bind then close: the port was real and is now free, so the connect is refused rather
+            // than black-holed, which is exactly the shape of a container whose forwarder never came up.
+            Sync.defer(kyo.net.NetPlatform.transport.listen("127.0.0.1", 0, 16)(_ => ()).safe).map(_.get).map { listener =>
+                val port = listener.port
+                Sync.defer(listener.close()).andThen {
+                    Container.probeHostPort("127.0.0.1", port).map { reachable =>
+                        assert(!reachable, s"port $port has no listener and must not be reported reachable")
+                    }
+                }
+            }
+        }
+    }
+
     "uniqueName" - {
         // Regression guard for the shared-/tmp collision: container suites are forked once per
         // runtime and those forks run concurrently on one machine. A bare `prefix-counter` resets
