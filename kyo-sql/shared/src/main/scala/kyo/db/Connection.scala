@@ -354,8 +354,12 @@ object Connection:
             host,
             port
         ).safe).flatMap(_.use(identity))).flatMap {
-            case Result.Failure(_) =>
-                Abort.fail(SqlConnectionConnectFailedException(host, port, new Exception("connect refused")))
+            case Result.Failure(cause) =>
+                // Carry the NetException through as the cause rather than substituting a placeholder. The placeholder this replaces,
+                // `new Exception("connect refused")`, read as the socket's own answer while discarding it: a DNS failure, a refused
+                // connect, an unavailable I/O backend and a connect timeout all arrived as the same four words with no cause attached,
+                // and a report built on that message named the wrong layer.
+                Abort.fail(SqlConnectionConnectFailedException(host, port, cause))
             case Result.Panic(t) =>
                 onPanic(t).flatMap(Abort.fail(_))
             case Result.Success(rawConn) =>
