@@ -160,3 +160,12 @@ REMAINING rollout (mechanical, mirror the done ones):
   reviewer flags the outer layer redundant; needs its own decision); DebuggerTest 2 ignored;
   CanLift-Any guard (above); NarrowBind alloc row; Tag fastPathEqual inline-threshold
   re-measure against TagHash.
+- Platform verdicts (2026-08-25 early am): Native kernel2 1114/0 and kyo-core 251 classes /
+  1629 leaves / 0 failed, both green as-is. JS is hard-blocked in kernel2's Safepoint: the slot
+  machinery is shared code on JVM-only APIs (AtomicReferenceArray.getPlain, Thread.threadId,
+  Thread.isAlive), the Scala.js LINKER rejects it (compile passes), and every kernel2-riding
+  module fails fastLinkJS through Safepoint.get. Complete inventory of JVM-only APIs in kernel2
+  shared: Safepoint.scala (the slot machinery) and Stack.scala (2x ThreadLocal, which Scala.js
+  supports, so Safepoint is the whole gap). The single-threaded Safepoint semantics (what stop
+  and preemption mean on JS, wasm too) are a design ruling, not a mechanical port; parked for
+  the owner. Full Native matrix launched overnight; log scratchpad/native-full.log.
