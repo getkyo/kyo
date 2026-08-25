@@ -1086,8 +1086,8 @@ class SpanTest extends kyo.test.Test[Any]:
 
         "out of bounds index throws" in {
             val arr = Span(1, 2, 3)
-            assertThrows[IndexOutOfBoundsException](arr.updated(3, 4))
-            assertThrows[IndexOutOfBoundsException](arr.updated(-1, 4))
+            interceptThrown[IndexOutOfBoundsException](arr.updated(3, 4))
+            interceptThrown[IndexOutOfBoundsException](arr.updated(-1, 4))
         }
     }
 

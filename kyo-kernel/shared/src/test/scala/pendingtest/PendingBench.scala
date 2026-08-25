@@ -156,16 +156,10 @@ object KernelScenarios:
                 else echo(i)
             runEcho(echo(0).map(loop))
 
-        val state = time("state"):
-            def program: Int < Var[Int] =
-                Var.use[Int](n => if n <= 0 then n else Var.set(n - 1).flatMap(_ => program))
-            Var.run(N)(program).eval
-
-        def stateMapAt(name: String, size: Int) = time(name):
-            def program: Int < Var[Int] =
-                Var.use[Int](n => if n <= 0 then n else Var.set(n - 1).flatMap(_ => program).map(_ + 1))
-            Var.run(size)(program).eval
-        val stateMap10k  = stateMapAt("stateMap10k", 10000)
+        // kyo.Var rides the new kernel mid-migration, so its rows cannot type against this module's
+        // Safepoint until the migration lands; the cross-kernel board is kyo-kernel-bench
+        val state        = "state: skipped (kyo.Var rides the new kernel mid-migration)"
+        val stateMap10k  = "stateMap10k: skipped (kyo.Var rides the new kernel mid-migration)"
         val stateMap100k = "stateMap100k: skipped (quadratic, ~2min per rep)"
         val stateMap     = "stateMap1M: skipped (quadratic, unbounded runtime)"
 
