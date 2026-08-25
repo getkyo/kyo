@@ -87,7 +87,43 @@ Two implementations, equivalent in the public contract (the 21 signatures back t
 Either way the derivation, the macro, and the kernel are untouched; kyo-ai and kyo-browser compile
 unmodified, as on main.
 
-## 6. What a reviewer should attack
+## 6. The first-parameter-group contract
+
+Every isolate-taking method, on main and on the branch, places the isolate in the FIRST parameter
+group, ahead of the computation:
+
+```scala
+def race[E, A, S](
+    using isolate: Isolate[S, Abort[E] & Async, S]   // main
+)(iterable: Iterable[A < (Abort[E] & Async & S)])(using frame: Frame): A < (Abort[E] & Async & S)
+```
+
+This placement is a contract, not style: the isolate is supplied first (inferred, or explicitly
+passed as `Async.zip(using Browser.isolate.fresh)(..)`), so the isolate constrains the site rather
+than the site constraining the isolate. Verified pieces of the mechanism:
+
+- Keep is contravariant (`Isolate[Remove, -Keep, -Restore]`, identical in both kernels). A request
+  with Keep = `Abort[E] & Async` and E free admits `LLM.isolate: Isolate[LLM, Async, LLM]` for any
+  E (`Abort[E] & Async <: Async`), and admits
+  `Browser.isolate.fresh: Isolate[Browser, Async & Abort[BrowserReadException], Any]` by bounding
+  E with BrowserReadException. That bound is how the isolate's own failure mode is admitted into
+  the combinator's row; BrowserIsolateTest's comments state it directly ("carries
+  `Abort[BrowserConnectionException]` in its `Isolate.Keep` channel ... and surfaces").
+- So the Keep written in a first-group signature is the admission policy for isolates, enforced at
+  resolution time in parameter group one, before the computation argument is considered.
+
+Consequence: hardcoding Keep = Sync at the 21 sites did not merely move a row. It rejects every
+async isolate at the door (Sync is not <: Async, so contravariance excludes any Async-Keep
+instance), which is exactly the two symptom classes in section 1. It also explains why the Keep
+war could not be won by widening or narrowing signatures while the spawn helpers kept
+`using isolate: Isolate[S, Sync, S2]` in their first group: the exclusion fires at
+implicit-resolution time, not at capture time. A correct arrangement must keep the first-group
+Keep wide (with the site's free E) at the level where USER isolates are supplied, the combinators.
+Both proposals do. (B)'s internals additionally stop being admission points at all: they switch
+from a first-group `using` isolate to an explicit (isolate, state) parameter pair, plumbing rather
+than policy, which is the honest shape once the internals no longer decide who gets in.
+
+## 7. What a reviewer should attack
 
 - Is the claim in section 2 airtight: is there ANY Isolate-level semantic difference (Contextual
   crossing via Park, marks, the orphan drain) that makes main's combinator-side isolation unsound
@@ -98,3 +134,7 @@ unmodified, as on main.
   across the private[kyo] internals leak anything the using-clause form did not?
 - The dead sentence in 5e8: "kyo-ai's isolate gets fixed on its own side" - is there a Sync-Keep
   rewrite of LLM's isolate that 213 missed, which would make module-side migration viable after all?
+- Section 6's resolution-order claim: confirm against the typer's actual behavior for a leading
+  using clause that the isolate's Keep bounds participate in solving the site's E before/while the
+  computation argument is checked, and whether any call-site pattern (explicitly passed isolates,
+  `Isolate.derive` at an abstract S) behaves differently under (B)'s explicit-parameter internals.
