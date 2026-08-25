@@ -394,7 +394,10 @@ case class JsonRpcImplementationError private (
 )(using Frame)
     extends JsonRpcError(
         code0 = code,
-        message = s"Server error ($code): $label",
+        // The code is already the wire's own `code` field, and `fromWire` rebuilds this error from the
+        // `message` it receives: folding the code in here would re-apply on every hop, so a message
+        // relayed through a proxy or a reverse call would accumulate one prefix per hop.
+        message = label,
         data0 = data
     ) with JsonRpcExecutionFailure
 
@@ -451,4 +454,6 @@ case class JsonRpcCustomError(
     label: String,
     override val data: Maybe[Structure.Value] = Absent
 )(using Frame)
-    extends JsonRpcApplicationError(code, s"Application error ($code): $label", data)
+// As with JsonRpcImplementationError, the code is NOT folded into the message: `fromWire` re-enters
+// this constructor with whatever arrived, so any prefix added here is re-applied on every hop.
+    extends JsonRpcApplicationError(code, label, data)
