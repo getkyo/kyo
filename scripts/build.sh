@@ -281,15 +281,20 @@ run_in_container() {
         envs+=(-e CI=true -e SBT_TASK_LIMIT=1
                -e "JAVA_OPTS=$CI_DRIVER_OPTS"
                -e "JVM_OPTS=$CI_DRIVER_OPTS")
-        # Mirror build.yml's Native env so a podman-ci Native run reproduces the row's link staging.
-        # NATIVE_SKIP (the app/integration tier dropped from the Native leg) is forwarded so a host value
-        # reproduces the CI cut; it is empty by default here, so a bare `build.sh podman-ci test Native`
-        # links the whole set (set NATIVE_SKIP=<the build.yml list> to match the CI Native row exactly).
-        # A host NATIVE_HEAVY / NATIVE_LINK_CPUS value wins. Native target only, matching the workflow's
-        # `matrix.target == 'Native'` gate.
+        # Mirror build.yml's Native env so a podman-ci Native run reproduces the row's link staging:
+        # the link CPU cap and the pool batch sizes carry the workflow's values. NATIVE_SKIP (the
+        # app/integration tier dropped from the Native leg) is forwarded so a host value reproduces the
+        # CI cut; it is empty by default here, so a bare `build.sh podman-ci test Native` links the whole
+        # set (set NATIVE_SKIP=<the build.yml list> to match the CI Native row exactly). NATIVE_HEAVY is
+        # the one deliberate difference: the workflow leaves it empty because its NATIVE_SKIP list drops
+        # kyo-schema-tests from the Native leg entirely, while a local run that keeps the whole set still
+        # wants that module pre-linked in a driver of its own. A host value wins for each. Native target
+        # only, matching the workflow's `matrix.target == 'Native'` gate.
         if [ "$platform" = Native ]; then
             envs+=(-e "NATIVE_HEAVY=${NATIVE_HEAVY-kyo-schema-tests}"
-                   -e "NATIVE_LINK_CPUS=${NATIVE_LINK_CPUS-2}"
+                   -e "NATIVE_LINK_CPUS=${NATIVE_LINK_CPUS-3}"
+                   -e "NATIVE_LINK_BATCH=${NATIVE_LINK_BATCH-8}"
+                   -e "NATIVE_TEST_BATCH=${NATIVE_TEST_BATCH-8}"
                    -e "NATIVE_SKIP=${NATIVE_SKIP-}")
         fi
     fi
