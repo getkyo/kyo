@@ -128,3 +128,35 @@ REMAINING rollout (mechanical, mirror the done ones):
   in 7abded79a3). The macro sees the static type per summon site, so the guard only fires where
   the type system has lost track; abstract type parameters still lift. After adding, compile the
   whole tree to surface every site the guard catches.
+
+## Session 2026-08-24/25: Isolate resolution, Loop constructors, main merge, test board
+
+- Isolate Keep resolved: `capture` narrowed to `A < (Remove & S)` (319b49fe67). The Keep in
+  capture's row was the coupling that forced Sync Keep across the 21 Async combinators and
+  rejected every async isolate (kyo-ai, kyo-browser). Combinators and Fiber internals back to
+  `Isolate[S, Abort[E] & Async, *]`; public Fiber.init/use/initUnscoped untouched at Sync;
+  internal.initUnscoped added; LLM capture re-spelled; Browser.clone snapshots in isolate.
+  Full analysis with the opus review folded in: reviews/ISOLATE-KEEP-INVESTIGATION.md.
+- Loop outcome constructors all pending now (be268fe90a): nullary via the cast, value-carrying
+  done via Kyo.lift (bare cast fails the stays-data pin; lift passes). Eight-test nesting
+  battery pins payload-as-data across every drive lane (dbddbfb4c3). kyo-ui's hand-rolled
+  Kyo.lift(Loop.done) workaround removed (3e04104e25).
+- getkyo/kyo main merged (2b2e01c319): _timeout arm-before-fork fix kept through the task-side
+  spawn; kernel2 IOTask kept (abandon/ensureInterrupt carry main's semantics; fatal-path
+  finalizer question adjudicated green by the suite); main's TagHash taken; HttpClientBackend
+  fresh-DecoderState + bodyOutcome in kernel2 spelling.
+- @static dropped from Effect.defer and Nested.nest/unnest (34a6a681c4): an @static named in
+  inline-expanded code crashes any downstream macro-owning module's clean build
+  (StaleSymbolException in the suspended-unit retry; first hit by merged kyo-sql; mechanism
+  pinned by the crash moving defer -> nest). Cost +3 bytes per expansion site, recorded in the
+  bytecode pins (lift 5->8, handleCont 37->40). AWAITS OWNER RULING; revert is two annotations
+  plus the pins.
+- Test board on the merged tree: repo-wide Test/compile green (all platforms compile); full JVM
+  suite green in union across runs except the two Anthropic real-API tests (need a valid
+  ANTHROPIC_API_KEY; the harness token 401s; without the var they skip). Live-provider arms
+  (Moonshot timeout, xAI 401) vary run to run; OpenAI/Gemini/Groq pass. JS suite run launched;
+  Native still pending.
+- Still open: foreachIndexed double-crossing (per-item isolate plus IOTask whole-worker wrap;
+  reviewer flags the outer layer redundant; needs its own decision); DebuggerTest 2 ignored;
+  CanLift-Any guard (above); NarrowBind alloc row; Tag fastPathEqual inline-threshold
+  re-measure against TagHash.
