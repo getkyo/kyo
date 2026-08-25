@@ -242,14 +242,14 @@ A context binding carries its own strategy for crossing fork boundaries. `Contex
 
 ```scala
 import kyo.*
-import kyo.kernel.*
 import kyo.Maybe.*
+import kyo.kernel.*
 
 sealed trait RequestId extends ContextEffect[String]
 
 // A binding whose value never crosses a fork: children start unbound.
 def scoped[A, S](id: String)(v: A < (RequestId & S)): A < S =
-    ContextEffect.handle(Tag[RequestId], id, fork = _ => Absent)(v)
+    ContextEffect.handle(Tag[RequestId], id, identity, fork = _ => Absent)(v)
 ```
 
 ### Suspending: how an effect's API requests work
@@ -340,9 +340,12 @@ val combined =
     yield i
 
 val ran =
-    ArrowEffect.handleCont(Tag[E2], ArrowEffect.handleCont(Tag[E1], combined)(
-        [C] => (in, cont) => cont(in.toString)
-    ))(
+    ArrowEffect.handleCont(
+        Tag[E2],
+        ArrowEffect.handleCont(Tag[E1], combined)(
+            [C] => (in, cont) => cont(in.toString)
+        )
+    )(
         [C] => (in, cont) => cont(in.toInt)
     )
 

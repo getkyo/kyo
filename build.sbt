@@ -794,15 +794,17 @@ lazy val `kyo-kernel` =
         .in(file("kyo-kernel"))
         .settings(
             `kyo-settings`,
-            // Interim while the kernel swap migrates up the stack: kyo-test and kyo-doctest
-            // depend on the stack above this module, which does not compile against the new
-            // kernel yet. Tests use scalatest directly, and the doctest jars that kyo-settings
-            // places on Test/unmanagedJars are dropped, until the migration reaches them.
-            libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
-            Test / unmanagedJars := Seq.empty
+            // Interim while the kernel swap migrates up the stack: kyo-test depends on the
+            // stack above this module, so tests use scalatest directly until the migration
+            // reaches it.
+            libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test
         )
         .jvmSettings(
             mimaCheck(false),
+            // The kernel's lift is a same-module splice macro, and a resident doctest driver
+            // reusing one compiler across blocks trips dotty's denotation validation on the
+            // suspended-unit retries. A fresh driver per block sidesteps it.
+            doctestFreshDriver := true,
             // Bytecode-shape pins (PendingBytecodeTest, ArrowEffectBytecodeTest) read method
             // sizes through javassist, matching the old kernel's BytecodeTest.
             libraryDependencies += "org.javassist" % "javassist" % "3.32.0-GA" % Test,
