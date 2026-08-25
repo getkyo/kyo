@@ -51,13 +51,13 @@ private[kyo] trait Recover[+A, -S]:
 
     /** The answer to a failure, or absent for one this must not answer.
       *
-      * Fatal errors pass every recovery untouched, which is the previous kernel's rule: both of its arms
-      * guard on `NonFatal`. The recovery itself never declines, and never had to: the consumers pass total
-      * functions, `Abort.catching` with an explicit catch-all and `Debug` with a lambda that rethrows.
+      * Fatal errors pass every recovery untouched. The recovery itself never declines, and never had to: the
+      * consumers pass total functions, `Abort.catching` with an explicit catch-all and `Debug` with a lambda
+      * that rethrows.
       *
       * The frames are reconstructed before the recovery runs. It is a second place a failure is observed, and
-      * the boundary is no longer the only one, so a handler that reads the carrier has to see what a handler
-      * at the boundary would. The previous kernel owed the same and paid it the same way.
+      * the boundary is not the only one, so a handler that reads the carrier has to see what a handler at the
+      * boundary would.
       */
     final def panic(ex: Throwable): Maybe[A < S] =
         if !NonFatal(ex) then Maybe.empty
@@ -138,8 +138,8 @@ object Eval:
 
     private def unhandled(kyo: Suspend[IX, OX, EX, CX, AX, SX], stack: Stack): Nothing =
         // the row rules this out for both entry points: a slice takes `A < Any` as well, so an operation
-        // reaching here has no handler anywhere and never will. The failure goes through `bug.failTag`
-        // for the previous kernel's message; the catch attaches the effect trace before rethrowing
+        // reaching here has no handler anywhere and never will. The failure goes through `bug.failTag`;
+        // the catch attaches the effect trace before rethrowing
         try bug.failTag(kyo.asInstanceOf[Any < Any], Tag[Any])
         catch case ex: Throwable => attachThrow(ex, kyo, Arrow.id[Any], stack)
 

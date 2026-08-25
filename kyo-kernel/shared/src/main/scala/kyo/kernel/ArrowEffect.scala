@@ -122,8 +122,8 @@ object ArrowEffect:
     // `v` is typed, and S2 is a free variable for whatever the clause adds beyond it. With a single
     // row the typer commits it to the body's row before the clause is seen, so a clause that
     // introduces its own effect (Abort in Check.runAbort, the fold function's row in Emit.runFold)
-    // cannot widen it and the site needs explicit instantiation. The previous kernel drew the same
-    // split. The internals do not know about the pair: they instantiate at S & S2.
+    // cannot widen it and the site needs explicit instantiation. The internals do not know about
+    // the pair: they instantiate at S & S2.
 
     /** Handles an arrow effect by providing a handler function implementation, with the continuation in hand.
       *
@@ -533,8 +533,7 @@ object ArrowEffect:
       *
       * What it covers is what runs while it is installed: forcing the body, a resumption, the clause, and a
       * region nested inside. What it does not cover is the done clause, which runs once the region has been
-      * popped, or anything after it. The previous kernel covered the done clause because its recovery was a
-      * try around the whole traversal rather than a position on a stack.
+      * popped, or anything after it.
       */
     /** Runs a clause against the operation a computation is standing at, without evaluating anything.
       *

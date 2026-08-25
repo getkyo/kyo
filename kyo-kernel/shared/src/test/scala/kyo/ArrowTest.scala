@@ -161,9 +161,6 @@ class ArrowTest extends AnyFreeSpec:
         assert(List(1, 2, 3).map(i => f(i).eval) == List(2, 3, 4))
     }
 
-    // the previous kernel also exposed the composed shape through `step`. `head` and `tail` are on
-    // Arrow itself here and say the same thing, so `step` is not coming back and its case is gone
-    // rather than parked.
     "toString" - {
         "renders identity" in {
             assert(Arrow.id[Int].toString == "Arrow(identity)")

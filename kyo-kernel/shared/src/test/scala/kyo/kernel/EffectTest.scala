@@ -219,8 +219,7 @@ class EffectTest extends AnyFreeSpec:
 
         "failure in a map after a stateful region" in {
             val region = ArrowEffect.handleLoopState(Tag[TestEffect1], 7, testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
-                // the old stateful clause applied a continuation it was handed; this one hands the answer
-                // back in the outcome and the region resumes with it
+                // the clause hands the answer back in the outcome and the region resumes with it
                 [C] => (state, input) => Loop.continue(state + 1, (input * state).toString)
             )
             val effect = Effect.catching {
@@ -258,8 +257,7 @@ class EffectTest extends AnyFreeSpec:
         "catching catches past the budget inside a stateful region" in {
             val body = testEffect1(1).map(a => burn(Period * 2).map(_ => testEffect1(2).map(b => a + b)))
             val region = ArrowEffect.handleLoopState(Tag[TestEffect1], 7, body)(
-                // the old stateful clause applied a continuation it was handed; this one hands the answer
-                // back in the outcome and the region resumes with it
+                // the clause hands the answer back in the outcome and the region resumes with it
                 [C] => (state, input) => Loop.continue(state + 1, (input * state).toString)
             )
             val effect = Effect.catching {
@@ -305,8 +303,7 @@ class EffectTest extends AnyFreeSpec:
 
         "a stateful region threads state under catching" in {
             val region = ArrowEffect.handleLoopState(Tag[TestEffect1], 7, testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
-                // the old stateful clause applied a continuation it was handed; this one hands the answer
-                // back in the outcome and the region resumes with it
+                // the clause hands the answer back in the outcome and the region resumes with it
                 [C] => (state, input) => Loop.continue(state + 1, (input * state).toString)
             )
             val effect = Effect.catching(region) {
@@ -315,32 +312,30 @@ class EffectTest extends AnyFreeSpec:
             assert(effect.eval == "716")
         }
     }
-    //
-    //
-    // "defer with catching" in {
-    //     val effect = Effect.defer {
-    //         Effect.catching {
-    //             throw new RuntimeException("Test exception")
-    //         } {
-    //             case _: RuntimeException => 42
-    //         }
-    //     }
-    //     assert(effect.eval == 42)
-    // }
-    //
-    // "combining multiple effects" in {
-    //     val effect =
-    //         for
-    //             a <- Effect.defer(1)
-    //             b <- Effect.catching(2 / 0) { case _: ArithmeticException => 2 }
-    //             c <- Effect.defer(3)
-    //         yield a + b + c
-    //
-    //     assert(effect.eval == 6)
-    // }
-    //
-    // // Parked with the removal of ContextEffect and Effect.detach from kyo-kernel2.
-    // // Restore against the replacement design.
+
+    "defer with catching" in {
+        val effect = Effect.defer {
+            Effect.catching {
+                throw new RuntimeException("Test exception")
+            } {
+                case _: RuntimeException => 42
+            }
+        }
+        assert(effect.eval == 42)
+    }
+
+    "combining multiple effects" in {
+        val effect =
+            for
+                a <- Effect.defer(1)
+                b <- Effect.catching(2 / 0) { case _: ArithmeticException => 2 }
+                c <- Effect.defer(3)
+            yield a + b + c
+
+        assert(effect.eval == 6)
+    }
+
+    // // Requires Effect.detach, which is not implemented (see the commented declaration in Effect.scala).
     // "detach" - {
     //
     //     sealed trait TestCtx extends ContextEffect[Int]

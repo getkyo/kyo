@@ -104,9 +104,8 @@ object Kyo:
       * What it binds is a function of what the enclosing scope binds, not a value, and the consumers force
       * that. Every `Local` shares one tag and one map, and each `let` binds `_.updated(this, value)` over
       * what is already there, so a binding that replaced would drop every local bound outside it. The
-      * previous kernel resolved that function at each continuation crossing, since its context travelled as
-      * an argument. Here it is resolved when the entry is installed and the result lives in the entry's state
-      * slot, which makes both properties that matter hold: a read is a walk to the innermost matching entry
+      * function is resolved when the entry is installed and the result lives in the entry's state slot,
+      * which makes both properties that matter hold: a read is a walk to the innermost matching entry
       * and a field read, never an allocation, and a scope re-entered under a different enclosing binding
       * resolves against that one, which is what a continuation captured inside a binding and resumed
       * elsewhere depends on.

@@ -734,7 +734,7 @@ class LoopTest extends AnyFreeSpec:
     }
 
     "constructors" - {
-        "take the type arguments the old kernel's call sites pass" in {
+        "take explicit type arguments at every arity" in {
             val stated = Loop(1) { i =>
                 if i < 3 then Loop.continue[Int, Int, Any](i + 1)
                 else Loop.done[Int, Int](i * 10)

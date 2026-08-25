@@ -9,7 +9,7 @@ import org.scalatest.freespec.AnyFreeSpec
 
 /** The public inline surface, exercised from outside package `kyo`.
   *
-  * Every other kernel2 test is in package `kyo`, so none of them can observe what a call site outside it sees, and two failures have
+  * Every other kernel test is in package `kyo`, so none of them can observe what a call site outside it sees, and two failures have
   * already reached that blind spot. An inline body is re-typechecked where it expands, so a `private[kyo]` name it selects qualified does
   * not resolve there: `map` and `Eval` both stopped compiling outside `kyo` that way. And a `private[kyo]` term an inline body names gets
   * an inline accessor, which for a top-level object in `kyo.kernel.internal` dotty emits with the package itself as the receiver, so every
@@ -230,8 +230,7 @@ class PendingExpansionSiteTest extends AnyFreeSpec:
         }
 
         "handleLoopState" in {
-            // a done clause that computes leaves the result type to the expected type, as the
-            // previous kernel's signatures did
+            // a done clause that computes leaves the result type to the expected type
             val v: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 7, ask.map(_ + 1))(
                 [C] => (state, _) => Loop.continue(state + 1, state),
                 (state, a) => a * 100 + state

@@ -5,12 +5,9 @@ import kyo.Tag
 import org.scalatest.freespec.AnyFreeSpec
 import scala.reflect.ClassTag
 
-/** Pins the compiled size of the ArrowEffect expansions at user call sites, mirroring the old kernel's BytecodeTest rows for suspend,
-  * suspendWith, and the region constructor.
+/** Pins the compiled size of the ArrowEffect expansions at user call sites: suspend, suspendWith, and the region constructor.
   *
-  * The numbers are measured against this kernel, not carried over from the previous one: `handle` became `handleCont` and takes a done
-  * clause, so the region row is not the same expansion the old pin described. A size that moves here is a result to look at, never a
-  * baseline to quietly rewrite.
+  * A size that moves here is a result to look at, never a baseline to quietly rewrite.
   */
 class ArrowEffectBytecodeTest extends AnyFreeSpec:
 
@@ -27,7 +24,7 @@ class ArrowEffectBytecodeTest extends AnyFreeSpec:
             ArrowEffect.handleCont(Tag[TestEffect.type], v)([C] => (input, cont) => cont(input), a => a)
 
     "suspend" in {
-        // one allocation and a return. The old kernel pinned this at 16
+        // one allocation and a return
         val sizes = methodBytecodeSize[TestSuspend]
         assert(sizes == Map("test" -> 14))
     }
@@ -40,17 +37,13 @@ class ArrowEffectBytecodeTest extends AnyFreeSpec:
     }
 
     "handleCont" in {
-        // 37 against the old kernel's 33 for `handle`, and the two are not the same expansion: this
-        // one carries a done clause the old one did not, and it opens with the settled-input check.
-        // It stood at 87 while the settled arm went through `unsafeGet`, an inline extension on the
-        // opaque type, which made the expansion carry a proxy chain for the type's owner. Reading
-        // the settled value through `Nested.unnest` instead halved it, and it went 44 to 37 when the
-        // region stopped binding the matched body and stored the value it already had. The call site
-        // still allocates twice, the region node and the handler it holds, where the old kernel's
-        // region was a single node; whether the handler should fuse into the node is a design
-        // question, not a pin to adjust. 37 to 40 when Effect.defer stopped being @static (see the
-        // PendingBytecodeTest lift pins for the crash evidence): the expansion loads the module
-        // before the call.
+        // the expansion opens with the settled-input check (reading the settled value through
+        // `Nested.unnest`; an inline extension on the opaque type would drag a proxy chain for the
+        // type's owner into every site), carries the done clause, and allocates twice: the region
+        // node and the handler it holds. Whether the handler should fuse into the node is a design
+        // question, not a pin to adjust. The expansion also loads the Effect module before the
+        // deferral call: an @static symbol named in inline-expanded code crashes a downstream
+        // macro-owning module's clean build (see the PendingBytecodeTest lift pins).
         val sizes = methodBytecodeSize[TestHandleCont]
         assert(sizes == Map("test" -> 40))
     }

@@ -88,9 +88,9 @@ class EvalThreadingTest extends AnyFreeSpec:
 
         "a cross-thread stop parks a running slice" in {
             // the suspension channel: the answers loop peeks the sentinel at each answer, bails,
-            // and the park check sees the same pending stop. Under the old consuming poll this was
-            // the lost-preemption path; the loop never terminates on its own, so parking is the
-            // only way the thread ends
+            // and the park check sees the same pending stop. A consuming poll would lose the
+            // preemption here; the loop never terminates on its own, so parking is the only way
+            // the thread ends
             @volatile var started = false
             @volatile var parked  = false
             val t = new Thread(() =>

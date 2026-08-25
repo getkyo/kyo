@@ -208,7 +208,7 @@ object Batch:
             case ToExpand(op: Seq[Any], cont: ContAny[A, S])
             case Expanded(value: Any, source: SourceAny[S], cont: ContAny[A, S])
 
-        // the captured continuation is kernel2's Arrow: a complete value applied strictly at the two
+        // the captured continuation is the kernel's Arrow: a complete value applied strictly at the two
         // call sites, so the multi-shot replay discipline the kernel guarantees carries the batching
         type ContAny[A, S] = Arrow[Any, ToExpand[A, S] | Expanded[A, S] | A, Batch & S]
     end internal

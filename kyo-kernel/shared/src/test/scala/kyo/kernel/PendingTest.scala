@@ -667,9 +667,6 @@ class PendingTest extends AnyFreeSpec:
                 )
         end TestEffect2
 
-        // Parked with the removal of ContextEffect from kyo-kernel2. Restore against
-        // the replacement design, together with "multiple operations" below.
-        /*
         sealed trait TestEffect3 extends ContextEffect[Boolean]
         object TestEffect3:
             def apply(): Boolean < TestEffect3 =
@@ -678,7 +675,6 @@ class PendingTest extends AnyFreeSpec:
             def run[A, S](value: Boolean)(v: A < (TestEffect3 & S)): A < S =
                 ContextEffect.handle(Tag[TestEffect3], value)(v)
         end TestEffect3
-         */
 
         "basic nesting operations" in {
             val nested: String < TestEffect1 < Any = Kyo.lift(TestEffect1(42))
@@ -794,7 +790,6 @@ class PendingTest extends AnyFreeSpec:
             assert(result2 == "Effect1:80".length)
         }
 
-        /*
         "multiple operations" in {
             def processValue(v: Int): Int < TestEffect2 < TestEffect1 =
                 TestEffect1(v).map(s => Kyo.lift(TestEffect2(s + "!")))
@@ -812,7 +807,6 @@ class PendingTest extends AnyFreeSpec:
 
             assert(finalResult.eval == ("Effect1:100!".length + 10) * 2)
         }
-         */
 
         "method returning nested computation" in {
             def compute(x: Int): String < TestEffect1 < TestEffect2 =

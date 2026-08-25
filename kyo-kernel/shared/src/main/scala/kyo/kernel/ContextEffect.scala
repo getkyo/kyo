@@ -140,7 +140,6 @@ object ContextEffect:
       * The other three parameters say what happens at the edges of the extent, and each defaults to the plainest answer:
       *
       *   - `fork` is what a computation forked from here receives, `Absent` for a value that must not cross.
-      *     This is what the previous kernel's non-inheritable marker said, as a function rather than a type.
       *   - `join` is what this holds once a fork ends, given what it holds and what the fork ended with.
       *     Keeping this one, taking the fork's, or merging them is the whole of an isolate strategy.
       *   - `release` is what the value owes when the extent ends. It is `Maybe` rather than a function with

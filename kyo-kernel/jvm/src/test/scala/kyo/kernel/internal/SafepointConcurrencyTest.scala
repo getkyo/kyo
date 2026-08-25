@@ -273,7 +273,6 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
                 enterAfter = Safepoint.enter(slot)
                 Safepoint.exit(slot)
                 stoppedResult = Safepoint.consumeStopped(slot)
-                // `Eval.apply` returns the value directly; the old kernel's `run` returned `A < S`
                 evalResult = Eval(burn(Period * 4))
                 probeReady.countDown()
                 discard(checked.await(60, TimeUnit.SECONDS))

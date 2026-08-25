@@ -103,7 +103,7 @@ object Effect:
       * while the body is being built and one raised after a resumption. It stops applying where the scope ends: a value flowing back
       * through the entry pops it, so a throw after the computation completes is not this scope's.
       *
-      * Fatal errors pass untouched, which is the previous kernel's rule.
+      * Fatal errors pass untouched.
       */
     @nowarn("msg=anonymous")
     inline def catching[A, S, B >: A, S2](inline v: => A < S)(
@@ -114,10 +114,7 @@ object Effect:
             def value                  = v
             def recover(ex: Throwable) = f(ex)
 
-    /** Detaches a computation from the bindings standing at this point, so the child carries them and can be evaluated elsewhere.
-      *
-      * Waits on ContextEffect, which this kernel does not have.
-      */
+    /** Detaches a computation from the bindings standing at this point, so the child carries them and can be evaluated elsewhere. */
     // private[kyo] inline def detach[A, S](inline v: A < S)(using inline _frame: Frame): (A < S) < S
 
     /** Acquires a resource, uses it, and releases it, with the release running whether or not the use completes.
