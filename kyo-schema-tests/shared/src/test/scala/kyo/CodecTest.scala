@@ -539,6 +539,12 @@ class CodecTest extends kyo.test.Test[Any]:
         assertRenameOrDenyRoundTrip[TransformMapDeny, Bson](transformMapDenyValue)
     }
 
+    private val transformMapRenameAllValue = TransformMapRenameAll("Dave", Map("k1" -> 1, "k2" -> 2))
+
+    "no-op renameAllFields alongside a Map field decodes the Map correctly through JSON" in {
+        assertRenameOrDenyRoundTrip[TransformMapRenameAll, Json](transformMapRenameAllValue)
+    }
+
     // --- Field transform + Map/mixed product regression matrix, extended to every representable
     // codec (Yaml, Ion text, Ion Binary, alongside the JSON/MsgPack/BSON matrix above) and to a
     // richer mixed-field product, so the transform-aware Map guard alignment is proven
@@ -604,6 +610,10 @@ class CodecTest extends kyo.test.Test[Any]:
 
     "schema-level denyUnknownFields alongside a Map field decodes the Map correctly through Yaml" in {
         assertRenameOrDenyRoundTrip[TransformMapDeny, Yaml](transformMapDenyValue)
+    }
+
+    "no-op renameAllFields alongside a Map field decodes the Map correctly through Yaml" in {
+        assertRenameOrDenyRoundTrip[TransformMapRenameAll, Yaml](transformMapRenameAllValue)
     }
 
     "schema-level denyUnknownFields alongside a Map field decodes the Map correctly through Protobuf" in {
