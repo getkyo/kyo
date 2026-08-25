@@ -2,6 +2,7 @@ package kyo.postgres
 
 import kyo.*
 import kyo.OwnContainer
+import kyo.internal.SqlTestContainers
 
 /** Integration tests for retry policy via kyo.Retry + kyo.Schedule.
   *
@@ -15,7 +16,7 @@ import kyo.OwnContainer
   *
   * Container ownership: this suite mutates server state via `Container.pause` / `Container.unpause`. It cannot share the per-fork-JVM
   * Postgres singleton with other tests because pausing the singleton would freeze every concurrent caller. Each leaf therefore starts its
-  * own container via [[ContainerPredef.Postgres.initWith]] and carries the `kyo.OwnContainer` tag.
+  * own container via `SqlTestContainers.initScopedPostgres` and carries the `kyo.OwnContainer` tag.
   */
 class RetryIntegrationTest extends SqlContainerTest:
 
@@ -55,7 +56,10 @@ class RetryIntegrationTest extends SqlContainerTest:
       */
     "Container.pause then unpause mid-query: Retry bridges the downtime and produces >= 1 retry".tagged("kyo.OwnContainer") in {
         Scope.run {
-            ContainerPredef.Postgres.initWith(ContainerPredef.Postgres.Config.default) { pg =>
+            // Through `SqlTestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
+            // container carries the `kyo-sql-singleton` and `kyo-sql-owner-pid` labels and a killed test
+            // process leaves something the reaper can find.
+            SqlTestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-retry").map { pg =>
                 pg.container.mappedPort(pg.config.port).flatMap { port =>
                     val url = pgUrl(pg, port)
                     // acquireTimeout = 1 second so paused-server connect attempts time out quickly

@@ -7,7 +7,7 @@ import kyo.internal.mysql.MysqlConnection
   * discovered by kyo-sql-tests through the `META-INF/services/kyo.internal.SqlTestBackend` entry so the backend-agnostic conformance battery
   * names no engine.
   *
-  * Provisioning relocates [[SqlSharedContainers.withFreshMysqlSchema]] verbatim: a per-JVM shared MySQL container memoized by the id `"mysql"`
+  * Provisioning relocates [[SqlSharedContainers.withFreshMysqlSchema]] verbatim: a shared MySQL container memoized by the id `"mysql"`
   * through [[SqlTestContainers.getOrInit]], a freshly-created database per leaf, an admin connection that runs the CREATE/GRANT/DROP SQL, and a
   * scoped per-test connection, all dropped on scope exit even when the body fails. The container config carries the same `performance_schema`
   * override [[containerConfig]] documents, so this descriptor and kyo-sql-tests share one container for the id whichever inits first.
