@@ -263,9 +263,12 @@ optimization-candidates/, backlog-sections/, .claude/ trees.
   (plus SpanTest's updated block; ChunkTest's updated block still compiles and passes against
   the inherited Seq.updated, so it can stay as coverage). Awaiting ruling: revert or keep as
   deliberate API.
-- RESOLVED by revert: bug.exception in kyo-data/data.scala (private[kyo], not public API) lost
-  its last caller when Eval/kernel.scala were minimized back to bug.failTag; reverted data.scala
-  to main verbatim (zero diff).
+- REVISED: bug.exception in kyo-data/data.scala is restored. Its designed caller is Eval's
+  unhandled path, which must construct the failure, attach the effect trace, and throw once
+  (the interim failTag-based form was throw-then-catch and was rejected). Consequence: the
+  restored kernel.scala failTag extension (main-verbatim per ruling 22) now has no caller on
+  the branch; unhandled builds the same message via bug.exception. Options if wanted: leave
+  failTag as main-verbatim surface, or drop it (breaks kernel.scala zero-diff).
 - NOTE: ChunkTest gains a toIndexed test block covering API that already exists on main; kept
   as meaningful coverage, listed here for visibility.
 - RESOLVED by ruling: Emit.runFirst and Poll.runFirst are now private[kyo]. The Arrow shape
@@ -289,4 +292,16 @@ optimization-candidates/, backlog-sections/, .claude/ trees.
   main's 737 lines. CONTRIBUTING.md rewritten against the current tree (Stack-based evaluator,
   current file inventory and test names, current handler-variant names) with the dangling
   kernel2-*.md links removed. Doctest validation pending sbt.
+- FLAG (design fork, from validation): a kernel bracket inside a runFirst-peeled stream
+  breaks across evals. ZStreamsTest "round trip: get then run" panics with Finalizer$Spent:
+  Emit.runFirst hands the remainder out as a value, the finishing eval's release-on-abandonment
+  drain releases the Scope resource the remainder still carries, and the next peel re-enters
+  the spent scope. Main supported this pattern (old Scope released at Scope.run completion,
+  crossing evals as data freely; the trade was a leak if the remainder was dropped). Kernel2
+  chose release-on-abandonment (no leak, but no cross-eval resumption of a live bracket).
+  Ruling needed: (a) dumps transfer finalizer ownership into the reified continuation
+  (restores main's semantics; a dropped remainder's resources become the holder's
+  responsibility), or (b) keep release-on-abandonment and rework ZStreams.get to manage the
+  ZIO scope outside the kernel bracket. Recommendation: (a), it is what the runFirst/stream
+  ecosystem is built on.
 - (append here as the pass proceeds)
