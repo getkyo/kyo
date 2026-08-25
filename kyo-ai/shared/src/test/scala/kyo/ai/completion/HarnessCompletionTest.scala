@@ -118,4 +118,14 @@ class HarnessCompletionTest extends kyo.test.Test[Any]:
         assert(!AIHarnessException("p", "garbled").isInstanceOf[AIProviderException], "a harness malfunction is per-call")
     }
 
+    "every backend declares whether it streams incrementally" in {
+        // The declaration is the signal a chat UI reads instead of discovering in production feel, so it
+        // has to be right per family rather than merely present. The HTTP families stream over SSE; the
+        // command harnesses report a finished turn, so their stream arrives in one piece.
+        assert(Completion.openAI.streamsIncrementally, "the OpenAI family streams over SSE")
+        assert(Completion.anthropic.streamsIncrementally, "the Anthropic family streams over SSE")
+        assert(!Completion.claudeCode.streamsIncrementally, "the Claude Code harness reports a finished turn")
+        assert(!Completion.codex.streamsIncrementally, "the Codex harness reports a finished turn")
+    }
+
 end HarnessCompletionTest
