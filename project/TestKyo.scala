@@ -44,8 +44,8 @@ object TestKyo {
     }
 
     def command: Command = Command.args("testKyo", "") { (state, args) =>
-        val isAll           = args.contains("--all")
-        val isDryRun        = args.contains("--dry-run")
+        val isAll    = args.contains("--all")
+        val isDryRun = args.contains("--dry-run")
         // --quick emits `testQuick` per module, so a re-invocation re-runs only the tests sbt did not record as
         // passed. The native crash-retry loop (ci-test.sh) uses it so a crashed suite's re-run stays scoped to failures.
         val isQuick         = args.contains("--quick")
@@ -106,7 +106,7 @@ object TestKyo {
         val primary = commandForScala(targetScala)
         if (primary.nonEmpty) parts += primary
         if (runBothScala) findScala2Versions(extracted) match {
-            case Nil => log("no Scala 2.x cross-build modules found")
+            case Nil      => log("no Scala 2.x cross-build modules found")
             case versions =>
                 // One pass per distinct Scala 2.x version: 2.13 for the cross-build library modules,
                 // 2.12 for the sbt plugins (kyo-compat-plugin, kyo-doctest-plugin).
