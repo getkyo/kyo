@@ -103,9 +103,11 @@ object Random:
                     b.result()
                 end nextString
 
-                val bytes = Seq(0.toByte, 1.toByte).toIndexedSeq
                 def nextBytes(length: Int)(using AllowUnsafe) =
-                    nextValues(length, bytes)
+                    val arr = new Array[Byte](length)
+                    random.nextBytes(arr)
+                    arr.toSeq
+                end nextBytes
 
                 def shuffle[A](seq: Seq[A])(using AllowUnsafe) =
                     val buffer = scala.collection.mutable.ArrayBuffer.from(seq)

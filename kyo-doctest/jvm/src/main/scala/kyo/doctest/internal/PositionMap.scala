@@ -24,6 +24,18 @@ final private[kyo] class PositionMap private (records: Map[kyo.Path, Map[Int, (B
                     case None                       => Absent
                     case Some((block, bodyLine, _)) => Present((block, bodyLine))
 
+    /** Translates a runtime stack frame to the block and README line that supplied the executed code. */
+    def translateRuntime(synthFile: kyo.Path, synthLine: Int): Maybe[(Block, Int)] =
+        records.get(synthFile) match
+            case None => Absent
+            case Some(lineMap) =>
+                lineMap.get(synthLine) match
+                    case None => Absent
+                    case Some((block, blockBodyLine, setupBlocks)) =>
+                        if blockBodyLine >= 1 then Present((block, block.lineStart + blockBodyLine))
+                        else backMapPreludePosition(synthLine, lineMap, setupBlocks)
+    end translateRuntime
+
     /** Translates a Driver.Diagnostic to a PositionMap.MappedDiagnostic.
       *
       * Returns Absent for boilerplate lines. On Present, computes the README line from blockBodyLine.
@@ -75,34 +87,32 @@ final private[kyo] class PositionMap private (records: Map[kyo.Path, Map[Int, (B
         setupBlocks: Chunk[Block],
         originalMessage: String
     ): (Int, String) =
-        if setupBlocks.isEmpty then
-            // Fallback: cannot identify originating setup block.
-            (block.lineStart, originalMessage + " (setup prelude)")
-        else
-            // Count prelude lines (blockBodyLine == 0) up to and including targetSynthLine.
-            val prelLineIndex = lineMap
-                .toSeq
-                .filter { case (synthLine, (_, bodyLine, _)) => bodyLine == 0 && synthLine <= targetSynthLine }
-                .size - 1 // 0-indexed
-
-            if prelLineIndex < 0 then
-                (block.lineStart, originalMessage + " (setup prelude)")
-            else
-                @scala.annotation.tailrec
-                def loop(remaining: Int, sbs: List[Block]): (Int, String) =
-                    sbs match
-                        case Nil => (block.lineStart, originalMessage + " (setup prelude)")
-                        case sb :: rest =>
-                            val sbLines = sb.body.linesIterator.length
-                            if remaining < sbLines then
-                                (sb.lineStart + 1 + remaining, originalMessage)
-                            else
-                                loop(remaining - sbLines, rest)
-                            end if
-                loop(prelLineIndex, setupBlocks.toList)
-            end if
-        end if
+        backMapPreludePosition(targetSynthLine, lineMap, setupBlocks) match
+            case Present((_, readmeLine)) => (readmeLine, originalMessage)
+            case Absent                   => (block.lineStart, originalMessage + " (setup prelude)")
     end backMapPreludeLine
+
+    private def backMapPreludePosition(
+        targetSynthLine: Int,
+        lineMap: Map[Int, (Block, Int, Chunk[Block])],
+        setupBlocks: Chunk[Block]
+    ): Maybe[(Block, Int)] =
+        val preludeLineIndex = lineMap
+            .toSeq
+            .count { case (synthLine, (_, bodyLine, _)) => bodyLine == 0 && synthLine <= targetSynthLine } - 1
+
+        @scala.annotation.tailrec
+        def loop(remaining: Int, blocks: List[Block]): Maybe[(Block, Int)] =
+            blocks match
+                case Nil => Absent
+                case setupBlock :: rest =>
+                    val lineCount = setupBlock.body.linesIterator.length
+                    if remaining < lineCount then Present((setupBlock, setupBlock.lineStart + 1 + remaining))
+                    else loop(remaining - lineCount, rest)
+
+        if preludeLineIndex < 0 then Absent
+        else loop(preludeLineIndex, setupBlocks.toList)
+    end backMapPreludePosition
 
 end PositionMap
 

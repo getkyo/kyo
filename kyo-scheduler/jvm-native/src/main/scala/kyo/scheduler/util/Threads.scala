@@ -16,7 +16,9 @@ import java.util.concurrent.atomic.AtomicInteger
 object Threads {
 
     def apply(name: String): ThreadFactory =
-        apply(name, new Thread(_))
+        // The final `false` is `inheritThreadLocals`: scheduler threads must not inherit the creating thread's thread-locals,
+        // so each gets its own Scala Native `StackTrace` cursor `Context` (see Worker.WorkerThread for why sharing crashes native).
+        apply(name, r => new Thread(null, r, name, 0L, false))
 
     def apply(name: String, create: Runnable => Thread): ThreadFactory =
         new ThreadFactory {

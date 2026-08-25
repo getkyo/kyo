@@ -98,7 +98,7 @@ class StartTlsUpgradeCloseRaceTest extends Test:
                         // own (soon-to-be-reused) fd numbers when a later iteration's fresh driver and socket pair reused those same
                         // numbers, misrouting an event.
                         Sync.ensure(Sync.defer { driver.close(); discard(real.close(clientFd)) }) {
-                            val serverHandle = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent)
+                            val serverHandle = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                             val serverPlain  = transport.openWith(serverHandle, driver, kyo.net.NetConfig.DefaultChannelCapacity)
                             serverPlain.start()
 

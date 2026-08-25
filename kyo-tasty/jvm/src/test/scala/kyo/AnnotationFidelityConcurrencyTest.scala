@@ -12,9 +12,10 @@ import kyo.internal.tasty.query.ClasspathOrchestrator
   * `unresolvedFullNameByNegId` map and the surviving fully-qualified name depends on the non-deterministic order in
   * which the concurrent decoders' results reach the merger.
   *
-  * Roots here deliberately exclude scala-library so every `scala.*` annotation takes the unresolved path. This is the
-  * JVM-only end-to-end guard (it needs real filesystem roots and explicit concurrency control); the cross-platform
-  * embedded path is covered by AnnotationFidelityTest and the deterministic ClasspathOrchestratorNegIdTest.
+  * The first test's roots exclude scala-library so every `scala.*` annotation takes the unresolved path; the second
+  * includes it to guard address-based tycon resolution against the per-scope jar-pool race under concurrent loads.
+  * JVM-only (needs real filesystem roots and concurrency control); the embedded path is covered by
+  * AnnotationFidelityTest and the deterministic ClasspathOrchestratorNegIdTest.
   */
 class AnnotationFidelityConcurrencyTest extends kyo.test.Test[Any]:
 
@@ -45,6 +46,34 @@ class AnnotationFidelityConcurrencyTest extends kyo.test.Test[Any]:
                 assert(
                     distinct.head.contains("deprecatedTopLevel"),
                     s"expected the @deprecated fixture method to resolve to scala.deprecated; got ${distinct.head}"
+                )
+                succeed
+            }
+        }
+    }
+
+    "symbolsAnnotatedWith(scala.annotation.tailrec) resolves >= 1 across concurrent loads with scala-library" in {
+        // Regression guard for computeFullName determinism under concurrent merge. scala-library pickles nested PACKAGE
+        // nodes and the merge writes a collapsed package's owner last-write-wins in decode-arrival order, so
+        // scala.annotation can end up owned by a same-prefix scala package. Query-side computeFullName must stop at the
+        // first Package like the registration side, else the prefix doubles ("scala.scala.annotation.tailrec") and
+        // symbolsAnnotatedWith intermittently returns 0 (the linux-x64 JVM TailrecAnnotationTest failure). Concurrency
+        // stresses decode-arrival order; every load must resolve the full stdlib @tailrec set.
+        val roots = TestClasspaths.standard
+        System.availableProcessors.map { cpus =>
+            val concurrency = cpus.max(2).min(4)
+            Async.foreach(Chunk.fill(24)(()), concurrency) { _ =>
+                Scope.run(Abort.run[TastyError](
+                    ClasspathOrchestrator.init(roots, Tasty.ErrorMode.SoftFail, concurrency)
+                )).map {
+                    case Result.Success(cp) => cp.symbolsAnnotatedWith("scala.annotation.tailrec").size
+                    case other              => -1
+                }
+            }.map { counts =>
+                assert(
+                    counts.forall(_ >= 1),
+                    s"every concurrent load must resolve >= 1 @tailrec symbol; a 0 is the computeFullName " +
+                        s"prefix-doubling race. got ${counts.toList}"
                 )
                 succeed
             }

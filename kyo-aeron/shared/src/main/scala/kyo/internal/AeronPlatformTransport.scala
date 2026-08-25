@@ -20,11 +20,20 @@ private[kyo] object AeronPlatformTransport:
       * scheduler's blocking monitor; JS and Wasm dispatch to a libuv worker, leaving the event loop
       * free) rather than stranding the caller during the ~10s connect. The driver is just-launched,
       * so the connect returns within milliseconds; the NULL path is [[external]]'s concern.
+      *
+      * The client-liveness and publication-unblock timeouts default to [[AeronDriver.Settings.embedded]]
+      * (wider than Aeron's own, see there for why); `Topic.run(settings)` overrides them.
       */
-    def embedded(dir: String)(using Frame): AeronRuntime < Async =
+    def embedded(
+        dir: String,
+        clientLivenessNs: Long = AeronDriver.Settings.embedded.clientLivenessTimeout.toNanos,
+        publicationUnblockNs: Long = AeronDriver.Settings.embedded.publicationUnblockTimeout.toNanos
+    )(using Frame): AeronRuntime < Async =
         Sync.Unsafe.defer(Ffi.load[AeronBindings]).map { bindings =>
             for
-                driver <- Sync.Unsafe.defer(bindings.driverStart(dir, 0L, 0L)).flatMap(_.safe.get)
+                driver <- Sync.Unsafe.defer(
+                    bindings.driverStart(dir, clientLivenessNs, publicationUnblockNs)
+                ).flatMap(_.safe.get)
                 client <- Sync.Unsafe.defer(bindings.clientConnect(dir)).flatMap(_.safe.get)
                 runtime <- Sync.Unsafe.defer {
                     val ffiTransport = new FfiAeronTransport(bindings, client)

@@ -51,8 +51,8 @@ class TopicUniformInvariantsTest extends Test:
         }
     }
 
-    // The assertion runs outside Topic.run so the Sync.ensure teardown (including dir.removeAll)
-    // has already completed by the time the temp dir is listed.
+    // The assertion runs outside Topic.run so the driver teardown and the scoped temp-dir finalizer
+    // have already completed by the time the temp dir is listed.
     //
     // The temp dir is shared with the other leaves of this suite, which open their own embedded
     // drivers under the same name prefix and hold those directories for as long as they run, so an
@@ -64,8 +64,8 @@ class TopicUniformInvariantsTest extends Test:
         val settleAttempts = 100
         // Inability to list the temp dir is a platform limitation, not a leak.
         def embeddedDirs(using Frame): Set[Path] < Async =
-            Abort.recover[FileFsException](_ => Chunk.empty[Path]) {
-                Path.basePaths.tmp.list("kyo-aeron-embedded*")
+            Abort.recover[FileStructureException](_ => Chunk.empty[Path]) {
+                Path.basePaths.tmp.list(glob"kyo-aeron-embedded*")
             }.map(_.toSet)
         for
             before <- embeddedDirs
@@ -73,7 +73,7 @@ class TopicUniformInvariantsTest extends Test:
                 if i >= n then Loop.done
                 else
                     // An empty body still exercises the full embedded() lifecycle (alloc dir, start
-                    // driver, teardown driver, removeAll dir) and needs no subscriber.
+                    // driver, teardown driver, finalize temp dir) and needs no subscriber.
                     Topic.run(()).andThen(Loop.continue)
             }
             leaked <- Loop.indexed { i =>
@@ -152,23 +152,25 @@ class TopicUniformInvariantsTest extends Test:
     // The second round-trip succeeding proves the first run(aeronDir) closed only its own client,
     // never the caller's driver. The distinct chunks keep the two round-trips distinguishable.
     "run(aeronDir) closes only the client: a second round-trip on the same driver succeeds" in {
-        def roundTrip(dir: Path, payload: Seq[String]) =
+        // Each round-trip uses its own stream id: aeron keeps a closed publication's image lingering for a few seconds, so reusing
+        // one id would let the first run's a,b still be readable when the second subscribes. Distinct ids isolate the runs but still prove that the second Topic.run(dir) connecting means the first closed only its client.
+        def roundTrip(dir: Path, payload: Seq[String], streamId: Int) =
             Topic.run(dir) {
                 for
                     started <- Latch.init(1)
                     fiber <- Fiber.initUnscoped(using Topic.isolate)(
-                        started.release.andThen(Topic.stream[String]("aeron:ipc").take(payload.size).run)
+                        started.release.andThen(Topic.stream[String]("aeron:ipc", streamId = Present(streamId)).take(payload.size).run)
                     )
                     _        <- started.await
-                    _        <- Fiber.initUnscoped(Topic.publish[String]("aeron:ipc")(Stream.init(payload)))
+                    _        <- Fiber.initUnscoped(Topic.publish[String]("aeron:ipc", streamId = Present(streamId))(Stream.init(payload)))
                     received <- fiber.get
                 yield received
             }
         Path.tempDir("kyo-aeron-external-reuse").map { dir =>
             withExternalDriver(dir) {
                 for
-                    first  <- roundTrip(dir, Seq("a", "b"))
-                    second <- roundTrip(dir, Seq("x", "y"))
+                    first  <- roundTrip(dir, Seq("a", "b"), 1)
+                    second <- roundTrip(dir, Seq("x", "y"), 2)
                 yield
                     assert(first == Seq("a", "b"), s"""first round-trip expected Seq("a","b") but got $first""")
                     assert(

@@ -5,6 +5,15 @@ import kyo.ai.Config
 
 class ClaudeCodeCompletionTest extends kyo.test.Test[Any]:
 
+    "mcpConfigFile writes the exact config to a scoped JSON file" in Scope.run {
+        val config = """{"mcpServers":{"kyo":{"type":"ws","url":"ws://127.0.0.1:1234/mcp"}}}"""
+        ClaudeCodeCompletion.mcpConfigFile(config).map { path =>
+            path.read.map { contents =>
+                assert(contents == config, s"the CLI must read the exact MCP config from disk: $contents")
+            }
+        }
+    }
+
     "strippedEnvVars is exactly the three ambient API credential vars (subscription-guarantee isolation)" in {
         // The base URL is deliberately NOT in the set: it is routing, not a credential. Stripping it
         // made Config.apiUrl silently inert on this backend alone while the native path honored it.

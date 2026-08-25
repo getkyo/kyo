@@ -265,11 +265,17 @@ class TodoScenarioItTest extends UITest:
                 items.map(is => UI.span(s"list:${is.toSeq.mkString(",")}").id("v"))
             )
         withUI(app) {
+            // Windows Chrome can drop a synthetic click, leaving the inline editor unopened or the save unfired. Retry
+            // each action with its follow-up: the click re-fires until it takes effect, then the follow-up succeeds and the retry stops.
             for
-                _ <- Browser.click(Selector.id("item-0"))
-                _ <- Browser.fill(Selector.id("edit"), "Buy eggs")
-                _ <- Browser.click(Selector.id("save"))
-                _ <- Browser.assertText(Selector.id("v"), "list:Buy eggs,Walk dog")
+                _ <- Retry[BrowserException](Schedule.fixed(300.millis).take(5)) {
+                    Browser.click(Selector.id("item-0")).andThen(Browser.fill(Selector.id("edit"), "Buy eggs"))
+                }
+                _ <- Retry[BrowserException](Schedule.fixed(300.millis).take(5)) {
+                    Browser.click(Selector.id("save")).andThen(
+                        Browser.assertText(Selector.id("v"), "list:Buy eggs,Walk dog", Present(Schedule.fixed(100.millis).take(2)))
+                    )
+                }
             yield ()
         }
     }

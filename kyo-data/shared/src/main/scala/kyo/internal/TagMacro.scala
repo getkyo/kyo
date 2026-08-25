@@ -187,6 +187,15 @@ private[kyo] object TagMacro:
                                     OpaqueEntry(name, visit(lower), visit(upper), Span.from(variances), Span.from(params))
                             end match
 
+                        // A Java wildcard type argument (e.g. `Comparable<? extends T>`) surfaces
+                        // through `typeArgs` as a bare `TypeBounds`. It is not a proper type, so
+                        // it must not reach `asType`/`summon`/`<:<` (those crash the compiler).
+                        // Encode it as its upper bound: a deterministic, sound representative for
+                        // subtyping purposes, consistent with how the macro already collapses
+                        // type-lambda bounds (see the `TypeLambda` case above).
+                        case TypeBounds(_, high) =>
+                            loop(high.dealiasKeepOpaques.simplified.dealiasKeepOpaques)
+
                         case tpe =>
                             tpe.asType match
                                 case '[t] =>

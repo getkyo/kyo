@@ -3,6 +3,7 @@ package kyo
 import izumi.reflect.Tag as ITag
 import kyo.*
 import kyo.internal.RegisterFunction
+import kyo.internal.TagHash
 import kyo.internal.TagTestMacro.test
 import scala.annotation.nowarn
 
@@ -303,6 +304,57 @@ class TagTest extends kyo.test.Test[Any]:
         class A0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
         val tag = Tag[A0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789]
         assert(tag =:= tag && tag <:< tag)
+    }
+
+    // Regression: deriving a Tag for a type whose Java supertypes are *parameterized*
+    // crashed the macro. A Java wildcard `<?>` argument surfaces through `typeArgs`
+    // as a bare `TypeBounds(Nothing, FromJavaObject)`, which `TagMacro` did not
+    // handle, raising `AssertionError: TypeBounds(...)` inside the dotty compiler.
+    "Java parameterized supertypes (wildcard type args)" - {
+        "LocalDateTime derives without crashing" in {
+            val tag = Tag[java.time.LocalDateTime]
+            assert(tag.show.nonEmpty)
+            assert(tag =:= tag)
+            assert(tag <:< tag)
+        }
+
+        "OffsetDateTime derives without crashing" in {
+            val tag = Tag[java.time.OffsetDateTime]
+            assert(tag.show.nonEmpty)
+            assert(tag =:= tag && tag <:< tag)
+        }
+
+        "ZonedDateTime derives without crashing" in {
+            val tag = Tag[java.time.ZonedDateTime]
+            assert(tag.show.nonEmpty)
+            assert(tag =:= tag && tag <:< tag)
+        }
+
+        "LocalDate / LocalTime still derive (unparameterized supertypes)" in {
+            assert(Tag[java.time.LocalDate].show.nonEmpty)
+            assert(Tag[java.time.LocalTime].show.nonEmpty)
+        }
+
+        "distinct java.time tags are not equal" in {
+            assert(Tag[java.time.LocalDateTime] =!= Tag[java.time.LocalDate])
+            assert(Tag[java.time.LocalDateTime] =!= Tag[java.time.LocalTime])
+            assert(Tag[java.time.LocalDateTime] =!= Tag[java.time.OffsetDateTime])
+        }
+
+        "direct wildcard-parameterized Java type derives" in {
+            // java.lang.Class is declared as Class<T> with no wildcard; use a
+            // type whose own supertype list contains a parameterized interface.
+            val tag = Tag[java.util.concurrent.atomic.AtomicReference[String]]
+            assert(tag.show.nonEmpty)
+            assert(tag =:= tag)
+        }
+
+        "case class with a LocalDateTime field can summon its field Tag" in {
+            final case class HasTime(at: java.time.LocalDateTime, label: String)
+            val tag = Tag[HasTime]
+            assert(tag.show.nonEmpty)
+            assert(tag =:= tag && tag <:< tag)
+        }
     }
 
     "type unions" - {
@@ -1206,6 +1258,35 @@ class TagTest extends kyo.test.Test[Any]:
         "is pinned to its content-derived constant (process-independent determinism)" in {
             assert(Tag[Int].hash == -1492440803, s"Tag[Int].hash = ${Tag[Int].hash}")
             assert(Tag[String].hash == -59591402, s"Tag[String].hash = ${Tag[String].hash}")
+        }
+    }
+
+    // `TagHash` is the dispatch hash, not the content-stable `Tag.hash` above: it memoizes on the
+    // platforms whose `String.hashCode` does not. What has to hold is that memoizing changes nothing,
+    // so each case reads a tag twice, once filling the memo and once through it.
+    "dispatch hash memoization" - {
+
+        "agrees with hashCode, before and after the memo is filled" in {
+            trait MA
+            val tag    = Tag[MA]
+            val direct = tag.hashCode
+            assert(TagHash.of(tag) == direct)
+            assert(TagHash.of(tag) == direct)
+        }
+
+        "distinct types keep distinct dispatch hashes" in {
+            assert(TagHash.of(Tag[Int]) != TagHash.of(Tag[String]))
+        }
+
+        "repeated comparisons hold their verdict once the memo is warm" in {
+            trait MB
+            trait MC extends MB
+            val sub    = (1 to 10).map(_ => Tag[MC] <:< Tag[MB])
+            val notSub = (1 to 10).map(_ => Tag[MB] <:< Tag[MC])
+            val notEq  = (1 to 10).map(_ => Tag[MB] =:= Tag[MC])
+            assert(sub.distinct.size == 1 && sub.head)
+            assert(notSub.distinct.size == 1 && !notSub.head)
+            assert(notEq.distinct.size == 1 && !notEq.head)
         }
     }
 

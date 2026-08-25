@@ -33,11 +33,20 @@ private[kyo] object TestClasspaths:
             .toSeq
     end all
 
+    /** Match a classpath entry against a forward-slash fragment predicate.
+      *
+      * `java.class.path` entries are backslash-separated on Windows, so the `/`-based fragment checks below must run against a
+      * forward-slash view of the path. The original entry is unchanged; only the predicate sees the normalized copy.
+      */
+    private def matchesPath(p: String)(pred: String => Boolean): Boolean = pred(p.replace('\\', '/'))
+
     /** Subset: the kyo-tasty compiled classes directory or jar from the test classpath. */
     lazy val kyoTasty: Seq[String] =
         all.filter { p =>
-            (p.contains("/kyo-tasty/jvm/target/") && p.endsWith("/classes")) ||
-            (p.contains("/kyo-tasty_3-") && p.endsWith(".jar"))
+            matchesPath(p)(np =>
+                (np.contains("/kyo-tasty/jvm/target/") && np.endsWith("/classes")) ||
+                    (np.contains("/kyo-tasty_3-") && np.endsWith(".jar"))
+            )
         }
 
     /** Subset: kyo-data compiled classes directory or jar.
@@ -46,8 +55,10 @@ private[kyo] object TestClasspaths:
       */
     lazy val kyoData: Seq[String] =
         all.filter { p =>
-            (p.contains("/kyo-data") && p.endsWith("/classes")) ||
-            (p.contains("/kyo-data") && p.endsWith(".jar"))
+            matchesPath(p)(np =>
+                (np.contains("/kyo-data") && np.endsWith("/classes")) ||
+                    (np.contains("/kyo-data") && np.endsWith(".jar"))
+            )
         }
 
     /** Subset: the scala-library jar that contains `.tasty` files.
@@ -80,8 +91,10 @@ private[kyo] object TestClasspaths:
       */
     lazy val kyoCore: Seq[String] =
         all.filter { p =>
-            (p.contains("/kyo-core") && p.endsWith("/classes")) ||
-            (p.contains("/kyo-core") && p.endsWith(".jar"))
+            matchesPath(p)(np =>
+                (np.contains("/kyo-core") && np.endsWith("/classes")) ||
+                    (np.contains("/kyo-core") && np.endsWith(".jar"))
+            )
         }
 
     /** Subset: the internal fixtures compiled classes directory, when available on the test classpath.
@@ -92,8 +105,10 @@ private[kyo] object TestClasspaths:
       */
     lazy val kyoTastyFixtures: Seq[String] =
         all.filter { p =>
-            (p.contains("/kyo-tasty/fixtures") && p.endsWith("/classes")) ||
-            (p.contains("/kyo-tasty-fixtures-internal") && p.endsWith(".jar"))
+            matchesPath(p)(np =>
+                (np.contains("/kyo-tasty/fixtures") && np.endsWith("/classes")) ||
+                    (np.contains("/kyo-tasty-fixtures-internal") && np.endsWith(".jar"))
+            )
         }
 
     /** A standard 3-root combo used by most fidelity tests: kyo-tasty + kyo-data + scala-library + internal fixtures. */

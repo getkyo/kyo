@@ -101,6 +101,40 @@ object NetConnectionClosedException:
     end Operation
 end NetConnectionClosedException
 
+/** An I/O operation on a single connection or listener failed at the driver layer: the OS rejected a connect, a recv returned an error number,
+  * a TLS record could not be processed, or an accept failed. `resource` is the driver's label for the specific fd/channel/socket (never the
+  * driver itself), `operation` (a [[NetConnectionIoException.Operation]]) names what failed, and `cause` carries the underlying [[NetErrno]] or
+  * engine `Throwable`. A consumer branches on the typed fields, never on message text.
+  *
+  * Construction sites pass the connection's creation frame explicitly, `(using handle.createdAt)`, so the rendered position is the user's
+  * `connect`/`listen` call, not a driver internal (the same discipline as the upgrade-handoff waiter failure in `PosixHandle`).
+  *
+  * Internal to the driver seam: it reaches a caller only as the `cause` inside a public leaf (for example [[NetConnectException]] built by the
+  * transport's connect wrap) or inside a [[kyo.net.internal.transport.ReadOutcome.Failed]] the read pump logs at teardown.
+  */
+final private[net] case class NetConnectionIoException(
+    resource: String,
+    operation: NetConnectionIoException.Operation,
+    cause: String | Throwable = ""
+)(using Frame) extends NetConnectionException(s"$resource ${operation.label} failed${NetException.suffix(cause)}", cause)
+
+private[net] object NetConnectionIoException:
+    /** The driver-layer operation that failed. `label` is the lowercase name embedded in the rendered message, preserving the
+      * "<resource> <label> failed" shape.
+      *
+      *   - [[Connect]]: the OS reported the non-blocking connect failed (refused, unreachable, reset, errno from the connect CQE).
+      *   - [[Receive]]: a recv/read returned an error (errno, a failed read fiber, a socket error event).
+      *   - [[Decrypt]]: the TLS engine could not process received ciphertext (a thrown engine op, a fatal record).
+      *   - [[Accept]]: the accept operation itself failed with an error number (the listener may still be open).
+      */
+    enum Operation(val label: String) derives CanEqual:
+        case Connect extends Operation("connect")
+        case Receive extends Operation("receive")
+        case Decrypt extends Operation("TLS decrypt")
+        case Accept  extends Operation("accept")
+    end Operation
+end NetConnectionIoException
+
 /** A TLS operation failed. Recover the whole family with `Abort.recover[NetTlsException]`. */
 sealed abstract class NetTlsException(message: String, cause: String | Throwable = "")(using Frame)
     extends NetException(message, cause)
@@ -167,3 +201,11 @@ final case class NetNotUpgradableException()(using Frame)
 /** The connection has already been detached for a TLS upgrade (a second upgrade was attempted on the same connection). */
 final case class NetAlreadyDetachedException()(using Frame)
     extends NetCapabilityException("the connection is already detached for upgrade")
+
+/** An [[kyo.net.internal.transport.IoDriver]] operation was invoked on a backend or handle that cannot serve it: the NIO and JS drivers'
+  * `awaitAccept(handle)` stubs (those transports drive their own accept seams), or an io_uring `awaitConnect` on a handle created without a
+  * connect target. Always a programming error inside kyo-net's own wiring, never an environmental failure, so producers deliver it as a
+  * `Result.Panic` on the pending promise (the promise-completing analog of the `NoDriver` sentinel's loud `UnsupportedOperationException`).
+  */
+final private[net] case class NetDriverUnsupportedException(backend: String, operation: String)(using Frame)
+    extends NetCapabilityException(s"'$operation' is not supported by I/O backend '$backend'")

@@ -43,32 +43,33 @@ final private[kyo] class BlockCache private (root: kyo.Path):
         val key      = cacheKey(block, scopeClosure, classpathFingerprint, scalaVersion, scalacOpts)
         val okFile   = root / s"$key.ok"
         val failFile = root / s"$key.fail"
-        // Cache files may be truncated or corrupted by a crashed prior run; treat parse failures as Absent so the
-        // block re-runs rather than serving stale garbage. The corrupted file is left in place and overwritten by
-        // the next `record` call.
-        okFile.exists.flatMap {
-            case true =>
-                // Wrap in Abort.run so a read error (corrupt/truncated file) is treated as a cache miss.
-                Abort.run[FileReadException](okFile.read).map {
-                    case Result.Success(content) =>
+        // Cache files may be truncated or corrupted by a crashed prior run; treat any read failure as a cache
+        // miss so the block re-runs rather than serving stale or corrupt data. One Abort.run covers all four ops
+        // (exists and read for both files) because every failure routes to Maybe.empty regardless of which op
+        // raised it.
+        Abort.run[FileReadException] {
+            okFile.exists.flatMap {
+                case true =>
+                    okFile.read.map { content =>
                         try Maybe(BlockCache.Entry(Driver.Outcome.Ok(deserializeDiagnostics(content))))
                         catch case _: Throwable => Maybe.empty
-                    case _ => Maybe.empty
-                }
-            case false =>
-                failFile.exists.flatMap {
-                    case true =>
-                        Abort.run[FileReadException](failFile.read).map {
-                            case Result.Success(content) =>
+                    }
+                case false =>
+                    failFile.exists.flatMap {
+                        case true =>
+                            failFile.read.map { content =>
                                 try
                                     val (errors, warnings) = deserializeErrorsAndWarnings(content)
                                     Maybe(BlockCache.Entry(Driver.Outcome.Failed(errors, warnings)))
                                 catch case _: Throwable => Maybe.empty
-                            case _ => Maybe.empty
-                        }
-                    case false =>
-                        Maybe.empty
-                }
+                            }
+                        case false =>
+                            Maybe.empty
+                    }
+            }
+        }.map {
+            case Result.Success(v) => v
+            case _                 => Maybe.empty
         }
     end lookup
 
@@ -206,13 +207,12 @@ private[kyo] object BlockCache:
       *   A ready-to-use BlockCache.
       */
     def init(path: kyo.Path)(using Frame): BlockCache < (Sync & Abort[Doctest.Error]) =
-        path.exists.flatMap { exists =>
-            if !exists then
-                Abort.recover[FileFsException](e => Abort.fail(Doctest.Error.IoError(path, "mkDir", e))) {
-                    path.mkDir.andThen(new BlockCache(path))
-                }
-            else
-                new BlockCache(path)
+        // Both ops fail for the same reason (cache-dir setup failure), so a combined error label is accurate.
+        Abort.recover[FileReadException | FileStructureException](e => Abort.fail(Doctest.Error.IoError(path, "exists/mkDir", e))) {
+            path.exists.flatMap { exists =>
+                if !exists then path.mkDir.andThen(new BlockCache(path))
+                else new BlockCache(path)
+            }
         }
 
 end BlockCache

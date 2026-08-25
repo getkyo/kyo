@@ -132,7 +132,7 @@ class PollerIoDriverTlsHalfCloseEtTest extends Test:
                             val cipher2 = TlsEngineLoopback.encrypt(clientEngine, record2)
                             val cipher  = cipher1 ++ cipher2
                             // Attach the server engine to the accepted handle so dispatchReadTls uses it.
-                            val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                            val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                             acceptedH.tls = Present(serverEngine)
                             // Send the ciphertext on the raw socket, then half-close for writing. Both the ciphertext and the TCP FIN
                             // arrive in the accepted side's kernel recv buffer before the reader below starts. On epoll, this guarantees
@@ -214,7 +214,7 @@ class PollerIoDriverTlsHalfCloseEtTest extends Test:
                             // Encrypt through the client engine; the driver will recv the wire bytes and feed the server engine via
                             // submitEngineOp -> feedAndDecrypt. No pre-feeding: that would double-feed and trigger a TLS protocol error.
                             val cipher    = TlsEngineLoopback.encrypt(clientEngine, plainData)
-                            val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                            val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                             acceptedH.tls = Present(serverEngine)
                             // Register the awaitRead FIRST so the reader is parked when the data arrives.
                             val acc  = new java.io.ByteArrayOutputStream

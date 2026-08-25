@@ -251,7 +251,16 @@ abstract class BaseAITest extends kyo.test.Test[Any]:
             config <- Config.credentialed(backend.entry)
             _ <- backend.cli match
                 case Present(command) =>
-                    commandAvailable(command).map(available => assume(available, s"$command CLI is not available"))
+                    for
+                        available <- commandAvailable(command)
+                        _         <- Kyo.lift(assume(available, s"$command CLI is not available"))
+                        _ <-
+                            if command != "claude" then Kyo.unit
+                            else
+                                claudeAuthenticationAvailable.map(authenticated =>
+                                    assume(authenticated, "claude CLI is not authenticated")
+                                )
+                    yield ()
                 case Absent =>
                     Kyo.lift(assume(config.apiKey.isDefined, s"${backend.provider.keyName} is not available")).andThen(
                         apiBackendAvailable(backend, config)
@@ -339,6 +348,26 @@ abstract class BaseAITest extends kyo.test.Test[Any]:
             case _                         => false
         }
     end commandAvailable
+
+    private[kyo] def claudeAuthenticationAvailable(using Frame): Boolean < Async =
+        Abort.run[CommandException] {
+            Command("claude", "auth", "status").textWithExitCode
+        }.map {
+            case Result.Success((output, code)) => code.isSuccess && claudeAuthenticated(output)
+            case _                              => false
+        }
+    end claudeAuthenticationAvailable
+
+    private[kyo] def claudeAuthenticated(output: String): Boolean =
+        Json.decode[Structure.Value](output).toMaybe.exists {
+            case Structure.Value.Record(fields) =>
+                fields.exists {
+                    case ("loggedIn", Structure.Value.Bool(value)) => value
+                    case _                                         => false
+                }
+            case _ => false
+        }
+    end claudeAuthenticated
 
     private[kyo] def providerUnavailable(ex: Throwable): Boolean =
         val renderedUnavailable = unavailableText(ex.getMessage) || unavailableText(ex.toString)

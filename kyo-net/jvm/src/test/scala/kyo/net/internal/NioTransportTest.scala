@@ -705,7 +705,13 @@ class NioTransportTest extends Test:
                     client.getOutputStream.write(Array.fill[Byte](128)(1))
                     client.getOutputStream.flush()
                 }
-                _         <- Async.sleep(300.millis)    // let the accepted-side pump read both chunks and park on the put
+                // A pump that overflows the channel parks by registering a put, so awaiting a pending put guarantees the
+                // FIN lands on a parked pump; a FIN before parking is reclaimed via the EOF path, leaving grace reclaim untested.
+                parked <- awaitCondition(5.seconds)(accepted.inbound.pendingPuts().getOrElse(0) > 0)
+                _ = assert(
+                    parked,
+                    "the accepted-side pump never parked on the full inbound channel, so the FIN below would not exercise the grace reclaim"
+                )
                 _         <- Sync.defer(client.close()) // FIN with the pump parked
                 reclaimed <- awaitCondition(5.seconds)(!accepted.isOpen)
                 _         <- Sync.defer(listener.close())

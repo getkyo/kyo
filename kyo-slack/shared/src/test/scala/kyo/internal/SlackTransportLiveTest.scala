@@ -22,8 +22,8 @@ class SlackTransportLiveTest extends kyo.test.Test[Any]:
     )(using Frame): A < (S & Async & Scope & Abort[HttpException]) =
         val echoHandler: (HttpRequest[Any], HttpWebSocket) => Unit < (Async & Abort[Closed]) =
             (_, ws) => ws.stream.foreach(ws.put)
-        HttpServer.init(0, "localhost")(HttpHandler.webSocket("ws/echo")(echoHandler)).map { server =>
-            test("localhost", server.port)
+        HttpServer.init(0, "127.0.0.1")(HttpHandler.webSocket("ws/echo")(echoHandler)).map { server =>
+            test("127.0.0.1", server.port)
         }
     end withEchoServer
 

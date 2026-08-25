@@ -28,6 +28,10 @@ class MachineSamplerJvmTest extends kyo.test.Test[Any]:
     // invocations through a side effect (a RateCell's histogram count, here) must account for every window.
     private val probeTrials = 5
 
+    // A JIT deopt or safepoint charges a small per-window cost to the measuring thread (~64 bytes/window on windows-x64) that recurs every
+    // window, which best-of-trials cannot filter. Per-window not per-op, so it is admitted as a floor; a real per-op allocation still fails.
+    private val perWindowFloorBytes = 1024L
+
     private def histogramSummary(path: String*): Summary =
         StatsRegistry.internal.histograms.get(path.toList.reverse, "", new UnsafeHistogram(Array(0d))).summary()
 
@@ -115,7 +119,7 @@ class MachineSamplerJvmTest extends kyo.test.Test[Any]:
             out.setLong(0, 4294967296L); out.setLong(1, 1073741824L); 0
         macosStub.getloadavgFn = (out, n) =>
             out.setDouble(0, 1.5); out.setDouble(1, 2.5); out.setDouble(2, 3.5); n
-        AllocationProbe.assertBoundedPerOp(warmupIters, measuredIters, 0.0)(realDecodeObserve(macosMachine, macosStub))
+        AllocationProbe.assertBoundedPerOp(warmupIters, measuredIters, 0.0, perWindowFloorBytes)(realDecodeObserve(macosMachine, macosStub))
 
         val windowsHandles = MachineHandles.initForTest(Stat.initScope("mstest-alloc-windows"), 8L)
         val windowsSampler = new MachineSampler(windowsHandles)
@@ -125,7 +129,7 @@ class MachineSamplerJvmTest extends kyo.test.Test[Any]:
             idle.setLong(0, 1000000L); kernel.setLong(0, 3000000L); user.setLong(0, 2000000L); 1
         windowsStub.globalMemoryStatusFn = out =>
             out.setLong(1, 17179869184L); out.setLong(2, 6442450944L); out.setLong(3, 25769803776L); out.setLong(4, 12884901888L); 1
-        AllocationProbe.assertBoundedPerOp(warmupIters, measuredIters, 0.0)(
+        AllocationProbe.assertBoundedPerOp(warmupIters, measuredIters, 0.0, perWindowFloorBytes)(
             realDecodeObserve(windowsMachine, windowsStub)
         )
 
@@ -134,29 +138,31 @@ class MachineSamplerJvmTest extends kyo.test.Test[Any]:
         // probe trial), and each call writes this fixture's memTotal into the retained LongGaugeCell;
         // against the shared scope that would poison "machine.memory.total" for every other suite's later
         // poll of the same well-known path (a real-host acceptance leaf among them).
-        for
-            dir <- Path.tempDir("kyo-stats-machine-allocprobe-linux")
-            handles  = MachineHandles.initForTest(Stat.initScope("mstest-alloc-linux"), 8L)
-            statFile = dir / "stat"
-            memFile  = dir / "meminfo"
-            _ <- statFile.write("cpu 100 20 30 40 50 6 7 80\n")
-            _ <- memFile.write(
-                "MemTotal:       16384 kB\nMemAvailable:    8192 kB\nMemFree:  4096 kB\nSwapTotal:  2048 kB\nSwapFree: 1024 kB\n"
-            )
-            sampler  = new MachineSampler(handles)
-            statSlot = sampler.openSlot(statFile)
-            memSlot  = sampler.openSlot(memFile)
-            decodeCpu = new MachineSampler.Decode:
-                def apply(b: Span[Byte], n: Int)(using AllowUnsafe): Unit = LinuxDecoders.cpu(b, n, 1L, handles)
-            decodeMem = new MachineSampler.Decode:
-                def apply(b: Span[Byte], n: Int)(using AllowUnsafe): Unit = LinuxDecoders.meminfo(b, n, handles)
-            _ = AllocationProbe.assertBoundedPerOp(warmupIters, measuredIters, 0.0) {
-                realDecodeObserve(sampler, statSlot, decodeCpu)
-                realDecodeObserve(sampler, memSlot, decodeMem)
-            }
-            _ <- dir.removeAll
-        yield ()
-        end for
+        Scope.run {
+            for
+                dir <- Path.tempDir("kyo-stats-machine-allocprobe-linux")
+                handles  = MachineHandles.initForTest(Stat.initScope("mstest-alloc-linux"), 8L)
+                statFile = dir / "stat"
+                memFile  = dir / "meminfo"
+                _ <- statFile.write("cpu 100 20 30 40 50 6 7 80\n")
+                _ <- memFile.write(
+                    "MemTotal:       16384 kB\nMemAvailable:    8192 kB\nMemFree:  4096 kB\nSwapTotal:  2048 kB\nSwapFree: 1024 kB\n"
+                )
+                sampler  = new MachineSampler(handles)
+                statSlot = sampler.openSlot(statFile)
+                memSlot  = sampler.openSlot(memFile)
+                decodeCpu = new MachineSampler.Decode:
+                    def apply(b: Span[Byte], n: Int)(using AllowUnsafe): Unit = LinuxDecoders.cpu(b, n, 1L, handles)
+                decodeMem = new MachineSampler.Decode:
+                    def apply(b: Span[Byte], n: Int)(using AllowUnsafe): Unit = LinuxDecoders.meminfo(b, n, handles)
+                _ = AllocationProbe.assertBoundedPerOp(warmupIters, measuredIters, 0.0, perWindowFloorBytes) {
+                    realDecodeObserve(sampler, statSlot, decodeCpu)
+                    realDecodeObserve(sampler, memSlot, decodeMem)
+                }
+                _ <- dir.removeAll
+            yield ()
+            end for
+        }
     }
 
     "the steady-state disk read on an unchanged mount table allocates exactly 0 bytes per op".onlyJvm in {
@@ -186,7 +192,7 @@ class MachineSamplerJvmTest extends kyo.test.Test[Any]:
                 out.setLong(1, 400000000L)
                 0
             end statfs
-        AllocationProbe.assertBoundedPerOp(warmupIters, measuredIters, 0.0)(disk.read(stub))
+        AllocationProbe.assertBoundedPerOp(warmupIters, measuredIters, 0.0, perWindowFloorBytes)(disk.read(stub))
     }
 
     "the Windows steady-state disk read on an unchanged drive set allocates exactly 0 bytes per op".onlyJvm in {
@@ -209,7 +215,7 @@ class MachineSamplerJvmTest extends kyo.test.Test[Any]:
                 totalFree.setLong(0, 400000000L)
                 1
             end diskFreeSpace
-        AllocationProbe.assertBoundedPerOp(warmupIters, measuredIters, 0.0)(disk.read(stub))
+        AllocationProbe.assertBoundedPerOp(warmupIters, measuredIters, 0.0, perWindowFloorBytes)(disk.read(stub))
         // Revert-and-fail proof: a degenerate measured op that never drove the real production read would
         // leave the "C:\" store's cells unregistered, so gaugePath's -1d sentinel would fail this assertion
         // rather than pass silently.
@@ -225,27 +231,29 @@ class MachineSamplerJvmTest extends kyo.test.Test[Any]:
                 0
             end statvfs
             def sysconf(name: Int)(using AllowUnsafe): Long = 100L
-        for
-            dir <- Path.tempDir("kyo-stats-machine-allocprobe-disk-linux")
-            mountsFile = dir / "mounts"
-            _ <- mountsFile.write("/dev/sda1 / ext4 rw 0 0\n")
-            handles = MachineHandles.initForTest(Stat.initScope("mstest-alloc-disk-linux"), 8L)
-            sampler = new MachineSampler(handles)
-            disk    = new LinuxDisk(handles, sampler, mountsFile)
-            _       = AllocationProbe.assertBoundedPerOp(warmupIters, measuredIters, 0.0)(disk.read(Present(stub)))
-            // Revert-and-fail proof: a degenerate measured op that never drove the real production read
-            // would leave the "root" store's cells unregistered, so gaugePath's -1d sentinel would fail this
-            // assertion rather than pass silently.
-            _ = assert(gaugePath("mstest-alloc-disk-linux", "disk", "root", "total") == 4096000000.0)
-            // Exercises the mount-change rebuild branch the steady read above never touches: a byte-differing
-            // mounts file fails decodeMounts's fingerprint check, forcing a real re-parse that registers a
-            // retained Store (and its cells) for the newly-added mount.
-            _ <- mountsFile.write("/dev/sda1 / ext4 rw 0 0\n/dev/sdb1 /data ext4 rw 0 0\n")
-            _ = disk.read(Present(stub))
-            _ = assert(gaugePath("mstest-alloc-disk-linux", "disk", "data", "total") == 4096000000.0)
-            _ <- dir.removeAll
-        yield ()
-        end for
+        Scope.run {
+            for
+                dir <- Path.tempDir("kyo-stats-machine-allocprobe-disk-linux")
+                mountsFile = dir / "mounts"
+                _ <- mountsFile.write("/dev/sda1 / ext4 rw 0 0\n")
+                handles = MachineHandles.initForTest(Stat.initScope("mstest-alloc-disk-linux"), 8L)
+                sampler = new MachineSampler(handles)
+                disk    = new LinuxDisk(handles, sampler, mountsFile)
+                _       = AllocationProbe.assertBoundedPerOp(warmupIters, measuredIters, 0.0, perWindowFloorBytes)(disk.read(Present(stub)))
+                // Revert-and-fail proof: a degenerate measured op that never drove the real production read
+                // would leave the "root" store's cells unregistered, so gaugePath's -1d sentinel would fail this
+                // assertion rather than pass silently.
+                _ = assert(gaugePath("mstest-alloc-disk-linux", "disk", "root", "total") == 4096000000.0)
+                // Exercises the mount-change rebuild branch the steady read above never touches: a byte-differing
+                // mounts file fails decodeMounts's fingerprint check, forcing a real re-parse that registers a
+                // retained Store (and its cells) for the newly-added mount.
+                _ <- mountsFile.write("/dev/sda1 / ext4 rw 0 0\n/dev/sdb1 /data ext4 rw 0 0\n")
+                _ = disk.read(Present(stub))
+                _ = assert(gaugePath("mstest-alloc-disk-linux", "disk", "data", "total") == 4096000000.0)
+                _ <- dir.removeAll
+            yield ()
+            end for
+        }
     }
 
     "the probe op is the reader's REAL decode+observe, not a degenerate callback, and an unsupported counter fails loud".onlyJvm in {
@@ -256,39 +264,41 @@ class MachineSamplerJvmTest extends kyo.test.Test[Any]:
             def currentThreadAllocatedBytes(): Long = 0L
         val acc = new Array[Long](1)
         val failure = intercept[AssertionFailed] {
-            AllocationProbe.assertBoundedPerOp(unsupported, warmupIters, measuredIters, 0.0) {
+            AllocationProbe.assertBoundedPerOp(unsupported, warmupIters, measuredIters, 0.0, 0L) {
                 acc(0) = acc(0) + 1L
             }
         }
         assert(failure.diagram.contains("per-thread allocation measurement is unsupported"))
 
-        for
-            dir <- Path.tempDir("kyo-stats-machine-allocprobe-substance")
-            baselineFile = dir / "stat-baseline"
-            tickFile     = dir / "stat-tick"
-            _ <- baselineFile.write("cpu 0 0 0 0 0 0 0 0\n")
-            _ <- tickFile.write("cpu 100 20 30 40 50 6 7 80\n")
-            isolated     = MachineHandles.initForTest(Stat.initScope("mstest-substance"), 8L)
-            sampler      = new MachineSampler(isolated)
-            baselineSlot = sampler.openSlot(baselineFile)
-            tickSlot     = sampler.openSlot(tickFile)
-            decode = new MachineSampler.Decode:
-                def apply(b: Span[Byte], n: Int)(using AllowUnsafe): Unit = LinuxDecoders.cpu(b, n, 1L, isolated)
-            // Baselines the RateCell's prior with no observation recorded yet (RateCell's first-ever
-            // observe call only baselines), so the FIRST probe-driven call below records the one genuine
-            // delta and every call after it (identical tick bytes) records a clamped-to-zero delta.
-            _ = realDecodeObserve(sampler, baselineSlot, decode)
-            _ = AllocationProbe.assertBoundedPerOp(warmupIters, measuredIters, 0.0)(
-                realDecodeObserve(sampler, tickSlot, decode)
-            )
-            _ <- dir.removeAll
-        yield
-            val summary = histogramSummary("mstest-substance", "cpu", "total.rate")
-            // A degenerate `(_, len) => len` op would never call LinuxDecoders.cpu, leaving this cell
-            // unobserved: count would stay 0 and this assertion would fail (the revert-and-fail guard).
-            assert(summary.count == (warmupIters + probeTrials * measuredIters).toLong)
-            assert(summary.sum == 333.0)
-        end for
+        Scope.run {
+            for
+                dir <- Path.tempDir("kyo-stats-machine-allocprobe-substance")
+                baselineFile = dir / "stat-baseline"
+                tickFile     = dir / "stat-tick"
+                _ <- baselineFile.write("cpu 0 0 0 0 0 0 0 0\n")
+                _ <- tickFile.write("cpu 100 20 30 40 50 6 7 80\n")
+                isolated     = MachineHandles.initForTest(Stat.initScope("mstest-substance"), 8L)
+                sampler      = new MachineSampler(isolated)
+                baselineSlot = sampler.openSlot(baselineFile)
+                tickSlot     = sampler.openSlot(tickFile)
+                decode = new MachineSampler.Decode:
+                    def apply(b: Span[Byte], n: Int)(using AllowUnsafe): Unit = LinuxDecoders.cpu(b, n, 1L, isolated)
+                // Baselines the RateCell's prior with no observation recorded yet (RateCell's first-ever
+                // observe call only baselines), so the FIRST probe-driven call below records the one genuine
+                // delta and every call after it (identical tick bytes) records a clamped-to-zero delta.
+                _ = realDecodeObserve(sampler, baselineSlot, decode)
+                _ = AllocationProbe.assertBoundedPerOp(warmupIters, measuredIters, 0.0, perWindowFloorBytes)(
+                    realDecodeObserve(sampler, tickSlot, decode)
+                )
+                _ <- dir.removeAll
+            yield
+                val summary = histogramSummary("mstest-substance", "cpu", "total.rate")
+                // A degenerate `(_, len) => len` op would never call LinuxDecoders.cpu, leaving this cell
+                // unobserved: count would stay 0 and this assertion would fail (the revert-and-fail guard).
+                assert(summary.count == (warmupIters + probeTrials * measuredIters).toLong)
+                assert(summary.sum == 333.0)
+            end for
+        }
     }
 
 end MachineSamplerJvmTest

@@ -39,8 +39,12 @@ end AeronDriverRuntime
   * happens once, in the platform selectors.
   */
 private[kyo] object AeronPlatform:
-    def embedded(dir: String)(using Frame): AeronRuntime < Async =
-        AeronPlatformTransport.embedded(dir)
+    def embedded(
+        dir: String,
+        clientLivenessNs: Long = AeronDriver.Settings.embedded.clientLivenessTimeout.toNanos,
+        publicationUnblockNs: Long = AeronDriver.Settings.embedded.publicationUnblockTimeout.toNanos
+    )(using Frame): AeronRuntime < Async =
+        AeronPlatformTransport.embedded(dir, clientLivenessNs, publicationUnblockNs)
 
     def external(aeronDir: String)(using Frame): AeronRuntime < (Async & Abort[TopicTransportFailedException]) =
         AeronPlatformTransport.external(aeronDir)

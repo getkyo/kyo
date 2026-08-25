@@ -137,8 +137,8 @@ class WriteBackpressureConservationTest extends Test:
                     val pollerFd   = real.create()
                     val backend    = RecordingPollerBackend(real)
                     val driver     = TestDrivers.forBackend(backend, pollerFd, spy)
-                    val handle     = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent)
-                    val peerHandle = PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent)
+                    val handle     = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val peerHandle = PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     handle.tls = Present(clientEngine)
                     discard(driver.start())
 
@@ -206,8 +206,8 @@ class WriteBackpressureConservationTest extends Test:
                     val pollerFd   = real.create()
                     val backend    = RecordingPollerBackend(real)
                     val driver     = TestDrivers.forBackend(backend, pollerFd, spy)
-                    val handle     = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent)
-                    val peerHandle = PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent)
+                    val handle     = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val peerHandle = PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     handle.tls = Present(clientEngine)
                     discard(driver.start())
 

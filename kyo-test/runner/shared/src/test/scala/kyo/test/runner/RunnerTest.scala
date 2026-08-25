@@ -152,18 +152,22 @@ end RTJoinedFailSuite
 /** A detached fiber asserts AFTER the body returns: the leaf stays Passed and the assert records into the now-CLOSED
   * scope, which emits the "a fiber outlived its test" stderr warning instead of failing the leaf.
   *
-  * The body returns immediately; the detached fiber sleeps briefly, then asserts false. By the time the assert fires the
-  * runner has already joined the body, scored the leaf, and closed the scope, so `record` takes the closed branch (the
-  * stderr warning) rather than the sink. Full determinism through the runner is not achievable here (the close happens
-  * on the runner timeline, not the leaf's), so the sleep makes the after-body ordering as reliable as possible; the
-  * closed->log branch itself is unit-covered in the api `AssertScopeTest`.
+  * The detached fiber parks on a release latch the test completes only after the runner has scored the leaf and closed
+  * the scope, so the fiber's false assert takes the closed branch (stderr warning plus process-global collector), not
+  * the sink. The latch makes the ordering exact. The closed->log branch itself is unit-covered in api `AssertScopeTest`.
   */
 class RTDetachedAfterSuite extends TestBase[Any]:
     "detached-fails-after" in Sync.defer {
         Fiber.initUnscoped {
-            Async.sleep(500.millis).andThen(Abort.run[Throwable](assert(false, "detached fiber asserted after the leaf")))
+            RTDetachedAfterSuite.release.get.andThen(Abort.run[Throwable](assert(false, "detached fiber asserted after the leaf")))
         }
     }.andThen(succeed)
+end RTDetachedAfterSuite
+
+object RTDetachedAfterSuite:
+    // Set by the test before the suite runs; the detached fiber parks on it and asserts only once the test releases it,
+    // after the runner has scored the leaf and closed the scope.
+    @volatile var release: kyo.Promise[Unit, Any] = null.asInstanceOf[kyo.Promise[Unit, Any]]
 end RTDetachedAfterSuite
 
 /** A single leaf slower than a short heartbeat interval, used to prove `onLeafHeartbeat` fires while a leaf is still running. */
@@ -352,19 +356,34 @@ class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
     }
 
     "AssertScope: a detached fiber that fails AFTER the body leaves the leaf Passed" in {
-        // The body returns immediately; the detached fiber sleeps, then asserts false after the runner has already
-        // scored and closed the scope, so `record` takes the closed branch (a stderr "a fiber outlived its test"
-        // warning) rather than failing the leaf. We assert only the deterministic integration fact: the leaf stays
-        // Passed. The closed->log warning itself is deterministically covered by the api AssertScopeTest (close()
-        // then record() emits the warning); asserting it here would race the detached fiber's wakeup.
-        TestRunner.runToFuture(classOf[RTDetachedAfterSuite], RunConfig.default).map { report =>
+        // The latch releases the parked fiber only after the runner scored the leaf and closed the scope, so its assert
+        // hits the closed branch (stderr warning + process-global collector), not the leaf. The asserted fact: the leaf
+        // stays Passed. The closed->log warning itself is covered by the api AssertScopeTest.
+        import kyo.AllowUnsafe.embrace.danger
+        val release = Sync.Unsafe.evalOrThrow(Promise.init[Unit, Any])
+        RTDetachedAfterSuite.release = release
+        // The after-close collector is process-global; drain any prior leak so this run starts from a clean baseline.
+        val _ = kyo.test.AssertScope.drainLeakedAfterClose()
+        TestRunner.runToFuture(classOf[RTDetachedAfterSuite], RunConfig.default).flatMap { report =>
             assert(countResults(report) == 1)
-            assert(
+            val passed = assert(
                 leafByPath(report, Chunk("detached-fails-after")).exists {
                     case _: TestResult.Passed => true; case _ => false
                 },
                 s"expected the detached-after leaf to be Passed but got $report"
             )
+            // Release the parked fiber so its assert records into the now-closed scope, then poll (Kyo-native, not a
+            // blocking sleep, so the single-threaded JS event loop can run the fiber) until the record lands in the
+            // process-global collector, then drain so it does not pollute later tests. The poll is best-effort, never asserted.
+            val settle: Unit < (Async & Abort[Throwable]) =
+                release.completeDiscard(Result.succeed(())).andThen {
+                    Loop(0) { attempt =>
+                        if !kyo.test.AssertScope.leakedAfterClose.isEmpty || attempt >= 500 then Loop.done
+                        else Async.sleep(1.millis).andThen(Loop.continue(attempt + 1))
+                    }
+                }.andThen(Sync.defer(kyo.test.AssertScope.drainLeakedAfterClose(): Unit))
+            val settled: Future[Unit] < Sync = Fiber.initUnscoped(settle).map(_.toFuture)
+            Sync.Unsafe.evalOrThrow(settled).map(_ => passed)
         }
     }
 
@@ -432,7 +451,12 @@ class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
             val beats = rec.recorded
             assert(beats.nonEmpty, "expected at least one heartbeat for a leaf that ran far longer than the interval")
             assert(beats.forall(_._1 == Chunk("slow-leaf")), s"every heartbeat must name the running leaf, got $beats")
-            assert(beats.forall(_._2.toMillis > 0), s"every heartbeat must carry a positive elapsed, got $beats")
+            // Assert the elapsed is monotonic (structural), not a real-time threshold a coarse clock could flip.
+            val elapsed = beats.map(_._2)
+            assert(
+                elapsed.zip(elapsed.drop(1)).forall((a, b) => b >= a),
+                s"heartbeat elapsed must be non-decreasing as the leaf keeps running, got $beats"
+            )
         }
     }
 

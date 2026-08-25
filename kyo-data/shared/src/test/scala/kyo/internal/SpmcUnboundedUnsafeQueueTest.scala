@@ -68,24 +68,27 @@ class SpmcUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
     "SpmcUnboundedUnsafeQueue-specific concurrent".notJs - {
 
         "noElementDuplication" in {
-            val q        = new SpmcUnboundedUnsafeQueue[Long](16)
-            val stop     = new AtomicBoolean(false)
-            val start    = new CountDownLatch(1)
-            val counter  = new AtomicLong(0)
-            val consumed = new ConcurrentHashMap[Long, java.lang.Boolean]()
-            val dup      = new AtomicBoolean(false)
+            val q            = new SpmcUnboundedUnsafeQueue[Long](16)
+            val total        = 20000
+            val start        = new CountDownLatch(1)
+            val producerDone = new CountDownLatch(1)
+            val consumed     = new ConcurrentHashMap[Long, java.lang.Boolean]()
+            val dup          = new AtomicBoolean(false)
 
             val producer = new Thread(() =>
                 start.await()
-                while !stop.get() do
-                    discard(q.offer(counter.incrementAndGet()))
+                var i = 1
+                while i <= total do
+                    discard(q.offer(i.toLong))
+                    i += 1
+                producerDone.countDown()
             )
             producer.setDaemon(true)
 
             val consumers = (0 until 4).map { cid =>
                 val t = new Thread(() =>
                     start.await()
-                    while !stop.get() do
+                    while producerDone.getCount > 0 || !q.isEmpty() do
                         q.poll() match
                             case Maybe.Present(v) =>
                                 if consumed.put(v, java.lang.Boolean.TRUE) != null then
@@ -99,29 +102,34 @@ class SpmcUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
 
             (producer +: consumers).foreach(_.start())
             start.countDown()
-            Thread.sleep(200)
-            stop.set(true)
-            (producer +: consumers).foreach(_.join(10000))
+            (producer +: consumers).foreach(_.join())
+
+            var r = q.poll()
+            while r.isDefined do
+                if consumed.put(r.get, java.lang.Boolean.TRUE) != null then dup.set(true)
+                r = q.poll()
 
             assert(!dup.get(), "Detected duplicate consumption in unbounded SPMC")
+            assert(consumed.size == total, s"data loss: consumed=${consumed.size}, total=$total")
         }
 
         "chunkRefRace" in {
             // Multiple consumers racing to advance consumerChunkRef across many chunks
             val q             = new SpmcUnboundedUnsafeQueue[Long](8)
-            val stop          = new AtomicBoolean(false)
+            val total         = 20000L
             val start         = new CountDownLatch(1)
+            val producerDone  = new CountDownLatch(1)
             val consumed      = new ConcurrentHashMap[Long, java.lang.Boolean]()
             val dup           = new AtomicBoolean(false)
-            val counter       = new AtomicLong(0)
-            val offered       = new AtomicLong(0)
             val consumedCount = new AtomicLong(0)
 
             val producer = new Thread(() =>
                 start.await()
-                while !stop.get() do
-                    discard(q.offer(counter.incrementAndGet()))
-                    discard(offered.incrementAndGet())
+                var i = 1
+                while i <= total do
+                    discard(q.offer(i.toLong))
+                    i += 1
+                producerDone.countDown()
             )
             producer.setDaemon(true)
 
@@ -129,7 +137,7 @@ class SpmcUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
             val consumers = (0 until 8).map { cid =>
                 val t = new Thread(() =>
                     start.await()
-                    while !stop.get() do
+                    while producerDone.getCount > 0 || !q.isEmpty() do
                         q.poll() match
                             case Maybe.Present(v) =>
                                 consumedCount.incrementAndGet()
@@ -144,18 +152,15 @@ class SpmcUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
 
             (producer +: consumers).foreach(_.start())
             start.countDown()
-            Thread.sleep(200)
-            stop.set(true)
-            (producer +: consumers).foreach(_.join(10000))
+            (producer +: consumers).foreach(_.join())
 
-            // Drain remaining
             var remaining = 0L
             while q.poll().isDefined do remaining += 1
 
             assert(!dup.get(), "Chunk ref race produced duplicates")
             assert(
-                consumedCount.get() + remaining == offered.get(),
-                s"Chunk ref race data loss: offered=${offered.get()}, consumed=${consumedCount.get()}, remaining=$remaining"
+                consumedCount.get() + remaining == total,
+                s"Chunk ref race data loss: consumed=${consumedCount.get()}, remaining=$remaining, total=$total"
             )
         }
     }

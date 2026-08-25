@@ -17,7 +17,7 @@ class HandleGuardDriverTest extends Test:
     given Frame = Frame.internal
 
     "full-duplex-read-write-then-deferred-close" in {
-        val handle = PosixHandle.socket(-1, PosixHandle.DefaultReadBufferSize, Absent)
+        val handle = PosixHandle.socket(-1, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
         Sync.defer {
             // A read dispatch and a write acquire concurrently: the independent read/write halves let them proceed full-duplex.
             assert(handle.beginDispatch(), "the read dispatch acquires the read half")
@@ -39,7 +39,7 @@ class HandleGuardDriverTest extends Test:
 
     "idle-close-frees-immediately" in {
         // With no holder in flight, requestClose runs the free now (the HandleGuard idle-close path), so a plain close frees the buffer at once.
-        val handle = PosixHandle.socket(-1, PosixHandle.DefaultReadBufferSize, Absent)
+        val handle = PosixHandle.socket(-1, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
         Sync.defer {
             assert(!handle.readBuffer.isClosed, "the buffer is live before close")
             PosixHandle.close(handle)

@@ -42,15 +42,9 @@ class TestClasspathsTest extends kyo.test.Test[Any]:
 
     "withClasspath loads successfully on two consecutive invocations" in {
         val roots = TestClasspaths.standard
-        val t0    = java.lang.System.currentTimeMillis()
         TestClasspaths.withClasspath(roots)(Tasty.classpath).map { classpath1 =>
-            val elapsed1 = java.lang.System.currentTimeMillis() - t0
-            assert(elapsed1 >= 0, "first load elapsed should be non-negative")
             assert(classpath1.symbols.length > 0, "first load should produce symbols")
-            val t1 = java.lang.System.currentTimeMillis()
             TestClasspaths.withClasspath(roots)(Tasty.classpath).map { classpath2 =>
-                val elapsed2 = java.lang.System.currentTimeMillis() - t1
-                assert(elapsed2 >= 0, "second load elapsed should be non-negative")
                 assert(classpath2.symbols.length > 0, "second load should produce symbols")
                 succeed
             }

@@ -9,7 +9,7 @@ class WebsiteBuildGraphTest extends WebsiteTest:
     private def repoRoot(): Path =
         @scala.annotation.tailrec
         def loop(dir: Path): Path =
-            if (dir / "build.sbt").unsafe.exists() then dir
+            if (dir / "build.sbt").unsafe.exists()(using summon[AllowUnsafe], Frame.internal).getOrThrow then dir
             else
                 dir.parent match
                     case Maybe.Present(parent) => loop(parent)
@@ -24,7 +24,7 @@ class WebsiteBuildGraphTest extends WebsiteTest:
     // kyo-website/shared, kyo-website/js, and kyo-website-bundle source trees should have no flexmark import.
     private def sourceLines(subdir: String): List[String] =
         val root = repoRoot() / subdir
-        if root.unsafe.exists() then
+        if root.unsafe.exists()(using summon[AllowUnsafe], Frame.internal).getOrThrow then
             filesUnder(root)
                 .filter(p => p.toString.endsWith(".scala") || p.toString.endsWith(".sbt"))
                 .flatMap(p => p.unsafe.read().getOrThrow.linesIterator.toList)
@@ -163,7 +163,7 @@ class WebsiteBuildGraphTest extends WebsiteTest:
     "zero scala_meta in bundle-opt main.js (skip when absent)" in {
         val ver    = scala.util.Properties.versionNumberString
         val jsPath = repoRoot() / s"kyo-website-bundle/js/target/scala-$ver/kyo-website-bundle-opt/main.js"
-        if !jsPath.unsafe.exists() then
+        if !jsPath.unsafe.exists()(using summon[AllowUnsafe], Frame.internal).getOrThrow then
             cancel("Bundle-opt check skipped: bundle-opt main.js not present (run fullLinkJS first)")
         else
             val text              = jsPath.unsafe.read().getOrThrow

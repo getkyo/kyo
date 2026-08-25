@@ -29,8 +29,8 @@ class RecordingDecoratorsTest extends Test:
                 val driver = PollerIoDriver.init()
                 discard(driver.start())
                 Sync.ensure(Sync.defer(driver.close())) {
-                    val clientH   = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent)
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val clientH   = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val payload   = Span.fromUnsafe(Array[Byte](5, 6, 7, 8))
                     val w         = driver.write(clientH, payload, 0)
                     assert(w == WriteResult.Done, s"write result=$w")

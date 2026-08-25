@@ -141,7 +141,7 @@ class PosixHandleWriteTailBoundTest extends Test:
                     val pollerFd = real.create()
                     val backend  = RecordingPollerBackend(real)
                     val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
-                    val handle   = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent)
+                    val handle   = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     handle.tls = Present(clientEngine)
                     discard(driver.start())
                     for
@@ -175,7 +175,7 @@ class PosixHandleWriteTailBoundTest extends Test:
                         throw Closed("PosixHandleWriteTailBoundTest", summon[Frame], s"queue_init failed: rc=$rc")
                     end if
                     val driver = TestDrivers.forBindings(RecordingIoUringBindings(realUring, realRing), realRing)
-                    val handle = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent)
+                    val handle = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     discard(driver.start())
                     for
                         result <- issueUntilBoundedOrGrown(driver, handle)
@@ -209,7 +209,7 @@ class PosixHandleWriteTailBoundTest extends Test:
                         throw Closed("PosixHandleWriteTailBoundTest", summon[Frame], s"queue_init failed: rc=$rc")
                     end if
                     val driver = TestDrivers.forBindings(RecordingIoUringBindings(realUring, realRing), realRing)
-                    val handle = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent)
+                    val handle = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     handle.tls = Present(clientEngine)
                     discard(driver.start())
                     for

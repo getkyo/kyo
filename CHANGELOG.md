@@ -6,14 +6,22 @@ All breaking API changes to this project will be documented in this file.
 
 ### Added
 
+- [kyo-data] `Glob`: a compiled, platform-independent pattern for matching slash-separated paths, with a `glob"..."` literal interpolator
 - [kyo-data] `OrderedDict[K, V]`: an immutable map that iterates in insertion order
 - [kyo-data] `OrderedDictBuilder[K, V]`: build an `OrderedDict` from repeated adds
 - [kyo-schema] `Schema.stringOrderedDictSchema` and `Schema.orderedDictSchema`: derive a `Schema` for a case class with an `OrderedDict` field
 - [kyo-core] `Fiber.use`: use a forked fiber within a function and clean it up
 - [kyo-core] `Fiber.initUnscoped`: fork a fiber without guaranteeing cleanup (formerly `Fiber.init`)
+- [kyo-system] `Path.tailBytes`: follow a file at the byte level, starting from the beginning, the end, or a recorded offset
+- [kyo-system] `Path.Origin`: where a byte-level read begins (`Start`, `End`, `Offset`)
+- [kyo-core] `Stream.fromInputStream`: stream a `java.io.InputStream`'s bytes, closed with the enclosing `Scope`
+- [kyo-schema] `RecordDecodeException`: decode failure for one record in a multi-record input, carrying its index and byte offset
+- [kyo-schema-json] `Json.Lines`: pure JSONL/NDJSON framing (`Framer`, `Pending`, `Line`, `Framed`) plus `decodeAll`, `decodeAllBytes`, `decodeAllBytesResults`, `encodeAll`, `encodeAllBytes`, `encodeLine`
+- [kyo-schema-json] `Jsonl`: streaming JSONL/NDJSON over files and byte streams with `read`, `watch`, `pipe`, `encode`, `write`, `append`, and per-record error recovery through the `Results` variants
 - [kyo-combinators] `.forkUsing`: apply `Fiber.use`
 - [kyo-logging-jpl] `kyo.JavaLog`: bridge `Log` to Java platform logging a.k.a. `System.Logger`
 - [kyo-logging-slf4j] `kyo.SLF4JLog`: bridge `Log` to SLF4J 2.0 API
+- [kyo-system] `Stream.writeTo` and `Stream.writeLinesTo`: `append` and `createFolders` parameters, matching the `Path` write methods. `append = true` adds to the end of an existing file and leaves that file in place when the stream fails.
 
 ### Removed
 
@@ -28,3 +36,9 @@ All breaking API changes to this project will be documented in this file.
 - [kyo-combinators] `.fork`: apply `Fiber.init` (formerly `.forkScoped`)
 - [kyo-prelude] The `Parse` effect has been moved to a new `kyo-parse` module
 - [kyo-core] `Log.live`: defaulting to `Unsafe.ConsoleLogger` for all platforms
+- [kyo-core] `Path`, `System`, `Process`, `Command`, `CommandException`, `FileException`, and the `Stream` `writeTo` and `writeLinesTo` sinks have moved to a new `kyo-system` module. Add `"io.getkyo" %% "kyo-system"` to keep using them. No import or signature changes are needed, since the package is still `kyo`.
+- [kyo-core] `Async.defaultConcurrency` now resolves through `StaticFlag`, which adds an environment-variable channel (`KYO_ASYNC_CONCURRENCY_DEFAULT`, checked after the `kyo.async.concurrency.default` system property) and changes the exception type thrown on a malformed value.
+- [kyo-system] `Path.readStream(charset, bufferSize)`, `Path.readBytesStream(bufferSize)`, `Path.tail(pollDelay, bufferSize)`, and `Path.tailBytes(bufferSize)`: `bufferSize` is now a `ByteSize` rather than an `Int`. Pass `8.kib` where `8192` was passed. The value is clamped to the range an array can address, so `ByteSize.Zero` reads one byte at a time and anything above `Int.MaxValue` bytes reads through the largest buffer there is.
+- [kyo-core] `Stream.fromInputStream(is, bufferSize)`: `bufferSize` is now a `ByteSize`, clamped the same way.
+- [kyo-schema-json] `Json.Lines.DefaultMaxLineBytes` is now `Json.Lines.DefaultMaxLineSize`, a `ByteSize` of 16 MiB. The `maxLineBytes` parameter of `Json.Lines.Framer.init`, `Json.Lines.decodeAll`, `Json.Lines.decodeAllBytes`, `Json.Lines.decodeAllBytesResults`, and every `Jsonl` entry point is now `maxLineSize: ByteSize`. Pass `30.bytes` where `30` was passed. A ceiling above `Json.Lines.MaxLineSize` (`Int.MaxValue` bytes) is clamped to it, since a record is handed out as an array-backed `Span`.
+- [kyo-system] `Path.Unsafe.openWrite(append = true)`: now appends on Scala.js and Wasm. The Node handle wrote at an explicit position, which makes the call a positioned write, and POSIX leaves `O_APPEND` without effect there, so on macOS every write overwrote the file from its first byte. Writes now go at the file description's own cursor.

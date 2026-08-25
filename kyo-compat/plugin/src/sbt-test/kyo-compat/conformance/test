@@ -1,0 +1,5 @@
+# Scripted test - .compatConformance extracts the plugin-bundled conformance suite.
+> publishFakes
+> checkConformanceSources
+> checkConformanceWiring
+> checkByteIdentity

@@ -239,7 +239,7 @@ object DigestComputer:
     /** Collect all .tasty file paths from directory roots via a recursive walk.
       *
       * Uses kyo.Path.exists (no Abort) and a synchronous walk via Path.Unsafe.openWalk, which avoids introducing Scope into the
-      * effect row. The walk handle is released in a finally block before returning. FileFsException from the walk is converted to
+      * effect row. The walk handle is released in a finally block before returning. FileStructureException from the walk is converted to
       * TastyError.SnapshotIoError.
       *
       * Unsafe: the openWalk call is synchronous I/O via AllowUnsafe; the handle is closed in a finally block; no resource leak.
@@ -248,7 +248,7 @@ object DigestComputer:
         roots: Seq[String]
     )(using Frame): Seq[String] < (Sync & Abort[TastyError]) =
         Kyo.foreach(roots) { root =>
-            Path(root).exists.map { ex =>
+            Abort.recover[FileReadException](_ => false)(Path(root).exists).map { ex =>
                 if !ex then Sync.defer(Seq.empty[String])
                 else
                     Sync.Unsafe.defer {

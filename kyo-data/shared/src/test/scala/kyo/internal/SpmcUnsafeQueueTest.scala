@@ -33,25 +33,27 @@ class SpmcUnsafeQueueTest extends UnsafeQueueBaseTest:
 
     "SpmcUnsafeQueue-specific concurrent".notJs - {
         "noElementDuplication" in {
-            val q        = new SpmcUnsafeQueue[Long](128)
-            val stop     = new AtomicBoolean(false)
-            val start    = new CountDownLatch(1)
-            val counter  = new AtomicLong(0)
-            val consumed = new ConcurrentHashMap[Long, java.lang.Boolean]()
-            val dup      = new AtomicBoolean(false)
+            val q            = new SpmcUnsafeQueue[Long](128)
+            val total        = 20000
+            val start        = new CountDownLatch(1)
+            val producerDone = new CountDownLatch(1)
+            val consumed     = new ConcurrentHashMap[Long, java.lang.Boolean]()
+            val dup          = new AtomicBoolean(false)
 
             val producer = new Thread(() =>
                 start.await()
-                while !stop.get() do
-                    val v = counter.incrementAndGet()
-                    if !q.offer(v) then Thread.`yield`()
+                var i = 0
+                while i < total do
+                    if q.offer(i.toLong) then i += 1
+                    else Thread.`yield`()
+                producerDone.countDown()
             )
             producer.setDaemon(true)
 
             val consumers = (0 until 4).map { cid =>
                 val t = new Thread(() =>
                     start.await()
-                    while !stop.get() do
+                    while producerDone.getCount > 0 || !q.isEmpty() do
                         q.poll() match
                             case Maybe.Present(v) =>
                                 if consumed.put(v, java.lang.Boolean.TRUE) != null then
@@ -65,33 +67,39 @@ class SpmcUnsafeQueueTest extends UnsafeQueueBaseTest:
 
             (producer +: consumers).foreach(_.start())
             start.countDown()
-            Thread.sleep(200)
-            stop.set(true)
-            (producer +: consumers).foreach(_.join(10000))
+            (producer +: consumers).foreach(_.join())
+
+            var r = q.poll()
+            while r.isDefined do
+                if consumed.put(r.get, java.lang.Boolean.TRUE) != null then dup.set(true)
+                r = q.poll()
 
             assert(!dup.get(), "Detected duplicate consumption")
+            assert(consumed.size == total, s"data loss: consumed=${consumed.size}, total=$total")
         }
 
         "capacity2Concurrent" in {
-            val q        = new SpmcUnsafeQueue[Long](2)
-            val stop     = new AtomicBoolean(false)
-            val start    = new CountDownLatch(1)
-            val consumed = new ConcurrentHashMap[Long, java.lang.Boolean]()
-            val dup      = new AtomicBoolean(false)
-            val counter  = new AtomicLong(0)
+            val q            = new SpmcUnsafeQueue[Long](2)
+            val total        = 20000
+            val start        = new CountDownLatch(1)
+            val producerDone = new CountDownLatch(1)
+            val consumed     = new ConcurrentHashMap[Long, java.lang.Boolean]()
+            val dup          = new AtomicBoolean(false)
 
             val producer = new Thread(() =>
                 start.await()
-                while !stop.get() do
-                    val v = counter.incrementAndGet()
-                    if !q.offer(v) then Thread.`yield`()
+                var i = 0
+                while i < total do
+                    if q.offer(i.toLong) then i += 1
+                    else Thread.`yield`()
+                producerDone.countDown()
             )
             producer.setDaemon(true)
 
             val consumers = (0 until 4).map { cid =>
                 val t = new Thread(() =>
                     start.await()
-                    while !stop.get() do
+                    while producerDone.getCount > 0 || !q.isEmpty() do
                         q.poll() match
                             case Maybe.Present(v) =>
                                 if consumed.put(v, java.lang.Boolean.TRUE) != null then
@@ -105,38 +113,40 @@ class SpmcUnsafeQueueTest extends UnsafeQueueBaseTest:
 
             (producer +: consumers).foreach(_.start())
             start.countDown()
-            Thread.sleep(200)
-            stop.set(true)
-            (producer +: consumers).foreach(_.join(10000))
+            (producer +: consumers).foreach(_.join())
+
+            var r = q.poll()
+            while r.isDefined do
+                if consumed.put(r.get, java.lang.Boolean.TRUE) != null then dup.set(true)
+                r = q.poll()
 
             assert(!dup.get(), "Capacity-2 concurrent produced duplicates")
+            assert(consumed.size == total, s"data loss: consumed=${consumed.size}, total=$total")
         }
 
         "producerBubbleSpin" in {
             // Exercise the producer bubble spin: consumer CAS'd but hasn't nulled slot yet.
             // Use capacity=2 to maximize the chance of hitting this path.
-            val q        = new SpmcUnsafeQueue[Long](2)
-            val stop     = new AtomicBoolean(false)
-            val start    = new CountDownLatch(1)
-            val offered  = new AtomicLong(0)
-            val consumed = new AtomicLong(0)
+            val q            = new SpmcUnsafeQueue[Long](2)
+            val total        = 20000L
+            val start        = new CountDownLatch(1)
+            val producerDone = new CountDownLatch(1)
+            val consumed     = new AtomicLong(0)
 
             val producer = new Thread(() =>
                 start.await()
-                var i = 0L
-                while !stop.get() do
-                    if q.offer(i) then
-                        offered.incrementAndGet()
-                        i += 1
+                var i = 0
+                while i < total do
+                    if q.offer(i.toLong) then i += 1
                     else Thread.`yield`()
-                end while
+                producerDone.countDown()
             )
             producer.setDaemon(true)
 
             val consumers = (0 until 4).map { cid =>
                 val t = new Thread(() =>
                     start.await()
-                    while !stop.get() do
+                    while producerDone.getCount > 0 || !q.isEmpty() do
                         q.poll() match
                             case Maybe.Present(_) => discard(consumed.incrementAndGet())
                             case _                => Thread.`yield`()
@@ -148,16 +158,14 @@ class SpmcUnsafeQueueTest extends UnsafeQueueBaseTest:
 
             (producer +: consumers).foreach(_.start())
             start.countDown()
-            Thread.sleep(200)
-            stop.set(true)
-            (producer +: consumers).foreach(_.join(10000))
+            (producer +: consumers).foreach(_.join())
 
             var remaining = 0L
             while q.poll().isDefined do remaining += 1
 
             assert(
-                consumed.get() + remaining == offered.get(),
-                s"Bubble spin data loss: offered=${offered.get()}, consumed=${consumed.get()}, remaining=$remaining"
+                consumed.get() + remaining == total,
+                s"Bubble spin data loss: consumed=${consumed.get()}, remaining=$remaining, total=$total"
             )
         }
     }

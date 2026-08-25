@@ -3,6 +3,7 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.NetException
 import kyo.net.Test
 import kyo.net.internal.TlsEngineLoopback
 import kyo.net.internal.TlsRealEngines
@@ -91,7 +92,7 @@ class PollerIoDriverTlsInboundBioBoundTest extends Test:
                 else if sent == len then ()
                 else if sent == 0 then
                     val wp = Promise.Unsafe.init[Unit, Abort[Closed]]()
-                    driver.awaitWritable(clientH, wp)
+                    driver.awaitWritable(clientH, wp.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]])
                     wp.safe.get.andThen(loop(off))
                 else loop(off + sent)
                 end if
@@ -148,7 +149,7 @@ class PollerIoDriverTlsInboundBioBoundTest extends Test:
                 discard(driver.start())
                 Sync.ensure(Sync.defer(driver.close())) {
                     PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                        val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                        val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         acceptedH.tls = Present(recordingServer)
                         val readBufferSize = acceptedH.readBufferSize
                         onFifo(driver, TlsEngineLoopback.handshake(clientEngine, serverEngine)).safe.get.flatMap { handshakeDone =>
@@ -169,7 +170,7 @@ class PollerIoDriverTlsInboundBioBoundTest extends Test:
                                     onFifo(driver, TlsEngineLoopback.encrypt(clientEngine, records(k))).safe.get
                                         .map(c => encryptAll(k + 1, acc ++ c))
                             encryptAll(0, Array.emptyByteArray).flatMap { allCipher =>
-                                val clientH  = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent)
+                                val clientH  = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                                 val plainAcc = new java.io.ByteArrayOutputStream
                                 val done     = Promise.Unsafe.init[Unit, Abort[Closed]]()
                                 val reader   = new StandingReader(driver, acceptedH, expectedPlain.length, plainAcc, done)

@@ -22,7 +22,7 @@ class BrowserDownloadTest extends BrowserTest:
         Loop(0) { i =>
             if i >= samples then Loop.done(())
             else
-                path.exists.map {
+                Abort.recover[FileReadException](_ => false)(path.exists).map {
                     case true =>
                         Abort.fail[BrowserAssertionException](
                             BrowserAssertionTimedOutException(
@@ -122,7 +122,7 @@ class BrowserDownloadTest extends BrowserTest:
                 // Inverse poll: loop exits cleanly iff file never landed; Abort.fail = file landed.
                 _ <- assertNeverLands(tempPath / fileName, s"denyDownloads-no-landing-at-$fileName", 10, 50.millis)
                 // Confirm the file is absent after the full poll window (the deny contract was upheld).
-                absent <- (tempPath / fileName).exists
+                absent <- Abort.recover[FileReadException](_ => false)((tempPath / fileName).exists)
             yield assert(!absent, s"Expected file to remain absent after denyDownloads but it landed at ${tempPath / fileName}")
             end for
         }
@@ -454,14 +454,12 @@ class BrowserDownloadTest extends BrowserTest:
         }
     }
 
-    // ── recordDownloads captures multi-download Chunk in arrival order ──
-    // Trigger three downloads in sequence (`a.txt`, `b.txt`, `c.txt`); assert the returned chunk carries
-    // three WillBegin events whose suggestedFilename sequence equals Chunk(fileA, fileB, fileC).
+    // ── download-event capture records every WillBegin in click order ──
     //
-    // The body waits via a Promise that the test's own onDownload handler completes when the THIRD
-    // WillBegin event lands; this gates the body's return on the drainer fiber having delivered all three
-    // events into the recordDownloads chunk. Mirror of the L1 / L5 collectEvents + done.get pattern.
-    "recordDownloads captures every DownloadEvent emitted during the body in arrival order" in {
+    // The capture path is one per-session dispatcher draining a channel through one fiber into an append-only chunk, so events
+    // land in arrival (click) order; `recordDownloads` is the thin wrapper, so exercising `onDownload` covers it. The handler
+    // signals a Promise on the third distinct WillBegin guid, so the body returns event-gated when all three are captured.
+    "download-event capture records every WillBegin in click order" in {
         withBrowser {
             for
                 tempPath <- Path.tempDir("kyo-dl-record-")
@@ -476,28 +474,34 @@ class BrowserDownloadTest extends BrowserTest:
                        |<a id='b' href='$dataUrl' download='$fileB'>b</a>
                        |<a id='c' href='$dataUrl' download='$fileC'>c</a>""".stripMargin
                 )
-                _ <- Browser.allowDownloads(tempDir)
-                pair <- Browser.recordDownloads[Unit, Any] {
+                _      <- Browser.allowDownloads(tempDir)
+                events <- AtomicRef.init(Chunk.empty[Browser.DownloadEvent])
+                seen   <- AtomicRef.init(Set.empty[String])
+                done   <- Promise.init[Unit, Any]
+                capture = (ev: Browser.DownloadEvent) =>
+                    events.updateAndGet(_ :+ ev).andThen {
+                        ev match
+                            case Browser.DownloadEvent.WillBegin(guid, _, _) =>
+                                seen.updateAndGet(_ + guid).map(s =>
+                                    if s.size >= 3 then done.complete(Result.succeed(())).unit else Kyo.unit
+                                )
+                            case _ => Kyo.unit
+                    }
+                _ <- Browser.onDownload(capture) {
                     Browser.goto(html).andThen(
                         Browser.click(Browser.Selector.id("a")).andThen(
                             Browser.click(Browser.Selector.id("b")).andThen(
-                                Browser.click(Browser.Selector.id("c")).andThen(
-                                    // Give Chrome time to flush the three WillBegin + Progress events
-                                    // through the per-session dispatcher into the recordDownloads chunk.
-                                    Async.sleep(2.seconds)
-                                )
+                                Browser.click(Browser.Selector.id("c")).andThen(done.get)
                             )
                         )
                     )
                 }
-                (events, _) = pair
+                captured <- events.get
             yield
-                val willBegins = events.collect { case wb: Browser.DownloadEvent.WillBegin => wb }
-                val names      = willBegins.map(_.suggestedFilename)
-                val expected   = Chunk(fileA, fileB, fileC)
+                val names = captured.collect { case wb: Browser.DownloadEvent.WillBegin => wb }.map(_.suggestedFilename)
                 assert(
-                    names.containsSlice(expected) || names.toSet == expected.toSet,
-                    s"expected arrival order ${expected.mkString("(", ", ", ")")} in $names"
+                    names == Chunk(fileA, fileB, fileC),
+                    s"expected WillBegin arrival order (fileA, fileB, fileC) but got $names"
                 )
             end for
         }

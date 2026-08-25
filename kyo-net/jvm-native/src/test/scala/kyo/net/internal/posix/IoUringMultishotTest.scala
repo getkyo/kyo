@@ -3,6 +3,7 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.NetException
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
@@ -67,10 +68,10 @@ class IoUringMultishotTest extends Test:
             val C = 5
             withRealDriver { driver =>
                 listenOnly().flatMap { serverFd =>
-                    val serverH = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent)
+                    val serverH = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     // Arm the first accept before any client connects.
                     val p0 = Promise.Unsafe.init[Int, Abort[Closed]]()
-                    driver.awaitAccept(serverH, p0)
+                    driver.awaitAccept(serverH, p0.asInstanceOf[Promise.Unsafe[Int, Abort[Closed | NetException]]])
                     // Connect one client at a time and wait for its accept CQE before arming the next accept and connecting the next
                     // client. This matches the production accept-loop pattern: await fd, arm next accept, handle fd.
                     Loop(p0, Vector.empty[Int]) { (currentPromise, fds) =>
@@ -84,7 +85,7 @@ class IoUringMultishotTest extends Test:
                                 else
                                     // Arm the next single-shot accept SQE before connecting the next client.
                                     val next = Promise.Unsafe.init[Int, Abort[Closed]]()
-                                    driver.awaitAccept(serverH, next)
+                                    driver.awaitAccept(serverH, next.asInstanceOf[Promise.Unsafe[Int, Abort[Closed | NetException]]])
                                     Loop.continue(next, acc)
                                 end if
                             }
@@ -115,7 +116,7 @@ class IoUringMultishotTest extends Test:
                     if i >= B then Loop.done(succeed)
                     else
                         PosixTestSockets.loopbackPair().flatMap { case (client, accepted) =>
-                            val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                            val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                             val payload   = Span.fromUnsafe(Array.tabulate[Byte](16)(j => ((i * 16 + j) & 0xff).toByte))
                             val w         = driver.write(acceptedH, payload, 0)
                             assert(w == WriteResult.Done, s"write result=$w for round-trip $i")

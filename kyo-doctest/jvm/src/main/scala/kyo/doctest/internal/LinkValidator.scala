@@ -33,7 +33,7 @@ private[kyo] object LinkValidator:
       */
     def validate(file: Path)(using Frame): Chunk[Doctest.Failure] < (Sync & Abort[Doctest.Error]) =
         Abort.recover[FileReadException](e => Abort.fail(Doctest.Error.IoError(file, "read", e))) {
-            file.read.flatMap { raw =>
+            file.read.map { raw =>
                 val content      = raw.replace("\r\n", "\n")
                 val headingSlugs = extractHeadings(content).map(_.slug).toSet
                 val links        = extractLinks(content)
@@ -60,7 +60,9 @@ private[kyo] object LinkValidator:
         else
             val (pathPart, anchorPart) = splitAnchor(target)
             val resolved               = file.parent.map(_ / pathPart).getOrElse(Path(pathPart))
-            resolved.exists.flatMap {
+            Abort.recover[FileReadException](e => Abort.fail(Doctest.Error.IoError(resolved, "exists", e))) {
+                resolved.exists
+            }.map {
                 case false => Chunk(failure(
                         file,
                         link,

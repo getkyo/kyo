@@ -49,8 +49,8 @@ class StartTlsUpgradeTest extends Test:
         Sync.ensure(Sync.defer(driver.close())) {
             Scope.run {
                 loopbackPair().map { case (clientFd, serverFd) =>
-                    val clientHandle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
-                    val serverHandle = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent)
+                    val clientHandle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val serverHandle = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val clientPlain  = transport.openWith(clientHandle, driver, kyo.net.NetConfig.DefaultChannelCapacity)
                     val serverPlain  = transport.openWith(serverHandle, driver, kyo.net.NetConfig.DefaultChannelCapacity)
                     clientPlain.start()
@@ -106,6 +106,8 @@ class StartTlsUpgradeTest extends Test:
     }
 
     "STARTTLS on a non-upgradable in-memory connection aborts NetNotUpgradableException" in {
+        if !(PosixConstants.isLinux || PosixConstants.isMacOrBsd) then
+            cancel("builds a real PollerIoDriver, which needs epoll (Linux) or kqueue (macOS/BSD)")
         val driver    = PollerIoDriver.init()
         val transport = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         Sync.ensure(Sync.defer(driver.close())) {

@@ -130,8 +130,8 @@ class IoUringTlsWriteOrderingTest extends Test:
                 assert(TlsEngineLoopback.handshake(clientEngine, serverEngine), "handshake must complete before the writes")
                 withRecordingDriver { (drv, recording) =>
                     PosixTestSockets.loopbackPair().map { case (driverFd, peerFd) =>
-                        val handle     = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent)
-                        val peerHandle = PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent)
+                        val handle     = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        val peerHandle = PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         handle.tls = Present(serverEngine)
 
                         val p1       = Array.tabulate[Byte](16)(i => (i + 1).toByte)
@@ -174,8 +174,8 @@ class IoUringTlsWriteOrderingTest extends Test:
                     // Shrunk SO_SNDBUF on the driver side forces the first ciphertext send to partial-send genuinely; the driver re-flushes the
                     // unsent remainder when the send CQE reaps. Larger payloads ensure the ciphertext exceeds the small send buffer.
                     PosixTestSockets.smallBufferedPair(sndBuf = 2048, rcvBuf = 2048).map { case (driverFd, peerFd) =>
-                        val handle     = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent)
-                        val peerHandle = PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent)
+                        val handle     = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        val peerHandle = PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         handle.tls = Present(serverEngine)
 
                         val p1       = Array.tabulate[Byte](48 * 1024)(i => (i % 251).toByte)
@@ -214,8 +214,8 @@ class IoUringTlsWriteOrderingTest extends Test:
                 assert(TlsEngineLoopback.handshake(clientEngine, serverEngine), "handshake must complete before the writes")
                 withRecordingDriver { (drv, recording) =>
                     PosixTestSockets.loopbackPair().map { case (driverFd, peerFd) =>
-                        val handle     = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent)
-                        val peerHandle = PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent)
+                        val handle     = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        val peerHandle = PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         handle.tls = Present(serverEngine)
 
                         val payloads = List(

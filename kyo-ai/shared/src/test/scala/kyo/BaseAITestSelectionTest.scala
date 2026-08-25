@@ -34,4 +34,19 @@ class BaseAITestSelectionTest extends BaseAITest:
         }
     }
 
+    "claudeAuthenticated" - {
+        "accepts an authenticated status response" in {
+            assert(claudeAuthenticated("""{"loggedIn":true,"authMethod":"oauth"}"""))
+        }
+
+        "rejects a logged-out status response" in {
+            assert(!claudeAuthenticated("""{"loggedIn":false,"authMethod":"none"}"""))
+        }
+
+        "rejects malformed and incomplete responses" in {
+            assert(!claudeAuthenticated("not json"))
+            assert(!claudeAuthenticated("""{"authMethod":"oauth"}"""))
+        }
+    }
+
 end BaseAITestSelectionTest

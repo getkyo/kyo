@@ -17,15 +17,18 @@ import scala.annotation.nowarn
   *
   * @param executor
   *   Executor for running the update thread
+  * @param now
+  *   Time source sampled on every update (default the system clock), overridable so a test drives the published value:
+  *   `currentMillis()` then reports whatever this source last returned, independent of real time.
   */
-final case class InternalClock(executor: Executor) {
+final case class InternalClock(executor: Executor, now: () => Long = () => System.currentTimeMillis()) {
 
     @volatile private var _stop = false
 
     // padding to avoid false sharing
     val a1, a2, a3, a4, a5, a6, a7 = 0L
 
-    @volatile private var millis = System.currentTimeMillis()
+    @volatile private var millis = now()
 
     // padding to avoid false sharing
     val b1, b2, b3, b4, b5, b6, b7 = 0L
@@ -56,7 +59,7 @@ final case class InternalClock(executor: Executor) {
     )
 
     private def update(): Unit = {
-        millis = System.currentTimeMillis()
+        millis = now()
         val end     = System.nanoTime()
         val elapsed = Math.max(0, end - start)
         start = end
@@ -65,5 +68,5 @@ final case class InternalClock(executor: Executor) {
 
     @nowarn("msg=unused")
     private val gauge =
-        statsScope.scope("clock").gauge("skew")((System.currentTimeMillis() - millis).toDouble)
+        statsScope.scope("clock").gauge("skew")((now() - millis).toDouble)
 }

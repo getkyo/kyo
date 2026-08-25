@@ -36,12 +36,14 @@ class PollerIoDriverReadyCountTest extends Test:
                     if remaining == 0 then acc
                     else PosixTestSockets.loopbackPair().map(p => buildPairs(p :: acc, remaining - 1))
                 buildPairs(Nil, n).map { pairs =>
-                    val accepted = pairs.map { case (_, a) => PosixHandle.socket(a, PosixHandle.DefaultReadBufferSize, Absent) }
+                    val accepted = pairs.map { case (_, a) =>
+                        PosixHandle.socket(a, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    }
                     // Each connection gets a DISTINCT one-byte payload so a misrouted/missed dispatch is detectable by value, not just count.
                     val payloads = (0 until n).map(i => (i + 1).toByte).toList
                     // Write all N payloads from the client side first, so by the time we arm reads many fds are ready in (close to) one poll cycle.
                     pairs.zip(payloads).foreach { case ((client, _), b) =>
-                        val clientH = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent)
+                        val clientH = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         val w       = driver.write(clientH, Span.fromUnsafe(Array[Byte](b)), 0)
                         assert(w == WriteResult.Done, s"write result=$w")
                     }
@@ -79,8 +81,8 @@ class PollerIoDriverReadyCountTest extends Test:
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
-                    val clientH   = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent)
+                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val clientH   = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val payload   = Array.tabulate[Byte](8)(i => (i + 1).toByte)
                     assert(driver.write(clientH, Span.fromUnsafe(payload), 0) == WriteResult.Done)
                     val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()

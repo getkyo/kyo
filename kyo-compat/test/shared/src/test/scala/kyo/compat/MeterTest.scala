@@ -1,5 +1,6 @@
 package kyo.compat
 
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kyo.compat.*
 import scala.concurrent.duration.*
@@ -72,27 +73,33 @@ class MeterTest extends CompatTest:
         }
     }
     "concurrent runs respect the permit limit" in run {
-        // Meter(2) + 4 concurrent runs that each sleep 100ms: total elapsed
-        // must be at least 200ms (two batches of two), but well under 5s.
-        val ctr = new AtomicInteger(0)
-        def one: CIO[Int] =
-            CIO.sleep(100.millis).flatMap { _ =>
-                CIO.defer { ctr.incrementAndGet() }
-            }
+        // Meter(2) + 4 runs: the limit shows up as concurrency, not elapsed. Peak active must be exactly 2 (never 3+,
+        // never serialised to 1); the two-way barrier holds the first two until both have a permit so the peak reaches 2.
+        val ctr    = new AtomicInteger(0)
+        val active = new AtomicInteger(0)
+        val peak   = new AtomicInteger(0)
+        def one(barrier: CLatch): CIO[Int] =
+            CIO.defer {
+                val cur = active.incrementAndGet()
+                peak.updateAndGet(_ max cur)
+                ()
+            }.flatMap(_ => barrier.release)
+                .flatMap(_ => barrier.await)
+                .flatMap(_ => CIO.defer { active.decrementAndGet(); ctr.incrementAndGet() })
         val c =
-            CMeter.init(2).flatMap { m =>
-                val r1: CIO[Int] = m.run(one)
-                val r2: CIO[Int] = m.run(one)
-                val r3: CIO[Int] = m.run(one)
-                val r4: CIO[Int] = m.run(one)
-                CIO.zip(r1, r2, r3, r4)
+            CLatch.init(2).flatMap { barrier =>
+                CMeter.init(2).flatMap { m =>
+                    val r1: CIO[Int] = m.run(one(barrier))
+                    val r2: CIO[Int] = m.run(one(barrier))
+                    val r3: CIO[Int] = m.run(one(barrier))
+                    val r4: CIO[Int] = m.run(one(barrier))
+                    CIO.zip(r1, r2, r3, r4)
+                }
             }
-        val start = java.lang.System.nanoTime()
         c.map { case (a, b, d, e) =>
-            val elapsed = (java.lang.System.nanoTime() - start) / 1_000_000L
             assert(
-                Set(a, b, d, e) == Set(1, 2, 3, 4) && elapsed < 5_000L,
-                s"results=${(a, b, d, e)} elapsed=$elapsed ms"
+                Set(a, b, d, e) == Set(1, 2, 3, 4) && peak.get() == 2,
+                s"results=${(a, b, d, e)} peak=${peak.get()}"
             )
         }
     }
@@ -110,37 +117,45 @@ class MeterTest extends CompatTest:
         }
     }
     "second acquire blocks until first holder releases" in run {
-        val holdMs = 150L
+        // Blocking is a happens-before, not a duration, pinned both sides: the holder reads `waiterEntered` while still
+        // holding the only permit (false => not yet acquired), the waiter reads `releasing` (true => acquired after release).
+        val waiterEntered = new AtomicBoolean(false)
+        val releasing     = new AtomicBoolean(false)
         val c =
             CMeter.init(1).flatMap { m =>
                 CPromise.init[Unit].flatMap { acquired =>
-                    val holder: CIO[Long] =
-                        m.run {
-                            CIO.nowMonotonic.map(_.toMillis).flatMap { t0 =>
+                    CPromise.init[Unit].flatMap { attempting =>
+                        val holder: CIO[Boolean] =
+                            m.run {
                                 acquired.succeed(()).flatMap { _ =>
-                                    CIO.sleep(holdMs.millis).flatMap { _ =>
-                                        CIO.nowMonotonic.map(_.toMillis).flatMap { t1 =>
-                                            CIO.defer(t1 - t0)
+                                    attempting.get.flatMap { _ =>
+                                        // Scheduling nudge toward the waiter's blocked acquire; the assertions hold regardless.
+                                        CIO.sleep(50.millis).flatMap { _ =>
+                                            CIO.defer {
+                                                val enteredWhileHeld = waiterEntered.get()
+                                                releasing.set(true)
+                                                enteredWhileHeld
+                                            }
                                         }
                                     }
                                 }
                             }
-                        }
-                    val waiter: CIO[Long] =
-                        acquired.get.flatMap { _ =>
-                            CIO.nowMonotonic.map(_.toMillis).flatMap { before =>
-                                m.run {
-                                    CIO.nowMonotonic.map(_.toMillis).flatMap { after =>
-                                        CIO.defer(after - before)
-                                    }
+                        val waiter: CIO[Boolean] =
+                            acquired.get.flatMap { _ =>
+                                attempting.succeed(()).flatMap { _ =>
+                                    m.run(CIO.defer {
+                                        waiterEntered.set(true)
+                                        releasing.get()
+                                    })
                                 }
                             }
-                        }
-                    CIO.zip(holder, waiter)
+                        CIO.zip(holder, waiter)
+                    }
                 }
             }
-        c.map { case (_, waitMs) =>
-            assert(waitMs >= holdMs - 30L, s"waiter did not block long enough: waitMs=$waitMs")
+        c.map { case (enteredWhileHeld, observedRelease) =>
+            assert(!enteredWhileHeld, "waiter held the permit at the same time as the holder")
+            assert(observedRelease, "waiter acquired the permit before the holder released it")
         }
     }
 

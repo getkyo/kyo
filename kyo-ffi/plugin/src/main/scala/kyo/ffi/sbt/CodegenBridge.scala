@@ -36,7 +36,7 @@ private[sbt] object CodegenBridge {
       *                  Used by the plugin to validate library ids (#10) and to
       *                  detect stale generated impls when a trait is deleted (#34).
       */
-    final case class Generated(files: Seq[Path], traits: Seq[TraitInfo])
+    final case class Generated(files: Seq[Path], traits: Seq[TraitInfo], reachabilityMetadata: String = "")
     final case class TraitInfo(fqcn: String, simpleName: String, packageName: String, library: String)
 
     def generate(
@@ -125,6 +125,8 @@ private[sbt] object CodegenBridge {
         val files     = resultCls.getMethod("files").invoke(result)
         val warnings  = resultCls.getMethod("warnings").invoke(result)
         val traits    = resultCls.getMethod("traits").invoke(result)
+        val reachabilityMetadata =
+            resultCls.getMethod("reachabilityMetadata").invoke(result).asInstanceOf[String]
 
         val warningList = scalaSeqToJava(warnings)
         warningList.foreach(w => log.warn(w.toString))
@@ -140,7 +142,7 @@ private[sbt] object CodegenBridge {
                 library = cls.getMethod("library").invoke(c).asInstanceOf[String]
             )
         }
-        Generated(filesList, traitList)
+        Generated(filesList, traitList, reachabilityMetadata)
     }
 
     /** Build (and cache) a URLClassLoader containing the codegen JAR PLUS the codegen's

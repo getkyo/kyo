@@ -43,8 +43,8 @@ class PollerIoDriverFdMapTest extends Test:
                 buildPairs(Nil, n).map { pairs =>
                     val conns = pairs.zipWithIndex.map { case ((client, accepted), i) =>
                         (
-                            PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent),
-                            PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent),
+                            PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal),
+                            PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal),
                             client,
                             accepted,
                             (i + 1).toByte

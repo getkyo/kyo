@@ -82,7 +82,7 @@ class IoUringOrphanHandshakeRecvRoutingTest extends Test:
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     val serverEngine = TlsRealEngines.singleEngine(isServer = true)
                     Sync.ensure(Sync.defer(serverEngine.free())) {
-                        val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                        val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         // Reach the upgrade-window state driveUpgradeRead's "no stale recv, arm producer" branch runs in (upgradeRole sets
                         // isUpgraded/upgradeActive/upgrading before detach; tls stays Absent until onFinished), then arm the orphaned producer
                         // recv directly -- exactly as armUpgradeProducerRead does (awaitReadHandshake, handshakeOwned=true) -- so submitRecv

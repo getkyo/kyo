@@ -1,7 +1,5 @@
 package kyo
 
-import kyo.internal.UUIDEntropy
-
 /** Generates secure random and time-ordered UUIDs.
   *
   * A generator owns the entropy source and monotonic version 7 state used by its operations. The companion provides a live generator and
@@ -30,9 +28,9 @@ end UUIDGenerator
 
 object UUIDGenerator:
 
-    /** The default generator backed by the platform secure entropy source and the dynamically scoped Kyo clock. */
+    /** The default generator backed by the ambient [[SecureRandom]] and the dynamically scoped Kyo clock. */
     val live: UUIDGenerator =
-        make(Clock.nowWith(_.toJava.toEpochMilli), UUIDEntropy.live)
+        make(Clock.nowWith(_.toJava.toEpochMilli), SecureRandom.nextBytes(16))
 
     private val local = Local.init(live)
 
@@ -52,8 +50,8 @@ object UUIDGenerator:
         def v7WithStateReadHook(hook: UUID => Unit < Async)(using Frame): UUID < Async
     end TestControl
 
-    private[kyo] def init(clockMillis: () => Long, entropy: UUIDEntropy): UUIDGenerator =
-        make(Sync.defer(clockMillis()), entropy)
+    private[kyo] def init(clockMillis: () => Long, next16: Frame ?=> Span[Byte] < Sync): UUIDGenerator =
+        make(Sync.defer(clockMillis()), next16)
 
     private[kyo] def test(clockMillis: Chunk[Long], entropy: Chunk[Byte]): UUIDGenerator =
         makeFinite(clockMillis, entropy)
@@ -68,12 +66,12 @@ object UUIDGenerator:
 
     final private class Default(
         clockMillis: Frame ?=> Long < Sync,
-        entropy: UUIDEntropy,
+        next16: Frame ?=> Span[Byte] < Sync,
         state: AtomicRef[V7State]
     ) extends TestControl:
 
         def v4(using Frame): UUID < Sync =
-            entropy.next16.map(stampV4)
+            next16.map(stampV4)
 
         def v7(using Frame): UUID < Sync =
             observeMillis.map: observedMillis =>
@@ -118,7 +116,7 @@ object UUIDGenerator:
         end nextState
 
         private def samplePayload(using Frame): (Int, Long) < Sync =
-            entropy.next16.map: source =>
+            next16.map: source =>
                 require16(source)
                 val high = ((source(6) & 0x0f) << 8) | (source(7) & 0xff)
                 var low  = (source(8) & 0x3f).toLong
@@ -141,10 +139,10 @@ object UUIDGenerator:
             )
     end validateMillis
 
-    private def make(clockMillis: Frame ?=> Long < Sync, entropy: UUIDEntropy): TestControl =
+    private def make(clockMillis: Frame ?=> Long < Sync, next16: Frame ?=> Span[Byte] < Sync): TestControl =
         // Unsafe: construction creates the generator's private atomic state before any effectful operation can observe it.
         import AllowUnsafe.embrace.danger
-        new Default(clockMillis, entropy, AtomicRef.Unsafe.init[V7State](V7State.Empty).safe)
+        new Default(clockMillis, next16, AtomicRef.Unsafe.init[V7State](V7State.Empty).safe)
     end make
 
     private def makeFinite(clockMillis: Chunk[Long], entropy: Chunk[Byte]): TestControl =
@@ -152,18 +150,6 @@ object UUIDGenerator:
         import AllowUnsafe.embrace.danger
         val clockIndex   = AtomicInt.Unsafe.init(0)
         val entropyIndex = AtomicInt.Unsafe.init(0)
-        val finiteEntropy = new UUIDEntropy:
-            def next16(using Frame): Span[Byte] < Sync =
-                Sync.defer:
-                    val start = entropyIndex.getAndAdd(16)
-                    if !containsEntropyBlock(entropy.size, start) then
-                        throw new NoSuchElementException("UUID test entropy exhausted")
-                    val bytes = new Array[Byte](16)
-                    var i     = 0
-                    while i < 16 do
-                        bytes(i) = entropy(start + i)
-                        i += 1
-                    Span.fromUnsafe(bytes)
         make(
             Sync.defer:
                 val index = clockIndex.getAndIncrement()
@@ -171,7 +157,16 @@ object UUIDGenerator:
                     throw new NoSuchElementException("UUID test clock exhausted")
                 clockMillis(index)
             ,
-            finiteEntropy
+            Sync.defer:
+                val start = entropyIndex.getAndAdd(16)
+                if !containsEntropyBlock(entropy.size, start) then
+                    throw new NoSuchElementException("UUID test entropy exhausted")
+                val bytes = new Array[Byte](16)
+                var i     = 0
+                while i < 16 do
+                    bytes(i) = entropy(start + i)
+                    i += 1
+                Span.fromUnsafe(bytes)
         )
     end makeFinite
 

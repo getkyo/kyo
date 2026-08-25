@@ -48,7 +48,7 @@ class PollerWakeReadArmTest extends Test:
                 driver.wakePending.set(true)
                 val before = backend.wakeCount.get()
 
-                val handle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 driver.cancel(handle)
 
                 val after = backend.wakeCount.get()

@@ -21,7 +21,7 @@ import sys.process._
   *
   * For MSVC the flag shape is:
   * {{{
-  *   cl.exe /LD /O2 /W3 /I<dir> <sources> /Fe:<outFile> <linkFlags> <lib>.lib
+  *   cl.exe /LD /O2 /W3 /I<dir> <sources> /Fo:<objectDir> /Fe:<outFile> <linkFlags> <lib>.lib
   * }}}
   *
   * When `staticLink` is true the named `linkLibs` are folded statically into the produced
@@ -186,14 +186,16 @@ private[sbt] object CCompiler {
             val staticFlag      = if (staticLink) Seq("/MT") else Nil
             val libDirFlags     = libDirs.map(d => "/LIBPATH:" + d.getAbsolutePath)
             val libFlags        = linkLibs.map(l => l + ".lib")
-            // cl.exe builds a DLL with /LD; /Fe: sets output exe/dll name. `/LIBPATH:` is a linker
-            // option: cl silently ignores it on the compiler command line, so the search dirs and the
-            // named import libs must follow `/link`, otherwise the linker cannot find a vendored .lib
-            // (LNK1181). The libs found via the LIB env (winsock, the CRT) resolve either way.
+            val objectDirFlag   = "/Fo:" + outFile.getAbsoluteFile.getParentFile.getAbsolutePath + File.separator
+            // cl.exe builds a DLL with /LD; /Fo: keeps intermediate objects beside the target DLL and
+            // /Fe: sets its name. `/LIBPATH:` is a linker option: cl silently ignores it on the compiler
+            // command line, so the search dirs and the named import libs must follow `/link`, otherwise
+            // the linker cannot find a vendored .lib (LNK1181). The libs found via the LIB env (winsock,
+            // the CRT) resolve either way.
             val linkerArgs = linkFlags ++ libDirFlags ++ libFlags
             splitCc(cc) ++ Seq("/LD") ++ translatedFlags ++ staticFlag ++ includeFlags ++
                 sources.map(_.getAbsolutePath) ++
-                Seq("/Fe:" + outFile.getAbsolutePath) ++
+                Seq(objectDirFlag, "/Fe:" + outFile.getAbsolutePath) ++
                 (if (linkerArgs.nonEmpty) Seq("/link") ++ linkerArgs else Nil)
         case _ =>
             val includeFlags = includes.flatMap(d => Seq("-I", d.getAbsolutePath))

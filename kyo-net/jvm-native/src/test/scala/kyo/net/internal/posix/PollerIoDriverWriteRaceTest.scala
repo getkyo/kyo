@@ -91,7 +91,7 @@ class PollerIoDriverWriteRaceTest extends Test:
                 val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
                 val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
                 discard(driver.start())
-                val handle = PosixHandle.socket(targetFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle = PosixHandle.socket(targetFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
 
                 val engine = new RecordingTlsEngine(clientEngine)
                 engine.onWritePlain = () => driver.closeHandle(handle)

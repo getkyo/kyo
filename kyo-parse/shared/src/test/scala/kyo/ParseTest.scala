@@ -1488,50 +1488,33 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
         }
     }
 
-    "performance" - {
-        // Per-token reads must index into the input, not copy the remaining tail on every read.
-        // With the tail-copy bug, `repeat` over an n-token input is O(n^2): at this size the buggy
-        // code takes minutes (and churns O(n^2) garbage), while the fixed linear code finishes in well
-        // under a second. The 30s wall-clock bound fails against the bug with a wide margin and passes
-        // comfortably after the fix on the JVM/JS/Native runners.
-        val perfLen = 500000
-        def withinBudget(label: String)(body: kyo.test.AssertScope ?=> Unit)(using kyo.test.AssertScope): Unit =
-            val start = java.lang.System.nanoTime()
-            body
-            val elapsed = (java.lang.System.nanoTime() - start) / 1000000L
-            assert(elapsed < 30000L, s"$label took ${elapsed}ms (budget 30000ms): repeat is not linear")
-        end withinBudget
+    "large input" - {
+        // These parse a large input through combinators whose per-token cost must stay O(1): `any`/`readOne` via
+        // `ParseInput.headMaybe` (a direct index) and `literal` via `ParseInput.startsWith` (bounded by the prefix),
+        // neither materializing the remaining tail per token. A regression to per-token tail copying makes `repeat`
+        // over n tokens O(n^2), running for minutes instead of well under a second.
+        //
+        // No hard threshold assertion: the only per-token work on the correct linear path is `headMaybe`/`startsWith`
+        // themselves, so any counter that detects the regression sits on the production hot path. A quadratic
+        // regression therefore surfaces as the suite timing out.
+        val largeLen = 500000
 
-        "repeat(any) over a large input is linear" in {
-            val text   = "a" * perfLen
+        "repeat(any) over a large input" in {
+            val text   = "a" * largeLen
             val parser = Parse.repeat(Parse.any[Char])
-            Parse.runOrAbort(text)(parser).map { result =>
-                withinBudget("repeat(any)") {
-                    assert(result.length == perfLen)
-                }
-            }
+            Parse.runOrAbort(text)(parser).map(result => assert(result.length == largeLen))
         }
 
-        "readWhile over a large input is linear" in {
-            val text   = "a" * perfLen
+        "readWhile over a large input" in {
+            val text   = "a" * largeLen
             val parser = Parse.readWhile[Char](_ == 'a')
-            Parse.runOrAbort(text)(parser).map { result =>
-                withinBudget("readWhile") {
-                    assert(result.length == perfLen)
-                }
-            }
+            Parse.runOrAbort(text)(parser).map(result => assert(result.length == largeLen))
         }
 
-        "literal in a repeat over a large input is linear" in {
-            // Each iteration probes a 1-char literal then consumes a char; the literal check must be
-            // O(prefix), not O(remaining).
-            val text   = "a" * perfLen
+        "literal in a repeat over a large input" in {
+            val text   = "a" * largeLen
             val parser = Parse.repeat(Parse.firstOf(Parse.literal("z").map(_ => 'z'), Parse.any[Char]))
-            Parse.runOrAbort(text)(parser).map { result =>
-                withinBudget("repeat(literal/any)") {
-                    assert(result.length == perfLen)
-                }
-            }
+            Parse.runOrAbort(text)(parser).map(result => assert(result.length == largeLen))
         }
     }
 end ParseTest

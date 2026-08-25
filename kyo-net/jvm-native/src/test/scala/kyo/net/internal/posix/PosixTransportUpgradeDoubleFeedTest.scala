@@ -104,7 +104,7 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
                 // The driver is closed last, as the io_uring leaf below does: this leaf started it, and a transport is process-lifetime,
                 // so nothing else ever reclaims its poller fd or stops its poll loop.
                 Sync.ensure(Sync.defer { discard(sock.close(peerFd)); driver.close() }) {
-                    val handle    = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+                    val handle    = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val plaintext = transport.openWith(handle, driver, channelCapacity = 1)
                     plaintext.start()
                     assert(sock.sendNow(peerFd, Buffer.fromArray[Byte](signal), signal.length.toLong, 0).value == signal.length.toLong)
@@ -165,7 +165,7 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
                 )
                 PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
                     Sync.ensure(Sync.defer(discard(sockets.close(peerFd)))) {
-                        val handle    = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+                        val handle    = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         val plaintext = transport.openWith(handle, driver, channelCapacity = 1)
                         plaintext.start()
                         assert(sockets.sendNow(
@@ -221,7 +221,7 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
             discard(driver.start())
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                 Sync.ensure(Sync.defer { discard(sock.close(client)); discard(sock.close(accepted)); driver.close() }) {
-                    val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     handle.driver = driver
                     handle.upgrading = true
                     handle.lastPlaintextRead.set(Present(flight))
@@ -249,7 +249,7 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
             discard(driver.start())
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                 Sync.ensure(Sync.defer { discard(sock.close(client)); discard(sock.close(accepted)); driver.close() }) {
-                    val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     handle.driver = driver
                     handle.upgrading = true
                     handle.lastPlaintextRead.set(Present(flight))

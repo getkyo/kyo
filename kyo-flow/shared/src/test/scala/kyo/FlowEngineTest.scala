@@ -620,14 +620,21 @@ class FlowEngineTest extends kyo.test.Test[Any]:
                     _ <- pump(tc, store, eid, _.isTerminal)
                     h <- store.getHistory(eid, 100, 0)
                 yield
-                    val kinds = h.events.map(_.kind).toSeq
+                    val evs   = h.events.toSeq
+                    val kinds = evs.map(_.kind)
                     assert(kinds.head == Flow.EventKind.Created)
                     assert(kinds.contains(Flow.EventKind.Completed))
-                    val stepPairs = kinds.sliding(2).count {
-                        case Seq(Flow.EventKind.StepStarted, Flow.EventKind.StepCompleted) => true
-                        case _                                                             => false
+                    // Each output records StepStarted before its StepCompleted. Lifecycle events
+                    // (claim/resume/input) interleave around steps in the shared audit log, so this
+                    // asserts per-step start-before-complete ordering, not global event adjacency.
+                    def startIdx(name: String) = evs.indexWhere { case Flow.Event.StepStarted(_, _, n, _, _) => n == name; case _ => false }
+                    def completeIdx(name: String) =
+                        evs.indexWhere { case Flow.Event.StepCompleted(_, _, n, _) => n == name; case _ => false }
+                    Seq("y", "z").foreach { name =>
+                        assert(startIdx(name) >= 0, s"missing StepStarted($name): ${kinds.mkString(", ")}")
+                        assert(completeIdx(name) > startIdx(name), s"StepCompleted($name) before its StepStarted: ${kinds.mkString(", ")}")
                     }
-                    assert(stepPairs >= 2)
+                    assert(startIdx("y") < startIdx("z"), s"steps out of flow order: ${kinds.mkString(", ")}")
                 end for
             }
         }

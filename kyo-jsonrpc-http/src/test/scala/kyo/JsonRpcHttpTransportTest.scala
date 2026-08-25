@@ -19,30 +19,30 @@ class JsonRpcHttpTransportTest extends kyo.test.Test[Any]:
     private def withEchoWsServer[A, S](
         test: HttpUrl => A < (S & Async & Abort[HttpException])
     )(using Frame): A < (S & Async & Scope & Abort[HttpException]) =
-        HttpServer.init(0, "localhost")(
+        HttpServer.init(0, "127.0.0.1")(
             HttpHandler.webSocket("ws/echo") { (_, ws) =>
                 ws.stream.foreach(ws.put)
             }
         ).map(server =>
-            test(HttpUrl.parse(s"http://localhost:${server.port}").getOrThrow)
+            test(HttpUrl.parse(s"http://127.0.0.1:${server.port}").getOrThrow)
         )
 
     private def withBinaryWsServer[A, S](
         test: HttpUrl => A < (S & Async & Abort[HttpException])
     )(using Frame): A < (S & Async & Scope & Abort[HttpException]) =
-        HttpServer.init(0, "localhost")(
+        HttpServer.init(0, "127.0.0.1")(
             HttpHandler.webSocket("ws/binary") { (_, ws) =>
                 ws.put(HttpWebSocket.Payload.Binary(Span.fromUnsafe(Array[Byte](1, 2, 3))))
             }
         ).map(server =>
-            test(HttpUrl.parse(s"http://localhost:${server.port}").getOrThrow)
+            test(HttpUrl.parse(s"http://127.0.0.1:${server.port}").getOrThrow)
         )
 
     private def withCloseTrackingWsServer[A, S](
         test: (HttpUrl, () => Int) => A < (S & Async & Abort[HttpException])
     )(using Frame): A < (S & Async & Scope & Abort[HttpException]) =
         val closeCount = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
-        HttpServer.init(0, "localhost")(
+        HttpServer.init(0, "127.0.0.1")(
             HttpHandler.webSocket("ws/close") { (_, ws) =>
                 ws.stream.run.andThen(
                     Sync.defer(discard(closeCount.incrementAndGet()(using AllowUnsafe.embrace.danger)))
@@ -50,7 +50,7 @@ class JsonRpcHttpTransportTest extends kyo.test.Test[Any]:
             }
         ).map(server =>
             test(
-                HttpUrl.parse(s"http://localhost:${server.port}").getOrThrow,
+                HttpUrl.parse(s"http://127.0.0.1:${server.port}").getOrThrow,
                 () => closeCount.get()(using AllowUnsafe.embrace.danger)
             )
         )
@@ -59,14 +59,14 @@ class JsonRpcHttpTransportTest extends kyo.test.Test[Any]:
     private def withGarbageWsServer[A, S](
         test: HttpUrl => A < (S & Async & Abort[HttpException])
     )(using Frame): A < (S & Async & Scope & Abort[HttpException]) =
-        HttpServer.init(0, "localhost")(
+        HttpServer.init(0, "127.0.0.1")(
             HttpHandler.webSocket("ws/garbage") { (_, ws) =>
                 // Send "not json" then sleep briefly so our bridge has time to read it
                 // before the server closes the connection.
                 ws.put(HttpWebSocket.Payload.Text("not json")).andThen(Async.sleep(500.millis))
             }
         ).map(server =>
-            test(HttpUrl.parse(s"http://localhost:${server.port}").getOrThrow)
+            test(HttpUrl.parse(s"http://127.0.0.1:${server.port}").getOrThrow)
         )
 
     // ==================== Tests ====================

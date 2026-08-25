@@ -40,7 +40,7 @@ class PosixHandleReadCopyOutTest extends Test:
         Frame,
         kyo.test.AssertScope
     ): Unit < (Abort[Closed] & Async) =
-        val clientH = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent)
+        val clientH = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
         val w       = driver.write(clientH, Span.fromUnsafe(bytes), 0)
         assert(w == WriteResult.Done, s"write result=$w")
         ()
@@ -54,7 +54,7 @@ class PosixHandleReadCopyOutTest extends Test:
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val payload   = Array.tabulate[Byte](300)(i => (i & 0xff).toByte)
                     send(driver, client, payload).andThen(readVia(driver, acceptedH)).map { got =>
                         driver.closeHandle(acceptedH)
@@ -71,7 +71,7 @@ class PosixHandleReadCopyOutTest extends Test:
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val first     = Array.tabulate[Byte](200)(i => (i & 0xff).toByte)
                     val second    = Array.tabulate[Byte](200)(i => ((i + 128) & 0xff).toByte)
                     // Read the first chunk and RETAIN the delivered span, then read the second chunk into the (reused) buffer. If the read
@@ -97,7 +97,7 @@ class PosixHandleReadCopyOutTest extends Test:
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val partA     = Array.tabulate[Byte](100)(i => (i & 0xff).toByte)
                     val partB     = Array.tabulate[Byte](100)(i => ((i + 50) & 0xff).toByte)
                     // Two distinct sends; drain both and concatenate. The concatenation must equal partA ++ partB in order.

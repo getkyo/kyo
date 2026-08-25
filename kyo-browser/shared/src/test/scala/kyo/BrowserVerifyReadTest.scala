@@ -76,40 +76,44 @@ class BrowserVerifyReadTest extends BrowserTest:
     // settle reads its bound from configLocal, not a hardcoded literal.
     // Two runs use the same never-converging counter. Override A uses a tight 200ms retrySchedule;
     // override B uses a wider 600ms retrySchedule. Both must abort a BrowserReadException.
-    // The elapsed time under A must be strictly less than the elapsed time under B,
-    // proving the bound comes from configLocal rather than a hardcoded constant.
     "settle reads its bound from configLocal and not a hardcoded constant" in {
         withBrowser {
             onPage("""<body>
                 <script>
+                    window.__reads = 0;
                     window.__kyoFlicker2 = Date.now();
                     setInterval(() => { window.__kyoFlicker2 = Date.now(); }, 5);
                 </script>
             </body>""") {
+                // The flicker never stabilizes, so settle exhausts its retrySchedule; window.__reads counts the probes. Probe count is
+                // maxDuration/interval, so the wider 600ms bound probes strictly more than the 200ms bound, proving the bound came from configLocal, not elapsed time.
                 val runSettle =
                     Abort.run[BrowserReadException] {
-                        SettleRead.settle("settle-config-bound", "String(window.__kyoFlicker2)") { raw =>
-                            raw
+                        SettleRead.settle(
+                            "settle-config-bound",
+                            "String((window.__reads = (window.__reads || 0) + 1, window.__kyoFlicker2))"
+                        ) {
+                            raw => raw
                         }
                     }
-                timed(Browser.withConfig(
-                    _.retrySchedule(Schedule.fixed(50.millis).maxDuration(200.millis))
-                        .assertionStabilityWindow(80.millis)
-                )(runSettle)).map { case (elapsedA, resultA) =>
-                    timed(Browser.withConfig(
-                        _.retrySchedule(Schedule.fixed(50.millis).maxDuration(600.millis))
-                            .assertionStabilityWindow(80.millis)
-                    )(runSettle)).map { case (elapsedB, resultB) =>
-                        assert(resultA.isFailure, s"expected Failure under override A but got $resultA")
-                        assert(resultB.isFailure, s"expected Failure under override B but got $resultB")
-                        assert(elapsedA < 500.millis, s"override A elapsed ${elapsedA} exceeds 500ms ceiling")
-                        assert(elapsedB < 900.millis, s"override B elapsed ${elapsedB} exceeds 900ms ceiling")
-                        assert(
-                            elapsedA < elapsedB,
-                            s"expected override A ($elapsedA) to finish before override B ($elapsedB)"
-                        )
-                    }
-                }
+                for
+                    _ <- Browser.eval("(window.__reads = 0, 'ok')")
+                    resultA <- Browser.withConfig(
+                        _.retrySchedule(Schedule.fixed(50.millis).maxDuration(200.millis)).assertionStabilityWindow(80.millis)
+                    )(runSettle)
+                    readsA <- Browser.eval("String(window.__reads)")
+                    _      <- Browser.eval("(window.__reads = 0, 'ok')")
+                    resultB <- Browser.withConfig(
+                        _.retrySchedule(Schedule.fixed(50.millis).maxDuration(600.millis)).assertionStabilityWindow(80.millis)
+                    )(runSettle)
+                    readsB <- Browser.eval("String(window.__reads)")
+                yield
+                    assert(resultA.isFailure, s"expected Failure under override A but got $resultA")
+                    assert(resultB.isFailure, s"expected Failure under override B but got $resultB")
+                    val a = readsA.trim.toInt
+                    val b = readsB.trim.toInt
+                    assert(a < b, s"expected the narrower 200ms bound to probe fewer times than the wider 600ms bound, but A=$a B=$b")
+                end for
             }
         }
     }
@@ -441,7 +445,7 @@ class BrowserVerifyReadTest extends BrowserTest:
 
     // waitForStable returns after the DOM quiesces.
     // A setInterval mutates the DOM 10 times over ~200ms then stops.
-    // waitForStable(2.seconds) must return within the timeout.
+    // waitForStable gets an effectively-infinite timeout, so broken quiescence detection hangs into the leaf timeout.
     "waitForStable returns after the DOM quiesces" in {
         withBrowser {
             onPage("""<html><body>
@@ -456,8 +460,8 @@ class BrowserVerifyReadTest extends BrowserTest:
                     }, 20);
                 </script>
             </body></html>""") {
-                timed(Browser.waitForStable(2.seconds)).map { case (elapsed, _) =>
-                    assert(elapsed < 2.seconds, s"waitForStable took too long: $elapsed")
+                Browser.waitForStable(1.hour).map { _ =>
+                    succeed
                 }
             }
         }

@@ -27,7 +27,7 @@ class PosixHandleAdaptiveBufferTest extends Test:
 
         "grows after the configured number of consecutive full reads, doubling the buffer" in {
             val seed = 1024
-            val h    = PosixHandle.socket(7, seed, Absent)
+            val h    = PosixHandle.socket(7, seed, Absent, Frame.internal)
             assert(h.readBufferSize == seed)
             // The first GrowAfterFullReads-1 full reads do NOT grow (the predictor waits for a sustained pattern).
             var i = 0
@@ -46,7 +46,7 @@ class PosixHandleAdaptiveBufferTest extends Test:
 
         "a non-full read resets the predictor so a settled connection never grows" in {
             val seed = 1024
-            val h    = PosixHandle.socket(8, seed, Absent)
+            val h    = PosixHandle.socket(8, seed, Absent, Frame.internal)
             // Three full reads, then a short read resets the streak; the buffer must not grow.
             assert(!h.growReadBufferForFullRead(seed))
             assert(!h.growReadBufferForFullRead(seed))
@@ -66,7 +66,7 @@ class PosixHandleAdaptiveBufferTest extends Test:
 
         "the grow follows the recipe: the old buffer is closed exactly once and the new one is live" in {
             val seed = 1024
-            val h    = PosixHandle.socket(9, seed, Absent)
+            val h    = PosixHandle.socket(9, seed, Absent, Frame.internal)
             // Capture the seed buffer reference before the grow closes it.
             val oldBuffer = h.readBuffer
             assert(!oldBuffer.isClosed)
@@ -95,7 +95,7 @@ class PosixHandleAdaptiveBufferTest extends Test:
 
         "never grows past the MaxReadBufferSize cap" in {
             // Seed at the cap: no further grow is possible regardless of how many full reads arrive.
-            val h = PosixHandle.socket(10, PosixHandle.MaxReadBufferSize, Absent)
+            val h = PosixHandle.socket(10, PosixHandle.MaxReadBufferSize, Absent, Frame.internal)
             var i = 0
             while i < PosixHandle.GrowAfterFullReads * 3 do
                 assert(!h.growReadBufferForFullRead(PosixHandle.MaxReadBufferSize), "must not grow past the cap")
@@ -113,7 +113,7 @@ class PosixHandleAdaptiveBufferTest extends Test:
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                    val acceptedH = PosixHandle.socket(accepted, seed, Absent)
+                    val acceptedH = PosixHandle.socket(accepted, seed, Absent, Frame.internal)
                     // Drive GrowAfterFullReads full-buffer reads to force a grow, each verified byte-for-byte, then one final post-grow read.
                     def fullPayload(tag: Int): Array[Byte] = Array.tabulate[Byte](seed)(j => ((j + tag) & 0xff).toByte)
                     def readOne(expected: Array[Byte]): Unit < (Abort[Closed] & Async) =
@@ -127,7 +127,7 @@ class PosixHandleAdaptiveBufferTest extends Test:
                         }
                     end readOne
                     def sendFull(tag: Int): Unit < (Abort[Closed] & Async) =
-                        val clientH = PosixHandle.socket(client, seed, Absent)
+                        val clientH = PosixHandle.socket(client, seed, Absent, Frame.internal)
                         val w       = driver.write(clientH, Span.fromUnsafe(fullPayload(tag)), 0)
                         assert(w == WriteResult.Done, s"write result=$w")
                         ()

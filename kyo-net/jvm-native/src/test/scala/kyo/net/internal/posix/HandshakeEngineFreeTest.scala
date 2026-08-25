@@ -210,7 +210,7 @@ class HandshakeEngineFreeTest extends Test:
                 // handshake reads EOF and fails, and the failure path must close the detached plaintext fd it kept open.
                 loopbackPair().map { case (clientFd, peerFd) =>
                     closeRaw(shim, peerFd)
-                    val handle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+                    val handle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val plaintext =
                         transport.openWith(handle, transportDriver(transport), transportConfig.channelCapacity)
                     plaintext.start()
@@ -245,7 +245,7 @@ class HandshakeEngineFreeTest extends Test:
                         soak(k) { _ =>
                             loopbackPair().map { case (cFd, pFd) =>
                                 closeRaw(shim, pFd)
-                                val h = PosixHandle.socket(cFd, PosixHandle.DefaultReadBufferSize, Absent)
+                                val h = PosixHandle.socket(cFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                                 val pc =
                                     transport.openWith(h, transportDriver(transport), transportConfig.channelCapacity)
                                 pc.start()

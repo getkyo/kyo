@@ -10,16 +10,8 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
 
     override def timeout = 60.seconds
 
-    // A per-process random token folded into every generated test resource name.
-    //
-    // Container-runtime suites are forked once per runtime (`#podman` / `#docker`, pinned via
-    // KYO_POD_RUNTIME) and those forks run concurrently on one machine, sharing its `/tmp`. A bare
-    // per-JVM counter resets to the same sequence in each fork, so both would emit `prefix-1`,
-    // `prefix-2`, … and collide on the same host bind-mount directories (one fork's rootful-docker
-    // cleanup then leaves a root-owned dir the other fork cannot write to or remove). The token
-    // disambiguates the forks (and any concurrent CI job on the same runner) so names stay unique
-    // on the shared filesystem. Hex of a random Long keeps it valid for container/volume/network
-    // names and host paths alike.
+    // A per-process random token folded into every test resource name: per-runtime suites (`#podman`/`#docker`) fork
+    // concurrently sharing `/tmp`, so a bare per-JVM counter would emit the same `prefix-N` and collide on bind-mounts.
     private val runToken: String = java.lang.Long.toHexString(new java.util.Random().nextLong())
 
     private val nameCounter = new java.util.concurrent.atomic.AtomicLong(0L)
@@ -30,16 +22,11 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
     def uniqueName(prefix: String): String =
         s"$prefix-$runToken-${nameCounter.incrementAndGet()}"
 
-    // Container ops contend on a single daemon, so leaves must run sequentially: the runBackends design (below)
-    // assumes "<=1 in-flight container op per daemon", which only holds with sequential leaves. kyo-test defaults to
-    // parallel leaves whereas the ScalaTest base ran them sequentially, so restore that. Without it, parallel leaves
-    // race the daemon and produce port conflicts, already-exists, image-pull, and backend errors.
+    // Container ops contend on a single daemon, so leaves must run sequentially (runBackends assumes <=1
+    // in-flight op per daemon); parallel leaves produce port conflicts, already-exists, and pull errors.
     //
-    // Only the socket category is disabled. These suites reach the podman/docker daemon REST API over HttpClient, and
-    // those connections are Scope-closed on scope exit, but the NIO transport defers a connection's real fd close to its
-    // idle selector's next select(), which nothing wakes, so the fd outlives the run. That fix belongs to the transport
-    // (frozen for the kyo-net rewrite); the socket is an opaque socket:[inode] no allowlist can match. File-descriptor,
-    // thread, and fiber detection stay on.
+    // Only socket leak-checking is disabled: the NIO transport defers a connection's fd close to its idle selector's
+    // next select() (which nothing wakes), so the fd outlives the run and its opaque socket:[inode] matches no allowlist.
     override def config = super.config.sequential.leakCheckSockets(false)
 
     // Linux CI's container runtime (podman REST API) intermittently takes longer than
@@ -49,9 +36,44 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
     // still see the 5s default until they set their own via withConfig.
     // For tests that explicitly need a longer timeout (e.g. image pulls), use runBackendsLong /
     // runBackendLong which scope an even longer 5-minute timeout inside the test body.
-    // Ported from the ScalaTest base's `run` override to kyo-test's `aroundLeaf` hook.
     override def aroundLeaf[A](body: A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
         HttpClient.withConfig(_.timeout(60.seconds))(body)
+
+    /** Fails the leaf if it leaves a container behind (diffs the container set around the body, run under its own `Scope`
+      * first). Unchecked, leaks exhaust the rootless kernel keyring (`runc create` session keys, capped at `kernel.keys.maxkeys`).
+      */
+    private def checkingContainerLeak(v: kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using
+        Frame,
+        kyo.test.AssertScope
+    ): Unit < (Async & Abort[Any] & Scope) =
+        Container.currentBackend.map { backend =>
+            Container.list(all = true).map { before =>
+                val beforeIds = before.map(_.id).toSet
+                Scope.run(v).andThen {
+                    Container.list(all = true).map { after =>
+                        val candidates = after.filterNot(s => beforeIds.contains(s.id))
+                        // The daemon's listing lags inspect on podman: a just-removed container can still appear in `list`.
+                        // Confirm each candidate via an authoritative inspect before flagging, avoiding a false leak.
+                        Kyo.foreach(candidates) { s =>
+                            Abort.run[ContainerException](backend.state(s.id)).map {
+                                case Result.Failure(_: ContainerMissingException) => Maybe.empty[Container.Summary]
+                                case _                                            => Maybe(s)
+                            }
+                        }.map { results =>
+                            val leaked = results.flatMap(m => Chunk.from(m.toList))
+                            if leaked.isEmpty then Kyo.unit
+                            else
+                                fail(
+                                    s"leaf leaked ${leaked.size} container(s) not freed before exit: " +
+                                        leaked.map(s => s"${s.id.value.take(12)}[${s.state}]").mkString(", ")
+                                )
+                            end if
+                        }
+                    }
+                }
+            }
+        }
+    end checkingContainerLeak
 
     /** Register one leaf test per available `(runtime, backend)` combination. Each registered test runs `v` with the appropriate
       * `Container.withBackendConfig` wrapper. Use as the body of `String -` in test declarations:
@@ -66,12 +88,12 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
             s"[$runtime]" - {
                 ContainerRuntime.findSocket(runtime).foreach { path =>
                     "http" in {
-                        Container.withBackendConfig(_.UnixSocket(Path(path)))(v)
+                        Container.withBackendConfig(_.UnixSocket(Path(path)))(checkingContainerLeak(v))
                     }
                 }
 
                 "shell" in {
-                    Container.withBackendConfig(_.Shell(runtime))(v)
+                    Container.withBackendConfig(_.Shell(runtime))(checkingContainerLeak(v))
                 }
             }
         }
@@ -88,13 +110,13 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
                 ContainerRuntime.findSocket(runtime).foreach { path =>
                     "http" in {
                         Container.withBackendConfig(_.UnixSocket(Path(path))) {
-                            HttpClient.withConfig(_.timeout(5.minutes))(v)
+                            HttpClient.withConfig(_.timeout(5.minutes))(checkingContainerLeak(v))
                         }
                     }
                 }
 
                 "shell" in {
-                    Container.withBackendConfig(_.Shell(runtime))(v)
+                    Container.withBackendConfig(_.Shell(runtime))(checkingContainerLeak(v))
                 }
             }
         }
@@ -126,7 +148,7 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
             .nextOption()
         socket.foreach { path =>
             "http" in {
-                Container.withBackendConfig(_.UnixSocket(Path(path)))(v)
+                Container.withBackendConfig(_.UnixSocket(Path(path)))(checkingContainerLeak(v))
             }
         }
     end runBackend
@@ -143,7 +165,7 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
         socket.foreach { path =>
             "http" in {
                 Container.withBackendConfig(_.UnixSocket(Path(path))) {
-                    HttpClient.withConfig(_.timeout(5.minutes))(v)
+                    HttpClient.withConfig(_.timeout(5.minutes))(checkingContainerLeak(v))
                 }
             }
         }

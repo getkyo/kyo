@@ -37,8 +37,8 @@ private[kyo] object BrowserLauncher:
       */
     private def removeTmpDir(tmpDir: Path, removalSchedule: Schedule)(using Frame): Unit < Async =
         tmpDir.name.fold(Kyo.unit)(name => killOrphans(pattern = name, command = "pgrep")).andThen {
-            Abort.run[FileFsException] {
-                Retry[FileFsException](removalSchedule)(tmpDir.removeAll)
+            Abort.run[FileStructureException] {
+                Retry[FileStructureException](removalSchedule)(tmpDir.removeAll)
             }.map {
                 case Result.Failure(err) =>
                     // Leaked tmp dirs are not a hard failure (they are cleaned up by `killOrphans` next launch),
@@ -50,20 +50,6 @@ private[kyo] object BrowserLauncher:
             }
         }
 
-    /** Wraps a temp-dir creation, surfacing any `FileFsException` (e.g. EACCES) as a typed `BrowserSetupFailedException`. Both
-      * `createTempDir` overloads delegate here so the recovery shape lives in exactly one place.
-      */
-    private def recoverTempDir(create: => Path < (Sync & Abort[FileFsException]))(using
-        Frame
-    ): Path < (Sync & Abort[BrowserSetupException]) =
-        Abort.recover[FileFsException] { (ex: FileFsException) =>
-            Abort.fail[BrowserSetupException](
-                BrowserSetupFailedException("failed to create Chrome user-data temp dir", ex)
-            )
-        } {
-            create
-        }
-
     /** Creates a fresh user-data temp directory for the Chrome process.
       *
       * The 0-arg form delegates to the JDK's default temp-directory placement via `Path.tempDir`. The 1-arg `parent` overload is a test
@@ -71,13 +57,21 @@ private[kyo] object BrowserLauncher:
       * `BrowserSetupFailedException`. The seam type is `kyo.Path` (not `java.nio.file.Path`) so this file remains compilable across
       * JVM/JS/Native.
       */
-    private[kyo] def createTempDir(using Frame): Path < (Sync & Abort[BrowserSetupException]) =
-        recoverTempDir {
+    private[kyo] def createTempDir(using Frame): Path < (Sync & Scope & Abort[BrowserSetupException]) =
+        Abort.recover[FileStructureException] { (ex: FileStructureException) =>
+            Abort.fail[BrowserSetupException](
+                BrowserSetupFailedException("failed to create Chrome user-data temp dir", ex)
+            )
+        } {
             Path.tempDir("kyo-browser-")
         }
 
     private[kyo] def createTempDir(parent: Path)(using Frame): Path < (Sync & Abort[BrowserSetupException]) =
-        recoverTempDir {
+        Abort.recover[FileStructureException] { (ex: FileStructureException) =>
+            Abort.fail[BrowserSetupException](
+                BrowserSetupFailedException("failed to create Chrome user-data temp dir", ex)
+            )
+        } {
             Random.nextLong.map { n =>
                 val childName = f"kyo-browser-$n%016x"
                 val target    = parent / childName

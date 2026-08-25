@@ -512,10 +512,11 @@ class ExchangeTest extends kyo.test.Test[Any]:
         "receive stream ending closes exchange" in {
             for
                 (ex, _, receiveCh) <- mkExchange
+                doneFiber          <- Fiber.initUnscoped(ex.awaitDone)
                 // End the receive stream
                 _ <- receiveCh.close
-                // Wait a bit for the reader fiber to process the stream end
-                _ <- Async.sleep(10.millis)
+                // Deterministically await the exchange's terminal state (mirrors the awaitDone leaf below).
+                _ <- Abort.run[TestError | Closed](doneFiber.get)
                 // Subsequent apply calls should fail with Closed
                 result <- Abort.run[TestError | Closed](ex("after-stream-end"))
             yield assert(result.isFailure)
@@ -524,10 +525,11 @@ class ExchangeTest extends kyo.test.Test[Any]:
         "receive stream ending with no pending requests" in {
             for
                 (ex, _, receiveCh) <- mkExchange
+                doneFiber          <- Fiber.initUnscoped(ex.awaitDone)
                 // Close the receive channel with no pending requests
                 _ <- receiveCh.close
-                // Wait for reader fiber to process stream end
-                _ <- Async.sleep(10.millis)
+                // Deterministically await the exchange's terminal state.
+                _ <- Abort.run[TestError | Closed](doneFiber.get)
                 // Exchange should be closed cleanly
                 result <- Abort.run[TestError | Closed](ex("after-end"))
             yield assert(result.isFailure)
@@ -675,9 +677,10 @@ class ExchangeTest extends kyo.test.Test[Any]:
                     receive = mkControllableStream(ctrlCh),
                     decode = wire => Sync.defer(Exchange.Message.Response(wire._1, wire._2))
                 )
+                doneFiber <- Fiber.initUnscoped(ex.awaitDone)
                 // Trigger receive stream failure immediately
                 _      <- ctrlCh.put(Left(TestError("receive failed")))
-                _      <- Async.sleep(10.millis)
+                _      <- Abort.run[TestError | Closed](doneFiber.get)
                 result <- Abort.run[TestError | Closed](ex("after-error"))
             yield assert(result.isFailure)
         }
@@ -818,9 +821,8 @@ class ExchangeTest extends kyo.test.Test[Any]:
                 _ <- receiveCh.put((0, "push:event2"))
                 // Feed the response: reader cannot reach it while parked on event2
                 _ <- receiveCh.put((wire._1, "resp:actual-response"))
-                // Give the reader fiber time to get parked on event2
-                _ <- Async.sleep(20.millis)
-                // reqFiber should still be waiting — reader is parked before the response
+                // reqFiber must still be waiting: the capacity-1 event channel is full with event1 and has no consumer
+                // yet (eventsFiber is forked below), so the reader is blocked putting event2 and cannot reach the response.
                 reqDone <- reqFiber.done
                 // Collect both events in a fiber — the fiber will drain event1, unblock reader for event2
                 eventsFiber <- Fiber.initUnscoped(ex.events.take(2).run)
@@ -879,9 +881,7 @@ class ExchangeTest extends kyo.test.Test[Any]:
                 (ex, sendCh, receiveCh) <- mkEventsExchange(eventCapacity = 64)
                 // Feed 64 Push messages — all should buffer without blocking
                 _ <- Kyo.foreachDiscard(1 to 64)(i => receiveCh.put((0, s"push:event$i")))
-                // Give reader time to consume from receive and fill event channel
-                _ <- Async.sleep(30.millis)
-                // Drain all 64 events
+                // take(64).run blocks until the reader has moved all 64 messages into the event channel.
                 events <- ex.events.take(64).run
                 _      <- ex.close
             yield assert(events.size == 64)
@@ -1455,8 +1455,9 @@ class ExchangeTest extends kyo.test.Test[Any]:
         "apply after receive stream end completes with Closed" in {
             for
                 (ex, sendCh, receiveCh) <- mkExchange
+                doneFiber               <- Fiber.initUnscoped(ex.awaitDone)
                 _                       <- receiveCh.close
-                _                       <- Async.sleep(10.millis)
+                _                       <- Abort.run[TestError | Closed](doneFiber.get)
                 result                  <- Abort.run[TestError | Closed](ex("req"))
             yield assert(result.isFailure, s"Expected failure, got $result")
         }

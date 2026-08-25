@@ -13,8 +13,8 @@ class TransportBackpressureReclaimTest extends kyo.net.Test:
 
     import AllowUnsafe.embrace.danger
 
-    // Poll a condition driven by a genuinely external event (a real FIN through the OS). Sleep-polling is the right tool here: the reclaim runs on
-    // the transport's own carrier, out of the test's reach, so there is no deterministic latch to await.
+    // Poll a condition that settles on the transport's own carriers (the pump parking on the full channel, the grace reclaim closing the
+    // connection), out of the test's reach, so there is no latch to await. The bound is a ceiling; every caller asserts on the settled state.
     private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
         val deadline = java.lang.System.nanoTime() + bound.toNanos
         Loop(()) { _ =>
@@ -36,11 +36,17 @@ class TransportBackpressureReclaimTest extends kyo.net.Test:
             listener <- transport.listen("127.0.0.1", 0, 128, config) { conn =>
                 acceptedP.completeDiscard(Result.succeed(conn))
             }.safe.get
-            _         <- Scope.ensure(Sync.defer(listener.close()))
-            client    <- transport.connect("127.0.0.1", listener.port, config = config).safe.get
-            accepted  <- acceptedP.asInstanceOf[Fiber.Unsafe[Connection, Abort[Closed]]].safe.get
-            _         <- Abort.run[Closed](client.outbound.safe.put(Span.fromUnsafe(Array.fill[Byte](128)(1))))
-            _         <- Async.sleep(300.millis)    // let the accepted-side ReadPump read both chunks and park on the put
+            _        <- Scope.ensure(Sync.defer(listener.close()))
+            client   <- transport.connect("127.0.0.1", listener.port, config = config).safe.get
+            accepted <- acceptedP.asInstanceOf[Fiber.Unsafe[Connection, Abort[Closed]]].safe.get
+            _        <- Abort.run[Closed](client.outbound.safe.put(Span.fromUnsafe(Array.fill[Byte](128)(1))))
+            // An overflowing pump parks by registering a put, so a pending put IS the parked state. Awaiting it guarantees the FIN below lands on a
+            // parked pump: a FIN arriving earlier would be observed by an armed read and reclaimed via the EOF path, leaving the grace reclaim untested.
+            parked <- awaitCondition(5.seconds)(accepted.inbound.pendingPuts().getOrElse(0) > 0)
+            _ = assert(
+                parked,
+                "the accepted-side ReadPump never parked on the full inbound channel, so the FIN below would not exercise the grace reclaim"
+            )
             _         <- Sync.defer(client.close()) // FIN with the accepted-side pump parked
             reclaimed <- awaitCondition(5.seconds)(!accepted.isOpen)
         yield assert(

@@ -563,17 +563,41 @@ class LLMTest extends kyo.test.Test[Any]:
         }
     }
 
+    /** Waits until the server has captured at least `n` requests, advancing only real wall-clock time (never virtual
+      * time) under the controlled Clock, so a leaf can defer advancing past the deadline until the request is genuinely
+      * in flight rather than racing a fixed millisecond budget for it to reach the server.
+      */
+    private def awaitCaptured(server: TestCompletionServer, control: Clock.TimeControl, n: Int)(using Frame): Unit < Async =
+        Loop(0) { i =>
+            server.captured.flatMap { caps =>
+                if caps.size >= n then Loop.done
+                else if i >= 200 then Loop.done
+                else control.advance(Duration.Zero, 20.millis).andThen(Loop.continue(i + 1))
+            }
+        }
+
     "a client-side timeout halts fast as AICompletionTimeoutException" in {
         TestCompletionServer.run { server =>
-            val config = serverConfig(server.baseUrl).timeout(100.millis).retrySchedule(Schedule.repeat(1))
-            server.enqueueNeverRespond.andThen {
-                Abort.run[AIException](LLM.run(config)(AI.gen[String])).map { result =>
-                    server.captured.map { caps =>
+            // Deterministic timing: the deadline runs on a controlled Clock, so it fires exactly when the test advances
+            // virtual time, never by racing a real short timeout against the real request reaching the server. The
+            // request is sent over real I/O and confirmed captured BEFORE the advance, so "request in flight" and
+            // "deadline fired" are causally ordered; the leaf cannot flake on a slow runner where the request alone
+            // takes longer than a fixed millisecond budget to arrive.
+            val config = serverConfig(server.baseUrl).timeout(10.seconds).retrySchedule(Schedule.repeat(1))
+            Clock.withTimeControl { control =>
+                server.enqueueNeverRespond.andThen {
+                    for
+                        fiber  <- Fiber.init(Abort.run[AIException](LLM.run(config)(AI.gen[String])))
+                        _      <- awaitCaptured(server, control, 1)
+                        _      <- control.advance(config.timeout + 1.second, 500.millis)
+                        result <- fiber.get
+                        caps   <- server.captured
+                    yield
                         result match
                             case Result.Failure(_: AICompletionTimeoutException) => ()
                             case other => fail(s"expected AICompletionTimeoutException, got: $other")
                         assert(caps.size == 1, s"a per-call timeout must halt without retry, expected 1 request, got: ${caps.size}")
-                    }
+                    end for
                 }
             }
         }
@@ -581,22 +605,41 @@ class LLMTest extends kyo.test.Test[Any]:
 
     "the configured timeout bounds a completion call and its retries, not one attempt" in {
         TestCompletionServer.run { server =>
-            // Every attempt fails transiently and is retried on a schedule whose backoff outlasts the
-            // configured timeout. The deadline covers the retry clause, so the call surfaces the timeout;
-            // a deadline that covered only one attempt would let the schedule run to exhaustion and
-            // surface the throttle instead.
+            // The deadline covers the whole call INCLUDING its retry backoffs, not one attempt. Made deterministic
+            // with a controlled Clock rather than by racing a real deadline against a real schedule: the first retry
+            // backoff is set LONGER than the deadline, so after one throttled attempt the call is waiting to retry
+            // when virtual time is advanced past the deadline. A call-scoped deadline (armed once at call start)
+            // fires during that backoff, so exactly one attempt was made; an attempt-scoped deadline would have been
+            // cancelled with the completed attempt and never fire, leaving the call to retry to exhaustion. The one
+            // attempt is confirmed over real I/O, and a short real settle lets its throttle response schedule the
+            // backoff, before the advance; the advance itself carries the causal firing, so nothing races real time.
+            val callTimeout = 5.seconds
             val config = serverConfig(server.baseUrl)
-                .timeout(300.millis)
-                .retrySchedule(Schedule.exponentialBackoff(initial = 200.millis, factor = 2, maxBackoff = 2.seconds).take(10))
+                .timeout(callTimeout)
+                .retrySchedule(Schedule.exponentialBackoff(initial = callTimeout * 2, factor = 2, maxBackoff = 1.minute).take(10))
             def throttle(remaining: Int): Unit < Async =
                 if remaining == 0 then ()
                 else server.enqueueStatus(429, """{"error":{"message":"rate limited"}}""").andThen(throttle(remaining - 1))
-            throttle(12).andThen {
-                Abort.run[AIException](LLM.run(config)(AI.gen[String])).map { result =>
-                    result match
-                        case Result.Failure(_: AICompletionTimeoutException) => succeed
-                        case other =>
-                            fail(s"expected the call deadline to fire while retries were still pending, got: $other")
+            Clock.withTimeControl { control =>
+                throttle(12).andThen {
+                    for
+                        fiber  <- Fiber.init(Abort.run[AIException](LLM.run(config)(AI.gen[String])))
+                        _      <- awaitCaptured(server, control, 1)
+                        _      <- control.advance(Duration.Zero, 300.millis)
+                        _      <- control.advance(callTimeout + 1.second, 500.millis)
+                        result <- fiber.get
+                        caps   <- server.captured
+                    yield
+                        result match
+                            case Result.Failure(_: AICompletionTimeoutException) => ()
+                            case other =>
+                                fail(s"expected the call deadline to fire while retries were still pending, got: $other")
+                        end match
+                        assert(
+                            caps.size == 1,
+                            s"the deadline must fire during the first retry's backoff, so exactly one attempt is made, got ${caps.size}"
+                        )
+                    end for
                 }
             }
         }

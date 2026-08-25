@@ -111,11 +111,10 @@ for
     start <- Locale.preferred(supported, Locale("en"))
     i18n  <- I18n.init(supported, start)(Path("resources") / "i18n")
 yield i18n
-end for
 // reads resources/i18n/en.ftl and resources/i18n/de.ftl
 ```
 
-That overload carries `Abort[FileReadException]` for the reads. A browser build never links it, since nothing there calls it.
+That overload's reads carry `Abort[FileReadException]`, so a missing or unreadable bundle surfaces at the caller. A browser build never links it, since nothing there calls it.
 
 `let` provides the handle as the ambient source for its body. A `t` leaf built anywhere resolves against whichever handle is ambient when it is sampled; a leaf sampled outside any `let` renders miss markers.
 

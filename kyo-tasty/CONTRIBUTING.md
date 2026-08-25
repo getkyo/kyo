@@ -138,8 +138,8 @@ bump to this list.
 
 **Site 4: `Tasty.evictOlderThan(cacheDir, maxAge)`**
 - Effect: lists and deletes `.krfl` files older than `maxAge`.
-- AllowUnsafe gate: the `kyo.Path` operations `Path(cacheDir).list("*.krfl")`,
-  `p.stat`, and `p.remove` inside `Tasty.evictOlderThan`; their `FileFsException`
+- AllowUnsafe gate: the `kyo.Path` operations `Path(cacheDir).list(glob"*.krfl")`,
+  `p.stat`, and `p.remove` inside `Tasty.evictOlderThan`; their `FileStructureException`
   / `FileReadException` failures are recovered to `TastyError.SnapshotIoError`.
 
 **Site 5: `Tasty.symbolAt(position)` / `Tasty.references(symbol)` (shared)**

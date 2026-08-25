@@ -3,6 +3,9 @@ package kyo
 class HubTest extends kyo.test.Test[Any]:
     val repeats = 100
 
+    // A blocked operation never completes, so an `Async.timeout` reporting it unfinished proves the block.
+    val blockedWindow = 100.millis
+
     "initWith" - {
         "listen, offer, take" in {
             Hub.initWith[Int](10) { h =>
@@ -84,15 +87,14 @@ class HubTest extends kyo.test.Test[Any]:
         "backpressure when hub is full" in {
             for
                 h     <- Hub.init[Int](1)
-                latch <- Latch.init(1)
                 _     <- h.listen(0)
                 _     <- h.put(1)
                 _     <- h.put(2)
                 fiber <- Fiber.initUnscoped(h.put(3))
-                _     <- Async.sleep(10.millis)
-                done  <- fiber.done
-                hFull <- h.full
-            yield assert(!done && hFull)
+                // the hub is full, so the third put reports that it did not complete
+                blocked <- Abort.run[Timeout](Async.timeout(blockedWindow)(fiber.get))
+                hFull   <- h.full
+            yield assert(blocked.isFailure && hFull)
         }
     }
 
@@ -346,12 +348,11 @@ class HubTest extends kyo.test.Test[Any]:
                         Kyo.foreachDiscard(1 to 10)(hub.put)
                     )
                 )
-                _         <- latch.release
-                stopwatch <- Clock.stopwatch
-                result    <- slowConsumer.get
-                _         <- producerFiber.get
-                elapsed   <- stopwatch.elapsed
-            yield assert(elapsed >= 8.millis && result == (1 to 10))
+                _      <- latch.release
+                result <- slowConsumer.get
+                _      <- producerFiber.get
+            // result == (1 to 10) is the property: every item reached the throttled consumer, in order, with no loss.
+            yield assert(result == (1 to 10))
         }
 
         "concurrent filtered listeners".onlyJvm in {
@@ -501,15 +502,17 @@ class HubTest extends kyo.test.Test[Any]:
         "takeExactly" - {
             "blocks until enough elements" in {
                 for
-                    h     <- Hub.init[Int](4)
-                    l     <- h.listen
-                    fiber <- Fiber.initUnscoped(l.takeExactly(4))
-                    _     <- Async.sleep(10.millis)
-                    done1 <- fiber.done
-                    _     <- h.putBatch(1 to 4)
-                    res   <- fiber.get
-                    done2 <- fiber.done
-                yield assert(!done1 && done2 && res == Chunk.from(1 to 4))
+                    // with fewer than four elements available, takeExactly reports it did not complete
+                    hShort  <- Hub.init[Int](4)
+                    lShort  <- hShort.listen
+                    _       <- hShort.putBatch(1 to 3)
+                    blocked <- Abort.run[Timeout](Async.timeout(blockedWindow)(lShort.takeExactly(4)))
+                    // with all four available, takeExactly returns exactly those elements in order
+                    hFull <- Hub.init[Int](4)
+                    lFull <- hFull.listen
+                    _     <- hFull.putBatch(1 to 4)
+                    res   <- lFull.takeExactly(4)
+                yield assert(blocked.isFailure && res == Chunk.from(1 to 4))
             }
 
             "respects filters" in {

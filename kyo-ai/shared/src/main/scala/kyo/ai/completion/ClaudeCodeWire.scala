@@ -80,6 +80,14 @@ private[completion] object ClaudeCodeWire:
     private[completion] def stoppedAtOutputLimit(out: String)(using Frame): Boolean < Abort[AIGenException] =
         readEvents(out, lenient = true).map(_.exists(_.error.contains("max_output_tokens")))
 
+    /** True when the CLI emitted its structured authentication failure code.
+      *
+      * This deliberately ignores prose and terminal result text. Only the decoded `error` field can classify a failed command as an
+      * authentication problem, preserving the same no-text-scraping rule used for provider status codes and output limits.
+      */
+    private[completion] def authenticationFailed(out: String)(using Frame): Boolean < Abort[AIGenException] =
+        readEvents(out, lenient = true).map(_.exists(_.error.contains("authentication_failed")))
+
     case class ExecutedTool(name: String, arguments: Structure.Value, output: String)
 
     val mcpServerName = "kyo"

@@ -6,3 +6,8 @@
 > checkPartialFutureNoMaven
 > checkPartialKyoMaven
 > checkPartialKyoNoLocal
+# CompatBackendAxis.local: a vendored backend bound to a local project.
+> checkLocalAxisDep
+> checkLocalAxisNoMaven
+# An unbound CompatBackendAxis.local backend fails with a clear message.
+> checkUnboundLocalErrors

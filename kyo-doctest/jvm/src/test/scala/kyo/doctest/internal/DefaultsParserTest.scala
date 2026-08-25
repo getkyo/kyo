@@ -79,4 +79,27 @@ class DefaultsParserTest extends kyo.test.Test[Any]:
         }
     }
 
+    "per-block timeout overrides the per-README timeout default" in {
+        val content = """|<!-- doctest:default expect=runs timeout=2s -->
+                           |
+                           |```scala
+                           |val inheritedTimeout = true
+                           |```
+                           |
+                           |```scala doctest:timeout=75ms
+                           |val overriddenTimeout = true
+                           |```
+                           |""".stripMargin
+        Abort.run(MarkdownParser.parseString(content, dummyFile)).map {
+            case Result.Success(blocks) =>
+                assert(blocks.size == 2)
+                assert(blocks(0).timeout == 2.seconds)
+                assert(blocks(1).timeout == 75.millis)
+            case Result.Failure(err) =>
+                fail(s"unexpected parse error: $err")
+            case Result.Panic(t) =>
+                fail(s"unexpected panic: ${t.getMessage}")
+        }
+    }
+
 end DefaultsParserTest

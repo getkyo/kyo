@@ -40,7 +40,7 @@ class TlsEngineIoChunkConsumerTest extends Test:
                 TlsRealEngines.withEngines { (client, server) =>
                     assert(TlsEngineLoopback.handshake(client, server), "handshake did not complete")
                     val harness = new Harness
-                    val handle  = PosixHandle.socket(77, PosixHandle.DefaultReadBufferSize, Absent)
+                    val handle  = PosixHandle.socket(77, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val plain   = Array.tabulate[Byte](200)(i => (i & 0xff).toByte)
 
                     // Collect each ciphertext chunk the SAM receives. `len` arrives as a primitive Int parameter (no Integer box at the call site);
@@ -83,7 +83,7 @@ class TlsEngineIoChunkConsumerTest extends Test:
                 TlsRealEngines.withEngines { (client, server) =>
                     assert(TlsEngineLoopback.handshake(client, server), "handshake did not complete")
                     val harness = new Harness
-                    val handle  = PosixHandle.socket(78, PosixHandle.DefaultReadBufferSize, Absent)
+                    val handle  = PosixHandle.socket(78, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val plain   = Array[Byte](1, 2, 3, 4, 5)
                     val cipher  = new java.io.ByteArrayOutputStream
                     val sam = new ChunkConsumer:

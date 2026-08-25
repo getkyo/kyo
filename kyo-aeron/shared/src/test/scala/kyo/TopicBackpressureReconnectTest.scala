@@ -159,25 +159,56 @@ class TopicBackpressureReconnectTest extends Test:
         // One continuous publication carries all four messages: order across two publish-then-close calls
         // is undefined in Aeron. The long-lived subscriber is slowed (Async.delay) so the short-lived
         // sibling departs mid-flight.
+        //
+        // started.await proves both fibers started, not that both images receive; a one-shot publish can reach shortSub and close
+        // before longSub's image connects (aeron never redelivers late), so longSub would hang. So a leading probe phase emits
+        // sentinel SubRestartMsgB(0) until both signal first receipt, then the real batch follows in the SAME publication (FIFO within one); each filters sentinels before its quota.
         "7b fan-out continuity after a sibling subscriber stops" in {
-            val uri = "aeron:ipc"
-            val all = Seq(SubRestartMsgB(1), SubRestartMsgB(2), SubRestartMsgB(3), SubRestartMsgB(4))
+            val uri          = "aeron:ipc"
+            val all          = Seq(SubRestartMsgB(1), SubRestartMsgB(2), SubRestartMsgB(3), SubRestartMsgB(4))
+            val probe        = SubRestartMsgB(0)
+            val probeBackoff = 5.millis
+            val maxProbes    = 2000 // bounded: ~10 s ceiling at 5 ms; the probe stream stops if an image never connects
             Topic.run {
                 for
-                    started <- Latch.init(2)
+                    started        <- Latch.init(2)
+                    shortReceiving <- Latch.init(1)
+                    longReceiving  <- Latch.init(1)
                     shortSub <- Fiber.initUnscoped(using Topic.isolate)(
-                        started.release.andThen(Topic.stream[SubRestartMsgB](uri).take(2).run)
+                        started.release.andThen(
+                            Topic.stream[SubRestartMsgB](uri)
+                                .tap(_ => shortReceiving.release)
+                                .filterPure(_.seq > 0)
+                                .take(2)
+                                .run
+                        )
                     )
                     longSub <- Fiber.initUnscoped(using Topic.isolate)(
                         started.release.andThen(
                             Topic.stream[SubRestartMsgB](uri)
+                                .tap(_ => longReceiving.release)
+                                .filterPure(_.seq > 0)
                                 .map(m => Async.delay(2.millis)(m))
                                 .take(all.size)
                                 .run
                         )
                     )
-                    _          <- started.await
-                    _          <- Fiber.initUnscoped(Topic.publish[SubRestartMsgB](uri)(Stream.init(all)))
+                    _ <- started.await
+                    _ <- Fiber.initUnscoped {
+                        // chunkSize 1 gives one offer per probe step.
+                        val probes =
+                            Stream.unfold(0, chunkSize = 1) { step =>
+                                shortReceiving.pending.map { shortWaiting =>
+                                    longReceiving.pending.map { longWaiting =>
+                                        if (shortWaiting == 0 && longWaiting == 0) || step >= maxProbes then
+                                            Absent: Maybe[(SubRestartMsgB, Int)]
+                                        else
+                                            Async.sleep(probeBackoff).andThen(Present((probe, step + 1)): Maybe[(SubRestartMsgB, Int)])
+                                    }
+                                }
+                            }
+                        Topic.publish[SubRestartMsgB](uri)(probes.concat(Stream.init(all)))
+                    }
                     shortRecvd <- shortSub.get
                     _ = assert(shortRecvd == all.take(2), s"short-lived subscriber first-two mismatch: $shortRecvd")
                     longRecvd <- longSub.get
@@ -187,6 +218,7 @@ class TopicBackpressureReconnectTest extends Test:
                 )
             }
         }
+
     }
 
     // Mirrors Aeron's PongTest.playPingPongWithRestart: the two-stream echo must survive a mid-life stream

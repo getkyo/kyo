@@ -33,6 +33,32 @@ class ModifierParserTest extends kyo.test.Test[Any]:
         }
     }
 
+    "doctest:timeout=250ms parses to a finite positive Duration" in {
+        Abort.run(ModifierParser.parse("scala doctest:expect=runs timeout=250ms", dummyFile, 1)).map {
+            case Result.Success(mods) =>
+                assert(mods.timeout == Present(250.millis))
+            case Result.Failure(err) =>
+                fail(s"unexpected parse error: $err")
+            case Result.Panic(t) =>
+                fail(s"unexpected panic: ${t.getMessage}")
+        }
+    }
+
+    "timeout rejects zero, infinity, and malformed durations" in {
+        Kyo.foreach(Chunk("0s", "infinity", "later")) { value =>
+            Abort.run(ModifierParser.parse(s"scala doctest:timeout=$value", dummyFile, 9)).map {
+                case Result.Success(mods) =>
+                    fail(s"expected invalid timeout '$value' to fail, got $mods")
+                case Result.Failure(Doctest.Error.ParseError(file, line, message)) =>
+                    assert(file == dummyFile)
+                    assert(line == 9)
+                    assert(message.contains("timeout"), s"expected timeout error, got: $message")
+                case Result.Panic(t) =>
+                    fail(s"unexpected panic: ${t.getMessage}")
+            }
+        }.unit
+    }
+
     "doctest:scope=inherited parses to Block.Visibility.Inherited" in {
         Abort.run(ModifierParser.parse("scala doctest:scope=inherited", dummyFile, 1)).map {
             case Result.Success(mods) =>

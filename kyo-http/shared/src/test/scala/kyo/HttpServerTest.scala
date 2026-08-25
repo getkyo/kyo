@@ -18,9 +18,9 @@ class HttpServerTest extends BaseHttpTest:
     )(using Frame): Unit =
         "plain" in {
             HttpClient.init().map { httpClient =>
-                HttpServer.init(0, "localhost")(handlers*).map(s =>
+                HttpServer.init(0, "127.0.0.1")(handlers*).map(s =>
                     HttpClient.let(httpClient) {
-                        test(HttpUrl.parse(s"http://localhost:${s.port}").getOrThrow)
+                        test(HttpUrl.parse(s"http://127.0.0.1:${s.port}").getOrThrow)
                     }
                 )
             }
@@ -28,10 +28,10 @@ class HttpServerTest extends BaseHttpTest:
         "tls" in {
             initTrustAllClient().map { httpClient =>
                 HttpServer.init(
-                    HttpServerConfig.default.port(0).host("localhost").tls(internal.HttpTestPlatformBackend.serverTlsConfig)
+                    HttpServerConfig.default.port(0).host("127.0.0.1").tls(internal.HttpTestPlatformBackend.serverTlsConfig)
                 )(handlers*).map(s =>
                     HttpClient.let(httpClient) {
-                        test(HttpUrl.parse(s"https://localhost:${s.port}").getOrThrow)
+                        test(HttpUrl.parse(s"https://127.0.0.1:${s.port}").getOrThrow)
                     }
                 )
             }
@@ -43,9 +43,9 @@ class HttpServerTest extends BaseHttpTest:
     )(using Frame): Unit =
         "plain" in {
             HttpClient.init().map { httpClient =>
-                HttpServer.init(HttpServerConfig.default.port(0).host("localhost").cors(cors))(handlers*).map(s =>
+                HttpServer.init(HttpServerConfig.default.port(0).host("127.0.0.1").cors(cors))(handlers*).map(s =>
                     HttpClient.let(httpClient) {
-                        test(HttpUrl.parse(s"http://localhost:${s.port}").getOrThrow)
+                        test(HttpUrl.parse(s"http://127.0.0.1:${s.port}").getOrThrow)
                     }
                 )
             }
@@ -55,9 +55,9 @@ class HttpServerTest extends BaseHttpTest:
         test: kyo.test.AssertScope ?=> HttpUrl => Unit < (Async & Abort[Any] & Scope)
     )(using Frame, kyo.test.AssertScope): Unit < (Scope & Async & Abort[Any]) =
         HttpClient.init().map { httpClient =>
-            HttpServer.init(0, "localhost")(handlers*).map(s =>
+            HttpServer.init(0, "127.0.0.1")(handlers*).map(s =>
                 HttpClient.let(httpClient) {
-                    test(HttpUrl.parse(s"http://localhost:${s.port}").getOrThrow)
+                    test(HttpUrl.parse(s"http://127.0.0.1:${s.port}").getOrThrow)
                 }
             )
         }
@@ -66,9 +66,9 @@ class HttpServerTest extends BaseHttpTest:
         test: kyo.test.AssertScope ?=> HttpUrl => Unit < (Async & Abort[Any] & Scope)
     )(using Frame, kyo.test.AssertScope): Unit < (Scope & Async & Abort[Any]) =
         HttpClient.init().map { httpClient =>
-            HttpServer.init(HttpServerConfig.default.port(0).host("localhost").cors(cors))(handlers*).map(s =>
+            HttpServer.init(HttpServerConfig.default.port(0).host("127.0.0.1").cors(cors))(handlers*).map(s =>
                 HttpClient.let(httpClient) {
-                    test(HttpUrl.parse(s"http://localhost:${s.port}").getOrThrow)
+                    test(HttpUrl.parse(s"http://127.0.0.1:${s.port}").getOrThrow)
                 }
             )
         }
@@ -1327,7 +1327,7 @@ class HttpServerTest extends BaseHttpTest:
     "server lifecycle" - {
 
         "bind to port 0 assigns random port" in {
-            HttpServer.init(0, "localhost")().map { server =>
+            HttpServer.init(0, "127.0.0.1")().map { server =>
                 assert(server.port > 0)
                 assert(server.host == "localhost" || server.host == "127.0.0.1" || server.host == "::1" || server.host == "0:0:0:0:0:0:0:1")
             }
@@ -1336,8 +1336,8 @@ class HttpServerTest extends BaseHttpTest:
         "close stops accepting new connections" in {
             val route = HttpRoute.getRaw("test").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("ok"))
-            HttpServer.init(0, "localhost")(ep).map { server =>
-                val serverUrl = HttpUrl.parse(s"http://localhost:${server.port}").getOrThrow
+            HttpServer.init(0, "127.0.0.1")(ep).map { server =>
+                val serverUrl = HttpUrl.parse(s"http://127.0.0.1:${server.port}").getOrThrow
                 send(serverUrl, route, HttpRequest.getRaw(HttpUrl.fromUri("/test"))).map { resp =>
                     assert(resp.status == HttpStatus.OK)
                 }
@@ -1351,10 +1351,10 @@ class HttpServerTest extends BaseHttpTest:
         val ep    = route.handler(_ => HttpResponse.ok("ok"))
 
         "initWith" in {
-            HttpServer.initWith(0, "localhost")(ep) { server =>
+            HttpServer.initWith(0, "127.0.0.1")(ep) { server =>
                 assert(server.port > 0)
                 send(
-                    HttpUrl.parse(s"http://localhost:${server.port}").getOrThrow,
+                    HttpUrl.parse(s"http://127.0.0.1:${server.port}").getOrThrow,
                     route,
                     HttpRequest.getRaw(HttpUrl.fromUri("/health"))
                 ).map { resp =>
@@ -1365,7 +1365,7 @@ class HttpServerTest extends BaseHttpTest:
         }
 
         "initUnscopedWith" in {
-            HttpServer.initUnscopedWith(0, "localhost")(ep) { server =>
+            HttpServer.initUnscopedWith(0, "127.0.0.1")(ep) { server =>
                 assert(server.port > 0)
                 server.closeNow.unit
             }
@@ -2599,9 +2599,9 @@ class HttpServerTest extends BaseHttpTest:
             val route = HttpRoute.getRaw("auto-server").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("ok"))
             HttpClient.init().map { httpClient =>
-                HttpServer.init(0, "localhost")(ep).map { server =>
+                HttpServer.init(0, "127.0.0.1")(ep).map { server =>
                     HttpClient.let(httpClient) {
-                        val url = HttpUrl.parse(s"http://localhost:${server.port}/auto-server").getOrThrow
+                        val url = HttpUrl.parse(s"http://127.0.0.1:${server.port}/auto-server").getOrThrow
                         HttpClient.getTextResponse(url).map { response =>
                             assert(response.headers.get("X-Auto-Server").contains("enabled"))
                         }
@@ -2614,9 +2614,9 @@ class HttpServerTest extends BaseHttpTest:
             val route = HttpRoute.getRaw("auto-server").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("ok"))
             HttpClient.init().map { httpClient =>
-                HttpServer.init(HttpServerConfig.default.port(0).host("localhost").withoutAutoFilters)(ep).map { server =>
+                HttpServer.init(HttpServerConfig.default.port(0).host("127.0.0.1").withoutAutoFilters)(ep).map { server =>
                     HttpClient.let(httpClient) {
-                        val url = HttpUrl.parse(s"http://localhost:${server.port}/auto-server").getOrThrow
+                        val url = HttpUrl.parse(s"http://127.0.0.1:${server.port}/auto-server").getOrThrow
                         HttpClient.getTextResponse(url).map { response =>
                             assert(response.headers.get("X-Auto-Server") == Absent)
                         }
@@ -2690,11 +2690,11 @@ class HttpServerTest extends BaseHttpTest:
         "OpenAPI endpoint returns Content-Type application/json" in {
             val route  = HttpRoute.getRaw("items").response(_.bodyText)
             val ep     = route.handler(_ => HttpResponse.ok("ok"))
-            val config = HttpServerConfig.default.port(0).host("localhost").openApi("/openapi.json", "Test API")
+            val config = HttpServerConfig.default.port(0).host("127.0.0.1").openApi("/openapi.json", "Test API")
             HttpServer.init(config)(ep).map { server =>
                 val oaRoute = HttpRoute.getRaw("openapi.json").response(_.bodyText)
                 send(
-                    HttpUrl.parse(s"http://localhost:${server.port}").getOrThrow,
+                    HttpUrl.parse(s"http://127.0.0.1:${server.port}").getOrThrow,
                     oaRoute,
                     HttpRequest.getRaw(HttpUrl.fromUri("/openapi.json"))
                 ).map { resp =>
@@ -3428,17 +3428,17 @@ class HttpServerTest extends BaseHttpTest:
             val ep1    = route1.handler(_ => HttpResponse.ok("server1"))
             val route2 = HttpRoute.getRaw("s2").response(_.bodyText)
             val ep2    = route2.handler(_ => HttpResponse.ok("server2"))
-            HttpServer.init(0, "localhost")(ep1).map { server1 =>
-                HttpServer.init(0, "localhost")(ep2).map { server2 =>
+            HttpServer.init(0, "127.0.0.1")(ep1).map { server1 =>
+                HttpServer.init(0, "127.0.0.1")(ep2).map { server2 =>
                     assert(server1.port != server2.port)
                     send(
-                        HttpUrl.parse(s"http://localhost:${server1.port}").getOrThrow,
+                        HttpUrl.parse(s"http://127.0.0.1:${server1.port}").getOrThrow,
                         route1,
                         HttpRequest.getRaw(HttpUrl.fromUri("/s1"))
                     ).map { resp1 =>
                         assert(resp1.fields.body == "server1")
                         send(
-                            HttpUrl.parse(s"http://localhost:${server2.port}").getOrThrow,
+                            HttpUrl.parse(s"http://127.0.0.1:${server2.port}").getOrThrow,
                             route2,
                             HttpRequest.getRaw(HttpUrl.fromUri("/s2"))
                         ).map { resp2 =>
@@ -3550,16 +3550,16 @@ class HttpServerTest extends BaseHttpTest:
         "binding to in-use port fails with a recoverable Abort[HttpBindException] (init)" in {
             val route = HttpRoute.getRaw("test").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("ok"))
-            HttpServer.init(0, "localhost")(ep).map { server =>
+            HttpServer.init(0, "127.0.0.1")(ep).map { server =>
                 val port = server.port
                 // Abort.run[HttpBindException] proves the failure travels the typed abort channel and is recoverable:
                 // a bind failure must arrive as Result.Failure, not Result.Panic (a defect). A Panic fails the test.
                 Abort.run[HttpBindException] {
-                    HttpServer.init(port, "localhost")(ep)
+                    HttpServer.init(port, "127.0.0.1")(ep)
                 }.map {
                     case Result.Failure(e: HttpBindException) =>
                         assert(e.port == port, s"HttpBindException.port should be $port but was: ${e.port}")
-                        assert(e.host == "localhost", s"HttpBindException.host should be localhost but was: ${e.host}")
+                        assert(e.host == "127.0.0.1", s"HttpBindException.host should be 127.0.0.1 but was: ${e.host}")
                         assert(e.getMessage.contains(port.toString), s"Error message should contain port $port but was: ${e.getMessage}")
                     case other =>
                         fail(s"Expected a recoverable Abort.fail(HttpBindException) on port $port but got: $other")
@@ -3570,17 +3570,17 @@ class HttpServerTest extends BaseHttpTest:
         "binding to in-use port fails with a recoverable Abort[HttpBindException] (initUnscoped)" in {
             val route = HttpRoute.getRaw("test").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("ok"))
-            HttpServer.initUnscoped(0, "localhost")(ep).map { server =>
+            HttpServer.initUnscoped(0, "127.0.0.1")(ep).map { server =>
                 val port = server.port
                 Abort.run[HttpBindException] {
-                    HttpServer.initUnscoped(port, "localhost")(ep)
+                    HttpServer.initUnscoped(port, "127.0.0.1")(ep)
                 }.map { result =>
                     // Close the first (unscoped) server before asserting so cleanup happens regardless of the outcome.
                     server.closeNow.andThen {
                         result match
                             case Result.Failure(e: HttpBindException) =>
                                 assert(e.port == port, s"HttpBindException.port should be $port but was: ${e.port}")
-                                assert(e.host == "localhost", s"HttpBindException.host should be localhost but was: ${e.host}")
+                                assert(e.host == "127.0.0.1", s"HttpBindException.host should be 127.0.0.1 but was: ${e.host}")
                                 assert(
                                     e.getMessage.contains(port.toString),
                                     s"Error message should contain port $port but was: ${e.getMessage}"
@@ -3660,8 +3660,8 @@ class HttpServerTest extends BaseHttpTest:
         "connection tracking: Binding.close closes all connections" in {
             val route = HttpRoute.getRaw("pump-close").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("alive"))
-            HttpServer.initUnscoped(0, "localhost")(ep).map { server =>
-                val url = HttpUrl.parse(s"http://localhost:${server.port}").getOrThrow
+            HttpServer.initUnscoped(0, "127.0.0.1")(ep).map { server =>
+                val url = HttpUrl.parse(s"http://127.0.0.1:${server.port}").getOrThrow
                 // Verify server is alive
                 send(url, route, HttpRequest.getRaw(HttpUrl.fromUri("/pump-close"))).map { resp =>
                     assert(resp.status == HttpStatus.OK)
@@ -3796,8 +3796,8 @@ class HttpServerTest extends BaseHttpTest:
                             }
                         }
                     }
-                    HttpServer.initUnscoped(0, "localhost")(ep).map { server =>
-                        val url = HttpUrl.parse(s"http://localhost:${server.port}").getOrThrow
+                    HttpServer.initUnscoped(0, "127.0.0.1")(ep).map { server =>
+                        val url = HttpUrl.parse(s"http://127.0.0.1:${server.port}").getOrThrow
                         // Start a request in a fiber (may or may not receive the response)
                         Fiber.initUnscoped(
                             Abort.run[Throwable] {
@@ -3839,10 +3839,10 @@ class HttpServerTest extends BaseHttpTest:
                             }
                         }
                     }
-                    HttpServer.init(0, "localhost")(handler).map { server =>
+                    HttpServer.init(0, "127.0.0.1")(handler).map { server =>
                         Sync.Unsafe.defer {
                             val transport = kyo.net.NetPlatform.transport
-                            transport.connect("localhost", server.port).safe.get.map { conn =>
+                            transport.connect("127.0.0.1", server.port).safe.get.map { conn =>
                                 val req = "GET /park HTTP/1.1\r\nHost: localhost\r\n\r\n"
                                 conn.outbound.safe.put(Span.fromUnsafe(req.getBytes("US-ASCII")))
                                     .andThen(started.await)

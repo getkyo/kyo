@@ -1,0 +1,21 @@
+{
+  "reflection": [
+    { "type": "java.lang.invoke.VarHandleSegmentAsBytes", "allDeclaredMethods": true },
+    { "type": "java.lang.invoke.VarHandleSegmentAsShortsAligned", "allDeclaredMethods": true },
+    { "type": "java.lang.invoke.VarHandleSegmentAsShortsUnaligned", "allDeclaredMethods": true },
+    { "type": "java.lang.invoke.VarHandleSegmentAsCharsAligned", "allDeclaredMethods": true },
+    { "type": "java.lang.invoke.VarHandleSegmentAsCharsUnaligned", "allDeclaredMethods": true },
+    { "type": "java.lang.invoke.VarHandleSegmentAsIntsAligned", "allDeclaredMethods": true },
+    { "type": "java.lang.invoke.VarHandleSegmentAsIntsUnaligned", "allDeclaredMethods": true },
+    { "type": "java.lang.invoke.VarHandleSegmentAsLongsAligned", "allDeclaredMethods": true },
+    { "type": "java.lang.invoke.VarHandleSegmentAsLongsUnaligned", "allDeclaredMethods": true },
+    { "type": "java.lang.invoke.VarHandleSegmentAsFloatsAligned", "allDeclaredMethods": true },
+    { "type": "java.lang.invoke.VarHandleSegmentAsFloatsUnaligned", "allDeclaredMethods": true },
+    { "type": "java.lang.invoke.VarHandleSegmentAsDoublesAligned", "allDeclaredMethods": true },
+    { "type": "java.lang.invoke.VarHandleSegmentAsDoublesUnaligned", "allDeclaredMethods": true }
+  ],
+  "resources": [
+    { "glob": "META-INF/kyo-ffi/**" },
+    { "glob": "META-INF/native/**" }
+  ]
+}

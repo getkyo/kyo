@@ -3,6 +3,7 @@ package kyo
 import java.util.concurrent.ConcurrentHashMap
 import kyo.Tag.internal.Type.Entry.*
 import kyo.internal.Platform
+import kyo.internal.TagHash
 import kyo.internal.TagMacro
 import kyo.internal.XXHash
 import scala.annotation.tailrec
@@ -49,9 +50,7 @@ object Tag:
       * @return
       *   The Tag for type A
       */
-    // inline so a use site gets the tag itself rather than a call that returns its own argument. The given is
-    // already inline, so the static case is a string constant and this was the only hop left
-    inline def apply[A](using inline tag: Tag[A]): Tag[A] = tag
+    def apply[A: Tag as tag]: Tag[A] = tag
 
     /** Derives a Tag for type A. This method attempts to statically analyze the structure of type A and encode it as a string constant in
       * the bytecode. This approach offers optimal performance as the type information is available without allocations but it can fall back
@@ -169,16 +168,22 @@ object Tag:
           * extremely unlikely. This method checks for these common cases before falling back to the more expensive full type-based checking
           * if any of the tags are dynamic.
           *
-          * This method runs on the kernel's per-operation dispatch path, so it relies on the memoized `String.hashCode` and must not
-          * recompute a content hash per call. Content-stable cross-process hashing is `hash`'s job, not this method's. The body uses plain
-          * instanceof checks instead of pattern binders to stay within the JVM's 35-byte inline threshold, so it inlines at any call site,
-          * not only hot ones.
+          * This method runs on the kernel's per-operation dispatch path, so it goes through `TagHash` and must not recompute a content hash
+          * per call. `TagHash` is the JVM's memoized `String.hashCode` here and a memo table on JS, which has none. Content-stable
+          * cross-process hashing is `hash`'s job, not this method's.
           */
         private def fastPathEqual[B](that: Tag[B]): Boolean =
-            (self eq that) || (
-                (self.isInstanceOf[String] & that.isInstanceOf[String]) &&
-                    (self: AnyRef).hashCode == (that: AnyRef).hashCode
-            )
+            (self eq that) || {
+                self match
+                    case self: String =>
+                        that match
+                            case that: String =>
+                                TagHash.of(self) == TagHash.of(that)
+                            case _ =>
+                                false
+                    case _ =>
+                        false
+            }
 
         /** Checks if this Tag represents a concrete class type (without type parameters).
           *
@@ -375,9 +380,9 @@ object Tag:
           *   true if a is a subtype of b, false otherwise
           */
         def checkTypes[A, B](a: Tag[A], b: Tag[B], mode: Mode): Boolean =
-            // Cache key from memoized hashCodes: this is a per-call in-process key, so it must not
-            // recompute a content hash (the memoization constraint on fastPathEqual applies here too).
-            var hash = (a.hashCode.toLong << 32) | (b.hashCode & 0xffffffffL)
+            // Cache key from memoized hashCodes: this is a per-call in-process key, so it goes through
+            // `TagHash` and must not recompute a content hash (the constraint on fastPathEqual applies here too).
+            var hash = (TagHash.of(a).toLong << 32) | (TagHash.of(b) & 0xffffffffL)
             hash += mode.factor
             hash ^= (hash >>> 30)
             hash *= 0xbf58476d1ce4e5b9L

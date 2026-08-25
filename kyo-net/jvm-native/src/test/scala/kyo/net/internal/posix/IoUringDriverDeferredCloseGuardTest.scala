@@ -52,7 +52,7 @@ class IoUringDriverDeferredCloseGuardTest extends Test:
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 PosixTestSockets.loopbackPair(spy).map { case (client, accepted) =>
-                    val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     handle.driver = driver
                     Sync.ensure(Sync.defer(discard(spy.close(client)))) {
                         val readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
@@ -109,7 +109,7 @@ class IoUringDriverDeferredCloseGuardTest extends Test:
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 PosixTestSockets.loopbackPair(spy).map { case (client, accepted) =>
-                    val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     handle.driver = driver
                     Sync.ensure(Sync.defer(discard(spy.close(client)))) {
                         val readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()

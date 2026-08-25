@@ -17,7 +17,7 @@ class HttpContainerBackendTest extends BasePodTest:
             Sync.defer(value)
     end FixedUUIDGenerator
 
-    private def claimLegacyFixture(using Frame): (UUID, Path, Path) < (Sync & Abort[FileFsException]) =
+    private def claimLegacyFixture(using Frame): (UUID, Path, Path) < (Sync & Scope & Abort[FileReadException | FileStructureException]) =
         val uuid = UUID.v5(
             UUID.nil,
             Span.fromUnsafe(uniqueName("copyto-legacy-fixture").getBytes("UTF-8"))
@@ -26,8 +26,15 @@ class HttpContainerBackendTest extends BasePodTest:
             val parent        = claimed.parent.getOrElse(throw new IllegalStateException("temporary directory must have a parent"))
             val exact         = parent / s"kyo-copyto-${uuid.show}"
             val missingSource = parent / s"kyo-copyto-missing-${uuid.show}"
-            Abort.run[FileFsException](
-                claimed.move(exact, replaceExisting = false, atomicMove = true, createFolders = false)
+            Abort.run[FileStructureException](
+                claimed.move(
+                    exact,
+                    Path.MoveOptions(
+                        replace = Path.Replace.Never,
+                        atomicity = Path.Atomicity.Required,
+                        createFolders = false
+                    )
+                )
             ).map {
                 case Result.Success(_) =>
                     missingSource.exists.map { sourceExists =>
@@ -44,11 +51,51 @@ class HttpContainerBackendTest extends BasePodTest:
         }
     end claimLegacyFixture
 
+    "create payload" - {
+        // Regression guard for the podman 5.x compat API: docker and podman 4.x treat
+        // PidsLimit 0 as "no limit configured", but podman 5.8.4 applies it as a literal
+        // pids.max=0, so every container created through the HTTP backend died at start
+        // (exit 2, sh unable to fork). The limit must be absent from the JSON unless the
+        // caller configured one.
+        def hostConfigJson(config: Container.Config): String < Sync =
+            Sync.defer {
+                val backend = new HttpContainerBackend("/unused.sock")
+                Json.encode(backend.buildHostConfig(
+                    config,
+                    binds = Chunk.empty,
+                    portBindings = Map.empty,
+                    networkModeStr = "bridge",
+                    tmpfs = Map.empty,
+                    restartPol = backend.RestartPolicyEntry("no", 0)
+                ))
+            }
+
+        "omits PidsLimit when maxProcesses is unset" in {
+            hostConfigJson(Container.Config(ContainerImage("alpine"))).map { json =>
+                assert(!json.contains("PidsLimit"), s"PidsLimit must be absent when unconfigured: $json")
+            }
+        }
+
+        "carries PidsLimit when maxProcesses is set" in {
+            hostConfigJson(Container.Config(ContainerImage("alpine")).maxProcesses(64)).map { json =>
+                assert(json.contains("\"PidsLimit\":64"), s"configured limit must be encoded: $json")
+            }
+        }
+    }
+
+    "update payload" - {
+        "omits PidsLimit when maxProcesses is unset" in {
+            val backend = new HttpContainerBackend("/unused.sock")
+            val json    = Json.encode(backend.UpdateRequest(Memory = 1024L))
+            assert(!json.contains("PidsLimit"), s"PidsLimit must be absent when unconfigured: $json")
+        }
+    }
+
     "copyTo" - {
         "scoped UUID temp directories do not overwrite or delete the exact legacy staging path" in {
             claimLegacyFixture.map { (uuid, foreignPath, missingSource) =>
                 val sentinel = foreignPath / "sentinel"
-                Sync.ensure(foreignPath.removeAll.unit) {
+                Sync.ensure(Abort.run[FileStructureException](foreignPath.removeAll).unit) {
                     sentinel.write("foreign fixture").andThen {
                         val generator = new FixedUUIDGenerator(uuid)
                         val backend   = new HttpContainerBackend("/unused.sock")

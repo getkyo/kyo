@@ -138,41 +138,47 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
 
     test("awaitSchedulerIdle returns Accounted without spending the budget when every busy worker is allowlisted") {
         // The process-lifetime transport case: load never reaches zero, but the only carrier holding it is allowlisted. Before quiescence
-        // accounted for the allowlist, such a fork parked for the whole budget and was then excused anyway, once per forked JVM.
-        val budget  = 2_000_000_000L
-        val started = java.lang.System.nanoTime()
+        // accounted for the allowlist, such a fork parked for the whole budget and was then excused anyway. The loop runs on a virtual clock
+        // (park advances it), so "settles without spending the budget" is an exact, load-independent fact, not a wall-clock ceiling.
+        val budget = 2_000_000_000L
+        val clock  = new java.util.concurrent.atomic.AtomicLong(0L)
         val verdict = LeakCheck.awaitSchedulerIdle(
             budgetNanos = budget,
             settleNanos = 20_000_000L,
             pollNanos = 1_000_000L,
             loadNow = () => 1.0,
-            allAccounted = () => true
+            allAccounted = () => true,
+            now = () => clock.get(),
+            park = d =>
+                clock.addAndGet(d); ()
         )
-        val elapsed = java.lang.System.nanoTime() - started
         val ok = verdict match
             case LeakCheck.IdleResult.Accounted(la) => la == 1.0
             case _                                  => false
         assert(ok, s"work whose carriers are all allowlisted must read as Accounted, got $verdict")
-        assert(elapsed < budget / 2, s"Accounted must settle without spending the budget, took ${elapsed / 1000000}ms")
+        assert(clock.get() < budget, s"Accounted must settle without spending the budget, virtual elapsed ${clock.get()}ns of $budget")
     }
 
     test("awaitSchedulerIdle still spends the budget and reports Busy when work is unaccounted") {
         // The leak this check exists to find: nothing accounts for the running work, so the full settle budget is spent before the verdict.
-        val budget  = 200_000_000L
-        val started = java.lang.System.nanoTime()
+        // On the virtual clock the loop advances only through park, so it runs to exactly the deadline: spending the full budget is exact.
+        val budget = 200_000_000L
+        val clock  = new java.util.concurrent.atomic.AtomicLong(0L)
         val verdict = LeakCheck.awaitSchedulerIdle(
             budgetNanos = budget,
             settleNanos = 20_000_000L,
             pollNanos = 1_000_000L,
             loadNow = () => 2.0,
-            allAccounted = () => false
+            allAccounted = () => false,
+            now = () => clock.get(),
+            park = d =>
+                clock.addAndGet(d); ()
         )
-        val elapsed = java.lang.System.nanoTime() - started
         val ok = verdict match
             case LeakCheck.IdleResult.Busy(la, _) => la == 2.0
             case _                                => false
         assert(ok, s"unaccounted work must still be reported as Busy, got $verdict")
-        assert(elapsed >= budget, s"an unaccounted fork must still get its full budget, took ${elapsed / 1000000}ms")
+        assert(clock.get() >= budget, s"an unaccounted fork must still get its full budget, virtual elapsed ${clock.get()}ns of $budget")
     }
 
     test("awaitSchedulerIdle reports Idle at zero load without consulting the accounted probe") {
@@ -258,8 +264,9 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
         // Tear the spinner down BEFORE asserting so a failed assertion never leaves it pegging a worker.
         stop.set(true)
         val _ = Sync.Unsafe.evalOrThrow(fiber.interrupt)
-        Thread.sleep(200)
-        val drained = minLoad(10)
+        // Poll until the interrupted spinner's load drains back to ambient, not a fixed sleep hoping the interrupt
+        // propagated: converges when the worker goes idle, fails the bound only if load never returns (the leak itself).
+        val drainedToAmbient = awaitTrue(2000)(LeakCheck.loadAvg() <= ambient + 0.5)
 
         assert(observed, s"the spinner should be observed as busy load within 2s (ambient=$ambient)")
         verdict match
@@ -272,7 +279,7 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
                 // The allowlist is empty here, so nothing can account for the spinner: Accounted would mean the predicate excused a leak.
                 fail(s"expected Busy while a fiber was spinning, got Accounted($la) under an empty allowlist (ambient=$ambient)")
         end match
-        assert(drained <= ambient + 0.5, s"after cleanup the spinner's load should be gone (ambient=$ambient drained=$drained)")
+        assert(drainedToAmbient, s"after cleanup the spinner's load should drain back to ambient within 2s (ambient=$ambient)")
     }
 
     test("non-daemon thread probe detects a leaked thread, respects the allowlist, and clears after join") {

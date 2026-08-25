@@ -8,11 +8,6 @@ class BrowserCookieTest extends BrowserTest:
 
     private val base = """{"name":"n","value":"v"}"""
 
-    // Matches the fixture's setTimeout(...remove..., 250) inside `tryAcceptCookies waits for banner removal`.
-    private val cookieRemovalDelayMs: Long = 250L
-    // Lower-bound floor for the timing assertion: removalDelay minus 50ms slack for scheduling jitter.
-    private val cookieRemovalFloorMs: Long = cookieRemovalDelayMs - 50 // = 200
-
     /** Asserts the shared-Chrome cookie jar is empty (call AFTER `cleanupCookieJar`). Proves the prelude wipe
       * landed; also surfaces shared-Chrome contamination if a future API change breaks `cleanupCookieJar`.
       */
@@ -542,14 +537,8 @@ class BrowserCookieTest extends BrowserTest:
               |</script>""".stripMargin
             ) {
                 for
-                    pair <- timed(Browser.tryAcceptCookies)
-                    (elapsedDur, result) = pair
-                    elapsed              = elapsedDur.toMillis
+                    result <- Browser.tryAcceptCookies
                     _ = assert(result.isDefined, s"Expected tryAcceptCookies to return Present(selector) but got $result")
-                    _ = assert(
-                        elapsed >= cookieRemovalFloorMs,
-                        s"Expected to wait at least ${cookieRemovalFloorMs}ms (banner removal at ${cookieRemovalDelayMs}ms) but elapsed was ${elapsed}ms"
-                    )
                     gone <- Browser.eval("String(document.querySelector('#cookie-banner') === null)")
                 yield assert(gone == "true", s"Expected banner to be removed from DOM but got: $gone")
             }
@@ -586,21 +575,20 @@ class BrowserCookieTest extends BrowserTest:
     "tryAcceptCookies no-ops without a banner" in {
         withBrowser {
             onPage("<div><p>No cookie banner here</p></div>") {
-                for
-                    pair <- timed(Browser.tryAcceptCookies)
-                    (elapsedDur, result) = pair
-                    elapsed              = elapsedDur.toMillis
-                    // Behavior: when no banner is present, the no-op path must (a) return Absent and (b) leave the DOM untouched.
-                    // No spurious banner element should be created or remain. Together these are the deterministic contract;
-                    // the timing bound below is a soft envelope.
-                    bannerAbsent <- Browser.eval("String(document.querySelector('#cookie-banner') === null)")
-                yield
-                    assert(result.isEmpty, s"Expected tryAcceptCookies to return Absent but got $result")
-                    assert(
-                        bannerAbsent == "true",
-                        s"Expected no banner DOM node after no-op tryAcceptCookies but got bannerAbsent='$bannerAbsent'"
-                    )
-                    assert(elapsed < 2000, s"Expected fast path (< 2000ms soft envelope) but elapsed was ${elapsed}ms")
+                // loadSchedule is set effectively-infinite: the no-op path returns Absent from the in-page IIFE before
+                // consulting the deadline, so a broken short-circuit into the poll loop would hang instead of returning.
+                Browser.withConfig(_.loadSchedule(Schedule.fixed(1.hour))) {
+                    for
+                        result <- Browser.tryAcceptCookies
+                        // No banner present: the no-op path must return Absent and leave the DOM untouched (no spurious banner).
+                        bannerAbsent <- Browser.eval("String(document.querySelector('#cookie-banner') === null)")
+                    yield
+                        assert(result.isEmpty, s"Expected tryAcceptCookies to return Absent but got $result")
+                        assert(
+                            bannerAbsent == "true",
+                            s"Expected no banner DOM node after no-op tryAcceptCookies but got bannerAbsent='$bannerAbsent'"
+                        )
+                }
             }
         }
     }

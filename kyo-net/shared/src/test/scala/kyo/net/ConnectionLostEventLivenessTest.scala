@@ -34,15 +34,15 @@ class ConnectionLostEventLivenessTest extends Test:
     abstract class StubDriver extends IoDriver[Unit]:
         def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
             Promise.Unsafe.init[Unit, Any]().asInstanceOf[Fiber.Unsafe[Unit, Any]]
-        def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit = ()
-        def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit  = ()
-        def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit    = ()
-        def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult                        = WriteResult.Done
-        def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                                                      = ()
-        def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                                                 = ()
-        def close()(using AllowUnsafe, Frame): Unit                                                                   = ()
-        def label: String                                                                                             = "StubDriver"
-        def handleLabel(handle: Unit): String                                                                         = "stub"
+        def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit = ()
+        def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit  = ()
+        def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit    = ()
+        def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = WriteResult.Done
+        def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                               = ()
+        def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                          = ()
+        def close()(using AllowUnsafe, Frame): Unit                                            = ()
+        def label: String                                                                      = "StubDriver"
+        def handleLabel(handle: Unit): String                                                  = "stub"
     end StubDriver
 
     "no permanent stall on a lost event" - {

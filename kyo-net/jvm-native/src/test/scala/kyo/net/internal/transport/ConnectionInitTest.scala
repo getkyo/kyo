@@ -66,7 +66,7 @@ class ConnectionInitTest extends Test:
         val spy  = new RecordingIoDriver(real)
         discard(spy.start())
         PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
-            val handle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+            val handle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
             val conn   = Connection.init(handle, spy, channelCapacity = 8)
             conn.start()
             conn.close()
@@ -92,7 +92,7 @@ class ConnectionInitTest extends Test:
 
         discard(spy.start())
         PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
-            val handle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+            val handle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
             val conn   = Connection.init(handle, spy, channelCapacity = 8)
             conn.start()
             conn.close()
@@ -118,7 +118,7 @@ class ConnectionInitTest extends Test:
         val spy  = new RecordingIoDriver(real)
         discard(spy.start())
         PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
-            val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+            val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
             val conn    = Connection.init(handle, spy, channelCapacity = 1)
             val payload = Array.tabulate[Byte](128 * 1024)(i => (i % 251).toByte)
 
@@ -141,7 +141,7 @@ class ConnectionInitTest extends Test:
         val spy  = new RecordingIoDriver(real)
         discard(spy.start())
         PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
-            val handle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+            val handle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
             val conn   = Connection.init(handle, spy, channelCapacity = 8)
             conn.start()
             assert(!conn.onClosing.done(), "onClosing must not be complete on a live connection")
@@ -160,7 +160,7 @@ class ConnectionInitTest extends Test:
         val spy  = new RecordingIoDriver(real)
         discard(spy.start())
         PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
-            val handle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+            val handle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
             val conn   = Connection.init(handle, spy, channelCapacity = 8)
             conn.start()
             discard(sock.close(peerFd)) // peer FIN -> ReadPump EOF -> teardown -> closeFn
@@ -180,7 +180,7 @@ class ConnectionInitTest extends Test:
         val spy  = new RecordingIoDriver(real)
         discard(spy.start())
         PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
-            val handle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+            val handle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
             val conn   = Connection.init(handle, spy, channelCapacity = 8)
             conn.start()
             discard(conn.detachForUpgrade())

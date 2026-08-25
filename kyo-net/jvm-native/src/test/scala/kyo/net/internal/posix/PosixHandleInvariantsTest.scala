@@ -32,7 +32,7 @@ class PosixHandleInvariantsTest extends Test:
         // The runtime assert pins the PosixHandle split-fd contract.
         "ReadPump and WritePump instantiate over PosixHandle + IoDriver[PosixHandle]" in {
             typeCheck("""
-                val handle = kyo.net.internal.posix.PosixHandle.socket(3, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle = kyo.net.internal.posix.PosixHandle.socket(3, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val ch = kyo.Channel.Unsafe.init[kyo.Span[Byte]](1)
                 import kyo.AllowUnsafe.embrace.danger
                 given kyo.Frame = kyo.Frame.internal
@@ -42,7 +42,7 @@ class PosixHandleInvariantsTest extends Test:
                 val _rp = new kyo.net.internal.transport.ReadPump[kyo.net.internal.posix.PosixHandle](handle, driver, ch, () => (), kyo.Duration.Infinity, kyo.Clock.live)
                 val _wp = new kyo.net.internal.transport.WritePump[kyo.net.internal.posix.PosixHandle](handle, driver, ch, () => (), kyo.AtomicRef.Unsafe.init[kyo.net.internal.transport.WriteState](kyo.net.internal.transport.WriteState.Idle))
             """)
-            val handle = PosixHandle.socket(3, PosixHandle.DefaultReadBufferSize, Absent)
+            val handle = PosixHandle.socket(3, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
             assert(handle.readFd == 3 && handle.writeFd == 3)
         }
     }

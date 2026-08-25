@@ -352,9 +352,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
 
     def bytes(): Span[Byte] =
         val s = string()
-        try
-            val arr = java.util.Base64.getDecoder.decode(s)
-            Span.from(arr)
+        try Span.fromUnsafe(kyo.internal.Base64s.decodeExact(s))
         catch
             case e: IllegalArgumentException =>
                 error(s"Invalid Base64: ${e.getMessage}")

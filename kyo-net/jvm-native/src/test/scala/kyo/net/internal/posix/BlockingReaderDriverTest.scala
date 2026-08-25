@@ -51,8 +51,8 @@ class BlockingReaderDriverTest extends Test:
             val realDriver = PollerIoDriver.init() // unstarted; awaitRead path never delegates here
             // init loads the real socket bindings; the blocking read(2) path reads the real temp file fd.
             val driver = BlockingReaderDriver.init(realDriver)
-            // PosixHandle.socket(fd, PosixHandle.DefaultReadBufferSize, Absent) creates a handle with readFd == writeFd == fd; BlockingReaderDriver reads from readFd.
-            val handle = PosixHandle.socket(fd, PosixHandle.DefaultReadBufferSize, Absent)
+            // PosixHandle.socket(fd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal) creates a handle with readFd == writeFd == fd; BlockingReaderDriver reads from readFd.
+            val handle = PosixHandle.socket(fd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
 
             // Drain all data reads until EOF, accumulating bytes. A real file returns however many bytes the kernel provides per read
             // (may be all 6 at once, or split); the concatenation is asserted to equal the file content. EOF produces an empty Span.
@@ -81,7 +81,7 @@ class BlockingReaderDriverTest extends Test:
             PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
                 // init wraps the recording driver (a real IoDriver that records the delegated write) over the real socket bindings.
                 val wrappedDriver = BlockingReaderDriver.init(spy)
-                val handle        = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle        = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val payload       = Span.fromUnsafe(Array.tabulate[Byte](8)(i => (i + 1).toByte))
                 val result        = wrappedDriver.write(handle, payload, 0)
                 assert(result == WriteResult.Done, s"write result must be Done, got $result")

@@ -264,6 +264,9 @@ final private[kyo] class MpmcUnboundedUnsafeQueue[A](chunkSize: Int, maxPooledCh
     end moveToNextConsumerChunk
 
     def peek()(using AllowUnsafe): Maybe[A] =
+        // peek mirrors poll's chunk resolution but WITHOUT consuming: it returns the element only when present AND consumerIndex
+        // has not moved (JCTools' `e != null && cIndex == consumerIndex` guard), and Absent only on the strict empty-check
+        // (cIdx == producerIndex). Like poll it moves at most ONE chunk and retries when consumerChunk lags/ahead; it never walks the recycled pooled chunk graph.
         @tailrec def loop(pIndex: Long): Maybe[A] =
             val cIdx          = consumerIndex.get()
             val ciChunkOffset = (cIdx & chunkMask).toInt
@@ -271,74 +274,79 @@ final private[kyo] class MpmcUnboundedUnsafeQueue[A](chunkSize: Int, maxPooledCh
             val cChunk        = consumerChunk.get()
             val ccChunkIndex  = cChunk.index
 
-            if ccChunkIndex == ciChunkIndex then
+            if ciChunkOffset == 0 && cIdx != 0 then
+                if ciChunkIndex - ccChunkIndex != 1 then
+                    loop(pIndex) // consumerChunk not exactly one behind: stale view, retry
+                else
+                    val next = cChunk.next.get()
+                    if next == null then
+                        if cIdx >= pIndex then
+                            val newPIndex = producerIndex.get()
+                            if cIdx == newPIndex then Absent
+                            else loop(newPIndex)
+                        else loop(pIndex)
+                    else if isPooled then
+                        val seq = next.sequence.get(ciChunkOffset)
+                        if seq == ciChunkIndex then
+                            val e = next.buffer.get(ciChunkOffset)
+                            if !isNull(e) && consumerIndex.get() == cIdx then Maybe(e.asInstanceOf[A])
+                            else loop(pIndex)
+                        else if seq > ciChunkIndex then
+                            loop(pIndex)
+                        else
+                            if cIdx >= pIndex then
+                                val newPIndex = producerIndex.get()
+                                if cIdx == newPIndex then Absent
+                                else loop(newPIndex)
+                            else loop(pIndex)
+                        end if
+                    else
+                        val e = next.buffer.get(ciChunkOffset)
+                        if !isNull(e) then
+                            if consumerIndex.get() == cIdx then Maybe(e.asInstanceOf[A])
+                            else loop(pIndex)
+                        else
+                            if cIdx >= pIndex then
+                                val newPIndex = producerIndex.get()
+                                if cIdx == newPIndex then Absent
+                                else loop(newPIndex)
+                            else loop(pIndex)
+                        end if
+                    end if
+                end if
+            else if ccChunkIndex > ciChunkIndex then
+                loop(pIndex) // stale view, retry
+            else if ccChunkIndex == ciChunkIndex then
                 if isPooled then
                     val seq = cChunk.sequence.get(ciChunkOffset)
                     if seq == ciChunkIndex then
                         val e = cChunk.buffer.get(ciChunkOffset)
-                        if consumerIndex.get() == cIdx && !isNull(e) then
-                            Maybe(e.asInstanceOf[A])
+                        if !isNull(e) && consumerIndex.get() == cIdx then Maybe(e.asInstanceOf[A])
                         else loop(pIndex)
+                    else if seq > ciChunkIndex then
+                        loop(pIndex) // stale, retry
                     else
-                        // not yet stored — check if empty
                         if cIdx >= pIndex then
                             val newPIndex = producerIndex.get()
-                            if cIdx >= newPIndex then Absent
+                            if cIdx == newPIndex then Absent
                             else loop(newPIndex)
                         else loop(pIndex)
                     end if
                 else
                     val e = cChunk.buffer.get(ciChunkOffset)
-                    if !isNull(e) && consumerIndex.get() == cIdx then
-                        Maybe(e.asInstanceOf[A])
+                    if !isNull(e) then
+                        if consumerIndex.get() == cIdx then Maybe(e.asInstanceOf[A])
+                        else loop(pIndex)
                     else
-                        // not yet stored — check if empty
                         if cIdx >= pIndex then
                             val newPIndex = producerIndex.get()
-                            if cIdx >= newPIndex then Absent
+                            if cIdx == newPIndex then Absent
                             else loop(newPIndex)
-                        else loop(pIndex)
-                    end if
-            else if ccChunkIndex < ciChunkIndex then
-                // consumer chunk is stale (updated via lazySet by another consumer)
-                // walk forward through chunk links to find the right chunk
-                @tailrec def walkForward(chunk: Chunk, ci: Long): Chunk | Null =
-                    if ci >= ciChunkIndex then chunk
-                    else
-                        val nextChunk = chunk.next.get()
-                        if nextChunk == null then null
-                        else walkForward(nextChunk, ci + 1)
-                val targetChunk = walkForward(cChunk, ccChunkIndex)
-                if targetChunk == null || consumerIndex.get() != cIdx then
-                    loop(pIndex)
-                else
-                    val chunk = targetChunk.asInstanceOf[Chunk]
-                    if isPooled then
-                        val seq = chunk.sequence.get(ciChunkOffset)
-                        if seq == ciChunkIndex then
-                            val e = chunk.buffer.get(ciChunkOffset)
-                            if consumerIndex.get() == cIdx && !isNull(e) then
-                                Maybe(e.asInstanceOf[A])
-                            else loop(pIndex)
-                        else loop(pIndex)
-                        end if
-                    else
-                        val e = chunk.buffer.get(ciChunkOffset)
-                        if !isNull(e) then
-                            Maybe(e.asInstanceOf[A])
                         else loop(pIndex)
                     end if
                 end if
             else
-                // check if empty
-                if cIdx >= pIndex then
-                    val newPIndex = producerIndex.get()
-                    if cIdx >= newPIndex then Absent
-                    else loop(newPIndex)
-                else if consumerIndex.get() != cIdx then
-                    loop(pIndex) // cIdx was stale, retry
-                else
-                    loop(pIndex)
+                loop(pIndex) // consumerChunk lags (ccChunkIndex < ciChunkIndex): retry, as poll does
             end if
         end loop
         loop(-1L)

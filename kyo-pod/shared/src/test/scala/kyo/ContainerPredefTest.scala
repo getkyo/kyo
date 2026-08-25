@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.*
 import kyo.ContainerPredef.MongoDB
 import kyo.ContainerPredef.MySQL
 import kyo.ContainerPredef.Postgres
@@ -33,6 +34,13 @@ class ContainerPredefTest extends BasePodTest:
             }
             "Postgres.Config.default == Postgres.Config()" in {
                 assert(Postgres.Config.default == Postgres.Config())
+            }
+            "readinessBudget defaults to 120s and its builder is immutable" in {
+                val base    = Postgres.Config.default
+                val updated = base.readinessBudget(30.seconds)
+                assert(base.readinessBudget == 120.seconds)
+                assert(updated.readinessBudget == 30.seconds)
+                assert(updated.port == base.port)
             }
         }
     }
@@ -69,8 +77,41 @@ class ContainerPredefTest extends BasePodTest:
             "MySQL.Config.default == MySQL.Config()" in {
                 assert(MySQL.Config.default == MySQL.Config())
             }
+            "readinessBudget defaults to 120s and its builder is immutable" in {
+                val base    = MySQL.Config.default
+                val updated = base.readinessBudget(45.seconds)
+                assert(base.readinessBudget == 120.seconds)
+                assert(updated.readinessBudget == 45.seconds)
+                assert(updated.serverArgs == base.serverArgs)
+            }
         }
         "buildContainerConfig" - {
+            // The command line is `mysqld` followed by the memory caps followed by the caller's own args, and
+            // the ORDER is load-bearing twice over. `mysqld` is the executable, so anything that replaces the
+            // whole command drops it. The caller's args come last because MySQL takes the last spelling of a
+            // repeated flag, which is what lets a fixture raise a cap the defaults lower.
+            //
+            // This pins the contract because the failure mode is silent: five fixtures were calling
+            // `.command(...)` on the RESULT of this method, which replaced the line and dropped all three
+            // caps, and the official image's entrypoint hides it by prepending `mysqld` to any argv whose
+            // first element starts with a dash. The containers booted and simply took the memory back,
+            // roughly 350MB each from performance_schema alone.
+            "command line is mysqld, then the default caps, then the caller's serverArgs, in that order" in {
+                val cfg  = MySQL.buildContainerConfig(MySQL.Config.default.appendServerArgs("--sql-mode=ANSI"))
+                val args = cfg.command.map(_.args)
+                assert(
+                    args == Present(Chunk("mysqld") ++ MySQL.defaultServerArgs ++ Chunk("--sql-mode=ANSI")),
+                    s"command line lost its executable, its caps or its ordering; got $args"
+                )
+                assert(
+                    args.map(_.head) == Present("mysqld"),
+                    "the first element is the executable, so anything replacing the command line drops it"
+                )
+                assert(
+                    MySQL.defaultServerArgs.forall(a => args.exists(_.contains(a))),
+                    s"every default memory cap must survive into the command line; got $args"
+                )
+            }
             "default config (non-root user, non-empty password) sets MYSQL_USER/PASSWORD/ROOT_PASSWORD" in {
                 val cfg = MySQL.buildContainerConfig(MySQL.Config.default)
                 val env = cfg.env
@@ -128,6 +169,27 @@ class ContainerPredefTest extends BasePodTest:
             "MongoDB.Config.default == MongoDB.Config()" in {
                 assert(MongoDB.Config.default == MongoDB.Config())
             }
+            "readinessBudget defaults to 120s and its builder is immutable" in {
+                val base    = MongoDB.Config.default
+                val updated = base.readinessBudget(90.seconds)
+                assert(base.readinessBudget == 120.seconds)
+                assert(updated.readinessBudget == 90.seconds)
+                assert(updated.port == base.port)
+            }
+        }
+    }
+
+    "readinessScript" - {
+        "embeds the configured budget as the loop deadline" in {
+            // The generated shell loop computes its end as `date +%s` plus the budget in seconds, so a fixture's
+            // readinessBudget must appear verbatim in the script. This pins the flow-through that the
+            // Container.HealthCheck closure otherwise hides (it exposes only check/schedule, not the script).
+            val script = ContainerPredef.readinessScript(Chunk("psql"), 30.seconds)
+            assert(script.contains("+30)"), s"budget seconds must reach the loop deadline; got: $script")
+        }
+        "carries a Config's readinessBudget (default 120s)" in {
+            val budget = Postgres.Config.default.readinessBudget
+            assert(ContainerPredef.readinessScript(Chunk("psql"), budget).contains("+120)"))
         }
     }
 

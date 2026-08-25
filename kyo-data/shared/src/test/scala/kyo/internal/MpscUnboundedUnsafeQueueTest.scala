@@ -27,18 +27,18 @@ class MpscUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
 
     "MpscUnboundedUnsafeQueue-specific concurrent".notJs - {
         "resizeUnderContention" in {
-            val q     = new MpscUnboundedUnsafeQueue[Long](4)
-            val stop  = new AtomicBoolean(false)
-            val start = new CountDownLatch(1)
-            val total = new AtomicLong(0)
+            val q             = new MpscUnboundedUnsafeQueue[Long](4)
+            val perProducer   = 20000
+            val producerCount = 3
+            val total         = perProducer.toLong * producerCount
+            val start         = new CountDownLatch(1)
 
-            val producers = (0 until 3).map { pid =>
+            val producers = (0 until producerCount).map { pid =>
                 val t = new Thread(() =>
                     start.await()
-                    var i = 0L
-                    while !stop.get() do
-                        q.offer(pid * 1000000L + i)
-                        total.incrementAndGet()
+                    var i = 0
+                    while i < perProducer do
+                        discard(q.offer(pid * 1000000L + i))
                         i += 1
                     end while
                 )
@@ -48,37 +48,39 @@ class MpscUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
 
             producers.foreach(_.start())
             start.countDown()
-            Thread.sleep(300)
-            stop.set(true)
-            producers.foreach(_.join(10000))
+            producers.foreach(_.join())
 
-            // Drain and count
             var count = 0L
             while q.poll().isDefined do count += 1
-            assert(count == total.get(), s"Lost elements: expected ${total.get()}, got $count")
+            assert(count == total, s"Lost elements: expected $total, got $count")
         }
 
         "concurrentResizeRaceNoDuplicates" in {
-            val q        = new MpscUnboundedUnsafeQueue[Long](2)
-            val stop     = new AtomicBoolean(false)
-            val start    = new CountDownLatch(1)
-            val consumed = new ConcurrentHashMap[Long, java.lang.Boolean]()
-            val dup      = new AtomicBoolean(false)
-            val counter  = new AtomicLong(0)
+            val q             = new MpscUnboundedUnsafeQueue[Long](2)
+            val perProducer   = 10000
+            val producerCount = 6
+            val total         = perProducer * producerCount
+            val start         = new CountDownLatch(1)
+            val producersDone = new CountDownLatch(producerCount)
+            val consumed      = new ConcurrentHashMap[Long, java.lang.Boolean]()
+            val dup           = new AtomicBoolean(false)
 
             // Many producers with tiny chunk size to maximize resize contention
-            val producers = (0 until 6).map { pid =>
+            val producers = (0 until producerCount).map { pid =>
                 val t = new Thread(() =>
                     start.await()
-                    while !stop.get() do
-                        discard(q.offer(counter.incrementAndGet()))
+                    var seq = 0
+                    while seq < perProducer do
+                        discard(q.offer(pid * 1000000L + seq))
+                        seq += 1
+                    producersDone.countDown()
                 )
                 t.setDaemon(true)
                 t
             }
             val consumer = new Thread(() =>
                 start.await()
-                while !stop.get() do
+                while producersDone.getCount > 0 || !q.isEmpty() do
                     q.poll() match
                         case Maybe.Present(v) =>
                             if consumed.put(v, java.lang.Boolean.TRUE) != null then
@@ -90,42 +92,41 @@ class MpscUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
 
             (producers :+ consumer).foreach(_.start())
             start.countDown()
-            Thread.sleep(200)
-            stop.set(true)
-            (producers :+ consumer).foreach(_.join(10000))
+            (producers :+ consumer).foreach(_.join())
 
-            // Drain remaining
-            while q.poll() match
-                    case Maybe.Present(v) =>
-                        if consumed.put(v, java.lang.Boolean.TRUE) != null then
-                            dup.set(true)
-                        true
-                    case _ => false
-            do ()
-            end while
+            var r = q.poll()
+            while r.isDefined do
+                if consumed.put(r.get, java.lang.Boolean.TRUE) != null then dup.set(true)
+                r = q.poll()
 
             assert(!dup.get(), "Concurrent resize produced duplicates")
+            assert(consumed.size == total, s"data loss: consumed=${consumed.size}, total=$total")
         }
 
         "concurrentResizeNoDataLoss" in {
-            val q        = new MpscUnboundedUnsafeQueue[Long](4)
-            val stop     = new AtomicBoolean(false)
-            val start    = new CountDownLatch(1)
-            val offered  = new AtomicLong(0)
-            val consumed = new AtomicLong(0)
+            val q             = new MpscUnboundedUnsafeQueue[Long](4)
+            val perProducer   = 20000
+            val producerCount = 4
+            val total         = perProducer.toLong * producerCount
+            val start         = new CountDownLatch(1)
+            val producersDone = new CountDownLatch(producerCount)
+            val consumed      = new AtomicLong(0)
 
-            val producers = (0 until 4).map { pid =>
+            val producers = (0 until producerCount).map { pid =>
                 val t = new Thread(() =>
                     start.await()
-                    while !stop.get() do
-                        discard(q.offer(offered.incrementAndGet()))
+                    var i = 0
+                    while i < perProducer do
+                        discard(q.offer(pid * 100000000L + i))
+                        i += 1
+                    producersDone.countDown()
                 )
                 t.setDaemon(true)
                 t
             }
             val consumer = new Thread(() =>
                 start.await()
-                while !stop.get() do
+                while producersDone.getCount > 0 || !q.isEmpty() do
                     q.poll() match
                         case Maybe.Present(_) => discard(consumed.incrementAndGet())
                         case _                => Thread.`yield`()
@@ -135,16 +136,14 @@ class MpscUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
 
             (producers :+ consumer).foreach(_.start())
             start.countDown()
-            Thread.sleep(200)
-            stop.set(true)
-            (producers :+ consumer).foreach(_.join(10000))
+            (producers :+ consumer).foreach(_.join())
 
             var remaining = 0L
             while q.poll().isDefined do remaining += 1
 
             assert(
-                consumed.get() + remaining == offered.get(),
-                s"Resize data loss: offered=${offered.get()}, consumed=${consumed.get()}, remaining=$remaining"
+                consumed.get() + remaining == total,
+                s"Resize data loss: consumed=${consumed.get()}, remaining=$remaining, total=$total"
             )
         }
     }

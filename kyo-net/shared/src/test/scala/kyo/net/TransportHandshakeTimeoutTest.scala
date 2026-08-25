@@ -9,8 +9,8 @@ import kyo.net.internal.TlsProviderPlatform
   *
   * The deadline arms per accepted connection: a plaintext client completes the TCP accept but never sends a ClientHello, so the server
   * handshake parks; a finite `handshakeTimeout` reaps it (closing the accepted fd), which the client observes as its inbound terminating.
-  * Reaps and disarms are observed through the public `Connection` surface with generous bounds, never a sleep-as-synchronization (the one
-  * fixed sleep is a past-the-deadline survival window in the disarm leaf, not a settle).
+  * Reaps and disarms are observed through the public `Connection` surface, never a sleep: the disarm leaf pairs the tested connection with a
+  * stalled one whose reap proves the deadline instant passed, and `Async.timeout` is only a ceiling turning a missing reap into a failure, not a hang.
   */
 class TransportHandshakeTimeoutTest extends Test:
 
@@ -157,12 +157,14 @@ class TransportHandshakeTimeoutTest extends Test:
         }
     }
 
+    // Proving the completed handshake's timer never fires needs a point provably past its deadline. One deadline is armed per accepted connection, so a
+    // second stalled peer (accepted later, same duration) falls due strictly after; its reap proves the deadline passed, then the round-trip proves the completed peer was not reaped.
     "a handshake that completes within the deadline is NOT reaped on every backend" in {
         assumeTls()
         given Frame = Frame.internal
         TlsTestCertShared.writePems.map { case (certPath, keyPath) =>
-            // A generous 1s deadline: the loopback handshake completes well under it (tens of ms), so the timer disarms. Sleeping 1.5s (past
-            // the deadline) and then round-tripping proves a still-armed timer would have reaped the connection but did not.
+            // Both connections below ride this one listener, so both deadlines have exactly this duration. It is generous next to a loopback
+            // handshake (tens of ms), which is what makes a fired timer on the completed connection a real defect rather than a slow machine.
             val serverTls =
                 NetTlsConfig(certChainPath = Present(certPath), privateKeyPath = Present(keyPath), handshakeTimeout = 1.second)
             val clientTls = NetTlsConfig(trustAll = true, sniHostname = Present("localhost"))
@@ -178,26 +180,42 @@ class TransportHandshakeTimeoutTest extends Test:
                     }
                 })
             }.safe.get.map { listener =>
-                // Both are guaranteed to be released even if the put/collect below aborts before reaching the trailing close() calls.
-                Scope.ensure(Sync.defer(listener.close())).andThen {
-                    transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get.map { client =>
-                        Scope.ensure(Sync.defer(client.close())).andThen {
-                            Async.sleep(1500.millis).andThen {
-                                val message = "completes-within-deadline".getBytes("UTF-8")
-                                client.outbound.safe.put(Span.fromUnsafe(message)).andThen {
-                                    collect(client, message.length).map { echoed =>
-                                        client.close()
-                                        listener.close()
-                                        assert(
-                                            echoed.sameElements(message),
-                                            s"a completed handshake must not be reaped; it round-trips past the deadline, got '${new String(echoed, "UTF-8")}'"
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                val message = "completes-within-deadline".getBytes("UTF-8")
+                for
+                    // Every connection below is released even if an assertion aborts the leaf partway through.
+                    _      <- Scope.ensure(Sync.defer(listener.close()))
+                    client <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
+                    _      <- Scope.ensure(Sync.defer(client.close()))
+                    // The pacer: a plaintext peer completes the TCP accept and never sends a ClientHello. Its deadline is armed at that accept,
+                    // which happens after connectTls above returned, so it falls due strictly after the completed connection's would have.
+                    stalled <- transport.connect("127.0.0.1", listener.port).safe.get
+                    _       <- Scope.ensure(Sync.defer(stalled.close()))
+                    // The reap closes the pacer's accepted fd, which it observes as its inbound terminating (a Closed failure or an empty EOF
+                    // span, depending on backend). The ceiling only keeps a never-reaped pacer from hanging the suite.
+                    reap <- Abort.run[Timeout](Async.timeout(10.seconds)(Abort.run[Closed](stalled.inbound.safe.take)))
+                    reaped = reap match
+                        case Result.Success(Result.Success(span)) => span.isEmpty
+                        case Result.Success(Result.Failure(_))    => true
+                        case _                                    => false
+                    _ = assert(
+                        reaped,
+                        "the stalled pacer was not reaped, so nothing here proves the completed connection's deadline instant has passed " +
+                            s"and the round-trip below would assert nothing, got $reap"
+                    )
+                    _      <- client.outbound.safe.put(Span.fromUnsafe(message))
+                    echoed <- Abort.run[Closed | Timeout](Async.timeout(10.seconds)(collect(client, message.length)))
+                yield echoed match
+                    case Result.Success(bytes) =>
+                        assert(
+                            bytes.sameElements(message),
+                            s"a completed handshake must not be reaped; it round-trips past the deadline, got '${new String(bytes, "UTF-8")}'"
+                        )
+                    case other =>
+                        fail(
+                            "the completed handshake was reaped past its deadline instead of disarming its timer: the round-trip on it " +
+                                s"ended with $other"
+                        )
+                end for
             }
         }
     }

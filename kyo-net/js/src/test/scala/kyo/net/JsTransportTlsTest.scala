@@ -227,10 +227,9 @@ class JsTransportTlsTest extends Test:
             sniHostname = Present("localhost")
         )
         for
-            // Listen on "localhost" (not 127.0.0.1): the verifying client must connect by NAME for hostname verification, and Node resolves
-            // "localhost" to ::1 first on some hosts (verbatim DNS result order). Binding and connecting through the same name makes both
-            // sides share one resolution, so the leaf does not depend on which address family the host lists first.
-            listener <- transport.listenTls("localhost", 0, 128, serverTls) { serverConn =>
+            // Bind and connect on the 127.0.0.1 literal so both sides pin IPv4 with no DNS lookup: localhost can resolve ::1-first and a
+            // split family would miss the server's ephemeral port. Verification checks sniHostname "localhost" against the cert SAN, not the connect host.
+            listener <- transport.listenTls("127.0.0.1", 0, 128, serverTls) { serverConn =>
                 discard(Sync.Unsafe.evalOrThrow {
                     Fiber.initUnscoped {
                         Abort.run[Closed](serverConn.inbound.safe.take.unit).unit
@@ -238,7 +237,7 @@ class JsTransportTlsTest extends Test:
                 })
             }.safe.get
             port = listener.port
-            result <- Abort.run[NetException](transport.connectTls("localhost", port, verifyingClient).safe.get)
+            result <- Abort.run[NetException](transport.connectTls("127.0.0.1", port, verifyingClient).safe.get)
         yield
             // This handshake succeeds, so the result carries a live connection. A listener close only reclaims sockets still mid-handshake,
             // never one already handed to the accept handler, so closing the client here is what releases both ends (its FIN tears down the
@@ -254,11 +253,17 @@ class JsTransportTlsTest extends Test:
         privateKeyPath = Present(localhostKeyPath)
     )
 
-    /** Open a raw Node TCP socket to `port` (completing the TCP accept) and then send NOTHING, so the TLS handshake never starts. Returns a
-      * `Promise[Boolean]` completed `true` when the socket is closed by the far end (the server's handshake-deadline reap destroying it) and a
-      * thunk that destroys the client socket for teardown. The close event is the deterministic latch: no sleep is used to detect the reap.
+    /** The finite deadline the Infinity leaf's pacer listener carries. It bounds what the leaf catches: a deadline wrongly armed for an
+      * Infinity config is caught if it would fire within this duration of the subject's accept.
       */
-    private def stalledRawClient(port: Int)(using Frame): (Boolean < Async, () => Unit) =
+    private val pacerDeadline = 400.millis
+
+    /** Open a raw Node TCP socket to `port` (completing the TCP accept) and then send NOTHING, so the TLS handshake never starts. Returns the
+      * `Promise[Boolean]` completed `true` when the socket is closed by the far end (the server's handshake-deadline reap destroying it) and a
+      * thunk that destroys the client socket for teardown. The close event is the deterministic latch: no sleep is used to detect the reap. The
+      * promise itself is handed back, not just its `get`, so a caller can also read whether the reap has happened without waiting for one.
+      */
+    private def stalledRawClient(port: Int)(using Frame): (Promise[Boolean, Any], () => Unit) =
         import AllowUnsafe.embrace.danger
         val net    = sjs.Dynamic.global.require("net")
         val closed = Sync.Unsafe.evalOrThrow(Promise.init[Boolean, Any])
@@ -267,7 +272,7 @@ class JsTransportTlsTest extends Test:
         // The server reaping the stalled handshake destroys the accepted socket; the client observes that as "close".
         discard(socket.on("close", { (_: sjs.Any) => closed.unsafe.completeDiscard(Result.succeed(true)) }: sjs.Function1[sjs.Any, Unit]))
         discard(socket.on("error", { (_: sjs.Any) => () }: sjs.Function1[sjs.Any, Unit]))
-        (closed.get, () => discard(socket.destroy()))
+        (closed, () => discard(socket.destroy()))
     end stalledRawClient
 
     "a stalled server TLS handshake is reaped after the deadline (socket destroyed)" in {
@@ -282,7 +287,7 @@ class JsTransportTlsTest extends Test:
             listener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial.copy(handshakeTimeout = 150.millis)) { _ => () }.safe.get
             port                    = listener.port
             (reaped, destroyClient) = stalledRawClient(port)
-            wasReaped <- reaped
+            wasReaped <- reaped.get
         yield
             destroyClient()
             listener.close()
@@ -320,8 +325,8 @@ class JsTransportTlsTest extends Test:
     }
 
     "a stalled server TLS handshake is not reaped when handshakeTimeout is Infinity" in {
-        // With handshakeTimeout = Infinity the server arms no deadline timer: a stalled handshake parks forever and is not reaped. A bounded
-        // observation window (an Async suspension, not a thread block) is the no-reap ceiling; with Infinity the client's "close" must not fire.
+        // With handshakeTimeout = Infinity the server arms no deadline timer, so a stalled handshake parks forever. A second stalled client (the
+        // pacer) on a finite-deadline listener of the SAME transport, accepted AFTER the subject, settles on its own reap: proves the machinery is alive, not an empty window.
         import AllowUnsafe.embrace.danger
         val transport =
             JsTransport.init(poolSize = 1)
@@ -329,14 +334,25 @@ class JsTransportTlsTest extends Test:
             listener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial.copy(handshakeTimeout = Duration.Infinity)) { _ =>
                 ()
             }.safe.get
-            port                    = listener.port
-            (reaped, destroyClient) = stalledRawClient(port)
-            // Race the reap signal against a bounded window: if the window wins, the stall was NOT reaped (the expected Infinity behavior).
-            outcome <- Async.race(reaped.map(_ => true), Async.sleep(400.millis).andThen(false))
+            (subjectClosed, destroySubject) = stalledRawClient(listener.port)
+            pacerListener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial.copy(handshakeTimeout = pacerDeadline)) { _ =>
+                ()
+            }.safe.get
+            (pacerClosed, destroyPacer) = stalledRawClient(pacerListener.port)
+            pacer <- Abort.run[Timeout](Async.timeout(10.seconds)(pacerClosed.get))
         yield
-            destroyClient()
+            // Read before the teardown below, which closes the subject's socket itself and would complete its promise for a reason of our own.
+            val subjectReaped = subjectClosed.unsafe.done()
+            destroySubject()
+            destroyPacer()
             listener.close()
-            assert(!outcome, "a stalled handshake must not be reaped when handshakeTimeout is Infinity")
+            pacerListener.close()
+            assert(
+                pacer.isSuccess,
+                s"the pacer's finite deadline never reaped its stalled handshake, so nothing here proves a deadline armed for the subject " +
+                    s"would have fired by now: $pacer"
+            )
+            assert(!subjectReaped, "a stalled handshake must not be reaped when handshakeTimeout is Infinity")
         end for
     }
 

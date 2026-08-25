@@ -26,6 +26,11 @@ sealed abstract class Fields[A] extends Serializable:
       */
     type Map[F[_]] = Fields.Join[Tuple.Map[AsTuple, F]]
 
+    /** Applies a name-aware type constructor `G[_ <: String, _]` to each field component, preserving the field name in the produced type.
+      * Example: for `"a" ~ Int & "b" ~ String`, with `G[N, V] = Column[N, V]`, yields `"a" ~ Column["a", Int] & "b" ~ Column["b", String]`.
+      */
+    type MapNamed[G[_ <: String & Singleton, _]] = Fields.Join[Tuple.Map[AsTuple, Record.~.MapNamedValue[G]]]
+
     /** Extracts the value types from each field component into a plain tuple: `Fields["a" ~ Int & "b" ~ String].Values` = `(Int, String)`.
       */
     type Values = Fields.ExtractValues[AsTuple]
@@ -135,6 +140,21 @@ object Fields:
         transparent inline given [F, Name <: String]: Have[F, Name] =
             ${ internal.FieldsMacros.haveImpl[F, Name] }
     end Have
+
+    /** Type-level Boolean predicate over a labelled-tuple's `AsTuple` form: `true` if `T` contains a field named `Name`, `false` otherwise.
+      * Never raises a compile error.
+      *
+      * Consumers typically bind `T` via `Fields.Aux[F, T]` at the call site.
+      */
+    type HasName[T <: Tuple, Name <: String] <: Boolean = T match
+        case EmptyTuple      => false
+        case (Name ~ ?) *: ? => true
+        case ? *: rest       => HasName[rest, Name]
+
+    /** Conditional type alias driven by `HasName`: returns `IfTrue` when `T` has `Name`, otherwise `IfFalse`. */
+    type IfHasName[T <: Tuple, Name <: String, IfTrue, IfFalse] = HasName[T, Name] match
+        case true  => IfTrue
+        case false => IfFalse
 
     /** Opaque evidence that all value types in field type `A` have `CanEqual` instances, enabling `==` comparisons on `Record[A]`. */
     opaque type Comparable[A] = Unit

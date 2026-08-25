@@ -28,8 +28,8 @@ class PollerIoDriverPreRegisterReadTest extends Test:
         discard(spy.start())
         Kyo.foreach(0 until 20) { i =>
             PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
-                val clientH = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
-                val peerH   = PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val clientH = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val peerH   = PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val payload = Array.tabulate[Byte](136)(j => (j % 7).toByte)
                 // Send on the client BEFORE the first awaitRead on the peer: the bytes sit in the peer's socket buffer before the read is armed.
                 discard(spy.write(clientH, Span.fromUnsafe(payload), 0))

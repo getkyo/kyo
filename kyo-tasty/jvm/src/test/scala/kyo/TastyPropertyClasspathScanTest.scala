@@ -43,13 +43,15 @@ class TastyPropertyClasspathScanTest extends kyo.test.Test[Any]:
             dir.unsafe.list().getOrThrow.foreach { entry =>
                 if entry.unsafe.isDirectory() && !entry.unsafe.isSymbolicLink() then recurse(entry)
                 else
-                    val s = entry.toString
+                    // Path.toString is backslash-separated on Windows; match against a forward-slash view so the
+                    // test/fixtures exclusions below fire on every OS.
+                    val s = entry.toString.replace('\\', '/')
                     if s.endsWith(".tasty") && !s.contains("/test/") && !s.contains("/fixtures/") then
                         entry.parent.foreach(parent => discard(accumulator += parent.toString))
             }
         TestClasspaths.all.foreach { root =>
             val dir = Path(root)
-            if dir.unsafe.exists() && dir.unsafe.isDirectory() then recurse(dir)
+            if dir.unsafe.exists()(using summon[AllowUnsafe], Frame.internal).getOrThrow && dir.unsafe.isDirectory() then recurse(dir)
         }
         accumulator.toList.sorted
     end discoverKyoClasspathRoots

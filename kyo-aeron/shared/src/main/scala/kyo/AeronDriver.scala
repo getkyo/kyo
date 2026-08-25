@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.*
 import kyo.internal.AeronDriverRuntime
 import kyo.internal.AeronPlatform
 
@@ -54,6 +55,17 @@ object AeronDriver:
     object Settings:
         /** Aeron's own defaults, which [[Duration.Zero]] selects for both timeouts. */
         val default: Settings = Settings()
+
+        /** Timeouts for the in-process driver that backs [[Topic.run]], wider than Aeron's 10s/15s
+          * defaults. The embedded driver's only client is in-process over `aeron:ipc`, so it can die
+          * only when the whole process does. Aeron's default assumes the client conductor gets CPU
+          * promptly, and a loaded or emulated CI host can starve that thread for seconds; at the
+          * default the driver reads the silence as client death and frees every registration the
+          * client holds, so a subscription never reads back connected and its retry loop backs off
+          * forever. A wide window keeps a momentarily starved client alive; `publicationUnblockTimeout`
+          * exceeds `clientLivenessTimeout`, as Aeron requires.
+          */
+        val embedded: Settings = Settings(60.seconds, 65.seconds)
     end Settings
 
     /** Launches an embedded media driver and binds its lifetime to the current `Scope`.
@@ -95,14 +107,18 @@ object AeronDriver:
                     s"clientLivenessTimeout (${settings.clientLivenessTimeout})"
             ))
         else
-            Abort.run[FileFsException](Path.tempDir("kyo-aeron-driver")).map {
+            // tempDirUnscoped, not the `Scope`-managed Path.tempDir: this driver's directory belongs to
+            // the caller for exactly as long as the driver does, and no enclosing scope may remove it.
+            Abort.run[FileStructureException](Path.tempDirUnscoped("kyo-aeron-driver")).map {
                 case Result.Success(dir) =>
                     // The directory outlives the start call, so a failed start removes it here rather
                     // than leaving an empty directory behind for the caller to notice.
                     Abort.recover[Nothing](
                         onFail = (never: Nothing) => never,
                         onPanic = (t: Throwable) =>
-                            Abort.run[FileFsException](dir.removeAll).andThen(Abort.panic(t))
+                            // Unsafe: removes host-tier, matching the tier tempDirUnscoped created it in,
+                            // and discards the outcome so cleanup cannot replace the panic it follows.
+                            Sync.Unsafe.defer(discard(dir.unsafe.removeAll())).andThen(Abort.panic(t))
                     ) {
                         AeronPlatform.driver(
                             dir.unsafe.show,

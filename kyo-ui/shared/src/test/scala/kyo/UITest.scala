@@ -47,30 +47,33 @@ abstract class UITest extends kyo.test.Test[Any]:
     def withUI[A, S](ui: UI < Async)(f: A < (Browser & S))(using
         Frame
     ): A < (Async & Scope & Abort[BrowserException] & Abort[HttpBindException] & S) =
-        // JVM-shared Chrome (Browser.runShared). One Chrome process is launched lazily on the
-        // first call and kept alive for the JVM; each call attaches its own tab and tears it
-        // down via internal Scope.run. Amortizes the per-test Chrome boot across the suite
-        // (~14% wall-clock saving on this machine; larger on slower CI runners where 2-core
-        // process-launch cost dominates).
+        // Shared Chrome AND shared server. Browser.runShared launches one Chrome process lazily and keeps it alive for
+        // the run; each call attaches its own tab and tears it down via internal Scope.run. SharedUIServer likewise binds
+        // ONE HttpServer for the run: this leaf's UI is stashed in the shared server's ref, then the shared Chrome
+        // navigates to the server's single stable URL, whose page/WebSocket routes re-read that ref per request. Every
+        // leaf thus lands on the same origin, and the run no longer churns a fresh ephemeral server + client sockets
+        // per leaf (that churn exhausted Windows sockets: WSAENOBUFS / error 10055, the failure this fixes). Suite
+        // wall-clock is unchanged on JVM+Chrome (measured: identical to the per-leaf-server version, since a localhost
+        // bind is cheap and per-leaf cost is dominated by CDP navigation), so this is a correctness fix, not a speedup.
+        // Safe because leaves never overlap (JS sequential + `.sequential`; one JVM per suite on the JVM), so the
+        // set-then-navigate has no race.
         //
-        // An earlier runShared trial dropped the trailing focus event on focus-transition
-        // tests because non-foregrounded shared tabs suppress focus events. That blocker was
-        // resolved by BrowserTab.scala calling Emulation.setFocusEmulationEnabled(true) on
-        // each tab attach, which forces Chrome to dispatch focus events regardless of tab
-        // foregrounding.
+        // An earlier runShared trial dropped the trailing focus event on focus-transition tests because non-foregrounded
+        // shared tabs suppress focus events. That blocker was resolved by BrowserTab.scala calling
+        // Emulation.setFocusEmulationEnabled(true) on each tab attach, which forces Chrome to dispatch focus events
+        // regardless of tab foregrounding.
         //
-        // Retry is scoped to the two transient browser-infrastructure failure types: a dropped
-        // CDP connection and a Chrome process that failed to launch. Retry[E] only retries
-        // E-typed failures, so assertion failures and every other BrowserException propagate
-        // immediately and are never masked.
+        // Retry is scoped to the two transient browser-infrastructure failure types: a dropped CDP connection and a
+        // Chrome process that failed to launch. Retry[E] only retries E-typed failures, so assertion failures and every
+        // other BrowserException propagate immediately and are never masked.
         Retry[BrowserConnectionLostException | BrowserSetupFailedException](retrySchedule) {
             cancelOnUnsupportedPlatform {
                 for
-                    uiTree   <- ui
-                    handlers <- UI.runHandlers("/")(uiTree)
-                    server   <- HttpServer.init(0, "localhost")(handlers*)
+                    uiTree <- ui
+                    _      <- SharedUIServer.set(uiTree)
+                    url    <- SharedUIServer.url
                     result <- Browser.runShared() {
-                        Browser.goto(s"http://localhost:${server.port}/").andThen(f)
+                        Browser.goto(url).andThen(f)
                     }
                 yield result
             }

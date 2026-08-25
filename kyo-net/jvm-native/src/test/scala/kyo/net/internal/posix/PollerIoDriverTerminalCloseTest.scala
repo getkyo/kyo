@@ -35,7 +35,7 @@ class PollerIoDriverTerminalCloseTest extends Test:
             // stages OpenSSL but not BoringSSL.
             TlsRealEngines.assumeBoringSslReady()
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                val handle    = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle    = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val rawEngine = TlsRealEngines.singleEngine(isServer = true)
                 val engine    = new RecordingTlsEngine(rawEngine)
                 handle.tls = Present(engine)
@@ -69,7 +69,7 @@ class PollerIoDriverTerminalCloseTest extends Test:
             // stages OpenSSL but not BoringSSL.
             TlsRealEngines.assumeBoringSslReady()
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                val handle    = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle    = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val rawEngine = TlsRealEngines.singleEngine(isServer = true)
                 val engine    = new RecordingTlsEngine(rawEngine)
                 handle.tls = Present(engine)

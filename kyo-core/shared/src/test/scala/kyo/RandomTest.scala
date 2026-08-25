@@ -189,7 +189,14 @@ class RandomTest extends kyo.test.Test[Any]:
             val length = 4
             Random.nextBytes(length).map { v =>
                 assert(v.length == length)
-                assert(v.forall(b => b == 0.toByte || b == 1.toByte))
+            }
+        }
+
+        // Regression: the default generator once drew every byte from {0, 1} (nextValues over Seq(0, 1)) rather than the full byte range.
+        // A real fill over 512 bytes spans far more than two distinct values, so this fails loudly if that defect returns.
+        "nextBytes fills the full byte range, not just {0, 1}" in {
+            Random.nextBytes(512).map { v =>
+                assert(v.toSet.size > 2, s"nextBytes produced only ${v.toSet.size} distinct byte values, expected the full range")
             }
         }
 

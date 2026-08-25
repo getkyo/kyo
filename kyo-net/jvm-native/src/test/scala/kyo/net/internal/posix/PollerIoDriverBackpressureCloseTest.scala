@@ -2,6 +2,7 @@ package kyo.net.internal.posix
 
 import kyo.*
 import kyo.ffi.Ffi
+import kyo.net.NetException
 import kyo.net.Test
 import kyo.net.internal.util.GrowableByteBuffer
 
@@ -47,7 +48,7 @@ class PollerIoDriverBackpressureCloseTest extends Test:
             val driver   = TestDrivers.forBackend(real, pollerFd)
             discard(driver.start())
             PosixTestSockets.loopbackPair().map { case (writeFd, peerFd) =>
-                val handle = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 // Put the write tail at the high-water mark so awaitWritable takes the backpressure PARK branch (tail >= low-water).
                 val tail = new GrowableByteBuffer()
                 tail.writeBytes(Array.fill[Byte](PosixHandle.WriteTailHighWater)(0.toByte), 0, PosixHandle.WriteTailHighWater)
@@ -60,7 +61,7 @@ class PollerIoDriverBackpressureCloseTest extends Test:
                 // The close path's cancel runs FIRST: no waiter is parked yet, so it fails nothing (the window this test exercises).
                 driver.cancel(handle)
                 // The racing WritePump parks its writable promise AFTER cancel: the tail is high, so this is the backpressure park.
-                val waiter = Promise.Unsafe.init[Unit, Abort[Closed]]()
+                val waiter = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
                 driver.awaitWritable(handle, waiter)
                 assert(
                     handle.backpressurePromise.isDefined,

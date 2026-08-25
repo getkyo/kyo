@@ -57,11 +57,19 @@ class CoreTest extends kyo.test.Test[Any]:
 
     "clock operations" - {
         "sleep and timeout" in {
-            direct {
-                val start = Clock.now.now
-                Async.sleep(5.millis).now
-                val elapsed = Clock.now.now - start
-                assert(elapsed >= 4.millis)
+            // Async.sleep suspends until the clock passes its deadline, so under a controlled clock the post-sleep
+            // instant is strictly after the pre-sleep instant, no wall-clock skew.
+            Clock.withTimeControl { control =>
+                for
+                    fiber <- Fiber.initUnscoped(direct {
+                        val start = Clock.now.now
+                        Async.sleep(50.millis).now
+                        Clock.now.now > start
+                    })
+                    advancer <- Fiber.initUnscoped(Loop.forever(control.advance(50.millis)))
+                    advanced <- fiber.get
+                    _        <- advancer.interrupt
+                yield assert(advanced)
             }
         }
 

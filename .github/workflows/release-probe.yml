@@ -18,6 +18,8 @@ name: release-probe
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
 
 permissions:
   contents: read
@@ -30,6 +32,11 @@ concurrency:
 
 jobs:
   probe:
+    # release.yml already builds the release artifacts on an upstream main push, so there the probe
+    # only needs to run for pull requests. In a fork release.yml is guarded off, so the probe also
+    # runs on pushes to the fork's main to keep publishability checked. On an upstream main push the
+    # guard skips the job, so no runner is used and the run entry is inert.
+    if: github.event_name == 'pull_request' || github.repository != 'getkyo/kyo'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:

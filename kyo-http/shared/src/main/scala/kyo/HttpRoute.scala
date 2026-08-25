@@ -197,7 +197,7 @@ object HttpRoute:
 
     object Field:
 
-        case class Param[N <: String, A, F](
+        case class Param[N <: String & Singleton, A, F](
             kind: Param.Location,
             fieldName: N,
             wireName: String,
@@ -215,7 +215,7 @@ object HttpRoute:
             end Location
         end Param
 
-        case class Body[N <: String, A](
+        case class Body[N <: String & Singleton, A](
             fieldName: N,
             contentType: ContentType[A],
             description: String

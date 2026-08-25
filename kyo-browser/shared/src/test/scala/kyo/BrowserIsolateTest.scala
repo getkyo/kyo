@@ -1157,22 +1157,20 @@ class BrowserIsolateTest extends BrowserTest:
     "withPopup with a schedule clause bounds the wait time" in {
         withBrowser {
             onPage("<div>no popup here</div>") {
-                val start = java.lang.System.currentTimeMillis()
-                Scope.run {
-                    Abort.run[BrowserReadException] {
-                        Browser.withPopup(
-                            schedule = Present(Schedule.fixed(50.millis).maxDuration(300.millis))
-                        )(Browser.eval("'noop'").unit)(Browser.url)
+                // Outer config is effectively-infinite: if the per-call schedule failed to bound the wait, withPopup
+                // would fall back to it and hang. The typed BrowserProtocolErrorException means the 300ms budget fired.
+                Browser.withConfig(_.retrySchedule(Schedule.fixed(1.hour))) {
+                    Scope.run {
+                        Abort.run[BrowserReadException] {
+                            Browser.withPopup(
+                                schedule = Present(Schedule.fixed(50.millis).maxDuration(300.millis))
+                            )(Browser.eval("'noop'").unit)(Browser.url)
+                        }
                     }
                 }.map { result =>
-                    val elapsed = java.lang.System.currentTimeMillis() - start
                     result match
-                        case Result.Failure(_: BrowserProtocolErrorException) =>
-                            assert(
-                                elapsed >= 300 && elapsed < 1500,
-                                s"per-call schedule should land in [300, 1500)ms but took ${elapsed}ms"
-                            )
-                        case other => fail(s"expected BrowserProtocolErrorException, got $other")
+                        case Result.Failure(_: BrowserProtocolErrorException) => succeed
+                        case other                                            => fail(s"expected BrowserProtocolErrorException, got $other")
                     end match
                 }
             }

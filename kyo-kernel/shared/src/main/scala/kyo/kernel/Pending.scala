@@ -76,7 +76,7 @@ object `<`:
                         // protocol this reproduces. A future protocol change updates that method
                         // AND this site.
                         if !safepoint.enter(_frame, value) then
-                            Effect.defer(mapLoop(value))
+                            Effect.defer(mapLoop(v))
                         else
                             try f(value): B < S2
                             finally safepoint.exit()
@@ -112,7 +112,7 @@ object `<`:
                         // protocol this reproduces. A future protocol change updates that method
                         // AND this site.
                         if !safepoint.enter(_frame, value) then
-                            Effect.defer(flatMapLoop(value))
+                            Effect.defer(flatMapLoop(v))
                         else
                             try f(value): B < S2
                             finally safepoint.exit()
@@ -145,7 +145,7 @@ object `<`:
                         // protocol this reproduces. A future protocol change updates that method
                         // AND this site.
                         if !safepoint.enter(_frame, value) then
-                            Effect.defer(andThenLoop(value))
+                            Effect.defer(andThenLoop(v))
                         else
                             try f: B < S2
                             finally safepoint.exit()

@@ -24,8 +24,8 @@ class PosixTestSocketsTest extends Test:
                 val driver = PollerIoDriver.init()
                 discard(driver.start())
                 Sync.ensure(Sync.defer(driver.close())) {
-                    val clientH   = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent)
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val clientH   = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val payload   = Span.fromUnsafe(Array[Byte](1, 2, 3, 4))
                     val w         = driver.write(clientH, payload, 0)
                     assert(w == WriteResult.Done, s"write result=$w")
@@ -53,8 +53,8 @@ class PosixTestSocketsTest extends Test:
                 val driver = PollerIoDriver.init()
                 discard(driver.start())
                 Sync.ensure(Sync.defer(driver.close())) {
-                    val clientH   = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent)
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val clientH   = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val payload   = Span.fromUnsafe(Array[Byte](10, 20, 30))
                     val w         = driver.write(clientH, payload, 0)
                     assert(w == WriteResult.Done, s"write result=$w")
@@ -88,8 +88,8 @@ class PosixTestSocketsTest extends Test:
                 val driver = PollerIoDriver.init()
                 discard(driver.start())
                 Sync.ensure(Sync.defer(driver.close())) {
-                    val clientH   = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent)
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val clientH   = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val total     = 1024
                     val blob      = Span.fromUnsafe(Array.fill[Byte](total)(0x42.toByte))
                     val w         = driver.write(clientH, blob, 0)
@@ -110,7 +110,7 @@ class PosixTestSocketsTest extends Test:
                 val driver = PollerIoDriver.init()
                 discard(driver.start())
                 Sync.ensure(Sync.defer(driver.close())) {
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     // RST the client side.
                     PosixTestSockets.resetPeer(sock, client)
                     Abort.run[Closed](
@@ -139,7 +139,7 @@ class PosixTestSocketsTest extends Test:
                 val driver = PollerIoDriver.init()
                 discard(driver.start())
                 Sync.ensure(Sync.defer(driver.close())) {
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     PosixTestSockets.closePeerForEof(sock, client)
                     val readP = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     driver.awaitRead(acceptedH, readP)
@@ -165,7 +165,7 @@ class PosixTestSocketsTest extends Test:
                 val driver = PollerIoDriver.init()
                 discard(driver.start())
                 Sync.ensure(Sync.defer(driver.close())) {
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     PosixTestSockets.halfClose(sock, client)
                     val readP = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     driver.awaitRead(acceptedH, readP)

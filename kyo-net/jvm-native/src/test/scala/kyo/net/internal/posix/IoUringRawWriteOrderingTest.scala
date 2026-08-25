@@ -93,8 +93,8 @@ class IoUringRawWriteOrderingTest extends Test:
                     if iteration >= 8 then Loop.done(succeed)
                     else
                         PosixTestSockets.smallBufferedPair(sndBuf = 2048, rcvBuf = 2048).map { case (driverFd, peerFd) =>
-                            val handle     = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent)
-                            val peerHandle = PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent)
+                            val handle     = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                            val peerHandle = PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
 
                             // No await between the two writes: mirrors the WritePump issuing the next take as soon as writeRaw returns Done.
                             val w1 = drv.write(handle, Span.fromUnsafe(p1), 0)

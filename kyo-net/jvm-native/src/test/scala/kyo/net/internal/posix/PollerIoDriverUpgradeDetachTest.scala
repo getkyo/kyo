@@ -58,7 +58,7 @@ class PollerIoDriverUpgradeDetachTest extends Test:
         discard(driver.start())
         Sync.ensure(Sync.defer(driver.close())) {
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 Sync.ensure(Sync.defer {
                     driver.closeHandle(handle)
                     discard(sock.close(client).poll())
@@ -93,8 +93,8 @@ class PollerIoDriverUpgradeDetachTest extends Test:
         discard(driver.start())
         Sync.ensure(Sync.defer(driver.close())) {
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                val handle  = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
-                val clientH = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle  = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val clientH = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val flight  = Array[Byte](22, 33, 44)
                 Sync.ensure(Sync.defer {
                     driver.closeHandle(handle)
@@ -109,8 +109,8 @@ class PollerIoDriverUpgradeDetachTest extends Test:
                     // rejects it as a stray (the shape under test needs an armed-then-consumed read, not a rejected arm). Registrations
                     // drain FIFO, so a completed round-trip on a second pair armed AFTER the main read proves the main registration is in.
                     PosixTestSockets.loopbackPair().map { case (bClient, bAccepted) =>
-                        val bHandle  = PosixHandle.socket(bAccepted, PosixHandle.DefaultReadBufferSize, Absent)
-                        val bClientH = PosixHandle.socket(bClient, PosixHandle.DefaultReadBufferSize, Absent)
+                        val bHandle  = PosixHandle.socket(bAccepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        val bClientH = PosixHandle.socket(bClient, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         val bp       = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         driver.awaitRead(bHandle, bp)
                         assert(driver.write(bClientH, Span.fromUnsafe(Array[Byte](1)), 0) == WriteResult.Done)
@@ -167,7 +167,7 @@ class PollerIoDriverUpgradeDetachTest extends Test:
         discard(driver.start())
         Sync.ensure(Sync.defer(driver.close())) {
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 Sync.ensure(Sync.defer {
                     driver.closeHandle(handle)
                     discard(sock.close(client).poll())

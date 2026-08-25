@@ -94,7 +94,7 @@ class PollerIoDriverRaceTest extends Test:
                 val backend  = RecordingPollerBackend(real)
                 val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
                 driverRef = driver
-                val handle = PosixHandle.socket(targetFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle = PosixHandle.socket(targetFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 handle.tls = Present(engine)
                 handleRef = handle
 

@@ -101,7 +101,7 @@ class PollerIoDriverHalfCloseTest extends Test:
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     // A known payload, distinct per index so reordering or truncation is caught byte-for-byte.
                     val payload = Array.tabulate[Byte](4096)(i => (i % 251).toByte)
                     // Queue the data, THEN half-close the write side: the kernel delivers the buffered bytes on the accepted side and then an

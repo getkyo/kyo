@@ -16,27 +16,27 @@ class PosixHandleTest extends Test:
 
     "PosixHandle" - {
         "socket handle sets readFd == writeFd (one fd both directions)" in {
-            val h = PosixHandle.socket(42, PosixHandle.DefaultReadBufferSize, Absent)
+            val h = PosixHandle.socket(42, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
             assert(h.readFd == 42)
             assert(h.writeFd == 42)
         }
 
         "stdio handle splits the fds to (readFd=0, writeFd=1)" in {
-            val h = PosixHandle.stdio(PosixHandle.DefaultReadBufferSize)
+            val h = PosixHandle.stdio(PosixHandle.DefaultReadBufferSize, Frame.internal)
             assert(h.readFd == 0)
             assert(h.writeFd == 1)
         }
 
         "each handle gets a strictly-greater monotonic id (recycled-fd guard)" in {
-            val first  = PosixHandle.socket(10, PosixHandle.DefaultReadBufferSize, Absent)
-            val second = PosixHandle.socket(11, PosixHandle.DefaultReadBufferSize, Absent)
+            val first  = PosixHandle.socket(10, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+            val second = PosixHandle.socket(11, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
             assert(second.id.packed > first.id.packed)
         }
 
         "close frees the TLS engine exactly once and is idempotent" in {
             var freed  = 0
             val engine = countingEngine(() => freed += 1)
-            val h      = PosixHandle.socket(7, PosixHandle.DefaultReadBufferSize, Absent)
+            val h      = PosixHandle.socket(7, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
             h.tls = Present(engine)
             // First close releases the engine + the read buffer; the second must be a safe no-op.
             PosixHandle.close(h)
@@ -59,7 +59,7 @@ class PosixHandleTest extends Test:
     "PosixHandle.guard (dispatch-vs-close UAF)" - {
         "defers the free while two holders are in flight and frees exactly once at the last release" in {
             var freed = 0
-            val h     = PosixHandle.socket(7, PosixHandle.DefaultReadBufferSize, Absent)
+            val h     = PosixHandle.socket(7, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
             h.tls = Present(countingEngine(() => freed += 1))
             // Two holders acquire: a read dispatch then a write (holders 0 -> 1 -> 2).
             assert(h.beginDispatch(), "first acquire (read) must succeed before any close")
@@ -79,7 +79,7 @@ class PosixHandleTest extends Test:
 
         "frees at the last release regardless of which holder releases last (reverse order)" in {
             var freed = 0
-            val h     = PosixHandle.socket(8, PosixHandle.DefaultReadBufferSize, Absent)
+            val h     = PosixHandle.socket(8, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
             h.tls = Present(countingEngine(() => freed += 1))
             assert(h.beginDispatch())
             assert(h.beginWrite())
@@ -95,7 +95,7 @@ class PosixHandleTest extends Test:
 
         "rejects a new holder once close has been requested (no acquire after CloseBit)" in {
             var freed = 0
-            val h     = PosixHandle.socket(9, PosixHandle.DefaultReadBufferSize, Absent)
+            val h     = PosixHandle.socket(9, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
             h.tls = Present(countingEngine(() => freed += 1))
             // One holder in flight when close is requested: the close bit is set, the free deferred.
             assert(h.beginDispatch(), "acquire before close must succeed")
@@ -113,7 +113,7 @@ class PosixHandleTest extends Test:
 
         "frees immediately when close is requested with no holder, and is idempotent" in {
             var freed = 0
-            val h     = PosixHandle.socket(10, PosixHandle.DefaultReadBufferSize, Absent)
+            val h     = PosixHandle.socket(10, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
             h.tls = Present(countingEngine(() => freed += 1))
             // No op holds the resources: requestClose frees right away (holders 0 -> terminal).
             PosixHandle.close(h)

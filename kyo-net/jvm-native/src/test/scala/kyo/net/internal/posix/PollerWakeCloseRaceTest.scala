@@ -2,6 +2,7 @@ package kyo.net.internal.posix
 
 import kyo.*
 import kyo.ffi.Ffi
+import kyo.net.NetException
 import kyo.net.Test
 
 /** Deterministic reproduction + regression guard for the wake-fd close-vs-wake race in [[PollerIoDriver]] (the lazyFdDelete cross-fd stale-event
@@ -71,8 +72,8 @@ class PollerWakeCloseRaceTest extends Test:
 
             // Arm write-readiness through the public connect path: awaitConnect -> armSocketWritable -> submitChange -> triggerWake -> backend.wake,
             // which fires onWakeEnter. A loopback fd is immediately writable, so the wake path is the one under test (not the readiness delivery).
-            val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
-            val promise = Promise.Unsafe.init[Unit, Abort[Closed]]()
+            val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+            val promise = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
             driver.awaitConnect(handle, promise)
 
             // Synchronize on the wake fd actually being closed (the driver's terminal exit ran closeWake). Bounded so a regression that never closes

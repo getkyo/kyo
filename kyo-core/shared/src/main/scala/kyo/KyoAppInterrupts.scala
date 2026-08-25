@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.internal.OsSignal
+import kyo.internal.Platform
 
 /** Signal handling for Kyo application entrypoints. Mixed into `KyoAppRunnerWithInterrupts`. */
 private[kyo] trait KyoAppInterrupts:
@@ -13,7 +14,7 @@ private[kyo] trait KyoAppInterrupts:
                 promise
                     .completeDiscard(Result.panic(Interrupted(Frame.internal, s"Interrupt Signal: $signal")))
 
-        if System.live.unsafe.operatingSystem() != System.OS.Windows then
+        if !Platform.isWindows then
             OsSignal.handle("INT", interrupt("INT"))
             OsSignal.handle("TERM", interrupt("TERM"))
 

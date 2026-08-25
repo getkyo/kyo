@@ -30,17 +30,15 @@ class IOPromiseBlockingTest extends kyo.test.Test[Any]:
         }
 
         def threadInterruption[E, A](promise: IOPromise[E, A])(assertion: Result[E | Timeout, A] => Unit) =
-            @volatile var threadStarted = false
             val thread = new Thread:
                 override def run(): Unit =
-                    threadStarted = true
                     discard(promise.block(deadline(Duration.Infinity)))
                 end run
             thread.start()
 
-            // wait for parking
-            while !threadStarted do Thread.sleep(10)
-            Thread.sleep(10)
+            // block() registers its waiter before parking, so a positive waiter count means the thread reached the blocking
+            // call and the interrupt lands on a parked thread.
+            while promise.waiters() == 0 do Thread.sleep(1)
 
             thread.interrupt()
             thread.join(200)

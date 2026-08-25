@@ -3,6 +3,7 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.NetException
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
 
@@ -72,14 +73,14 @@ class PollerIoDriverErrorEventTest extends Test:
                 val pollerFd = real.create()
                 val backend  = RecordingPollerBackend(real)
                 val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
-                val handle   = PosixHandle.socket(acceptedFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle   = PosixHandle.socket(acceptedFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
 
                 discard(driver.start())
                 // Reset the peer so SO_ERROR is set on acceptedFd; the driver's real getsockopt reads the genuine non-zero errno.
                 PosixTestSockets.resetPeer(spy, clientFd)
 
                 val readPromise  = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
-                val writePromise = Promise.Unsafe.init[Unit, Abort[Closed]]()
+                val writePromise = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
                 // Register both a pending read and a pending writable so the error dispatch has both in its tables.
                 driver.awaitRead(handle, readPromise)
                 driver.awaitWritable(handle, writePromise)
@@ -101,6 +102,9 @@ class PollerIoDriverErrorEventTest extends Test:
                 yield
                     readOutcome match
                         case Result.Failure(_: Closed) => succeed
+                        // The pending read is failed by the real error: either the error dispatch fails it Closed, or the recv itself reaps the
+                        // errno and surfaces a typed receive failure (ReadOutcome.Failed). Both mean the read was failed, not stranded.
+                        case Result.Success(ReadOutcome.Failed(_)) => succeed
                         case Result.Failure(_: Timeout) =>
                             fail("error event dropped: the pending read was never failed and hung")
                         case other => fail(s"unexpected read outcome: $other")
@@ -143,7 +147,7 @@ class PollerIoDriverErrorEventTest extends Test:
                 val pollerFd = real.create()
                 val backend  = RecordingPollerBackend(real)
                 val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
-                val handle   = PosixHandle.socket(acceptedFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle   = PosixHandle.socket(acceptedFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
 
                 discard(driver.start())
                 // Do NOT reset the peer; the accepted fd is still connected, so SO_ERROR == 0.

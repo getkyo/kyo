@@ -20,6 +20,12 @@ class AssertScopeTest extends AsyncFreeSpec with NonImplicitAssertions:
 
     implicit override val executionContext: ExecutionContext = scala.concurrent.ExecutionContext.global
 
+    // Power-assert instrumentation (the recorded value diagram, incl. the `|` marker line) compiles in only when
+    // KYO_TEST_POWER_ASSERT (or -Dkyo.test.powerAssert) is set (see AssertMacro); the marker case below is gated on it.
+    private val powerAssertOn: Boolean =
+        sys.props.get("kyo.test.powerAssert").orElse(sys.env.get("KYO_TEST_POWER_ASSERT"))
+            .exists(v => Set("1", "true", "on", "yes").contains(v.trim.toLowerCase))
+
     private def runLeaf[S <: kyo.test.Test[Any]](make: => S): Future[TestResult] =
         LeafHarness.runLeaf(make)
 
@@ -132,6 +138,7 @@ class AssertScopeTest extends AsyncFreeSpec with NonImplicitAssertions:
         // that the pipe line's first `|` lands exactly under the left operand token in the header
         // and that no marker runs past the header width.
         "diagram pipe markers align under the operands, not shifted by indentation (#228)" in {
+            assume(powerAssertOn)
             runLeaf {
                 new kyo.test.Test[Any]:
                     "deeply-indented-leaf" in {

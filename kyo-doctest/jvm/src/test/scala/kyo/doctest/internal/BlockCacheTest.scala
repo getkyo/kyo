@@ -27,8 +27,8 @@ class BlockCacheTest extends kyo.test.Test[Any]:
         for
             id <- Random.uuid
             dir = Path.basePaths.tmp / s"doctest-cache-test-$id"
-            _   <- Abort.run[FileFsException](dir.mkDir).unit
-            res <- Scope.acquireRelease(Sync.defer(dir))(_ => Abort.run[FileFsException](dir.removeAll).unit).flatMap(f)
+            _   <- Abort.run[FileStructureException](dir.mkDir).unit
+            res <- Scope.acquireRelease(Sync.defer(dir))(_ => Abort.run[FileStructureException](dir.removeAll).unit).flatMap(f)
         yield res
 
     "BlockCache.init creates the cache directory if missing" in {

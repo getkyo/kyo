@@ -96,9 +96,9 @@ class OTLPTraceExporterTest extends kyo.test.Test[Any]:
         batchSize: Int = 50,
         scheduleDelay: Duration = 60.seconds
     ) = OTLPConfig(
-        endpoint = s"http://localhost:$port",
-        tracesEndpoint = s"http://localhost:$port/v1/traces",
-        metricsEndpoint = s"http://localhost:$port/v1/metrics",
+        endpoint = s"http://127.0.0.1:$port",
+        tracesEndpoint = s"http://127.0.0.1:$port/v1/traces",
+        metricsEndpoint = s"http://127.0.0.1:$port/v1/metrics",
         headers = Map.empty,
         timeout = 5.seconds,
         compression = "none",
@@ -142,7 +142,7 @@ class OTLPTraceExporterTest extends kyo.test.Test[Any]:
                         }
                     }
                     (_, metricHandler) = defaultHandlers
-                    server <- HttpServer.init(0, "localhost")(traceHandler, metricHandler)
+                    server <- HttpServer.init(0, "127.0.0.1")(traceHandler, metricHandler)
                     config   = exporterTestConfig(server.port, batchSize = 1)
                     exporter = OTLPTraceExporter.init(config)
                     _ <- control.advance(100.millis)
@@ -168,7 +168,7 @@ class OTLPTraceExporterTest extends kyo.test.Test[Any]:
                         }
                     }
                     (_, metricHandler) = defaultHandlers
-                    server <- HttpServer.init(0, "localhost")(traceHandler, metricHandler)
+                    server <- HttpServer.init(0, "127.0.0.1")(traceHandler, metricHandler)
                     config   = exporterTestConfig(server.port, batchSize = 2)
                     exporter = OTLPTraceExporter.init(config)
                     _ <- control.advance(100.millis)
@@ -197,7 +197,7 @@ class OTLPTraceExporterTest extends kyo.test.Test[Any]:
                         }
                     }
                     (_, metricHandler) = defaultHandlers
-                    server <- HttpServer.init(0, "localhost")(traceHandler, metricHandler)
+                    server <- HttpServer.init(0, "127.0.0.1")(traceHandler, metricHandler)
                     config   = exporterTestConfig(server.port, batchSize = 1)
                     exporter = OTLPTraceExporter.init(config)
                     _ <- control.advance(100.millis)
@@ -228,7 +228,7 @@ class OTLPTraceExporterTest extends kyo.test.Test[Any]:
                         }
                     }
                     (_, metricHandler) = defaultHandlers
-                    server <- HttpServer.init(0, "localhost")(traceHandler, metricHandler)
+                    server <- HttpServer.init(0, "127.0.0.1")(traceHandler, metricHandler)
                     config   = exporterTestConfig(server.port, queueSize = 100, batchSize = 3)
                     exporter = OTLPTraceExporter.init(config)
                     _ <- control.advance(100.millis)
@@ -268,7 +268,7 @@ class OTLPTraceExporterTest extends kyo.test.Test[Any]:
                         }
                     }
                     (_, metricHandler) = defaultHandlers
-                    server <- HttpServer.init(0, "localhost")(traceHandler, metricHandler)
+                    server <- HttpServer.init(0, "127.0.0.1")(traceHandler, metricHandler)
                     config   = exporterTestConfig(server.port, queueSize = 2, batchSize = 100)
                     exporter = OTLPTraceExporter.init(config)
                     _ <- control.advance(100.millis)
@@ -298,7 +298,7 @@ class OTLPTraceExporterTest extends kyo.test.Test[Any]:
                         }
                     }
                     (_, metricHandler) = defaultHandlers
-                    server <- HttpServer.init(0, "localhost")(traceHandler, metricHandler)
+                    server <- HttpServer.init(0, "127.0.0.1")(traceHandler, metricHandler)
                     config   = exporterTestConfig(server.port, queueSize = 100, batchSize = 3)
                     exporter = OTLPTraceExporter.init(config)
                     _ <- control.advance(100.millis)

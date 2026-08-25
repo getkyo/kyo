@@ -14,7 +14,7 @@ import scala.scalanative.meta.LinktimeInfo
   */
 private[scheduler] object Sleep {
     def apply(ms: Int): Unit =
-        if LinktimeInfo.isWindows then
+        if (LinktimeInfo.isWindows)
             Thread.sleep(ms.toLong)
         else
             PosixSleep(ms)

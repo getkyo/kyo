@@ -53,7 +53,7 @@ class TlsEngineIoReadDrainTest extends Test:
 
                 val recording = RecordingTlsEngine(server)
                 val harness   = new TlsEngineIoHarness
-                val handle    = PosixHandle.socket(303, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle    = PosixHandle.socket(303, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val cipher    = Buffer.fromArray[Byte](record)
                 val decrypted =
                     try harness.feedAndDecryptForTest(recording, cipher, record.length, handle)

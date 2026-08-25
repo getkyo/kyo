@@ -64,14 +64,13 @@ class AsyncPlatformSpecificTest extends kyo.test.Test[Any]:
             val cf = new CompletableFuture[Int]() // never completes on its own
             for
                 fiber <- Fiber.initUnscoped(Async.fromCompletableFuture(cf))
-                _     <- Async.sleep(50.millis) // let the fiber suspend so the cancel finalizer is registered
-                _     <- fiber.interrupt
-                cancelled <- Loop.indexed { attempt =>
-                    if cf.isCancelled then Loop.done(true)
-                    else if attempt >= 200 then Loop.done(false)
-                    else Async.sleep(10.millis).andThen(Loop.continue)
-                }
-            yield assert(cancelled, "interrupting the fiber should cancel the underlying CompletableFuture")
+                // Wait until the fiber registered its cancel dependent before interrupting (earlier leaves `cf` uncancelled).
+                // getNumberOfDependents is a JDK estimate, but the real check is cf.isCancelled below, so a miss only costs a poll.
+                _ <- assertEventually(Sync.defer(cf.getNumberOfDependents() > 0))
+                _ <- fiber.interrupt
+                // Cancellation propagates asynchronously after interrupt, so poll the real observable, not a fixed sleep loop.
+                _ <- assertEventually(Sync.defer(cf.isCancelled))
+            yield assert(cf.isCancelled, "interrupting the fiber should cancel the underlying CompletableFuture")
             end for
         }
     }

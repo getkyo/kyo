@@ -1,0 +1,5 @@
+# Scripted test - externally-published backend coordinates.
+# An external backend (declared via CompatBackendAxis.external) resolves to its
+# own org:artifact:version; built-in backends keep io.getkyo:kyo-compat-<name>.
+> checkExternalCoords
+> checkBuiltinCoords

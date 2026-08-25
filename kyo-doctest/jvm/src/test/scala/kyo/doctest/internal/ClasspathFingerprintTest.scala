@@ -19,8 +19,10 @@ class ClasspathFingerprintTest extends kyo.test.Test[Any]:
         for
             id <- Random.uuid
             dir = Path.basePaths.tmp / s"kyo-doctest-fp-test-$id"
-            _   <- Abort.run[FileFsException](dir.mkDir).unit
-            res <- Scope.acquireRelease(Sync.defer(dir))(_ => Abort.run[FileFsException](dir.removeAll).unit).flatMap(f)
+            _ <- Abort.run[FileStructureException](dir.mkDir).unit
+            res <- Scope.acquireRelease(Sync.defer(dir))(_ =>
+                Abort.run[FileStructureException](dir.removeAll).unit
+            ).flatMap(f)
         yield res
 
     "compute returns stable hash for unchanged jars" in {

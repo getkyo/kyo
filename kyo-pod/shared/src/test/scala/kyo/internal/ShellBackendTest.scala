@@ -4,6 +4,32 @@ import kyo.*
 
 class ShellBackendTest extends kyo.BasePodTest:
 
+    "probeUsable" - {
+
+        // The decision table behind detect's CLI fall-through. The non-zero leaf reproduces a live failure: with the
+        // podman machine VM stopped, `podman version` exits 125 with empty stdout, and the earlier guarded match in
+        // detect escaped as `scala.MatchError: (,Failure(125))` instead of falling through to docker.
+        "a zero exit is usable" in {
+            assert(ShellBackend.probeUsable(Result.Success(("podman version 5.0", Process.ExitCode.Success))))
+        }
+
+        "a non-zero exit is not usable" in {
+            assert(!ShellBackend.probeUsable(Result.Success(("", Process.ExitCode.Failure(125)))))
+        }
+
+        "a signal exit is not usable" in {
+            assert(!ShellBackend.probeUsable(Result.Success(("", Process.ExitCode.Signaled(9)))))
+        }
+
+        "a spawn failure is not usable" in {
+            assert(!ShellBackend.probeUsable(Result.Failure(ProgramNotFoundException("podman"))))
+        }
+
+        "a panic is not usable" in {
+            assert(!ShellBackend.probeUsable(Result.Panic(new RuntimeException("boom"))))
+        }
+    }
+
     "lastLine" - {
 
         "empty input returns empty" in {

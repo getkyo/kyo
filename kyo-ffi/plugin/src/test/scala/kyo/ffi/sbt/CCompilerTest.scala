@@ -207,6 +207,7 @@ class CCompilerTest extends AnyFunSuite with Matchers {
         cmd should contain("/O2")
         cmd should contain("/W3")
         cmd should contain("/I" + inc.getAbsolutePath)
+        cmd should contain("/Fo:" + out.getAbsoluteFile.getParentFile.getAbsolutePath + File.separator)
         cmd should contain("/Fe:" + out.getAbsolutePath)
         cmd should contain("ws2_32.lib")
         // -fPIC is dropped on Windows (PIC is default for DLLs):

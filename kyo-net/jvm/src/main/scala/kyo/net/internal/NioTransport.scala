@@ -199,8 +199,8 @@ final private[kyo] class NioTransport private (
         catch case _: Throwable => ()
 
     def connect(host: String, port: Int, connectTimeout: Duration, config: kyo.net.NetConfig)(using
-        AllowUnsafe,
-        Frame
+        allow: AllowUnsafe,
+        frame: Frame
     ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
         kyo.net.Transport.checkConnectTimeout(connectTimeout)
         val promise = new IOPromise[NetException, Connection[NioHandle]]
@@ -220,7 +220,7 @@ final private[kyo] class NioTransport private (
             Log.live.unsafe.debug(s"NioTransport connect immediate=$connected channel=${channel.hashCode()}")
             if connected then
                 // Immediate connection (localhost)
-                val handle = NioHandle.init(channel, config.readChunkSize, config.peerCloseGrace)
+                val handle = NioHandle.init(channel, config.readChunkSize, config.peerCloseGrace, frame)
                 discard(driver.registerChannel(handle))
                 completeConnect(handle, promise, config.channelCapacity)
             else
@@ -256,13 +256,13 @@ final private[kyo] class NioTransport private (
         channelCapacity: Int,
         readChunkSize: Int,
         peerCloseGrace: Duration
-    )(using AllowUnsafe, Frame): Unit =
+    )(using allow: AllowUnsafe, frame: Frame): Unit =
         // For fast localhost, check if already connected.
         // Returns true if the connect was handled (success or error), false if still pending.
         def tryFinishConnect(): Boolean =
             try
                 if channel.finishConnect() then
-                    val handle = NioHandle.init(channel, readChunkSize, peerCloseGrace)
+                    val handle = NioHandle.init(channel, readChunkSize, peerCloseGrace, frame)
                     discard(driver.registerChannel(handle))
                     completeConnect(handle, promise, channelCapacity)
                     true
@@ -276,30 +276,30 @@ final private[kyo] class NioTransport private (
 
         if !tryFinishConnect() then
             // Not yet connected: register and let the driver handle OP_CONNECT
-            val handle = NioHandle.init(channel, readChunkSize, peerCloseGrace)
+            val handle = NioHandle.init(channel, readChunkSize, peerCloseGrace, frame)
             if !driver.registerChannel(handle) then
                 channel.close()
                 promise.completeDiscard(Result.fail(connectFail(host, port, "")))
             else
-                val connectPromise = new IOPromise[Closed, Unit]
+                val connectPromise = new IOPromise[Closed | NetException, Unit]
                 connectPromise.onComplete { result =>
                     result match
                         case Result.Success(_) =>
                             Log.live.unsafe.debug(s"NioTransport connected channel=${channel.hashCode()}")
                             completeConnect(handle, promise, channelCapacity)
-                        case Result.Failure(closed) =>
+                        case Result.Failure(cause) =>
                             channel.close()
-                            promise.completeDiscard(Result.fail(connectFail(host, port, closed)))
+                            promise.completeDiscard(Result.fail(connectFail(host, port, cause)))
                         case Result.Panic(e) =>
                             channel.close()
                             promise.completeDiscard(Result.panic(e))
                 }
                 // Promise.Unsafe[A, S] is an opaque alias over IOPromise[Any, A < S] (kyo.Fiber.scala), structurally different from this
-                // plainly-constructed IOPromise[Closed, Unit], even though both erase to the same runtime object; the alias is transparent
-                // only inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitConnect's fixed Promise.Unsafe-typed parameter needs
-                // this erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed/Unit values above,
-                // never a suspended computation.
-                driver.awaitConnect(handle, connectPromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]])
+                // plainly-constructed IOPromise[Closed | NetException, Unit], even though both erase to the same runtime object; the alias is
+                // transparent only inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitConnect's fixed Promise.Unsafe-typed parameter
+                // needs this erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed | NetException/Unit
+                // values above (a driver-side connect failure is delivered as NetConnectionIoException on this row), never a suspended computation.
+                driver.awaitConnect(handle, connectPromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]])
             end if
         end if
     end awaitConnect
@@ -346,7 +346,7 @@ final private[kyo] class NioTransport private (
 
     def listen(host: String, port: Int, backlog: Int, config: kyo.net.NetConfig)(
         handler: NetConnection => Unit
-    )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
+    )(using allow: AllowUnsafe, frame: Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
         val promise = new IOPromise[NetException, NetListener]
 
         // Hoisted so the catch can close it: bind throws (e.g. address-already-in-use) after the server channel is open, and that catch otherwise
@@ -367,7 +367,7 @@ final private[kyo] class NioTransport private (
                 val actualHost = Maybe(serverChannel.socket().getInetAddress.getHostAddress).getOrElse(host)
                 Log.live.unsafe.debug(s"NioTransport listen $host:$actualPort")
 
-                val listener = new NioListener(serverChannel, actualPort, actualHost, driver, NetAddress.Tcp(actualHost, actualPort))
+                val listener = new NioListener(serverChannel, actualPort, actualHost, driver, NetAddress.Tcp(actualHost, actualPort), frame)
                 startAcceptLoop(serverChannel, handler, listener, config)
                 promise.completeDiscard(Result.succeed(listener))
             end if
@@ -416,7 +416,7 @@ final private[kyo] class NioTransport private (
                 // only inside kyo.Fiber.Promise's own defining scope, so NioIoDriver's ServerSocketChannel overload of awaitAccept, whose
                 // promise parameter is Promise.Unsafe[Unit, Abort[Closed]], needs this erased-boundary cast to accept it. Safe: the
                 // promise is completed only with the plain Closed/Unit values above, never a suspended computation.
-                driver.awaitAccept(serverChannel, acceptPromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]])
+                driver.awaitAccept(serverChannel, acceptPromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]], listener.createdAt)
             end if
         end scheduleNextAccept
 
@@ -454,7 +454,7 @@ final private[kyo] class NioTransport private (
                         s"NioTransport accepted client channel=${clientChannel.hashCode()} on server port=${listener.port}"
                     )
 
-                    val handle = NioHandle.init(clientChannel, config.readChunkSize, config.peerCloseGrace)
+                    val handle = NioHandle.init(clientChannel, config.readChunkSize, config.peerCloseGrace, listener.createdAt)
                     discard(driver.registerChannel(handle))
                     val connection = initTracked(handle, config.channelCapacity)
                     // Accepted connection: a STARTTLS upgrade through the public upgradeToTls runs in the TLS server role (upgradeToTls reads
@@ -495,8 +495,8 @@ final private[kyo] class NioTransport private (
     end acceptAllPending
 
     def connectTls(host: String, port: Int, tls: NetTlsConfig, connectTimeout: Duration, config: kyo.net.NetConfig)(using
-        AllowUnsafe,
-        Frame
+        allow: AllowUnsafe,
+        frame: Frame
     ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
         kyo.net.Transport.checkConnectTimeout(connectTimeout)
         val promise = new IOPromise[NetException, Connection[NioHandle]]
@@ -575,7 +575,7 @@ final private[kyo] class NioTransport private (
         peerCloseGrace: Duration,
         // Called at the TCP-to-handshake boundary: connectTimeout bounds the TCP phase, tls.handshakeTimeout the handshake.
         disarmConnectDeadline: () => Unit
-    )(using AllowUnsafe, Frame): Unit =
+    )(using allow: AllowUnsafe, frame: Frame): Unit =
         // For fast localhost, check if already connected.
         // Returns true if the connect was handled (success or error), false if still pending.
         def tryFinishConnect(): Boolean =
@@ -606,12 +606,12 @@ final private[kyo] class NioTransport private (
 
         if !tryFinishConnect() then
             // Not yet connected: register and let the driver handle OP_CONNECT
-            val handle = NioHandle.init(channel, readChunkSize, peerCloseGrace)
+            val handle = NioHandle.init(channel, readChunkSize, peerCloseGrace, frame)
             if !driver.registerChannel(handle) then
                 channel.close()
                 promise.completeDiscard(Result.fail(NetConnectException(host, port, "")))
             else
-                val connectPromise = new IOPromise[Closed, Unit]
+                val connectPromise = new IOPromise[Closed | NetException, Unit]
                 connectPromise.onComplete { result =>
                     result match
                         case Result.Success(_) =>
@@ -630,19 +630,19 @@ final private[kyo] class NioTransport private (
                                 readChunkSize,
                                 handle.peerCloseGrace
                             )
-                        case Result.Failure(closed) =>
+                        case Result.Failure(cause) =>
                             channel.close()
-                            promise.completeDiscard(Result.fail(NetConnectException(host, port, closed)))
+                            promise.completeDiscard(Result.fail(NetConnectException(host, port, cause)))
                         case Result.Panic(e) =>
                             channel.close()
                             promise.completeDiscard(Result.panic(e))
                 }
                 // Promise.Unsafe[A, S] is an opaque alias over IOPromise[Any, A < S] (kyo.Fiber.scala), structurally different from this
-                // plainly-constructed IOPromise[Closed, Unit], even though both erase to the same runtime object; the alias is transparent
-                // only inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitConnect's fixed Promise.Unsafe-typed parameter needs
-                // this erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed/Unit values above,
-                // never a suspended computation.
-                driver.awaitConnect(handle, connectPromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]])
+                // plainly-constructed IOPromise[Closed | NetException, Unit], even though both erase to the same runtime object; the alias is
+                // transparent only inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitConnect's fixed Promise.Unsafe-typed parameter
+                // needs this erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed | NetException/Unit
+                // values above (a driver-side connect failure is delivered as NetConnectionIoException on this row), never a suspended computation.
+                driver.awaitConnect(handle, connectPromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]])
             end if
         end if
     end awaitConnectThenTls
@@ -660,7 +660,7 @@ final private[kyo] class NioTransport private (
         readChunkSize: Int,
         // Unused when existingHandle is present (a STARTTLS upgrade reuses that handle, keeping its grace); applied only to a fresh TLS handle.
         peerCloseGrace: Duration
-    )(using AllowUnsafe, Frame): Unit =
+    )(using allow: AllowUnsafe, frame: Frame): Unit =
         // One deadline per handshake, armed here so every role gets it: a connection accepted by listenTls, a client connectTls, and either
         // direction of a STARTTLS upgrade. A peer that finishes the TCP phase and then stalls the handshake (sends nothing, or a partial
         // ClientHello, and never finishes) would otherwise leave connectPromise parked forever, pinning the channel, handle, and buffers (a
@@ -737,7 +737,7 @@ final private[kyo] class NioTransport private (
             // Create handle in raw mode (tls = Absent) for handshake.
             // The driver reads raw ciphertext during handshake.
             val handle = existingHandle.getOrElse {
-                val h = NioHandle.init(channel, readChunkSize, peerCloseGrace)
+                val h = NioHandle.init(channel, readChunkSize, peerCloseGrace, frame)
                 discard(driver.registerChannel(h))
                 h
             }
@@ -1066,7 +1066,7 @@ final private[kyo] class NioTransport private (
         connectPromise: IOPromise[NetException, Connection[NioHandle]],
         channelCapacity: Int
     )(using AllowUnsafe, Frame): Unit =
-        val writablePromise = new IOPromise[Closed, Unit]
+        val writablePromise = new IOPromise[Closed | NetException, Unit]
         writablePromise.onComplete { result =>
             result match
                 case Result.Success(_) =>
@@ -1091,12 +1091,12 @@ final private[kyo] class NioTransport private (
         // inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitWritable's fixed Promise.Unsafe-typed parameter needs this
         // erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed/Unit values above, never a
         // suspended computation.
-        driver.awaitWritable(handle, writablePromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]])
+        driver.awaitWritable(handle, writablePromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]])
     end flushHandshakeWrite
 
     def listenTls(host: String, port: Int, backlog: Int, tls: NetTlsConfig, config: kyo.net.NetConfig)(
         handler: NetConnection => Unit
-    )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
+    )(using allow: AllowUnsafe, frame: Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
         val promise = new IOPromise[NetException, NetListener]
 
         // Hoisted so the catch can close it: bind throws (e.g. address-already-in-use) after the server channel is open, and that catch otherwise
@@ -1117,7 +1117,7 @@ final private[kyo] class NioTransport private (
                 val actualHost = Maybe(serverChannel.socket().getInetAddress.getHostAddress).getOrElse(host)
                 Log.live.unsafe.debug(s"NioTransport TLS listen $host:$actualPort")
 
-                val listener = new NioListener(serverChannel, actualPort, actualHost, driver, NetAddress.Tcp(actualHost, actualPort))
+                val listener = new NioListener(serverChannel, actualPort, actualHost, driver, NetAddress.Tcp(actualHost, actualPort), frame)
                 // Only the TLS listen path can have in-flight handshakes; a plaintext accept becomes a tracked Connection immediately.
                 listener.onClose(() => dischargeListenerHandshakes(listener))
                 startTlsAcceptLoop(serverChannel, handler, listener, tls, config)
@@ -1173,7 +1173,7 @@ final private[kyo] class NioTransport private (
                     // through driver.closeHandle(handle). The handle owns the parked awaitRead and the driver's pendingReads[channel] -> handle
                     // entry; a bare clientChannel.close() on a failed/timed-out handshake strands that entry and the armed IOPromise. Passing the
                     // handle as existingHandle to startTlsHandshake reuses it (no double registerChannel).
-                    val handle = NioHandle.init(clientChannel, config.readChunkSize, config.peerCloseGrace)
+                    val handle = NioHandle.init(clientChannel, config.readChunkSize, config.peerCloseGrace, listener.createdAt)
                     discard(driver.registerChannel(handle))
 
                     // Create a per-connection promise for the TLS handshake result
@@ -1264,7 +1264,7 @@ final private[kyo] class NioTransport private (
         host: String,
         port: Int,
         handshakeTimeout: Duration
-    )(using AllowUnsafe, Frame): Unit =
+    )(using allow: AllowUnsafe, frame: Frame): Unit =
         if handshakeTimeout.isFinite then
             val timer = Clock.live.unsafe.sleep(handshakeTimeout)
             timer.onComplete { _ =>
@@ -1272,7 +1272,7 @@ final private[kyo] class NioTransport private (
             }
             // Disarm: when the handshake outcome completes connPromise first, interrupt the timer fiber so it never fires.
             connPromise.onComplete { _ =>
-                timer.interruptDiscard(Result.Panic(Closed("NioTransport", summon[Frame], "handshake completed before deadline")))
+                timer.interruptDiscard(Result.Panic(Interrupted(frame, "handshake completed before deadline")))
             }
     end armHandshakeDeadline
 
@@ -1290,7 +1290,7 @@ final private[kyo] class NioTransport private (
         host: String,
         port: Int,
         connectTimeout: Duration
-    )(using AllowUnsafe, Frame): () => Unit =
+    )(using allow: AllowUnsafe, frame: Frame): () => Unit =
         if connectTimeout.isFinite then
             // Disarming INTERRUPTS the timer, which completes it and fires the callback below, so that callback must distinguish "the deadline
             // elapsed" from "the deadline was called off". Harmless while the only disarm ran after connPromise had already settled (the
@@ -1309,7 +1309,7 @@ final private[kyo] class NioTransport private (
             def disarm(): Unit =
                 // Set BEFORE the interrupt, so the callback the interrupt triggers observes it.
                 disarmed.set(true)
-                timer.interruptDiscard(Result.Panic(Closed("NioTransport", summon[Frame], "connect completed before deadline")))
+                timer.interruptDiscard(Result.Panic(Interrupted(frame, "connect completed before deadline")))
             end disarm
             // Backstop for every way this connect can end before its TCP phase completes.
             connPromise.onComplete(_ => disarm())
@@ -1318,8 +1318,8 @@ final private[kyo] class NioTransport private (
     end armConnectDeadline
 
     def connectUnix(path: String, connectTimeout: Duration, config: kyo.net.NetConfig)(using
-        AllowUnsafe,
-        Frame
+        allow: AllowUnsafe,
+        frame: Frame
     ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
         kyo.net.Transport.checkConnectTimeout(connectTimeout)
         val promise = new IOPromise[NetException, Connection[NioHandle]]
@@ -1343,7 +1343,7 @@ final private[kyo] class NioTransport private (
             val connected = channel.connect(addr)
             Log.live.unsafe.debug(s"NioTransport connectUnix immediate=$connected channel=${channel.hashCode()}")
             if connected then
-                val handle = NioHandle.init(channel, config.readChunkSize, config.peerCloseGrace)
+                val handle = NioHandle.init(channel, config.readChunkSize, config.peerCloseGrace, frame)
                 discard(driver.registerChannel(handle))
                 completeConnect(handle, promise, config.channelCapacity)
             else
@@ -1365,7 +1365,7 @@ final private[kyo] class NioTransport private (
 
     def listenUnix(path: String, backlog: Int, config: kyo.net.NetConfig)(
         handler: NetConnection => Unit
-    )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
+    )(using allow: AllowUnsafe, frame: Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
         val promise = new IOPromise[NetException, NetListener]
 
         try
@@ -1381,7 +1381,7 @@ final private[kyo] class NioTransport private (
             else
                 Log.live.unsafe.debug(s"NioTransport listenUnix $path")
 
-                val listener = new NioListener(serverChannel, -1, path, driver, NetAddress.Unix(path))
+                val listener = new NioListener(serverChannel, -1, path, driver, NetAddress.Unix(path), frame)
                 startAcceptLoop(serverChannel, handler, listener, config)
                 promise.completeDiscard(Result.succeed(listener))
             end if
@@ -1726,7 +1726,8 @@ final private[net] class NioListener(
     val port: Int,
     val host: String,
     private val driver: NioIoDriver,
-    val address: NetAddress
+    val address: NetAddress,
+    val createdAt: Frame
 ) extends NetListener:
 
     /** Extra teardown the transport attaches, currently reclaiming the in-flight handshakes this listener accepted. Written once at listen time,
@@ -1746,7 +1747,7 @@ final private[net] class NioListener(
             // Reclaim the handshakes this listener accepted before the accept teardown: they own channels and handles this close is the only
             // remaining chance to release, since the transport itself may never be closed.
             onCloseHook.foreach(_())
-            driver.cleanupAccept(serverChannel)
+            driver.cleanupAccept(serverChannel, createdAt)
             try serverChannel.close()
             catch case _: IOException => ()
                 // serverChannel.close() cancels the channel's SelectionKey but, on JDK 11+, defers the real fd close (kill()) until the selector

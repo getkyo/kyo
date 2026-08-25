@@ -2,6 +2,7 @@ package kyo.net.internal.posix
 
 import kyo.*
 import kyo.ffi.Ffi
+import kyo.net.NetException
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
 
@@ -36,13 +37,13 @@ class PollerIoDriverStaleWritableTest extends Test:
             Sync.ensure(Sync.defer(driver.close())) {
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     // Two handles over the SAME accepted fd with distinct ids: the OLD writable owner and the NEW reader.
-                    val oldHandle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
-                    val newHandle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val oldHandle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val newHandle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     assert(oldHandle.id.packed != newHandle.id.packed, "handles must have distinct ids")
 
                     // Submit Write registration for oldHandle: when the poll loop starts and drainChanges runs, it sets
                     // activeFds[fd] = oldId and pendingWritables[fd] = (oldWritable, oldId).
-                    val oldWritable = Promise.Unsafe.init[Unit, Abort[Closed]]()
+                    val oldWritable = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
                     driver.awaitWritable(oldHandle, oldWritable)
 
                     // Submit Read registration for newHandle: drainChanges processes this next in the SAME cycle (both are in the

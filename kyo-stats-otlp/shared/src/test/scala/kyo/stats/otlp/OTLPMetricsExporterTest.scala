@@ -15,9 +15,9 @@ class OTLPMetricsExporterTest extends kyo.test.Test[Any]:
     import AllowUnsafe.embrace.danger
 
     def testConfig(port: Int) = OTLPConfig(
-        endpoint = s"http://localhost:$port",
-        tracesEndpoint = s"http://localhost:$port/v1/traces",
-        metricsEndpoint = s"http://localhost:$port/v1/metrics",
+        endpoint = s"http://127.0.0.1:$port",
+        tracesEndpoint = s"http://127.0.0.1:$port/v1/traces",
+        metricsEndpoint = s"http://127.0.0.1:$port/v1/metrics",
         headers = Map.empty,
         timeout = 5.seconds,
         compression = "none",
@@ -50,7 +50,7 @@ class OTLPMetricsExporterTest extends kyo.test.Test[Any]:
                     HttpResponse.ok.addField("body", ExportMetricsResponse())
                 }
             }
-            server <- HttpServer.init(0, "localhost")(traceHandler, metricHandler)
+            server <- HttpServer.init(0, "127.0.0.1")(traceHandler, metricHandler)
             config = testConfig(server.port)
             result <- test(config, metricCh)
         yield result
@@ -151,20 +151,31 @@ class OTLPMetricsExporterTest extends kyo.test.Test[Any]:
             }
         }
 
-        "exports registered gauge at interval".onlyJvm.flaky in {
+        "exports registered gauge at interval".onlyJvm in {
             withCollector { (config, metricCh) =>
                 val uniqueName           = "test.export.gauge." + java.util.UUID.randomUUID().toString.take(8)
                 @volatile var gaugeValue = 99.5
-                val _                    = Stat.initScope("test", "export").initGauge(uniqueName, "test gauge")(gaugeValue)
+                val gauge                = Stat.initScope("test", "export").initGauge(uniqueName, "test gauge")(gaugeValue)
                 for
-                    _        <- OTLPMetricsExporter.run(config)
-                    received <- metricCh.take
+                    _ <- OTLPMetricsExporter.run(config)
+                    // The first export may fire before the gauge is registered, so take up to 10 exports. The registry holds only a WeakReference,
+                    // so `discard(gauge)` in the Loop keeps it strongly reachable (else the JVM may GC it mid-test); works on all platforms, unlike Reference.reachabilityFence.
+                    found <- Loop.indexed { i =>
+                        discard(gauge)
+                        metricCh.take.map { received =>
+                            val allMetrics = received.resourceMetrics.head.scopeMetrics.head.metrics
+                            allMetrics.find(_.name == s"test.export.$uniqueName") match
+                                case Some(m)       => Loop.done(m)
+                                case None if i < 9 => Loop.continue
+                                case None => throw new AssertionError(
+                                        s"Gauge test.export.$uniqueName not found after ${i + 1} exports"
+                                    )
+                            end match
+                        }
+                    }
                 yield
-                    val allMetrics = received.resourceMetrics.head.scopeMetrics.head.metrics
-                    val found      = allMetrics.find(_.name == s"test.export.$uniqueName")
-                    assert(found.isDefined)
-                    assert(found.get.gauge.isDefined)
-                    assert(found.get.gauge.get.dataPoints.head.asDouble == Present(99.5))
+                    assert(found.gauge.isDefined)
+                    assert(found.gauge.get.dataPoints.head.asDouble == Present(99.5))
                 end for
             }
         }

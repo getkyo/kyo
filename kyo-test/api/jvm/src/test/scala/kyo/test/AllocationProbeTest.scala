@@ -170,7 +170,7 @@ class AllocationProbeTest extends AsyncFreeSpec with NonImplicitAssertions:
             new kyo.test.Test[Any]:
                 "counter-unsupported" in {
                     val acc = new Array[Long](1)
-                    AllocationProbe.assertBoundedPerOp(unsupported, warmupIters, measuredIters, 0.0) {
+                    AllocationProbe.assertBoundedPerOp(unsupported, warmupIters, measuredIters, 0.0, 0L) {
                         acc(0) = acc(0) + 1L
                     }
                 }

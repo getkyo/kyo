@@ -10,6 +10,9 @@ import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import javax.net.ssl.SSLEngineResult
 import kyo.*
+import kyo.net.NetConnectionIoException
+import kyo.net.NetDriverUnsupportedException
+import kyo.net.NetException
 import kyo.net.internal.transport.*
 import kyo.net.internal.util.*
 import kyo.scheduler.InternalClock
@@ -74,11 +77,12 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
 
     // Pending writable requests: channel -> promise
     private val pendingWritables =
-        new java.util.concurrent.ConcurrentHashMap[SocketChannel, Promise.Unsafe[Unit, Abort[Closed]]]()
+        new java.util.concurrent.ConcurrentHashMap[SocketChannel, Promise.Unsafe[Unit, Abort[Closed | NetException]]]()
 
-    // Pending connect requests: channel -> promise
+    // Pending connect requests: channel -> (promise, handle). The handle is carried so a driver-side connect failure (dispatchConnect's
+    // finishConnect IOException) can name the connection it belongs to and its creation frame, rather than the driver.
     private val pendingConnects =
-        new java.util.concurrent.ConcurrentHashMap[SocketChannel, Promise.Unsafe[Unit, Abort[Closed]]]()
+        new java.util.concurrent.ConcurrentHashMap[SocketChannel, (Promise.Unsafe[Unit, Abort[Closed | NetException]], NioHandle)]()
 
     // Pending accept requests: server channel -> promise
     private val pendingAccepts =
@@ -277,7 +281,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         // or, landing between the sweep and the first producer arm, by applyUpgradeArm's occupant fail. upgrading scopes the reject to the
         // window: it clears at handshake completion, so the upgraded connection's own reads pass.
         if handle.upgrading && handle.handshakeReading then
-            promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"${handleLabel(handle)} detached for upgrade")))
+            promise.completeDiscard(Result.fail(Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "detached for upgrade")))
         else
             awaitReadAdmitted(handle, promise)
     end awaitRead
@@ -325,14 +329,18 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         // catcher ran, for which this overwrite is the last owner. Idempotent against occupants already completed elsewhere. Displacing a
         // still-armed live cell surfaces promptly as a typed Closed its owner handles as teardown, rather than as a silent hang.
         handle.readArm.getAndSet(newCell).foreach { previous =>
-            previous.promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"${handleLabel(handle)} read arm replaced")))
+            previous.promise.completeDiscard(Result.fail(Closed(
+                s"connection ${handleLabel(handle)}",
+                handle.createdAt,
+                "read arm replaced"
+            )))
         }
         pendingReads.put(handle.channel, handle)
         Log.live.unsafe.debug(s"$label awaitRead registered ${handleLabel(handle)}")
         if !registerInterest(handle.channel, SelectionKey.OP_READ) then
             discard(handle.readArm.compareAndSet(newCell, Absent))
             discard(pendingReads.remove(handle.channel))
-            promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"registerRead failed for ${handleLabel(handle)}")))
+            promise.completeDiscard(Result.fail(Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "registerRead failed")))
         else
             if handle.forceReadArmWakeup then
                 // First post-STARTTLS read arm (NioHandle.forceReadArmWakeup): registerInterest's cross-carrier OP_READ set can be lost to the
@@ -440,7 +448,11 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         // first producer arm escaped the sweep (awaitRead's reject fires only once handshakeReading is set), so this swap is the last point
         // that can complete it. A probe occupant's promise is a throwaway; failing it is harmless.
         handle.readArm.getAndSet(Present(ReadArmCell(producer))).foreach { previous =>
-            previous.promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"${handleLabel(handle)} detached for upgrade")))
+            previous.promise.completeDiscard(Result.fail(Closed(
+                s"connection ${handleLabel(handle)}",
+                handle.createdAt,
+                "detached for upgrade"
+            )))
         }
         pendingReads.put(handle.channel, handle)
         val registered = registerInterest(handle.channel, SelectionKey.OP_READ)
@@ -650,9 +662,9 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                                         armCell.promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(staged))))
                                     case Absent =>
                                         armCell.promise.completeDiscard(Result.fail(Closed(
-                                            label,
-                                            summon[Frame],
-                                            s"${handleLabel(handle)} detached for upgrade during staged delivery"
+                                            s"connection ${handleLabel(handle)}",
+                                            handle.createdAt,
+                                            "detached for upgrade during staged delivery"
                                         )))
                                 end match
                         case Present(tls) =>
@@ -735,7 +747,12 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
       */
     private def failConsumedUpgradeRead(handle: NioHandle, cell: Maybe[ReadArmCell])(using AllowUnsafe): Unit =
         given Frame = Frame.internal
-        cell.foreach(_.promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"${handleLabel(handle)} detached for upgrade"))))
+        cell.foreach(_.promise.completeDiscard(Result.fail(Closed(
+            s"connection ${handleLabel(handle)}",
+            handle.createdAt,
+            "detached for upgrade"
+        ))))
+    end failConsumedUpgradeRead
 
     /** Deliver `arr` (one peer ciphertext flight read on the selector carrier) into the handle's [[NioHandle.upgradeHandoff]] slot: fulfil a parked
       * handshake waiter, or stage a Carryover the handshake's next read consumes. Demand-driven, the producer arms only after the park has already
@@ -791,7 +808,11 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         // last catcher on that ordering. Runs at FINISHED before completeConnect starts the upgraded pump, so the occupant is never the new
         // connection's arm.
         handle.readArm.getAndSet(Absent).foreach { cell =>
-            cell.promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"${handleLabel(handle)} detached for upgrade")))
+            cell.promise.completeDiscard(Result.fail(Closed(
+                s"connection ${handleLabel(handle)}",
+                handle.createdAt,
+                "detached for upgrade"
+            )))
         }
         discard(pendingReads.remove(handle.channel))
         val key = handle.channel.keyFor(selector)
@@ -801,12 +822,12 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         end if
     end stopUpgradeProducer
 
-    def awaitWritable(handle: NioHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+    def awaitWritable(handle: NioHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         pendingWritables.put(handle.channel, promise)
         Log.live.unsafe.debug(s"$label awaitWritable registered ${handleLabel(handle)}")
         if !registerInterest(handle.channel, SelectionKey.OP_WRITE) then
             discard(pendingWritables.remove(handle.channel))
-            promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"registerWrite failed for ${handleLabel(handle)}")))
+            promise.completeDiscard(Result.fail(Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "registerWrite failed")))
         end if
     end awaitWritable
 
@@ -827,16 +848,16 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         registered
     end armConnectInterest
 
-    def awaitConnect(handle: NioHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
-        Maybe(pendingConnects.putIfAbsent(handle.channel, promise)) match
+    def awaitConnect(handle: NioHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
+        Maybe(pendingConnects.putIfAbsent(handle.channel, (promise, handle))) match
             case Absent =>
                 Log.live.unsafe.debug(s"$label awaitConnect registered ${handleLabel(handle)}")
                 if !armConnectInterest(handle.channel) then
                     discard(pendingConnects.remove(handle.channel))
                     promise.completeDiscard(Result.fail(Closed(
-                        label,
-                        summon[Frame],
-                        s"registerConnect failed for ${handleLabel(handle)}"
+                        s"connection ${handleLabel(handle)}",
+                        handle.createdAt,
+                        "registerConnect failed"
                     )))
                 end if
             case Present(_) =>
@@ -853,12 +874,8 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
       * use the ServerSocketChannel overload below, not this one. Fails loudly so an accidental caller gets an immediate error rather than
       * silently receiving fd 0 (stdin), which is a latent misuse bug.
       */
-    def awaitAccept(handle: NioHandle, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
-        promise.completeDiscard(Result.fail(Closed(
-            label,
-            summon[Frame],
-            "awaitAccept not supported on NioIoDriver; the Nio transport drives its own accept loop"
-        )))
+    def awaitAccept(handle: NioHandle, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
+        promise.completeDiscard(Result.Panic(NetDriverUnsupportedException(label, "awaitAccept")))
 
     /** Run a TLS engine op on the NIO driver. The NIO driver's selector-carrier read path (dispatchReadTls) and caller-carrier write path
       * (writeTls) acquire the per-connection engine ownership gate directly at their call sites, so no two carriers touch one connection's
@@ -961,7 +978,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
             } writes=${if pendingWritables.containsKey(handle.channel) then 1 else 0} connects=${
                 if pendingConnects.containsKey(handle.channel) then 1 else 0
             }")
-        val closed = Closed(label, summon[Frame], s"${handleLabel(handle)} closed")
+        val closed = Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "closed")
         // The read sweep is slot-first, never keyed on the pendingReads entry: a dispatch that consumed the entry without completing the
         // promise (the STARTTLS salvage branch) or an arm whose entry put raced this remove leaves a live cell with no entry, and a
         // map-keyed sweep misses it, stranding a promise nothing else ever completes. getAndSet is exactly-once against every completer
@@ -981,7 +998,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         Maybe(pendingWritables.remove(handle.channel)).foreach { promise =>
             promise.completeDiscard(Result.fail(closed))
         }
-        Maybe(pendingConnects.remove(handle.channel)).foreach { promise =>
+        Maybe(pendingConnects.remove(handle.channel)).foreach { case (promise, _) =>
             promise.completeDiscard(Result.fail(closed))
         }
     end cleanupPending
@@ -1043,8 +1060,8 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     end closeHandle
 
     /** Remove a pending accept entry for a server channel and fail its promise with Closed. */
-    def cleanupAccept(serverChannel: ServerSocketChannel)(using AllowUnsafe, Frame): Unit =
-        val closed = Closed(label, summon[Frame], s"server channel=${serverChannel.hashCode()} closed")
+    def cleanupAccept(serverChannel: ServerSocketChannel, createdAt: Frame)(using AllowUnsafe, Frame): Unit =
+        val closed = Closed(s"listener channel=${serverChannel.hashCode()}", createdAt, "closed")
         Maybe(pendingAccepts.remove(serverChannel)).foreach { promise =>
             promise.completeDiscard(Result.fail(closed))
         }
@@ -1065,7 +1082,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
             Log.live.unsafe.debug(
                 s"$label closing driver, failing ${pendingReads.size()} reads, ${pendingWritables.size()} writes, ${pendingConnects.size()} connects, ${pendingAccepts.size()} accepts"
             )
-            val closed = Closed(label, summon[Frame], "driver closed")
+            val closed = Closed(label, Frame.internal, "driver closed")
             // This sweep iterates the pendingReads map, unlike cleanupPending's slot-first per-handle sweep: an armed cell whose entry a
             // dispatch consumed (the STARTTLS salvage shape) is invisible here. Covered in practice because the transport's close cancels
             // every connection (cleanupPending) before the driver close runs; this map walk is the backstop for entries those closes missed.
@@ -1079,8 +1096,8 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                 promise.completeDiscard(Result.fail(closed))
             }
             pendingWritables.clear()
-            pendingConnects.forEach { (_, promise) =>
-                promise.completeDiscard(Result.fail(closed))
+            pendingConnects.forEach { (_, entry) =>
+                entry._1.completeDiscard(Result.fail(closed))
             }
             pendingConnects.clear()
             pendingAccepts.forEach { (_, promise) =>
@@ -1166,12 +1183,19 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
             case _: java.nio.channels.IllegalBlockingModeException => false
 
     /** Wait for server channel to have pending connections. Promise completes when accept() will not block. */
-    def awaitAccept(serverChannel: ServerSocketChannel, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+    def awaitAccept(serverChannel: ServerSocketChannel, promise: Promise.Unsafe[Unit, Abort[Closed]], createdAt: Frame)(using
+        AllowUnsafe,
+        Frame
+    ): Unit =
         pendingAccepts.put(serverChannel, promise)
         Log.live.unsafe.debug(s"$label awaitAccept registered server=${serverChannel.hashCode()}")
         if !registerServerInterest(serverChannel, SelectionKey.OP_ACCEPT) then
             discard(pendingAccepts.remove(serverChannel))
-            promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"registerAccept failed")))
+            promise.completeDiscard(Result.fail(Closed(
+                s"listener channel=${serverChannel.hashCode()}",
+                createdAt,
+                "registerAccept failed"
+            )))
         end if
     end awaitAccept
 
@@ -1852,7 +1876,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     private def dispatchConnect(channel: SocketChannel)(using AllowUnsafe): Unit =
         given Frame = Frame.internal
         Maybe(pendingConnects.remove(channel)) match
-            case Present(promise) =>
+            case Present((promise, handle)) =>
                 try
                     if channel.finishConnect() then
                         Log.live.unsafe.debug(s"$label dispatchConnect channel=${channel.hashCode()} connected")
@@ -1861,15 +1885,18 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                         // Not ready (a real partial: finishConnect returned false): re-arm OP_CONNECT with a definite poll cycle (armConnectInterest's
                         // unconditional wakeup), so the re-arm's readiness can never be coalesced away. This branch fires only on an actual
                         // finishConnect=false, so the re-arm is bounded (one per genuine partial), not a self-sustaining spin.
-                        pendingConnects.put(channel, promise)
+                        pendingConnects.put(channel, (promise, handle))
                         discard(armConnectInterest(channel))
                 catch
                     case e: IOException =>
-                        promise.completeDiscard(Result.fail(Closed(
-                            label,
-                            summon[Frame],
-                            s"finishConnect failed for channel=${channel.hashCode()}: ${e.getMessage}"
-                        )))
+                        // A driver-side connect I/O failure (e.g. ECONNREFUSED surfaced by finishConnect): a receive/connect failure on THIS
+                        // connection, not a closure of the driver. Fail the connect promise with a typed connection I/O error naming the
+                        // connection and its creation frame; the transport wraps it into NetConnectException.
+                        promise.completeDiscard(Result.fail(NetConnectionIoException(
+                            s"connection ${handleLabel(handle)}",
+                            NetConnectionIoException.Operation.Connect,
+                            e
+                        )(using handle.createdAt)))
             case Absent =>
                 Log.live.unsafe.debug(s"$label dispatchConnect channel=${channel.hashCode()} no pending promise")
         end match

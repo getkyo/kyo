@@ -40,7 +40,7 @@ class IoUringDriverUpgradeDetachTest extends Test:
         discard(driver.start())
         Sync.ensure(Sync.defer(driver.close())) {
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 Sync.ensure(Sync.defer {
                     driver.closeHandle(handle)
                     discard(sock.close(client).poll())

@@ -12,55 +12,51 @@ private[kyo] object ZipHandlePlatform:
     def open(root: String)(using Frame): Maybe[ZipHandle] < (Sync & Scope & Abort[TastyError]) =
         JvmZipHandle.open(root)
 
-    /** Install a fresh JarMappedReaderPool for the duration of `body`.
+    /** The active JarMappedReaderPool for the current classpath-load scope, or Absent when none is installed.
       *
-      * A Scope.ensure finalizer calls pool.closeAll() on any exit (success, Abort, interrupt), dropping all cached MappedByteBuffer
-      * references. The Scope effect is consumed by the enclosing Scope.run in ClasspathOrchestrator.
+      * A fiber-scoped Local, not a process-global, so concurrent `withClasspath` scopes each bind their own pool
+      * without clobbering another's. The binding propagates into the Async.foreach decoder fibers that call `readJarEntry`.
+      */
+    private val activePool: Local[Maybe[JarMappedReaderPool]] = Local.init(Maybe.Absent)
+
+    /** Install a fresh JarMappedReaderPool for the duration of `body`, bound to this scope alone.
+      *
+      * Acquired in a Scope so its closeAll() (dropping cached MappedByteBuffers) runs on any exit; `activePool.let`
+      * scopes the pool to `body` and every fiber it forks.
       */
     def withPool[A, S](body: A < S)(using Frame): A < (S & Sync & Scope) =
         Scope.acquireRelease(
-            Sync.defer {
-                val pool = new JarMappedReaderPool()
-                JvmJarPool.active.set(pool)
-                pool
-            }
-        )(pool => Sync.defer(pool.closeAll()).andThen(Sync.defer(JvmJarPool.active.set(null)))).map { _ =>
-            body
+            Sync.defer(new JarMappedReaderPool())
+        )(pool => Sync.defer(pool.closeAll())).map { pool =>
+            activePool.let(Maybe.Present(pool))(body)
         }
 
-    /** Read one entry from a jar using the active JarMappedReaderPool when available, falling back to a one-shot reader otherwise. */
+    /** Read one entry from a jar using the current scope's JarMappedReaderPool when installed, falling back to a one-shot reader otherwise. */
     def readJarEntry(jarPath: String, entryName: String)(using Frame): Array[Byte] < (Sync & Abort[TastyError]) =
-        Sync.Unsafe.defer {
-            try
-                // Unsafe: AllowUnsafe is supplied implicitly by the enclosing Sync.Unsafe.defer block;
-                // we bind it to a named val and pass it explicitly to the AtomicLong .inc / .add calls
-                // below because Scala 3 implicit resolution inside a try block is ambiguous when the
-                // body alternates between AtomicLong perf-stat calls and pool-reader operations.
-                // The named pass-through is the same proof; no widening of the unsafe boundary.
-                val au: AllowUnsafe = AllowUnsafe.embrace.danger
-                TastyPerfStats.jarOpens.inc()(using au)
-                val t0   = java.lang.System.nanoTime()
-                val pool = JvmJarPool.active.get()
-                if pool != null then
-                    val reader = pool.get(jarPath)
-                    val t1     = java.lang.System.nanoTime()
+        activePool.use { activePoolMaybe =>
+            Sync.Unsafe.defer {
+                try
+                    // Unsafe: AllowUnsafe is supplied implicitly by the enclosing Sync.Unsafe.defer block;
+                    // we bind it to a named val and pass it explicitly to the AtomicLong .inc / .add calls
+                    // below because Scala 3 implicit resolution inside a try block is ambiguous when the
+                    // body alternates between AtomicLong perf-stat calls and pool-reader operations.
+                    // The named pass-through is the same proof; no widening of the unsafe boundary.
+                    val au: AllowUnsafe = AllowUnsafe.embrace.danger
+                    TastyPerfStats.jarOpens.inc()(using au)
+                    val t0 = java.lang.System.nanoTime()
+                    val reader = activePoolMaybe match
+                        case Maybe.Present(pool) => pool.get(jarPath)
+                        case Maybe.Absent        => JarMappedReader.init(jarPath)
+                    val t1 = java.lang.System.nanoTime()
                     TastyPerfStats.jarConstructNs.add(t1 - t0)(using au)
                     val bytes = reader.readEntry(entryName)
                     val t2    = java.lang.System.nanoTime()
                     TastyPerfStats.jarReadNs.add(t2 - t1)(using au)
                     bytes
-                else
-                    val reader = JarMappedReader.init(jarPath)
-                    val t1     = java.lang.System.nanoTime()
-                    TastyPerfStats.jarConstructNs.add(t1 - t0)(using au)
-                    val bytes = reader.readEntry(entryName)
-                    val t2    = java.lang.System.nanoTime()
-                    TastyPerfStats.jarReadNs.add(t2 - t1)(using au)
-                    bytes
-                end if
-            catch
-                case ex: java.io.IOException =>
-                    Abort.fail(TastyError.FileNotFound(s"$jarPath!/$entryName: ${ex.getMessage}"))
+                catch
+                    case ex: java.io.IOException =>
+                        Abort.fail(TastyError.FileNotFound(s"$jarPath!/$entryName: ${ex.getMessage}"))
+            }
         }
 
     /** Read the raw bytes of a single `jrt:/` class file.
@@ -115,11 +111,3 @@ private[kyo] object ZipHandlePlatform:
             }
 
 end ZipHandlePlatform
-
-/** JVM-internal holder for the active JarMappedReaderPool across withPool/readJarEntry calls. */
-private[kyo] object JvmJarPool:
-    /** Currently active pool, or null when no pool is installed. AtomicReference for cross-fiber visibility. */
-    // Unsafe: null sentinel is Java-interop; checked on every readJarEntry call.
-    val active: java.util.concurrent.atomic.AtomicReference[JarMappedReaderPool] =
-        new java.util.concurrent.atomic.AtomicReference(null)
-end JvmJarPool

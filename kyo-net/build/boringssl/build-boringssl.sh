@@ -61,9 +61,20 @@ commit="$(grep -vE '^[[:space:]]*#' "$here/BORINGSSL_COMMIT" | head -n1 | tr -d 
 [ "${#commit}" -eq 40 ] || { echo "BORINGSSL_COMMIT is not a 40-char commit: '$commit'" >&2; exit 1; }
 
 src="${BORINGSSL_SRC:-${TMPDIR:-/tmp}/kyonet-boringssl-src}"
+# Clone from the GitHub mirror rather than boringssl.googlesource.com: googlesource rate-limits
+# anonymous clones from CI/datacenter IP ranges and returns intermittent 503s on GitHub-hosted
+# runners. The mirror carries the same history, so the pinned commit below resolves identically.
+# Override with BORINGSSL_GIT_URL if a different source is ever needed.
+boringssl_url="${BORINGSSL_GIT_URL:-https://github.com/google/boringssl}"
 clone_src() {
     rm -rf "$src"
-    git clone https://boringssl.googlesource.com/boringssl "$src"
+    attempt=1
+    until git clone "$boringssl_url" "$src"; do
+        [ "$attempt" -ge 3 ] && { echo "git clone $boringssl_url failed after $attempt attempts" >&2; exit 1; }
+        echo "git clone $boringssl_url failed (attempt $attempt); retrying in $((attempt * 5))s" >&2
+        sleep $((attempt * 5))
+        attempt=$((attempt + 1))
+    done
 }
 # `[ -d "$src/.git" ]` is not a usable-clone check: the default $src lives under $TMPDIR, which the OS
 # reaps, and it reaps it to a skeleton (.git/ survives with HEAD, config and index gone). That skeleton

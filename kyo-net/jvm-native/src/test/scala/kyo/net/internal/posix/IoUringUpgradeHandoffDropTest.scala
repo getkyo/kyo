@@ -69,7 +69,7 @@ class IoUringUpgradeHandoffDropTest extends Test:
                         sock,
                         backendIsEpoll = false
                     )
-                    val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     Sync.ensure(Sync.defer { discard(sock.close(client)); driver.closeHandle(handle) }) {
                         val conn = transport.openWith(handle, driver, channelCapacity = 1)
                         conn.start()
@@ -138,7 +138,7 @@ class IoUringUpgradeHandoffDropTest extends Test:
             withDriver { driver =>
                 val sock = Ffi.load[SocketBindings]
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                    val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     handle.driver = driver
                     Sync.ensure(Sync.defer { discard(sock.close(client)); driver.closeHandle(handle) }) {
                         handle.upgrading = true
@@ -187,7 +187,7 @@ class IoUringUpgradeHandoffDropTest extends Test:
             withDriver { driver =>
                 val sock = Ffi.load[SocketBindings]
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                    val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     handle.driver = driver
                     Sync.ensure(Sync.defer { discard(sock.close(client)); driver.closeHandle(handle) }) {
                         // handle.upgrading stays false (the default): an ordinary close, not a STARTTLS upgrade window.

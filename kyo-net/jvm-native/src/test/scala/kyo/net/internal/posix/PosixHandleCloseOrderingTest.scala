@@ -30,7 +30,7 @@ class PosixHandleCloseOrderingTest extends Test:
       * test portable.
       */
     private def makeHandle(): PosixHandle =
-        PosixHandle.stdio(PosixHandle.DefaultReadBufferSize)
+        PosixHandle.stdio(PosixHandle.DefaultReadBufferSize, Frame.internal)
 
     "read-dispatch and close ordering" - {
 

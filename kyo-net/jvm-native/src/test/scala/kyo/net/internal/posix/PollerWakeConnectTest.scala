@@ -2,6 +2,7 @@ package kyo.net.internal.posix
 
 import kyo.*
 import kyo.ffi.Ffi
+import kyo.net.NetException
 import kyo.net.Test
 
 /** Deterministic guard for the poll-loop wakeup ([[PollerBackend.wake]] / [[PollerIoDriver.submitChange]]), guarding against the connect
@@ -41,8 +42,8 @@ class PollerWakeConnectTest extends Test:
                 // reaches the kernel promptly (with the wake) or only after the bounded park (without it).
                 discard(driver.start())
 
-                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
-                val promise = Promise.Unsafe.init[Unit, Abort[Closed]]()
+                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val promise = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
 
                 // awaitConnect -> armSocketWritable -> submitChange(OpRegisterWrite); submitChange triggers backend.wake, cutting the park short so
                 // the register runs and the (already-writable) fd's readiness is delivered. Without the wake the writable still arrives, but only
@@ -81,8 +82,8 @@ class PollerWakeConnectTest extends Test:
                 Loop(0) { i =>
                     if i >= 20 then Loop.done(i)
                     else
-                        val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
-                        val promise = Promise.Unsafe.init[Unit, Abort[Closed]]()
+                        val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        val promise = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
                         driver.awaitConnect(handle, promise)
                         Abort.run[Timeout](Async.timeout(5.seconds)(Abort.run[Closed](promise.safe.get))).map { outcome =>
                             assert(

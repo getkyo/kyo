@@ -1,6 +1,7 @@
 package kyo.net.internal.transport
 
 import kyo.*
+import kyo.net.NetException
 
 /** Pump that drains an outbound channel and writes bytes to the socket via the driver.
   *
@@ -74,7 +75,7 @@ final private[kyo] class WritePump[Handle](
     end onTake
 
     /** Writable callback: the socket became writable, or the await failed. Resume the parked tail. */
-    private def onWritable(result: Result[Closed, Unit])(using AllowUnsafe, Frame): Unit =
+    private def onWritable(result: Result[Closed | NetException, Unit])(using AllowUnsafe, Frame): Unit =
         result match
             case Result.Success(_) =>
                 // Resume the tail recorded in AwaitingWritable/Backpressured. The CAS to Flushing is
@@ -114,7 +115,7 @@ final private[kyo] class WritePump[Handle](
                 // carries the tail inline; the fresh promise's completion runs onWritable.
                 val next = WriteState.AwaitingWritable(remaining, newOffset)
                 if state.compareAndSet(current, next) then
-                    val p = Promise.Unsafe.init[Unit, Abort[Closed]]()
+                    val p = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
                     p.onComplete { r =>
                         import AllowUnsafe.embrace.danger
                         given Frame = Frame.internal
@@ -137,7 +138,7 @@ final private[kyo] class WritePump[Handle](
                 // no-ops.
                 val next = WriteState.Backpressured(remaining, newOffset)
                 if state.compareAndSet(current, next) then
-                    val p = Promise.Unsafe.init[Unit, Abort[Closed]]()
+                    val p = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
                     p.onComplete { r =>
                         import AllowUnsafe.embrace.danger
                         given Frame = Frame.internal

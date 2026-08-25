@@ -5,7 +5,7 @@ import kyo.*
 /** Base for every kyo-website build-time failure. Mirrors the substrate exception rules: extends
   * KyoException, leaves are top-level + prefixed, each leaf is one failure mode with raw structured
   * fields, Frame captured. The whole family lives in this one `WebsiteException.scala` file, matching
-  * how the kyo substrate organizes its exception hierarchies ([[kyo.FileException]],
+  * how the kyo substrate organizes its exception hierarchies ([[kyo.FileSystemException]],
   * [[kyo.HttpException]], [[kyo.BrowserException]]).
   */
 sealed abstract class WebsiteException(message: => String = "", cause: String | Throwable = "")(using Frame)

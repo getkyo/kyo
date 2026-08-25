@@ -159,7 +159,7 @@ class FlowTest extends kyo.test.Test[Any]:
         }
 
         "output with Async effect tracks S" in {
-            val f = Flow.input[Int]("x").output("y")(ctx => Async.sleep(1.millis).map(_ => ctx.x))
+            val f = Flow.input[Int]("x").output("y")(ctx => Fiber.initUnscoped(ctx.x).map(_.get))
             val _: Flow["x" ~ Int, "x" ~ Int & ("y" ~ Int), Async] = f
             succeed("type-level property verified at compile time")
         }
@@ -229,8 +229,8 @@ class FlowTest extends kyo.test.Test[Any]:
         }
 
         "zip compiles with Async flows" in {
-            val f1 = Flow.input[Int]("a").output("b")(ctx => Async.sleep(1.millis).map(_ => ctx.a + 1))
-            val f2 = Flow.input[Int]("c").output("d")(ctx => Async.sleep(1.millis).map(_ => ctx.c + 2))
+            val f1 = Flow.input[Int]("a").output("b")(ctx => Fiber.initUnscoped(ctx.a + 1).map(_.get))
+            val f2 = Flow.input[Int]("c").output("d")(ctx => Fiber.initUnscoped(ctx.c + 2).map(_.get))
             val _  = f1.zip(f2)
             succeed("isolate compatibility verified at compile time")
         }

@@ -160,8 +160,8 @@ final private[kyo] class ReadPump[Handle](
         @volatile private var timer: Maybe[Fiber.Unsafe[Unit, Any]] = Absent
 
         // Interrupt the grace timer fiber. Panic so its onComplete guard (settled) short-circuits rather than reclaiming.
-        private def disarm(t: Fiber.Unsafe[Unit, Any])(using Frame): Unit =
-            discard(t.interruptDiscard(Result.Panic(Closed("ReadPump", summon[Frame], "grace disarmed by progress"))))
+        private def disarm(t: Fiber.Unsafe[Unit, Any])(using frame: Frame): Unit =
+            discard(t.interruptDiscard(Result.Panic(Interrupted(frame, "grace disarmed by progress"))))
 
         /** Arm the first grace timer on park. `Duration.Infinity` disables reclamation (no timer). */
         def arm()(using Frame): Unit =

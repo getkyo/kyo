@@ -1,6 +1,7 @@
 package kyo.net.internal
 
 import kyo.*
+import kyo.net.NetException
 import kyo.net.Test
 import kyo.net.internal.util.HandleId
 import scala.scalajs.js as sjs
@@ -32,8 +33,8 @@ class JsIoDriverAwaitWritableFailureTest extends Test:
     "awaitWritable fails the promise with Closed on a socket error" in {
         val driver  = JsIoDriver.init()
         val socket  = mockSocket()
-        val handle  = new JsHandle(socket, HandleId.next(0))
-        val promise = Promise.Unsafe.init[Unit, Abort[Closed]]()
+        val handle  = new JsHandle(socket, HandleId.next(0), Frame.internal)
+        val promise = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
         driver.awaitWritable(handle, promise)
         // Drive the Node "error" event: the registered errorFn must fail the promise, not succeed.
         discard(socket.emit("error", sjs.Dynamic.literal(message = "boom")))
@@ -49,8 +50,8 @@ class JsIoDriverAwaitWritableFailureTest extends Test:
     "awaitWritable fails the promise with Closed on a socket close" in {
         val driver  = JsIoDriver.init()
         val socket  = mockSocket()
-        val handle  = new JsHandle(socket, HandleId.next(0))
-        val promise = Promise.Unsafe.init[Unit, Abort[Closed]]()
+        val handle  = new JsHandle(socket, HandleId.next(0), Frame.internal)
+        val promise = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
         driver.awaitWritable(handle, promise)
         discard(socket.emit("close"))
         assert(promise.done(), "awaitWritable did not complete the promise on a socket close")
@@ -65,8 +66,8 @@ class JsIoDriverAwaitWritableFailureTest extends Test:
     "awaitWritable still succeeds on drain (the success path is preserved)" in {
         val driver  = JsIoDriver.init()
         val socket  = mockSocket()
-        val handle  = new JsHandle(socket, HandleId.next(0))
-        val promise = Promise.Unsafe.init[Unit, Abort[Closed]]()
+        val handle  = new JsHandle(socket, HandleId.next(0), Frame.internal)
+        val promise = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
         driver.awaitWritable(handle, promise)
         discard(socket.emit("drain"))
         assert(promise.done(), "awaitWritable did not complete the promise on drain")

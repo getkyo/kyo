@@ -375,6 +375,23 @@ class ClaudeCodeWireTest extends kyo.test.Test[Any]:
         end for
     }
 
+    "authenticationFailed reads only the structured authentication error" in {
+        val authFailure =
+            """{"type":"assistant","error":"authentication_failed","message":{"role":"assistant","content":[]}}"""
+        val proseOnly =
+            """{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"authentication_failed"}]}}"""
+
+        for
+            auth  <- Abort.run[AIGenException](ClaudeCodeWire.authenticationFailed(authFailure))
+            prose <- Abort.run[AIGenException](ClaudeCodeWire.authenticationFailed(proseOnly))
+            empty <- Abort.run[AIGenException](ClaudeCodeWire.authenticationFailed(""))
+        yield
+            assert(auth == Result.Success(true), s"the structured auth error must be recognized: $auth")
+            assert(prose == Result.Success(false), s"prose must never be classified as an auth error: $prose")
+            assert(empty == Result.Success(false), s"empty output has no auth error: $empty")
+        end for
+    }
+
     "turnUsage prefers the terminal result event's aggregate" in {
         // The result event sums the invocation's internal iterations (verified live), so it wins over
         // the per-message assistant events, whose output counts are message-start snapshots.

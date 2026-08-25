@@ -1,7 +1,6 @@
 package kyo.internal
 
 import java.util.concurrent.CountDownLatch
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kyo.*
 import kyo.AllowUnsafe.embrace.danger
@@ -61,18 +60,26 @@ class MpmcUnsafeQueueTest extends UnsafeQueueBaseTest:
 
     "MpmcUnsafeQueue-specific concurrent".notJs - {
         "highContentionMPMC" in {
-            val q        = new MpmcUnsafeQueue[Long](16)
-            val stop     = new AtomicBoolean(false)
-            val start    = new CountDownLatch(1)
-            val offered  = new AtomicLong(0)
-            val consumed = new AtomicLong(0)
+            val q             = new MpmcUnsafeQueue[Long](16)
+            val perProducer   = 5000
+            val producerCount = 4
+            val total         = perProducer.toLong * producerCount
+            val start         = new CountDownLatch(1)
+            val producersDone = new CountDownLatch(producerCount)
+            val offered       = new AtomicLong(0)
+            val consumed      = new AtomicLong(0)
 
-            val producers = (0 until 4).map { pid =>
+            val producers = (0 until producerCount).map { pid =>
                 val t = new Thread(() =>
                     start.await()
-                    while !stop.get() do
-                        if q.offer(offered.incrementAndGet()) then ()
+                    var i = 0
+                    while i < perProducer do
+                        if q.offer(pid.toLong * 10000000L + i) then
+                            i += 1
+                            discard(offered.incrementAndGet())
                         else Thread.`yield`()
+                    end while
+                    producersDone.countDown()
                 )
                 t.setDaemon(true)
                 t
@@ -80,7 +87,7 @@ class MpmcUnsafeQueueTest extends UnsafeQueueBaseTest:
             val consumers = (0 until 4).map { cid =>
                 val t = new Thread(() =>
                     start.await()
-                    while !stop.get() do
+                    while producersDone.getCount > 0 do
                         q.poll() match
                             case Maybe.Present(_) => discard(consumed.incrementAndGet())
                             case _                => Thread.`yield`()
@@ -92,34 +99,39 @@ class MpmcUnsafeQueueTest extends UnsafeQueueBaseTest:
 
             (producers ++ consumers).foreach(_.start())
             start.countDown()
-            Thread.sleep(200)
-            stop.set(true)
-            (producers ++ consumers).foreach(_.join(10000))
+            (producers ++ consumers).foreach(_.join())
 
-            // Drain remaining
             var remaining = 0L
             while q.poll().isDefined do remaining += 1
 
-            // Verify no loss: consumed + remaining should account for offered
-            assert(consumed.get() + remaining > 0, "Nothing was consumed")
+            assert(offered.get() == total, s"expected $total offered, got ${offered.get()}")
+            assert(
+                consumed.get() + remaining == total,
+                s"data loss: consumed=${consumed.get()}, remaining=$remaining, total=$total"
+            )
         }
 
         "batchDrainConcurrent" in {
-            val q        = new MpmcUnsafeQueue[Long](16)
-            val stop     = new AtomicBoolean(false)
-            val start    = new CountDownLatch(1)
-            val offered  = new AtomicLong(0)
-            val consumed = new AtomicLong(0)
+            val q             = new MpmcUnsafeQueue[Long](16)
+            val perProducer   = 5000
+            val producerCount = 4
+            val total         = perProducer.toLong * producerCount
+            val start         = new CountDownLatch(1)
+            val producersDone = new CountDownLatch(producerCount)
+            val offered       = new AtomicLong(0)
+            val consumed      = new AtomicLong(0)
 
-            val producers = (0 until 4).map { pid =>
+            val producers = (0 until producerCount).map { pid =>
                 val t = new Thread(() =>
                     start.await()
-                    var v = pid.toLong * 100000000L
-                    while !stop.get() do
-                        v += 1
-                        if q.offer(v) then discard(offered.incrementAndGet())
+                    var i = 0
+                    while i < perProducer do
+                        if q.offer(pid.toLong * 100000000L + i) then
+                            i += 1
+                            discard(offered.incrementAndGet())
                         else Thread.`yield`()
                     end while
+                    producersDone.countDown()
                 )
                 t.setDaemon(true)
                 t
@@ -127,7 +139,7 @@ class MpmcUnsafeQueueTest extends UnsafeQueueBaseTest:
             val consumers = (0 until 2).map { cid =>
                 val t = new Thread(() =>
                     start.await()
-                    while !stop.get() do
+                    while producersDone.getCount > 0 do
                         val n = q.drain(_ => (), 4)
                         consumed.addAndGet(n)
                         if n == 0 then Thread.`yield`()
@@ -139,16 +151,15 @@ class MpmcUnsafeQueueTest extends UnsafeQueueBaseTest:
 
             (producers ++ consumers).foreach(_.start())
             start.countDown()
-            Thread.sleep(200)
-            stop.set(true)
-            (producers ++ consumers).foreach(_.join(10000))
+            (producers ++ consumers).foreach(_.join())
 
             var remaining = 0L
             while q.poll().isDefined do remaining += 1
 
+            assert(offered.get() == total, s"expected $total offered, got ${offered.get()}")
             assert(
-                consumed.get() + remaining == offered.get(),
-                s"Batch drain data loss: offered=${offered.get()}, consumed=${consumed.get()}, remaining=$remaining"
+                consumed.get() + remaining == total,
+                s"Batch drain data loss: consumed=${consumed.get()}, remaining=$remaining, total=$total"
             )
         }
     }
