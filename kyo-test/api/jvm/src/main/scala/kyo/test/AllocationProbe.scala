@@ -62,18 +62,27 @@ object AllocationProbe:
       * `(after - before) / measuredIters <= maxBytesPerOp`. When the allocation counter is unsupported or
       * cannot be enabled the probe FAILS LOUD rather than passing silently: an unmeasurable claim is not a
       * satisfied one.
+      *
+      * `perWindowFloorBytes` admits a bounded per-window cost (a JIT deopt/safepoint charged to the measuring thread every window, which
+      * best-of-[[trials]] cannot filter). Per-window not per-op, so a small floor stays green while a real per-op allocation still fails; defaults to 0.
       */
-    def assertBoundedPerOp[A](warmupIters: Int, measuredIters: Int, maxBytesPerOp: Double)(
+    def assertBoundedPerOp[A](warmupIters: Int, measuredIters: Int, maxBytesPerOp: Double, perWindowFloorBytes: Long = 0L)(
         op: => A
     )(using Frame, AssertScope): Unit =
-        assertBoundedPerOp(hotSpotCounter, warmupIters, measuredIters, maxBytesPerOp)(op)
+        assertBoundedPerOp(hotSpotCounter, warmupIters, measuredIters, maxBytesPerOp, perWindowFloorBytes)(op)
 
     /** Test seam: the same measurement, routed through an injected [[AllocationCounter]] instead of the
       * real HotSpot bean. The real bean always reports its counter supported, so the unsupported branch
       * above is unreachable through the public overload; this seam is what lets that branch be exercised
       * by a named test rather than staying an asserted-but-unverified safety claim.
       */
-    private[kyo] def assertBoundedPerOp[A](counter: AllocationCounter, warmupIters: Int, measuredIters: Int, maxBytesPerOp: Double)(
+    private[kyo] def assertBoundedPerOp[A](
+        counter: AllocationCounter,
+        warmupIters: Int,
+        measuredIters: Int,
+        maxBytesPerOp: Double,
+        perWindowFloorBytes: Long
+    )(
         op: => A
     )(using frame: Frame, scope: AssertScope): Unit =
         scope.recordEvaluated()
@@ -85,7 +94,7 @@ object AllocationProbe:
             if !counter.isEnabled then counter.enable()
             iterate(warmupIters, op)
             val minPerOp = minPerOpAcrossTrials(counter, op, measuredIters)
-            if minPerOp > maxBytesPerOp then
+            if minPerOp > maxBytesPerOp + perWindowFloorBytes.toDouble / measuredIters then
                 violation(
                     s"per-op allocation $minPerOp bytes exceeds the bound $maxBytesPerOp (measured over $measuredIters ops)"
                 )

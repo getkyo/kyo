@@ -209,31 +209,35 @@ private[runner] object LeakCheck:
         settleNanos: Long,
         pollNanos: Long,
         loadNow: () => Double,
-        allAccounted: () => Boolean
+        allAccounted: () => Boolean,
+        now: () => Long = () => System.nanoTime(),
+        park: Long => Unit = LockSupport.parkNanos(_)
     ): IdleResult =
-        val deadline                  = System.nanoTime() + budgetNanos
+        // now/park are the loop's only real-time dependencies, defaulting to the monotonic clock and a real park; a test overrides them with a
+        // virtual clock (park advances the clock instead of sleeping) to drive the settle/budget logic deterministically.
+        val deadline                  = now() + budgetNanos
         var quietSince: Long          = -1L
         var lastAccountedAt: Long     = 0L
         var accountedChecked          = false
         var accounted                 = false
         var result: Maybe[IdleResult] = Maybe.empty
-        while result.isEmpty && System.nanoTime() < deadline do
-            val now  = System.nanoTime()
-            val idle = loadNow() == 0.0
+        while result.isEmpty && now() < deadline do
+            val sampledAt = now()
+            val idle      = loadNow() == 0.0
             // busyFiberTraces renders a kyo trace per busy worker and is documented as a leak probe rather than a monitoring surface, so the
             // accounted branch is re-evaluated at most once per settle window instead of on every poll.
-            if !idle && (!accountedChecked || now - lastAccountedAt >= settleNanos) then
+            if !idle && (!accountedChecked || sampledAt - lastAccountedAt >= settleNanos) then
                 accounted = allAccounted()
-                lastAccountedAt = now
+                lastAccountedAt = sampledAt
                 accountedChecked = true
             end if
             if idle || accounted then
-                if quietSince < 0 then quietSince = now
-                else if now - quietSince >= settleNanos then
+                if quietSince < 0 then quietSince = sampledAt
+                else if sampledAt - quietSince >= settleNanos then
                     result = Maybe(if idle then IdleResult.Idle else IdleResult.Accounted(loadNow()))
             else quietSince = -1L
             end if
-            if result.isEmpty then LockSupport.parkNanos(pollNanos)
+            if result.isEmpty then park(pollNanos)
         end while
         result.getOrElse {
             if loadNow() == 0.0 then IdleResult.Idle

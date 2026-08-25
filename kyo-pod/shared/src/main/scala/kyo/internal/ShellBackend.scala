@@ -145,11 +145,12 @@ final private[kyo] class ShellBackend(
         case Config.RestartPolicy.OnFailure(retries) => s"${rp.cliName}:$retries"
         case _                                       => rp.cliName
 
-    /** Builds behavior-related flags: `-i`, `-t`, `--rm`, `--restart`, `--stop-signal`. Pure — no effects. */
+    /** Builds behavior-related flags: `-i`, `-t`, `--rm`, `--init`, `--restart`, `--stop-signal`. Pure: no effects. */
     private def behaviorArgs(config: Config, restartStr: String): Chunk[String] =
         (if config.interactive then Chunk("-i") else Chunk.empty) ++
             (if config.allocateTty then Chunk("-t") else Chunk.empty) ++
             (if config.autoRemove then Chunk("--rm") else Chunk.empty) ++
+            (if config.initProcess then Chunk("--init") else Chunk.empty) ++
             Chunk("--restart", restartStr) ++
             config.stopSignal.map(s => Chunk("--stop-signal", s.name)).getOrElse(Chunk.empty)
 
@@ -729,7 +730,10 @@ final private[kyo] class ShellBackend(
                                     drain(proc.stdout, LogEntry.Source.Stdout),
                                     drain(proc.stderr, LogEntry.Source.Stderr)
                                 ).unit
-                            Fiber.init(Abort.run[Closed](drainBoth).andThen(channel.close.unit)).andThen {
+                            // Drain-preserving close: closeAwaitEmpty keeps the channel readable until the consumer has
+                            // emptied it, then closes. A hard close would fully-close the queue and sweep the buffered
+                            // backlog into a discarded return, dropping entries the consumer had not drained (e.g. a final stderr line).
+                            Fiber.init(Abort.run[Closed](drainBoth).andThen(channel.closeAwaitEmpty.unit)).andThen {
                                 channel.streamUntilClosed().emit
                             }
                         }

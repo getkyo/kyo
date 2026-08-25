@@ -97,6 +97,7 @@ For any bug, regression, or "this shouldn't happen" report, write a failing test
 - **Assert on concrete values, not just types or non-emptiness.** `assert(result == List(1, 2, 3))`, not `assert(result.nonEmpty)` or `assert(result.isInstanceOf[List[_]])`.
 - **Test behavior, not implementation.** Verify what the code does from the caller's perspective, not how it does it internally.
 - **Cover edge cases.** Empty inputs, error paths, boundary conditions, concurrent scenarios, not just the happy path.
+- **Never depend on the real clock.** No assertion on measured wall-clock elapsed, no `Thread.sleep`-then-assert, no real-time delay or timeout as the pass condition. Use `Clock.withTimeControl` for virtual time (sleeps under it are fine) and barriers (`Latch`/`Channel`/`Fiber.get`) to coordinate. Any unavoidable real-clock use is a deviation: validate and report it. Full guide: [CONTRIBUTING.md](CONTRIBUTING.md#deterministic-tests).
 
 ### Write Clean, Simple, and Safe Code
 

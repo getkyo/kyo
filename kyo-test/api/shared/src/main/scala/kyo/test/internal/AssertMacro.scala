@@ -21,6 +21,16 @@ import scala.quoted.*
   */
 object AssertMacro:
 
+    /** Whether the power-assert instrumentation is compiled in, read once at macro-expansion time.
+      *
+      * Instrumenting every `assert` for the failure diagram costs significant test-compilation time, so it is OFF by default (`assert(cond)` becomes
+      * a plain `if !cond`). Set `KYO_TEST_POWER_ASSERT`/`-Dkyo.test.powerAssert` to `1`/`true`/`on`/`yes` to compile it back in; Zinc does not track it, flip on a clean compile.
+      */
+    private val powerAssertEnabled: Boolean =
+        def truthy(v: String): Boolean = Set("1", "true", "on", "yes").contains(v.trim.toLowerCase)
+        sys.props.get("kyo.test.powerAssert").orElse(sys.env.get("KYO_TEST_POWER_ASSERT")).exists(truthy)
+    end powerAssertEnabled
+
     /** Macro implementation for `assert(cond: Boolean)`, scope-threaded (the leaf evidence value). */
     def assertImpl(cond: Expr[Boolean], frame: Expr[Frame], scope: Expr[AssertScope])(using Quotes): Expr[Unit] =
         instrumentAndCheck(cond, frame, '{ Maybe.empty[String] }, scope)
@@ -81,27 +91,48 @@ object AssertMacro:
 
         val sourceLineExpr: Expr[String] = Expr(sourceLine)
 
-        '{
-            $scope.recordEvaluated()
-            val _rec    = new kyo.test.internal.Recorder()
-            val _result = ${ instrument(cond, '{ _rec }, baseCol) }
-            if !_result then
-                val _baseDiagram = _rec.diagram($sourceLineExpr, $frame)
-                val _finalDiagram = $msg match
-                    case kyo.Maybe.Present(_m) if _m.nonEmpty => s"${_baseDiagram}\n// message: ${_m}"
-                    case _                                    => _baseDiagram
-                val _failure = new kyo.test.AssertionFailed(
-                    _finalDiagram,
-                    $frame,
-                    $msg,
-                    kyo.Maybe.empty[Throwable]
-                )
-                // Record the failure into the leaf scope before throwing so a detached fiber's failure is
-                // captured even when its throw never reaches the joined body.
-                $scope.record(_failure)
-                throw _failure
-            end if
-        }
+        if powerAssertEnabled then
+            '{
+                $scope.recordEvaluated()
+                val _rec    = new kyo.test.internal.Recorder()
+                val _result = ${ instrument(cond, '{ _rec }, baseCol) }
+                if !_result then
+                    val _baseDiagram = _rec.diagram($sourceLineExpr, $frame)
+                    val _finalDiagram = $msg match
+                        case kyo.Maybe.Present(_m) if _m.nonEmpty => s"${_baseDiagram}\n// message: ${_m}"
+                        case _                                    => _baseDiagram
+                    val _failure = new kyo.test.AssertionFailed(
+                        _finalDiagram,
+                        $frame,
+                        $msg,
+                        kyo.Maybe.empty[Throwable]
+                    )
+                    // Record the failure into the leaf scope before throwing so a detached fiber's failure is
+                    // captured even when its throw never reaches the joined body.
+                    $scope.record(_failure)
+                    throw _failure
+                end if
+            }
+        else
+            // Power-assert disabled (default): no per-subexpression instrumentation. Evaluate the condition once and, on failure, report
+            // the assertion's source text plus the optional message. Same scope-record-before-throw contract as the instrumented path.
+            '{
+                $scope.recordEvaluated()
+                if ! $cond then
+                    val _diagram = $msg match
+                        case kyo.Maybe.Present(_m) if _m.nonEmpty => s"${$sourceLineExpr}\n// message: ${_m}"
+                        case _                                    => $sourceLineExpr
+                    val _failure = new kyo.test.AssertionFailed(
+                        _diagram,
+                        $frame,
+                        $msg,
+                        kyo.Maybe.empty[Throwable]
+                    )
+                    $scope.record(_failure)
+                    throw _failure
+                end if
+            }
+        end if
     end instrumentAndCheck
 
     /** Recursively instrument a boolean-valued expression tree.

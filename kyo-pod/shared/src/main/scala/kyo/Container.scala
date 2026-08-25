@@ -477,11 +477,8 @@ object Container:
                     b.imageEnsure(config.image, Absent, Absent).andThen(b.create(config))
                 }
             }.map { cid =>
-                // Capture the HttpClient active at registration time so the Scope.ensure teardown block
-                // uses the same client that created the container. The runner discharges Scope OUTSIDE any
-                // caller-scoped `HttpClient.let`, so by finalizer time the fiber-local would have unwound
-                // back to the process-shared default client, whose pool would then hold the teardown
-                // connections open past end-of-run and trip the leak check.
+                // Capture the HttpClient bound at registration: by finalizer time the fiber-local has unwound to the
+                // default client, and tearing down through a different client leaves the creating client's pool open.
                 HttpClient.use { boundClient =>
                     Scope.ensure {
                         HttpClient.let(boundClient) {
@@ -511,7 +508,16 @@ object Container:
                                 // `/var/lib/mysql` volume the official MySQL image declares). Without it, a long-running
                                 // suite of scope-managed containers leaks daemon-side state until inspect/start latency
                                 // exceeds the test wrapper. Named volumes are unaffected.
-                                Abort.run[ContainerException](b.remove(cid, force = true, removeVolumes = true)).map(logFailure("remove"))
+                                //
+                                // A force-remove can hit a transient ContainerBackendException under load and leak the container, so
+                                // retry; a genuinely-absent container surfaces as ContainerMissingException, which logFailure treats as done.
+                                val removeSchedule =
+                                    Schedule.exponentialBackoff(initial = 50.millis, factor = 2, maxBackoff = 500.millis).take(3)
+                                Abort.run[ContainerException] {
+                                    Retry[ContainerBackendException](removeSchedule) {
+                                        b.remove(cid, force = true, removeVolumes = true)
+                                    }
+                                }.map(logFailure("remove"))
                             }
                         }
                     }
@@ -806,6 +812,10 @@ object Container:
         interactive: Boolean,
         allocateTty: Boolean,
         autoRemove: Boolean,
+        /** Run the entrypoint under a minimal init process (Docker's `--init`, tini/catatonit) as PID 1, which forwards
+          * signals and reaps zombies. Enable it for non-init-aware images (e.g. `mysqld`), which otherwise wedge in `stopping` and leak.
+          */
+        initProcess: Boolean,
         restartPolicy: Config.RestartPolicy,
         stopSignal: Maybe[Signal],
         stopTimeout: Duration,
@@ -912,6 +922,9 @@ object Container:
 
         def autoRemove(value: Boolean): Config = copy(autoRemove = value)
 
+        /** Enable or disable the [[Config.initProcess init process]] (Docker's `--init`) for this container. */
+        def initProcess(value: Boolean): Config = copy(initProcess = value)
+
         def restartPolicy(policy: Config.RestartPolicy): Config = copy(restartPolicy = policy)
 
         def restartPolicy(f: Config.RestartPolicy.type => Config.RestartPolicy): Config =
@@ -961,6 +974,7 @@ object Container:
             interactive = false,
             allocateTty = false,
             autoRemove = false,
+            initProcess = false,
             restartPolicy = Config.RestartPolicy.No,
             stopSignal = Absent,
             stopTimeout = 3.seconds,

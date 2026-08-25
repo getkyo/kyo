@@ -3,7 +3,6 @@ package kyo.internal
 import java.lang.reflect.Field
 import java.util.IdentityHashMap
 import kyo.*
-import scala.annotation.tailrec
 import scala.jdk.CollectionConverters.*
 
 /** JVM platform tests for [[BrowserLauncherPlatform]].
@@ -149,25 +148,19 @@ class BrowserLauncherPlatformTest extends BaseBrowserTest:
             assert(pidText.nonEmpty, "sentinel file is empty (fixture did not write inner PID)")
             val pid = pidText.toLong
 
-            // Verify the inner proc was killed by the fixture's shutdown hook.
-            // Bounded retry on `kill -0 <pid>` (SIGKILL propagation can take a few ms).
-            def isAlive(p: Long): Boolean =
-                val probe = new java.lang.ProcessBuilder("kill", "-0", p.toString)
-                    .redirectErrorStream(true).start()
-                probe.waitFor(2L, java.util.concurrent.TimeUnit.SECONDS)
-                probe.exitValue() == 0
-            end isAlive
-
-            @tailrec def poll(n: Int): (Boolean, Int) =
-                if !isAlive(pid) || n >= 20 then (isAlive(pid), n)
+            // Verify the shutdown hook killed the inner proc by waiting on its termination, not sampling liveness: ProcessHandle.of(pid) is empty
+            // once reaped, else onExit completes the instant it terminates. The 30s is a hang backstop, not a pass/fail bound (only a broken hook reaches it).
+            val handleOpt = java.lang.ProcessHandle.of(pid)
+            val innerExited =
+                if !handleOpt.isPresent then true
                 else
-                    java.lang.Thread.sleep(50L) // bounded retry, total cap = 1s
-                    poll(n + 1)
-            val (alive, attempts) = poll(0)
+                    try
+                        discard(handleOpt.get.onExit().get(30L, java.util.concurrent.TimeUnit.SECONDS))
+                        true
+                    catch case _: java.util.concurrent.TimeoutException => false
             assert(
-                !alive,
-                s"inner sleep proc pid=$pid was NOT killed by the fixture's shutdown hook " +
-                    s"(still alive after ${attempts * 50}ms of polling)"
+                innerExited,
+                s"inner sleep proc pid=$pid was NOT killed by the fixture's shutdown hook (still alive after the 30s backstop)"
             )
         finally
             try
