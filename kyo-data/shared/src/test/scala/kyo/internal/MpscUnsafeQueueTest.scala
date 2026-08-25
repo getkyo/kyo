@@ -1,7 +1,6 @@
 package kyo.internal
 
 import java.util.concurrent.CountDownLatch
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kyo.*
 import kyo.AllowUnsafe.embrace.danger
@@ -31,25 +30,29 @@ class MpscUnsafeQueueTest extends UnsafeQueueBaseTest:
 
     "MpscUnsafeQueue-specific concurrent".notJs - {
         "manyProducersSingleConsumer" in {
-            val q        = new MpscUnsafeQueue[Long](64)
-            val stop     = new AtomicBoolean(false)
-            val start    = new CountDownLatch(1)
-            val offered  = Array.fill(8)(new AtomicLong(0))
-            val consumed = new java.util.concurrent.ConcurrentLinkedQueue[Long]()
+            val q             = new MpscUnsafeQueue[Long](64)
+            val perProducer   = 2000
+            val producerCount = 8
+            val total         = perProducer * producerCount
+            val start         = new CountDownLatch(1)
+            val producersDone = new CountDownLatch(producerCount)
+            val consumed      = new java.util.concurrent.ConcurrentLinkedQueue[Long]()
 
-            val producers = (0 until 8).map { pid =>
+            val producers = (0 until producerCount).map { pid =>
                 val t = new Thread(() =>
                     start.await()
-                    while !stop.get() do
-                        val v = pid * 1000000L + offered(pid).incrementAndGet()
-                        if !q.offer(v) then Thread.`yield`()
+                    var seq = 1
+                    while seq <= perProducer do
+                        if q.offer(pid * 1000000L + seq) then seq += 1
+                        else Thread.`yield`()
+                    producersDone.countDown()
                 )
                 t.setDaemon(true)
                 t
             }
             val consumer = new Thread(() =>
                 start.await()
-                while !stop.get() do
+                while producersDone.getCount > 0 do
                     q.poll() match
                         case Maybe.Present(v) => discard(consumed.add(v))
                         case _                => Thread.`yield`()
@@ -58,59 +61,54 @@ class MpscUnsafeQueueTest extends UnsafeQueueBaseTest:
             consumer.setDaemon(true)
 
             (producers :+ consumer).foreach(_.start())
-            Thread.sleep(1000)
             start.countDown()
-            stop.set(true)
-            (producers :+ consumer).foreach(_.join(10000))
+            (producers :+ consumer).foreach(_.join())
 
-            // Drain remaining
             var r = q.poll()
             while r.isDefined do
                 consumed.add(r.get)
                 r = q.poll()
 
-            // Verify per-producer FIFO
-            val byProducer = new Array[scala.collection.mutable.ArrayBuffer[Long]](8)
-            for i <- 0 until 8 do byProducer(i) = scala.collection.mutable.ArrayBuffer()
-            val it = consumed.iterator()
+            // Per-producer FIFO: each producer's items must be consumed strictly in offer order, and all present.
+            val byProducer = Array.fill(producerCount)(scala.collection.mutable.ArrayBuffer.empty[Long])
+            val it         = consumed.iterator()
             while it.hasNext do
-                val v   = it.next()
-                val pid = (v / 1000000L).toInt
-                byProducer(pid) += v % 1000000
-            end while
-
-            for pid <- 0 until 8 do
+                val v = it.next()
+                byProducer((v / 1000000L).toInt) += v % 1000000
+            for pid <- 0 until producerCount do
                 val seqs = byProducer(pid)
+                assert(seqs.size == perProducer, s"Producer $pid: expected $perProducer items, got ${seqs.size}")
                 for i <- 1 until seqs.size do
                     assert(seqs(i) > seqs(i - 1), s"Producer $pid: FIFO violation at $i")
             end for
-            // All threads terminated without hanging; consumed items (if any) maintained per-producer FIFO order
-            assert(!(producers :+ consumer).exists(_.isAlive), "A producer or consumer thread did not terminate within the timeout")
+            assert(consumed.size == total, s"data loss: consumed=${consumed.size}, total=$total")
         }
 
         "capacity2Concurrent" in {
-            val q        = new MpscUnsafeQueue[Long](2)
-            val stop     = new AtomicBoolean(false)
-            val start    = new CountDownLatch(1)
-            val offered  = new AtomicLong(0)
-            val consumed = new AtomicLong(0)
+            val q             = new MpscUnsafeQueue[Long](2)
+            val perProducer   = 5000
+            val producerCount = 4
+            val total         = perProducer.toLong * producerCount
+            val start         = new CountDownLatch(1)
+            val producersDone = new CountDownLatch(producerCount)
+            val consumed      = new AtomicLong(0)
 
-            val producers = (0 until 4).map { pid =>
+            val producers = (0 until producerCount).map { pid =>
                 val t = new Thread(() =>
                     start.await()
-                    var v = pid.toLong * 100000000L
-                    while !stop.get() do
-                        v += 1
-                        if q.offer(v) then discard(offered.incrementAndGet())
+                    var i = 0
+                    while i < perProducer do
+                        if q.offer(pid.toLong * 100000000L + i) then i += 1
                         else Thread.`yield`()
                     end while
+                    producersDone.countDown()
                 )
                 t.setDaemon(true)
                 t
             }
             val consumer = new Thread(() =>
                 start.await()
-                while !stop.get() do
+                while producersDone.getCount > 0 do
                     q.poll() match
                         case Maybe.Present(_) => discard(consumed.incrementAndGet())
                         case _                => Thread.`yield`()
@@ -120,16 +118,14 @@ class MpscUnsafeQueueTest extends UnsafeQueueBaseTest:
 
             (producers :+ consumer).foreach(_.start())
             start.countDown()
-            Thread.sleep(200)
-            stop.set(true)
-            (producers :+ consumer).foreach(_.join(10000))
+            (producers :+ consumer).foreach(_.join())
 
             var remaining = 0L
             while q.poll().isDefined do remaining += 1
 
             assert(
-                consumed.get() + remaining == offered.get(),
-                s"Capacity-2 data loss: offered=${offered.get()}, consumed=${consumed.get()}, remaining=$remaining"
+                consumed.get() + remaining == total,
+                s"Capacity-2 data loss: consumed=${consumed.get()}, remaining=$remaining, total=$total"
             )
         }
     }

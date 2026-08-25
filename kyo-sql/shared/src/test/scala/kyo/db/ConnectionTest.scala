@@ -255,7 +255,9 @@ class ConnectionTest extends Test:
     // anything about the socket at all. The cause has to survive.
     "openSocket carries the transport's own failure as the cause".timeout(30.seconds) in {
         // Port 1 on the loopback: privileged, never bound by a test, so the connect fails for a reason the transport names.
-        Abort.run[SqlException](Connection.openSocket("127.0.0.1", 1, _ => SqlConnectionClosedException("probe"))(_ => ())).map {
+        // `ownerClose` only runs on the success path, which a connect to port 1 never reaches.
+        val open = Connection.openSocket("127.0.0.1", 1, _ => SqlConnectionClosedException("probe"), (_: Unit) => ())(_ => ())
+        Abort.run[SqlException](open).map {
             case Result.Failure(e: SqlConnectionConnectFailedException) =>
                 assert(e.cause.isInstanceOf[kyo.net.NetException], s"expected the transport's NetException as the cause, got ${e.cause}")
                 assert(e.cause.getMessage != "connect refused", "the cause must be the transport's own failure, not a placeholder")

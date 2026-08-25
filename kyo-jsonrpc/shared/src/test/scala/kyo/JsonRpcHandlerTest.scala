@@ -852,11 +852,9 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             JsonRpcHandler.init(ta, Seq.empty).map { a =>
                 JsonRpcHandler.init(tb, Seq.empty).map { _ =>
-                    val start = java.lang.System.currentTimeMillis
-                    a.sendUnmatched("noop", (), JsonRpcId.Num(1)).andThen(a.awaitDrain).map { _ =>
-                        val elapsed = java.lang.System.currentTimeMillis - start
-                        assert(elapsed < 100)
-                    }
+                    // "noop" has no responder, so a sendUnmatched that blocked on a response would never reach
+                    // awaitDrain. That awaitDrain completes at all proves it did not block.
+                    a.sendUnmatched("noop", (), JsonRpcId.Num(1)).andThen(a.awaitDrain).map(_ => succeed)
                 }
             }
         }

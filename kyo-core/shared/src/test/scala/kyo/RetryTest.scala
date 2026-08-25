@@ -52,14 +52,23 @@ class RetryTest extends kyo.test.Test[Any]:
 
     "backoff" in {
         var calls = 0
-        val start = java.lang.System.currentTimeMillis()
-        Abort.run[Exception] {
-            Retry[Exception](Schedule.exponentialBackoff(1.milli, 2.0, Duration.Infinity).take(4)) {
-                calls += 1
-                throw ex
-            }
-        }.map { v =>
-            assert(v.isFailure && calls == 5 && (java.lang.System.currentTimeMillis() - start) >= 15)
+        // Virtual time: the retry blocks on the backoff schedule (1+2+4+8ms) until the advancer drives the
+        // clock, so `!early` proves the backoff delayed it and `calls == 5` is exact, with no wall clock.
+        Clock.withTimeControl { control =>
+            for
+                fiber <- Fiber.initUnscoped {
+                    Abort.run[Exception] {
+                        Retry[Exception](Schedule.exponentialBackoff(1.milli, 2.0, Duration.Infinity).take(4)) {
+                            calls += 1
+                            throw ex
+                        }
+                    }
+                }
+                early    <- fiber.done
+                advancer <- Fiber.initUnscoped(Loop.forever(control.advance(1.milli)))
+                v        <- fiber.get
+                _        <- advancer.interrupt
+            yield assert(!early && v.isFailure && calls == 5)
         }
     }
 

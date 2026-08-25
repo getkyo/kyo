@@ -302,6 +302,13 @@ object Clock:
           */
         def advance(duration: Duration, wallClockDelay: Duration): Unit < Async
 
+        /** Suspends until at least `count` sleep operations are registered and not yet triggered.
+          *
+          * A periodic task re-arms its next sleep only after `advance` triggers the current one and its body runs on another fiber. Fencing on
+          * the re-armed sleeper lets a test advance exactly one interval per tick, so the tick count is exact regardless of fiber interleaving.
+          */
+        private[kyo] def awaitPendingSleepers(count: Int): Unit < Async
+
     end TimeControl
 
     /** Runs an effect with a controlled Clock that allows manual time manipulation. This is primarily intended for testing scenarios where
@@ -328,17 +335,41 @@ object Clock:
                                 case class Task(deadline: Instant) extends IOPromise[Nothing, Unit < Any]
                                 val queue = new PriorityQueue[Task](using Ordering.fromLessThan((a, b) => b.deadline < a.deadline))
 
+                                // Test seam: a waiter installed by awaitPendingSleepers, completed by the next sleep enqueue.
+                                // Guarded by the queue monitor; the completion runs outside the lock, mirroring tick.
+                                var armWaiter: Maybe[IOPromise[Nothing, Unit < Any]] = Maybe.empty
+
                                 def now()(using AllowUnsafe) = current
 
                                 def nowMonotonic()(using AllowUnsafe) = current.toDuration
 
                                 def sleep(duration: Duration): Fiber.Unsafe[Unit, Any] =
                                     val task = new Task(current + duration)
-                                    queue.synchronized {
-                                        queue.enqueue(task)
-                                    }
+                                    val toSignal =
+                                        queue.synchronized {
+                                            queue.enqueue(task)
+                                            val w = armWaiter
+                                            armWaiter = Maybe.empty
+                                            w
+                                        }
+                                    toSignal.foreach(_.completeDiscard(Result.succeed(())))
                                     Promise.Unsafe.fromIOPromise(task)
                                 end sleep
+
+                                def awaitPendingSleepers(count: Int): Unit < Async =
+                                    Loop.foreach {
+                                        val waiter: Maybe[IOPromise[Nothing, Unit < Any]] =
+                                            queue.synchronized {
+                                                if queue.count(!_.done()) >= count then Maybe.empty
+                                                else
+                                                    val w = new IOPromise[Nothing, Unit < Any]()
+                                                    armWaiter = Present(w)
+                                                    Present(w)
+                                            }
+                                        waiter match
+                                            case Absent     => Loop.done
+                                            case Present(w) => Promise.Unsafe.fromIOPromise(w).safe.get.andThen(Loop.continue)
+                                    }
 
                                 def set(now: Instant) = set(now, 100.millis)
 
