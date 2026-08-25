@@ -12,24 +12,39 @@ set -uo pipefail
 #
 # JVM, JS, and Wasm run as three separate sbt processes (compile-main, then
 # compile-test, then run) so the driver never holds the whole compile heap while
-# the test phase forks. Native takes the same compile-upfront split and then links
-# each module exactly once, inside its own test session: it compiles main and test
-# (no link), runs the heavy modules isolated in a full-heap, CPU-capped driver via
-# `testKyo --only`, then runs the rest in the capped aggregate driver via
-# `testKyo --exclude`, under a crash-retry loop that tolerates libunwind shutdown
-# hangs and mid-RPC errno-104 resets. Linking must stay inside the test session and
-# must not be split into an upfront link: Scala Native's cross-invocation build-skip
-# is unreliable (scala-native #2514), so an upfront link in a separate sbt process
-# gets relinked from scratch by the test session, and the `native-settings` work-dir
-# prune (guarding #1821 disk pressure) has by then deleted the codegen cache, making
-# that second link a full re-codegen. One in-session link per module sidesteps both.
-# The strategy is derived from the platform; no caller selects it.
+# the test phase forks. Each of those processes chains its Scala passes in one
+# ordered command string, so one process covers the primary version and the 2.x
+# cross-builds.
 #
-# Reads CI, SBT_TASK_LIMIT, JAVA_OPTS, JVM_OPTS, NATIVE_HEAVY, and
-# NATIVE_LINK_CPUS from the environment; mutates none of them (the heavy --only
-# session appends -XX:ActiveProcessorCount when NATIVE_LINK_CPUS is set). The
-# caller (a CI workflow, or build.sh --env podman-ci) owns the environment, so this
-# one runner is correct in every environment.
+# Native runs a pool of fresh drivers over one module plan:
+#
+#   1. plan       one sbt process writes the selected modules to a file
+#   2. pre-link   each NATIVE_HEAVY module the plan selects, alone in its driver
+#   3. link pool  the plan in batches of NATIVE_LINK_BATCH modules
+#   4. test pool  the plan in batches of NATIVE_TEST_BATCH modules
+#   5. cross      the Scala 2.x cross-build modules
+#
+# Splitting the link out of the test session works only because every process in
+# the pool pins its Scala version (`--scala 3`, zero `++`), so each project resolves
+# to the same effective version everywhere and zinc's analysis and Scala Native's
+# "Build skipped" check both carry across the process boundary. The `native-settings`
+# work-dir prune (guarding #1821 disk pressure) keeps `build-checksum` and the linked
+# binary, which are the entire input to that check. A version-mismatched split, which
+# is what a `++` round trip used to produce, relinks from scratch instead: that is the
+# shape scala-native #2514 describes.
+#
+# A crash-retry loop wraps each test batch and the cross pass, tolerating libunwind
+# shutdown hangs and mid-RPC errno-104 resets but never a pass that stopped short of
+# its module list (see DONE_MARKER), and re-running through `testKyo --quick` so a
+# retry stays scoped to what did not pass. The strategy is derived from the platform;
+# no caller selects it.
+#
+# Reads CI, SBT_TASK_LIMIT, JAVA_OPTS, JVM_OPTS, NATIVE_HEAVY, NATIVE_SKIP,
+# NATIVE_LINK_CPUS, NATIVE_LINK_BATCH, and NATIVE_TEST_BATCH from the environment;
+# mutates none of them (the nativeLink invocations append -XX:ActiveProcessorCount
+# when NATIVE_LINK_CPUS is set). The caller (a CI workflow, or build.sh --env
+# podman-ci) owns the environment, so this one runner is correct in every
+# environment.
 
 PLATFORMS="JVM JS Native Wasm"
 ACTIONS="test testDiff compile link"
@@ -53,11 +68,12 @@ contains_word() {
 # call log and the JAVA_OPTS it inherited to a heap log, so each case asserts
 # the RECORDED CALLS or the RECORDED HEAP, not just the exit code: the
 # JVM/JS/Wasm three-phase split (compile-main, compile-test, run) on full AND
-# diff; the Native compile-upfront then single-link path (two compile phases, no
-# nativeLink, the heavy module isolated via --only ahead of the --exclude
-# aggregate); the platform-derived strategy; the exit-code mapping; and the
-# NATIVE_LINK_CPUS cap reaching the isolated heavy session but not the compiles
-# or the aggregate run.
+# diff; the Native plan/pre-link/link-pool/test-pool/cross flow with its batch
+# sizes and per-batch retry; the completion marker separating a finished pass
+# from a truncated one; NATIVE_SKIP reaching the plan and the cross pass; the
+# platform-derived strategy; the exit-code mapping; the resolution-retry
+# wrapper; and the NATIVE_LINK_CPUS cap reaching every link invocation and no
+# other process.
 if [ "${1:-}" = "--self-test" ]; then
     SELF="$0"
     PASS=0; FAIL=0; TOTAL=0
@@ -66,35 +82,65 @@ if [ "${1:-}" = "--self-test" ]; then
     HEAP="$SELFDIR/heap.log"
     trap 'rm -rf "$SELFDIR"' EXIT
 
+    # The modules the fake sbt writes when the runner asks it to plan; cases
+    # reassign it to shape the pools. FAKE_SKIP is the comma-separated base-name
+    # list the plan writer honors, so a NATIVE_SKIP case can assert that a
+    # skipped module never reaches a batch. PASS_BODY is a complete green pass:
+    # test output plus the completion marker the tolerance branches require.
+    FAKE_PLAN="kyo-dataNative kyo-preludeNative"
+    FAKE_SKIP=""
+    PASS_BODY='echo "Tests: succeeded 100, failed 0"; echo "[testKyo] completed"; exit 0'
+
     # Build a fake sbt whose body is $1; every call appends its full
     # argument string to CALLS and the JAVA_OPTS it inherited to HEAP, so an
     # assertion can read both the call sequence and the heap the sbt subprocess
-    # saw.
+    # saw. A --plan-file call is the planning process: it writes FAKE_PLAN minus
+    # anything FAKE_SKIP names to the requested path and exits without reaching
+    # the body, the way testKyo applies --exclude where selection happens.
     make_fake_sbt() {
         {
             printf '#!/usr/bin/env bash\n'
             printf 'printf "%%s\\n" "$*" >> "%s"\n' "$CALLS"
             printf 'printf "%%s\\n" "${JAVA_OPTS:-}" >> "%s"\n' "$HEAP"
+            printf 'all="$*"\n'
+            printf 'if [ "${all#*--plan-file }" != "$all" ]; then\n'
+            printf '    rest="${all#*--plan-file }"; path="${rest%%%% *}"\n'
+            printf '    : > "$path"\n'
+            printf '    for m in %s; do\n' "$FAKE_PLAN"
+            printf '        skipped=no\n'
+            printf '        for s in $(printf "%%s" "%s" | tr "," " "); do\n' "$FAKE_SKIP"
+            printf '            [ "$m" = "${s}Native" ] && skipped=yes\n'
+            printf '        done\n'
+            printf '        [ "$skipped" = no ] && printf "%%s\\n" "$m" >> "$path"\n'
+            printf '    done\n'
+            printf '    exit 0\n'
+            printf 'fi\n'
             printf '%s\n' "$1"
         } > "$SELFDIR/sbt"
         chmod +x "$SELFDIR/sbt"
     }
 
     # Run the real runner under the fake sbt. Sets CT_EXIT (the runner exit
-    # code) and leaves the recorded calls in CALLS for the assertion.
-    run_runner() {
-        local platform="$1" action="$2" body="$3"
+    # code) and leaves the recorded calls in CALLS for the assertion. Trailing
+    # VAR=value pairs enter the runner's environment.
+    run_runner_env() {
+        local body="$1" platform="$2" action="$3"; shift 3
         : > "$CALLS"; : > "$HEAP"
         make_fake_sbt "$body"
-        PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 RESOLVE_BACKOFF=0 \
+        env PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 RESOLVE_BACKOFF=0 "$@" \
             "$SELF" "$platform" "$action" >/dev/null 2>&1
         CT_EXIT=$?
+    }
+
+    run_runner() {  # run_runner <platform> <action> <body>
+        run_runner_env "$3" "$1" "$2"
     }
 
     # Assertion helpers, evaluated against CT_EXIT and CALLS.
     exit_is()      { [ "$CT_EXIT" = "$1" ]; }
     calls_count()  { [ "$(wc -l < "$CALLS" | tr -d ' ')" = "$1" ]; }
     call_nth_is()  { [ "$(sed -n "${1}p" "$CALLS")" = "$2" ]; }
+    call_nth_has() { sed -n "${1}p" "$CALLS" | grep -qF -- "$2"; }
     calls_have()   { grep -qF -- "$1" "$CALLS"; }
     calls_lack()   { ! grep -qF -- "$1" "$CALLS"; }
     heap_nth_has() { sed -n "${1}p" "$HEAP" | grep -qF -- "$2"; }
@@ -132,18 +178,6 @@ if [ "${1:-}" = "--self-test" ]; then
     then record ok "JS and Wasm take the same three-process split"
     else record no "JS and Wasm take the same three-process split"; fi
 
-    # 2b. The run-phase heap cap is applied to the out-of-JVM targets' run process and to nothing else:
-    # not the JVM run (its tests run in the driver), and not the compile phases.
-    run_runner JVM test 'exit 0'
-    jvm_uncapped=no
-    if call_nth_is 3 "testKyo --all JVM"; then jvm_uncapped=yes; fi
-    run_runner Native test 'echo "Tests: succeeded 1, failed 0"; exit 0'
-    if [ "$jvm_uncapped" = yes ] \
-       && calls_have "-J-Xmx6G testKyo --all Native" \
-       && calls_lack "-J-Xmx6G testKyo --phase"
-    then record ok "run-phase heap cap: out-of-JVM run only, never JVM or compile"
-    else record no "run-phase heap cap: out-of-JVM run only, never JVM or compile"; fi
-
     # 3. Phase-split fails fast on a compile-main failure.
     run_runner JVM test 'exit 1'
     if calls_count 1 && call_nth_is 1 "testKyo --phase compile-main --all JVM" && exit_is 1
@@ -164,100 +198,180 @@ if [ "${1:-}" = "--self-test" ]; then
     then record ok "compile action runs only the two compile phases"
     else record no "compile action runs only the two compile phases"; fi
 
-    # 6. Native compiles main+test upfront, then runs once, with no upfront link.
-    run_runner Native test 'case "$*" in *--phase*) exit 0;; esac; echo "Tests: succeeded 100, failed 0"; exit 0'
-    if calls_count 3 \
-       && call_nth_is 1 "testKyo --phase compile-main --all Native" \
-       && call_nth_is 2 "testKyo --phase compile-test --all Native" \
-       && call_nth_is 3 "-J-Xmx6G testKyo --all Native" \
-       && calls_lack "nativeLink" && exit_is 0
-    then record ok "Native compiles upfront then runs once, no upfront link"
-    else record no "Native compiles upfront then runs once, no upfront link"; fi
-
-    # 7. Native fails fast on a compile-main failure, before linking or running anything.
-    run_runner Native test 'case "$*" in *"--phase compile-main"*) exit 1;; esac; echo "Tests: succeeded 1, failed 0"; exit 0'
-    if calls_count 1 && call_nth_is 1 "testKyo --phase compile-main --all Native" && exit_is 1
-    then record ok "Native fails fast on a compile-main failure"
-    else record no "Native fails fast on a compile-main failure"; fi
-
-    # 8. NATIVE_HEAVY runs the heavy module isolated via --only, then the rest via --exclude; no link.
-    : > "$CALLS"; : > "$HEAP"; make_fake_sbt 'case "$*" in *--phase*) exit 0;; esac; echo "Tests: succeeded 100, failed 0"; exit 0'
-    PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 \
-        NATIVE_HEAVY="kyo-schema-tests" "$SELF" Native test >/dev/null 2>&1
-    CT_EXIT=$?
+    # 6. Native plans first, then links the plan in batches, before any test process, and never links
+    # the kyoNative aggregate (only the planned modules are linked at all).
+    run_runner Native test "$PASS_BODY"
     if calls_count 4 \
-       && call_nth_is 3 "testKyo --only kyo-schema-tests --all Native" \
-       && call_nth_is 4 "-J-Xmx6G testKyo --exclude kyo-schema-tests --all Native" \
-       && calls_lack "nativeLink" && exit_is 0
-    then record ok "NATIVE_HEAVY runs the heavy module via --only, then the rest via --exclude"
-    else record no "NATIVE_HEAVY runs the heavy module via --only, then the rest via --exclude"; fi
+       && call_nth_has 1 "testKyo --dry-run --plan-file" && call_nth_has 1 "--scala 3 --all Native" \
+       && call_nth_is 2 "testKyo --phase link --scala 3 --modules kyo-dataNative,kyo-preludeNative Native" \
+       && call_nth_is 3 "-J-Xmx6G testKyo --scala 3 --modules kyo-dataNative,kyo-preludeNative Native" \
+       && call_nth_is 4 "-J-Xmx6G testKyo --cross --all Native" \
+       && calls_lack "kyoNative/Test/nativeLink" && exit_is 0
+    then record ok "Native plans, then links the plan before any test process"
+    else record no "Native plans, then links the plan before any test process"; fi
 
-    # 8a. NATIVE_LINK_CPUS caps the isolated heavy --only session, never the compiles or the aggregate run.
-    : > "$CALLS"; : > "$HEAP"; make_fake_sbt 'case "$*" in *--phase*) exit 0;; esac; echo "Tests: succeeded 100, failed 0"; exit 0'
-    PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 \
-        NATIVE_HEAVY="kyo-schema-tests" NATIVE_LINK_CPUS=2 "$SELF" Native test >/dev/null 2>&1
-    CT_EXIT=$?
-    if ! heap_nth_has 1 "-XX:ActiveProcessorCount=2" && ! heap_nth_has 2 "-XX:ActiveProcessorCount=2" \
-       && heap_nth_has 3 "-XX:ActiveProcessorCount=2" && ! heap_nth_has 4 "-XX:ActiveProcessorCount=2" \
+    # 7. The Native test path never sends a compile phase: the plan's link batches compile what they
+    # link, so a separate upfront compile would be the duplicate work the pool exists to remove.
+    run_runner Native test "$PASS_BODY"
+    if calls_lack "--phase compile-main" && calls_lack "--phase compile-test"
+    then record ok "the Native test path never sends a compile phase"
+    else record no "the Native test path never sends a compile phase"; fi
+
+    # 8. The Native compile action is the compile phases and nothing else: no plan, no link, no run.
+    run_runner Native compile 'exit 0'
+    if calls_count 2 \
+       && call_nth_is 1 "testKyo --phase compile-main Native" \
+       && call_nth_is 2 "testKyo --phase compile-test Native" \
+       && calls_lack "--plan-file" && calls_lack "--phase link" && exit_is 0
+    then record ok "the Native compile action runs the two compile phases and nothing else"
+    else record no "the Native compile action runs the two compile phases and nothing else"; fi
+
+    # 9. A link-batch failure exits 1 before any test process.
+    run_runner Native test 'if [[ "$*" == *"--phase link"* ]]; then exit 3; fi
+'"$PASS_BODY"
+    if calls_count 2 && calls_lack "testKyo --scala 3 --modules" && calls_lack "--cross" && exit_is 1
+    then record ok "a Native link-batch failure exits 1 before any test process"
+    else record no "a Native link-batch failure exits 1 before any test process"; fi
+
+    # 10. The run-phase heap cap reaches the Native test batches and the cross pass and nothing else:
+    # not the plan, not the link batches, and not the JVM run (its tests run in the driver).
+    run_runner JVM test 'exit 0'
+    jvm_uncapped=no
+    if call_nth_is 3 "testKyo --all JVM"; then jvm_uncapped=yes; fi
+    run_runner Native test "$PASS_BODY"
+    if [ "$jvm_uncapped" = yes ] \
+       && calls_have "-J-Xmx6G testKyo --scala 3 --modules" \
+       && calls_have "-J-Xmx6G testKyo --cross" \
+       && calls_lack "-J-Xmx6G testKyo --dry-run" \
+       && calls_lack "-J-Xmx6G testKyo --phase link"
+    then record ok "run-phase heap cap: Native test batches and cross only, never plan, link, or JVM"
+    else record no "run-phase heap cap: Native test batches and cross only, never plan, link, or JVM"; fi
+
+    # 11. NATIVE_HEAVY pre-links a planned heavy module in its own process before the link pool.
+    FAKE_PLAN="kyo-schema-testsNative kyo-dataNative"
+    run_runner_env "$PASS_BODY" Native test NATIVE_HEAVY="kyo-schema-tests"
+    if call_nth_has 1 "--plan-file" \
+       && call_nth_is 2 "kyo-schema-testsNative/Test/nativeLink" \
+       && call_nth_is 3 "testKyo --phase link --scala 3 --modules kyo-schema-testsNative,kyo-dataNative Native" \
        && exit_is 0
-    then record ok "NATIVE_LINK_CPUS caps the heavy --only session, never the compiles or aggregate"
-    else record no "NATIVE_LINK_CPUS caps the heavy --only session, never the compiles or aggregate"; fi
+    then record ok "NATIVE_HEAVY pre-links a planned heavy module before the link pool"
+    else record no "NATIVE_HEAVY pre-links a planned heavy module before the link pool"; fi
 
-    # 8b. A heavy --only failure aborts before the --exclude aggregate run.
-    : > "$CALLS"; : > "$HEAP"
-    make_fake_sbt 'case "$*" in *--phase*) exit 0;; *--only*) echo "Tests: succeeded 5, failed 1"; exit 1;; esac; echo "Tests: succeeded 100, failed 0"; exit 0'
-    PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 \
-        NATIVE_HEAVY="kyo-schema-tests" "$SELF" Native test >/dev/null 2>&1
-    CT_EXIT=$?
-    if calls_count 3 && call_nth_is 3 "testKyo --only kyo-schema-tests --all Native" \
-       && calls_lack "--exclude" && exit_is 1
-    then record ok "a heavy --only failure aborts before the --exclude aggregate run"
-    else record no "a heavy --only failure aborts before the --exclude aggregate run"; fi
+    # 12. NATIVE_LINK_CPUS caps the pre-link and every link batch, and nothing else.
+    run_runner_env "$PASS_BODY" Native test NATIVE_HEAVY="kyo-schema-tests" NATIVE_LINK_CPUS=2
+    if ! heap_nth_has 1 "-XX:ActiveProcessorCount=2" \
+       && heap_nth_has 2 "-XX:ActiveProcessorCount=2" \
+       && heap_nth_has 3 "-XX:ActiveProcessorCount=2" \
+       && ! heap_nth_has 4 "-XX:ActiveProcessorCount=2" \
+       && ! heap_nth_has 5 "-XX:ActiveProcessorCount=2" && exit_is 0
+    then record ok "NATIVE_LINK_CPUS caps link invocations, never plan, test, or cross"
+    else record no "NATIVE_LINK_CPUS caps link invocations, never plan, test, or cross"; fi
 
-    # 8c. NATIVE_SKIP (with no heavy) threads --exclude into BOTH compile phases and the aggregate run, and
-    # runs no isolated --only session.
-    : > "$CALLS"; : > "$HEAP"; make_fake_sbt 'case "$*" in *--phase*) exit 0;; esac; echo "Tests: succeeded 100, failed 0"; exit 0'
-    PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 \
-        NATIVE_SKIP="kyo-aeron,kyo-sql" "$SELF" Native test >/dev/null 2>&1
-    CT_EXIT=$?
-    if calls_count 3 \
-       && call_nth_is 1 "testKyo --phase compile-main --exclude kyo-aeron,kyo-sql --all Native" \
-       && call_nth_is 2 "testKyo --phase compile-test --exclude kyo-aeron,kyo-sql --all Native" \
-       && call_nth_is 3 "-J-Xmx6G testKyo --exclude kyo-aeron,kyo-sql --all Native" \
+    # 13. A heavy pre-link failure aborts before the link pool and before any tests.
+    run_runner_env 'if [[ "$*" == *"kyo-schema-testsNative/Test/nativeLink"* ]]; then exit 3; fi
+'"$PASS_BODY" Native test NATIVE_HEAVY="kyo-schema-tests"
+    if calls_count 2 && call_nth_is 2 "kyo-schema-testsNative/Test/nativeLink" \
+       && calls_lack "--phase link" && calls_lack "testKyo --scala 3 --modules" && exit_is 1
+    then record ok "NATIVE_HEAVY pre-link failure aborts before the link pool and tests"
+    else record no "NATIVE_HEAVY pre-link failure aborts before the link pool and tests"; fi
+
+    # 14. A NATIVE_HEAVY module the plan does not select is never pre-linked.
+    FAKE_PLAN="kyo-dataNative kyo-preludeNative"
+    run_runner_env "$PASS_BODY" Native test NATIVE_HEAVY="kyo-schema-tests"
+    if calls_lack "kyo-schema-testsNative/Test/nativeLink" \
+       && call_nth_is 2 "testKyo --phase link --scala 3 --modules kyo-dataNative,kyo-preludeNative Native" \
+       && exit_is 0
+    then record ok "an unplanned NATIVE_HEAVY module is not pre-linked"
+    else record no "an unplanned NATIVE_HEAVY module is not pre-linked"; fi
+
+    # 15. NATIVE_SKIP reaches the two selecting invocations, the plan and the cross pass. The batches
+    # consume the already-filtered plan by exact module name, so they carry no --exclude of their own.
+    FAKE_PLAN="kyo-dataNative kyo-aeronNative kyo-preludeNative"
+    FAKE_SKIP="kyo-aeron"
+    run_runner_env "$PASS_BODY" Native test NATIVE_SKIP="kyo-aeron,kyo-sql"
+    if call_nth_has 1 "--exclude kyo-aeron,kyo-sql" \
+       && call_nth_is 4 "-J-Xmx6G testKyo --cross --exclude kyo-aeron,kyo-sql --all Native" \
+       && calls_lack "--modules kyo-dataNative,kyo-aeronNative" \
        && calls_lack "--only" && exit_is 0
-    then record ok "NATIVE_SKIP excludes in both compiles and the aggregate; no --only session"
-    else record no "NATIVE_SKIP excludes in both compiles and the aggregate; no --only session"; fi
+    then record ok "NATIVE_SKIP reaches the plan and the cross pass; batches carry no --exclude"
+    else record no "NATIVE_SKIP reaches the plan and the cross pass; batches carry no --exclude"; fi
 
-    # 8d. A heavy module that is also in NATIVE_SKIP is dropped from --only (an isolated session that selected
-    # nothing would fail on "no test output"); with no heavy left, the whole KEPT set runs in the aggregate,
-    # which excludes the skip set.
-    : > "$CALLS"; : > "$HEAP"; make_fake_sbt 'case "$*" in *--phase*) exit 0;; esac; echo "Tests: succeeded 100, failed 0"; exit 0'
-    PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 \
-        NATIVE_HEAVY="kyo-schema-tests" NATIVE_SKIP="kyo-schema-tests,kyo-aeron" "$SELF" Native test >/dev/null 2>&1
-    CT_EXIT=$?
-    if calls_count 3 && calls_lack "--only" \
-       && call_nth_is 3 "-J-Xmx6G testKyo --exclude kyo-schema-tests,kyo-aeron --all Native" \
-       && exit_is 0
-    then record ok "a heavy module also in NATIVE_SKIP is dropped from --only; aggregate excludes the skip set"
-    else record no "a heavy module also in NATIVE_SKIP is dropped from --only; aggregate excludes the skip set"; fi
+    # 16. A module NATIVE_SKIP names is absent from the plan, so neither pool ever sees it.
+    if call_nth_is 2 "testKyo --phase link --scala 3 --modules kyo-dataNative,kyo-preludeNative Native" \
+       && call_nth_is 3 "-J-Xmx6G testKyo --scala 3 --modules kyo-dataNative,kyo-preludeNative Native" \
+       && calls_lack "kyo-aeronNative"
+    then record ok "a skipped module is absent from the plan and from both pools"
+    else record no "a skipped module is absent from the plan and from both pools"; fi
+    FAKE_SKIP=""
 
-    # 9-20: Native crash-retry / check_log scenarios.
-    # The two compile phases must pass, so the body exits 0 for any --phase call and applies the
-    # scenario ($3) to the aggregate run.
+    # 17. An empty plan links and tests nothing, and still runs the cross pass (a diff can touch only
+    # cross-built modules).
+    FAKE_PLAN=""
+    run_runner Native test "$PASS_BODY"
+    if calls_count 2 && call_nth_is 2 "-J-Xmx6G testKyo --cross --all Native" && exit_is 0
+    then record ok "an empty plan skips both pools and still runs the cross pass"
+    else record no "an empty plan skips both pools and still runs the cross pass"; fi
+
+    # 18. NATIVE_LINK_BATCH partitions the plan into ordered link processes; the link action stops there.
+    FAKE_PLAN="m1Native m2Native m3Native m4Native m5Native m6Native m7Native"
+    run_runner_env 'exit 0' Native link NATIVE_LINK_BATCH=3
+    if calls_count 4 \
+       && call_nth_is 2 "testKyo --phase link --scala 3 --modules m1Native,m2Native,m3Native Native" \
+       && call_nth_is 3 "testKyo --phase link --scala 3 --modules m4Native,m5Native,m6Native Native" \
+       && call_nth_is 4 "testKyo --phase link --scala 3 --modules m7Native Native" && exit_is 0
+    then record ok "NATIVE_LINK_BATCH partitions the plan into ordered link processes"
+    else record no "NATIVE_LINK_BATCH partitions the plan into ordered link processes"; fi
+
+    # 19. NATIVE_TEST_BATCH partitions the test pool, and a crash retries only its own batch.
+    rm -f "$SELFDIR/crash"
+    run_runner_env 'if [[ "$*" == *"--phase link"* ]]; then exit 0; fi
+if [[ "$*" == *"m4Native,m5Native,m6Native"* ]] && [ ! -f "'"$SELFDIR"'/crash" ]; then
+    touch "'"$SELFDIR"'/crash"; exit 137
+fi
+'"$PASS_BODY" Native test NATIVE_TEST_BATCH=3
+    rm -f "$SELFDIR/crash"
+    if calls_count 7 \
+       && call_nth_is 3 "-J-Xmx6G testKyo --scala 3 --modules m1Native,m2Native,m3Native Native" \
+       && call_nth_is 4 "-J-Xmx6G testKyo --scala 3 --modules m4Native,m5Native,m6Native Native" \
+       && call_nth_is 5 "-J-Xmx6G testKyo --scala 3 --modules m4Native,m5Native,m6Native Native --quick" \
+       && call_nth_is 6 "-J-Xmx6G testKyo --scala 3 --modules m7Native Native" \
+       && call_nth_is 7 "-J-Xmx6G testKyo --cross --all Native" && exit_is 0
+    then record ok "a crashed test batch is retried alone, the other batches run once"
+    else record no "a crashed test batch is retried alone, the other batches run once"; fi
+
+    # 20. A clean Tests: tail without the completion marker is a truncated pass, not a green one: the
+    # regression guard for a Native job that started 10 of 58 modules, went quiet, and reported success.
+    FAKE_PLAN="kyo-dataNative"
+    run_runner Native test 'if [[ "$*" == *"--phase link"* ]]; then exit 0; fi
+echo "Tests: succeeded 100, failed 0"; exit 1'
+    if calls_count 4 \
+       && call_nth_is 3 "-J-Xmx6G testKyo --scala 3 --modules kyo-dataNative Native" \
+       && call_nth_is 4 "-J-Xmx6G testKyo --scala 3 --modules kyo-dataNative Native --quick" \
+       && calls_lack "--cross" && exit_is 1
+    then record ok "a clean tail without the completion marker is retried, then fails"
+    else record no "a clean tail without the completion marker is retried, then fails"; fi
+
+    # 21-42: Native crash-retry / check_log scenarios, applied to the test batches.
+    # The plan and link calls must pass, so the body branches on $*.
+    FAKE_PLAN="kyo-dataNative kyo-preludeNative"
     nat() {  # nat <name> <expected-exit> <run-body>
-        run_runner Native test "case \"\$*\" in *--phase*) exit 0;; esac; $3"
+        run_runner Native test "if [[ \"\$*\" == *'--phase link'* ]]; then exit 0; fi
+$3"
         if exit_is "$2"; then record ok "$1"; else record no "$1"; fi
     }
-    nat "clean Native pass exits 0"                 0 'echo "Tests: succeeded 100, failed 0"; exit 0'
+    nat "clean Native pass exits 0"                 0 "$PASS_BODY"
     nat "real Native test failures exit 1"          1 'echo "Tests: succeeded 90, failed 3"; exit 1'
-    nat "Native crash after a clean pass tolerated" 0 'echo "Tests: succeeded 100, failed 0"; exit 137'
+    nat "Native crash after a completed pass tolerated" 0 'echo "Tests: succeeded 100, failed 0"
+echo "[testKyo] completed"; exit 137'
     nat "Native kill before any tests exits 1"      1 'exit 137'
-    nat "Native hang after pass tolerated"          0 'echo "Tests: succeeded 163, failed 0"; sleep 600'
+    nat "Native hang after a completed pass tolerated" 0 'echo "Tests: succeeded 163, failed 0"
+echo "[testKyo] completed"; sleep 600'
     nat "Native hang after a failure exits 1"       1 'echo "Tests: succeeded 90, failed 2"; sleep 600'
     nat "Native hang with no output exits 1"        1 'sleep 600'
     nat "Native multi-suite all-pass exits 0"       0 'echo "Tests: succeeded 64, failed 0"
 echo "Tests: succeeded 45, failed 0"
-echo "Tests: succeeded 163, failed 0"; exit 0'
+echo "Tests: succeeded 163, failed 0"
+echo "[testKyo] completed"; exit 0'
     nat "Native multi-suite one failure exits 1"    1 'echo "Tests: succeeded 64, failed 0"
 echo "Tests: succeeded 45, failed 2"; exit 1'
     nat "Native kill mid-compile after pass exits 1" 1 'echo "Tests: succeeded 64, failed 0"
@@ -266,7 +380,7 @@ echo "[info] compiling 39 Scala sources to /target/test-classes ..."; sleep 600'
 echo "  - t *** FAILED *** (15 seconds)"
 echo "Exception in thread \"main\" java.net.SocketException: read failed, errno: 104"
 echo "    at scala.scalanative.testinterface.NativeRPC.loop(Unknown Source)"; exit 1
-else rm -f "'"$SELFDIR"'/rpc"; echo "Tests: succeeded 100, failed 0"; exit 0; fi'
+else rm -f "'"$SELFDIR"'/rpc"; echo "Tests: succeeded 100, failed 0"; echo "[testKyo] completed"; exit 0; fi'
     rm -f "$SELFDIR/rpc"
     nat "Native FAILED without rpc crash stays a failure" 1 'echo "  - t *** FAILED *** (15 seconds)"
 echo "Exception in thread \"main\" java.lang.RuntimeException: oops"; exit 1'
@@ -283,7 +397,7 @@ echo "[info] Optimizing (debug mode) (4000 ms)"; sleep 600'
     nat "Native teardown SIGABRT after a passing suite is retried then passes" 0 'if [ ! -f "'"$SELFDIR"'/abrt" ]; then touch "'"$SELFDIR"'/abrt"
 echo "Tests: succeeded 99, failed 0"
 echo "[warn] Process /x/kyo-jsonrpc-test finished with non-zero value 134 (0x86)"; exit 134
-else rm -f "'"$SELFDIR"'/abrt"; echo "Tests: succeeded 99, failed 0"; exit 0; fi'
+else rm -f "'"$SELFDIR"'/abrt"; echo "Tests: succeeded 99, failed 0"; echo "[testKyo] completed"; exit 0; fi'
     rm -f "$SELFDIR/abrt"
     nat "Native persistent teardown SIGABRT fails after retries" 1 'echo "Tests: succeeded 99, failed 0"
 echo "[warn] Process /x/kyo-jsonrpc-test finished with non-zero value 134 (0x86)"; exit 134'
@@ -294,7 +408,7 @@ echo "[warn] Process /x/kyo-jsonrpc-test finished with non-zero value 134 (0x86)
     nat "Native SIGSEGV (raw signal 11) after a passing suite is retried then passes" 0 'if [ ! -f "'"$SELFDIR"'/segv" ]; then touch "'"$SELFDIR"'/segv"
 echo "Tests: succeeded 75, failed 0"
 echo "[warn] Process /x/kyo-schema-yaml-test finished with non-zero value 11 (0xb)"; exit 11
-else rm -f "'"$SELFDIR"'/segv"; echo "Tests: succeeded 75, failed 0"; exit 0; fi'
+else rm -f "'"$SELFDIR"'/segv"; echo "Tests: succeeded 75, failed 0"; echo "[testKyo] completed"; exit 0; fi'
     rm -f "$SELFDIR/segv"
     nat "Native persistent SIGSEGV (raw signal 11) fails after retries" 1 'echo "Tests: succeeded 75, failed 0"
 echo "[warn] Process /x/kyo-schema-yaml-test finished with non-zero value 11 (0xb)"; exit 11'
@@ -303,6 +417,7 @@ echo "[warn] Process /x/kyo-schema-yaml-test finished with non-zero value 11 (0x
     # as SIGSEGV and pulled into the retry path. With the anchor it falls through to the post-suite
     # tolerance branch (exit 0); without the anchor it would be retried and, being persistent, fail as 1.
     nat "Native exit 116 (contains 11 but is not SIGSEGV) is not retried as a crash" 0 'echo "Tests: succeeded 75, failed 0"
+echo "[testKyo] completed"
 echo "[warn] Process /x/kyo-schema-yaml-test finished with non-zero value 116 (0x74)"; exit 116'
 
     # scala-native #4992 module-init null: a concurrent first-touch reader reads a null module instance,
@@ -313,7 +428,7 @@ echo "[warn] Process /x/kyo-schema-yaml-test finished with non-zero value 116 (0
 echo "Tests: succeeded 74, failed 1"
 echo "  - reads scalar primitives directly from event values *** FAILED ***"
 echo "java.lang.ClassCastException: null cannot be cast to scala.math.BigInt"; exit 1
-else rm -f "'"$SELFDIR"'/nullcast"; echo "Tests: succeeded 75, failed 0"; exit 0; fi'
+else rm -f "'"$SELFDIR"'/nullcast"; echo "Tests: succeeded 75, failed 0"; echo "[testKyo] completed"; exit 0; fi'
     rm -f "$SELFDIR/nullcast"
     nat "Native persistent module-init null fails after retries" 1 'echo "Tests: succeeded 74, failed 1"
 echo "java.lang.ClassCastException: null cannot be cast to scala.math.BigInt"; exit 1'
@@ -358,20 +473,23 @@ echo "Tests: succeeded 100, failed 0"; exit 0'
     then record ok "a real compile error is not retried (no resolution signature)"
     else record no "a real compile error is not retried (no resolution signature)"; fi
 
-    # A native crash-retry re-runs through testKyo --quick: attempt 1 is the full run, the retry appends
-    # --quick so only the tests sbt did not record as passed (the crashed suites) re-run.
+    # A native crash-retry re-runs its batch through testKyo --quick: attempt 1 is the full batch, the
+    # retry appends --quick so only the tests sbt did not record as passing (the crashed suites) re-run.
+    # The plan invocation must not pick the flag up, so the count is exactly one.
     rm -f "$SELFDIR/qk"
-    run_runner Native test 'case "$*" in *--phase*) exit 0;; esac
-if [ ! -f "'"$SELFDIR"'/qk" ]; then touch "'"$SELFDIR"'/qk"
+    run_runner Native test 'if [[ "$*" == *"--phase link"* ]]; then exit 0; fi
+if [[ "$*" == *--modules* ]] && [ ! -f "'"$SELFDIR"'/qk" ]; then touch "'"$SELFDIR"'/qk"
 echo "Tests: succeeded 99, failed 0"
 echo "[warn] Process /x/kyo-schema-yaml-test finished with non-zero value 134 (0x86)"; exit 134
-else rm -f "'"$SELFDIR"'/qk"; echo "Tests: succeeded 99, failed 0"; exit 0; fi'
+fi
+echo "Tests: succeeded 99, failed 0"; echo "[testKyo] completed"; exit 0'
     rm -f "$SELFDIR/qk"
-    if exit_is 0 && [ "$(grep -c -- '--quick' "$CALLS")" = 1 ] && tail -1 "$CALLS" | grep -q -- '--quick'
-    then record ok "native crash-retry re-runs through testKyo --quick; attempt 1 is the full run"
-    else record no "native crash-retry re-runs through testKyo --quick; attempt 1 is the full run"; fi
+    if exit_is 0 && [ "$(grep -c -- '--quick' "$CALLS")" = 1 ] \
+       && calls_have "testKyo --scala 3 --modules kyo-dataNative,kyo-preludeNative Native --quick"
+    then record ok "a crashed test batch re-runs through testKyo --quick; attempt 1 is the full batch"
+    else record no "a crashed test batch re-runs through testKyo --quick; attempt 1 is the full batch"; fi
 
-    # 21-22: argument validation exits 2 before any sbt.
+    # 47-48: argument validation exits 2 before any sbt.
     run_runner Frob test 'exit 0'
     if exit_is 2 && calls_count 0; then record ok "unknown platform exits 2 before any sbt"
     else record no "unknown platform exits 2 before any sbt"; fi
@@ -386,7 +504,7 @@ else rm -f "'"$SELFDIR"'/qk"; echo "Tests: succeeded 99, failed 0"; exit 0; fi'
 
     echo ""
     echo "Results: $PASS/$TOTAL passed, $FAIL failed"
-    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 39 ]
+    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 48 ]
     exit $?
 fi
 
@@ -411,31 +529,42 @@ POLL_INTERVAL=${POLL_INTERVAL:-10}
 RESOLVE_BACKOFF=${RESOLVE_BACKOFF:-20}
 
 # Space-separated module names (e.g. "kyo-schema-tests", which links every serialization format
-# into one binary) whose whole-program native-link optimize peak needs an isolated, full-heap sbt
-# driver. Each runs its link+test in its own process via `testKyo --only`, keeping that optimize off
-# the aggregate driver, which is heap-capped for fork headroom (run_phase_heap, below) and would OOM
-# under it. Measured before the format-module split: the then-monolithic kyo-schema alone peaked
-# ~7.7G RSS in a clean process vs ~9.9G stacked on an accumulated aggregate driver, which OOM-killed
-# the capped Native driver. The aggregate run excludes these via `testKyo --exclude`, so each is
-# linked and run exactly once. Empty by default; the CI workflow sets it for the Native target.
+# into one binary) whose SOLO native-link optimize peak needs an isolated, fresh-heap sbt driver.
+# Each is linked first in its own process, ahead of the link pool, so its whole-program optimize
+# never runs in a driver whose preceding modules have already filled the heap and metaspace.
+# Measured before the format-module split: the then-monolithic kyo-schema alone peaked ~7.7G RSS in
+# a clean process vs ~9.9G in an accumulated driver (the delta is that accumulation), which
+# OOM-killed the 8G-capped Native driver. nativeLink is disk-cached per project, so the link pool
+# skips a module already linked here, and a module the plan does not select is not pre-linked at
+# all. Empty by default; the CI workflow sets it for the Native target.
 NATIVE_HEAVY="${NATIVE_HEAVY:-}"
 
 # Space- or comma-separated base names dropped from the Native leg ENTIRELY (the app/integration tier:
 # database, messaging, container, browser/UI, and interop modules whose behavior is platform-shared and
 # already covered on JVM/JS). Native link is the dominant CI cost (~90s+ per module, one link each), so
-# excluding these keeps the Native rows viable. Applied as `--exclude` to every native phase (both
-# compile phases and the run), so an excluded module is neither compiled-for-test nor linked nor run. A
-# KEPT module that dependsOn an excluded one still compiles that dependency's main on demand, so the build
-# never breaks; only the excluded module's own tests stop running natively. Empty by default (so the
-# self-test and any standalone run keep the full set); the CI workflow sets it for the Native target.
+# excluding these keeps the Native rows viable. Applied as `--exclude` to the two invocations that do
+# their own selection, the plan and the cross pass, so an excluded module never enters the plan and is
+# therefore neither linked nor run; the batches consume the plan by exact module name and need no
+# filter of their own. A KEPT module that dependsOn an excluded one still compiles that dependency's
+# main on demand, so the build never breaks; only the excluded module's own tests stop running
+# natively. Empty by default (so the self-test and any standalone run keep the full set); the CI
+# workflow sets it for the Native target.
 NATIVE_SKIP="${NATIVE_SKIP:-}"
 
-# When non-empty, the isolated heavy-module native-link drivers run with
-# -XX:ActiveProcessorCount=$NATIVE_LINK_CPUS: the heavy `testKyo --only` link+test session (test path)
-# and the standalone pre-links (link action). The scala-native toolchain sizes its optimizer pool and
-# its concurrent clang forks from availableProcessors, and that fork fleet stacked on the driver heap
-# is what overcommits the 16GB CI runners. The compile phases and the aggregate run keep every CPU.
+# When non-empty, every nativeLink invocation runs with -XX:ActiveProcessorCount=$NATIVE_LINK_CPUS:
+# each link batch and each NATIVE_HEAVY pre-link. The scala-native toolchain sizes its optimizer pool
+# and its concurrent clang forks from availableProcessors, and that fork fleet stacked on the driver
+# heap is what overcommits the 16GB CI runners. Scoped to the link invocations only; the plan process,
+# the test batches, and the cross pass keep every CPU.
 NATIVE_LINK_CPUS="${NATIVE_LINK_CPUS:-}"
+
+# Modules per sbt process in the Native link and test pools. Each batch is a fresh driver, so no
+# driver carries more than this many modules of heap and metaspace; the measured accumulation delta
+# (+2.2G RSS) builds up around the tenth module of a shared driver. A crash then costs one batch
+# instead of the whole phase. Empty or 0 runs the whole plan in one process, which is the shape a
+# local run wants; the CI workflow sets both for the Native target.
+NATIVE_LINK_BATCH="${NATIVE_LINK_BATCH:-}"
+NATIVE_TEST_BATCH="${NATIVE_TEST_BATCH:-}"
 
 log() { echo "=== [ci-test] $(date '+%H:%M:%S') $* ==="; }
 
@@ -462,8 +591,8 @@ sbt_resolve_retry() {
     done
 }
 
-# sbt for a standalone native link invocation (the link action's pre-links and aggregate link):
-# applies the NATIVE_LINK_CPUS cap when set. The flag is added via the invocation's environment;
+# sbt for a native link invocation (a NATIVE_HEAVY pre-link or a link-pool batch): applies the
+# NATIVE_LINK_CPUS cap when set. The flag is added via the invocation's environment;
 # .jvmopts only overrides flags it duplicates, so a flag that appears only here always reaches the JVM.
 # Routes through sbt_resolve_retry so a transient resolution failure at link time is retried too.
 link_sbt() {
@@ -519,11 +648,45 @@ run_phase_split() {
     esac
 }
 
-# -- Native: compile upfront, then link+run each module once (heavy isolated), under crash-retry --
+# -- Native: plan once, then link and test that plan in a pool of fresh drivers, under crash-retry --
 LOG=""
 tail_pid=""
 watchdog_killed=0
-native_cleanup() { rm -f "$LOG"; [ -n "$tail_pid" ] && kill "$tail_pid" 2>/dev/null; }
+
+# The modules the run selects, computed once by the planning process and partitioned by both pools,
+# so link and test operate on the identical list and each batch's membership is in the runner log.
+PLAN="${RUNNER_TEMP:-/tmp}/kyo-native-plan.$$"
+
+# The line testKyo chains after each pass's tasks (project/TestKyo.scala). A pass that ends without
+# it stopped short of its module list.
+DONE_MARKER="[testKyo] completed"
+
+native_cleanup() { rm -f "$LOG" "$PLAN"; [ -n "$tail_pid" ] && kill "$tail_pid" 2>/dev/null; }
+
+# Join the non-empty fragments of a native testKyo command with single spaces, so an unset
+# NATIVE_SKIP or an empty run-arg leaves no stray double space in the command sbt receives.
+native_cmd() {
+    local out="" part
+    for part in "$@"; do [ -n "$part" ] && out="${out:+$out }$part"; done
+    printf '%s' "$out"
+}
+
+# Partition the plan into comma-separated module lists of at most $1 modules, one batch per line,
+# preserving plan order. An empty or non-positive size puts every module in one batch; an empty
+# plan yields no batches at all.
+plan_batches() {
+    grep -v '^[[:space:]]*$' "$PLAN" | awk -v n="${1:-0}" '
+        { mods[NR] = $0 }
+        END {
+            if (NR == 0) exit
+            if (n <= 0) n = NR
+            for (i = 1; i <= NR; i += n) {
+                line = mods[i]
+                for (j = i + 1; j < i + n && j <= NR; j++) line = line "," mods[j]
+                print line
+            }
+        }'
+}
 
 file_size() { wc -c < "$1" 2>/dev/null | tr -d ' '; }
 
@@ -544,7 +707,7 @@ crashed_native_runner() {
         && grep -qE 'scala\.scalanative\.testinterface\.NativeRPC' "$LOG"
 }
 
-# 0 pass, 1 real failure, 2 no test output. Called only after a nonzero exit or a watchdog kill.
+# 0 pass, 1 real failure, 2 no verdict (retry). Called only after a nonzero exit or a watchdog kill.
 check_log() {
     if crashed_native_runner; then
         log "native test runner crashed mid-RPC (errno 104): retrying"
@@ -575,13 +738,13 @@ check_log() {
     fi
     if grep -qE "Tests:" "$LOG"; then
         # At least one suite passed and none failed, yet the process still died (nonzero exit or a
-        # watchdog kill). That is tolerable only as a shutdown crash/hang AFTER the last suite, with
-        # nothing left running. Each module now links inside the run, so a later module's compile,
-        # link, or optimize, or a driver OOM-kill mid-optimize (exit 137), after an earlier module's
-        # Tests: line means real work was cut short. Scan the region after the last Tests: line for any
-        # work-in-progress marker and fail the run when one is present, on BOTH the watchdog and the
-        # self-exit paths. Bare "[error]" is deliberately excluded so a genuine post-suite shutdown
-        # crash stays tolerated.
+        # watchdog kill). That is tolerable only as a shutdown crash/hang AFTER the batch's last
+        # module, with nothing left running. Each module links inside its batch's session on a
+        # second run, so a later module's compile, link, or optimize, or a driver OOM-kill
+        # mid-optimize (exit 137), after an earlier module's Tests: line means real work was cut
+        # short. Scan the region after the last Tests: line for any work-in-progress marker and fail
+        # the run when one is present, on BOTH the watchdog and the self-exit paths. Bare "[error]"
+        # is deliberately excluded so a genuine post-suite shutdown crash stays tolerated.
         last_test_line=$(grep -nE "Tests:" "$LOG" | tail -1 | cut -d: -f1)
         post_test=""
         if [ -n "$last_test_line" ]; then
@@ -591,6 +754,15 @@ check_log() {
         fi
         if [ -n "$post_test" ]; then
             log "process died with work in progress after the last suite: $post_test"; return 1
+        fi
+        # A clean `Tests:` tail with nothing in progress only says "nothing has failed yet": it reads
+        # the same whether the pass ran out its module list or died at a module boundary with modules
+        # still queued, which is how a Native job that started 10 of 58 modules reported success. The
+        # marker is what separates the two, so without it the pass is truncated: retry, do not
+        # tolerate. The legitimate libunwind shutdown hang still passes, since the marker prints from
+        # the command chain before the JVM exits.
+        if ! grep -qF -- "$DONE_MARKER" "$LOG"; then
+            log "clean tests but no '$DONE_MARKER': the pass stopped short of its module list"; return 2
         fi
         if [ "$watchdog_killed" -eq 1 ]; then
             log "watchdog killed after the final Tests: line: tolerating shutdown hang"
@@ -602,27 +774,29 @@ check_log() {
     return 2
 }
 
-# Run one sbt invocation ("$@") under the stale-output watchdog and native crash-retry loop: a hung
-# process (no output for STALE_TIMEOUT) is killed and retried, a mid-RPC errno-104 reset is retried, a
-# clean pass or a real test failure returns immediately. Returns 0 (pass) or 1 (real failure, or no test
-# output after MAX_RETRIES). The caller sets the driver heap (a leading -J-Xmx arg) and any
-# NATIVE_LINK_CPUS cap via the environment; this loop just runs whatever sbt command it is handed.
-run_native_retry() {
-    LOG=$(mktemp)
-    trap native_cleanup EXIT
+# Run one sbt invocation ("$@", after the label) under the stale-output watchdog and native
+# crash-retry loop: a hung process (no output for STALE_TIMEOUT) is killed and retried, a mid-RPC
+# errno-104 reset is retried, a clean pass or a real test failure returns immediately. Returns 0
+# (pass) or 1 (real failure, or no verdict after MAX_RETRIES). Because it wraps ONE batch, a crash
+# costs that batch's modules rather than the whole test phase. The caller sets the driver heap (a
+# leading -J-Xmx arg) and any NATIVE_LINK_CPUS cap via the environment; this loop just runs whatever
+# sbt command it is handed.
+run_watched() {
+    local label="$1"; shift
+    local -a base=("$@")
     local attempt
     for attempt in $(seq 1 "$MAX_RETRIES"); do
-        # A retry re-runs through testKyo --quick so only the tests sbt did not record as passed run
-        # again: a crashed native suite is left unrecorded and re-runs, while every module that already
-        # passed is skipped, keeping the reroll off the whole module set the first attempt cleared (a
-        # per-process-startup crash rerolled across ~50 modules never converges). The testKyo command is
-        # the final positional arg; an optional -J-Xmx heap arg precedes it.
-        local -a cmd=("$@")
+        # A retry re-runs through testKyo --quick so only the tests sbt did not record as passing run
+        # again: a crashed native suite is left unrecorded and re-runs, while every module in the
+        # batch that already passed is skipped, keeping the reroll off the modules the first attempt
+        # cleared. The testKyo command is the final positional arg; an optional -J-Xmx heap arg
+        # precedes it.
+        local -a cmd=("${base[@]}")
         if [ "$attempt" -ge 2 ]; then
             local li=$(( ${#cmd[@]} - 1 ))
             case "${cmd[$li]}" in *testKyo*) cmd[$li]="${cmd[$li]} --quick" ;; esac
         fi
-        log "attempt $attempt/$MAX_RETRIES running: sbt ${cmd[*]}"
+        log "attempt $attempt/$MAX_RETRIES $label: sbt ${cmd[*]}"
         : > "$LOG"; watchdog_killed=0
         if command -v setsid >/dev/null 2>&1; then
             setsid sbt "${cmd[@]}" >> "$LOG" 2>&1 &
@@ -650,97 +824,71 @@ run_native_retry() {
         done
         wait "$sbt_pid" 2>/dev/null; exit_code=$?
         kill "$tail_pid" 2>/dev/null; wait "$tail_pid" 2>/dev/null; tail_pid=""
-        if [ "$exit_code" -eq 0 ]; then log "tests passed"; return 0; fi
+        if [ "$exit_code" -eq 0 ]; then log "$label passed"; return 0; fi
         check_log; rc=$?
         [ "$rc" -le 1 ] && return "$rc"
-        log "no test output: retrying..."
+        log "no verdict from $label: retrying..."
     done
-    log "FAILED: no test output after $MAX_RETRIES attempts"
+    log "FAILED: $label produced no verdict after $MAX_RETRIES attempts"
     return 1
-}
-
-# Assemble a native `testKyo` command with no stray double-spaces, folding NATIVE_SKIP into the exclude.
-# Args: phase(or "")  only_csv(or "")  extra_exclude_csv(or "")  skip_csv(or "")  run_arg(or "").
-# With an empty skip and extra the output matches the pre-NATIVE_SKIP form for the `test` action (a non-empty
-# run-arg), so the self-test's exact-match assertions still hold; the empty-arg compile/testDiff actions collapse
-# what used to be a double space to a single one, which sbt ignores.
-native_testkyo() {
-    local phase="$1" only="$2" extra="$3" skip="$4" arg="$5" excl cmd="testKyo"
-    [ -n "$phase" ] && cmd="$cmd --phase $phase"
-    [ -n "$only" ]  && cmd="$cmd --only $only"
-    excl="$extra"; [ -n "$skip" ] && excl="${extra:+$extra,}$skip"
-    [ -n "$excl" ]  && cmd="$cmd --exclude $excl"
-    [ -n "$arg" ]   && cmd="$cmd $arg"
-    printf '%s Native' "$cmd"
 }
 
 run_native() {
     local arg; arg=$(run_arg)
 
-    # Comma-separated base names to drop from every native phase (empty by default; CI sets NATIVE_SKIP).
-    local skip_csv; skip_csv=$(printf '%s' "$NATIVE_SKIP" | tr -s ', ' ',' | sed 's/^,//; s/,$//')
+    # Comma-separated base names to drop from the Native leg (empty by default; CI sets NATIVE_SKIP).
+    # Only the two invocations that select for themselves, the plan and the cross pass, take it.
+    local skip_csv skip_flag
+    skip_csv=$(printf '%s' "$NATIVE_SKIP" | tr -s ', ' ',' | sed 's/^,//; s/,$//')
+    skip_flag=""; [ -n "$skip_csv" ] && skip_flag="--exclude $skip_csv"
 
-    # compile: compile main and test only, no link, no run.
+    # compile: compile main and test only, no plan, no link, no run.
     if [ "$ACTION" = "compile" ]; then
-        sbt_resolve_retry "$(native_testkyo compile-main '' '' "$skip_csv" "$arg")" || return $?
-        sbt_resolve_retry "$(native_testkyo compile-test '' '' "$skip_csv" "$arg")" || return $?
+        sbt_resolve_retry "$(native_cmd 'testKyo --phase compile-main' "$skip_flag" "$arg" Native)" || return $?
+        sbt_resolve_retry "$(native_cmd 'testKyo --phase compile-test' "$skip_flag" "$arg" Native)" || return $?
         return 0
     fi
 
-    # link: compile + a standalone aggregate link, no run. This is the local/standalone
-    # link-validation action (build.sh); CI's Native path is the 'test' action below, which links
-    # inside the test session instead. NATIVE_HEAVY still gets its own isolated driver here.
-    if [ "$ACTION" = "link" ]; then
-        for heavy in $NATIVE_HEAVY; do
+    trap native_cleanup EXIT
+
+    # One selection for the whole run: the shell partitions this file, so both pools work the
+    # identical module list and each batch's membership lands in the runner log.
+    local plan_cmd; plan_cmd=$(native_cmd "testKyo --dry-run --plan-file $PLAN" "$skip_flag" '--scala 3' "$arg" Native)
+    log "planning native modules: sbt $plan_cmd"
+    sbt_resolve_retry "$plan_cmd" || { log "native planning failed"; return 1; }
+    if [ ! -f "$PLAN" ]; then
+        log "native planning wrote no plan file ($PLAN)"; return 1
+    fi
+    log "plan: $(tr '\n' ' ' < "$PLAN")"
+
+    local heavy
+    for heavy in $NATIVE_HEAVY; do
+        if grep -qxF -- "${heavy}Native" "$PLAN"; then
             log "pre-linking heavy native module in an isolated driver: sbt ${heavy}Native/Test/nativeLink"
             link_sbt "${heavy}Native/Test/nativeLink" || { log "native pre-link of $heavy failed"; return 1; }
-        done
-        log "linking native test binaries: sbt kyoNative/Test/nativeLink"
-        link_sbt "kyoNative/Test/nativeLink" || { log "native linking failed"; return 1; }
+        fi
+    done
+
+    local batch
+    for batch in $(plan_batches "$NATIVE_LINK_BATCH"); do
+        log "linking native test binaries: sbt testKyo --phase link --scala 3 --modules $batch Native"
+        link_sbt "testKyo --phase link --scala 3 --modules $batch Native" \
+            || { log "native linking failed for $batch"; return 1; }
+    done
+    if [ "$ACTION" = "link" ]; then
         log "link complete"; return 0
     fi
 
-    # test / testDiff: single-link. Compile upfront (no link) so a compile error fails fast, then run
-    # the heavy modules isolated and the rest in the aggregate. Each module links exactly once, inside
-    # its test session (see the file header on scala-native #2514 / #1822).
-    sbt_resolve_retry "$(native_testkyo compile-main '' '' "$skip_csv" "$arg")" || return $?
-    sbt_resolve_retry "$(native_testkyo compile-test '' '' "$skip_csv" "$arg")" || return $?
-
-    # Comma-separated base names for the --only / --exclude split (NATIVE_HEAVY is space-separated).
-    local heavy_csv; heavy_csv=$(printf '%s' "$NATIVE_HEAVY" | tr -s ' ' ',' | sed 's/^,//; s/,$//')
-    # Drop any heavy module that is also in NATIVE_SKIP: a `--only` session that selected nothing would make
-    # run_native_retry fail on "no test output". After the drop an all-skipped heavy leaves heavy_csv empty and
-    # the `--only` session is skipped, so the whole KEPT set runs in the aggregate.
-    if [ -n "$heavy_csv" ] && [ -n "$skip_csv" ]; then
-        local kept_heavy="" h
-        for h in $(printf '%s' "$heavy_csv" | tr ',' ' '); do
-            case ",$skip_csv," in *",$h,"*) : ;; *) kept_heavy="${kept_heavy:+$kept_heavy,}$h" ;; esac
-        done
-        heavy_csv="$kept_heavy"
-    fi
-    if [ -n "$heavy_csv" ]; then
-        # Heavy modules: link+run in their own full-heap driver (the .jvmopts 12G, uncapped) so the
-        # whole-program optimize does not stack on the aggregate's accumulated heap, CPU-capped so the
-        # clang fork fleet does not overcommit the runner. --only is diff-gated by testKyo, so in a diff
-        # run the heavy runs only when it is actually affected. A heavy module that is also in NATIVE_SKIP
-        # is excluded here, so its --only session runs nothing.
-        local heavy_cmd; heavy_cmd=$(native_testkyo '' "$heavy_csv" '' "$skip_csv" "$arg")
-        log "linking+running heavy native modules isolated: sbt $heavy_cmd"
-        (
-            if [ -n "$NATIVE_LINK_CPUS" ]; then
-                export JAVA_OPTS="${JAVA_OPTS:-} -XX:ActiveProcessorCount=$NATIVE_LINK_CPUS"
-                export JVM_OPTS="${JVM_OPTS:-} -XX:ActiveProcessorCount=$NATIVE_LINK_CPUS"
-            fi
-            run_native_retry "$heavy_cmd"
-        ) || return $?
-        # The rest: the run-phase heap cap keeps headroom for the podman/chrome forks the container and
-        # browser modules spawn; every heavy module (and every skipped module) is excluded here.
-        local rest_cmd; rest_cmd=$(native_testkyo '' '' "$heavy_csv" "$skip_csv" "$arg")
-        log "linking+running remaining native modules: sbt $rest_cmd"
-        run_native_retry $(run_phase_heap) "$rest_cmd"
-    else
-        run_native_retry $(run_phase_heap) "$(native_testkyo '' '' '' "$skip_csv" "$arg")"
-    fi
+    LOG=$(mktemp)
+    # The run-phase heap cap keeps headroom for the podman/chrome forks the container and browser
+    # modules spawn; the plan and the links above run at the full .jvmopts heap.
+    for batch in $(plan_batches "$NATIVE_TEST_BATCH"); do
+        run_watched "test batch $batch" $(run_phase_heap) "testKyo --scala 3 --modules $batch Native" || return 1
+    done
+    # The cross-build modules select themselves per Scala 2.x version, so they are outside the plan
+    # and outside both pools.
+    run_watched "cross pass" $(run_phase_heap) "$(native_cmd 'testKyo --cross' "$skip_flag" "$arg" Native)" || return 1
+    return 0
 }
 
 # -- strategy derivation: the platform decides, never the caller --
