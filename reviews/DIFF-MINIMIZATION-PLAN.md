@@ -39,6 +39,10 @@ restoration, and owner-ruled API restorations are applied without asking.
   platform-varying cells are settled this session.
 - kyo-kernel tests extend scalatest directly as an interim until kyo-test migrates to the new
   kernel (ship-list item); the textual delta collapses then and is not chased now.
+- Abort acceptance moved after the region (done-clause re-raise of unaccepted errors; kernel2
+  deliberately has no dispatch accept filter). Per the migration ledger.
+- Loop-family handler clauses are answer-style everywhere (the clause answers through the
+  Loop outcome instead of applying a passed continuation). Per the migration ledger.
 
 ## Checklist: every changed file (diff line count in parentheses)
 
@@ -121,18 +125,19 @@ the whole diff is the ruled swap itself.
 - [ ] (196) CONTRIBUTING.md; (743) README.md - rewrite for the new kernel is expected; verify
 
 ### kyo-prelude
-- [ ] (54) Abort.scala
-- [ ] (31) Batch.scala
-- [ ] (39) Check.scala
-- [ ] (34) Choice.scala
+- [x] (54) Abort.scala - acceptance-after-region migration (register), design comment; no alignable residue
+- [x] (31) Batch.scala - handleCont + Arrow continuation type (register); new design comment kept
+- [x] (39) Check.scala - handleCont/handleLoopState/answer-style (register)
+- [x] (34) Choice.scala - handleCont + cont(_) eta form (register); Debug import removal (flagged)
 - [ ] (102) Emit.scala
 - [ ] (201) Local.scala - reshaped by design (fork/join strategies); restore old docs
-- [ ] (12) Memo.scala
+- [x] (12) Memo.scala - register-covered renames only
 - [ ] (115) Pipe.scala
-- [ ] (44) Poll.scala
+- [x] (44) Poll.scala - handleLoopState/answer-style (register); doc reword matches new
+  continuation shape, kept
 - [ ] (84) Sink.scala
-- [ ] (572) Stream.scala - biggest prelude delta; classify hunk by hunk
-- [ ] (27) Var.scala
+- [x] (572) Stream.scala - answer-style loop clauses + handleCont renames (register); Debug import removal (flagged)
+- [x] (27) Var.scala - register-covered renames only
 - [ ] (130) debug/Debug.scala - Debug was deleted-then-reworked per ledger; classify
 - [ ] (91) ChoiceTest.scala; (53) EmitTest.scala; (64) LocalTest.scala; (235) DebugTest.scala
 
@@ -151,8 +156,9 @@ the whole diff is the ruled swap itself.
   (13) StreamCoreExtensionsTest.scala; (36) SyncTest.scala; (203) IOTaskTest.scala
 
 ### kyo-data
-- [ ] (36) Chunk.scala; (30) Span.scala; (17) data.scala - classify; flag API additions
-- [ ] (62) ChunkTest.scala
+- [x] (36) Chunk.scala; (30) Span.scala - orphaned updated additions FLAGGED (see queue);
+  data.scala reverted to main (zero diff, bug.exception unused)
+- [x] (62) ChunkTest.scala - updated + toIndexed test additions; see queue notes
 - [x] (45) SpanTest.scala - session fix (interceptThrown), ruled
 
 ### kyo-combinators (uniform small diffs; classify one, apply the reading to all)
@@ -194,4 +200,17 @@ optimization-candidates/, backlog-sections/, .claude/ trees.
   Ruling needed: rebuild Debug on the Debugger seam before ship, or ship without it?
 - kyo-slack, kyo-workers, kyo-zio, kyo-direct, kyo-jsonrpc, kyo-scheduler diffs: not traceable
   to any ruling this session knows; classification pending.
+- FLAG: Chunk.updated and Span.updated are ORPHANED public API additions. Both were added for
+  the kernel's Handlers.updated (commit 770ee98b04); that structure no longer exists in the
+  current Stack design and neither method has a single caller left anywhere in the repo (tests
+  aside). Chunk's is an efficiency override of the inherited Seq.updated refining the return
+  type to Chunk[B]; Span's is a genuinely new extension method. Recommendation: revert both
+  (plus SpanTest's updated block; ChunkTest's updated block still compiles and passes against
+  the inherited Seq.updated, so it can stay as coverage). Awaiting ruling: revert or keep as
+  deliberate API.
+- RESOLVED by revert: bug.exception in kyo-data/data.scala (private[kyo], not public API) lost
+  its last caller when Eval/kernel.scala were minimized back to bug.failTag; reverted data.scala
+  to main verbatim (zero diff).
+- NOTE: ChunkTest gains a toIndexed test block covering API that already exists on main; kept
+  as meaningful coverage, listed here for visibility.
 - (append here as the pass proceeds)
