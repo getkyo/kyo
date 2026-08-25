@@ -13,7 +13,6 @@ import kyo.Result
 import kyo.Tag
 import kyo.bug
 import kyo.discard
-import kyo.failTag
 import kyo.kernel.*
 import kyo.kernel.Loop.Outcome
 import kyo.kernel.internal.Handler.HandlerCont
@@ -138,18 +137,15 @@ object Eval:
 
     private def unhandled(kyo: Suspend[IX, OX, EX, CX, AX, SX], stack: Stack): Nothing =
         // the row rules this out for both entry points: a slice takes `A < Any` as well, so an operation
-        // reaching here has no handler anywhere and never will. The failure goes through `bug.failTag`;
-        // the catch attaches the effect trace before rethrowing. Rendering the node in the message can
+        // reaching here has no handler anywhere and never will. The exception is constructed rather than
+        // thrown so the effect trace attaches before the one throw. Rendering the node in the message can
         // itself throw (a frame that cannot be read), and describing a failure must never replace the
-        // failure being described, so a non-fatal render failure falls back to a message without the node
-        val ex =
-            try bug.failTag(kyo.asInstanceOf[Any < Any], Tag[Any])
-            catch
-                case ex: bug.KyoBugException => ex
-                case ex: Throwable if NonFatal(ex) =>
-                    try bug(s"Unexpected pending effect while handling ${Tag[Any].show}")
-                    catch case ex: bug.KyoBugException => ex
-        attachThrow(ex, kyo, Arrow.id[Any], stack)
+        // failure being described, so a non-fatal render failure falls back to the tag alone
+        val prefix = s"Unexpected pending effect while handling ${Tag[Any].show}"
+        val msg =
+            try prefix + ": " + kyo
+            catch case ex if NonFatal(ex) => prefix
+        attachThrow(bug.exception(msg), kyo, Arrow.id[Any], stack)
     end unhandled
 
     /** The first link a delivered value reaches: a chain delivers through its head, a folded run through its
