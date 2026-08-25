@@ -7,7 +7,7 @@ import kyo.kernel.*
 import kyo.kernel.internal.Eval
 import org.scalatest.freespec.AnyFreeSpec
 
-/** The public inline surface, exercised from outside package `kyo`.
+/** The kernel's public surface, exercised from outside package `kyo`: suspension, transformation, and handling for every entry point.
   *
   * Every other kernel test is in package `kyo`, so none of them can observe what a call site outside it sees, and two failures have
   * already reached that blind spot. An inline body is re-typechecked where it expands, so a `private[kyo]` name it selects qualified does
@@ -25,7 +25,7 @@ import org.scalatest.freespec.AnyFreeSpec
   * discarded result is bound to `val _`. And a `Loop` clause under a region ascribes its resumed value (`1: Int < Any`), because the
   * clause answers at the region's row rather than the successor's.
   */
-class PendingExpansionSiteTest extends AnyFreeSpec:
+class KernelTest extends AnyFreeSpec:
 
     sealed trait Ask   extends ArrowEffect[Const[Unit], Const[Int]]
     sealed trait Say   extends ArrowEffect[Const[String], Const[Unit]]
@@ -544,5 +544,87 @@ class PendingExpansionSiteTest extends AnyFreeSpec:
             val r = Eval(answer(Kyo.groupMap(Seq(1, 2, 3))(x => ask.map(a => x % (a + 1)))(x => ask.map(a => x * 10 * a))))
             assert(r == Map(1 -> Seq(10, 30), 0 -> Seq(20)))
         }
+
+        "filterKeys" in {
+            val r = Eval(answer(Kyo.filterKeys(Map("a" -> 1, "b" -> 2))((k: String) => ask.map(a => k.length == a))))
+            assert(r == Map("a" -> 1, "b" -> 2))
+        }
+
+        "fill" in {
+            val r = Eval(answer(Kyo.fill(3)(ask)))
+            assert(r == Chunk(1, 1, 1))
+        }
+
+        "zip" in {
+            val r = Eval(answer(Kyo.zip(ask, ask.map(_ + 1), ask.map(_ + 2))))
+            assert(r == (1, 2, 3))
+        }
+
+        "when with both branches" in {
+            val r = Eval(answer(ask.map(a => Kyo.when(a == 1)("yes", "no"))))
+            assert(r == "yes")
+        }
+
+        "when with one branch" in {
+            assert(Eval(answer(Kyo.when(true)(ask))) == Maybe(1))
+            assert(Eval(answer(Kyo.when(false)(ask))) == Maybe.empty)
+        }
+
+        "unless" in {
+            assert(Eval(answer(Kyo.unless(true)(ask))) == Maybe.empty)
+            assert(Eval(answer(Kyo.unless(false)(ask))) == Maybe(1))
+        }
     }
-end PendingExpansionSiteTest
+
+    "Isolate" - {
+
+        def level: Int < Level = ContextEffect.suspend(Tag[Level])
+
+        "derive for a context effect and run" in {
+            val isolate = Isolate.derive[Level, Any, Any]
+            val r       = ContextEffect.handle(Tag[Level], 3)(isolate.run(level.map(_ + 1)))
+            assert(Eval(r) == 4)
+        }
+
+        "summons implicitly" in {
+            val isolate = Isolate[Level, Any, Level]
+            assert(Eval(ContextEffect.handle(Tag[Level], 2)(isolate.run(level))) == 2)
+        }
+
+        "nest and flatten" in {
+            val isolate = Isolate.derive[Level, Any, Level]
+            val nested  = isolate.nest(level.map(_ * 10))
+            assert(Eval(ContextEffect.handle(Tag[Level], 5)(nested.flatten)) == 50)
+        }
+
+        "use provides the isolate as a given" in {
+            val r = Isolate.derive[Level, Any, Any].use {
+                summon[Isolate[Level, Any, Any]].run(level)
+            }
+            assert(Eval(ContextEffect.handle(Tag[Level], 8)(r)) == 8)
+        }
+
+        "andThen composes" in {
+            sealed trait Level2 extends ContextEffect[Int]
+            val isolate = Isolate.derive[Level, Any, Any].andThen(Isolate.derive[Level2, Any, Any])
+            val v       = level.map(a => ContextEffect.suspend(Tag[Level2]).map(_ + a))
+            val r       = ContextEffect.handle(Tag[Level], 1)(ContextEffect.handle(Tag[Level2], 10)(isolate.run(v)))
+            assert(Eval(r) == 11)
+        }
+    }
+
+    "context binding edges" - {
+
+        "a fork strategy is accepted at the handle site" in {
+            val v = ContextEffect.suspend(Tag[Level])
+            val r = ContextEffect.handle(Tag[Level], 7, identity, fork = l => Maybe(l + 1))(v)
+            assert(Eval(r) == 7)
+        }
+
+        "a join strategy is accepted at the handle site" in {
+            val v = ContextEffect.suspend(Tag[Level])
+            val r = ContextEffect.handle(Tag[Level], 7, identity, join = (held, _) => held)(v)
+            assert(Eval(r) == 7)
+        }
+    }
+end KernelTest

@@ -271,14 +271,10 @@ optimization-candidates/, backlog-sections/, .claude/ trees.
   mention are cleaned up; the combinators/README fallout stands as-is.
 - kyo-slack, kyo-workers, kyo-zio, kyo-direct, kyo-jsonrpc, kyo-scheduler diffs: not traceable
   to any ruling this session knows; classification pending.
-- FLAG: Chunk.updated and Span.updated are ORPHANED public API additions. Both were added for
-  the kernel's Handlers.updated (commit 770ee98b04); that structure no longer exists in the
-  current Stack design and neither method has a single caller left anywhere in the repo (tests
-  aside). Chunk's is an efficiency override of the inherited Seq.updated refining the return
-  type to Chunk[B]; Span's is a genuinely new extension method. Recommendation: revert both
-  (plus SpanTest's updated block; ChunkTest's updated block still compiles and passes against
-  the inherited Seq.updated, so it can stay as coverage). Awaiting ruling: revert or keep as
-  deliberate API.
+- RESOLVED by ruling: Chunk.updated and Span.updated stay. Chunk's is a performance override
+  of the inherited Seq.updated (constant-time last-element relink or one flat copy, replacing
+  the iterator-plus-builder default); Span's is the same operation for the array-backed type.
+  Both are tested; the original kernel consumer is gone but the API is kept on its own merit.
 - REVISED: bug.exception in kyo-data/data.scala is restored. Its designed caller is Eval's
   unhandled path, which must construct the failure, attach the effect trace, and throw once
   (the interim failTag-based form was throw-then-catch and was rejected). Consequence: the
@@ -287,6 +283,12 @@ optimization-candidates/, backlog-sections/, .claude/ trees.
   failTag as main-verbatim surface, or drop it (breaks kernel.scala zero-diff).
 - NOTE: ChunkTest gains a toIndexed test block covering API that already exists on main; kept
   as meaningful coverage, listed here for visibility.
+- RESOLVED by ruling: the outside-package suite stays, renamed outsidekyo.KernelTest (file
+  prefix matches kernel.scala, the module facade), and extended to represent the full effect
+  cycle from an external call site: the Isolate surface (derive, implicit summon under the
+  Restore <: Remove bound, nest+flatten, use, andThen), the remaining builder combinators
+  (fill, zip, when, unless, filterKeys), and the context binding fork/join edge parameters.
+  91 tests.
 - RESOLVED by ruling: Emit.runFirst and Poll.runFirst are now private[kyo]. The Arrow shape
   stays (internal surface); the StreamCompression/ZStreams/EmitTest ripple stands as-is. All
   callers (StreamCompression, ZStreams, Actor, Stream, tests) are in package kyo.
