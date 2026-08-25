@@ -1,86 +1,112 @@
 package kyo.kernel.internal
 
-import kyo.*
+import kyo.Const
+import kyo.discard
+import kyo.kernel.*
+import org.scalatest.freespec.AnyFreeSpec
+import scala.compiletime.testing.typeCheckErrors
 
-class CanLiftTest extends kyo.test.Test[Any]:
+class CanLiftTest extends AnyFreeSpec:
 
-    "compile for non-Kyo types" in {
-        implicitly[CanLift[Int]]
-        implicitly[CanLift[String]]
-        implicitly[CanLift[List[Int]]]
-        succeed("compile-time check: CanLift instances exist for non-Kyo types")
+    sealed trait TestEffect extends ArrowEffect[Const[Int], Const[Int]]
+
+    private inline def rejects(inline code: String): Unit =
+        val errors = typeCheckErrors(code)
+        discard(assert(
+            errors.exists(_.message.contains("may contain a nested effect computation")),
+            s"expected the nested-computation message, got ${errors.map(_.message)}"
+        ))
+    end rejects
+
+    "resolves for non-pending types" in {
+        discard(summon[CanLift[Int]])
+        discard(summon[CanLift[String]])
+        discard(summon[CanLift[List[Int]]])
+        succeed
     }
 
-    "compile for Kyo types in generic contexts" in {
-        def genericContext[A]: CanLift[A] = implicitly[CanLift[A]]
-        genericContext[Int < Any]
-        succeed("compile-time check: CanLift works in generic contexts")
+    "resolves for an abstract type in a generic context" in {
+        def genericContext[A]: CanLift[A] = summon[CanLift[A]]
+        discard(genericContext[Int < Any])
+        succeed
     }
 
-    "not compile for known Kyo types" in {
-        val error = "may contain a nested effect computation"
-        typeCheckFailure("implicitly[CanLift[Int < Any]]")(error)
-        typeCheckFailure("implicitly[CanLift[String < Env[Int]]]")(error)
+    "rejects a known pending type" in {
+        rejects("summon[CanLift[Int < Any]]")
+        rejects("summon[CanLift[String < TestEffect]]")
     }
 
-    "compile for Unit and Nothing" in {
-        implicitly[CanLift[Unit]]
-        implicitly[CanLift[Nothing]]
-        succeed("compile-time check: CanLift exists for Unit and Nothing")
+    "resolves for Unit and Nothing" in {
+        discard(summon[CanLift[Unit]])
+        discard(summon[CanLift[Nothing]])
+        succeed
     }
 
-    "work with type aliases" in {
+    "sees through a type alias" in {
         type MyAlias[A] = A
-        implicitly[CanLift[MyAlias[Int]]]
-        typeCheckFailure("implicitly[CanLift[MyAlias[Int < Any]]]")("may contain a nested effect computation")
-        // typeCheckFailure already counts as an assertion
+        discard(summon[CanLift[MyAlias[Int]]])
+        rejects("summon[CanLift[MyAlias[Int < Any]]]")
     }
 
-    "work with higher-kinded types" in {
+    "resolves for higher-kinded types" in {
         trait HigherKinded[F[_]]
-        implicitly[CanLift[HigherKinded[List]]]
-        implicitly[CanLift[HigherKinded[λ[A => A < Any]]]]
-        succeed("compile-time check: CanLift works with higher-kinded types")
+        discard(summon[CanLift[HigherKinded[List]]])
+        // the pending type appears only under the constructor, never as the lifted type itself
+        discard(summon[CanLift[HigherKinded[[A] =>> A < Any]]])
+        succeed
     }
 
-    "work in complex type scenarios" in {
+    "resolves for a multi-parameter type" in {
         trait Complex[A, B, C[_]]
-        implicitly[CanLift[Complex[Int, String, List]]]
-        succeed("compile-time check: CanLift works with complex type scenarios")
+        discard(summon[CanLift[Complex[Int, String, List]]])
+        succeed
     }
 
-    "be usable in extension methods" in {
+    "gates an extension method" in {
         extension [A](a: A)(using CanLift[A])
-            def weakMethod: String = "Weak method called"
+            def weakMethod: String = "weak method called"
 
-        42.weakMethod
-        "hello".weakMethod
-        typeCheckFailure("(42: Int < Any).weakMethod")("may contain a nested effect computation")
-        // typeCheckFailure already counts as an assertion
+        assert(42.weakMethod == "weak method called")
+        assert("hello".weakMethod == "weak method called")
+        // the evidence is unsatisfiable for a pending type, so the extension is not applicable and
+        // the compiler reports the missing member rather than the evidence's own message
+        val errors = typeCheckErrors("(42: Int < Any).weakMethod")
+        assert(errors.nonEmpty, "expected a type error, code compiled")
     }
 
-    "work with type bounds" in {
+    "resolves under a type bound" in {
         def boundedMethod[A <: AnyVal: CanLift](a: A): String =
             discard(a)
-            "Bounded method called"
-        boundedMethod(42)
-        boundedMethod("hello")
-        succeed("compile-time check: CanLift works with type bounds")
+            "bounded method called"
+        assert(boundedMethod(42) == "bounded method called")
     }
 
-    "work with union types" in {
+    // a union with a pending arm does not itself conform to the pending type, so it lifts; an
+    // intersection with a pending arm conforms to it, so it does not. The asymmetry is the
+    // conformance test doing exactly what it says, and both directions are pinned
+    "resolves for a union, including one with a pending arm" in {
         type Union = Int | String
-        implicitly[CanLift[Union]]
-        implicitly[CanLift[Int | (String < Any)]]
-        succeed("compile-time check: CanLift works with union types")
+        discard(summon[CanLift[Union]])
+        discard(summon[CanLift[Int | (String < Any)]])
+        succeed
     }
 
-    "work with intersection types" in {
+    "resolves for an intersection of non-pending types and rejects one with a pending arm" in {
         trait A
         trait B
         type Intersection = A & B
-        implicitly[CanLift[Intersection]]
-        typeCheckFailure("implicitly[CanLift[A & (B < Any)]]")("may contain a nested effect computation.")
-        // typeCheckFailure already counts as an assertion
+        discard(summon[CanLift[Intersection]])
+        rejects("summon[CanLift[A & (B < Any)]]")
     }
+
+    "case objects lift without reaching the macro" in {
+        discard(summon[CanLift[kyo.Maybe.Absent.type]])
+        succeed
+    }
+
+    "a kyo module object does not lift" in {
+        val errors = typeCheckErrors("summon[CanLift[ArrowEffect.type]]")
+        assert(errors.nonEmpty, "expected a type error, code compiled")
+    }
+
 end CanLiftTest

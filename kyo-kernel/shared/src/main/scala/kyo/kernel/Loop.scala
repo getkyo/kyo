@@ -1,11 +1,11 @@
 package kyo.kernel
 
-import kyo.*
-import kyo.kernel.internal.*
+import kyo.Frame
+import kyo.kernel.internal.Kyo
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.annotation.targetName
-import scala.util.NotGiven
+import scala.language.implicitConversions
 
 /** Provides utilities for creating and managing iterative computations with effects.
   *
@@ -80,7 +80,7 @@ object Loop:
       * @tparam O
       *   The type of the final value if completing
       */
-    opaque type Outcome[A, O] = O | Continue[A]
+    opaque type Outcome[A, +O] = O | Continue[A]
 
     /** Represents the result of a loop iteration with two state values.
       *
@@ -91,7 +91,7 @@ object Loop:
       * @tparam O
       *   The type of the final value if completing
       */
-    opaque type Outcome2[A, B, O] = O | Continue2[A, B]
+    opaque type Outcome2[A, B, +O] = O | Continue2[A, B]
 
     /** Represents the result of a loop iteration with three state values.
       *
@@ -104,7 +104,7 @@ object Loop:
       * @tparam O
       *   The type of the final value if completing
       */
-    opaque type Outcome3[A, B, C, O] = O | Continue3[A, B, C]
+    opaque type Outcome3[A, B, C, +O] = O | Continue3[A, B, C]
 
     /** Represents the result of a loop iteration with four state values.
       *
@@ -119,11 +119,11 @@ object Loop:
       * @tparam O
       *   The type of the final value if completing
       */
-    opaque type Outcome4[A, B, C, D, O] = O | Continue4[A, B, C, D]
+    opaque type Outcome4[A, B, C, D, +O] = O | Continue4[A, B, C, D]
 
     private val _continueUnit: Continue[Unit] =
         new Continue:
-            def _1 = ()
+            val _1 = ()
 
     /** Creates an outcome signaling continuation with no state value.
       *
@@ -133,19 +133,36 @@ object Loop:
       * @return
       *   An Outcome indicating continuation with Unit state
       */
-    inline def continue[A]: Outcome[Unit, A] = _continueUnit
+    inline def continue[A]: Outcome[Unit, A] < Any =
+        // pending like the other continue arities, so a branch pairing this with a pending sibling
+        // unifies instead of forming a union; the shared instance is never Boxed, so the cast asserts
+        // exactly what the lift would have produced
+        _continueUnit.asInstanceOf[Outcome[Unit, A] < Any]
 
     /** Creates an outcome signaling continuation with a single state value.
+      *
+      * The return type is pending on purpose: in a region clause this arity's slot is the answer,
+      * whose expected type is pending (`O[C] < (E & S)`), and only a pending return lets that
+      * expected type reach the argument when the call sits behind another combinator's lambda,
+      * where a raw return is typed before the conversion and the answer's type is minimized. The
+      * row is `Any` because the outcome itself is settled, which conforms to every expected row.
+      * The value is the same raw `Continue`: it extends nothing but `Serializable`, so it is
+      * valid union currency as-is and the cast asserts exactly what the lift would have produced.
       *
       * @param v
       *   The state value to continue with
       */
     @nowarn("msg=anonymous")
-    inline def continue[A, O, S](inline v: A): Outcome[A, O] =
-        new Continue:
-            def _1 = v
+    inline def continue[A, O, S](inline v: A): Outcome[A, O] < S =
+        (new Continue[A]:
+            val _1 = v
+        ).asInstanceOf[Outcome[A, O] < S]
 
     /** Creates an outcome signaling continuation with two state values.
+      *
+      * Pending return for the same reason as the single-value variant: in a stateful region clause
+      * the second slot is the answer, and the pending return carries the expected answer type into
+      * the argument through nested lambdas.
       *
       * @param v1
       *   The first state value
@@ -153,10 +170,11 @@ object Loop:
       *   The second state value
       */
     @nowarn("msg=anonymous")
-    inline def continue[A, B, o](inline v1: A, inline v2: B): Outcome2[A, B, o] =
-        new Continue2:
-            def _1 = v1
-            def _2 = v2
+    inline def continue[A, B, O](inline v1: A, inline v2: B): Outcome2[A, B, O] < Any =
+        (new Continue2[A, B]:
+            val _1 = v1
+            val _2 = v2
+        ).asInstanceOf[Outcome2[A, B, O] < Any]
 
     /** Creates an outcome signaling continuation with three state values.
       *
@@ -168,11 +186,12 @@ object Loop:
       *   The third state value
       */
     @nowarn("msg=anonymous")
-    inline def continue[A, B, C, O](inline v1: A, inline v2: B, inline v3: C): Outcome3[A, B, C, O] =
-        new Continue3:
-            def _1 = v1
-            def _2 = v2
-            def _3 = v3
+    inline def continue[A, B, C, O](inline v1: A, inline v2: B, inline v3: C): Outcome3[A, B, C, O] < Any =
+        (new Continue3[A, B, C]:
+            val _1 = v1
+            val _2 = v2
+            val _3 = v3
+        ).asInstanceOf[Outcome3[A, B, C, O] < Any]
 
     /** Creates an outcome signaling continuation with four state values.
       *
@@ -186,24 +205,44 @@ object Loop:
       *   The fourth state value
       */
     @nowarn("msg=anonymous")
-    inline def continue[A, B, C, D, O](inline v1: A, inline v2: B, inline v3: C, inline v4: D): Outcome4[A, B, C, D, O] =
-        new Continue4:
-            def _1 = v1
-            def _2 = v2
-            def _3 = v3
-            def _4 = v4
+    inline def continue[A, B, C, D, O](
+        inline v1: A,
+        inline v2: B,
+        inline v3: C,
+        inline v4: D
+    ): Outcome4[A, B, C, D, O] < Any =
+        (new Continue4[A, B, C, D]:
+            val _1 = v1
+            val _2 = v2
+            val _3 = v3
+            val _4 = v4
+        ).asInstanceOf[Outcome4[A, B, C, D, O] < Any]
 
-    /** Creates an outcome signaling completion with no value. */
+    /** Creates an outcome signaling completion with no value.
+      *
+      * Pending return like the continue constructors, so a branch pairing done with a pending
+      * continue unifies instead of forming a union the conversion cannot adapt; the raw unit is
+      * never Boxed, so the cast asserts exactly what the lift would have produced.
+      */
     @targetName("done0")
-    def done[A]: Outcome[A, Unit] = ()
+    inline def done[A]: Outcome[A, Unit] < Any =
+        ().asInstanceOf[Outcome[A, Unit] < Any]
 
     /** Creates an outcome signaling completion with a final value.
+      *
+      * Pending return for the same reason as done0, through the lift rather than a cast: the
+      * payload can be a computation held as data, which the lift's runtime analysis nests so the
+      * evaluator cannot mistake it for a suspension of the outcome itself.
       *
       * @param v
       *   The final value
       */
     @targetName("done1")
-    def done[A, O](v: O): Outcome[A, O] = v
+    inline def done[A, O](inline v: O): Outcome[A, O] < Any =
+        // the lift, not a cast: a payload held as data is a Kyo node, and only the lift's nest keeps
+        // the drive from mistaking it for a suspension of the outcome (the bare cast fails the
+        // "stays data" pinning test in LoopTest)
+        kyo.Kyo.lift[Outcome[A, O], Any](v)
 
     /** Creates an outcome signaling completion with a final value for a two-state loop.
       *
@@ -211,7 +250,8 @@ object Loop:
       *   The final value
       */
     @targetName("done2")
-    def done[A, B, O](v: O): Outcome2[A, B, O] = v
+    inline def done[A, B, O](inline v: O): Outcome2[A, B, O] < Any =
+        kyo.Kyo.lift[Outcome2[A, B, O], Any](v)
 
     /** Creates an outcome signaling completion with a final value for a three-state loop.
       *
@@ -219,7 +259,8 @@ object Loop:
       *   The final value
       */
     @targetName("done3")
-    def done[A, B, C, O](v: O): Outcome3[A, B, C, O] = v
+    inline def done[A, B, C, O](inline v: O): Outcome3[A, B, C, O] < Any =
+        kyo.Kyo.lift[Outcome3[A, B, C, O], Any](v)
 
     /** Creates an outcome signaling completion with a final value for a four-state loop.
       *
@@ -227,7 +268,8 @@ object Loop:
       *   The final value
       */
     @targetName("done4")
-    def done[A, B, C, D, O](v: O): Outcome4[A, B, C, D, O] = v
+    inline def done[A, B, C, D, O](inline v: O): Outcome4[A, B, C, D, O] < Any =
+        kyo.Kyo.lift[Outcome4[A, B, C, D, O], Any](v)
 
     /** Executes a loop with a single state value.
       *
@@ -241,23 +283,19 @@ object Loop:
       * @return
       *   The final result after loop completion
       */
-    inline def apply[A, O, S](inline input: A)(inline run: Safepoint ?=> A => Outcome[A, O] < S)(
-        using
-        inline _frame: Frame,
-        safepoint: Safepoint
+    inline def apply[A, O, S](inline input: A)(inline run: A => Outcome[A, O] < S)(
+        using inline _frame: Frame
     ): O < S =
-        @nowarn("msg=anonymous")
-        @tailrec def loop(v: Outcome[A, O] < S)(using Safepoint): O < S =
+        def suspended(v: Outcome[A, O] < S): O < S =
+            v.map(loop(_))
+        @tailrec def loop(v: Outcome[A, O] < S): O < S =
             v match
                 case next: Continue[A] @unchecked =>
                     loop(run(next._1))
-                case kyo: KyoSuspend[IX, OX, EX, Any, Outcome[A, O], S] @unchecked =>
-                    new KyoContinue[IX, OX, EX, Any, O, S](kyo):
-                        def frame = _frame
-                        def apply(v: OX[Any], context: Context)(using Safepoint) =
-                            loop(kyo(v, context))
+                case _: Kyo[?, ?] =>
+                    suspended(v)
                 case res =>
-                    res.asInstanceOf[O]
+                    res.asInstanceOf[O < S]
         loop(Loop.continue(input))
     end apply
 
@@ -275,23 +313,19 @@ object Loop:
       * @return
       *   The final result after loop completion
       */
-    inline def apply[A, B, O, S](input1: A, input2: B)(inline run: Safepoint ?=> (A, B) => Outcome2[A, B, O] < S)(
-        using
-        inline _frame: Frame,
-        safepoint: Safepoint
+    inline def apply[A, B, O, S](input1: A, input2: B)(inline run: (A, B) => Outcome2[A, B, O] < S)(
+        using inline _frame: Frame
     ): O < S =
-        @nowarn("msg=anonymous")
-        @tailrec def loop(v: Outcome2[A, B, O] < S)(using Safepoint): O < S =
+        def suspended(v: Outcome2[A, B, O] < S): O < S =
+            v.map(loop(_))
+        @tailrec def loop(v: Outcome2[A, B, O] < S): O < S =
             v match
                 case next: Continue2[A, B] @unchecked =>
                     loop(run(next._1, next._2))
-                case kyo: KyoSuspend[IX, OX, EX, Any, Outcome2[A, B, O], S] @unchecked =>
-                    new KyoContinue[IX, OX, EX, Any, O, S](kyo):
-                        def frame = _frame
-                        def apply(v: OX[Any], context: Context)(using Safepoint) =
-                            loop(kyo(v, context))
+                case _: Kyo[?, ?] =>
+                    suspended(v)
                 case res =>
-                    res.asInstanceOf[O]
+                    res.asInstanceOf[O < S]
         loop(Loop.continue(input1, input2))
     end apply
 
@@ -312,20 +346,18 @@ object Loop:
       *   The final result after loop completion
       */
     inline def apply[A, B, C, O, S](input1: A, input2: B, input3: C)(
-        inline run: Safepoint ?=> (A, B, C) => Outcome3[A, B, C, O] < S
-    )(using inline _frame: Frame, safepoint: Safepoint): O < S =
-        @nowarn("msg=anonymous")
-        @tailrec def loop(v: Outcome3[A, B, C, O] < S)(using Safepoint): O < S =
+        inline run: (A, B, C) => Outcome3[A, B, C, O] < S
+    )(using inline _frame: Frame): O < S =
+        def suspended(v: Outcome3[A, B, C, O] < S): O < S =
+            v.map(loop(_))
+        @tailrec def loop(v: Outcome3[A, B, C, O] < S): O < S =
             v match
                 case next: Continue3[A, B, C] @unchecked =>
                     loop(run(next._1, next._2, next._3))
-                case kyo: KyoSuspend[IX, OX, EX, Any, Outcome3[A, B, C, O], S] @unchecked =>
-                    new KyoContinue[IX, OX, EX, Any, O, S](kyo):
-                        def frame = _frame
-                        def apply(v: OX[Any], context: Context)(using Safepoint) =
-                            loop(kyo(v, context))
+                case _: Kyo[?, ?] =>
+                    suspended(v)
                 case res =>
-                    res.asInstanceOf[O]
+                    res.asInstanceOf[O < S]
         loop(Loop.continue(input1, input2, input3))
     end apply
 
@@ -348,20 +380,18 @@ object Loop:
       *   The final result after loop completion
       */
     inline def apply[A, B, C, D, O, S](input1: A, input2: B, input3: C, input4: D)(
-        inline run: Safepoint ?=> (A, B, C, D) => Outcome4[A, B, C, D, O] < S
-    )(using inline _frame: Frame, safepoint: Safepoint): O < S =
-        @nowarn("msg=anonymous")
-        @tailrec def loop(v: Outcome4[A, B, C, D, O] < S)(using Safepoint): O < S =
+        inline run: (A, B, C, D) => Outcome4[A, B, C, D, O] < S
+    )(using inline _frame: Frame): O < S =
+        def suspended(v: Outcome4[A, B, C, D, O] < S): O < S =
+            v.map(loop(_))
+        @tailrec def loop(v: Outcome4[A, B, C, D, O] < S): O < S =
             v match
                 case next: Continue4[A, B, C, D] @unchecked =>
                     loop(run(next._1, next._2, next._3, next._4))
-                case kyo: KyoSuspend[IX, OX, EX, Any, Outcome4[A, B, C, D, O], S] @unchecked =>
-                    new KyoContinue[IX, OX, EX, Any, O, S](kyo):
-                        def frame = _frame
-                        def apply(v: OX[Any], context: Context)(using Safepoint) =
-                            loop(kyo(v, context))
+                case _: Kyo[?, ?] =>
+                    suspended(v)
                 case res =>
-                    res.asInstanceOf[O]
+                    res.asInstanceOf[O < S]
         loop(Loop.continue(input1, input2, input3, input4))
     end apply
 
@@ -376,22 +406,17 @@ object Loop:
       * @return
       *   The final result after loop completion
       */
-    inline def indexed[O, S](inline run: Int => Outcome[Unit, O] < S)(using
-        inline _frame: Frame,
-        safepoint: Safepoint
-    ): O < S =
-        @nowarn("msg=anonymous")
-        @tailrec def loop(idx: Int)(v: Outcome[Unit, O] < S)(using Safepoint): O < S =
+    inline def indexed[O, S](inline run: Int => Outcome[Unit, O] < S)(using inline _frame: Frame): O < S =
+        def suspended(idx: Int)(v: Outcome[Unit, O] < S): O < S =
+            v.map(loop(idx)(_))
+        @tailrec def loop(idx: Int)(v: Outcome[Unit, O] < S): O < S =
             v match
                 case next: Continue[Unit] @unchecked =>
                     loop(idx + 1)(run(idx))
-                case kyo: KyoSuspend[IX, OX, EX, Any, Outcome[Unit, O], S] @unchecked =>
-                    new KyoContinue[IX, OX, EX, Any, O, S](kyo):
-                        def frame = _frame
-                        def apply(v: OX[Any], context: Context)(using Safepoint) =
-                            loop(idx)(kyo(v, context))
+                case _: Kyo[?, ?] =>
+                    suspended(idx)(v)
                 case res =>
-                    res.asInstanceOf[O]
+                    res.asInstanceOf[O < S]
         loop(0)(Loop.continue)
     end indexed
 
@@ -407,22 +432,17 @@ object Loop:
       * @return
       *   The final result after loop completion
       */
-    inline def indexed[A, O, S](input: A)(inline run: Safepoint ?=> (Int, A) => Outcome[A, O] < S)(using
-        inline _frame: Frame,
-        safepoint: Safepoint
-    ): O < S =
-        @nowarn("msg=anonymous")
-        @tailrec def loop(idx: Int)(v: Outcome[A, O] < S)(using Safepoint): O < S =
+    inline def indexed[A, O, S](input: A)(inline run: (Int, A) => Outcome[A, O] < S)(using inline _frame: Frame): O < S =
+        def suspended(idx: Int)(v: Outcome[A, O] < S): O < S =
+            v.map(loop(idx)(_))
+        @tailrec def loop(idx: Int)(v: Outcome[A, O] < S): O < S =
             v match
                 case next: Continue[A] @unchecked =>
                     loop(idx + 1)(run(idx, next._1))
-                case kyo: KyoSuspend[IX, OX, EX, Any, Outcome[A, O], S] @unchecked =>
-                    new KyoContinue[IX, OX, EX, Any, O, S](kyo):
-                        def frame = _frame
-                        def apply(v: OX[Any], context: Context)(using Safepoint) =
-                            loop(idx)(kyo(v, context))
+                case _: Kyo[?, ?] =>
+                    suspended(idx)(v)
                 case res =>
-                    res.asInstanceOf[O]
+                    res.asInstanceOf[O < S]
         loop(0)(Loop.continue(input))
     end indexed
 
@@ -441,20 +461,18 @@ object Loop:
       *   The final result after loop completion
       */
     inline def indexed[A, B, O, S](input1: A, input2: B)(
-        inline run: Safepoint ?=> (Int, A, B) => Outcome2[A, B, O] < S
-    )(using inline _frame: Frame, safepoint: Safepoint): O < S =
-        @nowarn("msg=anonymous")
-        @tailrec def loop(idx: Int)(v: Outcome2[A, B, O] < S)(using Safepoint): O < S =
+        inline run: (Int, A, B) => Outcome2[A, B, O] < S
+    )(using inline _frame: Frame): O < S =
+        def suspended(idx: Int)(v: Outcome2[A, B, O] < S): O < S =
+            v.map(loop(idx)(_))
+        @tailrec def loop(idx: Int)(v: Outcome2[A, B, O] < S): O < S =
             v match
                 case next: Continue2[A, B] @unchecked =>
                     loop(idx + 1)(run(idx, next._1, next._2))
-                case kyo: KyoSuspend[IX, OX, EX, Any, Outcome2[A, B, O], S] @unchecked =>
-                    new KyoContinue[IX, OX, EX, Any, O, S](kyo):
-                        def frame = _frame
-                        def apply(v: OX[Any], context: Context)(using Safepoint) =
-                            loop(idx)(kyo(v, context))
+                case _: Kyo[?, ?] =>
+                    suspended(idx)(v)
                 case res =>
-                    res.asInstanceOf[O]
+                    res.asInstanceOf[O < S]
         loop(0)(Loop.continue(input1, input2))
     end indexed
 
@@ -475,20 +493,18 @@ object Loop:
       *   The final result after loop completion
       */
     inline def indexed[A, B, C, O, S](input1: A, input2: B, input3: C)(
-        inline run: Safepoint ?=> (Int, A, B, C) => Outcome3[A, B, C, O] < S
-    )(using inline _frame: Frame, safepoint: Safepoint): O < S =
-        @nowarn("msg=anonymous")
-        @tailrec def loop(idx: Int)(v: Outcome3[A, B, C, O] < S)(using Safepoint): O < S =
+        inline run: (Int, A, B, C) => Outcome3[A, B, C, O] < S
+    )(using inline _frame: Frame): O < S =
+        def suspended(idx: Int)(v: Outcome3[A, B, C, O] < S): O < S =
+            v.map(loop(idx)(_))
+        @tailrec def loop(idx: Int)(v: Outcome3[A, B, C, O] < S): O < S =
             v match
                 case next: Continue3[A, B, C] @unchecked =>
                     loop(idx + 1)(run(idx, next._1, next._2, next._3))
-                case kyo: KyoSuspend[IX, OX, EX, Any, Outcome3[A, B, C, O], S] @unchecked =>
-                    new KyoContinue[IX, OX, EX, Any, O, S](kyo):
-                        def frame = _frame
-                        def apply(v: OX[Any], context: Context)(using Safepoint) =
-                            loop(idx)(kyo(v, context))
+                case _: Kyo[?, ?] =>
+                    suspended(idx)(v)
                 case res =>
-                    res.asInstanceOf[O]
+                    res.asInstanceOf[O < S]
         loop(0)(Loop.continue(input1, input2, input3))
     end indexed
 
@@ -511,20 +527,18 @@ object Loop:
       *   The final result after loop completion
       */
     inline def indexed[A, B, C, D, O, S](input1: A, input2: B, input3: C, input4: D)(
-        inline run: Safepoint ?=> (Int, A, B, C, D) => Outcome4[A, B, C, D, O] < S
-    )(using inline _frame: Frame, safepoint: Safepoint): O < S =
-        @nowarn("msg=anonymous")
-        @tailrec def loop(idx: Int)(v: Outcome4[A, B, C, D, O] < S)(using Safepoint): O < S =
+        inline run: (Int, A, B, C, D) => Outcome4[A, B, C, D, O] < S
+    )(using inline _frame: Frame): O < S =
+        def suspended(idx: Int)(v: Outcome4[A, B, C, D, O] < S): O < S =
+            v.map(loop(idx)(_))
+        @tailrec def loop(idx: Int)(v: Outcome4[A, B, C, D, O] < S): O < S =
             v match
                 case next: Continue4[A, B, C, D] @unchecked =>
                     loop(idx + 1)(run(idx, next._1, next._2, next._3, next._4))
-                case kyo: KyoSuspend[IX, OX, EX, Any, Outcome4[A, B, C, D, O], S] @unchecked =>
-                    new KyoContinue[IX, OX, EX, Any, O, S](kyo):
-                        def frame = _frame
-                        def apply(v: OX[Any], context: Context)(using Safepoint) =
-                            loop(idx)(kyo(v, context))
+                case _: Kyo[?, ?] =>
+                    suspended(idx)(v)
                 case res =>
-                    res.asInstanceOf[O]
+                    res.asInstanceOf[O < S]
         loop(0)(Loop.continue(input1, input2, input3, input4))
     end indexed
 
@@ -536,20 +550,19 @@ object Loop:
       * @param run
       *   The function to execute repeatedly until completion
       * @return
-      *   Unit after the loop completes
+      *   The final value after the loop completes
       */
-    inline def foreach[A, S](inline run: Safepoint ?=> Outcome[Unit, A] < S)(using inline _frame: Frame, safepoint: Safepoint): A < S =
-        @nowarn("msg=anonymous")
-        @tailrec def loop(v: Outcome[Unit, A] < S)(using Safepoint): A < S =
+    inline def foreach[A, S](inline run: Outcome[Unit, A] < S)(using inline _frame: Frame): A < S =
+        def suspended(v: Outcome[Unit, A] < S): A < S =
+            v.map(loop(_))
+        @tailrec def loop(v: Outcome[Unit, A] < S): A < S =
             v match
                 case next: Continue[Unit] @unchecked =>
                     loop(run)
-                case kyo: KyoSuspend[IX, OX, EX, Any, Outcome[Unit, A], S] @unchecked =>
-                    new KyoContinue[IX, OX, EX, Any, A, S](kyo):
-                        def frame = _frame
-                        def apply(v: OX[Any], context: Context)(using Safepoint) =
-                            loop(kyo(v, context))
-                case res => res.asInstanceOf[A]
+                case _: Kyo[?, ?] =>
+                    suspended(v)
+                case res =>
+                    res.asInstanceOf[A < S]
         loop(Loop.continue)
     end foreach
 
@@ -565,24 +578,30 @@ object Loop:
       * @return
       *   Unit after completing all iterations
       */
-    inline def repeat[S](n: Int)(inline run: Safepoint ?=> Any < S)(using inline _frame: Frame, safepoint: Safepoint): Unit < S =
-        @nowarn("msg=anonymous")
-        // the count is checked on the settled arm, immediately before `run` is reached, so the body is
-        // evaluated exactly n times. Checking it at the top of the loop instead evaluates `run` once past
-        // the limit: harmless for a suspended body, where the extra evaluation only builds a node that is
-        // then discarded undriven, and one extra execution for a settled one
-        @tailrec def loop(i: Int)(v: Any < S)(using Safepoint): Unit < S =
-            v match
-                case kyo: KyoSuspend[IX, OX, EX, Any, Unit, S] @unchecked =>
-                    new KyoContinue[IX, OX, EX, Any, Unit, S](kyo):
-                        def frame = _frame
-                        def apply(v: OX[Any], context: Context)(using Safepoint) =
-                            loop(i)(kyo(v, context))
-                case _ =>
-                    if i >= n then ()
-                    else loop(i + 1)(run)
+    // the count is checked before `run` is reached rather than after, so the body is evaluated exactly n
+    // times. Carrying the previous iteration's value into the check instead evaluates `run` once more than
+    // that: harmless for a deferred body, where the extra evaluation only builds a node that is then
+    // discarded unexecuted, and one extra execution for a settled one
+    inline def repeat[S](n: Int)(inline run: Any < S)(using inline _frame: Frame): Unit < S =
+        def suspended(i: Int)(v: Any < S): Unit < S =
+            v.map(_ => loop(i))
+        @tailrec def loop(i: Int): Unit < S =
+            if i >= n then ()
+            else
+                // bound at the row before it is matched, the way every other loop here takes its scrutinee
+                // as a typed parameter. Matching the inline parameter itself leaves the expansion carrying
+                // whatever the call site passed, and the exhaustivity check reads the arms against that
+                // rather than against the row
+                val v: Any < S = run
+                v match
+                    case v: Kyo[?, ?] =>
+                        suspended(i + 1)(v)
+                    case _ =>
+                        loop(i + 1)
+                end match
+            end if
         end loop
-        loop(0)(())
+        loop(0)
     end repeat
 
     /** Executes a loop indefinitely until explicitly terminated.
@@ -595,15 +614,13 @@ object Loop:
       * @return
       *   Nothing, as this loop runs forever unless interrupted
       */
-    inline def forever[S](inline run: Safepoint ?=> Any < S)(using inline _frame: Frame, safepoint: Safepoint): Nothing < S =
-        @nowarn("msg=anonymous")
-        @tailrec def loop(v: Any < S)(using Safepoint): Nothing < S =
+    inline def forever[S](inline run: Any < S)(using inline _frame: Frame): Nothing < S =
+        def suspended(v: Any < S): Nothing < S =
+            v.map(_ => loop(run))
+        @tailrec def loop(v: Any < S): Nothing < S =
             v match
-                case kyo: KyoSuspend[IX, OX, EX, Any, Nothing, S] @unchecked =>
-                    new KyoContinue[IX, OX, EX, Any, Nothing, S](kyo):
-                        def frame = _frame
-                        def apply(v: OX[Any], context: Context)(using Safepoint) =
-                            loop(kyo(v, context))
+                case _: Kyo[?, ?] =>
+                    suspended(v)
                 case _ =>
                     loop(run)
         end loop
@@ -619,21 +636,15 @@ object Loop:
       * @return
       *   Unit after the loop completes
       */
-    inline def whileTrue[S](inline condition: Safepoint ?=> Boolean < S)(inline run: Unit < S)(
-        using
-        inline _frame: Frame,
-        safepoint: Safepoint
+    inline def whileTrue[S](inline condition: Boolean < S)(inline run: Unit < S)(
+        using inline _frame: Frame
     ): Unit < S =
-        @nowarn("msg=anonymous")
-        def loop(v: Unit < S)(using Safepoint): Unit < S =
+        def loop(v: Unit < S): Unit < S =
             condition.map {
                 case true =>
                     v match
-                        case kyo: KyoSuspend[IX, OX, EX, Any, Unit, S] @unchecked =>
-                            new KyoContinue[IX, OX, EX, Any, Unit, S](kyo):
-                                def frame = _frame
-                                def apply(v: OX[Any], context: Context)(using Safepoint) =
-                                    loop(kyo(v, context))
+                        case _: Kyo[?, ?] =>
+                            v.map(_ => loop(run))
                         case _ =>
                             loop(run)
                 case false => ()

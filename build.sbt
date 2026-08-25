@@ -341,7 +341,6 @@ lazy val kyoJVM: Project = project
         `kyo-scheduler-pekko`.jvm,
         `kyo-data`.jvm,
         `kyo-kernel`.jvm,
-        `kyo-kernel2`.jvm,
         `kyo-prelude`.jvm,
         `kyo-parse`.jvm,
         `kyo-core`.jvm,
@@ -427,7 +426,6 @@ lazy val kyoJS = project
         `kyo-scheduler`.js,
         `kyo-data`.js,
         `kyo-kernel`.js,
-        `kyo-kernel2`.js,
         `kyo-prelude`.js,
         `kyo-parse`.js,
         `kyo-core`.js,
@@ -499,7 +497,6 @@ lazy val kyoNative = project
         `kyo-prelude`.native,
         `kyo-parse`.native,
         `kyo-kernel`.native,
-        `kyo-kernel2`.native,
         `kyo-stats-registry`.native,
         `kyo-config`.native,
         `kyo-scheduler`.native,
@@ -571,7 +568,6 @@ lazy val kyoWasm = project
         `kyo-stats-registry`.wasm,
         `kyo-data`.wasm,
         `kyo-kernel`.wasm,
-        `kyo-kernel2`.wasm,
         `kyo-prelude`.wasm,
         `kyo-parse`.wasm,
         `kyo-schema`.wasm,
@@ -740,50 +736,13 @@ lazy val `kyo-data` =
         .jsSettings(`js-settings`)
         .wasmSettings(`wasm-settings`)
 
-lazy val `kyo-kernel` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .crossType(CrossType.Full)
-        .dependsOn(`kyo-data`)
-        .withKyoTest
-        .in(file("kyo-kernel"))
-        .settings(
-            `kyo-settings`,
-            libraryDependencies += "org.javassist" % "javassist" % "3.32.0-GA" % Test,
-            Test / sourceGenerators += TestVariant.generate.taskValue
-        )
-        .jvmSettings(mimaCheck(false))
-        .jvmConfigure(_.settings(
-            doctestFreshDriver := true
-        ))
-        .nativeSettings(`native-settings`)
-        .jsSettings(`js-settings`)
-        .wasmSettings(`wasm-settings`)
-
-// Mirror of kyo-kernel2's KernelBench compiled against the old kernel, for cross-kernel
-// comparison boards. A separate project because the old kernel's Test configuration (which
-// Jmh extends) depends on kyo-test and the stack above, mid-migration to the new kernel.
-lazy val `kyo-kernel-bench` =
-    project
-        .in(file("kyo-kernel/bench"))
-        .enablePlugins(JmhPlugin)
-        .dependsOn(`kyo-kernel`.jvm)
-        .disablePlugins(MimaPlugin)
-        .settings(
-            `kyo-settings`,
-            publish / skip := true,
-            // No tests or doctests here; keep the doctest driver jars (built from the stack
-            // above the kernel, mid-migration) off the Test classpath that Jmh extends.
-            Test / unmanagedJars := Seq.empty,
-            Jmh / javaOptions := (Test / javaOptions).value.filterNot(_ == "-XX:+UseCompactObjectHeaders")
-        )
-
 // Cross-library ports of KernelBench's rows (ZIO, cats-effect, zio-blocks Async, Turbolift),
-// for comparison boards against both kernels. A separate unpublished project so the external
-// dependencies never reach a published kyo artifact's pom; row names match KernelBench's so
-// result tables join by name.
-lazy val `kyo-kernel2-bench-cross` =
+// for comparison boards. A separate unpublished project so the external dependencies never
+// reach a published kyo artifact's pom; row names match KernelBench's so result tables join
+// by name.
+lazy val `kyo-kernel-bench-cross` =
     project
-        .in(file("kyo-kernel2/bench-cross"))
+        .in(file("kyo-kernel/bench-cross"))
         .enablePlugins(JmhPlugin)
         .disablePlugins(MimaPlugin)
         .settings(
@@ -828,11 +787,11 @@ lazy val `kyo-compile-bench` =
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test
         )
 
-lazy val `kyo-kernel2` =
+lazy val `kyo-kernel` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-data`)
-        .in(file("kyo-kernel2"))
+        .in(file("kyo-kernel"))
         .settings(
             `kyo-settings`,
             // Interim while the kernel swap migrates up the stack: kyo-test and kyo-doctest
@@ -864,7 +823,7 @@ lazy val `kyo-kernel2` =
 lazy val `kyo-prelude` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
-        .dependsOn(`kyo-kernel2`)
+        .dependsOn(`kyo-kernel`)
         .withKyoTest
         .in(file("kyo-prelude"))
         .settings(

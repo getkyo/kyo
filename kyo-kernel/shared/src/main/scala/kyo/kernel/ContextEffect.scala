@@ -1,7 +1,14 @@
 package kyo.kernel
 
-import kyo.*
-import kyo.kernel.internal.*
+import kyo.Frame
+import kyo.Maybe
+import kyo.Maybe.*
+import kyo.Result
+import kyo.Tag
+import kyo.bug
+// unqualified so the inline expansions do not select it from Kyo.type at a site outside package kyo,
+// where it is not accessible. See the note in Pending.scala
+import kyo.kernel.internal.Kyo.Binding
 import scala.annotation.nowarn
 
 /** Represents the requirement for a value that will be provided later by a handler.
@@ -14,9 +21,8 @@ import scala.annotation.nowarn
   * different handlers can provide different values in different scopes. The composition of effects automatically tracks these requirements
   * through the type system.
   *
-  * Context effects come in two varieties. By default, values are inherited across async boundaries when computations are suspended and
-  * resumed. Effects that mix the ContextEffect.Noninheritable trait do not cross async boundaries, requiring fresh values when computation
-  * resumes asynchronously. This isolation is useful for values that should remain within a single async context, like thread-local data.
+  * Reads and bindings are both `Kyo.Binding`, which carries the semantics: what a binding holds is a function of what is bound around it,
+  * so nesting layers rather than replaces, and a read takes the innermost.
   *
   * The polymorphic type parameter A defines what type of value is required:
   * @tparam A
@@ -26,13 +32,8 @@ abstract class ContextEffect[+A] extends Effect
 
 object ContextEffect:
 
-    /** A marker trait for context effects that do not persist across asynchronous boundaries.
-      *
-      * When a context effect extends this trait, its values will not be inherited by child fibers after an asynchronous operation. Instead,
-      * child fibers start with fresh values, making these effects behave similarly to non-inheritable thread locals.
-      */
-    trait Noninheritable:
-        self: ContextEffect[?] =>
+    // No non-inheritable marker: a binding that must not cross a fork says so with `fork = _ => Absent`,
+    // which also lets one cross as something else, where a type could only say yes or no.
 
     /** Creates a suspended computation that requests a value from a context effect. This establishes a requirement for a value that must be
       * satisfied by a handler higher up in the program. The requirement becomes part of the effect type, ensuring that handlers must
@@ -56,12 +57,18 @@ object ContextEffect:
       * @return
       *   A computation containing the transformed value
       */
+    @nowarn("msg=anonymous")
     inline def suspendWith[A, E <: ContextEffect[A], B, S](
         inline effectTag: Tag[E]
     )(
-        inline f: Safepoint ?=> A => B < S
-    )(using inline frame: Frame): B < (E & S) =
-        suspendWith(effectTag, bug("Unexpected pending context effect: " + effectTag.show))(f)
+        inline f: A => B < S
+    )(using inline _frame: Frame): B < (E & S) =
+        new Binding[A, E, B, E & S]:
+            def frame = _frame
+            def tag   = Maybe(effectTag)
+            def bound = Absent
+            def resume(held: Maybe[A]) =
+                f(held.getOrElse(bug(s"Missing value for context effect '${effectTag.show}'")))
 
     /** Requests a value from a context effect with a specified default value. Unlike standard suspend, this version does not create a
       * mandatory effect requirement. If no handler provides a value, the computation proceeds with the default value instead. This makes
@@ -98,15 +105,13 @@ object ContextEffect:
         inline effectTag: Tag[E],
         inline default: => A
     )(
-        inline f: Safepoint ?=> A => B < S
+        inline f: A => B < S
     )(using inline _frame: Frame): B < S =
-        new KyoDefer[B, S]:
-            def frame = _frame
-            def apply(v: Unit, context: Context)(using Safepoint) =
-                Safepoint.handle(v)(
-                    suspend = this,
-                    continue = f(context.getOrElse(effectTag, default).asInstanceOf[A])
-                )
+        new Binding[A, E, B, S]:
+            def frame                  = _frame
+            def tag                    = Maybe(effectTag)
+            def bound                  = Absent
+            def resume(held: Maybe[A]) = f(held.getOrElse(default))
 
     /** Handles a context effect by providing a value for a specific computation scope. This satisfies suspend operations within that scope
       * by making the provided value available to them. The handler establishes a region where the context value is defined and can be
@@ -125,11 +130,21 @@ object ContextEffect:
         inline effectTag: Tag[E],
         inline value: A
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
-        handle(effectTag, value, _ => value)(v)
+        handle(effectTag, value, (_: A) => value)(v)
 
     /** Handles a context effect by either providing a new value or transforming an existing one. This allows for layered handling of
       * context values, where a handler can either establish a new value when none exists or modify a value that was provided by an outer
-      * handler.
+      * handler. Because a binding resolves when it is installed, a computation captured here and resumed under a different enclosing
+      * binding merges into that one instead.
+      *
+      * The other three parameters say what happens at the edges of the extent, and each defaults to the plainest answer:
+      *
+      *   - `fork` is what a computation forked from here receives, `Absent` for a value that must not cross.
+      *     This is what the previous kernel's non-inheritable marker said, as a function rather than a type.
+      *   - `join` is what this holds once a fork ends, given what it holds and what the fork ended with.
+      *     Keeping this one, taking the fork's, or merging them is the whole of an isolate strategy.
+      *   - `release` is what the value owes when the extent ends. It is `Maybe` rather than a function with
+      *     an empty default because a binding that owes nothing must not pay for one.
       *
       * @param effectTag
       *   Identifies which context effect to handle
@@ -142,28 +157,28 @@ object ContextEffect:
       * @return
       *   The computation result with the context value handled
       */
+    @nowarn("msg=anonymous")
     inline def handle[A, E <: ContextEffect[A], B, S](
         inline effectTag: Tag[E],
         inline ifUndefined: A,
-        inline ifDefined: A => A
-    )(v: B < (E & S))(
-        using inline _frame: Frame
-    ): B < S =
-        @nowarn("msg=anonymous")
-        def handleLoop(v: B < (E & S))(using Safepoint): B < S =
-            v match
-                case kyo: KyoSuspend[IX, OX, EX, Any, B, S] @unchecked =>
-                    new KyoContinue[IX, OX, EX, Any, B, S](kyo):
-                        def frame = _frame
-                        def apply(v: OX[Any], context: Context)(using Safepoint) =
-                            val tag = effectTag // avoid inlining the tag multiple times
-                            val updated =
-                                if !context.contains(tag) then context.set(tag, ifUndefined)
-                                else context.set(tag, ifDefined(context.get(tag)))
-                            handleLoop(kyo(v, updated))
-                        end apply
-                case kyo =>
-                    kyo.unsafeGet
-        handleLoop(v)
+        inline ifDefined: A => A,
+        inline fork: A => Maybe[A] < S = (a: A) => Maybe(a),
+        inline join: (A, A) => A < S = (held: A, _: A) => held,
+        inline release: Maybe[(A, Result[Any, B]) => Any < Any] = Absent
+    )(v: B < (E & S))(using inline _frame: Frame): B < S =
+        // named apart from the members below, which would shadow the parameters inside the class body
+        def onFork(held: A)            = fork(held)
+        def onJoin(held: A, forked: A) = join(held, forked)
+        def onRelease                  = release
+        new Binding[A, E, B, S]:
+            def frame                             = _frame
+            def tag                               = Maybe(effectTag)
+            val bound                             = Maybe((outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined))
+            override def fork(held: A)            = onFork(held)
+            override def join(held: A, forked: A) = onJoin(held, forked)
+            override val release                  = onRelease
+            def resume(held: Maybe[A])            = v
+        end new
     end handle
+
 end ContextEffect

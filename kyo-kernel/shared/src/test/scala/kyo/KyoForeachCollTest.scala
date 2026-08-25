@@ -1,7 +1,7 @@
 package kyo
 
 @TestVariant("Coll", "List", "Chunk")
-class KyoForeachCollTest extends kyo.test.Test[Any]:
+class KyoForeachCollTest extends org.scalatest.freespec.AnyFreeSpec:
 
     import KyoForeachTest.*
 
@@ -44,13 +44,13 @@ class KyoForeachCollTest extends kyo.test.Test[Any]:
         "collectDiscard" in {
             var count = 0
             val io    = TestEffect1(1).map(_ => count += 1)
-            TestEffect1.run(Kyo.collectAllDiscard(Coll.empty)).eval
+            discard(TestEffect1.run(Kyo.collectAllDiscard(Coll.empty)).eval)
             assert(count == 0)
-            TestEffect1.run(Kyo.collectAllDiscard(Coll(io))).eval
+            discard(TestEffect1.run(Kyo.collectAllDiscard(Coll(io))).eval)
             assert(count == 1)
-            TestEffect1.run(Kyo.collectAllDiscard(Coll.fill(42)(io))).eval
+            discard(TestEffect1.run(Kyo.collectAllDiscard(Coll.fill(42)(io))).eval)
             assert(count == 43)
-            TestEffect1.run(Kyo.collectAllDiscard(Coll.fill(10)(io))).eval
+            discard(TestEffect1.run(Kyo.collectAllDiscard(Coll.fill(10)(io))).eval)
             assert(count == 53)
         }
         "foreach" in {
@@ -69,13 +69,13 @@ class KyoForeachCollTest extends kyo.test.Test[Any]:
         }
         "foreachDiscard" in {
             var acc: Coll[Int] = Coll.empty
-            TestEffect1.run(Kyo.foreachDiscard(Coll.empty[Int])(v => TestEffect1(v).map(i => acc :+= i))).eval
+            discard(TestEffect1.run(Kyo.foreachDiscard(Coll.empty[Int])(v => TestEffect1(v).map(i => acc :+= i))).eval)
             assert(acc == Coll.empty[Int])
             acc = Coll.empty
-            TestEffect1.run(Kyo.foreachDiscard(Coll(1))(v => TestEffect1(v).map(i => acc :+= i))).eval
+            discard(TestEffect1.run(Kyo.foreachDiscard(Coll(1))(v => TestEffect1(v).map(i => acc :+= i))).eval)
             assert(acc == Coll(2))
             acc = Coll.empty
-            TestEffect1.run(Kyo.foreachDiscard(Coll(1, 2))(v => TestEffect1(v).map(i => acc :+= i))).eval
+            discard(TestEffect1.run(Kyo.foreachDiscard(Coll(1, 2))(v => TestEffect1(v).map(i => acc :+= i))).eval)
             assert(acc == Coll(2, 3))
         }
         "foldLeft" in {
@@ -384,7 +384,7 @@ class KyoForeachCollTest extends kyo.test.Test[Any]:
             "collectDiscard" in {
                 var count = 0
                 val io    = TestEffect1(1).map(_ => count += 1)
-                TestEffect1.run(Kyo.collectAllDiscard(Coll.fill(n)(io))).eval
+                discard(TestEffect1.run(Kyo.collectAllDiscard(Coll.fill(n)(io))).eval)
                 assert(count == n)
             }
 
@@ -394,7 +394,7 @@ class KyoForeachCollTest extends kyo.test.Test[Any]:
 
             "foreachDiscard" in {
                 var acc = Coll.empty[Int]
-                TestEffect1.run(Kyo.foreachDiscard(Coll.fill(n)(1))(v => TestEffect1(v).map(i => acc :+= i))).eval
+                discard(TestEffect1.run(Kyo.foreachDiscard(Coll.fill(n)(1))(v => TestEffect1(v).map(i => acc :+= i))).eval)
                 assert(acc.size == n)
             }
         }

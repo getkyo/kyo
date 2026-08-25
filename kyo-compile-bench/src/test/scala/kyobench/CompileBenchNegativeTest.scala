@@ -19,7 +19,7 @@ class CompileBenchNegativeTest extends AnyFreeSpec:
     private def compileErrors(fixture: String): List[String] =
         val file = new File(root, s"kyo-compile-bench/fixtures-negative/$fixture.scala")
         require(file.isFile, s"missing fixture: $file")
-        val kernel = new File(root, "kyo-kernel2/jvm/target/scala-3.8.4/classes")
+        val kernel = new File(root, "kyo-kernel/jvm/target/scala-3.8.4/classes")
         require(kernel.isDirectory, s"missing kernel classes: $kernel")
         val cp     = sys.props("java.class.path") + File.pathSeparator + kernel.getAbsolutePath
         val out    = java.nio.file.Files.createTempDirectory("kyocb-neg").toFile

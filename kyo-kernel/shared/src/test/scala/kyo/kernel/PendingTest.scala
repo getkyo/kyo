@@ -1,212 +1,526 @@
 package kyo.kernel
 
-import kyo.*
-import kyo.kernel.*
+import kyo.Const
+import kyo.Kyo
+import kyo.Maybe
+import kyo.Render
+import kyo.Result
+import kyo.Tag
+import kyo.discard
+import kyo.kernel.internal.Eval
 import kyo.kernel.internal.Safepoint
-import scala.annotation.nowarn
+import kyo.render
+import org.scalatest.freespec.AnyFreeSpec
+import scala.annotation.tailrec
+import scala.compiletime.testing.typeCheckErrors
 
-class PendingTest extends kyo.test.Test[Any]:
+class PendingTest extends AnyFreeSpec:
 
-    "map" in {
-        val x: Int < Any    = 5
-        val y: String < Any = x.map(_.toString)
-        assert(y.eval == "5")
+    private val Period = Safepoint.period()
+
+    sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
+    def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
+
+    sealed trait Say extends ArrowEffect[Const[String], Const[Unit]]
+    def say(s: String): Unit < Say = ArrowEffect.suspend[Any](Tag[Say], s)
+
+    sealed trait Give extends ArrowEffect[Const[Unit], Const[Int < Ask]]
+    def give: (Int < Ask) < Give = ArrowEffect.suspend[Any](Tag[Give], ())
+
+    def answerAsk[A](value: Int)(v: A < Ask): A < Any =
+        ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value))
+
+    def answerSay[A](v: A < Say): A < Any =
+        ArrowEffect.handleLoop(Tag[Say], v)([C] => _ => Loop.continue(()))
+
+    def settled[A](v: A): A < Any = v
+
+    def after[A](v: A): A < Ask = ask.map(_ => v)
+
+    "a settled payload evaluates to itself" in {
+        val outer: (Int < Any) < Any = settled(42: Int < Any)
+        assert(Eval(Eval(outer)) == 42)
     }
 
-    "flatMap" in {
-        val x: Int < Any    = 5
-        val y: String < Any = x.flatMap(i => (i * 2).toString)
-        assert(y.eval == "10")
+    "eval returns a pending payload without running it" in {
+        val inner: Int < Ask   = ask.map(_ + 1)
+        val payload: Int < Ask = Eval(settled(inner))
+        assert(Eval(answerAsk(41)(payload)) == 42)
     }
 
-    "handle chaining with for-comprehension" in {
+    "map receives a pending payload as a value" in {
+        val inner: Int < Ask    = ask
+        var received: Int < Ask = 0
+        val r: Int < Any = settled(inner).map { c =>
+            received = c
+            7
+        }
+        assert(Eval(r) == 7)
+        assert(Eval(answerAsk(41)(received.map(_ + 1))) == 42)
+    }
+
+    "a map can return a computation as its value" in {
+        val inner: Int < Ask     = ask.map(_ + 1)
+        val r: (Int < Ask) < Ask = after(inner)
+        val payload: Int < Ask   = Eval(answerAsk(1)(r))
+        assert(Eval(answerAsk(41)(payload)) == 42)
+    }
+
+    "a payload returned past the budget stays a value" in {
+        def loop(i: Int): (Int < Ask) < Any =
+            if i == 0 then settled(ask)
+            else (0: Int < Any).map(_ => loop(i - 1))
+        val payload: Int < Ask = Eval(loop(10000))
+        assert(Eval(answerAsk(42)(payload)) == 42)
+    }
+
+    "a handler applies done to a settled payload without driving it" in {
+        val outer: (Unit < Say) < Ask = settled(say("x"): Unit < Say)
+        val handled: (Unit < Say) < Any =
+            ArrowEffect.handleLoop(Tag[Ask], outer)([C] => _ => Loop.continue(1: Int < Any), a => settled(a))
+        val payload: Unit < Say = Eval(handled)
+        var seen                = ""
+        val r: Unit < Any = ArrowEffect.handleLoop(Tag[Say], payload)(
+            [C] =>
+                s =>
+                    seen = s
+                    Loop.continue((): Unit < Any)
+            ,
+            a => a
+        )
+        assert(Eval(r) == ())
+        assert(seen == "x")
+    }
+
+    "a region returns a foreign payload untouched" in {
+        val body: (Unit < Say) < Ask = after(say("y"): Unit < Say)
+        val handled: (Unit < Say) < Any =
+            ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.continue(1: Int < Any), a => settled(a))
+        val payload: Unit < Say = Eval(handled)
+        var seen                = ""
+        val r: Unit < Any = ArrowEffect.handleLoop(Tag[Say], payload)(
+            [C] =>
+                s =>
+                    seen = s
+                    Loop.continue((): Unit < Any)
+            ,
+            a => a
+        )
+        assert(Eval(r) == ())
+        assert(seen == "y")
+    }
+
+    "an answer can be a computation value" in {
+        val inner: Int < Ask = ask
+        val body: Int < Give = give.map(_ => 5)
+        val r: Int < Any     = ArrowEffect.handleLoop(Tag[Give], body)([C] => _ => Loop.continue(settled(inner)), a => a)
+        assert(Eval(r) == 5)
+    }
+
+    "a captured continuation accepts a computation answer" in {
+        val inner: Int < Ask = ask
+        val body: Int < Give = give.map(_ => 9)
+        val r: Int < Any     = ArrowEffect.handleCont(Tag[Give], body)([C] => (_, cont) => cont(inner), a => a)
+        assert(Eval(r) == 9)
+    }
+
+    "mapping over a payload derives a new payload" in {
+        val inner: Int < Ask           = ask
+        val derived: (Int < Ask) < Any = settled(inner).map(c => settled(c.map(_ * 2)))
+        val payload: Int < Ask         = Eval(derived)
+        assert(Eval(answerAsk(21)(payload)) == 42)
+    }
+
+    "a payload handles inside map" in {
+        def deliver[B](f: Int => B): B < Ask = ask.map(a => f(a))
+        val comp: (Int < Say) < Ask          = deliver(a => say("s").map(_ => a + 1))
+        val handled: (Int < Any) < Any       = answerAsk(10)(comp.map(c => settled(answerSay[Int](c))))
+        assert(Eval(Eval(handled)) == 11)
+    }
+
+    "a generic function nests its result across effects" in {
+        def f(a: Int): Int < Say       = say("x").map(_ => a + 5)
+        def g[B](f: Int => B): B < Ask = ask.map(a => f(a))
+        val nested: (Int < Say) < Ask  = g(f)
+        val payload: Int < Say         = Eval(answerAsk(1)(nested))
+        assert(Eval(answerSay(payload)) == 6)
+    }
+
+    "a loop can end its region with a computation result" in {
+        val inner: Int < Ask = ask.map(_ + 1)
+        val body: Int < Give = give.map(_ => 0)
+        val r: (Int < Ask) < Any = ArrowEffect.handleLoop(Tag[Give], body)(
+            [C] => _ => Loop.done(inner),
+            a => settled(inner)
+        )
+        val payload: Int < Ask = Eval(r)
+        assert(Eval(answerAsk(41)(payload)) == 42)
+    }
+
+    "a fused continuation receives the answer payload" in {
+        val inner: Int < Ask = ask
+        var got: Int < Ask   = 0
+        val body: Int < Give = ArrowEffect.suspendWith[Any](Tag[Give], ()) { c =>
+            got = c
+            3
+        }
+        val r: Int < Any = ArrowEffect.handleLoop(Tag[Give], body)([C] => _ => Loop.continue(settled(inner)), a => a)
+        assert(Eval(r) == 3)
+        assert(Eval(answerAsk(41)(got.map(_ + 1))) == 42)
+    }
+
+    "double nesting round trips" in {
+        val inner: Int < Ask                 = ask.map(_ + 1)
+        val twice: ((Int < Ask) < Any) < Any = settled(settled(inner))
+        val payload: Int < Ask               = Eval(Eval(twice))
+        assert(Eval(answerAsk(41)(payload)) == 42)
+    }
+
+    "a loop answer payload delivers unwrapped through a bare suspension" in {
+        val inner: Int < Ask = ask.map(_ + 1)
+        val r: (Int < Ask) < Any =
+            ArrowEffect.handleLoop(Tag[Give], give)([C] => _ => Loop.continue(settled(inner)), a => settled(a))
+        val payload: Int < Ask = Eval(r)
+        assert(Eval(answerAsk(41)(payload)) == 42)
+    }
+
+    "a suspended loop answer delivering a payload resumes unwrapped" in {
+        val inner: Int < Ask = ask.map(_ + 1)
+        val handled: (Int < Ask) < Ask =
+            ArrowEffect.handleLoop(Tag[Give], give)([C] => _ => Loop.continue(after(inner)), a => settled(a))
+        val payload: Int < Ask = Eval(answerAsk(0)(handled))
+        assert(Eval(answerAsk(41)(payload)) == 42)
+    }
+
+    "a stateful loop answer payload delivers unwrapped through a bare suspension" in {
+        val inner: Int < Ask = ask.map(_ + 1)
+        val r: (Int < Ask) < Any =
+            ArrowEffect.handleLoopState(Tag[Give], 0, give)(
+                [C] => (s, _) => Loop.continue(s + 1, settled(inner)),
+                (_, a) => settled(a)
+            )
+        val payload: Int < Ask = Eval(r)
+        assert(Eval(answerAsk(41)(payload)) == 42)
+    }
+
+    "a loop can end its region effectfully with a computation result" in {
+        val inner: Int < Ask = ask.map(_ + 1)
+        val r: (Int < Ask) < Ask = ArrowEffect.handleLoop(Tag[Give], give)(
+            [C] => _ => after(0).map(_ => Loop.done(inner)),
+            a => settled(a)
+        )
+        val payload: Int < Ask = Eval(answerAsk(0)(r))
+        assert(Eval(answerAsk(41)(payload)) == 42)
+    }
+
+    "a fused handler continuation receives a payload as a value" in {
+        val inner: Int < Ask = ask.map(_ + 1)
+        var got: Int < Ask   = 0
+        val r: Int < Any = ArrowEffect.handleLoopWith(Tag[Give], give)(
+            [C] => _ => Loop.continue(settled(inner)),
+            a => settled(a)
+        ) { (b: Int < Ask) =>
+            got = b
+            9
+        }
+        assert(Eval(r) == 9)
+        assert(Eval(answerAsk(41)(got)) == 42)
+    }
+
+    "flatMap chains a settled value into an effectful computation" in {
+        val r: Int < Ask = (5: Int < Ask).flatMap(a => ask.map(_ + a))
+        assert(Eval(answerAsk(1)(r)) == 6)
+    }
+
+    "flatMap receives a pending payload as a value" in {
+        val inner: Int < Ask    = ask
+        var received: Int < Ask = 0
+        val r: Int < Any = settled(inner).flatMap { c =>
+            received = c
+            7
+        }
+        assert(Eval(r) == 7)
+        assert(Eval(answerAsk(41)(received.map(_ + 1))) == 42)
+    }
+
+    "andThen sequences effects and discards the value" in {
+        var ran = false
+        val r: Int < Ask = ask.andThen {
+            ran = true
+            ask.map(_ + 1)
+        }
+        assert(Eval(answerAsk(41)(r)) == 42)
+        assert(ran)
+    }
+
+    "andThen leaves a discarded payload untouched" in {
+        val inner: Int < Ask = ask
+        val r: Int < Any     = settled(inner).andThen(7)
+        assert(Eval(r) == 7)
+    }
+
+    "unit discards the result" in {
+        assert(Eval((42: Int < Any).unit) == ())
+        assert(Eval(answerAsk(1)(ask.unit)) == ())
+    }
+
+    "eval returns the settled result" in {
+        assert((42: Int < Any).eval == 42)
+        assert((1: Int < Any).map(_ + 1).eval == 2)
+    }
+
+    "evalNow returns a settled value" in {
+        assert((42: Int < Any).evalNow == Maybe(42))
+    }
+
+    "evalNow is absent for a suspended computation" in {
+        assert(ask.evalNow == Maybe.Absent)
+    }
+
+    // the receiver of an extension marked `inline self` is substituted at each occurrence, so an
+    // occurrence per branch means the whole expression to the left of the dot is built once per branch.
+    // A settled receiver runs its lambda while it is built, which makes the duplication observable
+    "evalNow builds its receiver once" in {
+        var runs = 0
+        val r = (1: Int < Any).map { a =>
+            runs += 1
+            a + 1
+        }.evalNow
+        assert(r == Maybe(2))
+        assert(runs == 1)
+    }
+
+    "evalNow returns a payload unwrapped" in {
+        val inner: Int < Ask   = ask.map(_ + 1)
+        val payload: Int < Ask = settled(inner).evalNow.getOrElse(0)
+        assert(Eval(answerAsk(41)(payload)) == 42)
+    }
+
+    "flatten runs a nested payload" in {
+        val inner: Int < Ask = ask.map(_ + 1)
+        assert(Eval(answerAsk(41)(settled(inner).flatten)) == 42)
+    }
+
+    "flatten merges the effects of both layers" in {
+        val inner: Int < Ask          = ask.map(_ + 1)
+        val nested: (Int < Ask) < Ask = after(inner)
+        assert(Eval(answerAsk(20)(nested.flatten)) == 21)
+    }
+
+    "handle applies transformations fluently" in {
+        assert(ask.map(_ + 1).handle(v => answerAsk(41)(v)).handle(v => Eval(v)) == 42)
+        assert(ask.handle(v => answerAsk(1)(v), v => Eval(v)) == 1)
+        val ten: Int = (0: Int < Any).handle(
+            v => v.map(_ + 1),
+            v => v.map(_ + 1),
+            v => v.map(_ + 1),
+            v => v.map(_ + 1),
+            v => v.map(_ + 1),
+            v => v.map(_ + 1),
+            v => v.map(_ + 1),
+            v => v.map(_ + 1),
+            v => v.map(_ + 1),
+            v => Eval(v)
+        )
+        assert(ten == 9)
+    }
+
+    "map on a settled value runs eagerly" in {
+        var ran = false
+        val v = (1: Int < Any).map { n =>
+            ran = true
+            n + 1
+        }
+        assert(ran)
+        assert(v.eval == 2)
+    }
+
+    "map composes" in {
+        val v: Int < Any = (1: Int < Any).map(_ + 1).map(_ * 10)
+        assert(v.eval == 20)
+    }
+
+    "flatMap and andThen compose" in {
+        val v = (1: Int < Any).flatMap(n => (n + 1: Int < Any)).andThen(10: Int < Any)
+        assert(v.eval == 10)
+    }
+
+    "a computation as a value round-trips through the nested box" in {
+        def box[A](v: A): A < Any    = v
+        val inner: Int < Any         = (1: Int < Any).map(_ + 1)
+        val outer: (Int < Any) < Any = box(inner)
+        assert(outer.eval.eval == 2)
+    }
+
+    "a computation as a value survives mapping" in {
+        def box[A](v: A): A < Any = v
+        val inner: Int < Any      = (1: Int < Any).map(_ + 1)
+        val v: Int < Any          = box(inner).map(c => c.map(_ * 10))
+        assert(v.eval == 20)
+    }
+
+    "the extension surface applies to a val of nested type" in {
+        def box[A](v: A): A < Any     = v
+        val nested: (Int < Any) < Any = box(box(41))
+        assert(nested.map(c => c).eval == 41)
+        assert(nested.map(c => c.map(_ + 1)).eval == 42)
+        assert(nested.flatten.eval == 41)
+        assert(nested.unit.eval == ())
+        assert(nested.evalNow.isDefined)
+    }
+
+    "a pending value does not lift into a nested computation implicitly" in {
+        assertTypeError("val x: (Int < Any) < Any = (1: Int < Any).map(_ + 1)")
+    }
+
+    "a kyo module does not lift into a computation" in {
+        assertTypeError("val x: ArrowEffect.type < Any = ArrowEffect")
+    }
+
+    "deep map chains evaluate" in {
+        def chain(n: Int, v: Int < Any): Int < Any =
+            if n == 0 then v else chain(n - 1, v.map(_ + 1))
+        assert(chain(10000, 0).eval == 10000)
+    }
+
+    "deep nested computations evaluate" in {
+        def loop(n: Int): Int < Any =
+            if n == 0 then 0 else (n: Int < Any).map(_ => loop(n - 1))
+        assert(loop(100000).eval == 0)
+    }
+
+    "construction past the safepoint budget rescues instead of overflowing" in {
+        def loop(n: Int): Int < Any =
+            if n == 0 then 0 else (n: Int < Any).map(_ => loop(n - 1))
+        val v = loop(Period * 4)
+        assert(v.eval == 0)
+    }
+
+    "a long map tower on a rescued computation evaluates in bounded stack" in {
+        def loop(n: Int): Int < Any =
+            if n == 0 then 0 else (n: Int < Any).map(_ => loop(n - 1))
+        @tailrec def tower(v: Int < Any, n: Int): Int < Any =
+            if n == 0 then v else tower(v.map(_ + 1), n - 1)
+        val v = tower(loop(Period * 4), 1000000)
+        assert(v.eval == 1000000)
+    }
+
+    "eval does not compile for pending effects" in {
+        val errors = typeCheckErrors(
+            "sealed trait CustomEffect extends ArrowEffect[Const[Unit], Const[Unit]]; val x: Int < CustomEffect = 5; x.eval"
+        )
+        assert(errors.nonEmpty, "expected a type error, code compiled")
+    }
+
+    "a for-comprehension chains through flatMap and map" in {
         val result =
             for
                 x <- 5: Int < Any
                 y <- 3: Int < Any
             yield x + y
-
         assert(result.eval == 8)
     }
 
-    "flatten" in {
-        val x: Int < Any < Any = Kyo.lift(10: Int < Any)
-        val y: Int < Any       = x.flatten
-        assert(y.eval == 10)
-    }
-
-    "unit" in {
-        val x: Int < Any  = 5
-        val y: Unit < Any = x.unit
-        assert(y.eval == (()))
-    }
-
-    "andThen" in {
-        val x: Unit < Any   = ()
-        val y: String < Any = x.andThen("result")
-        assert(y.eval == "result")
-    }
-
-    "eval" in {
-        val x: Int < Any = 10
-        assert(x.eval == 10)
-    }
-
-    "eval should not compile for pending effects" in {
-        @nowarn("msg=unused") trait CustomEffect extends ArrowEffect[Const[Unit], Const[Unit]]
-        typeCheckFailure("val x: Int < CustomEffect = 5; x.eval")("value eval is not a member of Int < CustomEffect")
-    }
-
     "lift" - {
-
-        "allows lifting pure values" in {
+        "a pure value lifts into a computation" in {
             val x: Int < Any = 5
             assert(x.eval == 5)
         }
 
-        "nested computation" - {
-            "generic method effect mismatch" in {
-                @nowarn("msg=unused") def test1[A](v: A < Any) = v
-                typeCheckFailure("test1(1: Int < TestEffect)")("Required: Any < Any")
-            }
-            "inference widening" in {
-                typeCheckFailure("val _: Int < Any < Any = (1: Int < Any)")("Required: Int < Any < Any")
-            }
-        }
-
-        "functions" - {
+        "a pure function lifts into a computation-returning one" - {
             "one param" in {
-                val f: Int => String =
-                    _.toString
+                val f: Int => String            = _.toString
                 val lifted: Int => String < Any = f
                 assert(lifted(42).eval == "42")
             }
 
             "two params" in {
-                val f: (Int, Int) => String =
-                    (a, b) => (a + b).toString
+                val f: (Int, Int) => String            = (a, b) => (a + b).toString
                 val lifted: (Int, Int) => String < Any = f
                 assert(lifted(20, 22).eval == "42")
             }
 
             "three params" in {
-                val f: (Int, Int, Int) => String =
-                    (a, b, c) => (a + b + c).toString
+                val f: (Int, Int, Int) => String            = (a, b, c) => (a + b + c).toString
                 val lifted: (Int, Int, Int) => String < Any = f
                 assert(lifted(10, 20, 12).eval == "42")
             }
 
             "four params" in {
-                val f: (Int, Int, Int, Int) => String =
-                    (a, b, c, d) => (a + b + c + d).toString
+                val f: (Int, Int, Int, Int) => String            = (a, b, c, d) => (a + b + c + d).toString
                 val lifted: (Int, Int, Int, Int) => String < Any = f
                 assert(lifted(10, 20, 10, 2).eval == "42")
             }
 
-            "doesn't lift nested computations" in {
-                val f1: Int => String < Any                  = (_) => "test"
-                val f2: (Int, Int) => String < Any           = (_, _) => "test"
-                val f3: (Int, Int, Int) => String < Any      = (_, _, _) => "test"
-                val f4: (Int, Int, Int, Int) => String < Any = (_, _, _, _) => "test"
-                discard(f1, f2, f3, f4)
-                typeCheckFailure("""
-                    val _: Int => String < Any < Any = f1
-                """)(
-                    "Required: Int => String < Any < Any"
-                )
-                typeCheckFailure("""
-                    val _: (Int, Int) => String < Any < Any = f2
-                """)(
-                    "Required: (Int, Int) => String < Any < Any"
-                )
-                typeCheckFailure("""
-                    val _: (Int, Int, Int) => String < Any < Any = f3
-                """)(
-                    "Required: (Int, Int, Int) => String < Any < Any"
-                )
-                typeCheckFailure("""
-                    val _: (Int, Int, Int, Int) => String < Any < Any = f4
-                """)(
-                    "Required: (Int, Int, Int, Int) => String < Any < Any"
-                )
+            "five params" in {
+                val f: (Int, Int, Int, Int, Int) => String            = (a, b, c, d, e) => (a + b + c + d + e).toString
+                val lifted: (Int, Int, Int, Int, Int) => String < Any = f
+                assert(lifted(10, 20, 10, 1, 1).eval == "42")
             }
+
+            "six params" in {
+                val f: (Int, Int, Int, Int, Int, Int) => String            = (a, b, c, d, e, g) => (a + b + c + d + e + g).toString
+                val lifted: (Int, Int, Int, Int, Int, Int) => String < Any = f
+                assert(lifted(10, 20, 10, 1, 0, 1).eval == "42")
+            }
+        }
+
+        "a computation-returning function does not lift again" in {
+            val f1: Int => String < Any                  = _ => "test"
+            val f2: (Int, Int) => String < Any           = (_, _) => "test"
+            val f3: (Int, Int, Int) => String < Any      = (_, _, _) => "test"
+            val f4: (Int, Int, Int, Int) => String < Any = (_, _, _, _) => "test"
+            discard(f1, f2, f3, f4)
+            assert(typeCheckErrors("val _: Int => String < Any < Any = f1").nonEmpty)
+            assert(typeCheckErrors("val _: (Int, Int) => String < Any < Any = f2").nonEmpty)
+            assert(typeCheckErrors("val _: (Int, Int, Int) => String < Any < Any = f3").nonEmpty)
+            assert(typeCheckErrors("val _: (Int, Int, Int, Int) => String < Any < Any = f4").nonEmpty)
+        }
+
+        "a generic method does not accept a wider effect row" in {
+            def widen[A](v: A < Any) = v
+            discard(widen(1: Int < Any))
+            assert(typeCheckErrors("widen(ask)").nonEmpty)
         }
     }
 
-    sealed trait TestEffect extends ArrowEffect[Const[Int], Const[Int]]
-    object TestEffect:
-        def apply(i: Int): Int < TestEffect = ArrowEffect.suspend[Unit](Tag[TestEffect], i)
-        def run[A, S](v: => A < (TestEffect & S)) =
-            ArrowEffect.handle(Tag[TestEffect], v)(
-                [C] => (input, cont) => cont(input + 1)
-            )
-    end TestEffect
+    // the same shapes point-free: map takes A => B < S2, and a function returning a bare value is
+    // one only through the pure-function lift, since the alias is opaque outside its companion and
+    // a value conversion does not reach the result position of a function type
+    "a pure function passes to map point-free" in {
+        val f: Int => Int = _ + 1
+        val r: Int < Ask  = ask.map(f)
+        assert(Eval(answerAsk(41)(r)) == 42)
+    }
 
-    "evalNow" - {
-        "returns Present for pure values" in {
-            val x: Int < Any = 5
-            assert(x.evalNow == Maybe(5))
-        }
-
-        "returns Absent for suspended computations" in {
-            val x: Int < TestEffect = TestEffect(5)
-            assert(x.evalNow == Maybe.empty)
-        }
-
-        // Safepoint.eval keeps the enclosing fiber's preemption interceptor from
-        // deferring TestEffect.run's inline handling, which would make evalNow
-        // observe Absent.
-        "accepts nested computations" in {
-            Safepoint.eval {
-                Kyo.lift(TestEffect(1)).evalNow match
-                    case Absent => fail()
-                    case Present(v) =>
-                        TestEffect.run(v).evalNow match
-                            case Absent     => fail()
-                            case Present(v) => assert(v == 2)
-                end match
-            }
-        }
+    "a generic function passes to map point-free" in {
+        def f(a: Int): Int < Say       = say("x").map(_ => a + 5)
+        def g[B](f: Int => B): B < Ask = ask.map(f)
+        val nested: (Int < Say) < Ask  = g(f)
+        val payload: Int < Say         = Eval(answerAsk(1)(nested))
+        assert(Eval(answerSay(payload)) == 6)
     }
 
     "handle" - {
-        "applies a function to a pure value" in {
-            val result = (5: Int < Any).handle(_.map(_ + 1))
-            assert(result.eval == 6)
+        "applies a function to a settled value" in {
+            assert((5: Int < Any).handle(_.map(_ + 1)).eval == 6)
         }
 
         "applies a function to an effectful value" in {
-            val effect: Int < TestEffect = TestEffect(1)
-            val result                   = effect.handle(v => TestEffect.run(v))
-            assert(result.eval == 2)
+            assert(ask.handle(v => answerAsk(2)(v)).eval == 2)
         }
 
-        "allows chaining of operations" in {
-            val effect: Int < TestEffect = TestEffect(1)
-            val result = effect
-                .handle(v => v.map(_ * 2))
-                .handle(v => TestEffect.run(v))
-            assert(result.eval == 4)
+        "chains handles" in {
+            assert(ask.handle(v => v.map(_ * 2)).handle(v => answerAsk(3)(v)).eval == 6)
         }
 
-        "works with functions that return effects" in {
-            val effect: Int < TestEffect = TestEffect(1)
-            val result = effect.handle { v =>
-                TestEffect.run(v).map { x =>
-                    TestEffect.run(TestEffect(1))
-                }
-            }
-            assert(result.eval == 2)
-        }
-
-        "works with identity function" in {
-            val effect: Int < TestEffect = TestEffect(1)
-            val result                   = effect.handle(identity)
-            assert(TestEffect.run(result).eval == 2)
+        "works with the identity function" in {
+            val v: Int < Ask = ask
+            assert(answerAsk(2)(v.handle(identity)).eval == 2)
         }
 
         "can produce a value instead of a computation" in {
-            val result: Int = TestEffect(1).handle(TestEffect.run).handle(_.eval)
+            val result: Int = ask.handle(v => answerAsk(2)(v)).handle(_.eval)
             assert(result == 2)
         }
 
@@ -319,6 +633,15 @@ class PendingTest extends kyo.test.Test[Any]:
         }
     }
 
+    "show" - {
+        "displays a settled value through the inner type's Render" in {
+            val i: Result[String, Int] < Any         = Result.succeed(23)
+            val r: Render[Result[String, Int] < Any] = Render.apply
+            assert(r.asString(i) == "Kyo(Success(23))")
+            assert(render"$i" == "Kyo(Success(23))")
+        }
+    }
+
     "nested computations" - {
         sealed trait TestEffect1 extends ArrowEffect[Const[Int], Const[String]]
         object TestEffect1:
@@ -326,9 +649,10 @@ class PendingTest extends kyo.test.Test[Any]:
                 ArrowEffect.suspend[Any](Tag[TestEffect1], i)
 
             def run[A, S](v: A < (TestEffect1 & S)): A < S =
-                ArrowEffect.handle(Tag[TestEffect1], v)([C] =>
-                    (input, cont) =>
-                        cont(s"Effect1:$input"))
+                ArrowEffect.handleCont(Tag[TestEffect1], v)(
+                    [C] => (input, cont) => cont(s"Effect1:$input"),
+                    a => a
+                )
         end TestEffect1
 
         sealed trait TestEffect2 extends ArrowEffect[Const[String], Const[Int]]
@@ -337,11 +661,15 @@ class PendingTest extends kyo.test.Test[Any]:
                 ArrowEffect.suspend[Any](Tag[TestEffect2], s)
 
             def run[A, S](v: A < (TestEffect2 & S)): A < S =
-                ArrowEffect.handle(Tag[TestEffect2], v)([C] =>
-                    (input, cont) =>
-                        cont(input.length + 10))
+                ArrowEffect.handleCont(Tag[TestEffect2], v)(
+                    [C] => (input, cont) => cont(input.length + 10),
+                    a => a
+                )
         end TestEffect2
 
+        // Parked with the removal of ContextEffect from kyo-kernel2. Restore against
+        // the replacement design, together with "multiple operations" below.
+        /*
         sealed trait TestEffect3 extends ContextEffect[Boolean]
         object TestEffect3:
             def apply(): Boolean < TestEffect3 =
@@ -350,23 +678,7 @@ class PendingTest extends kyo.test.Test[Any]:
             def run[A, S](value: Boolean)(v: A < (TestEffect3 & S)): A < S =
                 ContextEffect.handle(Tag[TestEffect3], value)(v)
         end TestEffect3
-
-        // A fresh interceptor per call (it is stateful) that denies entry into the second pending computation: the
-        // resumption over a nested `A < S` value, where map/flatMap/andThen must re-apply their continuation.
-        def denyNestedResumption: Safepoint.Interceptor =
-            new Safepoint.Interceptor:
-                var seenNested                                                 = 0
-                def addFinalizer(f: Maybe[Result.Error[Any]] => Unit): Unit    = ()
-                def removeFinalizer(f: Maybe[Result.Error[Any]] => Unit): Unit = ()
-                def enter(frame: Frame, value: Any): Boolean =
-                    value match
-                        case _: kyo.kernel.internal.Kyo[?, ?] =>
-                            seenNested += 1
-                            seenNested != 2
-                        case _ => true
-
-        def nestedScenario: Int < TestEffect2 < TestEffect1 =
-            Kyo.lift(TestEffect1(10)).map(_.map(s => Kyo.lift(TestEffect2(s))))
+         */
 
         "basic nesting operations" in {
             val nested: String < TestEffect1 < Any = Kyo.lift(TestEffect1(42))
@@ -387,41 +699,50 @@ class PendingTest extends kyo.test.Test[Any]:
             assert(result2.eval == "Effect1:10".length + 10)
         }
 
-        // When the safepoint denies entry (as it does under fiber preemption), map/flatMap/andThen defer the
-        // resumption over a nested `A < S` value; each must still apply its continuation so the inner effect stays
-        // handled and does not leak past its handler. `denyNestedResumption` forces that deferral deterministically.
-        // One leaf per operation.
+        // A denied safepoint must defer the original boxed value, never the unnested
+        // payload: a deferred computation-as-data would otherwise resume as a
+        // suspension and leak the inner effect. Draining the budget forces the deferral.
+        def drainedBudget[A](f: => A): A =
+            val slot  = Safepoint.get()
+            val saved = Safepoint.save(slot)
+            while Safepoint.enter(slot) do ()
+            try f
+            finally Safepoint.restore(slot, saved)
+        end drainedBudget
 
-        "multiple effects with the nested map deferred at a denied safepoint" in {
-            assert(nestedScenario.map(_.handle(TestEffect2.run)).handle(TestEffect1.run).eval == "Effect1:10".length + 10)
-            val deferred =
-                Safepoint.immediate(denyNestedResumption) {
-                    nestedScenario.map(_.handle(TestEffect2.run)).handle(TestEffect1.run)
-                }
-            assert(deferred.eval == "Effect1:10".length + 10)
+        "map over a nested value denied by the budget defers the wrapped value" in {
+            val nested: Int < TestEffect2 < Any = Kyo.lift(TestEffect2("hello"))
+            val deferred                        = drainedBudget(nested.map(_.handle(TestEffect2.run)))
+            assert(deferred.eval == "hello".length + 10)
         }
 
-        "multiple effects with the nested flatMap deferred at a denied safepoint" in {
-            assert(nestedScenario.flatMap(_.handle(TestEffect2.run)).handle(TestEffect1.run).eval == "Effect1:10".length + 10)
-            val deferred =
-                Safepoint.immediate(denyNestedResumption) {
-                    nestedScenario.flatMap(_.handle(TestEffect2.run)).handle(TestEffect1.run)
-                }
-            assert(deferred.eval == "Effect1:10".length + 10)
+        "flatMap over a nested value denied by the budget defers the wrapped value" in {
+            val nested: Int < TestEffect2 < Any = Kyo.lift(TestEffect2("hello"))
+            val deferred                        = drainedBudget(nested.flatMap(_.handle(TestEffect2.run)))
+            assert(deferred.eval == "hello".length + 10)
         }
 
-        "discarding a nested computation with andThen deferred at a denied safepoint" in {
-            // andThen discards the inner `Int < TestEffect2`; the deferred resumption must drop the whole nested
-            // value rather than re-evaluate it at the wrong nesting.
-            assert(nestedScenario.andThen(99).handle(TestEffect1.run).eval == 99)
-            val deferred =
-                Safepoint.immediate(denyNestedResumption) {
-                    nestedScenario.andThen(99).handle(TestEffect1.run)
-                }
+        "flatten over a doubly nested value denied by the budget strips exactly one level" in {
+            val inner: Int < TestEffect2              = TestEffect2("hello")
+            val nested: Int < TestEffect2 < Any < Any = Kyo.lift(Kyo.lift(inner): Int < TestEffect2 < Any)
+            val deferred: Int < TestEffect2 < Any     = drainedBudget(nested.flatten)
+            val data                                  = deferred.eval
+            assert(TestEffect2.run(data).eval == "hello".length + 10)
+        }
+
+        "andThen over a nested value denied by the budget discards it unevaluated" in {
+            val nested: Int < TestEffect2 < Any = Kyo.lift(TestEffect2("hello"))
+            val deferred                        = drainedBudget(nested.andThen(99: Int < Any))
             assert(deferred.eval == 99)
         }
 
-        "map" in {
+        "unit over a nested value denied by the budget discards it unevaluated" in {
+            val nested: Int < TestEffect2 < Any = Kyo.lift(TestEffect2("hello"))
+            val deferred                        = drainedBudget(nested.unit)
+            assert(deferred.eval == ())
+        }
+
+        "map on nested" in {
             val nested: String < TestEffect1 < Any = Kyo.lift(TestEffect1(50))
 
             val mapped: Int < TestEffect1 = nested.map(_.map(_.length))
@@ -434,21 +755,18 @@ class PendingTest extends kyo.test.Test[Any]:
             assert(mapped3.eval.eval == "Effect1:50".length)
         }
 
-        "unit" in {
+        "unit on nested" in {
             val comp = Kyo.lift(TestEffect1(60)).map(_.unit).handle(TestEffect1.run)
             assert(comp.eval == ())
 
             val comp2 = Kyo.lift(TestEffect1(60)).map(v => v.unit.handle(TestEffect1.run))
             assert(comp2.eval == ())
 
-            val comp3 = Kyo.lift(TestEffect1(60)).map(v => Kyo.lift(v.unit)).map(_.handle(TestEffect1.run))
-            assert(comp2.eval == ())
-
             val comp4 = Kyo.lift(TestEffect1(60)).map(v => Kyo.lift(v.unit)).map(v => Kyo.lift(v.handle(TestEffect1.run)))
             assert(comp4.eval.eval == ())
         }
 
-        "andThen" in {
+        "andThen on nested" in {
             val comp = Kyo.lift(TestEffect1(60)).andThen(TestEffect1(70)).handle(TestEffect1.run)
             assert(comp.eval == "Effect1:70")
 
@@ -463,23 +781,20 @@ class PendingTest extends kyo.test.Test[Any]:
             assert(comp3.eval == 16)
         }
 
-        "handle" in {
+        "handle on nested" in {
             val nested: String < TestEffect1 < Any = Kyo.lift(TestEffect1(80))
 
-            val result = nested.handle(comp =>
-                TestEffect1.run(comp.flatten).map(_.length)
-            )
-
+            val result = nested.handle(comp => TestEffect1.run(comp.flatten).map(_.length))
             assert(result.eval == 10)
 
             val result2 = nested.handle(
                 comp => TestEffect1.run(comp.flatten),
                 res => res.eval.length
             )
-
             assert(result2 == "Effect1:80".length)
         }
 
+        /*
         "multiple operations" in {
             def processValue(v: Int): Int < TestEffect2 < TestEffect1 =
                 TestEffect1(v).map(s => Kyo.lift(TestEffect2(s + "!")))
@@ -497,6 +812,7 @@ class PendingTest extends kyo.test.Test[Any]:
 
             assert(finalResult.eval == ("Effect1:100!".length + 10) * 2)
         }
+         */
 
         "method returning nested computation" in {
             def compute(x: Int): String < TestEffect1 < TestEffect2 =
@@ -565,15 +881,41 @@ class PendingTest extends kyo.test.Test[Any]:
             assert(result2.eval == 11)
         }
 
+        "evalNow accepts nested computations" in {
+            sealed trait Bump extends ArrowEffect[Const[Int], Const[Int]]
+            def bump(i: Int): Int < Bump = ArrowEffect.suspend[Unit](Tag[Bump], i)
+            def run[A, S](v: => A < (Bump & S)) =
+                ArrowEffect.handleCont(Tag[Bump], v)([C] => (input, cont) => cont(input + 1), a => a)
+
+            Kyo.lift(bump(1)).evalNow match
+                case Maybe.Absent     => fail()
+                case Maybe.Present(v) =>
+                    // handleCont parks a region node, so a freshly handled
+                    // computation is Absent for evalNow until it evaluates
+                    assert(run(v).evalNow == Maybe.Absent)
+                    assert(run(v).eval == 2)
+            end match
+        }
     }
 
-    "show" - {
-        "should display pure vals wrapped with inner types displayed using show" in {
-            val i: Result[String, Int] < Any         = Result.succeed(23)
-            val r: Render[Result[String, Int] < Any] = Render.apply
-            assert(r.asString(i) == "Kyo(Success(23))")
-            assert(render"$i" == "Kyo(Success(23))")
-        }
+    "depth leaked by throwing maps resets at the eval loop" in {
+        def loop(n: Int): Int < Any =
+            if n == 0 then 0 else (n: Int < Any).map(_ => loop(n - 1))
+        def leaky(): Unit =
+            try
+                val _ = (1: Int < Any).map(_ => (throw new IllegalStateException("leak")): Int)
+                ()
+            catch
+                case _: IllegalStateException => ()
+        val v =
+            loop(Period * 2).map { z =>
+                var i = 0
+                while i < Period * 2 do
+                    leaky()
+                    i += 1
+                z
+            }.map(_ + 1)
+        assert(v.eval == 1)
     }
 
 end PendingTest

@@ -38,10 +38,23 @@ To fix this, you can:
 """)
 opaque type CanLift[A] = Null
 
-object CanLiftMacro:
-    inline given derived[A](using inline ng: NotGiven[A <:< (Any < Nothing)]): CanLift[A] = ${ liftImpl[A] }
+object CanLift:
 
-    private[internal] def liftImpl[A: Type](using Quotes): Expr[CanLift[A]] =
+    inline given derived[A](using inline ng: NotGiven[A <:< (Any < Nothing)], inline ns: NotGiven[A <:< Singleton]): CanLift[A] = null
+
+    inline given derivedCaseObject[A <: Singleton & Product](using inline ng: NotGiven[A <:< (Any < Nothing)]): CanLift[A] = null
+
+    inline given derivedSingleton[A <: Singleton]: CanLift[A] = CanLiftMacro.checkSingleton[A]
+
+    inline given nothing: CanLift[Nothing] = null
+
+end CanLift
+
+object CanLiftMacro:
+
+    inline def checkSingleton[A]: CanLift[A] = ${ checkImpl[A] }
+
+    private[kernel] def checkImpl[A: Type](using Quotes): Expr[CanLift[A]] =
         import quotes.reflect.*
         val tpe = TypeRepr.of[A]
         val sym = tpe.typeSymbol
@@ -49,23 +62,25 @@ object CanLiftMacro:
         if sym.fullName.startsWith("kyo.") && sym.flags.is(Flags.Module) && !sym.flags.is(Flags.Case) then
             report.errorAndAbort(s"Cannot lift '${sym.fullName}' to a '${sym.name} < S'", Position.ofMacroExpansion)
 
-        '{ CanLift.unsafe.bypass.asInstanceOf[CanLift[A]] }
-    end liftImpl
+        if tpe <:< TypeRepr.of[Any < Nothing] then
+            report.errorAndAbort(s"Type '${tpe.show}' may contain a nested effect computation.", Position.ofMacroExpansion)
+
+        '{ null.asInstanceOf[CanLift[A]] }
+    end checkImpl
 
 end CanLiftMacro
 
-object CanLift:
+object LiftMacro:
 
-    export CanLiftMacro.derived
+    def abortCastUnitMacro[S1: Type, S2: Type](v: Expr[Unit < S1])(using Quotes): Expr[Unit < S2] =
+        import quotes.reflect.*
+        val source = TypeRepr.of[S1].show
+        report.errorAndAbort(
+            s"""Cannot lift `Unit < ${source}` to the expected type (`Unit < ?`).
+               |This may be due to an effect type mismatch.
+               |Consider removing or adjusting the type constraint on the left-hand side.
+               |More info : https://github.com/getkyo/kyo/issues/903""".stripMargin
+        )
+    end abortCastUnitMacro
 
-    inline given CanLift[Nothing] = CanLift.unsafe.bypass
-
-    object unsafe:
-        /** Unconditionally provides CanLift evidence for any type.
-          *
-          * Warning: This bypasses normal type safety checks and should only be used when you can guarantee through other means that no
-          * problematic effect nesting will occur.
-          */
-        inline given bypass[A]: CanLift[A] = null
-    end unsafe
-end CanLift
+end LiftMacro
