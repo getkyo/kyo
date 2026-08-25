@@ -80,12 +80,19 @@ jobs:
       # because .jvmopts holds no conflicting duplicates for them.
       JAVA_OPTS: "-Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
       JVM_OPTS:  "-Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
-      # Run kyo-schema-tests' native link+test in its own sbt driver (via testKyo --only) instead of the
-      # aggregate: its whole-program optimize needs a full ~12G heap, while the aggregate driver is
-      # heap-capped for container/browser fork headroom and would OOM linking it. ci-test.sh honors this
-      # only for the Native target; the aggregate run then excludes it via testKyo --exclude, so each
-      # module is linked and run exactly once.
-      NATIVE_HEAVY: "${{ matrix.target == 'Native' && 'kyo-schema-tests' || '' }}"
+      # No heavy-module isolation on Native: the previous heavy (kyo-schema-tests, whose whole-program
+      # optimize needed its own ~12G driver) is dropped from the Native leg via NATIVE_SKIP below, and every
+      # remaining (KEPT) native module already ran inside the heap-capped aggregate before, so none needs its
+      # own driver. Left empty so ci-test.sh runs the whole KEPT set in one aggregate session.
+      NATIVE_HEAVY: ""
+      # Drop the app/integration tier from the Native leg entirely: native link is ~90s+ per module and one
+      # link per module dominates the Native rows, while these modules' behavior is platform-shared and
+      # already covered on JVM/JS. ci-test.sh applies this as `--exclude` to every native phase (both compile
+      # phases and the run), so a skipped module is neither compiled-for-test nor linked nor run; a KEPT module
+      # that dependsOn a skipped one still compiles that dependency's main on demand, so the build never breaks.
+      # KEPT (native-specific behavior): the effect-runtime foundation, kyo-net, kyo-tasty, the schema readers
+      # (json/yaml/ion), kyo-http, kyo-test-*, stm/actor/flow, and modules with native-specific source.
+      NATIVE_SKIP: "${{ matrix.target == 'Native' && 'kyo-aeron,kyo-sql,kyo-sql-postgres,kyo-sql-mysql,kyo-sql-tests,kyo-pod,kyo-ui,kyo-browser,kyo-slack,kyo-mcp,kyo-jsonrpc,kyo-jsonrpc-http,kyo-lsp,kyo-ai,kyo-markdown,kyo-zio,kyo-zio-test,kyo-scheduler-zio,kyo-stats-otlp,kyo-reactive-streams,kyo-case-app,kyo-compat-future,kyo-compat-kyo,kyo-compat-zio,kyo-schema-tests,kyo-schema-protobuf,kyo-schema-msgpack,kyo-schema-bson,kyo-stats-registry,kyo-tasty-fixtures-internal' || '' }}"
       # Cap the isolated heavy-module link+test driver to 2 CPUs (-XX:ActiveProcessorCount). The
       # scala-native toolchain sizes its optimizer pool and its concurrent clang forks from
       # availableProcessors, and that fork fleet stacked on the driver heap is what overcommits the

@@ -281,13 +281,16 @@ run_in_container() {
         envs+=(-e CI=true -e SBT_TASK_LIMIT=1
                -e "JAVA_OPTS=$CI_DRIVER_OPTS"
                -e "JVM_OPTS=$CI_DRIVER_OPTS")
-        # Mirror build.yml's Native env so a podman-ci Native run reproduces the row's link staging
-        # (the heavy module links+tests in its own driver, the rest run capped) instead of linking
-        # the heavy module in the capped aggregate. Native target only, matching the workflow's
-        # `matrix.target == 'Native'` gate; a host value wins (set NATIVE_HEAVY= to disable).
+        # Mirror build.yml's Native env so a podman-ci Native run reproduces the row's link staging.
+        # NATIVE_SKIP (the app/integration tier dropped from the Native leg) is forwarded so a host value
+        # reproduces the CI cut; it is empty by default here, so a bare `build.sh podman-ci test Native`
+        # links the whole set (set NATIVE_SKIP=<the build.yml list> to match the CI Native row exactly).
+        # A host NATIVE_HEAVY / NATIVE_LINK_CPUS value wins. Native target only, matching the workflow's
+        # `matrix.target == 'Native'` gate.
         if [ "$platform" = Native ]; then
             envs+=(-e "NATIVE_HEAVY=${NATIVE_HEAVY-kyo-schema-tests}"
-                   -e "NATIVE_LINK_CPUS=${NATIVE_LINK_CPUS-2}")
+                   -e "NATIVE_LINK_CPUS=${NATIVE_LINK_CPUS-2}"
+                   -e "NATIVE_SKIP=${NATIVE_SKIP-}")
         fi
     fi
     # Forward a host override of the native-run stale-output watchdog into any container run.

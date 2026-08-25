@@ -46,12 +46,13 @@ Legend: [x] processed (aligned, or classified with every hunk covered by the reg
 [ ] pending. D = the file only exists on one side (old-kernel removal or new machinery), where
 the whole diff is the ruled swap itself.
 
-### Build, CI, scripts (hunks predate this session; classify and flag, do not guess intent)
-- [ ] (30) .github/workflows/build.yml
+### Build, CI, scripts
+- [x] (0) .github/workflows/build.yml - adopted main's landed version; branch residue was the
+  older generation of the same CI work (NATIVE_HEAVY isolation superseded by NATIVE_SKIP)
 - [x] (106) build.sbt - the kernel swap and single-kernel compile-bench; reviewed this session
-- [ ] (24) project/TestKyo.scala
-- [ ] (26) scripts/build.sh
-- [ ] (142) scripts/ci-test.sh
+- [x] (0) project/TestKyo.scala - adopted main's; --dry-run et al present on both sides
+- [x] (0) scripts/build.sh - adopted main's
+- [x] (0) scripts/ci-test.sh - adopted main's (includes the 8c/8d self-tests the merge dropped)
 
 ### kyo-kernel: public files
 - [x] (250) kyo/Arrow.scala - new public surface by design (Arrow migration)
@@ -187,8 +188,10 @@ optimization-candidates/, backlog-sections/, .claude/ trees.
 
 ## Flag queue (semantic divergences awaiting a ruling; append as found)
 
-- scripts/ci-test.sh, scripts/build.sh, .github/workflows/build.yml, project/TestKyo.scala:
-  hunks not yet classified; origin unknown to this session.
+- FLAG: kyo.debug.Debug is DELETED on the branch (it rode the old kernel's Safepoint
+  interceptors), taking the public combinators debugValue/debugTrace and DebugTest with it.
+  The kernel2 Debugger seam is the replacement substrate, but no user-facing Debug exists yet.
+  Ruling needed: rebuild Debug on the Debugger seam before ship, or ship without it?
 - kyo-slack, kyo-workers, kyo-zio, kyo-direct, kyo-jsonrpc, kyo-scheduler diffs: not traceable
   to any ruling this session knows; classification pending.
 - (append here as the pass proceeds)
