@@ -12,5 +12,4 @@ private[kyo] enum FlowSuspension derives CanEqual:
     case Sleeping(name: String, until: Instant)
     case WaitingForInput(name: String)
     case ClaimLost
-    case StepAlreadyCompleted(name: String)
 end FlowSuspension

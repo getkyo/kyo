@@ -1,5 +1,15 @@
 package kyo
 
+object FlowEngineTest:
+    /** A step's own domain failure: not an engine error, and the reason FlowException has an open branch. */
+    case class ChargeDeclined(orderId: String, cents: Long)(using Frame)
+        extends FlowDomainException(s"charge declined for $orderId: $cents cents over limit")
+
+    /** A store's own failure, the way a store over a database reports one: typed, and marked retryable when the backend says so. */
+    case class StoreUnavailable(detail: String)(using Frame)
+        extends FlowStoreException(s"the store could not be reached: $detail") with FlowStoreException.Retryable
+end FlowEngineTest
+
 class FlowEngineTest extends kyo.test.Test[Any]:
 
     override def timeout = 30.seconds
@@ -25,8 +35,8 @@ class FlowEngineTest extends kyo.test.Test[Any]:
         eid: Flow.Id.Execution,
         predicate: Flow.Status => Boolean,
         maxRounds: Int = 200
-    )(using Frame): Flow.Status < Async =
-        def go(remaining: Int): Flow.Status < Async =
+    )(using Frame): Flow.Status < (Async & Abort[FlowStoreException]) =
+        def go(remaining: Int): Flow.Status < (Async & Abort[FlowStoreException]) =
             if remaining <= 0 then
                 store.getExecution(eid).map { state =>
                     Abort.panic(new AssertionError(s"pump timed out — last state: $state"))
@@ -119,8 +129,8 @@ class FlowEngineTest extends kyo.test.Test[Any]:
                     _      <- engine.executions.signal[Int](eid, "x", 1)
                     status <- pump(tc, store, eid, _.isTerminal)
                 yield status match
-                    case Flow.Status.Failed(msg) => assert(msg.contains("boom"))
-                    case other                   => fail(s"Expected Failed, got $other")
+                    case Flow.Status.Failed(msg, _) => assert(msg.contains("boom"))
+                    case other                      => fail(s"Expected Failed, got $other")
                 end for
             }
         }
@@ -305,6 +315,621 @@ class FlowEngineTest extends kyo.test.Test[Any]:
                 yield
                     assert(v.get == 11)
                     assert(callCount == 1)
+                end for
+            }
+        }
+
+        /** A node whose executor died mid-step is re-run by the executor that reclaims the lease.
+          *
+          * The durable state below is exactly what a crash leaves behind: a `StepStarted` for a node with no `StepCompleted` after it, on
+          * an execution nobody holds. It is built through the store rather than by killing a process, so the test states the condition it
+          * is about instead of racing to produce it.
+          *
+          * The engine used to treat that event as "another executor is working on this node" and wait for a completion, for as long as the
+          * node's own `timeout`. That timeout defaults to `Duration.Infinity`, so the wait never ended: the claim lapsed, another executor
+          * claimed, resumed, waited, and the execution sat at `Running` forever with nothing reporting a problem.
+          */
+        "a step in flight when its executor died is re-run on resume" in {
+            withEngine { (engine, store, tc) =>
+                val flow      = Flow.init("fulfillment").step("charge")(_ => ()).output("receipt")(_ => "paid")
+                val deadOne   = Flow.Id.Executor("executor-that-died")
+                val leaseSpan = 2.seconds
+                for
+                    eid <- Sync.defer(Flow.Id.Execution("exec-crashed-mid-step"))
+                    now <- Clock.now
+                    // The hash comes from the flow itself rather than from a registration, so the execution exists
+                    // BEFORE this engine polls for its workflow: that is what lets the dying executor take the lease
+                    // first, deterministically, instead of racing the engine's own worker for it.
+                    hash = kyo.internal.WorkflowSchema.structuralHash(flow)
+                    _ <- store.createExecution(eid, Flow.Status.Running, Flow.Event.Created(wf1, eid, now), hash)
+                    _ <- store.appendEvent(eid, Flow.Event.StepStarted(wf1, eid, "charge", deadOne, now))
+                    // The executor that is about to die holds the lease, which is the state a crash interrupts. Its
+                    // claim then has to LAPSE before anyone else may touch the execution, so the test waits it out
+                    // rather than starting from an execution that is conveniently unheld.
+                    claimed <- store.claimReady(Set(wf1), deadOne, leaseSpan, 10, Duration.Zero)
+                    held    <- store.getExecution(eid)
+                    _       <- engine.register(wf1, flow)
+                    _       <- tc.advance(leaseSpan + 1.second)
+                    status  <- pump(tc, store, eid, _.isTerminal)
+                    receipt <- store.getField[String](eid, "receipt")
+                    history <- store.getHistory(eid, Int.MaxValue, 0)
+                yield
+                    assert(claimed.map(_.executionId) == Seq(eid), s"the dying executor must have held it, claimed ${claimed.size}")
+                    assert(held.exists(_.executor == Present(deadOne)), s"the lease must have been held, state was $held")
+                    assert(status == Flow.Status.Completed, s"expected the reclaimed execution to complete, got $status")
+                    assert(receipt == Present("paid"), s"expected the flow to have produced its output, got $receipt")
+                    val chargeStarts = history.events.count {
+                        case Flow.Event.StepStarted(_, _, "charge", _, _) => true
+                        case _                                            => false
+                    }
+                    val chargeCompletions = history.events.count {
+                        case Flow.Event.StepCompleted(_, _, "charge", _) => true
+                        case _                                           => false
+                    }
+                    assert(chargeStarts == 2, s"expected the dead executor's start plus the re-run, got $chargeStarts")
+                    assert(chargeCompletions == 1, s"expected the re-run to record one completion, got $chargeCompletions")
+                end for
+            }
+        }
+
+        "a step already recorded as completed is not re-run when its start is also present" in {
+            withEngine { (engine, store, tc) =>
+                var charges = 0
+                val flow = Flow.init("fulfillment").step("charge") { _ =>
+                    charges += 1
+                }.output("receipt")(_ => "paid")
+                for
+                    eid <- Sync.defer(Flow.Id.Execution("exec-charge-already-done"))
+                    now <- Clock.now
+                    // The whole history is durable BEFORE the workflow is registered, for the same reason as the leaf
+                    // above: the engine's worker polls for registered workflows only, so writing the start and the
+                    // completion first is what keeps it from claiming the execution between the two appends and
+                    // re-running a step whose completion had not been written yet.
+                    hash = kyo.internal.WorkflowSchema.structuralHash(flow)
+                    _ <- store.createExecution(eid, Flow.Status.Running, Flow.Event.Created(wf1, eid, now), hash)
+                    _ <- store.appendEvent(
+                        eid,
+                        Flow.Event.StepStarted(wf1, eid, "charge", Flow.Id.Executor("executor-that-died"), now)
+                    )
+                    _      <- store.appendEvent(eid, Flow.Event.StepCompleted(wf1, eid, "charge", now))
+                    _      <- engine.register(wf1, flow)
+                    status <- pump(tc, store, eid, _.isTerminal)
+                yield
+                    assert(status == Flow.Status.Completed, s"expected the execution to complete, got $status")
+                    assert(charges == 0, s"a completed step must stay skipped on replay, ran $charges times")
+                end for
+            }
+        }
+    }
+
+    // =========================================================================
+    // Engine construction
+    // =========================================================================
+    "engine construction" - {
+
+        /** Tuning and a runner are available together.
+          *
+          * The overload that took the tuning parameters took no runner, and the one that took a runner took no tuning, so any flow whose
+          * steps touch a resource (which is any flow with a non-trivial effect row, and therefore the reason a runner exists) was stuck
+          * with the default lease and worker count. `lease` is what decides how long crash recovery waits.
+          */
+        "a tuned engine runs a flow whose steps need a runner" in {
+            Clock.withTimeControl { tc =>
+                FlowStore.initMemory.map { store =>
+                    val flow   = Flow.init("tuned").output("greeting")(_ => Env.use[String](name => s"hello $name"))
+                    val config = FlowEngine.Config(workerCount = 1, lease = 5.seconds, pollTimeout = 100.millis)
+                    FlowEngine.init(store, config, flow)([v] => (c: v < Env[String]) => Env.run("world")(c)).map { engine =>
+                        for
+                            handle <- engine.workflows.start(Flow.Id.Workflow("tuned"))
+                            eid = handle.executionId
+                            status   <- pump(tc, store, eid, _.isTerminal)
+                            greeting <- store.getField[String](eid, "greeting")
+                        yield
+                            assert(status == Flow.Status.Completed, s"expected Completed, got $status")
+                            assert(greeting == Present("hello world"), s"the runner must have supplied the effect, got $greeting")
+                        end for
+                    }
+                }
+            }
+        }
+
+        "the untuned overloads carry the default config" in {
+            assert(FlowEngine.Config.default == FlowEngine.Config())
+            assert(FlowEngine.Config.default.workerCount == 2)
+            assert(FlowEngine.Config.default.lease == 30.seconds)
+        }
+
+        /** Every `runHandlers` overload binds the same way in a for-comprehension.
+          *
+          * The engine one answered a bare `Chunk`, so `handlers <- Flow.runHandlers(engine)` bound over `Chunk`'s own `flatMap`: the rest
+          * of the comprehension ran once per handler with `handlers` being a single one. A type error catches that only when the body's
+          * types happen to disagree.
+          */
+        "runHandlers binds as one value in a kyo comprehension" in {
+            Clock.withTimeControl { _ =>
+                FlowStore.initMemory.map { store =>
+                    val flow = Flow.init("handlers").output("y")(_ => 1)
+                    FlowEngine.init(store, flow).map { engine =>
+                        for
+                            handlers <- Flow.runHandlers(engine)
+                            again    <- Flow.runHandlers(store, flow)
+                        yield
+                            assert(handlers.size > 1, s"the engine overload must answer every handler, got ${handlers.size}")
+                            assert(
+                                handlers.size == again.size,
+                                s"every overload answers the same handlers, ${handlers.size} vs ${again.size}"
+                            )
+                        end for
+                    }
+                }
+            }
+        }
+    }
+
+    // =========================================================================
+    // A step's own failures and its compensation's own effects
+    // =========================================================================
+    "domain failures" - {
+
+        /** A step declines for a domain reason, and the execution records what kind of failure that was.
+          *
+          * FlowException was sealed all the way down, so a domain failure had nowhere typed to go and became a panic; the persisted
+          * status then kept a message and nothing else, which makes "how many failed for payment reasons" a LIKE over free text.
+          */
+        "a domain failure is a failure, and the status names its kind" in {
+            withEngine { (engine, store, tc) =>
+                val flow = Flow.init("charging").step("charge") { _ =>
+                    Abort.fail(FlowEngineTest.ChargeDeclined("ord-200", 54000L))
+                }
+                for
+                    _      <- engine.register(Flow.Id.Workflow("charging"), flow)
+                    handle <- engine.workflows.start(Flow.Id.Workflow("charging"))
+                    eid = handle.executionId
+                    status <- pump(tc, store, eid, _.isTerminal)
+                yield status match
+                    case Flow.Status.Failed(error, kind) =>
+                        assert(error.contains("54000"), s"the message must survive, got $error")
+                        assert(kind == Present("ChargeDeclined"), s"the failure's kind must be recorded, got $kind")
+                    case other => assert(false, s"expected Failed, got $other")
+                end for
+            }
+        }
+
+        "a panic carries no kind, since nothing declared one" in {
+            withEngine { (engine, store, tc) =>
+                val flow = Flow.init("panicking").step("fall-over")(_ => throw new RuntimeException("the process fell over"))
+                for
+                    _      <- engine.register(Flow.Id.Workflow("panicking"), flow)
+                    handle <- engine.workflows.start(Flow.Id.Workflow("panicking"))
+                    eid = handle.executionId
+                    status <- pump(tc, store, eid, _.isTerminal)
+                yield status match
+                    case Flow.Status.Failed(error, kind) =>
+                        assert(error.contains("fell over"), s"the message must survive, got $error")
+                        assert(kind == Absent, s"an escaped throwable declares no kind, got $kind")
+                    case other => assert(false, s"expected Failed, got $other")
+                end for
+            }
+        }
+
+        /** A compensation uses the effects its forward step used, discharged by the same runner.
+          *
+          * The handler's row was pinned to `Async & Abort[FlowException]`, so a compensation that had to undo a write could not ask the
+          * engine for the resource the write used, and the flow ended up carrying a second dependency-injection mechanism.
+          */
+        "a compensation uses the forward step's own effects" in {
+            Clock.withTimeControl { tc =>
+                FlowStore.initMemory.map { store =>
+                    AtomicRef.init(Chunk.empty[String]).map { audit =>
+                        val flow = Flow.init("saga")
+                            .outputCompensated("reserve")(_ => Env.use[String](w => s"reserved in $w"))(ctx =>
+                                Env.use[String](w => audit.getAndUpdate(_ :+ s"released in $w").unit)
+                            )
+                            .step("charge")(_ => Abort.fail(FlowEngineTest.ChargeDeclined("ord-1", 1L)))
+                        val config = FlowEngine.Config(workerCount = 1, pollTimeout = 100.millis)
+                        FlowEngine.init(store, config, flow)([v] =>
+                            (c: v < (Env[String] & Abort[FlowEngineTest.ChargeDeclined])) =>
+                                Abort.recover[FlowEngineTest.ChargeDeclined](e => Abort.fail(e: FlowException))(
+                                    Env.run("warehouse")(c)
+                            )).map { engine =>
+                            for
+                                handle <- engine.workflows.start(Flow.Id.Workflow("saga"))
+                                eid = handle.executionId
+                                status  <- pump(tc, store, eid, _.isTerminal)
+                                entries <- audit.get
+                            yield
+                                assert(status.isInstanceOf[Flow.Status.Failed], s"expected the saga to fail, got $status")
+                                assert(
+                                    entries == Chunk("released in warehouse"),
+                                    s"the compensation must have run with the runner's effect, got $entries"
+                                )
+                            end for
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // =========================================================================
+    // A store that fails under the worker
+    // =========================================================================
+    "store failures" - {
+
+        /** A store that fails the claim keeps the engine alive, records the failure, and processes what follows.
+          *
+          * A failure raised while EXECUTING was already handled: the engine caught it, recorded it on the execution, and released the
+          * claim. A failure raised while CLAIMING killed every worker fiber with nothing logged and no status changed, and the process
+          * kept answering its health check while no execution ever progressed again.
+          */
+        "a claim that fails does not kill the worker" in {
+            Clock.withTimeControl { tc =>
+                FlowStore.initMemory.map { store =>
+                    AtomicInt.init(3).map { failuresLeft =>
+                        val flaky = new FailingClaimStore(store, failuresLeft)
+                        val flow  = Flow.init("resilient").output("y")(_ => 42)
+                        FlowEngine.init(flaky, FlowEngine.Config(workerCount = 1, pollTimeout = 100.millis), flow).map { engine =>
+                            for
+                                handle <- engine.workflows.start(Flow.Id.Workflow("resilient"))
+                                eid = handle.executionId
+                                status <- pump(tc, store, eid, _.isTerminal, maxRounds = 2000)
+                                y      <- store.getField[Int](eid, "y")
+                                health <- engine.health
+                            yield
+                                assert(status == Flow.Status.Completed, s"the engine must recover and run it, got $status")
+                                assert(y == Present(42), s"the flow must have produced its output, got $y")
+                                assert(health.workersAlive == 1, s"the worker must still be polling, got ${health.workersAlive}")
+                                assert(health.isHealthy, s"every configured worker must be alive, got $health")
+                                assert(health.pollFailures >= 3L, s"the failures must be counted, got ${health.pollFailures}")
+                                assert(
+                                    health.lastPollFailure.exists(_.contains("claimReady")),
+                                    s"the last failure must be reported, got ${health.lastPollFailure}"
+                                )
+                            end for
+                        }
+                    }
+                }
+            }
+        }
+
+        /** A store that FAILS the claim, rather than panicking, is handled the same way and keeps its message.
+          *
+          * This is what the SPI's error channel buys: a store over a database has typed, classified failures, and before it could only
+          * report one by panicking, which threw the classification away at the boundary.
+          */
+        "a typed store failure on the claim path is retried and reported" in {
+            Clock.withTimeControl { tc =>
+                FlowStore.initMemory.map { store =>
+                    AtomicInt.init(3).map { failuresLeft =>
+                        val flaky = new FailingClaimStore(store, failuresLeft, ClaimFailure.Typed)
+                        val flow  = Flow.init("typed-store-failure").output("y")(_ => 42)
+                        FlowEngine.init(flaky, FlowEngine.Config(workerCount = 1, pollTimeout = 100.millis), flow).map { engine =>
+                            for
+                                handle <- engine.workflows.start(Flow.Id.Workflow("typed-store-failure"))
+                                eid = handle.executionId
+                                status <- pump(tc, store, eid, _.isTerminal, maxRounds = 2000)
+                                health <- engine.health
+                            yield
+                                assert(status == Flow.Status.Completed, s"the engine must recover and run it, got $status")
+                                assert(health.workersAlive == 1, s"the worker must still be polling, got ${health.workersAlive}")
+                                assert(health.pollFailures >= 3L, s"the failures must be counted, got ${health.pollFailures}")
+                                assert(
+                                    health.lastPollFailure.exists(_.contains("could not be reached")),
+                                    s"the store's own message must survive, got ${health.lastPollFailure}"
+                                )
+                            end for
+                        }
+                    }
+                }
+            }
+        }
+
+        "a healthy engine reports every worker alive" in {
+            Clock.withTimeControl { _ =>
+                FlowStore.initMemory.map { store =>
+                    val flow = Flow.init("healthy").output("y")(_ => 1)
+                    FlowEngine.init(store, FlowEngine.Config(workerCount = 2, pollTimeout = 100.millis), flow).map { engine =>
+                        engine.health.map { health =>
+                            assert(health.workersConfigured == 2, s"got ${health.workersConfigured}")
+                            assert(health.workersAlive == 2, s"got ${health.workersAlive}")
+                            assert(health.pollFailures == 0L, s"got ${health.pollFailures}")
+                            assert(health.lastPollFailure == Absent, s"got ${health.lastPollFailure}")
+                        }
+                    }
+                }
+            }
+        }
+
+        /** A store failure raised while an execution is running keeps its own name on the way to the status.
+          *
+          * It used to be demoted to a panic on the way out of the flow, so a store that classified its failures precisely (a deadlock, a
+          * lost connection, a retryable one against one that will fail identically forever) had all of it thrown away at the boundary,
+          * and every store failure was persisted as an unclassified message. The typed channel the SPI now gives it exists to carry
+          * exactly that, and it is carried through to the recorded status the same way a flow's own declared failure is.
+          */
+        "a store failure while running an execution is recorded with the store's own kind" in {
+            Clock.withTimeControl { tc =>
+                FlowStore.initMemory.map { store =>
+                    val failing = new FailingFieldStore(store, "receipt")
+                    val flow    = Flow.init("unwritable").output("receipt")(_ => "paid")
+                    FlowEngine.init(failing, FlowEngine.Config(workerCount = 1, pollTimeout = 100.millis), flow).map { engine =>
+                        for
+                            handle <- engine.workflows.start(Flow.Id.Workflow("unwritable"))
+                            eid = handle.executionId
+                            status <- pump(tc, store, eid, _.isTerminal, maxRounds = 2000)
+                        yield status match
+                            case Flow.Status.Failed(message, kind) =>
+                                assert(
+                                    message.contains("deadlock writing 'receipt'"),
+                                    s"the store's own message must survive, got: $message"
+                                )
+                                assert(
+                                    kind == Present("StoreUnavailable"),
+                                    s"the store's own failure must be recorded under its own name, got: $kind"
+                                )
+                            case other => assert(false, s"expected the execution to fail, got $other")
+                        end for
+                    }
+                }
+            }
+        }
+
+        /** An interrupt raised inside the poll stops the worker rather than being retried as a store failure.
+          *
+          * The retry arm catches panics as well as failures, which is what keeps a store's defect from stopping the engine for good. An
+          * interrupt is not that: `Interrupted` is an ordinary exception, so it arrives on the same arm and would be logged, counted
+          * against the store's health, slept off, and tried again, for as long as the store kept raising it. Nothing about the engine
+          * would say why. The interrupt reaches this arm as a value rather than at the worker's own safepoint when the store raised it
+          * internally, from a race or a timeout of its own.
+          */
+        "an interrupt raised inside the poll stops the worker" in {
+            Clock.withTimeControl { tc =>
+                FlowStore.initMemory.map { store =>
+                    AtomicInt.init(Int.MaxValue).map { always =>
+                        val interrupting = new FailingClaimStore(store, always, ClaimFailure.Interrupt)
+                        val flow         = Flow.init("interrupted-poll").output("y")(_ => 42)
+                        FlowEngine.init(interrupting, FlowEngine.Config(workerCount = 1, pollTimeout = 100.millis), flow).map { engine =>
+                            for
+                                _      <- Kyo.foreachDiscard(1 to 50)(_ => tc.advance(10.millis))
+                                health <- engine.health
+                            yield
+                                assert(
+                                    health.workersAlive == 0,
+                                    s"the interrupted worker must have stopped, ${health.workersAlive} still polling"
+                                )
+                                assert(
+                                    health.pollFailures == 0L,
+                                    s"an interrupt is not a store failure and must not be counted as one, got ${health.pollFailures}"
+                                )
+                                assert(
+                                    health.lastPollFailure.isEmpty,
+                                    s"an interrupt must not be reported as a store failure, got ${health.lastPollFailure}"
+                                )
+                            end for
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** How a [[FailingClaimStore]] reports its failure.
+      *
+      * `Typed` is the SPI's own error channel, which is what a store over a database uses. `Panic` is what a store had to do before that
+      * channel existed and what a decode failure still does. `Interrupt` is neither: it is the caller being told to stop.
+      */
+    private enum ClaimFailure derives CanEqual:
+        case Panic, Typed, Interrupt
+
+    /** Forwards every SPI method to `underlying`, so a double that changes one of them says only what it changes. */
+    private class DelegatingStore(underlying: FlowStore) extends FlowStore:
+        def claimReady(
+            workflowIds: Set[Flow.Id.Workflow],
+            executorId: Flow.Id.Executor,
+            lease: Duration,
+            limit: Int,
+            timeout: Duration
+        )(using Frame): Seq[FlowStore.ExecutionState] < (Async & Abort[FlowStoreException]) =
+            underlying.claimReady(workflowIds, executorId, lease, limit, timeout)
+
+        def renewClaim(executionId: Flow.Id.Execution, executorId: Flow.Id.Executor, lease: Duration)(using
+            Frame
+        ): Boolean < (Async & Abort[FlowStoreException]) =
+            underlying.renewClaim(executionId, executorId, lease)
+        def releaseClaim(executionId: Flow.Id.Execution, executorId: Flow.Id.Executor)(using
+            Frame
+        ): Unit < (Async & Abort[FlowStoreException]) =
+            underlying.releaseClaim(executionId, executorId)
+        def createExecution(executionId: Flow.Id.Execution, status: Flow.Status, event: Flow.Event, hash: String)(using
+            Frame
+        ): Unit < (Async & Abort[FlowStoreException]) =
+            underlying.createExecution(executionId, status, event, hash)
+        def updateStatus(executionId: Flow.Id.Execution, status: Flow.Status, event: Flow.Event)(using
+            Frame
+        ): Unit < (Async & Abort[FlowStoreException]) =
+            underlying.updateStatus(executionId, status, event)
+        def getExecution(executionId: Flow.Id.Execution)(using
+            Frame
+        ): Maybe[FlowStore.ExecutionState] < (Async & Abort[FlowStoreException]) =
+            underlying.getExecution(executionId)
+        def listExecutions(flowId: Flow.Id.Workflow, status: Maybe[Flow.Status], limit: Int, offset: Int)(using
+            Frame
+        ): Chunk[FlowStore.ExecutionState] < (Async & Abort[FlowStoreException]) =
+            underlying.listExecutions(flowId, status, limit, offset)
+        def putField[V: Tag: Schema](executionId: Flow.Id.Execution, name: String, value: V)(using
+            Frame
+        ): Unit < (Async & Abort[FlowStoreException]) =
+            underlying.putField[V](executionId, name, value)
+        def putFieldIfAbsent[V: Tag: Schema](executionId: Flow.Id.Execution, name: String, value: V)(using
+            Frame
+        ): Boolean < (Async & Abort[FlowStoreException]) =
+            underlying.putFieldIfAbsent[V](executionId, name, value)
+        def getField[V: Tag: Schema](executionId: Flow.Id.Execution, name: String)(using
+            Frame
+        ): Maybe[V] < (Async & Abort[FlowStoreException]) =
+            underlying.getField[V](executionId, name)
+        def getAllFields(executionId: Flow.Id.Execution)(using
+            Frame
+        ): Dict[String, FlowStore.FieldData] < (Async & Abort[FlowStoreException]) =
+            underlying.getAllFields(executionId)
+        def appendEvent(executionId: Flow.Id.Execution, event: Flow.Event)(using Frame): Unit < (Async & Abort[FlowStoreException]) =
+            underlying.appendEvent(executionId, event)
+        def getHistory(executionId: Flow.Id.Execution, limit: Int, offset: Int)(using
+            Frame
+        ): FlowStore.HistoryPage < (Async & Abort[FlowStoreException]) =
+            underlying.getHistory(executionId, limit, offset)
+        def putWorkflow(meta: FlowEngine.WorkflowInfo)(using Frame): Unit < (Async & Abort[FlowStoreException]) =
+            underlying.putWorkflow(meta)
+        def getWorkflow(id: Flow.Id.Workflow)(using Frame): Maybe[FlowEngine.WorkflowInfo] < (Async & Abort[FlowStoreException]) =
+            underlying.getWorkflow(id)
+        def listWorkflows(using Frame): Seq[FlowEngine.WorkflowInfo] < (Async & Abort[FlowStoreException]) = underlying.listWorkflows
+    end DelegatingStore
+
+    /** A store whose `claimReady` fails the first `remaining` times it is called, in the manner `mode` names. */
+    private class FailingClaimStore(underlying: FlowStore, remaining: AtomicInt, mode: ClaimFailure = ClaimFailure.Panic)
+        extends DelegatingStore(underlying):
+        override def claimReady(
+            workflowIds: Set[Flow.Id.Workflow],
+            executorId: Flow.Id.Executor,
+            lease: Duration,
+            limit: Int,
+            timeout: Duration
+        )(using Frame): Seq[FlowStore.ExecutionState] < (Async & Abort[FlowStoreException]) =
+            remaining.getAndDecrement.map { left =>
+                if left <= 0 then super.claimReady(workflowIds, executorId, lease, limit, timeout)
+                else
+                    mode match
+                        case ClaimFailure.Typed     => Abort.fail(FlowEngineTest.StoreUnavailable("connection reset by peer"))
+                        case ClaimFailure.Interrupt => Abort.panic(Interrupted(summon[Frame]))
+                        case ClaimFailure.Panic     => Abort.panic(new RuntimeException("claimReady: the store could not decode a row"))
+            }
+    end FailingClaimStore
+
+    /** A store that fails every write of the named field, on the SPI's own channel and marked retryable. */
+    private class FailingFieldStore(underlying: FlowStore, field: String) extends DelegatingStore(underlying):
+        override def putField[V: Tag: Schema](executionId: Flow.Id.Execution, name: String, value: V)(using
+            Frame
+        ): Unit < (Async & Abort[FlowStoreException]) =
+            if name == field then Abort.fail(FlowEngineTest.StoreUnavailable(s"deadlock writing '$name'"))
+            else super.putField[V](executionId, name, value)
+    end FailingFieldStore
+
+    // =========================================================================
+    // Definition changes under a live execution
+    // =========================================================================
+    "definition changes" - {
+
+        /** A structural change to a deployed flow parks its in-flight executions instead of killing them.
+          *
+          * Failing them was terminal and unrecoverable, and it skipped every compensation on the way out, so a version bump silently
+          * leaked exactly the resources a saga exists to protect. Compensating on the way out is not available either: the handlers live
+          * in the definition the execution can no longer be matched to, so there is nothing to run. Parking is what keeps both options
+          * open, and re-registering the definition the execution was started under is the rollback that recovers it.
+          */
+        "a structural change parks an in-flight execution instead of failing it" in {
+            withEngine { (engine, store, tc) =>
+                val v1 = Flow.init("fulfillment").step("reserve")(_ => ()).output("receipt")(_ => "paid")
+                val v2 = Flow.init("fulfillment").step("reserve")(_ => ()).step("audit")(_ => ()).output("receipt")(_ => "paid")
+                for
+                    _      <- engine.register(wf1, v1)
+                    v1Info <- store.getWorkflow(wf1)
+                    _      <- engine.register(wf1, v2)
+                    v2Info <- store.getWorkflow(wf1)
+                    eid = Flow.Id.Execution("exec-version-bumped")
+                    now     <- Clock.now
+                    _       <- store.createExecution(eid, Flow.Status.Running, Flow.Event.Created(wf1, eid, now), v1Info.get.structuralHash)
+                    parked  <- pump(tc, store, eid, !_.isInstanceOf[Flow.Status.Running.type])
+                    history <- store.getHistory(eid, Int.MaxValue, 0)
+                yield
+                    parked match
+                        case Flow.Status.Parked(reason) =>
+                            assert(!parked.isTerminal, "a parked execution must stay recoverable")
+                            assert(reason.contains(wf1.value), s"the reason must name the workflow, got: $reason")
+                            assert(
+                                reason.contains(v1Info.get.structuralHash),
+                                s"the reason must name the execution's own hash, got: $reason"
+                            )
+                            assert(
+                                reason.contains(v2Info.get.structuralHash),
+                                s"the reason must name the registered hash, got: $reason"
+                            )
+                        case other =>
+                            assert(false, s"expected Parked, got $other")
+                    end match
+                    assert(
+                        !history.events.exists(_.kind == Flow.EventKind.Failed),
+                        "a version mismatch must not fail the execution"
+                    )
+                end for
+            }
+        }
+
+        /** A parked execution costs nothing while it waits.
+          *
+          * Parking is open-ended: an execution can sit in it for as long as it takes someone to notice the version bump and roll the
+          * definition back, which is hours, not seconds. So the cost of waiting has to be zero, and it is only zero if the store stops
+          * offering the execution to the poll loop. An engine that kept claiming it would spin at full speed, since a claim that can
+          * change nothing releases at once and the execution is ready again immediately, and it would write two history events per turn
+          * on top of that: the wait would grow the history without bound and burn a worker for the whole of it.
+          *
+          * The test measures over two equal stretches rather than against the moment of parking, so an event still in flight when the
+          * status flips cannot be read as a spin.
+          */
+        "a parked execution is left alone while it waits" in {
+            withEngine { (engine, store, tc) =>
+                val v1 = Flow.init("fulfillment").step("reserve")(_ => ()).output("receipt")(_ => "paid")
+                val v2 = Flow.init("fulfillment").step("reserve")(_ => ()).step("audit")(_ => ()).output("receipt")(_ => "paid")
+                def idle(using Frame): Unit < (Async & Abort[FlowStoreException]) =
+                    Kyo.foreachDiscard(1 to 50)(_ => tc.advance(10.millis))
+                for
+                    _      <- engine.register(wf1, v1)
+                    v1Info <- store.getWorkflow(wf1)
+                    _      <- engine.register(wf1, v2)
+                    eid = Flow.Id.Execution("exec-parked-idles")
+                    now    <- Clock.now
+                    _      <- store.createExecution(eid, Flow.Status.Running, Flow.Event.Created(wf1, eid, now), v1Info.get.structuralHash)
+                    _      <- pump(tc, store, eid, _.isInstanceOf[Flow.Status.Parked])
+                    _      <- idle
+                    first  <- store.getHistory(eid, Int.MaxValue, 0)
+                    _      <- idle
+                    second <- store.getHistory(eid, Int.MaxValue, 0)
+                    state  <- store.getExecution(eid)
+                yield
+                    assert(
+                        second.events.size == first.events.size,
+                        s"a parked execution must not be re-claimed: history grew from ${first.events.size} to ${second.events.size}"
+                    )
+                    assert(
+                        state.exists(_.status.isParked),
+                        s"the execution must still be parked, got ${state.map(_.status)}"
+                    )
+                    assert(
+                        state.exists(_.executor.isEmpty),
+                        s"nothing must be holding a claim on it, got ${state.map(_.executor)}"
+                    )
+                end for
+            }
+        }
+
+        "re-registering the definition an execution was started under recovers it" in {
+            withEngine { (engine, store, tc) =>
+                val v1 = Flow.init("fulfillment").step("reserve")(_ => ()).output("receipt")(_ => "paid")
+                val v2 = Flow.init("fulfillment").step("reserve")(_ => ()).step("audit")(_ => ()).output("receipt")(_ => "paid")
+                for
+                    _      <- engine.register(wf1, v1)
+                    v1Info <- store.getWorkflow(wf1)
+                    _      <- engine.register(wf1, v2)
+                    eid = Flow.Id.Execution("exec-rolled-back")
+                    now <- Clock.now
+                    _   <- store.createExecution(eid, Flow.Status.Running, Flow.Event.Created(wf1, eid, now), v1Info.get.structuralHash)
+                    _   <- pump(tc, store, eid, _.isInstanceOf[Flow.Status.Parked])
+                    // The rollback: the definition the execution was started under is registered again.
+                    _       <- engine.register(wf1, v1)
+                    status  <- pump(tc, store, eid, _.isTerminal)
+                    receipt <- store.getField[String](eid, "receipt")
+                yield
+                    assert(status == Flow.Status.Completed, s"expected the recovered execution to complete, got $status")
+                    assert(receipt == Present("paid"), s"expected the recovered execution to produce its output, got $receipt")
                 end for
             }
         }
@@ -763,8 +1388,8 @@ class FlowEngineTest extends kyo.test.Test[Any]:
                     _      <- engine.executions.signal[Int](eid, "x", 1)
                     status <- pump(tc, store, eid, _.isTerminal)
                 yield status match
-                    case Flow.Status.Failed(_) => assert(compensated)
-                    case other                 => fail(s"Expected Failed, got $other")
+                    case Flow.Status.Failed(_, _) => assert(compensated)
+                    case other                    => fail(s"Expected Failed, got $other")
                 end for
             }
         }
@@ -956,8 +1581,8 @@ class FlowEngineTest extends kyo.test.Test[Any]:
                     _      <- engine.executions.signal[Int](eid, "x", 0)
                     status <- pump(tc, store, eid, _.isTerminal)
                 yield assert(status match
-                    case Flow.Status.Failed(_) => true;
-                    case _                     => false)
+                    case Flow.Status.Failed(_, _) => true;
+                    case _                        => false)
                 end for
             }
         }
@@ -1079,8 +1704,8 @@ class FlowEngineTest extends kyo.test.Test[Any]:
                     _      <- engine.executions.signal[Int](eid, "x", 1)
                     status <- pump(tc, store, eid, _.isTerminal)
                 yield assert(status match
-                    case Flow.Status.Failed(_) => true;
-                    case _                     => false)
+                    case Flow.Status.Failed(_, _) => true;
+                    case _                        => false)
                 end for
             }
         }
@@ -1348,8 +1973,8 @@ class FlowEngineTest extends kyo.test.Test[Any]:
                     status <- pump(tc, store, eid, _.isTerminal)
                 yield
                     assert(status match
-                        case Flow.Status.Failed(_) => true;
-                        case _                     => false)
+                        case Flow.Status.Failed(_, _) => true;
+                        case _                        => false)
                     assert(log.contains("revert-a"), s"revert-a should fire, log=$log")
                     assert(log.contains("revert-b"), s"revert-b should fire, log=$log")
                     assert(log.indexOf("revert-b") < log.indexOf("revert-a"), s"reverse order, log=$log")
@@ -1394,8 +2019,8 @@ class FlowEngineTest extends kyo.test.Test[Any]:
                     status <- pump(tc, store, eid, _.isTerminal)
                 yield
                     assert(status match
-                        case Flow.Status.Failed(_) => true;
-                        case _                     => false)
+                        case Flow.Status.Failed(_, _) => true;
+                        case _                        => false)
                     assert(log.contains("revert-a"), "revert-a should still fire despite b's throw")
                     assert(log.contains("revert-c"), "revert-c should still fire")
                 end for
@@ -1440,8 +2065,8 @@ class FlowEngineTest extends kyo.test.Test[Any]:
                     status <- pump(tc, store, eid, _.isTerminal)
                 yield
                     assert(status match
-                        case Flow.Status.Failed(_) => true;
-                        case _                     => false)
+                        case Flow.Status.Failed(_, _) => true;
+                        case _                        => false)
                     assert(fired, "compensation fires on replay after skip+failure")
                 end for
             }
@@ -1463,8 +2088,8 @@ class FlowEngineTest extends kyo.test.Test[Any]:
                     status <- pump(tc, store, eid, _.isTerminal)
                 yield
                     assert(status match
-                        case Flow.Status.Failed(_) => true;
-                        case _                     => false)
+                        case Flow.Status.Failed(_, _) => true;
+                        case _                        => false)
                     assert(fired)
                 end for
             }
@@ -1679,8 +2304,8 @@ class FlowEngineTest extends kyo.test.Test[Any]:
                     _      <- engine.executions.signal[Int](eid, "x", 0)
                     status <- pump(tc, store, eid, _.isTerminal)
                 yield assert(status match
-                    case Flow.Status.Failed(_) => true;
-                    case _                     => false)
+                    case Flow.Status.Failed(_, _) => true;
+                    case _                        => false)
                 end for
             }
         }
@@ -1825,8 +2450,8 @@ class FlowEngineTest extends kyo.test.Test[Any]:
                     status <- pump(tc, store, eid, _.isTerminal)
                 yield
                     assert(status match
-                        case Flow.Status.Failed(_) => true;
-                        case _                     => false)
+                        case Flow.Status.Failed(_, _) => true;
+                        case _                        => false)
                     assert(log == Seq("e", "d", "c", "b", "a"), s"reverse order, got: $log")
                 end for
             }
@@ -1917,8 +2542,8 @@ class FlowEngineTest extends kyo.test.Test[Any]:
                     status <- pump(tc, store, eid, _.isTerminal)
                 yield
                     assert(status match
-                        case Flow.Status.Failed(_) => true;
-                        case _                     => false)
+                        case Flow.Status.Failed(_, _) => true;
+                        case _                        => false)
                     assert(fired)
                 end for
             }
@@ -2158,8 +2783,8 @@ class FlowEngineTest extends kyo.test.Test[Any]:
                     status <- pump(tc, store, eid, _.isTerminal, 300)
                 yield
                     assert(status match
-                        case Flow.Status.Failed(_) => true;
-                        case _                     => false)
+                        case Flow.Status.Failed(_, _) => true;
+                        case _                        => false)
                     assert(fired, "compensation should fire after sleep+failure")
                 end for
             }
@@ -2250,8 +2875,8 @@ class FlowEngineTest extends kyo.test.Test[Any]:
                     assert(compFired, "compensation should fire")
                     assert(
                         status match
-                            case Flow.Status.Failed(msg) => msg == "boom";
-                            case _                       => false
+                            case Flow.Status.Failed(msg, _) => msg == "boom";
+                            case _                          => false
                         ,
                         s"Should fail with 'boom' but got $status"
                     )
@@ -2278,8 +2903,8 @@ class FlowEngineTest extends kyo.test.Test[Any]:
                     status <- pump(tc, store, eid, _.isTerminal)
                 yield
                     assert(status match
-                        case Flow.Status.Failed(_) => true;
-                        case _                     => false)
+                        case Flow.Status.Failed(_, _) => true;
+                        case _                        => false)
                     // Handler should see "x" and "a" (fields at registration), not "b" (added after)
                     assert(capturedKeys.contains("x"), s"Should see 'x', got $capturedKeys")
                     assert(capturedKeys.contains("a"), s"Should see 'a', got $capturedKeys")
@@ -2420,8 +3045,8 @@ class FlowEngineTest extends kyo.test.Test[Any]:
                     _      <- engine.executions.signal[Int](eid, "x", 1)
                     status <- pump(tc, store, eid, _.isTerminal, 200)
                 yield assert(status match
-                    case Flow.Status.Failed(_) => true;
-                    case _                     => false)
+                    case Flow.Status.Failed(_, _) => true;
+                    case _                        => false)
                 end for
             }
         }
@@ -2469,8 +3094,8 @@ class FlowEngineTest extends kyo.test.Test[Any]:
                     _      <- engine.executions.signal[Int](eid, "x", 5)
                     status <- pump(tc, store, eid, _.isTerminal)
                 yield assert(status match
-                    case Flow.Status.Failed(_) => true;
-                    case _                     => false)
+                    case Flow.Status.Failed(_, _) => true;
+                    case _                        => false)
                 end for
             }
         }
@@ -2495,8 +3120,8 @@ class FlowEngineTest extends kyo.test.Test[Any]:
                     _      <- engine.executions.signal[Int](eid, "x", 5)
                     status <- pump(tc, store, eid, _.isTerminal)
                 yield assert(status match
-                    case Flow.Status.Failed(_) => true;
-                    case _                     => false)
+                    case Flow.Status.Failed(_, _) => true;
+                    case _                        => false)
                 end for
             }
         }
@@ -2569,8 +3194,8 @@ class FlowEngineTest extends kyo.test.Test[Any]:
                     status <- pump(tc, store, eid, _.isTerminal, 200)
                 yield
                     assert(status match
-                        case Flow.Status.Failed(_) => true;
-                        case _                     => false)
+                        case Flow.Status.Failed(_, _) => true;
+                        case _                        => false)
                     assert(attempts >= 2, s"Expected at least 2 attempts but got $attempts")
                 end for
             }
@@ -2667,8 +3292,8 @@ class FlowEngineTest extends kyo.test.Test[Any]:
                     _      <- engine.executions.signal[Int](eid, "x", 1)
                     status <- pump(tc, store, eid, _.isTerminal)
                 yield assert(status match
-                    case Flow.Status.Failed(_) => true;
-                    case _                     => false)
+                    case Flow.Status.Failed(_, _) => true;
+                    case _                        => false)
                 end for
             }
         }
@@ -2688,8 +3313,8 @@ class FlowEngineTest extends kyo.test.Test[Any]:
                     _      <- engine.executions.signal[Int](eid, "x", 1)
                     status <- pump(tc, store, eid, _.isTerminal)
                 yield assert(status match
-                    case Flow.Status.Failed(_) => true;
-                    case _                     => false)
+                    case Flow.Status.Failed(_, _) => true;
+                    case _                        => false)
                 end for
             }
         }
@@ -2729,8 +3354,8 @@ class FlowEngineTest extends kyo.test.Test[Any]:
                     _      <- engine.executions.signal[Int](eid, "x", 5)
                     status <- pump(tc, store, eid, _.isTerminal)
                 yield assert(status match
-                    case Flow.Status.Failed(_) => true;
-                    case _                     => false)
+                    case Flow.Status.Failed(_, _) => true;
+                    case _                        => false)
                 end for
             }
         }
@@ -2748,8 +3373,8 @@ class FlowEngineTest extends kyo.test.Test[Any]:
                     _      <- engine.executions.signal[Int](eid, "x", 1)
                     status <- pump(tc, store, eid, _.isTerminal)
                 yield assert(status match
-                    case Flow.Status.Failed(_) => true;
-                    case _                     => false)
+                    case Flow.Status.Failed(_, _) => true;
+                    case _                        => false)
                 end for
             }
         }
@@ -2821,8 +3446,8 @@ class FlowEngineTest extends kyo.test.Test[Any]:
                     _      <- engine.executions.signal[Int](eid, "x", 1)
                     status <- pump(tc, store, eid, _.isTerminal)
                 yield assert(status match
-                    case Flow.Status.Failed(_) => true;
-                    case _                     => false)
+                    case Flow.Status.Failed(_, _) => true;
+                    case _                        => false)
                 end for
             }
         }
@@ -2853,8 +3478,8 @@ class FlowEngineTest extends kyo.test.Test[Any]:
                     status <- pump(tc, store, eid, _.isTerminal)
                 yield
                     assert(status match
-                        case Flow.Status.Failed(_) => true;
-                        case _                     => false)
+                        case Flow.Status.Failed(_, _) => true;
+                        case _                        => false)
                     assert(
                         log == Seq("comp-e", "comp-d", "comp-c", "comp-b", "comp-a"),
                         s"Expected reverse order but got $log"
@@ -3292,7 +3917,7 @@ class FlowEngineTest extends kyo.test.Test[Any]:
                     _      <- engine.executions.signal[Int](eid, "x", 42)
                     status <- pump(tc, store, eid, _.isTerminal)
                 yield status match
-                    case Flow.Status.Failed(msg) =>
+                    case Flow.Status.Failed(msg, _) =>
                         assert(msg.contains("boom"), s"Error message should contain 'boom', got: '$msg'")
                     case other =>
                         fail(s"Expected Failed containing 'boom' but got $other")

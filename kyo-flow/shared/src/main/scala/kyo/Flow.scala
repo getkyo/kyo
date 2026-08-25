@@ -92,6 +92,11 @@ sealed abstract class Flow[In, Out, S] derives CanEqual:
       *
       * Compensations fire only on `Throwable` failures, not on suspension (sleep, waiting for input). Handlers must be idempotent. Use
       * `Abort.recover` inside `fn` for error recovery.
+      *
+      * The handler carries the forward step's own effects (`S2`), because a compensation undoes what the forward step did and therefore
+      * needs the same resource: a step that wrote a row needs the database to delete it. The engine's runner discharges both, so a
+      * compensating flow is built the same way an uncompensated one is, rather than closing over a live client the forward steps never
+      * needed and being unbuildable until that client exists.
       */
     def outputCompensated[N <: String & Singleton, V, S2](
         name: N,
@@ -100,7 +105,7 @@ sealed abstract class Flow[In, Out, S] derives CanEqual:
         retry: Maybe[Schedule] = Maybe.empty,
         tags: Seq[String] = Seq.empty
     )(fn: Record[Out] => V < S2)(
-        compensate: Record[Out & (N ~ V)] => Unit < (Async & Abort[FlowException])
+        compensate: Record[Out & (N ~ V)] => Unit < (S2 & Async & Abort[FlowException])
     )(using Frame, Tag[V], Schema[V]): Flow[In, Out & (N ~ V), S & S2] =
         AndThen(
             this,
@@ -122,7 +127,7 @@ sealed abstract class Flow[In, Out, S] derives CanEqual:
         AndThen(this, Step[Out, S2](name, fn, Meta(description, tags, timeout, retry), Maybe.empty))
     end step
 
-    /** Like `step`, but registers a compensation handler. */
+    /** Like `step`, but registers a compensation handler carrying the step's own effects. See [[outputCompensated]]. */
     def stepCompensated[S2](
         name: String,
         description: String = "",
@@ -130,7 +135,7 @@ sealed abstract class Flow[In, Out, S] derives CanEqual:
         retry: Maybe[Schedule] = Maybe.empty,
         tags: Seq[String] = Seq.empty
     )(fn: Record[Out] => Unit < S2)(
-        compensate: Record[Out] => Unit < (Async & Abort[FlowException])
+        compensate: Record[Out] => Unit < (S2 & Async & Abort[FlowException])
     )(using Frame): Flow[In, Out, S & S2] =
         AndThen(
             this,
@@ -344,35 +349,45 @@ object Flow:
       * Flow.runServer(orderFlow, shippingFlow)
       * ```
       */
-    def runServer(flows: Flow[?, ?, ?]*)(using Frame): HttpServer < (Async & Scope & Abort[HttpBindException]) =
+    def runServer(flows: Flow[?, ?, ?]*)(using Frame): HttpServer < (Async & Scope & Abort[HttpBindException] & Abort[FlowStoreException]) =
         FlowStore.initMemory.map(store => runServer(store, flows*))
 
     def runServer[S](flows: Flow[?, ?, S]*)(
         runner: [V] => V < S => V < (Async & Scope & Abort[FlowException])
-    )(using Frame): HttpServer < (Async & Scope & Abort[HttpBindException]) =
+    )(using Frame): HttpServer < (Async & Scope & Abort[HttpBindException] & Abort[FlowStoreException]) =
         FlowStore.initMemory.map(store => runServer(store, flows*)(runner))
 
     /** Start an HTTP server backed by a specific store. */
-    def runServer(store: FlowStore, flows: Flow[?, ?, ?]*)(using Frame): HttpServer < (Async & Scope & Abort[HttpBindException]) =
+    def runServer(store: FlowStore, flows: Flow[?, ?, ?]*)(using
+        Frame
+    ): HttpServer < (Async & Scope & Abort[HttpBindException] & Abort[FlowStoreException]) =
         runHandlers(store, flows*).map(h => HttpServer.init(h.toSeq*))
 
     def runServer[S](store: FlowStore, flows: Flow[?, ?, S]*)(
         runner: [V] => V < S => V < (Async & Scope & Abort[FlowException])
-    )(using Frame): HttpServer < (Async & Scope & Abort[HttpBindException]) =
+    )(using Frame): HttpServer < (Async & Scope & Abort[HttpBindException] & Abort[FlowStoreException]) =
         runHandlers(store, flows*)(runner).map(h => HttpServer.init(h.toSeq*))
 
     /** Get HTTP handlers without starting a server. Compose with your own endpoints. */
-    def runHandlers(store: FlowStore, flows: Flow[?, ?, ?]*)(using Frame): Chunk[HttpHandler[?, ?, ?]] < (Async & Scope) =
+    def runHandlers(store: FlowStore, flows: Flow[?, ?, ?]*)(using
+        Frame
+    ): Chunk[HttpHandler[?, ?, ?]] < (Async & Scope & Abort[FlowStoreException]) =
         FlowEngine.initImpl(store, flows = flows).map(engine => kyo.internal.FlowApi.handlers(engine))
 
     def runHandlers[S](store: FlowStore, flows: Flow[?, ?, S]*)(
         runner: [V] => V < S => V < (Async & Scope & Abort[FlowException])
-    )(using Frame): Chunk[HttpHandler[?, ?, ?]] < (Async & Scope) =
+    )(using Frame): Chunk[HttpHandler[?, ?, ?]] < (Async & Scope & Abort[FlowStoreException]) =
         FlowEngine.initImpl(store, flows = flows, runner = Maybe(FlowRunner[S](runner)))
             .map(engine => kyo.internal.FlowApi.handlers(engine))
 
-    /** Get HTTP handlers from an existing engine. */
-    def runHandlers(engine: FlowEngine)(using Frame): Chunk[HttpHandler[?, ?, ?]] =
+    /** Get HTTP handlers from an existing engine.
+      *
+      * Answers a pending value, like its two siblings above, rather than a bare `Chunk`. The three are written next to each other in the
+      * same for-comprehension, and a bare `Chunk` binds there over `Chunk`'s own `flatMap`: `handlers <- Flow.runHandlers(engine)` would
+      * give one handler per iteration and run the rest of the comprehension once per handler, quietly changing what the program does. A
+      * type error catches that only when the body's types disagree, which is not the case for a body generic in its element.
+      */
+    def runHandlers(engine: FlowEngine)(using Frame): Chunk[HttpHandler[?, ?, ?]] < Any =
         kyo.internal.FlowApi.handlers(engine)
 
     /** Execute a flow locally with an in-memory store. Blocks until the flow completes and returns the full output record.
@@ -383,7 +398,7 @@ object Flow:
     def runLocal[In, Out](
         flow: Flow[In, Out, ?],
         inputs: Record[In] = Record.empty
-    )(using Frame): Record[In & Out] < (Async & Scope & Abort[FlowException]) =
+    )(using Frame): Record[In & Out] < (Async & Scope & Abort[FlowException] & Abort[FlowStoreException]) =
         runLocalImpl(flow, inputs, Maybe.empty)
 
     /** Execute a flow locally with a runner that handles custom effects.
@@ -400,21 +415,21 @@ object Flow:
         inputs: Record[In]
     )(runner: [V] => V < S => V < (Async & Scope & Abort[FlowException]))(using
         Frame
-    ): Record[In & Out] < (Async & Scope & Abort[FlowException]) =
+    ): Record[In & Out] < (Async & Scope & Abort[FlowException] & Abort[FlowStoreException]) =
         runLocalImpl(flow, inputs, Maybe(FlowRunner[S](runner)))
 
     private def runLocalImpl[In, Out](
         flow: Flow[In, Out, ?],
         inputs: Record[In],
         runner: Maybe[FlowRunner]
-    )(using Frame): Record[In & Out] < (Async & Scope & Abort[FlowException]) =
+    )(using Frame): Record[In & Out] < (Async & Scope & Abort[FlowException] & Abort[FlowStoreException]) =
         FlowStore.initMemory.map { store =>
-            FlowEngine.initImpl(store, workerCount = 1, pollTimeout = 100.millis).map { engine =>
+            FlowEngine.initImpl(store, FlowEngine.Config(workerCount = 1, pollTimeout = 100.millis)).map { engine =>
                 val wfId = Flow.Id.Workflow("_local")
                 engine.registerImpl(wfId, flow, runner).map { _ =>
                     engine.workflows.start(wfId, inputs.asInstanceOf[Record[Any]]).map { handle =>
                         val eid = handle.executionId
-                        def await: Record[In & Out] < (Async & Abort[FlowException]) =
+                        def await: Record[In & Out] < (Async & Abort[FlowException] & Abort[FlowStoreException]) =
                             Async.sleep(10.millis).map { _ =>
                                 store.getExecution(eid).map {
                                     case Present(state) if state.status == Flow.Status.Completed =>
@@ -432,7 +447,7 @@ object Flow:
                                         }
                                     case Present(state) =>
                                         state.status match
-                                            case Flow.Status.Failed(err) =>
+                                            case Flow.Status.Failed(err, _) =>
                                                 Abort.fail(FlowExecutionFailedException(eid.value, err))
                                             case Flow.Status.Cancelled =>
                                                 Abort.fail(FlowCancelledException(eid.value))
@@ -546,8 +561,9 @@ object Flow:
     /** Per-node metadata for flow steps.
       *
       * @param timeout
-      *   Per-attempt timeout. If a single attempt exceeds this duration, it fails with a timeout error. Also used as in-flight fencing: how
-      *   long a new executor waits for a competing executor's in-progress step before re-executing.
+      *   Per-attempt timeout. If a single attempt exceeds this duration, it fails with a timeout error. It bounds this executor's own
+      *   attempt only: a node whose previous executor died mid-step is re-executed by the executor that reclaims the lease, never waited
+      *   on, because an execution is handed out only once no other executor holds a live lease on it.
       * @param retry
       *   Retry schedule for transient failures. When present, the engine retries the step computation according to the schedule's delays.
       *   When the schedule exhausts, the last error propagates. Each attempt is independently timed by `timeout`.
@@ -589,22 +605,48 @@ object Flow:
         case WaitingForInput(name: String)
         case Sleeping(name: String, until: Instant)
         case Completed
-        case Failed(error: String)
+
+        /** The execution failed. `kind` names what kind of failure it was, from [[FlowException.kind]] where the engine had one.
+          *
+          * The persisted shape of a failure is what an operator queries, and a message alone makes "how many failed for payment reasons"
+          * a LIKE over free text. A step's own [[FlowDomainException]] therefore lands its class name here, next to the message.
+          */
+        case Failed(error: String, kind: Maybe[String] = Maybe.empty)
         case Compensating
         case Cancelled
+
+        /** The execution cannot be matched to a registered definition, so it is held rather than run.
+          *
+          * What a structural change to a deployed flow leaves its in-flight executions in: the definition they were started under is no
+          * longer the one registered under their workflow id, and replaying them against the new one would run a different flow.
+          *
+          * Deliberately not terminal. A parked execution keeps its fields, its history, and its place, and resumes on its own once a
+          * definition matching its structural hash is registered again, which makes rolling the deployment back the recovery. The
+          * alternative, failing it, is unrecoverable and skips every compensation on the way out, since the handlers live in the
+          * definition the execution can no longer be matched to.
+          *
+          * `reason` names the workflow, the execution's own structural hash, and the registered one, because an operator seeing this needs
+          * to tell a version mismatch from a workflow that is not registered here at all.
+          */
+        case Parked(reason: String)
 
         def show: String = this match
             case Running               => "running"
             case WaitingForInput(name) => s"waiting:$name"
             case Sleeping(name, until) => s"sleeping:$name"
             case Completed             => "completed"
-            case Failed(error)         => s"failed:$error"
+            case Failed(error, _)      => s"failed:$error"
             case Compensating          => "compensating"
             case Cancelled             => "cancelled"
+            case Parked(reason)        => s"parked:$reason"
 
         def isTerminal: Boolean = this match
-            case Completed | Failed(_) | Cancelled => true
-            case _                                 => false
+            case Completed | Failed(_, _) | Cancelled => true
+            case _                                    => false
+
+        def isParked: Boolean = this match
+            case _: Parked => true
+            case _         => false
 
         def isSleeping: Boolean = this match
             case _: Sleeping => true
@@ -621,7 +663,7 @@ object Flow:
         case Created, StepStarted, StepCompleted, StepRetried, StepTimedOut,
             InputWaiting, InputReceived, SleepStarted, SleepCompleted,
             ExecutionResumed, ExecutionClaimed, ExecutionReleased,
-            Completed, Failed, CompensationStarted, CompensationCompleted, CompensationFailed, Cancelled
+            Completed, Failed, CompensationStarted, CompensationCompleted, CompensationFailed, Cancelled, Parked
     end EventKind
 
     enum Event derives Schema:
@@ -668,6 +710,9 @@ object Flow:
         case ExecutionReleased(flowId: Flow.Id.Workflow, executionId: Flow.Id.Execution, executorId: Flow.Id.Executor, timestamp: Instant)
         case Cancelled(flowId: Flow.Id.Workflow, executionId: Flow.Id.Execution, timestamp: Instant)
 
+        /** The execution was held because no registered definition matches it. See [[Flow.Status.Parked]]. */
+        case Parked(flowId: Flow.Id.Workflow, executionId: Flow.Id.Execution, reason: String, timestamp: Instant)
+
         def kind: EventKind = this match
             case _: Created               => EventKind.Created
             case _: StepStarted           => EventKind.StepStarted
@@ -687,6 +732,7 @@ object Flow:
             case _: ExecutionClaimed      => EventKind.ExecutionClaimed
             case _: ExecutionReleased     => EventKind.ExecutionReleased
             case _: Cancelled             => EventKind.Cancelled
+            case _: Parked                => EventKind.Parked
 
         def detail: String = this match
             case StepStarted(_, _, name, _, _)           => name
@@ -696,6 +742,7 @@ object Flow:
             case SleepStarted(_, _, name, _, _)          => name
             case SleepCompleted(_, _, name, _)           => name
             case Failed(_, _, error, _)                  => error
+            case Parked(_, _, reason, _)                 => reason
             case CompensationFailed(_, _, error, _)      => error
             case StepRetried(_, _, name, error, n, _, _) => s"$name (attempt $n: $error)"
             case StepTimedOut(_, _, name, _, _)          => name
@@ -1115,27 +1162,29 @@ object Flow:
                                 .reduce((l, r) => interpreter.onZip(l, r, ctx, n.erased.isolate))
 
             val rawResult = loop(flow, new Record[Any](inputs.toDict))
+
+            /** Re-raises what ended the flow, after its compensations have run.
+              *
+              * A [[FlowException]] goes back out on the typed channel it was raised on, which is what makes a step's own
+              * [[FlowDomainException]] survive as a failure rather than arriving at the engine as a panic and losing everything but its
+              * message. Anything else is not a declared failure of this flow and stays a panic.
+              */
+            def unwind(ex: Throwable): Nothing < S =
+                val reraise: Nothing < S = interpreter.onUnwind(ex)
+                compsRef.use { comps =>
+                    if comps.nonEmpty then
+                        interpreter.onCompensationStart
+                            .andThen(runComps())
+                            .andThen(interpreter.onCompensationComplete)
+                            .andThen(reraise)
+                    else reraise
+                }
+            end unwind
+
             Abort.run[Throwable](rawResult).map {
-                case Result.Success(record) =>
-                    record.asInstanceOf[Record[In & Out]]
-                case Result.Failure(ex) =>
-                    compsRef.use { comps =>
-                        if comps.nonEmpty then
-                            interpreter.onCompensationStart
-                                .andThen(runComps())
-                                .andThen(interpreter.onCompensationComplete)
-                                .andThen(Abort.panic(ex))
-                        else Abort.panic(ex)
-                    }
-                case Result.Panic(ex) =>
-                    compsRef.use { comps =>
-                        if comps.nonEmpty then
-                            interpreter.onCompensationStart
-                                .andThen(runComps())
-                                .andThen(interpreter.onCompensationComplete)
-                                .andThen(Abort.panic(ex))
-                        else Abort.panic(ex)
-                    }
+                case Result.Success(record) => record.asInstanceOf[Record[In & Out]]
+                case Result.Failure(ex)     => unwind(ex)
+                case Result.Panic(ex)       => unwind(ex)
             }
         }
     end run
@@ -1161,7 +1210,7 @@ object Flow:
             name: N & String,
             fn: Record[Ctx] => V < S,
             meta: Meta,
-            compensate: Maybe[Record[CompCtx] => Unit < (Async & Abort[FlowException])]
+            compensate: Maybe[Record[CompCtx] => Unit < (S & Async & Abort[FlowException])]
         )(using val frame: Frame, val tag: Tag[V], val schema: Schema[V]) extends Flow[Any, N ~ V, S]:
             private[kyo] def erased: Output[Any, Any, Nothing, Any, Any] = this.asInstanceOf[Output[Any, Any, Nothing, Any, Any]]
         end Output
@@ -1170,7 +1219,7 @@ object Flow:
             name: String,
             fn: Record[Ctx] => Unit < S,
             meta: Meta,
-            compensate: Maybe[Record[Ctx] => Unit < (Async & Abort[FlowException])]
+            compensate: Maybe[Record[Ctx] => Unit < (S & Async & Abort[FlowException])]
         )(using val frame: Frame) extends Flow[Any, Any, S]:
             private[kyo] def erased: Step[Any, Any] = this.asInstanceOf[Step[Any, Any]]
         end Step

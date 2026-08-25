@@ -18,6 +18,23 @@ private[kyo] object FlowApi:
     ) derives Schema
     case class SearchResponse(items: Seq[ExecutionInfoDto], total: Int) derives Schema
     case class ExecutionInfoDto(executionId: String, flowId: String, status: String) derives Schema
+
+    /** One flow node's progress, as the execution-detail response carries it. */
+    case class NodeProgressDto(name: String, nodeType: String, status: String, location: String) derives Schema
+
+    /** The execution-detail response: the three scalars a search result carries, plus the two things a caller asks this endpoint for.
+      *
+      * `progress` is which node the execution is on and what happened to the ones before it, and `inputs` is which of its inputs have been
+      * delivered. Both are already part of [[FlowEngine.ExecutionDetail]], which is what the endpoint reads; answering with the scalars
+      * alone sent a caller to the store to find out where an execution was.
+      */
+    case class ExecutionDetailDto(
+        executionId: String,
+        flowId: String,
+        status: String,
+        inputs: Seq[InputInfoDto],
+        progress: Seq[NodeProgressDto]
+    ) derives Schema
     case class CancelAllRequest(workflowId: Option[String] = None) derives Schema
     case class CancelAllResponse(cancelled: Int) derives Schema
 
@@ -92,11 +109,21 @@ private[kyo] object FlowApi:
 
     private def getExecution(engine: FlowEngine)(using Frame): HttpHandler[?, ?, ?] =
         HttpRoute.getRaw("api" / "v1" / "executions" / Capture[String]("eid"))
-            .response(_.bodyJson[ExecutionInfoDto])
+            .response(_.bodyJson[ExecutionDetailDto])
             .handler { req =>
                 Abort.run[Throwable] {
-                    engine.executions.describe(Flow.Id.Execution(req.fields.eid)).map { state =>
-                        HttpResponse.ok(ExecutionInfoDto(state.executionId.value, state.flowId.value, state.status.show))
+                    engine.executions.describe(Flow.Id.Execution(req.fields.eid)).map { detail =>
+                        HttpResponse.ok(
+                            ExecutionDetailDto(
+                                detail.executionId.value,
+                                detail.flowId.value,
+                                detail.status.show,
+                                detail.inputs.map(i => InputInfoDto(i.name, i.tag, i.delivered)),
+                                detail.progress.nodes.map(n =>
+                                    NodeProgressDto(n.name, n.nodeType.toString, n.status.show, n.location)
+                                )
+                            )
+                        )
                     }
                 }.map(mapError)
             }
@@ -217,6 +244,7 @@ private[kyo] object FlowApi:
             case "compensating"                => Maybe(Flow.Status.Compensating)
             case s if s.startsWith("failed:")  => Maybe(Flow.Status.Failed(s.stripPrefix("failed:")))
             case s if s.startsWith("waiting:") => Maybe(Flow.Status.WaitingForInput(s.stripPrefix("waiting:")))
+            case s if s.startsWith("parked:")  => Maybe(Flow.Status.Parked(s.stripPrefix("parked:")))
             case _                             => Maybe.empty
 
 end FlowApi

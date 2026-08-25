@@ -415,8 +415,26 @@ Running ──→ Failed (compensations run first if registered)
 Running ──→ WaitingForInput ──→ Running (on signal)
 Running ──→ Sleeping ──→ Running (on expiry)
 Running ──→ Compensating ──→ Failed
+Running ──→ Parked ──→ Running (on the matching definition being registered again)
 Any non-terminal ──→ Cancelled
 ```
+
+A failed execution records what kind of failure ended it. A step's own domain failure extends `FlowDomainException`, the one open branch
+of the exception hierarchy, and reaches the engine as a typed failure rather than a panic; the persisted `Flow.Status.Failed` then carries
+its class name beside the message, so "how many executions failed for payment reasons" is a query over a field rather than a `LIKE` over
+free text. An escaped throwable carries no kind, since nothing declared one.
+
+```scala
+case class ChargeDeclined(orderId: String, cents: Long)(using Frame)
+    extends FlowDomainException(s"charge declined for $orderId: $cents cents over limit")
+```
+
+An execution parks when no registered definition matches its structural hash, which is what a structural change to a deployed flow leaves
+its in-flight executions in. Parking is not terminal and not a failure: the execution keeps its fields and its history, and resumes on its
+own once a definition matching its hash is registered, so rolling the deployment back recovers it. The status carries a reason naming the
+workflow, the execution's own hash, and the registered one. Compensating on the way out is not an option the engine has here, because the
+handlers live in the definition the execution can no longer be matched to; holding the execution is what keeps a rollback able to run
+them.
 
 ```scala doctest:scope=env:monitor
 val eid: Flow.Id.Execution = Flow.Id.Execution("exec-123")
@@ -447,7 +465,7 @@ FlowStore.initMemory.map { store =>
 }
 ```
 
-Event kinds: `Created`, `StepStarted`, `StepCompleted`, `StepRetried`, `StepTimedOut`, `InputWaiting`, `InputReceived`, `SleepStarted`, `SleepCompleted`, `ExecutionResumed`, `ExecutionClaimed`, `ExecutionReleased`, `Completed`, `Failed`, `CompensationStarted`, `CompensationCompleted`, `CompensationFailed`, `Cancelled`.
+Event kinds: `Created`, `StepStarted`, `StepCompleted`, `StepRetried`, `StepTimedOut`, `InputWaiting`, `InputReceived`, `SleepStarted`, `SleepCompleted`, `ExecutionResumed`, `ExecutionClaimed`, `ExecutionReleased`, `Completed`, `Failed`, `CompensationStarted`, `CompensationCompleted`, `CompensationFailed`, `Cancelled`, `Parked`.
 
 ### Diagrams
 
@@ -477,7 +495,7 @@ The in-memory store (`FlowStore.initMemory`) is for development and testing. For
 class PostgresFlowStore(pool: ConnectionPool) extends FlowStore:
     def claimReady(): Unit   = ??? // SELECT ... FOR UPDATE SKIP LOCKED
     def updateStatus(): Unit = ??? // UPDATE + INSERT in one transaction
-    // ... 15 abstract methods total
+    // ... 16 abstract methods total
 end PostgresFlowStore
 ```
 

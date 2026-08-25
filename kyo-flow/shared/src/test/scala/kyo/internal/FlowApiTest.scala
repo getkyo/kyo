@@ -158,6 +158,33 @@ class FlowApiTest extends kyo.test.Test[Any]:
             }
         }
 
+        /** The detail endpoint answers what an execution is doing, not only that it is running.
+          *
+          * `FlowEngine.ExecutionDetail` carries the per-node progress and the input delivery state, and the endpoint used to project it
+          * down to three scalars, which sent anyone asking "which node is it on" to query the store directly.
+          */
+        "returns the per-node progress and the input state" in {
+            withFlowServer { port =>
+                for
+                    createBody <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
+                    eid = jsonField(createBody, "executionId")
+                    _    <- Async.sleep(500.millis)
+                    _    <- HttpClient.postText(url(port, s"/api/v1/executions/$eid/signal/x"), "42")
+                    _    <- Async.sleep(500.millis)
+                    body <- HttpClient.getText(url(port, s"/api/v1/executions/$eid"))
+                yield
+                    assert(body.contains("\"progress\""), s"the detail must carry progress: $body")
+                    assert(body.contains("\"inputs\""), s"the detail must carry the inputs: $body")
+                    // The flow's own nodes, by name, each with the status the engine derived for it.
+                    assert(body.contains("\"y\""), s"progress must name the flow's nodes: $body")
+                    assert(body.contains("\"greeting\""), s"progress must name the flow's nodes: $body")
+                    // `x` was signalled and `name` was not, so the two inputs disagree on delivery.
+                    assert(body.contains("\"delivered\":true"), s"a delivered input must say so: $body")
+                    assert(body.contains("\"delivered\":false"), s"a pending input must say so: $body")
+                    assert(body.contains("completed") || body.contains("running"), s"a node must carry a status: $body")
+            }
+        }
+
         "404 for unknown execution" in {
             withFlowServer { port =>
                 HttpClient.getTextResponse(url(port, "/api/v1/executions/nonexistent"), failOnError = false).map { resp =>

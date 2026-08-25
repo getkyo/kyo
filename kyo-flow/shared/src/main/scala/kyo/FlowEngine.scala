@@ -34,8 +34,18 @@ import kyo.kernel.Isolate
 final class FlowEngine private (
     private[kyo] val store: FlowStore,
     private[kyo] val defs: AtomicRef[Dict[Flow.Id.Workflow, FlowDefinition]],
-    val executorId: Flow.Id.Executor
+    val executorId: Flow.Id.Executor,
+    private[kyo] val liveness: FlowEngine.Liveness
 )(using Frame):
+
+    /** What the engine's workers are doing: how many are polling, and what the last poll failure was.
+      *
+      * The reachable answer to "is this engine actually working". A worker that cannot reach the store keeps polling and records the
+      * failure here rather than dying, so a health check reads `workersAlive` against `workersConfigured` and the process does not report
+      * itself healthy while nothing is being executed.
+      */
+    def health(using Frame): FlowEngine.Health < Sync =
+        liveness.snapshot
 
     // --- Workflows ---
 
@@ -50,7 +60,11 @@ final class FlowEngine private (
         def start(
             workflowId: Flow.Id.Workflow,
             inputs: Record[Any] = Record.empty
-        )(using Frame): FlowEngine.Handle < (Async & Abort[FlowWorkflowNotRegisteredException | FlowSignalTypeMismatchException]) =
+        )(using
+            Frame
+        ): FlowEngine.Handle < (Async & Abort[FlowWorkflowNotRegisteredException | FlowSignalTypeMismatchException] & Abort[
+            FlowStoreException
+        ]) =
             defs.use(_.get(workflowId)).map {
                 case Absent => Abort.fail(FlowWorkflowNotRegisteredException(workflowId.value))
                 case Present(defn) =>
@@ -93,7 +107,9 @@ final class FlowEngine private (
         def start(
             workflowId: Flow.Id.Workflow,
             executionId: Flow.Id.Execution
-        )(using Frame): Unit < (Async & Abort[FlowWorkflowNotRegisteredException | FlowDuplicateExecutionException]) =
+        )(using
+            Frame
+        ): Unit < (Async & Abort[FlowWorkflowNotRegisteredException | FlowDuplicateExecutionException] & Abort[FlowStoreException]) =
             defs.use(_.get(workflowId)).map {
                 case Absent => Abort.fail(FlowWorkflowNotRegisteredException(workflowId.value))
                 case Present(defn) =>
@@ -112,27 +128,27 @@ final class FlowEngine private (
             }
 
         /** List all registered workflows with their metadata. */
-        def list(using Frame): Seq[FlowEngine.WorkflowInfo] < Async =
+        def list(using Frame): Seq[FlowEngine.WorkflowInfo] < (Async & Abort[FlowStoreException]) =
             store.listWorkflows
 
         /** Get metadata for a registered workflow. Fails with FlowWorkflowNotFoundException if not registered. */
         def describe(workflowId: Flow.Id.Workflow)(using
             Frame
-        ): FlowEngine.WorkflowInfo < (Async & Abort[FlowWorkflowNotFoundException]) =
+        ): FlowEngine.WorkflowInfo < (Async & Abort[FlowWorkflowNotFoundException] & Abort[FlowStoreException]) =
             store.getWorkflow(workflowId).map {
                 case Absent     => Abort.fail(FlowWorkflowNotFoundException(workflowId.value))
                 case Present(m) => m
             }
 
         /** List all executions of a workflow, regardless of status. */
-        def executions(workflowId: Flow.Id.Workflow)(using Frame): Chunk[FlowStore.ExecutionState] < Async =
+        def executions(workflowId: Flow.Id.Workflow)(using Frame): Chunk[FlowStore.ExecutionState] < (Async & Abort[FlowStoreException]) =
             store.listExecutions(workflowId, Maybe.empty, Int.MaxValue, 0)
 
         /** Render the workflow's structure as a diagram. */
         def diagram(
             workflowId: Flow.Id.Workflow,
             format: Flow.DiagramFormat = Flow.DiagramFormat.Mermaid
-        )(using Frame): String < (Async & Abort[FlowWorkflowNotRegisteredException]) =
+        )(using Frame): String < (Async & Abort[FlowWorkflowNotRegisteredException] & Abort[FlowStoreException]) =
             defs.use(_.get(workflowId)).map {
                 case Absent => Abort.fail(FlowWorkflowNotRegisteredException(workflowId.value))
                 case Present(defn) =>
@@ -157,7 +173,9 @@ final class FlowEngine private (
             value: V
         )(using
             Frame
-        ): Unit < (Async & Abort[FlowExecutionStateException | FlowWorkflowNotRegisteredException | FlowSignalException]) =
+        ): Unit < (Async & Abort[FlowExecutionStateException | FlowWorkflowNotRegisteredException | FlowSignalException] & Abort[
+            FlowStoreException
+        ]) =
             store.getExecution(executionId).map {
                 case Absent => Abort.fail(FlowExecutionNotFoundException(executionId.value))
                 case Present(state) if state.status.isTerminal =>
@@ -189,7 +207,7 @@ final class FlowEngine private (
         /** Get full execution detail including status, progress, and pending input information. */
         def describe(executionId: Flow.Id.Execution)(using
             Frame
-        ): FlowEngine.ExecutionDetail < (Async & Abort[FlowExecutionNotFoundException]) =
+        ): FlowEngine.ExecutionDetail < (Async & Abort[FlowExecutionNotFoundException] & Abort[FlowStoreException]) =
             store.getExecution(executionId).map {
                 case Absent => Abort.fail(FlowExecutionNotFoundException(executionId.value))
                 case Present(state) =>
@@ -211,7 +229,7 @@ final class FlowEngine private (
             }
 
         /** Cancel a running execution. No-op if already terminal. In-flight steps complete; no new steps start. */
-        def cancel(executionId: Flow.Id.Execution)(using Frame): Unit < Async =
+        def cancel(executionId: Flow.Id.Execution)(using Frame): Unit < (Async & Abort[FlowStoreException]) =
             store.getExecution(executionId).map {
                 case Absent                                    => ()
                 case Present(state) if state.status.isTerminal => ()
@@ -222,7 +240,7 @@ final class FlowEngine private (
             }
 
         /** Cancel all non-terminal executions, optionally filtered by workflow. Returns the count cancelled. */
-        def cancelAll(wfId: Maybe[Flow.Id.Workflow] = Maybe.empty)(using Frame): Int < Async =
+        def cancelAll(wfId: Maybe[Flow.Id.Workflow] = Maybe.empty)(using Frame): Int < (Async & Abort[FlowStoreException]) =
             val wfIds: Seq[Flow.Id.Workflow] < Sync = wfId match
                 case Present(id) => Seq(id)
                 case _           => defs.use(_.keys.toArray.toSeq)
@@ -241,13 +259,17 @@ final class FlowEngine private (
         end cancelAll
 
         /** Get paginated event history for an execution. Events are in append order. */
-        def history(executionId: Flow.Id.Execution, limit: Int = 50, offset: Int = 0)(using Frame): FlowStore.HistoryPage < Async =
+        def history(executionId: Flow.Id.Execution, limit: Int = 50, offset: Int = 0)(using
+            Frame
+        ): FlowStore.HistoryPage < (Async & Abort[FlowStoreException]) =
             store.getHistory(executionId, limit, offset)
 
         /** List all inputs for an execution, showing which have been delivered and which are still pending. */
         def inputs(executionId: Flow.Id.Execution)(using
             Frame
-        ): Seq[FlowEngine.InputInfo] < (Async & Abort[FlowExecutionNotFoundException | FlowWorkflowNotRegisteredException]) =
+        ): Seq[FlowEngine.InputInfo] < (Async & Abort[FlowExecutionNotFoundException | FlowWorkflowNotRegisteredException] & Abort[
+            FlowStoreException
+        ]) =
             store.getExecution(executionId).map {
                 case Absent => Abort.fail(FlowExecutionNotFoundException(executionId.value))
                 case Present(state) =>
@@ -268,7 +290,7 @@ final class FlowEngine private (
             status: Maybe[Flow.Status] = Maybe.empty,
             limit: Int = 25,
             offset: Int = 0
-        )(using Frame): FlowEngine.SearchResult < Async =
+        )(using Frame): FlowEngine.SearchResult < (Async & Abort[FlowStoreException]) =
             val results = wfId match
                 case Present(id) => store.listExecutions(id, status, limit, offset)
                 case _ =>
@@ -289,7 +311,7 @@ final class FlowEngine private (
         /** Render the execution's flow diagram with progress overlay (completed nodes highlighted). */
         def diagram(executionId: Flow.Id.Execution, format: Flow.DiagramFormat = Flow.DiagramFormat.Mermaid)(using
             Frame
-        ): String < (Async & Abort[FlowExecutionNotFoundException | FlowWorkflowNotRegisteredException]) =
+        ): String < (Async & Abort[FlowExecutionNotFoundException | FlowWorkflowNotRegisteredException] & Abort[FlowStoreException]) =
             store.getExecution(executionId).map {
                 case Absent => Abort.fail(FlowExecutionNotFoundException(executionId.value))
                 case Present(state) =>
@@ -312,7 +334,7 @@ final class FlowEngine private (
     // --- Registration ---
 
     /** Register a workflow whose step bodies use only effects the engine already handles. */
-    def register(id: Flow.Id.Workflow, flow: Flow[?, ?, ?])(using Frame): Unit < Async =
+    def register(id: Flow.Id.Workflow, flow: Flow[?, ?, ?])(using Frame): Unit < (Async & Abort[FlowStoreException]) =
         registerImpl(id, flow, Maybe.empty)
 
     /** Register a workflow whose step bodies use custom effects.
@@ -325,30 +347,99 @@ final class FlowEngine private (
       */
     def register[S](id: Flow.Id.Workflow, flow: Flow[?, ?, S])(
         runner: [V] => V < S => V < (Async & Scope & Abort[FlowException])
-    )(using Frame): Unit < Async =
+    )(using Frame): Unit < (Async & Abort[FlowStoreException]) =
         registerImpl(id, flow, Maybe(FlowRunner[S](runner)))
 
-    private[kyo] def registerImpl(id: Flow.Id.Workflow, flow: Flow[?, ?, ?], runner: Maybe[FlowRunner])(using Frame): Unit < Async =
+    private[kyo] def registerImpl(id: Flow.Id.Workflow, flow: Flow[?, ?, ?], runner: Maybe[FlowRunner])(using
+        Frame
+    ): Unit < (Async & Abort[FlowStoreException]) =
         val meta   = FlowEngine.WorkflowInfo.of(id.value, flow)
         val schema = WorkflowSchema.of(flow)
         val inputs = kyo.internal.FlowLint.inputMetas(flow)
         val defn   = FlowDefinition(id, flow, runner, inputs, meta, schema)
-        defs.getAndUpdate(_.update(id, defn)).unit.andThen(store.putWorkflow(meta))
+        defs.getAndUpdate(_.update(id, defn)).unit
+            .andThen(store.putWorkflow(meta))
+            .andThen(release(id, meta.structuralHash))
     end registerImpl
+
+    /** Takes this workflow's parked executions out of that state, for the definition just registered.
+      *
+      * Registering a definition is the only event that can make a parked execution runnable again, so it is where the un-parking belongs.
+      * The alternative, leaving a parked execution claimable and letting it discover the new definition on a later poll, spins: a claim
+      * that changes nothing releases at once and the execution is ready again immediately, with two history events per turn.
+      *
+      * Only the executions whose own structural hash matches this definition are released. One parked under a different hash stays parked,
+      * because this registration is not the definition it is waiting for.
+      */
+    private def release(id: Flow.Id.Workflow, hash: String)(using Frame): Unit < (Async & Abort[FlowStoreException]) =
+        store.listExecutions(id, Maybe(Flow.Status.Parked("")), Int.MaxValue, 0).map { parked =>
+            Kyo.foreachDiscard(parked.filter(_.hash == hash)) { state =>
+                Clock.nowWith { ts =>
+                    store.updateStatus(
+                        state.executionId,
+                        Flow.Status.Running,
+                        Flow.Event.ExecutionResumed(id, state.executionId, executorId, ts)
+                    )
+                }
+            }
+        }
+    end release
 
     // --- Internal ---
 
-    private def withEvent[A, S2](eid: Flow.Id.Execution, event: Instant => Flow.Event)(body: => A < S2)(using Frame): A < (S2 & Async) =
+    private def withEvent[A, S2](eid: Flow.Id.Execution, event: Instant => Flow.Event)(body: => A < S2)(using
+        Frame
+    ): A < (S2 & Async & Abort[FlowStoreException]) =
         Clock.nowWith(ts => store.appendEvent(eid, event(ts))).andThen(body)
 
+    /** One worker's poll loop, wrapped so that a failure reaching the store retries instead of killing the fiber.
+      *
+      * A store failure raised while EXECUTING was already handled: the engine caught it, recorded it on the execution, and released the
+      * claim. A failure raised while CLAIMING was not, and it killed the worker fiber with nothing logged and no status changed, which
+      * left a process that answered its health check while no execution ever progressed again. Every failure here is a failure to reach
+      * the store, which is the transient kind, so the loop pauses for the poll timeout and goes around again.
+      */
     private[kyo] def worker(
         lease: Duration,
         renewEvery: Duration,
         batchSize: Int,
         pollTimeout: Duration
-    )(using Frame): Unit < (Async & Scope) =
+    )(using Frame): Unit < (Async & Scope & Abort[FlowStoreException]) =
+        // The loop goes around HERE, in the continuation of the handler, and never inside `pollOnce`. A poll that
+        // recursed into the next one from inside `Abort.run` would leave that handler open across every cycle, so a
+        // loop that is meant to run for the process's life would nest one more handler per poll, forever.
+        Abort.run[Throwable](pollOnce(lease, renewEvery, batchSize, pollTimeout)).map {
+            case Result.Success(_) => worker(lease, renewEvery, batchSize, pollTimeout)
+            // An interrupt is the engine going away, not a store that cannot be reached, so it stops the loop rather
+            // than being counted against the store's health and slept off. It has to be picked out by hand because
+            // `Interrupted` is an ordinary exception: `Result.Panic` carries every throwable `NonFatal` admits, and
+            // nothing else here tells it apart from a defect worth another attempt. The worker's own interruption is
+            // already stopped at its safepoint; what reaches this arm is one raised inside the poll, by a race or a
+            // timeout the store ran internally.
+            case Result.Panic(interrupted: Interrupted) => Abort.panic(interrupted)
+            case failed                                 =>
+                // Both channels, because a store is free to panic even though the SPI gives it somewhere typed to put
+                // a failure: an implementation is third-party code, and a defect in one poll must not permanently stop
+                // the only loop that moves executions forward while the process still answers its health check.
+                val error = failed match
+                    case Result.Failure(e) => e
+                    case Result.Panic(e)   => e
+                    case _                 => new IllegalStateException("worker poll failed with no error")
+                liveness.recordFailure(error).andThen {
+                    Log.error(s"kyo.flow: executor ${executorId.value} could not poll the store, retrying", error)
+                        .andThen(Async.sleep(pollTimeout))
+                        .andThen(worker(lease, renewEvery, batchSize, pollTimeout))
+                }
+        }
+
+    private def pollOnce(
+        lease: Duration,
+        renewEvery: Duration,
+        batchSize: Int,
+        pollTimeout: Duration
+    )(using Frame): Unit < (Async & Scope & Abort[FlowStoreException]) =
         defs.use(_.keys.toArray.toSet).map { wfIds =>
-            if wfIds.isEmpty then Async.sleep(pollTimeout).andThen(worker(lease, renewEvery, batchSize, pollTimeout))
+            if wfIds.isEmpty then Async.sleep(pollTimeout)
             else
                 store.claimReady(wfIds, executorId, lease, batchSize, pollTimeout).map { batch =>
                     Kyo.foreachDiscard(batch) { state =>
@@ -358,7 +449,7 @@ final class FlowEngine private (
                             case true =>
                                 withEvent(eid, ts => Flow.Event.ExecutionClaimed(state.flowId, eid, executorId, ts)) {
                                     Fiber.init {
-                                        def renew: Unit < Async =
+                                        def renew: Unit < (Async & Abort[FlowStoreException]) =
                                             Async.sleep(renewEvery).map { _ =>
                                                 store.renewClaim(eid, executorId, lease).map {
                                                     case true  => renew
@@ -388,17 +479,20 @@ final class FlowEngine private (
                                     }
                                 }
                         }
-                    }.andThen(worker(lease, renewEvery, batchSize, pollTimeout))
+                    }
                 }
         }
 
-    private def executeOne(eid: Flow.Id.Execution)(using Frame): Unit < Async =
+    private def executeOne(eid: Flow.Id.Execution)(using Frame): Unit < (Async & Abort[FlowStoreException]) =
         store.getExecution(eid).map {
             case Present(state) if state.status.isTerminal => ()
-            case Present(state) =>
-                withEvent(eid, ts => Flow.Event.ExecutionResumed(state.flowId, eid, executorId, ts)) {
-                    defs.use(_.get(state.flowId)).map {
-                        case Present(defn) if state.hash == defn.meta.structuralHash =>
+            case Present(state)                            =>
+                // The definition is resolved before the resume is recorded: an execution no registered definition matches is not
+                // resumed at all, so it is parked without a resume event, and a parked execution reclaimed on every poll does not
+                // grow its history by one resume per cycle.
+                defs.use(_.get(state.flowId)).map {
+                    case Present(defn) if state.hash == defn.meta.structuralHash =>
+                        withEvent(eid, ts => Flow.Event.ExecutionResumed(state.flowId, eid, executorId, ts)) {
                             Abort.run[Throwable] {
                                 for
                                     _ <- (state.status match
@@ -411,7 +505,7 @@ final class FlowEngine private (
                                                 )
                                             )
                                         case _ => ()
-                                    ): Unit < Async
+                                    ): Unit < (Async & Abort[FlowStoreException])
                                     fields  <- store.getAllFields(eid)
                                     history <- store.getHistory(eid, Int.MaxValue, 0)
                                     record    = rebuildRecord(fields, defn.schema)
@@ -430,29 +524,63 @@ final class FlowEngine private (
                                     _ <- handleResult(eid, state.flowId, result)
                                 yield ()
                             }.map {
-                                case Result.Panic(ex) =>
+                                // Both arms, not the panic alone. The store's own failures travel this handler as
+                                // `Result.Failure` now that the SPI has an error channel, so matching only the panic
+                                // dropped them: a store that failed while writing an execution's outcome left it at
+                                // Running with nothing recorded, to be claimed and re-run on the next poll. This is
+                                // what the SPI means by a failure raised while running an execution failing it.
+                                case Result.Success(_) => ()
+                                case failed            =>
+                                    // A store's own failure is recorded with its kind, the way a flow's declared failure is: it
+                                    // arrives here typed, and dropping the type at the last step would leave every store failure
+                                    // an unclassified message. A panic has no declared kind, so it keeps none.
+                                    val (ex, kind) = failed match
+                                        case Result.Failure(e: FlowStoreException) => (e, Maybe(e.kind))
+                                        case Result.Failure(e)                     => (e, Maybe.empty)
+                                        case Result.Panic(e)                       => (e, Maybe.empty)
+                                        case _ => (new IllegalStateException("execution failed with no error"), Maybe.empty)
                                     Clock.nowWith { ts =>
                                         store.updateStatus(
                                             eid,
-                                            Flow.Status.Failed(ex.getMessage),
+                                            Flow.Status.Failed(ex.getMessage, kind),
                                             Flow.Event.Failed(state.flowId, eid, ex.getMessage, ts)
                                         )
                                     }
-                                case _ => ()
                             }
-                        case _ =>
-                            // Workflow definition not found or hash mismatch — fail the execution
-                            Clock.nowWith { ts =>
-                                store.updateStatus(
-                                    eid,
-                                    Flow.Status.Failed("Workflow definition not found or version mismatch"),
-                                    Flow.Event.Failed(state.flowId, eid, "Workflow definition not found or version mismatch", ts)
-                                )
-                            }
-                    }
-                } // end withEvent ExecutionResumed
+                        } // end withEvent ExecutionResumed
+                    case registered => park(eid, state, registered)
+                }
             case _ => ()
         }
+
+    /** Holds an execution no registered definition matches, rather than failing it. See [[Flow.Status.Parked]] for why.
+      *
+      * Re-parking an execution already parked for the same reason writes nothing: an execution stays parked across as many poll cycles as
+      * it takes for a matching definition to be registered, and one event per cycle would bury the history it is being kept for.
+      */
+    private def park(
+        eid: Flow.Id.Execution,
+        state: FlowStore.ExecutionState,
+        registered: Maybe[FlowDefinition]
+    )(using Frame): Unit < (Async & Abort[FlowStoreException]) =
+        val startedUnder =
+            if state.hash.isEmpty then "no structural hash recorded"
+            else s"structural hash ${state.hash}"
+        val reason = registered match
+            case Present(defn) =>
+                s"workflow '${state.flowId.value}' is registered with structural hash ${defn.meta.structuralHash}, " +
+                    s"and this execution was started under $startedUnder"
+            case _ =>
+                s"workflow '${state.flowId.value}' has no definition registered here, " +
+                    s"and this execution was started under $startedUnder"
+        state.status match
+            case Flow.Status.Parked(current) if current == reason => ()
+            case _ =>
+                Clock.nowWith { ts =>
+                    store.updateStatus(eid, Flow.Status.Parked(reason), Flow.Event.Parked(state.flowId, eid, reason, ts))
+                }
+        end match
+    end park
 
     private def rebuildRecord(fields: Dict[String, FlowStore.FieldData], schema: WorkflowSchema): Record[Any] =
         val dict = fields.foldLeft(Dict.empty[String, Any]) { (acc, name, fd) =>
@@ -480,7 +608,7 @@ final class FlowEngine private (
         eid: Flow.Id.Execution,
         flowId: Flow.Id.Workflow,
         result: Result[FlowSuspension, Result[FlowException, Record[Any]]]
-    )(using Frame): Unit < Async =
+    )(using Frame): Unit < (Async & Abort[FlowStoreException]) =
         result match
             case Result.Failure(_: FlowSuspension) => ()
             case _ =>
@@ -488,17 +616,19 @@ final class FlowEngine private (
                     case Present(s) if s.status == Flow.Status.Cancelled => ()
                     case _ =>
                         Clock.nowWith { ts =>
+                            // A failure the flow raised on its typed channel is recorded with its kind, so a persisted
+                            // failure can be grouped by what it was rather than matched on the message text. A panic
+                            // has no declared kind: it is whatever escaped, and the class name of an escaped throwable
+                            // is not a category a caller declared.
+                            def failed(message: String, kind: Maybe[String]) =
+                                (Flow.Status.Failed(message, kind), Flow.Event.Failed(flowId, eid, message, ts))
                             val (status, event) = result match
                                 case Result.Success(Result.Success(_)) =>
                                     (Flow.Status.Completed, Flow.Event.Completed(flowId, eid, ts))
-                                case Result.Success(Result.Failure(err)) =>
-                                    (Flow.Status.Failed(err.getMessage), Flow.Event.Failed(flowId, eid, err.getMessage, ts))
-                                case Result.Success(Result.Panic(ex)) =>
-                                    (Flow.Status.Failed(ex.getMessage), Flow.Event.Failed(flowId, eid, ex.getMessage, ts))
-                                case Result.Panic(ex) =>
-                                    (Flow.Status.Failed(ex.getMessage), Flow.Event.Failed(flowId, eid, ex.getMessage, ts))
-                                case _ =>
-                                    (Flow.Status.Failed("unknown"), Flow.Event.Failed(flowId, eid, "unknown", ts))
+                                case Result.Success(Result.Failure(err)) => failed(err.getMessage, Maybe(err.kind))
+                                case Result.Success(Result.Panic(ex))    => failed(ex.getMessage, Maybe.empty)
+                                case Result.Panic(ex)                    => failed(ex.getMessage, Maybe.empty)
+                                case _                                   => failed("unknown", Maybe.empty)
                             store.updateStatus(eid, status, event)
                         }
                 }
@@ -517,13 +647,15 @@ object FlowEngine:
     def init(
         store: FlowStore,
         flows: Flow[?, ?, ?]*
-    )(using Frame): FlowEngine < (Async & Scope) =
+    )(using Frame): FlowEngine < (Async & Scope & Abort[FlowStoreException]) =
         init(store, flows = flows)
 
     def init[S](
         store: FlowStore,
         flows: Flow[?, ?, S]*
-    )(runner: [V] => V < S => V < (Async & Scope & Abort[FlowException]))(using Frame): FlowEngine < (Async & Scope) =
+    )(runner: [V] => V < S => V < (Async & Scope & Abort[FlowException]))(using
+        Frame
+    ): FlowEngine < (Async & Scope & Abort[FlowStoreException]) =
         initImpl(store, flows = flows, runner = Maybe(FlowRunner[S](runner)))
 
     def init(
@@ -534,23 +666,44 @@ object FlowEngine:
         batchSize: Int = 4,
         pollTimeout: Duration = 30.seconds,
         flows: Seq[Flow[?, ?, ?]] = Seq.empty
-    )(using Frame): FlowEngine < (Async & Scope) =
-        initImpl(store, workerCount, lease, renewEvery, batchSize, pollTimeout, flows, Maybe.empty)
+    )(using Frame): FlowEngine < (Async & Scope & Abort[FlowStoreException]) =
+        init(store, Config(workerCount, lease, renewEvery, batchSize, pollTimeout), flows*)
+
+    /** Create a tuned engine.
+      *
+      * The tuning is one [[FlowEngine.Config]] value rather than a parameter list, so it composes with the runner overload below. Every
+      * workflow whose steps touch a resource has a non-trivial effect row and therefore needs a runner, and `lease` is the knob that sets
+      * how long crash recovery waits, so the two have to be available together.
+      */
+    def init(
+        store: FlowStore,
+        config: Config,
+        flows: Flow[?, ?, ?]*
+    )(using Frame): FlowEngine < (Async & Scope & Abort[FlowStoreException]) =
+        initImpl(store, config, flows, Maybe.empty)
+
+    /** Create a tuned engine whose step bodies use custom effects. */
+    def init[S](
+        store: FlowStore,
+        config: Config,
+        flows: Flow[?, ?, S]*
+    )(runner: [V] => V < S => V < (Async & Scope & Abort[FlowException]))(using
+        Frame
+    ): FlowEngine < (Async & Scope & Abort[FlowStoreException]) =
+        initImpl(store, config, flows, Maybe(FlowRunner[S](runner)))
 
     private[kyo] def initImpl(
         store: FlowStore,
-        workerCount: Int = 2,
-        lease: Duration = 30.seconds,
-        renewEvery: Duration = 10.seconds,
-        batchSize: Int = 4,
-        pollTimeout: Duration = 30.seconds,
+        config: Config = Config(),
         flows: Seq[Flow[?, ?, ?]] = Seq.empty,
         runner: Maybe[FlowRunner] = Maybe.empty
-    )(using Frame): FlowEngine < (Async & Scope) =
+    )(using Frame): FlowEngine < (Async & Scope & Abort[FlowStoreException]) =
+        import config.*
         for
-            defs <- AtomicRef.init(Dict.empty[Flow.Id.Workflow, FlowDefinition])
-            eid  <- Flow.Id.Executor.random
-            engine = new FlowEngine(store, defs, eid)
+            defs     <- AtomicRef.init(Dict.empty[Flow.Id.Workflow, FlowDefinition])
+            eid      <- Flow.Id.Executor.random
+            liveness <- Liveness.init(workerCount)
+            engine = new FlowEngine(store, defs, eid, liveness)
             _ <- Kyo.foreachDiscard(flows) { flow =>
                 val name = FlowFold(flow)(new FlowVisitorCollect[Maybe[String]](Maybe.empty, (a, b) => a.orElse(b)):
                     override def onInit(name: String, frame: Frame, meta: Flow.Meta) = Maybe(
@@ -561,9 +714,102 @@ object FlowEngine:
                 engine.registerImpl(Flow.Id.Workflow(name), flow, runner)
             }
             _ <- Kyo.foreachDiscard(1 to workerCount) { _ =>
-                Fiber.init(engine.worker(lease, renewEvery, batchSize, pollTimeout))
+                // Counted before the fiber starts and uncounted when it ends, so `health` answers for every worker the
+                // engine was asked for from the moment `init` returns. Counting inside the fiber would report zero
+                // until the scheduler got to it, which is a health check that fails on a healthy engine.
+                liveness.workerStarted.andThen(
+                    Fiber.init(
+                        Sync.ensure(liveness.workerStopped)(engine.worker(lease, renewEvery, batchSize, pollTimeout))
+                    )
+                )
             }
         yield engine
+        end for
+    end initImpl
+
+    /** What [[FlowEngine.health]] answers: how many workers are polling, how many were asked for, and the last poll failure.
+      *
+      * `workersAlive < workersConfigured` is the condition a health check fails on: the engine is up but is not processing everything it
+      * was configured to. `lastPollFailure` is the message of the most recent failure to reach the store, present whether or not the
+      * worker that hit it recovered, so a store that is failing intermittently is visible rather than silent.
+      *
+      * @param workersAlive
+      *   worker fibers currently running
+      * @param workersConfigured
+      *   worker fibers the engine was created with
+      * @param pollFailures
+      *   how many times a poll has failed since the engine started
+      * @param lastPollFailure
+      *   the message of the most recent poll failure
+      */
+    case class Health(
+        workersAlive: Int,
+        workersConfigured: Int,
+        pollFailures: Long,
+        lastPollFailure: Maybe[String]
+    ) derives CanEqual:
+        /** Every worker the engine was configured with is polling. */
+        def isHealthy: Boolean = workersAlive == workersConfigured
+    end Health
+
+    /** The engine's own view of its workers, written by the workers and read by [[FlowEngine.health]]. */
+    final private[kyo] class Liveness(
+        configured: Int,
+        alive: AtomicInt,
+        failures: AtomicLong,
+        lastFailure: AtomicRef[Maybe[String]]
+    ):
+        def workerStarted(using Frame): Unit < Sync = alive.incrementAndGet.unit
+        def workerStopped(using Frame): Unit < Sync = alive.decrementAndGet.unit
+
+        def recordFailure(error: Throwable)(using Frame): Unit < Sync =
+            failures.incrementAndGet.andThen(lastFailure.set(Maybe(Maybe(error.getMessage).getOrElse(error.toString))))
+
+        def snapshot(using Frame): Health < Sync =
+            for
+                a <- alive.get
+                f <- failures.get
+                l <- lastFailure.get
+            yield Health(a, configured, f, l)
+    end Liveness
+
+    private[kyo] object Liveness:
+        def init(configured: Int)(using Frame): Liveness < Sync =
+            for
+                alive       <- AtomicInt.init(0)
+                failures    <- AtomicLong.init(0L)
+                lastFailure <- AtomicRef.init(Maybe.empty[String])
+            yield new Liveness(configured, alive, failures, lastFailure)
+    end Liveness
+
+    /** Engine tuning: how many workers poll, how long a claim lives, and how the poll loop is paced.
+      *
+      * One value rather than a parameter list, so a caller configures the engine the same way whether or not the flows need a runner.
+      * `lease` is the one that decides crash-recovery latency: an execution whose executor died is offered to another only once its claim
+      * has expired, so it is the first knob anyone running this in production reaches for.
+      *
+      * @param workerCount
+      *   how many worker fibers poll the store for ready executions
+      * @param lease
+      *   how long a claim on an execution lasts before another executor may take it
+      * @param renewEvery
+      *   how often a worker renews the claim of an execution it is running
+      * @param batchSize
+      *   how many executions one poll claims at once
+      * @param pollTimeout
+      *   how long a poll waits for a ready execution before going around again
+      */
+    case class Config(
+        workerCount: Int = 2,
+        lease: Duration = 30.seconds,
+        renewEvery: Duration = 10.seconds,
+        batchSize: Int = 4,
+        pollTimeout: Duration = 30.seconds
+    ) derives CanEqual
+
+    object Config:
+        /** The tuning the untuned `init` overloads use. */
+        val default: Config = Config()
 
     // --- Handle ---
 
@@ -573,19 +819,21 @@ object FlowEngine:
     final class Handle(val executionId: Flow.Id.Execution, engine: FlowEngine):
         def signal[V: Tag: Schema](name: String, value: V)(using
             Frame
-        ): Unit < (Async & Abort[FlowExecutionStateException | FlowWorkflowNotRegisteredException | FlowSignalException]) =
+        ): Unit < (Async & Abort[FlowExecutionStateException | FlowWorkflowNotRegisteredException | FlowSignalException] & Abort[
+            FlowStoreException
+        ]) =
             engine.executions.signal[V](executionId, name, value)
 
-        def status(using Frame): Flow.Status < (Async & Abort[FlowExecutionNotFoundException]) =
+        def status(using Frame): Flow.Status < (Async & Abort[FlowExecutionNotFoundException] & Abort[FlowStoreException]) =
             engine.executions.describe(executionId).map(_.status)
 
-        def describe(using Frame): ExecutionDetail < (Async & Abort[FlowExecutionNotFoundException]) =
+        def describe(using Frame): ExecutionDetail < (Async & Abort[FlowExecutionNotFoundException] & Abort[FlowStoreException]) =
             engine.executions.describe(executionId)
 
-        def cancel(using Frame): Unit < Async =
+        def cancel(using Frame): Unit < (Async & Abort[FlowStoreException]) =
             engine.executions.cancel(executionId)
 
-        def history(limit: Int = 50, offset: Int = 0)(using Frame): FlowStore.HistoryPage < Async =
+        def history(limit: Int = 50, offset: Int = 0)(using Frame): FlowStore.HistoryPage < (Async & Abort[FlowStoreException]) =
             engine.executions.history(executionId, limit, offset)
     end Handle
 
@@ -685,6 +933,15 @@ object FlowEngine:
             case Completed, Running, Pending, WaitingForInput
             case Sleeping(until: Instant)
             case Failed(error: String)
+
+            /** The one-line rendering a monitoring surface shows, in the same shape [[Flow.Status.show]] uses. */
+            def show: String = this match
+                case Completed       => "completed"
+                case Running         => "running"
+                case Pending         => "pending"
+                case WaitingForInput => "waiting"
+                case Sleeping(until) => s"sleeping:$until"
+                case Failed(error)   => s"failed:$error"
         end NodeStatus
 
         private[kyo] def build(flow: Flow[?, ?, ?], completedSteps: Set[String], currentStatus: Flow.Status): Progress =
@@ -728,7 +985,7 @@ object FlowEngine:
                                 assignStatuses(idx + 1, true, acc :+ node.copy(status = NodeStatus.WaitingForInput))
                             case Flow.Status.Sleeping(n, until) if n == node.name =>
                                 assignStatuses(idx + 1, true, acc :+ node.copy(status = NodeStatus.Sleeping(until)))
-                            case Flow.Status.Failed(error) if !foundActive =>
+                            case Flow.Status.Failed(error, _) if !foundActive =>
                                 assignStatuses(idx + 1, true, acc :+ node.copy(status = NodeStatus.Failed(error)))
                             case Flow.Status.Compensating if !foundActive =>
                                 assignStatuses(idx + 1, true, acc :+ node.copy(status = NodeStatus.Failed("compensating")))

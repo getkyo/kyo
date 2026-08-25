@@ -45,6 +45,11 @@ private[kyo] class MemoryFlowStore(
                             case Flow.Status.WaitingForInput(name) =>
                                 data.fields.contains((ex.executionId, name))
                             case Flow.Status.Cancelled => true
+                            // A parked execution is NOT ready. Nothing about it can change by claiming it again: the definition it
+                            // needs arrives through a registration, and an engine that registers one takes its own parked executions
+                            // out of that state (see FlowEngine.registerImpl). Offering it here instead would spin the poll loop at
+                            // full speed, since a claim that changes nothing releases immediately and the execution is ready again.
+                            case _: Flow.Status.Parked => false
                             case _                     => false)
                     }.take(limit).toSeq
 
@@ -190,7 +195,9 @@ private[kyo] class MemoryFlowStore(
         ref.use { data =>
             val filtered = data.executions.values.filter(_.flowId == flowId)
             val byStatus = status match
-                case Present(s) => filtered.filter(_.status == s)
+                // By CASE, ignoring the payload: a caller asking for the sleeping executions has no `until` to guess, so the filter
+                // cannot be value equality. The SPI documents this on `listExecutions`.
+                case Present(s) => filtered.filter(_.status.ordinal == s.ordinal)
                 case _          => filtered
             Chunk.from(byStatus.toSeq.sortBy(_.created)(using Ordering[Instant]).reverse.drop(offset).take(limit))
         }

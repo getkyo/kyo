@@ -41,4 +41,12 @@ abstract private[kyo] class FlowInterpreter[S]:
     /** Called when a compensation handler throws. */
     def onCompensationFailed(error: Throwable): Unit < S = ()
 
+    /** Re-raises what ended the flow, once its compensations have run.
+      *
+      * The interpreter owns this because the interpreter owns the effect row: whether a [[FlowException]] can go back out on a typed
+      * channel depends on whether `S` has one, which only the interpreter knows. Abstract rather than defaulted to a panic for that
+      * reason: `Abort.panic` is itself an effect, and one an arbitrary `S` does not have.
+      */
+    def onUnwind(error: Throwable): Nothing < S
+
 end FlowInterpreter

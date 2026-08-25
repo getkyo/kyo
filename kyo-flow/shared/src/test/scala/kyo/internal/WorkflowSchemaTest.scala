@@ -155,8 +155,8 @@ class WorkflowSchemaTest extends kyo.test.Test[Any]:
             eid: Flow.Id.Execution,
             predicate: Flow.Status => Boolean,
             maxRounds: Int = 200
-        )(using Frame): Flow.Status < Async =
-            def go(remaining: Int): Flow.Status < Async =
+        )(using Frame): Flow.Status < (Async & Abort[FlowStoreException]) =
+            def go(remaining: Int): Flow.Status < (Async & Abort[FlowStoreException]) =
                 if remaining <= 0 then Abort.panic(new AssertionError("pump timed out"))
                 else
                     tc.advance(10.millis).map { _ =>
@@ -213,7 +213,14 @@ class WorkflowSchemaTest extends kyo.test.Test[Any]:
             }
         }
 
-        "execution with mismatched hash is not processed" in {
+        /** A hash mismatch parks the execution rather than failing it.
+          *
+          * These two leaves used to require `Failed`, and what they were really about is visible in the second one's own comment: the
+          * execution "should eventually be marked as Failed, NOT RELEASED FOREVER". Being held in a named, visible state is what that
+          * asks for, and `Failed` is terminal, so it also destroyed every execution a deployment touched and skipped the compensations
+          * on the way out. `Parked` keeps the property they were written for and drops the part that made a version bump unrecoverable.
+          */
+        "execution with mismatched hash is parked, not processed" in {
             Clock.withTimeControl { tc =>
                 FlowStore.initMemory.map { store =>
                     val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
@@ -225,24 +232,25 @@ class WorkflowSchemaTest extends kyo.test.Test[Any]:
                         eid = Flow.Id.Execution("hash-mismatch-test")
                         _ <- store.createExecution(eid, Flow.Status.Running, Flow.Event.Created(wf1, eid, now), "")
                         _ <- store.putField[Int](eid, "x", 42)
-                        // The worker fails the mismatch asynchronously; pump advances until a terminal status
-                        // lands rather than reading once after a single advance, which races the worker.
-                        status <- pump(tc, store, eid, _.isTerminal)
+                        // The worker parks the mismatch asynchronously; pump advances until that lands rather than
+                        // reading once after a single advance, which races the worker. Parked is deliberately not
+                        // terminal, which is the whole point of it, so the predicate names the state directly.
+                        status <- pump(tc, store, eid, _.isParked)
                     yield
-                        // Hash mismatch: engine should fail the execution rather than run it.
+                        // Hash mismatch: the engine holds the execution and says why, rather than running it or ignoring it.
                         assert(
                             status match
-                                case Flow.Status.Failed(_) => true
-                                case _                     => false
+                                case Flow.Status.Parked(reason) => reason.contains(wf1.value)
+                                case _                          => false
                             ,
-                            s"Execution with mismatched hash should be Failed, but status is $status"
+                            s"Execution with mismatched hash should be Parked naming the workflow, but status is $status"
                         )
                     end for
                 }
             }
         }
 
-        "structural hash mismatch marks execution as failed".notNative in {
+        "structural hash mismatch parks the execution rather than leaving it stuck".notNative in {
             withEngine { (engine, store, tc) =>
                 val flowV1 = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 val flowV2 = Flow.input[Int]("x").output("y")(ctx => ctx.x).output("z")(ctx => 0)
@@ -264,17 +272,25 @@ class WorkflowSchemaTest extends kyo.test.Test[Any]:
                         WorkflowSchema.structuralHash(flowV1) // v1 hash
                     )
                     _ <- store.putField[Int](stuckEid, "x", 10)
-                    // The engine has v2 but this execution has the v1 hash, so it must reconcile to Failed, not release forever. The pump
-                    // must wait for a terminal status: stopping on the starting Running would race the async fail-on-mismatch transition.
-                    _     <- pump(tc, store, stuckEid, _.isTerminal)
-                    state <- store.getExecution(stuckEid)
-                yield assert(
-                    state.get.status match
-                        case Flow.Status.Failed(_) => true;
-                        case _                     => false
-                    ,
-                    s"Expected Failed but got ${state.get.status} — execution stuck on hash mismatch"
-                )
+                    // Engine now has v2 registered but this execution has v1 hash. It must end up in a named state that says so,
+                    // rather than being run against the wrong definition or released forever with nothing recorded.
+                    _       <- pump(tc, store, stuckEid, _.isParked, 50)
+                    state   <- store.getExecution(stuckEid)
+                    history <- store.getHistory(stuckEid, Int.MaxValue, 0)
+                yield
+                    assert(
+                        state.get.status match
+                            case Flow.Status.Parked(reason) =>
+                                reason.contains(WorkflowSchema.structuralHash(flowV1)) &&
+                                reason.contains(WorkflowSchema.structuralHash(flowV2))
+                            case _ => false
+                        ,
+                        s"Expected Parked naming both hashes but got ${state.get.status}"
+                    )
+                    assert(
+                        history.events.count(_.kind == Flow.EventKind.Parked) == 1,
+                        "an execution parked for the same reason on every poll must record it once"
+                    )
                 end for
             }
         }

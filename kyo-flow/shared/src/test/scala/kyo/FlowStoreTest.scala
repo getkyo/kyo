@@ -23,7 +23,7 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
         eid: Flow.Id.Execution,
         flowId: Flow.Id.Workflow,
         status: Flow.Status
-    )(using Frame): Unit < Async =
+    )(using Frame): Unit < (Async & Abort[FlowStoreException]) =
         Clock.now.map { now =>
             store.createExecution(
                 eid,
@@ -198,8 +198,8 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
                     _     <- store.updateStatus(eid1, Flow.Status.Running, Flow.Event.Created(wf1, eid1, now))
                     state <- store.getExecution(eid1)
                 yield assert(state.get.status match
-                    case Flow.Status.Failed(_) => true
-                    case _                     => false)
+                    case Flow.Status.Failed(_, _) => true
+                    case _                        => false)
             }
         }
 
@@ -828,6 +828,28 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
             }
         }
 
+        /** The status filter matches the case and ignores the payload.
+          *
+          * A caller asking for the sleeping executions has no `until` to guess and no name to guess either, so a filter that compared
+          * whole values could not express the question at all. Two stores reading "filtered by status" disagreed about this, which is
+          * why the SPI now states it.
+          */
+        "filters by the status case, ignoring its payload" in {
+            makeStore.map { store =>
+                for
+                    now <- Clock.now
+                    _   <- mkExecution(store, eid1, wf1, Flow.Status.Running)
+                    _   <- mkExecution(store, eid2, wf1, Flow.Status.Sleeping("wait", now + 30.seconds))
+                    _   <- mkExecution(store, eid3, wf1, Flow.Status.Sleeping("settle", now + 90.seconds))
+                    // A probe payload that matches neither sleeping execution by value.
+                    sleeping <- store.listExecutions(wf1, Maybe(Flow.Status.Sleeping("any", now)), 100, 0)
+                    running  <- store.listExecutions(wf1, Maybe(Flow.Status.Running), 100, 0)
+                yield
+                    assert(sleeping.length == 2, s"both sleeping executions must match, got ${sleeping.map(_.status)}")
+                    assert(running.length == 1, s"the running one must not, got ${running.map(_.status)}")
+            }
+        }
+
         "respects limit and offset" in {
             makeStore.map { store =>
                 for
@@ -973,8 +995,8 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
                 assert(s1.get.status == Flow.Status.WaitingForInput("x"))
                 assert(s2.get.status == Flow.Status.Running)
                 assert(s3.get.status match
-                    case Flow.Status.Failed(_) => true;
-                    case _                     => false)
+                    case Flow.Status.Failed(_, _) => true;
+                    case _                        => false)
         }
     }
 
