@@ -15,4 +15,14 @@ abstract class BaseHttpTest extends kyo.test.Test[Any]:
     )(using Frame): HttpClient < (Async & Scope) =
         HttpClient.init(maxConnectionsPerHost, idleConnectionTimeout, HttpTlsConfig(trustAll = true))
 
+    /** Polls until `condition` holds, giving up after a bound that only exists so a broken subject fails instead of spinning forever. The
+      * interval sleeps on the live clock (not `Async.sleep`), so it works inside `Clock.withTimeControl`; a slower machine just polls more.
+      */
+    def pollUntil(condition: => Boolean, maxPolls: Int = 10000)(using Frame): Boolean < Async =
+        Loop.indexed { i =>
+            if condition then Loop.done(true)
+            else if i >= maxPolls then Loop.done(false)
+            else Clock.live.sleep(1.milli).map(_.get).andThen(Loop.continue)
+        }
+
 end BaseHttpTest

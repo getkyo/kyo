@@ -33,7 +33,7 @@ class McpLoggingSetLevelTypedTest extends Test:
                     _ <- Abort.run[McpConnectionClosedException](srv.notifyLog(McpServer.LogLevel.Debug, "also-dropped"))
                     c1 = counter.get()(using AllowUnsafe.embrace.danger)
                     _ <- Abort.run[McpConnectionClosedException](srv.notifyLog(McpServer.LogLevel.Error, "received-message"))
-                    _ <- Async.sleep(50.millis)
+                    _ <- assertEventually(Sync.defer(counter.get()(using AllowUnsafe.embrace.danger) == 1))
                     c2 = counter.get()(using AllowUnsafe.embrace.danger)
                     _ <- srv.closeNow
                     _ <- client.closeNow
@@ -64,7 +64,7 @@ class McpLoggingSetLevelTypedTest extends Test:
                     _ <- Abort.run[McpConnectionClosedException](srv.notifyLog(McpServer.LogLevel.Info, "info-message"))
                     // Debug < Info, so Debug messages are dropped.
                     _ <- Abort.run[McpConnectionClosedException](srv.notifyLog(McpServer.LogLevel.Debug, "debug-dropped"))
-                    _ <- Async.sleep(50.millis)
+                    _ <- assertEventually(Sync.defer(counter.get()(using AllowUnsafe.embrace.danger) == 1))
                     c = counter.get()(using AllowUnsafe.embrace.danger)
                     _ <- srv.closeNow
                     _ <- client.closeNow

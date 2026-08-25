@@ -16,7 +16,16 @@ set -uo pipefail
 # can signal the root-owned apt-get when the deadline expires. Wrapping `sudo apt-get` in a
 # non-root supervisor instead (e.g. nick-fields/retry) fails with EPERM at kill time, because the
 # runner user cannot signal a root process, turning an apt mirror hang into a hard job failure.
-# apt-level Acquire::Retries covers transient fetch errors within an attempt.
+# apt-level Acquire::Retries covers transient fetch errors within an attempt; the attempt loop uses
+# exponential backoff to ride out a longer outage. GitHub's runners resolve the archive through a
+# mirrorlist (/etc/apt/apt-mirrors.txt: azure.archive.ubuntu.com primary, archive.ubuntu.com
+# fallback); azure intermittently 5xx or hangs, and apt's built-in fallback is only partial (under
+# an outage it refetches the Release files from archive but can leave a pocket's Packages index
+# Ign'd from azure, which then fails the install). So after the first failed attempt the loop
+# rewrites the azure host to archive.ubuntu.com wherever it appears (the mirrorlist, or a directly
+# pinned sources.list on older images), forcing every index off the failing mirror. It is a
+# host-only substitution that cannot restructure the file, and it runs only on the failure path, so
+# a healthy first-attempt install is untouched.
 
 if_missing=""
 if [ "${1:-}" = "--if-missing" ]; then
@@ -46,13 +55,29 @@ if [ -n "$if_missing" ]; then
     set -- "${missing[@]}"
 fi
 
-for attempt in 1 2 3; do
+max_attempts=5
+backoff=15
+mirror_swapped=""
+for attempt in $(seq 1 "$max_attempts"); do
     if sudo timeout -k 30 300 apt-get update &&
         sudo timeout -k 30 300 apt-get install -y -o Acquire::Retries=3 "$@"; then
         exit 0
     fi
-    echo "apt-get attempt $attempt failed; retrying in 15s" >&2
-    sleep 15
+    [ "$attempt" -ge "$max_attempts" ] && break
+    # One-time, failure-path only: force the canonical Ubuntu archive over the failing azure mirror,
+    # in the mirrorlist (current images) or a directly pinned sources.list (older images).
+    if [ -z "$mirror_swapped" ]; then
+        mirror_swapped=1
+        azure_files=$(grep -rl 'azure.archive.ubuntu.com' \
+            /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null || true)
+        if [ -n "$azure_files" ]; then
+            echo "apt-install: azure mirror failing, forcing archive.ubuntu.com" >&2
+            printf '%s\n' "$azure_files" | sudo xargs -r sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' 2>/dev/null || true
+        fi
+    fi
+    echo "apt-get attempt $attempt failed; retrying in ${backoff}s" >&2
+    sleep "$backoff"
+    backoff=$((backoff * 2))
 done
-echo "apt-get failed after 3 attempts: $*" >&2
+echo "apt-get failed after $max_attempts attempts: $*" >&2
 exit 1

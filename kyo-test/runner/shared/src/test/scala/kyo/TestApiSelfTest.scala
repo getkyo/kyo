@@ -10,6 +10,12 @@ import kyo.seconds
   */
 class TestApiSelfTest extends kyo.test.Test[Any]:
 
+    // Power-assert instrumentation is compiled in only when KYO_TEST_POWER_ASSERT (or -Dkyo.test.powerAssert) is set (see
+    // AssertMacro); the diagram-value case below gates on the same flag at runtime.
+    private val powerAssertOn: Boolean =
+        sys.props.get("kyo.test.powerAssert").orElse(sys.env.get("KYO_TEST_POWER_ASSERT"))
+            .exists(v => Set("1", "true", "on", "yes").contains(v.trim.toLowerCase))
+
     "sync test passes" in {
         assert(1 + 1 == 2)
     }
@@ -24,6 +30,7 @@ class TestApiSelfTest extends kyo.test.Test[Any]:
     }
 
     "power-assert diagram on failure" in {
+        assume(powerAssertOn)
         val ex = intercept[kyo.test.AssertionFailed] {
             val n = 5
             assert(n > 10)
