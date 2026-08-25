@@ -678,6 +678,72 @@ class ContainerItTest extends BasePodTest:
     }
 
     // =========================================================================
+    // requireService — init proves readiness instead of assuming it
+    //
+    // Without these two gates a container that died during startup, or one whose
+    // published port has no live forwarder behind it, was handed to the caller as a
+    // healthy handle: `runHealthCheck` treated a dead container as "nothing to check"
+    // and the port wait trusted `inspect`. The caller then failed on every query
+    // against a port that refuses connections, which is how one stillborn database
+    // fixture turned into a whole failed suite.
+    // =========================================================================
+
+    "requireService" - {
+        "a container that exits before its health check fails init" - runBackends {
+            val config = Container.Config("alpine")
+                .command("sh", "-c", "exit 3")
+                .requireService(true)
+                .healthCheck(Container.HealthCheck.exec(
+                    Command("echo", "ok"),
+                    Present("ok"),
+                    Schedule.fixed(100.millis).take(20)
+                ))
+            Abort.run[ContainerException](Scope.run(Container.init(config))).map {
+                case Result.Failure(e: ContainerHealthCheckException) =>
+                    assert(e.getMessage.contains("exited"), s"expected an exit-shaped reason, got ${e.getMessage}")
+                case other => fail(s"expected ContainerHealthCheckException for a stillborn fixture, got $other")
+            }
+        }
+
+        "the same container without requireService still starts (one-shot contract preserved)" - runBackends {
+            Container.init(Container.Config("alpine").command("sh", "-c", "exit 3")).map { c =>
+                c.waitForExit.map(code => assert(code == ExitCode.Failure(3)))
+            }
+        }
+
+        "a published port with nothing listening fails init" - runBackends {
+            // The container stays up, so only the host-side connect probe can tell that
+            // port 8080 is bound by the runtime and served by nobody.
+            val config = alpine.port(8080, 0)
+                .requireService(true)
+                .portMappingTimeout(5.seconds)
+            Abort.run[ContainerException](Scope.run(Container.init(config))).map {
+                case Result.Failure(e: ContainerStartFailedException) =>
+                    assert(e.reason.contains("refuses connections"), s"expected a reachability reason, got ${e.reason}")
+                case other => fail(s"expected ContainerStartFailedException for an unserved port, got $other")
+            }
+        }
+
+        "a published port with a live listener starts normally" - runBackends {
+            val config = Container.Config("alpine")
+                .command("sh", "-c", "trap 'exit 0' TERM; while true; do echo ok | nc -l -p 8080; done")
+                .port(8080, 0)
+                .requireService(true)
+                .portMappingTimeout(60.seconds)
+                .healthCheck(Container.HealthCheck.port(8080, Schedule.fixed(200.millis).take(30)))
+            Container.init(config).map { c =>
+                c.mappedPort(8080).map(hp => assert(hp > 0, s"expected a bound host port, got $hp"))
+            }
+        }
+
+        "the same unserved port is accepted without requireService" - runBackends {
+            Container.init(alpine.port(8080, 0)).map { c =>
+                c.mappedPort(8080).map(hp => assert(hp > 0, s"expected a bound host port, got $hp"))
+            }
+        }
+    }
+
+    // =========================================================================
     // Health Check
     // =========================================================================
 

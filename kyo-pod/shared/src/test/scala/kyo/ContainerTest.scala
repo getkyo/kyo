@@ -1248,6 +1248,167 @@ class ContainerTest extends BasePodTest:
         }
     }
 
+    // =========================================================================
+    // Host-side kill fallback — the escalation for a runtime that cannot reap
+    // its own container process ("given PID did not die within timeout").
+    // =========================================================================
+
+    "Container.isUnreapedProcessFailure" - {
+        "recognises podman's stop/kill/remove 'did not die' body" in {
+            val e = new RuntimeException(
+                """Daemon returned HTTP 500: {"cause":"given PID did not die within timeout","message":"..."}"""
+            )
+            assert(Container.isUnreapedProcessFailure(e))
+        }
+
+        "recognises the 'container state improper' sibling" in {
+            assert(Container.isUnreapedProcessFailure(new RuntimeException("HTTP 500: container state improper")))
+        }
+
+        "matches case-insensitively" in {
+            assert(Container.isUnreapedProcessMessage("GIVEN PID DID NOT DIE WITHIN TIMEOUT"))
+        }
+
+        "reads the cause chain, not only the top message" in {
+            val cause = new RuntimeException("given PID did not die within timeout")
+            assert(Container.isUnreapedProcessFailure(new RuntimeException("stop failed", cause)))
+        }
+
+        "does not fire on an unrelated daemon failure" in {
+            assert(!Container.isUnreapedProcessFailure(new RuntimeException("No such container: abc")))
+            assert(!Container.isUnreapedProcessMessage("port is already allocated"))
+        }
+
+        "tolerates a null message and a self-referential cause" in {
+            val loop = new RuntimeException(null: String):
+                override def getCause: Throwable = this
+            assert(!Container.isUnreapedProcessFailure(loop))
+        }
+    }
+
+    "Container.cgroupNamesContainer" - {
+        // The gate that keeps the host-side SIGKILL from signalling an unrelated host process:
+        // only a pid whose cgroup names this container is ever signalled.
+        "accepts a rootless podman libpod scope" in {
+            val id = Container.Id("3f9a1c2b4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8")
+            val cgroup =
+                "0::/user.slice/user-1001.slice/user@1001.service/user.slice/libpod-3f9a1c2b4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8.scope\n"
+            assert(Container.cgroupNamesContainer(cgroup, id))
+        }
+
+        "accepts a docker cgroup path" in {
+            val id = Container.Id("abcdef0123456789abcdef0123456789")
+            assert(Container.cgroupNamesContainer("0::/docker/abcdef0123456789abcdef0123456789\n", id))
+        }
+
+        "rejects a cgroup belonging to another container" in {
+            val id = Container.Id("abcdef0123456789abcdef0123456789")
+            assert(!Container.cgroupNamesContainer("0::/docker/999999999999999999999999\n", id))
+        }
+
+        "rejects an unrelated host process" in {
+            val id = Container.Id("abcdef0123456789abcdef0123456789")
+            assert(!Container.cgroupNamesContainer("0::/user.slice/user-501.slice/session-3.scope\n", id))
+        }
+
+        "rejects an empty id rather than matching everything" in {
+            assert(!Container.cgroupNamesContainer("0::/docker/abc\n", Container.Id("")))
+        }
+    }
+
+    "Container.hostKillCommand" - {
+        "is an unconditional SIGKILL of the given pid" in {
+            assert(Container.hostKillCommand(4242).args == Chunk("kill", "-9", "4242"))
+        }
+    }
+
+    "Container.withUnreapedProcessFallback" - {
+        // A daemon whose stop/kill/remove leaves the container's process running is the leak engine
+        // the SQL Native batch died of: without the escalation every scoped fixture became a corpse.
+        "passes a successful call straight through and never escalates" in {
+            for
+                calls     <- AtomicInt.init(0)
+                escalated <- AtomicInt.init(0)
+                _ <- Container.withUnreapedProcessFallback(escalated.incrementAndGet.andThen(true)) {
+                    calls.incrementAndGet.unit
+                }
+                callCount <- calls.get
+                killCount <- escalated.get
+            yield
+                assert(callCount == 1, s"expected one call, got $callCount")
+                assert(killCount == 0, s"a successful call must not escalate, got $killCount")
+        }
+
+        "escalates on 'did not die', then retries the call once" in {
+            for
+                calls     <- AtomicInt.init(0)
+                escalated <- AtomicInt.init(0)
+                result <- Abort.run[ContainerException] {
+                    Container.withUnreapedProcessFallback(escalated.incrementAndGet.andThen(true)) {
+                        calls.incrementAndGet.map { n =>
+                            if n == 1 then
+                                Abort.fail(ContainerOperationException("given PID did not die within timeout"))
+                            else ()
+                        }
+                    }
+                }
+                callCount <- calls.get
+                killCount <- escalated.get
+            yield
+                assert(result.isSuccess, s"the retry after the host kill should succeed, got $result")
+                assert(killCount == 1, s"expected exactly one escalation, got $killCount")
+                assert(callCount == 2, s"expected the call to run twice, got $callCount")
+        }
+
+        "re-raises the daemon failure when the escalation declines" in {
+            for
+                calls <- AtomicInt.init(0)
+                result <- Abort.run[ContainerException] {
+                    Container.withUnreapedProcessFallback(false) {
+                        calls.incrementAndGet.andThen(
+                            Abort.fail(ContainerOperationException("given PID did not die within timeout"))
+                        )
+                    }
+                }
+                callCount <- calls.get
+            yield
+                assert(result.isFailure, s"a declined escalation must surface the daemon failure, got $result")
+                assert(callCount == 1, s"a declined escalation must not retry, got $callCount")
+        }
+
+        "leaves an unrelated failure untouched" in {
+            for
+                escalated <- AtomicInt.init(0)
+                result <- Abort.run[ContainerException] {
+                    Container.withUnreapedProcessFallback(escalated.incrementAndGet.andThen(true)) {
+                        Abort.fail(ContainerMissingException(Container.Id("gone")))
+                    }
+                }
+                killCount <- escalated.get
+            yield
+                assert(killCount == 0, s"an unrelated failure must not escalate, got $killCount")
+                result match
+                    case Result.Failure(_: ContainerMissingException) => succeed("the original failure survives")
+                    case other                                        => fail(s"expected ContainerMissingException, got $other")
+        }
+
+        "surfaces a second failure from the retried call rather than looping" in {
+            for
+                calls <- AtomicInt.init(0)
+                result <- Abort.run[ContainerException] {
+                    Container.withUnreapedProcessFallback(true) {
+                        calls.incrementAndGet.andThen(
+                            Abort.fail(ContainerOperationException("given PID did not die within timeout"))
+                        )
+                    }
+                }
+                callCount <- calls.get
+            yield
+                assert(result.isFailure, s"a still-failing retry must fail, got $result")
+                assert(callCount == 2, s"the call must run exactly twice, got $callCount")
+        }
+    }
+
     "uniqueName" - {
         // Regression guard for the shared-/tmp collision: container suites are forked once per
         // runtime and those forks run concurrently on one machine. A bare `prefix-counter` resets

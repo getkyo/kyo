@@ -2709,6 +2709,9 @@ lazy val `kyo-pod` =
         .crossType(CrossType.Full)
         .in(file("kyo-pod"))
         .dependsOn(`kyo-core`, `kyo-http`)
+        // Direct, not through kyo-http: `Container.init` opens a host-side TCP connection to prove a published
+        // port is actually served before it hands the caller a handle.
+        .dependsOn(`kyo-net`)
         .dependsOn(`kyo-system`)
         .withKyoTest
         .settings(

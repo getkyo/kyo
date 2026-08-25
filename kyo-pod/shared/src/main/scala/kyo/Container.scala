@@ -64,7 +64,7 @@ final class Container private[kyo] (
 
     /** Send SIGTERM and wait up to `timeout` for graceful shutdown, then SIGKILL. */
     def stop(timeout: Duration)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        ensurePendingExit.andThen(backend.stop(id, timeout))
+        ensurePendingExit.andThen(Container.stopWithFallback(backend, id, timeout))
 
     /** Send SIGTERM to the container process. */
     def kill(using Frame): Unit < (Async & Abort[ContainerException]) =
@@ -79,7 +79,7 @@ final class Container private[kyo] (
       * real exit code is lost. If the exit code matters, prefer `autoRemove(false)` and call `waitForExit` followed by `remove` manually.
       */
     def kill(signal: Signal)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        ensurePendingExit.andThen(backend.kill(id, signal))
+        ensurePendingExit.andThen(Container.killWithFallback(backend, id, signal))
 
     /** When `autoRemove == true`, attach a `waitForExit` fiber before any destructive signal so the exit code is captured before the daemon
       * cleans the container up. Idempotent — subsequent calls are no-ops while a fiber is already attached.
@@ -128,7 +128,7 @@ final class Container private[kyo] (
 
     /** Delete this container. If `force` is true, kills the container first if running. */
     def remove(force: Boolean, removeVolumes: Boolean = false)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        backend.remove(id, force, removeVolumes)
+        Container.removeWithFallback(backend, id, force, removeVolumes)
 
     /** Change the container's name. */
     def rename(newName: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
@@ -494,14 +494,17 @@ object Container:
                                 case Result.Failure(e) => Log.warn(s"Container ${cid.value} $op failed: ${safeMessage(e)}")
                                 case Result.Panic(e)   => Log.warn(s"Container ${cid.value} $op panicked: ${safeMessage(e)}")
 
+                            // Every destructive step escalates to a host-side SIGKILL when the runtime reports the
+                            // container's process as unreaped, so a daemon that cannot kill its own container does
+                            // not turn each scoped fixture into a permanent corpse.
                             val shutdown: Unit < (Async & Abort[Nothing]) = config.stopSignal match
                                 case Present(signal) =>
-                                    Abort.run[ContainerException](b.kill(cid, signal)).map(logFailure("kill")).andThen(
+                                    Abort.run[ContainerException](killWithFallback(b, cid, signal)).map(logFailure("kill")).andThen(
                                         Abort.run[ContainerException](b.waitForExit(cid, config.stopTimeout))
                                             .map(r => logFailure("waitForExit")(r.map(_ => ())))
                                     )
                                 case Absent =>
-                                    Abort.run[ContainerException](b.stop(cid, config.stopTimeout)).map(logFailure("stop"))
+                                    Abort.run[ContainerException](stopWithFallback(b, cid, config.stopTimeout)).map(logFailure("stop"))
 
                             shutdown.andThen {
                                 // `removeVolumes = true` reaps anonymous volumes attached to the container (e.g. the
@@ -511,11 +514,13 @@ object Container:
                                 //
                                 // A force-remove can hit a transient ContainerBackendException under load and leak the container, so
                                 // retry; a genuinely-absent container surfaces as ContainerMissingException, which logFailure treats as done.
+                                // Each attempt goes through the unreaped-process fallback, so a runtime that reports the container's
+                                // process as still alive gets a host-side SIGKILL before the retry budget runs out.
                                 val removeSchedule =
                                     Schedule.exponentialBackoff(initial = 50.millis, factor = 2, maxBackoff = 500.millis).take(3)
                                 Abort.run[ContainerException] {
                                     Retry[ContainerBackendException](removeSchedule) {
-                                        b.remove(cid, force = true, removeVolumes = true)
+                                        removeWithFallback(b, cid, force = true, removeVolumes = true)
                                     }
                                 }.map(logFailure("remove"))
                             }
@@ -527,7 +532,7 @@ object Container:
                             AtomicRef.init(Absent: Maybe[Fiber[ExitCode, Abort[ContainerException]]]).map { pendingRef =>
                                 val container = new Container(cid, config, b, healthRef, pendingRef)
                                 runHealthCheck(container, config.healthCheck)
-                                    .andThen(waitForPortMappings(container))
+                                    .andThen(awaitPortsReady(container))
                                     .andThen(probePortConflict(container))
                                     .andThen(container)
                             }
@@ -590,14 +595,14 @@ object Container:
                         Abort.run[ContainerException] {
                             b.start(cid)
                                 .andThen(runHealthCheck(container, config.healthCheck))
-                                .andThen(waitForPortMappings(container))
+                                .andThen(awaitPortsReady(container))
                                 .andThen(probePortConflict(container))
                         }.map {
                             case Result.Success(_)                                => container
                             case e: (Result.Error[ContainerException] @unchecked) =>
                                 // Best-effort cleanup; reap anonymous volumes too — caller never received a
                                 // handle, so they can't reach those volumes through any other API.
-                                Abort.run[ContainerException](b.remove(cid, force = true, removeVolumes = true))
+                                Abort.run[ContainerException](removeWithFallback(b, cid, force = true, removeVolumes = true))
                                     .andThen(Abort.error(e))
                         }
                     }
@@ -824,6 +829,17 @@ object Container:
           * pressure; bumping this per-fixture avoids spurious teardown when the forwarder is just slow.
           */
         portMappingTimeout: Duration,
+        /** Whether this container is a long-lived service whose readiness `init` must prove rather than assume.
+          *
+          * With the default `false`, `init` accepts a container that has already exited (one-shot commands finish before any check can
+          * run) and treats an `inspect`-level port binding as the end of the port wait.
+          *
+          * With `true`, a container that exits before or during its health check fails startup, and every published TCP port must accept a
+          * host-side connection within [[portMappingTimeout]] before the handle is returned. Both are required for a database fixture: a
+          * stillborn engine and a bound-but-unserved port are otherwise indistinguishable from a healthy one until the first query. Set by
+          * every [[ContainerPredef]] fixture.
+          */
+        requireService: Boolean,
         healthCheck: HealthCheck
     ) derives CanEqual:
         // --- Builder methods ---
@@ -936,6 +952,8 @@ object Container:
 
         def portMappingTimeout(timeout: Duration): Config = copy(portMappingTimeout = timeout)
 
+        def requireService(value: Boolean): Config = copy(requireService = value)
+
         def healthCheck(hc: HealthCheck): Config = copy(healthCheck = hc)
 
     end Config
@@ -979,6 +997,7 @@ object Container:
             stopSignal = Absent,
             stopTimeout = 3.seconds,
             portMappingTimeout = 60.seconds,
+            requireService = false,
             healthCheck = HealthCheck.running
         )
 
@@ -2153,6 +2172,114 @@ object Container:
             case Absent     => ContainerBackend.detect()
         }
 
+    // --- Host-side kill fallback ---
+
+    /** Daemon message fragments that mean the runtime asked the OCI runtime to reap a container's process and the process outlived the
+      * request. Podman's libpod answers HTTP 500 `given PID did not die within timeout` on `/stop`, `/kill` and force-remove alike when its
+      * OCI runtime loses the ability to signal a container's init process, and `container state improper` for the half-killed state the
+      * container is then stuck in. Both leave the container's processes running with no daemon-side route to remove them.
+      */
+    private val unreapedProcessPhrases: Seq[String] =
+        Seq("did not die within timeout", "container state improper")
+
+    /** Whether `message` carries one of [[unreapedProcessPhrases]]. */
+    private[kyo] def isUnreapedProcessMessage(message: String): Boolean =
+        val lower = message.toLowerCase
+        unreapedProcessPhrases.exists(lower.contains)
+
+    /** As [[isUnreapedProcessMessage]], over a throwable's own message and its cause chain. The daemon body arrives on the cause for some
+      * transports, so both are read; the depth bound keeps a self-referential chain from looping.
+      */
+    private[kyo] def isUnreapedProcessFailure(error: Throwable): Boolean =
+        def text(t: Throwable, depth: Int): String =
+            if (t eq null) || depth > 4 then ""
+            else
+                val own =
+                    try Option(t.getMessage).getOrElse("")
+                    catch case scala.util.control.NonFatal(_) => ""
+                own + " " + text(t.getCause, depth + 1)
+        isUnreapedProcessMessage(text(error, 0))
+    end isUnreapedProcessFailure
+
+    /** The host-side SIGKILL issued when the runtime leaves a container's process unreaped. */
+    private[kyo] def hostKillCommand(pid: Int): Command = Command("kill", "-9", pid.toString)
+
+    /** Whether the host's process table attributes `pid` to `id`, read from the pid's cgroup membership: every cgroup-managed runtime names
+      * the container there (`libpod-<id>.scope` under podman, `docker-<id>.scope` or `/docker/<id>` under docker).
+      *
+      * This is the gate that makes the host-side SIGKILL safe. A runtime whose pids live in a VM (Docker Desktop, `podman machine`) reports
+      * a pid that means nothing on this host, and no `/proc/<pid>/cgroup` entry names the container, so the escalation declines rather than
+      * signalling an unrelated host process.
+      */
+    private[kyo] def cgroupNamesContainer(cgroup: String, id: Id): Boolean =
+        val short = Id.value(id).take(12)
+        short.nonEmpty && cgroup.contains(short)
+
+    private def hostPidBelongsTo(id: Id, pid: Int)(using Frame): Boolean < Sync =
+        Abort.run[FileReadException](Path("/proc", pid.toString, "cgroup").read).map {
+            case Result.Success(cgroup) => cgroupNamesContainer(cgroup, id)
+            case _                      => false
+        }
+
+    /** SIGKILL the host-side process of `id`, returning whether the signal was actually delivered. */
+    private[kyo] def hostKillContainerProcess(b: ContainerBackend, id: Id, op: String)(using Frame): Boolean < Async =
+        Abort.run[ContainerException](b.inspect(id)).map {
+            case Result.Success(info) if info.pid > 0 =>
+                hostPidBelongsTo(id, info.pid).map {
+                    case false => false
+                    case true =>
+                        Abort.run[CommandException](hostKillCommand(info.pid).redirectErrorStream(true).textWithExitCode).map {
+                            case Result.Success((_, ExitCode.Success)) =>
+                                Log.warn(
+                                    s"Container ${Id.value(id)} $op left its process unreaped by the runtime; SIGKILLed host pid ${info.pid}"
+                                ).andThen(true)
+                            case _ => false
+                        }
+                }
+            case _ => false
+        }
+
+    /** Runs `call` and, when it fails because the runtime could not reap the container's process, escalates through `hostKill` and runs
+      * `call` once more. Any other outcome passes through untouched, and a declined escalation re-raises the original failure so the caller
+      * still sees the daemon's own error.
+      *
+      * `hostKill` is a parameter rather than a fixed call so the escalation contract is exercisable without a container runtime.
+      */
+    private[kyo] def withUnreapedProcessFallback(hostKill: => Boolean < Async)(
+        call: => Unit < (Async & Abort[ContainerException])
+    )(using Frame): Unit < (Async & Abort[ContainerException]) =
+        def escalate(cause: Throwable, reraise: => Unit < Abort[ContainerException]): Unit < (Async & Abort[ContainerException]) =
+            if !isUnreapedProcessFailure(cause) then reraise
+            else
+                hostKill.map {
+                    case false => reraise
+                    case true  => call
+                }
+
+        Abort.run[ContainerException](call).map {
+            case Result.Success(_) => ()
+            case Result.Failure(e) => escalate(e, Abort.fail(e))
+            case Result.Panic(t)   => escalate(t, Abort.panic(t))
+        }
+    end withUnreapedProcessFallback
+
+    private[kyo] def stopWithFallback(b: ContainerBackend, id: Id, timeout: Duration)(using
+        Frame
+    ): Unit < (Async & Abort[ContainerException]) =
+        withUnreapedProcessFallback(hostKillContainerProcess(b, id, "stop"))(b.stop(id, timeout))
+
+    private[kyo] def killWithFallback(b: ContainerBackend, id: Id, signal: Signal)(using
+        Frame
+    ): Unit < (Async & Abort[ContainerException]) =
+        withUnreapedProcessFallback(hostKillContainerProcess(b, id, "kill"))(b.kill(id, signal))
+
+    /** Force-removes only escalate: a non-force remove failing on a running container is the API's own contract, not a broken runtime. */
+    private[kyo] def removeWithFallback(b: ContainerBackend, id: Id, force: Boolean, removeVolumes: Boolean)(using
+        Frame
+    ): Unit < (Async & Abort[ContainerException]) =
+        if !force then b.remove(id, force, removeVolumes)
+        else withUnreapedProcessFallback(hostKillContainerProcess(b, id, "remove"))(b.remove(id, force, removeVolumes))
+
     private def resolveBackend(config: BackendConfig)(using Frame): ContainerBackend < (Async & Abort[ContainerException]) =
         config match
             case BackendConfig.AutoDetect(meter, apiVersion, streamBufferSize) =>
@@ -2175,11 +2302,23 @@ object Container:
             case Result.Panic(ex)                             => Abort.panic(ex)
         }
 
+    /** What a dead container means during the health check: nothing for a one-shot (`init` is also used for containers that exit as soon as
+      * their command finishes, well before any check could run), a startup failure for a service fixture, where an engine that dies during
+      * boot is exactly the condition the check exists to catch.
+      *
+      * Without this split the escape laundered a stillborn database into a "healthy" handle, and the suite that received it failed every
+      * leaf on connect instead of failing once at init.
+      */
+    private def onDeadContainer(container: Container, reason: String, attempts: Int, lastError: String)(using
+        Frame
+    ): Unit < (Async & Abort[ContainerException]) =
+        if !container.config.requireService then ()
+        else Abort.fail(ContainerHealthCheckException(container.id, reason, attempts = attempts, lastError = lastError))
+
     private def runHealthCheck(container: Container, hc: HealthCheck)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        // If the container already exited (e.g. command("true")), skip health check — `init` is
-        // also used for fast one-shots that exit before any check could run.
         isContainerAlive(container).map { alive =>
-            if !alive then ()
+            if !alive then
+                onDeadContainer(container, "container exited before its health check could run", attempts = 0, lastError = "")
             else
                 // Container is running, run health check with retry.
                 // Accumulate errors for diagnostic reporting on final failure.
@@ -2192,7 +2331,9 @@ object Container:
                         Abort.runWith[ContainerException](hc.check(container)) {
                             case Result.Success(_) =>
                                 container.healthState.set(ContainerHealthState(Present(hc)))
-                            case Result.Failure(_: ContainerMissingException) => ()
+                            case Result.Failure(e: ContainerMissingException) =>
+                                if !container.config.requireService then ()
+                                else Abort.fail(e)
                             case failure =>
                                 val errorMsg = failure match
                                     // Prefer the structured `lastError` for HealthCheckException — `getMessage` on
@@ -2205,7 +2346,13 @@ object Container:
                                 val nextAttempts  = attempts + 1
                                 // Check if container is still running before retrying
                                 isContainerAlive(container).map { stillAlive =>
-                                    if !stillAlive then ()
+                                    if !stillAlive then
+                                        onDeadContainer(
+                                            container,
+                                            "container exited while its health check was still failing",
+                                            attempts = nextAttempts,
+                                            lastError = formatRecentHealthCheckErrors(updatedErrors)
+                                        )
                                     else
                                         Clock.now.map { now =>
                                             retrySchedule.next(now) match
@@ -2278,46 +2425,115 @@ object Container:
         end if
     end probePortConflict
 
-    /** After health check passes, wait until every configured host port binding is observable via `inspect`. Backends report container
-      * state Running before the port-forwarding hook completes (rootless podman uses slirp4netns/pasta async; Docker Desktop's VM has a
-      * similar gap). Without this wait, callers who ask for `mappedPort` immediately after `init` race intermittently.
+    /** Wait until every configured port is ready for the caller, under one [[Container.Config.portMappingTimeout]] budget shared by both
+      * halves of "ready": the daemon reporting the binding, and (for a service fixture) the host actually accepting a connection on it.
       *
       * Skipped when no port bindings are configured (no race to worry about).
       */
-    private def waitForPortMappings(container: Container)(using Frame): Unit < (Async & Abort[ContainerException]) =
+    private def awaitPortsReady(container: Container)(using Frame): Unit < (Async & Abort[ContainerException]) =
         if container.config.ports.isEmpty then ()
         else
-            val budgetMs = container.config.portMappingTimeout.toMillis
             Clock.now.map { startedAt =>
-                val deadlineMs = startedAt.toJava.toEpochMilli + budgetMs
-                val maxPollMs  = portMappingMaxPoll.toMillis
+                val deadlineMs = startedAt.toJava.toEpochMilli + container.config.portMappingTimeout.toMillis
+                waitForPortMappings(container, startedAt, deadlineMs).andThen {
+                    if !container.config.requireService then ()
+                    else awaitPortsReachable(container, deadlineMs)
+                }
+            }
+
+    /** Connect deadline for one attempt of the host-side port probe. Bounded well below the wall-clock budget so a black-holed port retries
+      * instead of consuming the whole budget in a single connect.
+      */
+    private val portProbeConnectTimeout: Duration = 2.seconds
+
+    /** Open and immediately close a TCP connection to `host:port`, reporting whether the host accepted it. */
+    private def probeHostPort(host: String, port: Int)(using Frame): Boolean < Async =
+        // Unsafe: kyo-net publishes `connect` on the unsafe tier only. The bridge is confined to this probe — the
+        // connection is closed on the success path and no handle escapes — and a host-side connect is the only
+        // proof that the runtime's port forwarder is actually serving the published port.
+        Abort.run[kyo.net.NetException] {
+            Sync.Unsafe.defer(kyo.net.NetPlatform.transport.connect(host, port, portProbeConnectTimeout).safe).map(_.get)
+        }.map {
+            case Result.Success(conn) => Sync.Unsafe.defer(conn.close()).andThen(true)
+            case _                    => false
+        }
+
+    /** Wait until every published TCP host port of `container` accepts a host-side connection, failing at `deadlineMs`.
+      *
+      * [[waitForPortMappings]] proves only that the daemon recorded a binding; on rootless podman the forwarder that serves it comes up
+      * asynchronously and can fail to come up at all, and on any runtime the container's process can die between its health check and the
+      * caller's first connect. Either way `inspect` keeps reporting a bound port, so without this probe `init` returns a handle whose port
+      * refuses every connection.
+      */
+    private[kyo] def awaitPortsReachable(container: Container, deadlineMs: Long)(using
+        Frame
+    ): Unit < (Async & Abort[ContainerException]) =
+        val maxPollMs = portMappingMaxPoll.toMillis
+        container.inspect.map { info =>
+            val hostPorts = info.ports.filter(b => b.protocol == Config.Protocol.TCP && b.hostPort > 0).map(_.hostPort).distinct
+            Kyo.foreachDiscard(hostPorts) { hostPort =>
                 Loop(portMappingMinPoll.toMillis) { pollMs =>
-                    container.backend.inspect(container.id).map { info =>
-                        val allBound = container.config.ports.forall { pb =>
-                            info.ports.exists(b => b.containerPort == pb.containerPort && b.protocol == pb.protocol && b.hostPort > 0)
-                        }
-                        if allBound then Loop.done(())
-                        else
+                    probeHostPort(container.host, hostPort).map {
+                        case true => Loop.done(())
+                        case false =>
                             Clock.now.map { now =>
-                                val nowMs = now.toJava.toEpochMilli
-                                if nowMs >= deadlineMs then
-                                    val elapsedMs = nowMs - startedAt.toJava.toEpochMilli
-                                    val configured =
-                                        container.config.ports.map(p => s"${p.containerPort}/${p.protocol.cliName}").mkString(", ")
-                                    val observed =
-                                        info.ports.map(p => s"${p.containerPort}/${p.protocol.cliName}->${p.hostPort}").mkString(", ")
-                                    Abort.fail[ContainerException](ContainerOperationException(
-                                        s"Container ${container.id.value} ports not bound on host after ${elapsedMs}ms (budget ${budgetMs}ms). " +
-                                            s"Configured: [$configured]. Observed via inspect: [$observed]."
+                                if now.toJava.toEpochMilli >= deadlineMs then
+                                    Abort.fail[ContainerException](ContainerStartFailedException(
+                                        container.id,
+                                        s"host port $hostPort is published by the runtime but refuses connections"
                                     ))
                                 else
                                     Async.sleep(Duration.fromJava(java.time.Duration.ofMillis(pollMs)))
                                         .andThen(Loop.continue(math.min(pollMs * 2, maxPollMs)))
-                                end if
                             }
-                        end if
                     }
                 }
             }
+        }
+    end awaitPortsReachable
+
+    /** @see [[awaitPortsReachable]] — same probe, bounded by a duration from now. */
+    private[kyo] def awaitPortsReachableWithin(container: Container, within: Duration)(using
+        Frame
+    ): Unit < (Async & Abort[ContainerException]) =
+        Clock.now.map(now => awaitPortsReachable(container, now.toJava.toEpochMilli + within.toMillis))
+
+    /** Poll `inspect` until every configured port binding reports a bound host port. Backends report container state Running before the
+      * port-forwarding hook completes (rootless podman uses slirp4netns/pasta async; Docker Desktop's VM has a similar gap). Without this
+      * wait, callers who ask for `mappedPort` immediately after `init` race intermittently.
+      */
+    private def waitForPortMappings(container: Container, startedAt: Instant, deadlineMs: Long)(using
+        Frame
+    ): Unit < (Async & Abort[ContainerException]) =
+        val budgetMs  = container.config.portMappingTimeout.toMillis
+        val maxPollMs = portMappingMaxPoll.toMillis
+        Loop(portMappingMinPoll.toMillis) { pollMs =>
+            container.backend.inspect(container.id).map { info =>
+                val allBound = container.config.ports.forall { pb =>
+                    info.ports.exists(b => b.containerPort == pb.containerPort && b.protocol == pb.protocol && b.hostPort > 0)
+                }
+                if allBound then Loop.done(())
+                else
+                    Clock.now.map { now =>
+                        val nowMs = now.toJava.toEpochMilli
+                        if nowMs >= deadlineMs then
+                            val elapsedMs = nowMs - startedAt.toJava.toEpochMilli
+                            val configured =
+                                container.config.ports.map(p => s"${p.containerPort}/${p.protocol.cliName}").mkString(", ")
+                            val observed =
+                                info.ports.map(p => s"${p.containerPort}/${p.protocol.cliName}->${p.hostPort}").mkString(", ")
+                            Abort.fail[ContainerException](ContainerOperationException(
+                                s"Container ${container.id.value} ports not bound on host after ${elapsedMs}ms (budget ${budgetMs}ms). " +
+                                    s"Configured: [$configured]. Observed via inspect: [$observed]."
+                            ))
+                        else
+                            Async.sleep(Duration.fromJava(java.time.Duration.ofMillis(pollMs)))
+                                .andThen(Loop.continue(math.min(pollMs * 2, maxPollMs)))
+                        end if
+                    }
+                end if
+            }
+        }
+    end waitForPortMappings
 
 end Container
