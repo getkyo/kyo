@@ -214,6 +214,33 @@ if [ "${1:-}" = "--self-test" ]; then
     then record ok "a heavy --only failure aborts before the --exclude aggregate run"
     else record no "a heavy --only failure aborts before the --exclude aggregate run"; fi
 
+    # 8c. NATIVE_SKIP (with no heavy) threads --exclude into BOTH compile phases and the aggregate run, and
+    # runs no isolated --only session.
+    : > "$CALLS"; : > "$HEAP"; make_fake_sbt 'case "$*" in *--phase*) exit 0;; esac; echo "Tests: succeeded 100, failed 0"; exit 0'
+    PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 \
+        NATIVE_SKIP="kyo-aeron,kyo-sql" "$SELF" Native test >/dev/null 2>&1
+    CT_EXIT=$?
+    if calls_count 3 \
+       && call_nth_is 1 "testKyo --phase compile-main --exclude kyo-aeron,kyo-sql --all Native" \
+       && call_nth_is 2 "testKyo --phase compile-test --exclude kyo-aeron,kyo-sql --all Native" \
+       && call_nth_is 3 "-J-Xmx6G testKyo --exclude kyo-aeron,kyo-sql --all Native" \
+       && calls_lack "--only" && exit_is 0
+    then record ok "NATIVE_SKIP excludes in both compiles and the aggregate; no --only session"
+    else record no "NATIVE_SKIP excludes in both compiles and the aggregate; no --only session"; fi
+
+    # 8d. A heavy module that is also in NATIVE_SKIP is dropped from --only (an isolated session that selected
+    # nothing would fail on "no test output"); with no heavy left, the whole KEPT set runs in the aggregate,
+    # which excludes the skip set.
+    : > "$CALLS"; : > "$HEAP"; make_fake_sbt 'case "$*" in *--phase*) exit 0;; esac; echo "Tests: succeeded 100, failed 0"; exit 0'
+    PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 \
+        NATIVE_HEAVY="kyo-schema-tests" NATIVE_SKIP="kyo-schema-tests,kyo-aeron" "$SELF" Native test >/dev/null 2>&1
+    CT_EXIT=$?
+    if calls_count 3 && calls_lack "--only" \
+       && call_nth_is 3 "-J-Xmx6G testKyo --exclude kyo-schema-tests,kyo-aeron --all Native" \
+       && exit_is 0
+    then record ok "a heavy module also in NATIVE_SKIP is dropped from --only; aggregate excludes the skip set"
+    else record no "a heavy module also in NATIVE_SKIP is dropped from --only; aggregate excludes the skip set"; fi
+
     # 9-20: Native crash-retry / check_log scenarios.
     # The two compile phases must pass, so the body exits 0 for any --phase call and applies the
     # scenario ($3) to the aggregate run.
@@ -634,8 +661,9 @@ run_native_retry() {
 
 # Assemble a native `testKyo` command with no stray double-spaces, folding NATIVE_SKIP into the exclude.
 # Args: phase(or "")  only_csv(or "")  extra_exclude_csv(or "")  skip_csv(or "")  run_arg(or "").
-# With an empty skip and extra the output is byte-identical to the pre-NATIVE_SKIP form, so the self-test's
-# exact-match assertions still hold.
+# With an empty skip and extra the output matches the pre-NATIVE_SKIP form for the `test` action (a non-empty
+# run-arg), so the self-test's exact-match assertions still hold; the empty-arg compile/testDiff actions collapse
+# what used to be a double space to a single one, which sbt ignores.
 native_testkyo() {
     local phase="$1" only="$2" extra="$3" skip="$4" arg="$5" excl cmd="testKyo"
     [ -n "$phase" ] && cmd="$cmd --phase $phase"
@@ -680,6 +708,16 @@ run_native() {
 
     # Comma-separated base names for the --only / --exclude split (NATIVE_HEAVY is space-separated).
     local heavy_csv; heavy_csv=$(printf '%s' "$NATIVE_HEAVY" | tr -s ' ' ',' | sed 's/^,//; s/,$//')
+    # Drop any heavy module that is also in NATIVE_SKIP: a `--only` session that selected nothing would make
+    # run_native_retry fail on "no test output". After the drop an all-skipped heavy leaves heavy_csv empty and
+    # the `--only` session is skipped, so the whole KEPT set runs in the aggregate.
+    if [ -n "$heavy_csv" ] && [ -n "$skip_csv" ]; then
+        local kept_heavy="" h
+        for h in $(printf '%s' "$heavy_csv" | tr ',' ' '); do
+            case ",$skip_csv," in *",$h,"*) : ;; *) kept_heavy="${kept_heavy:+$kept_heavy,}$h" ;; esac
+        done
+        heavy_csv="$kept_heavy"
+    fi
     if [ -n "$heavy_csv" ]; then
         # Heavy modules: link+run in their own full-heap driver (the .jvmopts 12G, uncapped) so the
         # whole-program optimize does not stack on the aggregate's accumulated heap, CPU-capped so the
