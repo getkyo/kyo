@@ -131,7 +131,7 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
                         if w1 != 0 || w2 != 0 || w3 != 0 then
                             Async.sleep(pollSpacing).andThen(Loop.continue(0))
                         else if count + 1 >= stableSamples then
-                            Kyo.lift(Loop.done[Int])
+                            Loop.done[Int]
                         else
                             Async.sleep(pollSpacing).andThen(Loop.continue(count + 1))
                 yield out
