@@ -249,4 +249,20 @@ class ConnectionTest extends Test:
         }
     }
 
+    // openSocket used to replace whatever the transport reported with `new Exception("connect refused")`, so a DNS failure, a refused
+    // connect, an unavailable I/O backend and a connect timeout all surfaced as the same four words with no cause attached. A validation
+    // report built on that message concluded the platform's socket layer was refusing an open port, when the message could not have said
+    // anything about the socket at all. The cause has to survive.
+    "openSocket carries the transport's own failure as the cause".timeout(30.seconds) in {
+        // Port 1 on the loopback: privileged, never bound by a test, so the connect fails for a reason the transport names.
+        // `ownerClose` only runs on the success path, which a connect to port 1 never reaches.
+        val open = Connection.openSocket("127.0.0.1", 1, _ => SqlConnectionClosedException("probe"), (_: Unit) => ())(_ => ())
+        Abort.run[SqlException](open).map {
+            case Result.Failure(e: SqlConnectionConnectFailedException) =>
+                assert(e.cause.isInstanceOf[kyo.net.NetException], s"expected the transport's NetException as the cause, got ${e.cause}")
+                assert(e.cause.getMessage != "connect refused", "the cause must be the transport's own failure, not a placeholder")
+            case other => fail(s"Expected a connect failure, got $other")
+        }
+    }
+
 end ConnectionTest
