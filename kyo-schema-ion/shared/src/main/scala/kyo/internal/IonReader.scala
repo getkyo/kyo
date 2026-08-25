@@ -205,7 +205,7 @@ final class IonReader private (
         value match
             case Blob(v) => v
             case Str(v) =>
-                try Span.from(java.util.Base64.getDecoder.decode(v))
+                try Span.fromUnsafe(kyo.internal.Base64s.decodeExact(v))
                 catch
                     case e: IllegalArgumentException =>
                         throw ParseException(Ion(), v, s"Base64 (${e.getMessage})")(using _frame)
@@ -466,7 +466,7 @@ final private class IonTextParser(
             if end < 0 then error("Unterminated blob")
             pos = end + 2
             val base64 = input.substring(start, end).filterNot(isIonWhitespace)
-            try Blob(Span.from(java.util.Base64.getDecoder.decode(base64)))
+            try Blob(Span.fromUnsafe(kyo.internal.Base64s.decodeExact(base64)))
             catch
                 case e: IllegalArgumentException =>
                     throw ParseException(Ion(), base64, s"blob (${e.getMessage})", Nil, start)(using frame)

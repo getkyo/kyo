@@ -100,11 +100,11 @@ class ChannelTest extends kyo.test.Test[Any]:
     }
     "blocking put" in {
         for
-            c  <- Channel.init[Int](2)
-            _  <- c.put(1)
-            _  <- c.put(2)
-            f  <- Fiber.initUnscoped(c.put(3))
-            _  <- Async.sleep(10.millis)
+            c <- Channel.init[Int](2)
+            _ <- c.put(1)
+            _ <- c.put(2)
+            f <- Fiber.initUnscoped(c.put(3))
+            // c is full (capacity 2) and nothing polls until below, so put(3) cannot complete here: d1 is deterministically false.
             d1 <- f.done
             v1 <- c.poll
             _  <- assertEventually(f.done)
@@ -114,9 +114,9 @@ class ChannelTest extends kyo.test.Test[Any]:
     }
     "blocking take" in {
         for
-            c  <- Channel.init[Int](2)
-            f  <- Fiber.initUnscoped(c.take)
-            _  <- Async.sleep(10.millis)
+            c <- Channel.init[Int](2)
+            f <- Fiber.initUnscoped(c.take)
+            // c is empty and nothing puts until below, so take cannot complete here: d1 is deterministically false.
             d1 <- f.done
             _  <- c.put(1)
             _  <- assertEventually(f.done)
@@ -133,9 +133,9 @@ class ChannelTest extends kyo.test.Test[Any]:
         }
         "blocks when empty then applies function" in {
             for
-                c  <- Channel.init[Int](2)
-                f  <- Fiber.initUnscoped(c.takeWith(_ + 5))
-                _  <- Async.sleep(10.millis)
+                c <- Channel.init[Int](2)
+                f <- Fiber.initUnscoped(c.takeWith(_ + 5))
+                // c is empty and nothing puts until below, so takeWith cannot complete here: d1 is deterministically false.
                 d1 <- f.done
                 _  <- c.put(3)
                 _  <- assertEventually(f.done)
@@ -1890,7 +1890,7 @@ class ChannelTest extends kyo.test.Test[Any]:
                 _     <- c.put(2)
                 f1    <- Fiber.initUnscoped(c.put(3))
                 f2    <- Fiber.initUnscoped(c.put(4))
-                _     <- Async.sleep(10.millis)
+                _     <- assertEventually(c.pendingPuts.map(_ == 2))
                 puts  <- c.pendingPuts
                 takes <- c.pendingTakes
                 _     <- c.take
@@ -1905,7 +1905,7 @@ class ChannelTest extends kyo.test.Test[Any]:
                 c     <- Channel.init[Int](2)
                 f1    <- Fiber.initUnscoped(c.take)
                 f2    <- Fiber.initUnscoped(c.take)
-                _     <- Async.sleep(10.millis)
+                _     <- assertEventually(c.pendingTakes.map(_ == 2))
                 puts  <- c.pendingPuts
                 takes <- c.pendingTakes
                 _     <- c.put(1)

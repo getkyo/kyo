@@ -221,13 +221,12 @@ class SignalTest extends kyo.test.Test[Any]:
             for
                 ref    <- Signal.initRef(1)
                 f      <- Fiber.initUnscoped(ref.streamChanges.take(3).run)
-                _      <- Async.sleep(100.millis)
+                _      <- assertEventually(ref.waiters.map(_ == 1))
                 _      <- ref.set(2)
-                _      <- Async.sleep(100.millis)
+                _      <- assertEventually(ref.waiters.map(_ == 1))
                 _      <- ref.set(2) // Should be ignored
-                _      <- Async.sleep(100.millis)
+                _      <- assertEventually(ref.waiters.map(_ == 1))
                 _      <- ref.set(3)
-                _      <- Async.sleep(100.millis)
                 values <- f.get
             yield assert(values == Chunk(1, 2, 3))
         }
@@ -357,9 +356,9 @@ class SignalTest extends kyo.test.Test[Any]:
                 inner <- Signal.initRef(10)
                 sm = outer.switchMap(_ => inner)
                 f  <- Fiber.initUnscoped(sm.streamChanges.take(3).run)
-                _  <- Async.sleep(100.millis)
+                _  <- assertEventually(inner.waiters.map(_ == 1))
                 _  <- inner.set(11)
-                _  <- Async.sleep(100.millis)
+                _  <- assertEventually(inner.waiters.map(_ == 1))
                 _  <- inner.set(12)
                 vs <- f.get
             yield assert(vs == Chunk(10, 11, 12))
@@ -512,17 +511,21 @@ class SignalTest extends kyo.test.Test[Any]:
                 refA <- Signal.initRef(0)
                 refB <- Signal.initRef(0)
                 cl = refA.combineLatest(refB)
-                f  <- Fiber.initUnscoped(cl.streamChanges.take(5).run)
-                _  <- Async.sleep(50.millis)
-                _  <- refA.set(1)
-                _  <- Async.sleep(50.millis)
+                f <- Fiber.initUnscoped(cl.streamChanges.take(5).run)
+                // streamChanges re-subscribes by racing refA.next and refB.next, so fire each change only after its waiter
+                // re-arms (a set in the re-arm gap is dropped, hanging the take). The first re-subscription is clean, so both refs arm to exactly 1.
+                _ <- assertEventually(Kyo.zip(refA.waiters, refB.waiters).map { case (a, b) => a == 1 && b == 1 })
+                _ <- refA.set(1)
+                // awaitAny cancels its losing branch without unregistering, leaving a ghost waiter; the next re-subscription
+                // arms that signal to 2 (ghost + live), so >= 2 proves the live re-arm landed, not a match on the stale ghost.
+                _  <- assertEventually(refB.waiters.map(_ >= 2))
                 _  <- refB.set(1)
-                _  <- Async.sleep(50.millis)
+                _  <- assertEventually(refA.waiters.map(_ >= 2))
                 _  <- refA.set(2)
-                _  <- Async.sleep(50.millis)
+                _  <- assertEventually(refB.waiters.map(_ >= 2))
                 _  <- refB.set(2)
                 vs <- f.get
-            yield assert(vs.size >= 4 && vs.last == (2, 2))
+            yield assert(vs == Chunk((0, 0), (1, 0), (1, 1), (2, 1), (2, 2)))
         }
 
         "source remains usable after concurrent waiters complete" in {
@@ -719,31 +722,28 @@ class SignalTest extends kyo.test.Test[Any]:
         }
 
         "every individual signal can wake the combinator" in {
+            // A fresh combinator per position keeps the sync point a clean `waiters == 1` on the source about to change;
+            // reusing one syncs on the non-deterministic ghost callbacks an interrupted Async.race arm leaves, so a `waiters >= N` threshold can hang assertEventually.
+            def wakes(index: Int, expected: Chunk[Int]) =
+                for
+                    r0 <- Signal.initRef(0)
+                    r1 <- Signal.initRef(0)
+                    r2 <- Signal.initRef(0)
+                    sources = Chunk(r0, r1, r2)
+                    z       = Signal.combineLatestAll(sources)
+                    f <- Fiber.initUnscoped(z.next)
+                    // combineLatestAll subscribes to its sources concurrently via Async.race, so sync on
+                    // the source we mutate: setting it before its subscription lands loses the wakeup.
+                    _ <- assertEventually(sources(index).waiters.map(_ == 1))
+                    _ <- sources(index).set(1)
+                    v <- f.get
+                yield assert(v == expected)
             for
-                r0 <- Signal.initRef(0)
-                r1 <- Signal.initRef(0)
-                r2 <- Signal.initRef(0)
-                z = Signal.combineLatestAll(Seq(r0, r1, r2))
-                // First emit: r0 fires; r0 starts with 0 waiters so reliable sync point
-                f0 <- Fiber.initUnscoped(z.next)
-                _  <- assertEventually(r0.waiters.map(_ == 1))
-                _  <- r0.set(1)
-                v0 <- f0.get
-                // Second emit: r1 fires; after first emit, r1 has 1 ghost waiter.
-                // After second awaitAny subscribes, r1 has ghost+new=2.
-                // Use r1.waiters >= 2 as sync point to confirm subscription.
-                f1 <- Fiber.initUnscoped(z.next)
-                _  <- assertEventually(r1.waiters.map(_ >= 2))
-                _  <- r1.set(1)
-                v1 <- f1.get
-                // Third emit: r2 fires, so sync on r2 (concurrent subscription means r1 being armed
-                // does not imply r2 is). r2 was never set, so it still carries its 2 ghost waiters from
-                // the prior races; r2.waiters >= 3 confirms the third subscription landed on r2.
-                f2 <- Fiber.initUnscoped(z.next)
-                _  <- assertEventually(r2.waiters.map(_ >= 3))
-                _  <- r2.set(1)
-                v2 <- f2.get
-            yield assert(v0 == Chunk(1, 0, 0) && v1 == Chunk(1, 1, 0) && v2 == Chunk(1, 1, 1))
+                _ <- wakes(0, Chunk(1, 0, 0))
+                _ <- wakes(1, Chunk(0, 1, 0))
+                _ <- wakes(2, Chunk(0, 0, 1))
+            yield succeed
+            end for
         }
 
         "rapid bursts coalesce" in {
@@ -751,7 +751,7 @@ class SignalTest extends kyo.test.Test[Any]:
                 ref <- Signal.initRef(0)
                 z = Signal.combineLatestAll(Seq(ref))
                 f  <- Fiber.initUnscoped(z.streamChanges.take(2).run)
-                _  <- Async.sleep(50.millis)
+                _  <- assertEventually(ref.waiters.map(_ == 1))
                 _  <- Kyo.foreachDiscard(Seq.range(1, 11))(ref.set)
                 vs <- f.get
             yield assert(vs.size == 2 && vs.head == Chunk(0) && vs.last.head >= 1)
@@ -780,9 +780,9 @@ class SignalTest extends kyo.test.Test[Any]:
                 mapped = outer.map(_ * 2)
                 sm     = mapped.switchMap(_ => inner)
                 f  <- Fiber.initUnscoped(sm.streamChanges.take(3).run)
-                _  <- Async.sleep(100.millis)
+                _  <- assertEventually(inner.waiters.map(_ == 1))
                 _  <- inner.set(11)
-                _  <- Async.sleep(100.millis)
+                _  <- assertEventually(inner.waiters.map(_ == 1))
                 _  <- inner.set(12)
                 vs <- f.get
             yield assert(vs == Chunk(10, 11, 12))
@@ -793,17 +793,21 @@ class SignalTest extends kyo.test.Test[Any]:
                 refA <- Signal.initRef(0)
                 refB <- Signal.initRef(0)
                 cl = refA.combineLatest(refB)
-                f  <- Fiber.initUnscoped(cl.streamChanges.take(5).run)
-                _  <- Async.sleep(50.millis)
-                _  <- refA.set(1)
-                _  <- Async.sleep(50.millis)
+                f <- Fiber.initUnscoped(cl.streamChanges.take(5).run)
+                // streamChanges re-subscribes by racing refA.next and refB.next, so fire each change only after its waiter
+                // re-arms (a set in the re-arm gap is dropped, hanging the take). The first re-subscription is clean, so both refs arm to exactly 1.
+                _ <- assertEventually(Kyo.zip(refA.waiters, refB.waiters).map { case (a, b) => a == 1 && b == 1 })
+                _ <- refA.set(1)
+                // awaitAny cancels its losing branch without unregistering, leaving a ghost waiter; the next re-subscription
+                // arms that signal to 2 (ghost + live), so >= 2 proves the live re-arm landed, not a match on the stale ghost.
+                _  <- assertEventually(refB.waiters.map(_ >= 2))
                 _  <- refB.set(1)
-                _  <- Async.sleep(50.millis)
+                _  <- assertEventually(refA.waiters.map(_ >= 2))
                 _  <- refA.set(2)
-                _  <- Async.sleep(50.millis)
+                _  <- assertEventually(refB.waiters.map(_ >= 2))
                 _  <- refB.set(2)
                 vs <- f.get
-            yield assert(vs.size >= 4 && vs.last == (2, 2))
+            yield assert(vs == Chunk((0, 0), (1, 0), (1, 1), (2, 1), (2, 2)))
         }
 
     }
@@ -875,15 +879,18 @@ class SignalTest extends kyo.test.Test[Any]:
         }
 
         "does not re-emit on a same-value set" in {
+            // Causal fence on `waiters`, not a settle window: wait for the observer parked, do the same-value set(0), then fence
+            // it is still parked before set(1). That orders any wakeup the same-value set could cause before set(1), so a spurious re-emission would land in `seen` before 1.
             for
-                ref    <- Signal.initRef(0)
-                seen   <- AtomicRef.init(Chunk.empty[Int])
-                fiber  <- Fiber.initUnscoped(ref.observe(recordValue(seen, _)))
-                _      <- pollUntil(seen.get.map(_ == Chunk(0)))
-                _      <- ref.set(0) // same value: SignalRef does not notify
-                _      <- Async.sleep(30.millis)
-                _      <- ref.set(1)
-                _      <- pollUntil(seen.get.map(_.contains(1)))
+                ref   <- Signal.initRef(0)
+                seen  <- AtomicRef.init(Chunk.empty[Int])
+                fiber <- Fiber.initUnscoped(ref.observe(recordValue(seen, _)))
+                _     <- pollUntil(seen.get.map(_ == Chunk(0)))
+                _     <- assertEventually(ref.waiters.map(_ == 1)) // observer parked for the next change
+                _ <- ref.set(0)                                // same value: SignalRef does not notify, so the parked observer is not woken
+                _ <- assertEventually(ref.waiters.map(_ == 1)) // still exactly one waiter: the same-value set injected no wakeup
+                _ <- ref.set(1)                                // a real change wakes the observer
+                _ <- pollUntil(seen.get.map(_.contains(1)))
                 result <- seen.get
                 _      <- fiber.interrupt
             yield assert(result == Chunk(0, 1))
@@ -896,8 +903,8 @@ class SignalTest extends kyo.test.Test[Any]:
                 fiber  <- Fiber.initUnscoped(ref.observe(recordValue(seen, _)))
                 _      <- pollUntil(seen.get.map(_ == Chunk(0)))
                 _      <- fiber.interrupt
+                _      <- fiber.getResult // the observer has fully stopped before the change is published
                 _      <- ref.set(1)
-                _      <- Async.sleep(50.millis)
                 result <- seen.get
             yield assert(result == Chunk(0)) // the post-interrupt change is not observed
         }

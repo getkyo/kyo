@@ -52,6 +52,15 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
     private def sendRequest(inbound: Channel.Unsafe[Span[Byte]], request: String): Unit =
         discard(inbound.offer(Span.fromUnsafe(request.getBytes(StandardCharsets.US_ASCII))))
 
+    /** Waits until the keep-alive idle timer for the next idle period is armed.
+      *
+      * `restartParserKeepAlive` arms the timer then restarts the parser, so a parser take on inbound is proof the
+      * timer exists. Tests need this before advancing virtual time against the deadline: the already-collected
+      * response was written while the handler ran and says nothing about the arm.
+      */
+    private def awaitIdleTimerArmed(inbound: Channel.Unsafe[Span[Byte]])(using Frame): Boolean < Async =
+        pollUntil(inbound.pendingTakes().contains(1))
+
     private val defaultConfig = HttpServerConfig.default
 
     "UnsafeServerDispatch" - {
@@ -189,20 +198,27 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             val request = "GET /hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
             discard(inbound.offer(Span.fromUnsafe(request.getBytes(StandardCharsets.US_ASCII))))
+            // Pipelined follow-up as its own span, so the parser cannot have buffered it with the first request.
+            // Consumed only if the parser restarts, which Connection: close forbids.
+            val followUp = "GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n"
+            discard(inbound.offer(Span.fromUnsafe(followUp.getBytes(StandardCharsets.US_ASCII))))
 
             UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
 
             collectResponse(outbound).map { response =>
                 assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200 OK, got: $response")
-                // With Connection: close, the parser should not call start() again.
-                // After a brief delay, no more data should be available.
-                Async.sleep(50.millis).andThen {
-                    outbound.poll() match
-                        case Result.Success(Present(span)) =>
-                            fail(s"Expected no more data after Connection: close, but got: ${new String(span.toArray)}")
-                        case _ =>
-                            succeed
-                }
+                // Connection: close registers no keep-alive hook, so once the response is out nothing runs again:
+                // the follow-up span stays queued and unread, nothing more is written.
+                assert(
+                    inbound.size().contains(1),
+                    s"the follow-up request must stay unread after Connection: close, queued=${inbound.size()}"
+                )
+                outbound.poll() match
+                    case Result.Success(Present(span)) =>
+                        fail(s"Expected no more data after Connection: close, but got: ${new String(span.toArray)}")
+                    case _ =>
+                        succeed
+                end match
             }
         }
 
@@ -330,8 +346,10 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
 
-            // Body chunk arrives after a delay — readBody parks and resumes
-            Async.sleep(50.millis).andThen {
+            // The body reader takes on inbound when out of bytes, so a pending take signals readBody has parked.
+            // Sending the body only then exercises the park-and-resume path, not hoping a fixed delay sufficed.
+            pollUntil(inbound.pendingTakes().contains(1)).map { parked =>
+                assert(parked, "readBody must park on inbound while the body is outstanding")
                 discard(inbound.offer(Span.fromUnsafe(body.getBytes(StandardCharsets.US_ASCII))))
                 collectResponse(outbound).map { response =>
                     assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200 OK, got: $response")
@@ -472,13 +490,14 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
 
-            // Close inbound channel after a short delay to simulate connection drop
-            Async.sleep(50.millis).andThen {
+            // Drop the connection exactly when the body reader is parked on the 70 bytes that never arrive: the
+            // pending take proves the reader got that far, so the drop lands on the intended path, not a delay's guess.
+            pollUntil(inbound.pendingTakes().contains(1)).map { parked =>
+                assert(parked, "readBody must park on inbound while the rest of the body is outstanding")
                 discard(inbound.close())
-                // The server should surface an error (either no response or error response)
-                // because readBody will get Abort[Closed] when trying to read remaining bytes.
-                // Wait briefly then check that no successful 200 response with truncated body was sent.
-                Async.sleep(100.millis).andThen {
+                // readBody aborts Closed, so nothing may be written for this request. The poll returns as soon as
+                // anything is written (violation surfaces at once), otherwise ends with an empty outbound.
+                pollUntil(!outbound.empty().contains(true), maxPolls = 100).map { _ =>
                     // Drain whatever is in the outbound channel
                     val sb   = new StringBuilder
                     var done = false
@@ -722,12 +741,14 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             }
         }
 
-        "Content-Length vs Transfer-Encoding conflict -- chunked wins" in {
-            // When both Content-Length and Transfer-Encoding: chunked are present,
-            // chunked takes priority per RFC 9110 section 8.6.
-            // The Content-Length should be ignored and the request treated as chunked.
-            val route = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
+        "Content-Length together with Transfer-Encoding is refused, not framed" in {
+            // Both Content-Length and Transfer-Encoding is the CL.TE request-smuggling shape (RFC 9112 section 6.1).
+            // The parser refuses it rather than pick a framing, so the dispatch answers 400 Connection: close and
+            // tears down: the body is never dechunked, routed, or handled, and the over-limit 413 is never reached.
+            val route  = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
+            val served = new AtomicBoolean(false)
             val handler = route.handler { req =>
+                discard(served.set(true))
                 HttpResponse.ok(req.fields.body)
             }
             val router = HttpRouter(Seq(handler), Absent)
@@ -736,34 +757,19 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
 
-            // Content-Length says 100 (over limit), but Transfer-Encoding: chunked should win
-            // and the CL enforcement should NOT reject this request
             val request =
-                "POST /echo HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: 100\r\nTransfer-Encoding: chunked\r\n\r\n"
+                "POST /echo HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: 100\r\nTransfer-Encoding: chunked\r\n\r\n" +
+                    "5\r\nhello\r\n0\r\n\r\n"
             discard(inbound.offer(Span.fromUnsafe(request.getBytes(StandardCharsets.US_ASCII))))
 
             UnsafeServerDispatch.serve(router, inbound, outbound, config)
 
-            // Since chunked wins, the request should NOT be rejected with 413.
-            // It should be processed (the chunked body will be empty since we don't send any chunks,
-            // which results in an empty body for a buffered request).
-            // Give a moment for any response, then check it's not 413
-            Async.sleep(100.millis).andThen {
-                val sb   = new StringBuilder
-                var done = false
-                while !done do
-                    outbound.poll() match
-                        case Result.Success(Present(span)) =>
-                            sb.append(new String(span.toArray, StandardCharsets.US_ASCII))
-                        case _ =>
-                            done = true
-                end while
-                val response = sb.toString
-                // The key assertion: chunked wins, so 413 should NOT appear
-                assert(
-                    !response.contains("413"),
-                    s"Transfer-Encoding: chunked should take priority over Content-Length, but got 413: $response"
-                )
+            collectResponse(outbound).map { response =>
+                assert(response.contains("HTTP/1.1 400 Bad Request"), s"Expected 400 for the CL+TE conflict, got: $response")
+                assert(response.contains("Connection: close"), s"the 400 must announce the close (RFC 9112 section 9.6), got: $response")
+                assert(!response.contains("413"), s"the request must be refused on framing, not on the Content-Length cap: $response")
+                assert(!served.get(), "a request with two candidate framings must never reach the handler")
+                assert(inbound.closed(), "the connection must be torn down after an unframeable request")
             }
         }
 
@@ -1076,31 +1082,37 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         }
 
         "HttpWebSocket rejects frames exceeding configured maxFrameSize" in {
-            val received = new AtomicBoolean(false)
-            val config   = HttpWebSocket.Config(maxFrameSize = 4)
-            val handler = HttpHandler.webSocket("ws", config) { (_, ws) =>
-                Abort.run[Closed](ws.take()).map {
-                    case Result.Success(_) =>
-                        discard(received.set(true))
-                    case _ => ()
+            Latch.initWith(1) { handlerDone =>
+                val received = new AtomicBoolean(false)
+                val config   = HttpWebSocket.Config(maxFrameSize = 4)
+                val handler = HttpHandler.webSocket("ws", config) { (_, ws) =>
+                    Abort.run[Closed](ws.take()).map {
+                        case Result.Success(_) =>
+                            discard(received.set(true))
+                        case _ => ()
+                    }.andThen(handlerDone.release)
                 }
-            }
-            val router = HttpRouter(Seq(handler), Absent)
+                val router = HttpRouter(Seq(handler), Absent)
 
-            val inbound  = Channel.Unsafe.init[Span[Byte]](64)
-            val outbound = Channel.Unsafe.init[Span[Byte]](64)
+                val inbound  = Channel.Unsafe.init[Span[Byte]](64)
+                val outbound = Channel.Unsafe.init[Span[Byte]](64)
 
-            discard(inbound.offer(Span.fromUnsafe(wsUpgradeRequest("ws").getBytes(StandardCharsets.US_ASCII))))
+                discard(inbound.offer(Span.fromUnsafe(wsUpgradeRequest("ws").getBytes(StandardCharsets.US_ASCII))))
 
-            UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
+                UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
 
-            collectWsUpgradeResponse(outbound).map { response =>
-                assert(response.contains("HTTP/1.1 101 Switching Protocols"), s"Expected 101, got: $response")
-                discard(inbound.offer(Span.fromUnsafe(encodeClientTextFrame("hello"))))
-                Async.sleep(100.millis).map { _ =>
-                    assert(!received.get(), "Oversized frame should close before reaching the handler")
-                    discard(inbound.close())
-                }.unit
+                collectWsUpgradeResponse(outbound).map { response =>
+                    assert(response.contains("HTTP/1.1 101 Switching Protocols"), s"Expected 101, got: $response")
+                    discard(inbound.offer(Span.fromUnsafe(encodeClientTextFrame("hello"))))
+                    // The oversized frame ends the read pump, closing the session's inbound and failing the handler's
+                    // take. The handler returning is when the frame's fate is settled: delivered by then or never.
+                    // The timeout is a deadlock ceiling, not a window the assertion depends on.
+                    Async.timeout(30.seconds)(handlerDone.await).andThen {
+                        assert(!received.get(), "Oversized frame should close before reaching the handler")
+                        discard(inbound.close())
+                        succeed
+                    }
+                }
             }
         }
 
@@ -1129,37 +1141,40 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         }
 
         "parser stops after upgrade" in {
-            val handler = HttpHandler.webSocket("ws")(wsEcho)
-            val router  = HttpRouter(Seq(handler), Absent)
+            Latch.initWith(1) { handlerDone =>
+                val handler = HttpHandler.webSocket("ws")((req, ws) => wsEcho(req, ws).andThen(handlerDone.release))
+                val router  = HttpRouter(Seq(handler), Absent)
 
-            val inbound  = Channel.Unsafe.init[Span[Byte]](64)
-            val outbound = Channel.Unsafe.init[Span[Byte]](64)
+                val inbound  = Channel.Unsafe.init[Span[Byte]](64)
+                val outbound = Channel.Unsafe.init[Span[Byte]](64)
 
-            discard(inbound.offer(Span.fromUnsafe(wsUpgradeRequest("ws").getBytes(StandardCharsets.US_ASCII))))
+                discard(inbound.offer(Span.fromUnsafe(wsUpgradeRequest("ws").getBytes(StandardCharsets.US_ASCII))))
 
-            UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
+                UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
 
-            collectWsUpgradeResponse(outbound).map { response =>
-                assert(response.contains("101"), s"Expected 101, got: $response")
-                // After upgrade, sending a second HTTP request should NOT produce an HTTP response.
-                // The connection is now HttpWebSocket -- the parser should NOT restart.
-                val secondRequest = "GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
-                discard(inbound.offer(Span.fromUnsafe(secondRequest.getBytes(StandardCharsets.US_ASCII))))
-                Async.sleep(100.millis).andThen {
-                    // Poll outbound: there should be no HTTP response (only WS frames, if any)
-                    var foundHttpResponse = false
-                    var done              = false
-                    while !done do
-                        outbound.poll() match
-                            case Result.Success(Present(span)) =>
-                                val str = new String(span.toArray, StandardCharsets.US_ASCII)
-                                if str.contains("HTTP/1.1") then foundHttpResponse = true
-                            case _ =>
-                                done = true
-                    end while
-                    assert(!foundHttpResponse, "Parser should NOT produce HTTP responses after WS upgrade")
-                    discard(inbound.close())
-                    ()
+                collectWsUpgradeResponse(outbound).map { response =>
+                    assert(response.contains("101"), s"Expected 101, got: $response")
+                    // After upgrade a second HTTP request must produce no HTTP response: the connection is now
+                    // HttpWebSocket and the parser must not restart. Those bytes reach the WS codec, which rejects
+                    // them as an unmasked client frame and ends the session, so the handler returning means done.
+                    val secondRequest = "GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+                    discard(inbound.offer(Span.fromUnsafe(secondRequest.getBytes(StandardCharsets.US_ASCII))))
+                    Async.timeout(30.seconds)(handlerDone.await).andThen {
+                        // Poll outbound: no HTTP response (WS frames only, if any)
+                        var foundHttpResponse = false
+                        var done              = false
+                        while !done do
+                            outbound.poll() match
+                                case Result.Success(Present(span)) =>
+                                    val str = new String(span.toArray, StandardCharsets.US_ASCII)
+                                    if str.contains("HTTP/1.1") then foundHttpResponse = true
+                                case _ =>
+                                    done = true
+                        end while
+                        assert(!foundHttpResponse, "Parser should NOT produce HTTP responses after WS upgrade")
+                        discard(inbound.close())
+                        succeed
+                    }
                 }
             }
         }
@@ -1269,24 +1284,20 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                 assert(response.contains("101"), s"Expected 101, got: $response")
                 // Send a close frame
                 discard(inbound.offer(Span.fromUnsafe(encodeClientCloseFrame(1000, "bye"))))
-                // Server should respond or terminate. Give it time.
-                Async.sleep(200.millis).andThen {
-                    // The server reads the Close frame which causes Abort.fail(Closed),
-                    // terminating the read loop. The handler's ws.take() also fails with Closed.
-                    // The serveWebSocket cleanup should send a close frame back (code 1000).
-                    // Drain outbound to see if we got a close response.
-                    val sb   = new java.io.ByteArrayOutputStream()
-                    var done = false
-                    while !done do
-                        outbound.poll() match
-                            case Result.Success(Present(span)) =>
-                                sb.write(span.toArray)
-                            case _ =>
-                                done = true
-                    end while
-                    // We should have received at least some data (close frame from server)
-                    // or the connection should have cleanly terminated
-                    ()
+                // The server reads the Close frame, registering the peer's reason and failing the read loop (and
+                // ws.take()) with Closed. Cleanup mirrors the peer's code and reason back as its own Close frame
+                // (RFC 6455 section 5.5.1). Reading that frame is the settled outcome; the timeout is a deadlock ceiling.
+                Async.timeout(30.seconds)(readWsFrame(outbound)).map { frameBytes =>
+                    val opcode     = frameBytes(0) & 0x0f
+                    val payloadLen = frameBytes(1) & 0x7f
+                    assert(opcode == 0x08, s"Expected a close opcode (0x08) in reply, got: $opcode")
+                    assert(payloadLen == 5, s"Expected a 2-byte code plus the 3-byte reason, got payload length: $payloadLen")
+                    val code   = ((frameBytes(2) & 0xff) << 8) | (frameBytes(3) & 0xff)
+                    val reason = new String(frameBytes, 4, payloadLen - 2, StandardCharsets.UTF_8)
+                    assert(code == 1000, s"Expected the peer's close code 1000 to be mirrored, got: $code")
+                    assert(reason == "bye", s"Expected the peer's close reason 'bye' to be mirrored, got: '$reason'")
+                    discard(inbound.close())
+                    succeed
                 }
             }
         }
@@ -1356,31 +1367,25 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             collectWsUpgradeResponse(outbound).map { response =>
                 assert(response.contains("101"), s"Expected 101, got: $response")
-                // Handler returned immediately. serveWebSocket's Sync.ensure block
-                // interrupts read/write fibers and closes outbound.
-                // The write pump reads from the WS outbound channel which gets closed,
-                // and the read pump reads from inbound raw channel.
-                // After cleanup, sending a WS frame should not produce an echo.
-                Async.sleep(200.millis).andThen {
+                // Handler returned immediately. serveWebSocket installs a 1000 close reason, drains the write pump so
+                // the close frame reaches the wire, then lets Sync.ensure interrupt the read pump. Reading that frame,
+                // the sequence's last observable step, is what says teardown ran.
+                Async.timeout(30.seconds)(readWsFrame(outbound)).map { closeFrame =>
+                    assert((closeFrame(0) & 0x0f) == 0x08, s"Expected the session close frame, got opcode: ${closeFrame(0) & 0x0f}")
                     discard(inbound.offer(Span.fromUnsafe(encodeClientTextFrame("after-cleanup"))))
-                    Async.sleep(200.millis).andThen {
-                        // Poll outbound — should have no echoed frame (only possibly a close frame)
-                        var gotEcho = false
-                        var done    = false
-                        while !done do
-                            outbound.poll() match
-                                case Result.Success(Present(span)) =>
-                                    val data = span.toArray
-                                    if data.length >= 2 then
-                                        val opcode = data(0) & 0x0f
-                                        // Text opcode = 1, if we see it, the echo pump is still running
-                                        if opcode == 1 then gotEcho = true
-                                    end if
-                                case _ => done = true
-                        end while
+                    // A surviving write pump would echo this frame back. The poll returns the moment one appears, so a
+                    // pump that outlived the handler is caught as soon as it acts, not after a fixed wait.
+                    def echoed =
+                        outbound.poll() match
+                            case Result.Success(Present(span)) =>
+                                val data = span.toArray
+                                // Text opcode = 1: seeing it means the echo pump still runs
+                                data.length >= 2 && (data(0) & 0x0f) == 1
+                            case _ => false
+                    pollUntil(echoed, maxPolls = 100).map { gotEcho =>
                         assert(!gotEcho, "Write pump should have been torn down — no echo expected after handler completes")
                         discard(inbound.close())
-                        ()
+                        succeed
                     }
                 }
             }
@@ -1513,24 +1518,32 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
 
-            val config = defaultConfig.idleTimeout(200.millis)
+            val idleTimeout = 200.millis
+            val config      = defaultConfig.idleTimeout(idleTimeout)
 
-            // Send one keep-alive request
-            val request = "GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n"
-            sendRequest(inbound, request)
+            Clock.withTimeControl { tc =>
+                Clock.use { clock =>
+                    val request = "GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n"
+                    sendRequest(inbound, request)
 
-            UnsafeServerDispatch.serve(router, inbound, outbound, config)
+                    UnsafeServerDispatch.serve(router, inbound, outbound, config, clock = clock)
 
-            collectResponse(outbound).map { response =>
-                assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200, got: $response")
+                    collectResponse(outbound).map { response =>
+                        assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200, got: $response")
 
-                // Wait longer than idle timeout, then verify connection is closed
-                Async.sleep(500.millis).andThen {
-                    // The inbound channel should be closed by the idle timer
-                    val result = inbound.offer(Span.fromUnsafe("test".getBytes))
-                    result match
-                        case Result.Failure(_: Closed) => succeed
-                        case other                     => assert(false, s"Expected channel to be closed, got: $other")
+                        awaitIdleTimerArmed(inbound).map { armed =>
+                            assert(armed, "the keep-alive restart must arm the idle timer")
+                            // Elapse the whole idle period: the timer fires and the connection is torn down.
+                            tc.advance(idleTimeout).andThen {
+                                pollUntil(inbound.closed()).map { closed =>
+                                    assert(closed, "the idle timer must close the connection once the idle period elapses")
+                                    inbound.offer(Span.fromUnsafe("test".getBytes)) match
+                                        case Result.Failure(_: Closed) => succeed
+                                        case other => fail(s"Expected the closed connection to refuse input, got: $other")
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1550,13 +1563,19 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             sendRequest(inbound, request1)
             sendRequest(inbound, request2)
 
-            UnsafeServerDispatch.serve(router, inbound, outbound, config)
+            // Virtual time never advances, so a stalled runner cannot fire the idle timer between the two pipelined
+            // requests: the leaf asserts pipelining leaves no idle gap.
+            Clock.withTimeControl { _ =>
+                Clock.use { clock =>
+                    UnsafeServerDispatch.serve(router, inbound, outbound, config, clock = clock)
 
-            // Both requests should succeed (pipelining — no idle gap)
-            collectResponse(outbound).map { response1 =>
-                assert(response1.contains("HTTP/1.1 200 OK"), s"First response expected 200, got: $response1")
-                collectResponse(outbound).map { response2 =>
-                    assert(response2.contains("HTTP/1.1 200 OK"), s"Second response expected 200, got: $response2")
+                    // Both succeed: pipelining, no idle gap
+                    collectResponse(outbound).map { response1 =>
+                        assert(response1.contains("HTTP/1.1 200 OK"), s"First response expected 200, got: $response1")
+                        collectResponse(outbound).map { response2 =>
+                            assert(response2.contains("HTTP/1.1 200 OK"), s"Second response expected 200, got: $response2")
+                        }
+                    }
                 }
             }
         }
@@ -1568,24 +1587,40 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
 
-            val config = defaultConfig.idleTimeout(400.millis)
+            val idleTimeout = 400.millis
+            val config      = defaultConfig.idleTimeout(idleTimeout)
+            val keepAlive   = "GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n"
 
-            // Send first request
-            val request1 = "GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n"
-            sendRequest(inbound, request1)
+            Clock.withTimeControl { tc =>
+                Clock.use { clock =>
+                    sendRequest(inbound, keepAlive)
 
-            UnsafeServerDispatch.serve(router, inbound, outbound, config)
+                    UnsafeServerDispatch.serve(router, inbound, outbound, config, clock = clock)
 
-            collectResponse(outbound).map { response1 =>
-                assert(response1.contains("HTTP/1.1 200 OK"))
+                    // Each round idles three quarters of the timeout then sends another request. A timer armed once at
+                    // connection start would expire in the second round; only a per-request rearm keeps it alive.
+                    def round(previous: String): String < (Async & Abort[Closed]) =
+                        assert(previous.contains("HTTP/1.1 200 OK"), s"Expected 200, got: $previous")
+                        awaitIdleTimerArmed(inbound).map { armed =>
+                            assert(armed, "the keep-alive restart must arm the idle timer")
+                            tc.advance(idleTimeout * 0.75).andThen {
+                                sendRequest(inbound, keepAlive)
+                                collectResponse(outbound)
+                            }
+                        }
+                    end round
 
-                // Wait less than timeout, then send another request
-                Async.sleep(200.millis).andThen {
-                    val request2 = "GET /hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
-                    sendRequest(inbound, request2)
-
-                    collectResponse(outbound).map { response2 =>
-                        assert(response2.contains("HTTP/1.1 200 OK"), s"Second response expected 200, got: $response2")
+                    collectResponse(outbound).map(round).map(round).map(round).map { last =>
+                        assert(last.contains("HTTP/1.1 200 OK"), s"Expected 200 after three idle rounds, got: $last")
+                        // The timer that survived every round is still live: a full idle period with no request closes it.
+                        awaitIdleTimerArmed(inbound).map { armed =>
+                            assert(armed, "the keep-alive restart must arm the idle timer")
+                            tc.advance(idleTimeout).andThen {
+                                pollUntil(inbound.closed()).map { closed =>
+                                    assert(closed, "a full idle period with no request must still close the connection")
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1598,23 +1633,33 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
 
-            // Very short timeout
-            val config = defaultConfig.idleTimeout(100.millis)
+            val idleTimeout = 100.millis
+            val config      = defaultConfig.idleTimeout(idleTimeout)
 
-            val request = "GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n"
-            sendRequest(inbound, request)
+            Clock.withTimeControl { tc =>
+                Clock.use { clock =>
+                    val request = "GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n"
+                    sendRequest(inbound, request)
 
-            UnsafeServerDispatch.serve(router, inbound, outbound, config)
+                    UnsafeServerDispatch.serve(router, inbound, outbound, config, clock = clock)
 
-            collectResponse(outbound).map { response =>
-                assert(response.contains("HTTP/1.1 200 OK"))
+                    collectResponse(outbound).map { response =>
+                        assert(response.contains("HTTP/1.1 200 OK"))
 
-                // Wait for timeout to fire
-                Async.sleep(300.millis).andThen {
-                    val result = inbound.offer(Span.fromUnsafe("test".getBytes))
-                    result match
-                        case Result.Failure(_: Closed) => succeed
-                        case other                     => assert(false, s"Expected closed after 100ms timeout, got: $other")
+                        awaitIdleTimerArmed(inbound).map { armed =>
+                            assert(armed, "the keep-alive restart must arm the idle timer")
+                            // One millisecond short of the configured period, so the connection must still be open.
+                            tc.advance(idleTimeout - 1.milli).andThen {
+                                assert(!inbound.closed(), s"connection closed before the configured $idleTimeout elapsed")
+                                // The remaining millisecond reaches the deadline.
+                                tc.advance(1.milli).andThen {
+                                    pollUntil(inbound.closed()).map { closed =>
+                                        assert(closed, s"connection still open after the configured $idleTimeout elapsed")
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1628,21 +1673,30 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             val config = defaultConfig.idleTimeout(Duration.Infinity)
 
-            val request = "GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n"
-            sendRequest(inbound, request)
+            Clock.withTimeControl { tc =>
+                Clock.use { clock =>
+                    val request = "GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n"
+                    sendRequest(inbound, request)
 
-            UnsafeServerDispatch.serve(router, inbound, outbound, config)
+                    UnsafeServerDispatch.serve(router, inbound, outbound, config, clock = clock)
 
-            collectResponse(outbound).map { response =>
-                assert(response.contains("HTTP/1.1 200 OK"))
+                    collectResponse(outbound).map { response =>
+                        assert(response.contains("HTTP/1.1 200 OK"))
 
-                // Wait a bit — connection should still be open
-                Async.sleep(200.millis).andThen {
-                    // Channel should NOT be closed
-                    val result = inbound.offer(Span.fromUnsafe("test".getBytes))
-                    result match
-                        case Result.Success(_) => succeed
-                        case other             => assert(false, s"Expected channel to still be open, got: $other")
+                        // The parser take proves the keep-alive restart ran; with the timeout disabled it armed
+                        // nothing, so no elapsed time can close the connection.
+                        awaitIdleTimerArmed(inbound).map { restarted =>
+                            assert(restarted, "the keep-alive restart must leave the parser waiting for the next request")
+                            tc.advance(1.hour).andThen {
+                                assert(!inbound.closed(), "a disabled idle timeout must never close the connection")
+                                // Still serving: the connection is usable, not merely unclosed.
+                                sendRequest(inbound, "GET /hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+                                collectResponse(outbound).map { second =>
+                                    assert(second.contains("HTTP/1.1 200 OK"), s"Expected 200 on the reused connection, got: $second")
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1654,26 +1708,36 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
 
-            val config = defaultConfig.idleTimeout(150.millis)
+            val idleTimeout = 150.millis
+            val config      = defaultConfig.idleTimeout(idleTimeout)
 
-            // First request succeeds
-            val request = "GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n"
-            sendRequest(inbound, request)
+            Clock.withTimeControl { tc =>
+                Clock.use { clock =>
+                    val request = "GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n"
+                    sendRequest(inbound, request)
 
-            UnsafeServerDispatch.serve(router, inbound, outbound, config)
+                    UnsafeServerDispatch.serve(router, inbound, outbound, config, clock = clock)
 
-            collectResponse(outbound).map { response1 =>
-                assert(response1.contains("HTTP/1.1 200 OK"))
+                    collectResponse(outbound).map { response1 =>
+                        assert(response1.contains("HTTP/1.1 200 OK"))
 
-                // Wait longer than idle timeout before sending second request
-                Async.sleep(400.millis).andThen {
-                    // Connection should be closed — sending another request should fail
-                    val result = inbound.offer(Span.fromUnsafe(
-                        "GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n".getBytes(StandardCharsets.US_ASCII)
-                    ))
-                    result match
-                        case Result.Failure(_: Closed) => succeed
-                        case other                     => assert(false, s"Expected closed, got: $other")
+                        awaitIdleTimerArmed(inbound).map { armed =>
+                            assert(armed, "the keep-alive restart must arm the idle timer")
+                            // The idle period elapses before the next request is written.
+                            tc.advance(idleTimeout).andThen {
+                                pollUntil(inbound.closed()).map { closed =>
+                                    assert(closed, "the idle timer must close the connection once the idle period elapses")
+                                    // A keep-alive follow-up sent after the expiry is refused rather than served.
+                                    inbound.offer(Span.fromUnsafe(
+                                        "GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n".getBytes(StandardCharsets.US_ASCII)
+                                    )) match
+                                        case Result.Failure(_: Closed) => succeed
+                                        case other                     => fail(s"Expected the follow-up request to be refused, got: $other")
+                                    end match
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1682,44 +1746,50 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val handler = HttpHandler.getText("hello")(_ => "world")
             val router  = HttpRouter(Seq(handler), Absent)
 
-            // Connection 1: will go idle
+            // Connection 1: goes idle after its request
             val inbound1  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound1 = Channel.Unsafe.init[Span[Byte]](16)
 
-            // Connection 2: will stay active
+            // Connection 2: also idle, on its own independently armed timer
             val inbound2  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound2 = Channel.Unsafe.init[Span[Byte]](16)
 
-            val config = defaultConfig.idleTimeout(200.millis)
+            val idleTimeout = 200.millis
+            val config      = defaultConfig.idleTimeout(idleTimeout)
 
-            val request = "GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n"
-            sendRequest(inbound1, request)
-            sendRequest(inbound2, request)
+            Clock.withTimeControl { tc =>
+                Clock.use { clock =>
+                    val request = "GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n"
+                    sendRequest(inbound1, request)
+                    sendRequest(inbound2, request)
 
-            UnsafeServerDispatch.serve(router, inbound1, outbound1, config)
-            UnsafeServerDispatch.serve(router, inbound2, outbound2, config)
+                    UnsafeServerDispatch.serve(router, inbound1, outbound1, config, clock = clock)
+                    UnsafeServerDispatch.serve(router, inbound2, outbound2, config, clock = clock)
 
-            // Collect responses from both
-            collectResponse(outbound1).map { r1 =>
-                assert(r1.contains("HTTP/1.1 200 OK"))
-                collectResponse(outbound2).map { r2 =>
-                    assert(r2.contains("HTTP/1.1 200 OK"))
+                    collectResponse(outbound1).map { r1 =>
+                        assert(r1.contains("HTTP/1.1 200 OK"))
+                        collectResponse(outbound2).map { r2 =>
+                            assert(r2.contains("HTTP/1.1 200 OK"))
 
-                    // Wait for idle timeout to fire
-                    Async.sleep(400.millis).andThen {
-                        // Connection 1 should be closed (was idle)
-                        val result1 = inbound1.offer(Span.fromUnsafe("test".getBytes))
-                        assert(
-                            result1.isFailure,
-                            s"Expected connection 1 to be closed, got: $result1"
-                        )
-
-                        // Connection 2 should also be closed (also was idle)
-                        val result2 = inbound2.offer(Span.fromUnsafe("test".getBytes))
-                        assert(
-                            result2.isFailure,
-                            s"Expected connection 2 to be closed, got: $result2"
-                        )
+                            awaitIdleTimerArmed(inbound1).map { armed1 =>
+                                awaitIdleTimerArmed(inbound2).map { armed2 =>
+                                    assert(armed1 && armed2, "both connections must arm their own idle timer")
+                                    tc.advance(idleTimeout).andThen {
+                                        pollUntil(inbound1.closed() && inbound2.closed()).map { closed =>
+                                            assert(closed, "both idle connections must be closed by their own timer")
+                                            assert(
+                                                inbound1.offer(Span.fromUnsafe("test".getBytes)).isFailure,
+                                                "connection 1 must refuse input after its idle expiry"
+                                            )
+                                            assert(
+                                                inbound2.offer(Span.fromUnsafe("test".getBytes)).isFailure,
+                                                "connection 2 must refuse input after its idle expiry"
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1736,22 +1806,31 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
 
-            val config = defaultConfig.idleTimeout(300.millis)
+            val idleTimeout = 300.millis
+            val config      = defaultConfig.idleTimeout(idleTimeout)
 
-            val request = "GET /stream HTTP/1.1\r\nHost: localhost\r\n\r\n"
-            sendRequest(inbound, request)
+            Clock.withTimeControl { tc =>
+                Clock.use { clock =>
+                    val request = "GET /stream HTTP/1.1\r\nHost: localhost\r\n\r\n"
+                    sendRequest(inbound, request)
 
-            UnsafeServerDispatch.serve(router, inbound, outbound, config)
+                    UnsafeServerDispatch.serve(router, inbound, outbound, config, clock = clock)
 
-            collectResponse(outbound).map { response =>
-                assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200, got: $response")
+                    collectResponse(outbound).map { response =>
+                        assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200, got: $response")
 
-                // After response, wait for idle timeout
-                Async.sleep(500.millis).andThen {
-                    val result = inbound.offer(Span.fromUnsafe("test".getBytes))
-                    result match
-                        case Result.Failure(_: Closed) => succeed
-                        case other                     => assert(false, s"Expected closed after idle timeout, got: $other")
+                        awaitIdleTimerArmed(inbound).map { armed =>
+                            assert(armed, "the keep-alive restart must arm the idle timer after a streamed response")
+                            tc.advance(idleTimeout).andThen {
+                                pollUntil(inbound.closed()).map { closed =>
+                                    assert(closed, "the idle timer must close the connection once the idle period elapses")
+                                    inbound.offer(Span.fromUnsafe("test".getBytes)) match
+                                        case Result.Failure(_: Closed) => succeed
+                                        case other => fail(s"Expected the closed connection to refuse input, got: $other")
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

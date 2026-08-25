@@ -423,5 +423,60 @@ class ChunkedBodyDecoderTest extends kyo.BaseHttpTest:
                 )
             }
         }
+
+        // Arrival-after-arm: readBufferedUnsafe starts FIRST (arming a taker), fragments are offered after, so every span travels
+        // the registered-taker delivery path (flush -> promise.complete), not the pre-staged poll path. Each offer runs the decode
+        // callbacks synchronously (deterministic on every platform). Postcondition: a completed body leaves the inbound channel empty, zero takers.
+        "readBufferedUnsafe arrival-after-arm" - {
+
+            def armThenOffer(initial: String, fragments: Seq[String], expected: String)(using kyo.test.AssertScope): Unit =
+                val inbound                                    = Channel.Unsafe.init[Span[Byte]](16)
+                var result: Maybe[Result[Closed, Span[Byte]]]  = Absent
+                var tooLarge                                   = false
+                var invalid: Maybe[HttpMalformedBodyException] = Absent
+                ChunkedBodyDecoder.readBufferedUnsafe(inbound, spanOf(initial), maxBytes = Int.MaxValue)(
+                    onResult = r => result = Present(r),
+                    onTooLarge = _ => tooLarge = true,
+                    onInvalid = e => invalid = Present(e)
+                )
+                fragments.foreach(f => discard(inbound.offer(spanOf(f))))
+                assert(!tooLarge, s"decode reported onTooLarge for fragments $fragments")
+                assert(invalid.isEmpty, s"decode reported malformed framing for fragments $fragments: $invalid")
+                result match
+                    case Present(r) =>
+                        assert(
+                            spanToString(r.getOrThrow) == expected,
+                            s"decoded body mismatch for initial='$initial' fragments=$fragments"
+                        )
+                    case Absent =>
+                        fail(s"decode did not complete after all fragments (initial='$initial', fragments=$fragments)")
+                end match
+                assert(inbound.empty().getOrThrow, "inbound must be empty after a completed body")
+                assert(inbound.pendingTakes().getOrThrow == 0, "no taker may remain registered after a completed body")
+            end armThenOffer
+
+            val framed  = "5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n"
+            val decoded = "hello world"
+
+            "whole body in one post-arm fragment" in {
+                armThenOffer("", Seq(framed), decoded)
+            }
+
+            "single-byte fragments (every byte boundary)" in {
+                armThenOffer("", framed.map(_.toString), decoded)
+            }
+
+            "named adversarial splits: mid-size-line, size and data, mid-data, data CRLF, terminal" in {
+                armThenOffer("", Seq("5", "\r\nhel", "lo\r", "\n6\r\n wor", "ld", "\r\n0\r\n\r", "\n"), decoded)
+            }
+
+            "terminal chunk as its own fragment" in {
+                armThenOffer("", Seq("5\r\nhello\r\n", "0\r\n\r\n"), "hello")
+            }
+
+            "partial initial bytes, remainder after arm" in {
+                armThenOffer("5\r\nhel", Seq("lo\r\n", "0\r\n\r\n"), "hello")
+            }
+        }
     }
 end ChunkedBodyDecoderTest

@@ -819,7 +819,10 @@ class AeronTransportTest extends Test:
     // closing the client unmaps. Running the JVM on the Java client instead is what made this leaf crash:
     // that path re-derived the guard as a per-handle gate whose drain could miss a publication registered
     // concurrently, so an offer wrote into a term buffer the close had already unmapped.
-    "UAF-loop: a high-iteration forked-then-close loop does not use-after-free" in {
+    // 100 full Topic.run lifecycles (add + fork pub/sub + close) is heavy and on the slow single-threaded windows JS
+    // runner runs near the 120s default budget. The count is the regression sensitivity (pre-fix UAF reproduced ~once
+    // per run at 100), so give the leaf headroom rather than reduce it; fast platforms still finish in seconds (ceiling).
+    "UAF-loop: a high-iteration forked-then-close loop does not use-after-free".timeout(5.minutes) in {
         val iterations = 100
         val messages   = Seq(1, 2, 3)
         Loop.indexed { i =>
@@ -845,7 +848,9 @@ class AeronTransportTest extends Test:
     // roughly once per run. Saturating the window instead (20k messages of ~1KB) keeps the publish fiber
     // continuously inside offer's claim-and-copy when the close lands, which segfaulted the carrier on
     // every run before the OpsGate existed.
-    "UAF-saturated: a close landing inside a running offer/poll loop does not use-after-free" in {
+    // Same heavy profile as UAF-loop (50 iterations, each publishing 20k ~1KB messages), so give it the
+    // same explicit headroom above the 120s default.
+    "UAF-saturated: a close landing inside a running offer/poll loop does not use-after-free".timeout(5.minutes) in {
         val iterations = 50
         val payload    = "x" * 1024
         val messages   = Seq.fill(20000)(UafSaturatedMsg(payload))

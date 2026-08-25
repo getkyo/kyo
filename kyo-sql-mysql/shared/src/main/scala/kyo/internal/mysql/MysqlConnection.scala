@@ -405,14 +405,15 @@ object MysqlConnection:
         preparedStmtTtl: Duration,
         socketTimeout: Duration = Duration.Infinity
     )(using Frame): MysqlConnection < (Async & Abort[SqlException]) =
-        Connection.openSocket(host, port, t => SqlConnectionConnectFailedException(host, port, t)) { conn =>
-            MysqlChannel(conn, socketTimeout).flatMap { rawChannel =>
-                HandshakeExchange.run(rawChannel, user, password, db, host, port, tls, false).flatMap { result =>
-                    // result.channel is the TLS-wrapped channel (or the original if no TLS).
-                    val ttl = if preparedStmtTtl == Duration.Infinity then Duration.Zero else preparedStmtTtl
-                    mkConnection(result.channel, result, preparedStmtCacheSize, ttl)
+        Connection.openSocket(host, port, t => SqlConnectionConnectFailedException(host, port, t), (c: MysqlConnection) => c.closeNow) {
+            conn =>
+                MysqlChannel(conn, socketTimeout).flatMap { rawChannel =>
+                    HandshakeExchange.run(rawChannel, user, password, db, host, port, tls, false).flatMap { result =>
+                        // result.channel is the TLS-wrapped channel (or the original if no TLS).
+                        val ttl = if preparedStmtTtl == Duration.Infinity then Duration.Zero else preparedStmtTtl
+                        mkConnection(result.channel, result, preparedStmtCacheSize, ttl)
+                    }
                 }
-            }
         }
     end connect
 
@@ -482,14 +483,15 @@ object MysqlConnection:
         preparedStmtTtl: Duration,
         socketTimeout: Duration = Duration.Infinity
     )(using Frame): MysqlConnection < (Async & Abort[SqlException]) =
-        Connection.openSocket(host, port, t => SqlConnectionConnectFailedException(host, port, t)) { conn =>
-            MysqlChannel(conn, socketTimeout).flatMap { rawChannel =>
-                val preferFallback = tlsMode == TlsMode.Prefer
-                val ttl            = if preparedStmtTtl == Duration.Infinity then Duration.Zero else preparedStmtTtl
-                HandshakeExchange.run(rawChannel, user, password, db, host, port, tls, preferFallback).flatMap { result =>
-                    mkConnection(result.channel, result, preparedStmtCacheSize, ttl)
+        Connection.openSocket(host, port, t => SqlConnectionConnectFailedException(host, port, t), (c: MysqlConnection) => c.closeNow) {
+            conn =>
+                MysqlChannel(conn, socketTimeout).flatMap { rawChannel =>
+                    val preferFallback = tlsMode == TlsMode.Prefer
+                    val ttl            = if preparedStmtTtl == Duration.Infinity then Duration.Zero else preparedStmtTtl
+                    HandshakeExchange.run(rawChannel, user, password, db, host, port, tls, preferFallback).flatMap { result =>
+                        mkConnection(result.channel, result, preparedStmtCacheSize, ttl)
+                    }
                 }
-            }
         }
     end connectWithMode
 

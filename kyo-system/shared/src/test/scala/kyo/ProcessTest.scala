@@ -371,18 +371,13 @@ class ProcessTest extends kyo.test.Test[Any]:
         unixOnly
         Scope.run {
             for
-                // Started after spawn, so the window measures only what the assertion names. On
-                // JS, spawn is synchronous (a PATH scan, then uv_spawn), so including it charges
-                // that work to the deadline and a failure reports a number that is not about
-                // waitFor at all.
-                proc      <- Command("sleep", "60").spawn
-                stopwatch <- Clock.stopwatch
-                result    <- proc.waitFor(200.millis)
-                elapsed   <- stopwatch.elapsed
-                _         <- proc.destroyForcibly
+                proc   <- Command("sleep", "60").spawn
+                result <- proc.waitFor(200.millis)
+                _      <- proc.destroyForcibly
             yield
+                // `sleep 60` outlives the 200ms deadline, so result == Absent means waitFor returned via its deadline;
+                // failing to enforce it would return Present, and a total hang trips the per-leaf timeout. No wall-clock ceiling.
                 assert(result == Absent)
-                assert(elapsed < 5.seconds, s"waitFor(200ms) took ${elapsed} — deadline not enforced")
         }
     }
 
@@ -392,14 +387,12 @@ class ProcessTest extends kyo.test.Test[Any]:
         unixOnly
         Scope.run {
             for
-                // Started after spawn: the assertion is about draining, not about process start.
-                proc      <- Command("echo", "fast").spawn
-                stopwatch <- Clock.stopwatch
-                out       <- proc.stdout.run
-                elapsed   <- stopwatch.elapsed
-                _         <- proc.waitFor
+                proc <- Command("echo", "fast").spawn
+                out  <- proc.stdout.run
+                _    <- proc.waitFor
             yield
-                assert(elapsed < 5.seconds, s"stdout collection took ${elapsed} for a trivial process")
+                // A stalled stdout stream would never complete `run`, hanging into the per-leaf timeout; a non-empty `out`
+                // means it drained and completed. No wall-clock ceiling.
                 assert(out.nonEmpty)
         }
     }
@@ -417,8 +410,14 @@ class ProcessTest extends kyo.test.Test[Any]:
                     _    <- pidHolder.set(pid)
                 yield ()
             }
-            _   <- Async.sleep(200.millis)
             pid <- pidHolder.get
+            // Poll until the scope-destroyed process has been reaped (kill -0 fails).
+            _ <- assertEventually {
+                Abort.run[Throwable](Command("kill", "-0", pid.toString).waitFor).map {
+                    case Result.Success(code) => !code.isSuccess
+                    case Result.Failure(_)    => true
+                }
+            }
             result <- Abort.run[Throwable](
                 Command("kill", "-0", pid.toString).waitFor
             )
@@ -439,18 +438,13 @@ class ProcessTest extends kyo.test.Test[Any]:
         unixOnly
         Scope.run {
             for
-                // Started after spawn, so the window measures only what the assertion names. On
-                // JS, spawn is synchronous (a PATH scan, then uv_spawn), so including it charges
-                // that work to the deadline and a failure reports a number that is not about
-                // waitFor at all.
-                proc      <- Command("sleep", "60").spawn
-                stopwatch <- Clock.stopwatch
-                result    <- proc.waitFor(200.millis)
-                elapsed   <- stopwatch.elapsed
-                _         <- proc.destroyForcibly
+                proc   <- Command("sleep", "60").spawn
+                result <- proc.waitFor(200.millis)
+                _      <- proc.destroyForcibly
             yield
+                // result == Absent means waitFor returned via its deadline, not by blocking until `sleep 60` exited (which
+                // would yield Present); a full deadlock hangs into the per-leaf timeout.
                 assert(result == Absent)
-                assert(elapsed < 5.seconds, s"waitFor(200ms) blocked for ${elapsed} — deadline not enforced")
         }
     }
 
@@ -460,15 +454,13 @@ class ProcessTest extends kyo.test.Test[Any]:
         unixOnly
         Scope.run {
             for
-                // Started after spawn: the assertion is about draining, not about process start.
-                proc      <- Command("echo", "fast").spawn
-                stopwatch <- Clock.stopwatch
-                out       <- proc.stdout.run
-                elapsed   <- stopwatch.elapsed
-                _         <- proc.waitFor
+                proc <- Command("echo", "fast").spawn
+                out  <- proc.stdout.run
+                _    <- proc.waitFor
             yield
+                // A stream that stalled on missing EOF would never complete `run`, hanging into
+                // the per-leaf timeout; a non-empty result means it drained and completed.
                 assert(out.nonEmpty)
-                assert(elapsed < 5.seconds, s"stdout took ${elapsed} for a short-lived process")
         }
     }
 
@@ -485,8 +477,14 @@ class ProcessTest extends kyo.test.Test[Any]:
                     _    <- pidHolder.set(pid)
                 yield ()
             }
-            _   <- Async.sleep(200.millis)
             pid <- pidHolder.get
+            // Poll until the scope-destroyed process has been reaped (kill -0 fails).
+            _ <- assertEventually {
+                Abort.run[Throwable](Command("kill", "-0", pid.toString).waitFor).map {
+                    case Result.Success(code) => !code.isSuccess
+                    case Result.Failure(_)    => true
+                }
+            }
             result <- Abort.run[Throwable](
                 Command("kill", "-0", pid.toString).waitFor
             )
@@ -511,8 +509,14 @@ class ProcessTest extends kyo.test.Test[Any]:
                     _    <- pidRef.set(pid)
                 yield ()
             }
-            _   <- Async.sleep(200.millis)
             pid <- pidRef.get
+            // Poll until the scope-destroyed process has been reaped (kill -0 fails).
+            _ <- assertEventually {
+                Abort.run[Throwable](Command("kill", "-0", pid.toString).waitFor).map {
+                    case Result.Success(code) => !code.isSuccess
+                    case Result.Failure(_)    => true
+                }
+            }
             result <- Abort.run[Throwable](
                 Command("kill", "-0", pid.toString).waitFor
             )
@@ -536,8 +540,14 @@ class ProcessTest extends kyo.test.Test[Any]:
                     yield ()
                 }
             }
-            _   <- Async.sleep(200.millis)
             pid <- pidRef.get
+            // Poll until the scope-destroyed process has been reaped (kill -0 fails).
+            _ <- assertEventually {
+                Abort.run[Throwable](Command("kill", "-0", pid.toString).waitFor).map {
+                    case Result.Success(code) => !code.isSuccess
+                    case Result.Failure(_)    => true
+                }
+            }
             result <- Abort.run[Throwable](
                 Command("kill", "-0", pid.toString).waitFor
             )

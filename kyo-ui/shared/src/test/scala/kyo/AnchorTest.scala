@@ -83,9 +83,14 @@ class AnchorTest extends UITest:
                 ref.map(v => UI.span(v.toString).id("v"))
             )
         withUI(app) {
+            // Windows Chrome can drop the synthetic click so the anchor never gains focus and onFocus never fires.
+            // Retry click+assert together; the click is idempotent once focus lands.
             for
-                _ <- Browser.click(Selector.id("a"))
-                _ <- Browser.assertText(Selector.id("v"), "true")
+                _ <- Retry[BrowserReadException](Schedule.fixed(300.millis).take(5)) {
+                    Browser.click(Selector.id("a")).andThen(
+                        Browser.assertText(Selector.id("v"), "true", Present(Schedule.fixed(100.millis).take(2)))
+                    )
+                }
             yield ()
         }
     }

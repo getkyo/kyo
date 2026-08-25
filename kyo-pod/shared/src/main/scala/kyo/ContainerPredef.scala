@@ -23,6 +23,87 @@ import kyo.*
   */
 object ContainerPredef:
 
+    /** The in-container readiness shell loop for `probe`, bounded by `budget`: probe until it exits 0 or the
+      * budget elapses. Split out from [[readinessLoop]] so a fixture's configured budget can be asserted to
+      * reach the generated script in a unit test, without standing up a container.
+      */
+    private[kyo] def readinessScript(probe: Chunk[String], budget: Duration): String =
+        val quoted = probe.map(a => "'" + a.replace("'", "'\\''") + "'").mkString(" ")
+        s"""end=$$(($$(date +%s)+${budget.toSeconds})); while [ "$$(date +%s)" -lt "$$end" ]; do $quoted >/dev/null 2>&1 && exit 0; sleep 2; done; exit 1"""
+    end readinessScript
+
+    /** A readiness [[Container.HealthCheck]] that runs `probe` in one bounded poll loop *inside* the container, not a
+      * fresh host `exec` per retry. Each host `exec` leaves a `conmon` lingering ~300s on rootless podman, so a
+      * sub-second host-side poll across a fixture suite accumulates orphaned `conmon`; the in-container loop collapses
+      * each fixture's wait to a single `exec`. `budget` bounds the loop so a service that never comes up fails rather
+      * than hang to the leaf timeout. Ready is exit code 0, so `probe` must exit non-zero until the service answers.
+      */
+    private[kyo] def readinessLoop(probe: Chunk[String], budget: Duration = 120.seconds): Container.HealthCheck =
+        val cmd = Command("sh", "-c", readinessScript(probe, budget))
+        new Container.HealthCheck:
+            def check(container: Container)(using Frame): Unit < (Async & Abort[ContainerException]) =
+                // The probe blocks inside the container until the service answers, so the exec must outlast the
+                // caller's ambient HttpClient timeout (often the 5s default; predef fixtures are reused beyond kyo-pod).
+                // Give it its own budget-covering timeout; the shell backend ignores the HttpClient config.
+                HttpClient.withConfig(_.timeout(budget + 15.seconds)) {
+                    Abort.run[ContainerException](container.exec(cmd)).map {
+                        case Result.Success(r) if r.isSuccess => Kyo.unit
+                        case Result.Success(r) =>
+                            healthFailure(container, s"readiness probe did not pass within ${budget.toSeconds}s", r.stderr.trim)
+                        case Result.Failure(cause) =>
+                            // The readiness exec failed: usually the service's own container exited mid-boot (OOM or
+                            // failed init), which the daemon reports as a not-running container. Capture why.
+                            healthFailure(container, s"readiness exec failed: ${cause.getMessage}", "")
+                        case Result.Panic(t) => Abort.panic(t)
+                    }
+                }
+            end check
+            def schedule: Schedule = Schedule.done
+        end new
+    end readinessLoop
+
+    /** Best-effort container post-mortem: terminal state (status + exit code) and the tail of its logs. A flaky DB
+      * fixture that dies or never becomes ready otherwise surfaces only as an opaque "already stopped" or "readiness
+      * did not pass"; its own stderr names the cause (OOM-exit, failed init, bad config). Both reads are guarded so an
+      * already-reaped container yields a placeholder rather than masking the original failure with a secondary error.
+      */
+    private[kyo] def postMortem(container: Container)(using Frame): String < Async =
+        Abort.run[ContainerException](container.inspect).map { infoR =>
+            Abort.run[ContainerException](container.logsText(tail = 40)).map { logsR =>
+                val st = infoR match
+                    case Result.Success(i) => s"container state=${i.state} exitCode=${i.exitCode}"
+                    case _                 => "container state=unavailable"
+                val lg = logsR match
+                    case Result.Success(t) if t.trim.nonEmpty => s"; log tail: ${t.trim.linesIterator.toList.takeRight(20).mkString(" ⏎ ")}"
+                    case _                                    => "; logs unavailable"
+                s"$st$lg"
+            }
+        }
+
+    /** Raise a [[ContainerHealthCheckException]] enriched with the container's [[postMortem]]. Used by the predef
+      * fixtures so a flaky DB failure on a constrained runner is self-diagnosing rather than an opaque abort.
+      */
+    private[kyo] def healthFailure(container: Container, reason: String, probeError: String)(using
+        Frame
+    ): Nothing < (Async & Abort[ContainerException]) =
+        postMortem(container).map { diag =>
+            val detail = Chunk(probeError, diag).filter(_.nonEmpty).mkString(" | ")
+            Abort.fail[ContainerException](ContainerHealthCheckException(container.id, reason, attempts = 1, lastError = detail))
+        }
+
+    /** Run a fixture container operation; on an abort (e.g. the container died and the daemon reports it not running)
+      * re-raise it enriched with the container's [[postMortem]]. Successful results (including a query that ran but
+      * returned a non-zero exit) pass through unchanged for the caller to assert on.
+      */
+    private[kyo] def withPostMortem[A](container: Container, op: String)(body: => A < (Async & Abort[ContainerException]))(using
+        Frame
+    ): A < (Async & Abort[ContainerException]) =
+        Abort.run[ContainerException](body).map {
+            case Result.Success(a)     => a
+            case Result.Failure(cause) => healthFailure(container, s"$op failed: ${cause.getMessage}", "")
+            case Result.Panic(t)       => Abort.panic(t)
+        }
+
     // =============================================================================================
     // Postgres
     // =============================================================================================
@@ -63,7 +144,7 @@ object ContainerPredef:
           * tuples-only — convenient for parsing single scalar results.
           */
         def psql(sql: String)(using Frame): Container.ExecResult < (Async & Abort[ContainerException]) =
-            container.exec(
+            withPostMortem(container, "psql")(container.exec(
                 "psql",
                 "-U",
                 config.username,
@@ -71,7 +152,7 @@ object ContainerPredef:
                 config.database,
                 "-tAc",
                 sql
-            )
+            ))
     end Postgres
 
     object Postgres:
@@ -104,12 +185,14 @@ object ContainerPredef:
             username: String = "test",
             password: String = "test",
             database: String = "test",
-            port: Int = defaultPort
+            port: Int = defaultPort,
+            readinessBudget: Duration = 120.seconds
         ) derives CanEqual:
-            def image(i: ContainerImage): Config = copy(image = i)
-            def username(u: String): Config      = copy(username = u)
-            def password(p: String): Config      = copy(password = p)
-            def database(d: String): Config      = copy(database = d)
+            def image(i: ContainerImage): Config     = copy(image = i)
+            def username(u: String): Config          = copy(username = u)
+            def password(p: String): Config          = copy(password = p)
+            def database(d: String): Config          = copy(database = d)
+            def readinessBudget(d: Duration): Config = copy(readinessBudget = d)
         end Config
 
         object Config:
@@ -139,10 +222,7 @@ object ContainerPredef:
                 .env("POSTGRES_DB", c.database)
                 .port(c.port, 0)
                 .command("postgres", "-c", "fsync=off")
-                .healthCheck(Container.HealthCheck.exec(
-                    Command("psql", "-U", c.username, "-d", c.database, "-c", "SELECT 1"),
-                    Absent
-                ))
+                .healthCheck(readinessLoop(Chunk("psql", "-U", c.username, "-d", c.database, "-c", "SELECT 1"), c.readinessBudget))
     end Postgres
 
     // =============================================================================================
@@ -191,7 +271,7 @@ object ContainerPredef:
             val args = Chunk("mysql", "-h", "127.0.0.1", "-u", config.username) ++
                 (if config.password.nonEmpty then Chunk(s"-p${config.password}") else Chunk.empty) ++
                 Chunk(config.database, "-N", "-e", sql)
-            container.exec(Command(args*))
+            withPostMortem(container, "mysql")(container.exec(Command(args*)))
         end mysql
     end MySQL
 
@@ -234,7 +314,8 @@ object ContainerPredef:
               * `--default-authentication-plugin=mysql_native_password` or `--innodb-buffer-pool-size=<larger>`; anything set here follows
               * the baseline args, so later flags win by MySQL's last-write semantics.
               */
-            serverArgs: Chunk[String] = Chunk.empty
+            serverArgs: Chunk[String] = Chunk.empty,
+            readinessBudget: Duration = 120.seconds
         ) derives CanEqual:
             def image(i: ContainerImage): Config        = copy(image = i)
             def username(u: String): Config             = copy(username = u)
@@ -243,6 +324,7 @@ object ContainerPredef:
             def rootPassword(p: String): Config         = copy(rootPassword = p)
             def serverArgs(args: Chunk[String]): Config = copy(serverArgs = args)
             def appendServerArgs(args: String*): Config = copy(serverArgs = serverArgs ++ Chunk.from(args))
+            def readinessBudget(d: Duration): Config    = copy(readinessBudget = d)
         end Config
 
         object Config:
@@ -309,9 +391,8 @@ object ContainerPredef:
             "--innodb-log-file-size=32M"
         )
 
-        /** MySQL flushes its InnoDB buffer pool during a graceful shutdown. The [[Container.Config]] default `stopTimeout` of `3.seconds`
-          * is too short: `mysqld` receives SIGTERM, cannot flush in time, and is SIGKILL'd, which leaves the daemon's `/stop` HTTP handler
-          * spinning past the client deadline and reporting `HttpTimeoutException` on teardown. `30.seconds` covers the flush.
+        /** Teardown budget for the post-SIGKILL `waitForExit` (see [[buildContainerConfig]]'s `stopSignal`). A cold SIGKILL of the idle,
+          * force-removed `mysqld` exits at once; the budget stays generous only to absorb reap latency under CI contention.
           */
         val defaultStopTimeout: Duration = 30.seconds
 
@@ -332,13 +413,16 @@ object ContainerPredef:
                 .env("MYSQL_DATABASE", c.database)
                 .port(c.port, 0)
                 .command(commandLine*)
+                // Run under an init process (catatonit as PID 1): mysqld as PID 1 does not reap its subprocesses' zombie children, so under a
+                // loaded CI runner the container wedges in `stopping` and the daemon reports "given PID did not die within timeout", leaking
+                // daemon-side. The init reaps the zombies and forwards signals to mysqld, so teardown completes.
+                .initProcess(true)
+                // Teardown SIGKILLs rather than graceful-stops: the fixture is discarded with its anonymous volume, so mysqld's InnoDB shutdown
+                // flush buys nothing and only adds a slow I/O-heavy shutdown on a loaded runner. The cold SIGKILL exits at once.
+                .stopSignal(Container.Signal.SIGKILL)
                 .stopTimeout(defaultStopTimeout)
                 .portMappingTimeout(defaultPortMappingTimeout)
-                .healthCheck(Container.HealthCheck.exec(
-                    Command(healthCmdBase*),
-                    Absent,
-                    Schedule.fixed(200.millis).take(300)
-                ))
+                .healthCheck(readinessLoop(healthCmdBase, c.readinessBudget))
             applyEnv(base, c)
         end buildContainerConfig
     end MySQL
@@ -381,7 +465,7 @@ object ContainerPredef:
 
         /** Run `mongosh --quiet --eval "<eval>"` against this container, returning the raw exec result. */
         def mongosh(eval: String)(using Frame): Container.ExecResult < (Async & Abort[ContainerException]) =
-            container.exec("mongosh", "--quiet", "--eval", eval)
+            withPostMortem(container, "mongosh")(container.exec("mongosh", "--quiet", "--eval", eval))
     end MongoDB
 
     object MongoDB:
@@ -415,10 +499,12 @@ object ContainerPredef:
         final case class Config(
             image: ContainerImage = defaultImage,
             database: String = "test",
-            port: Int = defaultPort
+            port: Int = defaultPort,
+            readinessBudget: Duration = 120.seconds
         ) derives CanEqual:
-            def image(i: ContainerImage): Config = copy(image = i)
-            def database(d: String): Config      = copy(database = d)
+            def image(i: ContainerImage): Config     = copy(image = i)
+            def database(d: String): Config          = copy(database = d)
+            def readinessBudget(d: Duration): Config = copy(readinessBudget = d)
         end Config
 
         object Config:
@@ -444,11 +530,7 @@ object ContainerPredef:
         private[kyo] def buildContainerConfig(c: Config): Container.Config =
             Container.Config(c.image)
                 .port(c.port, 0)
-                .healthCheck(Container.HealthCheck.exec(
-                    Command("mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"),
-                    Present("1"),
-                    Schedule.fixed(500.millis).take(60)
-                ))
+                .healthCheck(readinessLoop(Chunk("mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"), c.readinessBudget))
     end MongoDB
 
 end ContainerPredef

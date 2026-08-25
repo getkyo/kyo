@@ -142,12 +142,16 @@ final private[kyo] class HttpClientBackend private (
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In],
         maxResponseLength: Int,
-        multipartBoundary: Maybe[String]
+        multipartBoundary: Maybe[String],
+        bodyOutcome: Maybe[Promise.Unsafe[Boolean, Any]]
     )(using AllowUnsafe, Frame): Fiber.Unsafe[HttpResponse[Out], Abort[HttpException]] =
         val resultPromise = Promise.Unsafe.init[HttpResponse[Out], Abort[HttpException]]()
         try
             encodeAndSendDirectWith(conn, route, request, multipartBoundary)(
-                onInvalid = ex => resultPromise.completeDiscard(Result.fail(ex)),
+                onInvalid = ex =>
+                    bodyOutcome.foreach(_.completeDiscard(Result.succeed(false)))
+                    resultPromise.completeDiscard(Result.fail(ex))
+                ,
                 f = (responsePromise, path) =>
                     // IOPromise.onComplete gives Result[Nothing, ParsedResponse] directly
                     responsePromise.onComplete { parseResult =>
@@ -162,10 +166,15 @@ final private[kyo] class HttpClientBackend private (
                                     // away the only diagnostic. Going through the buffered path lets
                                     // RouteUtil.decodeBufferedResponse populate HttpStatusException.body.
                                     if parsed.statusCode >= 400 then
+                                        // The buffered fallback consumes the whole error body before completing
+                                        // resultPromise, so the reuse decision mirrors the buffered contract.
+                                        bodyOutcome.foreach(p =>
+                                            resultPromise.onComplete(r => p.completeDiscard(Result.succeed(r.isSuccess)))
+                                        )
                                         readBufferedBody(conn, parsed, request.method, resultPromise, route, request, maxResponseLength)
                                     else
                                         val lastBodySpan = conn.http1.lastBodySpan
-                                        val bodyStream   = buildBodyStream(conn, parsed, lastBodySpan, maxResponseLength)
+                                        val bodyStream   = buildBodyStream(conn, parsed, lastBodySpan, maxResponseLength, bodyOutcome)
                                         RouteUtil.decodeStreamingResponse(
                                             route,
                                             HttpStatus(parsed.statusCode),
@@ -187,13 +196,16 @@ final private[kyo] class HttpClientBackend private (
                                         resultPromise.completeDiscard(Result.panic(t))
                                 end try
                             case Result.Failure(e) =>
+                                bodyOutcome.foreach(_.completeDiscard(Result.succeed(false)))
                                 resultPromise.completeDiscard(Result.fail(HttpConnectionClosedException()))
                             case Result.Panic(t) =>
+                                bodyOutcome.foreach(_.completeDiscard(Result.succeed(false)))
                                 resultPromise.completeDiscard(Result.panic(t))
                     }
             )
         catch
             case t: Throwable =>
+                bodyOutcome.foreach(_.completeDiscard(Result.succeed(false)))
                 resultPromise.completeDiscard(Result.panic(t))
         end try
         resultPromise
@@ -226,7 +238,8 @@ final private[kyo] class HttpClientBackend private (
                     if request.method == HttpMethod.HEAD then
                         sendBuffered(conn, route, request, maxResponseLength, multipartBoundary)
                     else if RouteUtil.isStreamingResponse(route) then
-                        sendStreaming(conn, route, request, maxResponseLength, multipartBoundary)
+                        // Caller-scoped connection (not pooled): no pool-reuse obligation to defer.
+                        sendStreaming(conn, route, request, maxResponseLength, multipartBoundary, Absent)
                     else
                         sendBuffered(conn, route, request, maxResponseLength, multipartBoundary)
                 Sync.ensure { (error: Maybe[Result.Error[Any]]) =>
@@ -574,70 +587,89 @@ final private[kyo] class HttpClientBackend private (
     // -- Streaming response path --
 
     /** Build a raw body stream from the parsed response metadata. */
-    private def buildBodyStream(conn: HttpConnection, parsed: ParsedResponse, lastBodySpan: Span[Byte], maxControlBytes: Int)(using
+    private def buildBodyStream(
+        conn: HttpConnection,
+        parsed: ParsedResponse,
+        lastBodySpan: Span[Byte],
+        maxControlBytes: Int,
+        bodyOutcome: Maybe[Promise.Unsafe[Boolean, Any]]
+    )(using
         AllowUnsafe,
         Frame
     ): Stream[Span[Byte], Async] =
+        // Every branch MUST complete bodyOutcome once (true = drained/clean/reusable, false = undrained/corrupt/
+        // close-framed, discard); leaving it pending checks the connection out forever (the reuse decision never resolves).
         if parsed.isChunked then
             // For chunked streaming, pipe decoded chunks through a Channel.
             // Use closeAwaitEmpty (not close) to avoid dropping buffered items
             // that the consumer hasn't read yet.
             val decodedCh = Channel.Unsafe.init[Span[Byte]](4)
-            // Start the chunked decoder in a background fiber
+            // Fresh DecoderState (a streaming decode outlives the request scope, so it must not share connection-scoped state);
+            // its terminal result is the reuse decision (Done => reuse, fault => discard), completed before closeAwaitEmpty so reuse does not wait on the consumer.
             discard(kyo.scheduler.IOTask(
-                // Malformed framing (HttpMalformedBodyException) and an over-limit control plane
-                // (HttpPayloadTooLargeException) are caught here alongside Closed: the decoded channel is closed,
-                // ending the consumer's stream at the fault rather than propagating an uncaught abort.
                 Abort.run[Closed | HttpMalformedBodyException | HttpPayloadTooLargeException](ChunkedBodyDecoder.readStreaming(
                     conn.http1.bodyChannel,
                     lastBodySpan,
                     decodedCh,
-                    maxControlBytes,
-                    conn.http1.chunkedDecoderState
-                ))
-                    .unit
-                    .andThen(decodedCh.safe.closeAwaitEmpty),
+                    maxControlBytes
+                )).map {
+                    case Result.Success(_) => bodyOutcome.foreach(_.completeDiscard(Result.succeed(true)))
+                    case _                 => bodyOutcome.foreach(_.completeDiscard(Result.succeed(false)))
+                }.andThen(decodedCh.safe.closeAwaitEmpty),
                 kyo.kernel.internal.Trace.init,
                 kyo.kernel.internal.Context.empty
             ))
-            decodedCh.safe.streamUntilClosed()
+            // If the consumer abandons (drop/abort/interrupt) before the body drains, close the per-request decoded channel
+            // so the decode's next put fails Closed -> discard. Never touches the connection (safe); a no-op after a full drain already closed it.
+            Stream[Span[Byte], Async] {
+                Sync.ensure(Sync.Unsafe.defer(discard(decodedCh.close())))(decodedCh.safe.streamUntilClosed().emit)
+            }
         else if parsed.contentLength > 0 then
             val remaining = parsed.contentLength - lastBodySpan.size
             if remaining <= 0 then
-                // All body in last span
+                // All body in last span: nothing more to read from inbound, connection is clean.
+                bodyOutcome.foreach(_.completeDiscard(Result.succeed(true)))
                 if lastBodySpan.nonEmpty then Stream.init(Seq(lastBodySpan))
                 else Stream.empty[Span[Byte]]
             else
-                // Emit initial bytes, then read remaining from channel
+                // readContentLengthStream completes the outcome true once it drains `remaining`; the finalizer completes
+                // false on drop/interrupt (a no-op once true already won).
                 Stream[Span[Byte], Async] {
-                    val emitInitial: Unit < (Emit[Chunk[Span[Byte]]] & Async) =
-                        if lastBodySpan.nonEmpty then Emit.value(Chunk(lastBodySpan))
-                        else Kyo.unit
-                    emitInitial.andThen {
-                        readContentLengthStream(conn, remaining)
+                    Sync.ensure(Sync.Unsafe.defer(bodyOutcome.foreach(_.completeDiscard(Result.succeed(false))))) {
+                        val emitInitial: Unit < (Emit[Chunk[Span[Byte]]] & Async) =
+                            if lastBodySpan.nonEmpty then Emit.value(Chunk(lastBodySpan))
+                            else Kyo.unit
+                        emitInitial.andThen {
+                            readContentLengthStream(conn, remaining, bodyOutcome)
+                        }
                     }
                 }
             end if
         else
-            // No content-length, not chunked - emit whatever we have
+            // No content-length, not chunked: a close-framed body terminates the connection by close, so it is
+            // never reusable regardless of consumption -> discard.
+            bodyOutcome.foreach(_.completeDiscard(Result.succeed(false)))
             if lastBodySpan.nonEmpty then Stream.init(Seq(lastBodySpan))
             else Stream.empty[Span[Byte]]
         end if
     end buildBodyStream
 
     /** Emit exactly `remaining` bytes from the inbound channel. */
-    private def readContentLengthStream(conn: HttpConnection, remaining: Int)(using
-        Frame
+    private def readContentLengthStream(conn: HttpConnection, remaining: Int, bodyOutcome: Maybe[Promise.Unsafe[Boolean, Any]])(using
+        Frame,
+        AllowUnsafe
     ): Unit < (Emit[Chunk[Span[Byte]]] & Async) =
-        if remaining <= 0 then Kyo.unit
+        if remaining <= 0 then
+            Sync.Unsafe.defer(bodyOutcome.foreach(_.completeDiscard(Result.succeed(true))))
         else
             Abort.run[Closed](conn.http1.bodyChannel.safe.take).map {
                 case Result.Success(span) =>
                     Emit.value(Chunk(span)).andThen {
-                        readContentLengthStream(conn, remaining - span.size)
+                        readContentLengthStream(conn, remaining - span.size, bodyOutcome)
                     }
-                case Result.Failure(_: Closed) => Kyo.unit
-                case Result.Panic(t)           => throw t
+                case Result.Failure(_: Closed) =>
+                    Sync.Unsafe.defer(bodyOutcome.foreach(_.completeDiscard(Result.succeed(false))))
+                case Result.Panic(t) => throw t
             }
 
     // -- WebSocket support --
@@ -1005,7 +1037,7 @@ final private[kyo] class HttpClientBackend private (
       * Neither branch touches the registry directly; the pool's discard hook calls `registry.remove`, and a released connection stays
       * registered until it is later closed.
       */
-    private def releasingConn[A](key: HttpAddress, conn: HttpConnection)(
+    private def releasingConn[A](key: HttpAddress, conn: HttpConnection, bodyOutcome: Maybe[Promise.Unsafe[Boolean, Any]])(
         use: => A < (Async & Abort[HttpException])
     )(using AllowUnsafe, Frame): A < (Async & Abort[HttpException]) =
         val released = new java.util.concurrent.atomic.AtomicBoolean(false)
@@ -1013,7 +1045,18 @@ final private[kyo] class HttpClientBackend private (
             Sync.Unsafe.defer(if released.compareAndSet(false, true) then pool.discard(conn))
         } {
             use.map { result =>
-                Sync.Unsafe.defer(if released.compareAndSet(false, true) then pool.release(key, conn)).andThen(result)
+                Sync.Unsafe.defer {
+                    if released.compareAndSet(false, true) then
+                        bodyOutcome match
+                            case Absent        => pool.release(key, conn)
+                            case Present(done) =>
+                                // Streaming route: the body outlives `use` (lazy stream at headers time), so winning the CAS transfers
+                                // the reuse decision to the body-completion promise; the ensure finalizer cannot discard a still-draining connection. Callback decides once: true => reuse, false => discard.
+                                done.asInstanceOf[IOPromise[Nothing, Boolean]].onComplete { outcome =>
+                                    if outcome == Result.succeed(true) then pool.release(key, conn)
+                                    else pool.discard(conn)
+                                }
+                }.andThen(result)
             }
         }
     end releasingConn
@@ -1149,8 +1192,8 @@ final private[kyo] class HttpClientBackend private (
             Sync.Unsafe.defer {
                 pool.poll(key) match
                     case Present(conn) =>
-                        val responseFiber = sendViaBackend(conn, route, request, config.maxResponseLength, multipartBoundary)
-                        releasingConn(key, conn)(responseFiber.safe.use(f))
+                        val (responseFiber, bodyOutcome) = sendViaBackend(conn, route, request, config.maxResponseLength, multipartBoundary)
+                        releasingConn(key, conn, bodyOutcome)(responseFiber.safe.use(f))
                     case _ =>
                         val reserved = pool.tryReserve(key)
                         if reserved then
@@ -1158,8 +1201,9 @@ final private[kyo] class HttpClientBackend private (
                                 val connectFiber = connect(url, config.connectTimeout, config.tls)
                                 connectFiber.safe.use { conn =>
                                     trackConn(conn)
-                                    val responseFiber = sendViaBackend(conn, route, request, config.maxResponseLength, multipartBoundary)
-                                    releasingConn(key, conn)(responseFiber.safe.use(f))
+                                    val (responseFiber, bodyOutcome) =
+                                        sendViaBackend(conn, route, request, config.maxResponseLength, multipartBoundary)
+                                    releasingConn(key, conn, bodyOutcome)(responseFiber.safe.use(f))
                                 }
                             }
                         else
@@ -1217,15 +1261,18 @@ final private[kyo] class HttpClientBackend private (
         request: HttpRequest[In],
         maxResponseLength: Int,
         multipartBoundary: Maybe[String]
-    )(using AllowUnsafe, Frame): Fiber.Unsafe[HttpResponse[Out], Abort[HttpException]] =
+    )(using AllowUnsafe, Frame): (Fiber.Unsafe[HttpResponse[Out], Abort[HttpException]], Maybe[Promise.Unsafe[Boolean, Any]]) =
         // HEAD responses never have a body (RFC 9110 Section 9.3.2),
         // so always use the buffered path which skips body reading for HEAD.
         if request.method == HttpMethod.HEAD then
-            sendBuffered(conn, route, request, maxResponseLength, multipartBoundary)
+            (sendBuffered(conn, route, request, maxResponseLength, multipartBoundary), Absent)
         else if RouteUtil.isStreamingResponse(route) then
-            sendStreaming(conn, route, request, maxResponseLength, multipartBoundary)
+            // A streaming response body outlives the response fiber (lazy stream at headers time), so its reuse decision travels
+            // as a separate promise (true = reusable, false = discard); buffered routes complete their body first, so no obligation (Absent).
+            val bodyOutcome = Promise.Unsafe.init[Boolean, Any]()
+            (sendStreaming(conn, route, request, maxResponseLength, multipartBoundary, Present(bodyOutcome)), Present(bodyOutcome))
         else
-            sendBuffered(conn, route, request, maxResponseLength, multipartBoundary)
+            (sendBuffered(conn, route, request, maxResponseLength, multipartBoundary), Absent)
 
     /** True once `closeFiber` has closed the pool. For testing the Scope-based `init`'s release path only. */
     private[kyo] def isPoolClosed(using AllowUnsafe): Boolean = pool.isClosed
@@ -1292,7 +1339,9 @@ private[kyo] object HttpClientBackend:
         transportConfig: HttpTransportConfig = HttpTransportConfig.default
     )(using AllowUnsafe, Frame): HttpClientBackend =
         val registry = new kyo.internal.ConnectionRegistry[HttpConnection]
-        val pool = ConnectionPool.init[HttpAddress, HttpConnection](
+        // evalOrThrow resolves the pool's ambient clock at this unsafe boundary (Clock.live in production); a test
+        // that needs virtual-time eviction constructs its own pool under Clock.withTimeControl instead.
+        val pool = Sync.Unsafe.evalOrThrow(ConnectionPool.init[HttpAddress, HttpConnection](
             maxConnsPerHost,
             idleConnectionTimeout,
             conn => conn.transport.isOpen,
@@ -1300,7 +1349,7 @@ private[kyo] object HttpClientBackend:
                 registry.remove(conn)
                 conn.http1.close()
                 conn.transport.close()
-        )
+        ))
         new HttpClientBackend(
             transport,
             transportConfig,

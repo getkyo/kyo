@@ -9,7 +9,7 @@ import kyo.internal.Platform
   * Node targets.
   *
   * Covers `getpid` (positive, stable across two calls, a tight loop, and a longer burst), `time` (positive, monotonic non-decreasing, and
-  * close to the JVM wall clock), and `getenv` (borrowed-String return round-tripped against `java.lang.System.getenv`), extending the
+  * bracketed against the JVM wall clock), and `getenv` (borrowed-String return round-tripped against `java.lang.System.getenv`), extending the
   * stability and cross-call invariants over longer iteration counts.
   */
 class PosixTest extends ItTestBase:
@@ -83,15 +83,15 @@ class PosixTest extends ItTestBase:
             assert(posix.time(0L) > 0L)
         }
 
-        "is close to java.lang.System.currentTimeMillis / 1000" in {
+        "reads the same epoch clock as java.lang.System (bracketed)" in {
             assumePosixSymbols()
-            val posix    = Ffi.load[PosixBindings]
-            val cSeconds = posix.time(0L)
-            val jSeconds = java.lang.System.currentTimeMillis() / 1000L
-            // Absolute skew tolerance: 5 seconds. If the two read points straddle a
-            // wall-clock adjustment of more than this, the assertion would (correctly)
-            // flag a genuine clock anomaly.
-            assert(math.abs(cSeconds - jSeconds) <= 5L)
+            val posix = Ffi.load[PosixBindings]
+            // Bracket the C read between two Java reads: a same-clock value falls within [before, after]
+            // however slow the host, and a broken binding (wrong unit/epoch/garbage) falls outside. No tolerance.
+            val jBefore = java.lang.System.currentTimeMillis() / 1000L
+            val cSecs   = posix.time(0L)
+            val jAfter  = java.lang.System.currentTimeMillis() / 1000L
+            assert(jBefore <= cSecs && cSecs <= jAfter, s"time()=$cSecs not in [$jBefore, $jAfter]")
         }
 
         "two calls are monotonic non-decreasing" in {
@@ -131,19 +131,17 @@ class PosixTest extends ItTestBase:
             last
         }
 
-        "values are within a narrow window of each other across rapid calls" in {
+        "each rapid read stays bracketed by java.lang.System reads" in {
             assumePosixSymbols()
-            // Sanity check: 32 rapid-fire time() calls should span at most a
-            // few seconds. 30s is a very generous upper bound that will flag
-            // any wildly broken binding (e.g. returning uninitialized scratch)
-            // while tolerating slow CI hosts.
+            // Same bracketing across a 32-call burst: every read falls within its own [before, after] Java pair.
             val posix      = Ffi.load[PosixBindings]
-            val first      = posix.time(0L)
             var i          = 0
             var last: Unit = succeed
             while i < 32 do
-                val cur = posix.time(0L)
-                last = assert((cur - first) <= 30L)
+                val jBefore = java.lang.System.currentTimeMillis() / 1000L
+                val cur     = posix.time(0L)
+                val jAfter  = java.lang.System.currentTimeMillis() / 1000L
+                last = assert(jBefore <= cur && cur <= jAfter, s"time()=$cur not in [$jBefore, $jAfter]")
                 i += 1
             end while
             last

@@ -436,7 +436,10 @@ abstract private class Worker(
 
 private object Worker {
 
-    final class WorkerThread(init: Runnable) extends Thread(init) {
+    // Created without inheriting the creator's thread-locals (the final `false` is `inheritThreadLocals`): a worker spawned by a busy parent would
+    // otherwise share the parent's Scala Native `StackTrace` unwind-cursor `Context`, and two threads driving one cursor corrupt it into a native SIGSEGV.
+    final class WorkerThread(init: Runnable)
+        extends Thread(null, init, "kyo-scheduler-worker", 0L, false) {
         var currentWorker: Worker = null
     }
 

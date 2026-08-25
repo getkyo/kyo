@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.*
 import kyo.internal.AeronDriverRuntime
 import kyo.internal.AeronPlatform
 
@@ -54,6 +55,17 @@ object AeronDriver:
     object Settings:
         /** Aeron's own defaults, which [[Duration.Zero]] selects for both timeouts. */
         val default: Settings = Settings()
+
+        /** Timeouts for the in-process driver that backs [[Topic.run]], wider than Aeron's 10s/15s
+          * defaults. The embedded driver's only client is in-process over `aeron:ipc`, so it can die
+          * only when the whole process does. Aeron's default assumes the client conductor gets CPU
+          * promptly, and a loaded or emulated CI host can starve that thread for seconds; at the
+          * default the driver reads the silence as client death and frees every registration the
+          * client holds, so a subscription never reads back connected and its retry loop backs off
+          * forever. A wide window keeps a momentarily starved client alive; `publicationUnblockTimeout`
+          * exceeds `clientLivenessTimeout`, as Aeron requires.
+          */
+        val embedded: Settings = Settings(60.seconds, 65.seconds)
     end Settings
 
     /** Launches an embedded media driver and binds its lifetime to the current `Scope`.

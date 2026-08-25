@@ -6,7 +6,7 @@ Module-specific guide for kyo-aeron. Read the repository-root [CONTRIBUTING.md](
 
 kyo-aeron is typed publish-subscribe messaging over [Aeron](https://aeron.io/): low-latency inter-process communication through shared memory (`aeron:ipc`) and UDP for remote services (`aeron:udp?endpoint=...`). The public surface is:
 
-- `Topic` (`run`, `publish`, `stream`, `isolate`, `defaultRetrySchedule`), an opaque alias of `Env[AeronTransport]`. `run` has three overloads (`run(v)`, `run(aeronDir)`, `run(client)`; see [The public API](#the-public-api)).
+- `Topic` (`run`, `publish`, `stream`, `isolate`, `defaultRetrySchedule`), an opaque alias of `Env[AeronTransport]`. `run` has four overloads (`run(v)`, `run(settings)`, `run(aeronDir)`, `run(client)`; see [The public API](#the-public-api)).
 - `AeronClient` (`connect`), an opaque, `Scope`-managed handle to a connected client against an external driver, shareable across `Topic.run(client)` scopes.
 - the `TopicException` hierarchy (top-level in `package kyo`: `TopicBackpressureException`, `TopicPublishException`, `TopicTransportException`, and their concrete leaves).
 
@@ -34,9 +34,10 @@ When adding a transport operation, add it to the neutral `AeronTransport` trait,
 
 The public entry points are uniform across JVM, Native, JS, and Wasm: the same signatures, the same effect rows, the same backend selection happening behind `AeronPlatform`. They live in `shared/src/main/scala/kyo/Topic.scala` and `shared/src/main/scala/kyo/AeronClient.scala`. There are no platform-specific public overloads and no `TopicPlatformMethods` mixin with per-platform stubs. Every argument is a kyo type (a `Path`, an `AeronClient`, an `AeronDriver`), never a raw directory `String`; `TopicUniformInvariantsTest` "public surface takes only kyo types ..." pins that with `typeCheckFailure`.
 
-The three `Topic.run` overloads all funnel through the single private `runWith` (`Env.run(transport)`):
+The four `Topic.run` overloads all funnel through the single private `runWith` (`Env.run(transport)`):
 
-- **`run(v)`** runs `v` against an embedded media driver, row `A < (Async & S)`. It allocates a unique per-instance directory via `Path.tempDir` (so concurrent `Topic.run` calls never collide on the CnC file), launches the embedded driver + client through `AeronPlatform.embedded(dir)`, and brackets teardown with `Sync.ensure` (close the client and driver, then delete the dir).
+- **`run(v)`** runs `v` against an embedded media driver, row `A < (Async & S)`. It allocates a unique per-instance directory via `Path.tempDir` (so concurrent `Topic.run` calls never collide on the CnC file), launches the embedded driver + client through `AeronPlatform.embedded(dir)`, and brackets teardown with `Sync.ensure` (close the client and driver, then delete the dir). It uses the `AeronDriver.Settings.embedded` liveness/unblock timeouts.
+- **`run(settings: AeronDriver.Settings)(v)`** is `run(v)` with caller-supplied embedded-driver timeouts, row `A < (Async & Abort[TopicTransportFailedException] & S)`. It validates `publicationUnblockTimeout` exceeds `clientLivenessTimeout` (the same check as `AeronDriver.launchUnscoped`), aborting `TopicTransportFailedException` before any driver starts, then shares `run(v)`'s embedded body. `run(v)` is exactly this overload at the `AeronDriver.Settings.embedded` default, minus the (impossible-at-default) validation abort; both derive the driver-start nanos through the `private[kyo] embeddedDriverTimeouts` seam.
 - **`run(aeronDir: Path)(v)`** connects a fresh client to an external driver already running at `aeronDir`, row `A < (Async & Abort[TopicTransportFailedException] & S)`. It does not start or stop the driver (the caller owns the driver lifecycle); `Sync.ensure` closes only the client. A failed connect aborts `TopicTransportFailedException` eagerly and in-band (see below).
 - **`run(client: AeronClient)(v)`** borrows a caller-owned `Scope`-managed client, row `A < (Async & S)`. It does NOT close the client (the `Scope` that produced it owns its lifetime), so multiple `run(client)` scopes can share one `AeronClient` and amortize the connect cost.
 
@@ -233,7 +234,7 @@ Beyond the root checklist:
 - [ ] All wire-contract logic (stream id, `Envelope`, codec, sentinel mapping) lives only in shared `Topic.scala` / `AeronSentinels`, never in a transport impl.
 - [ ] `Topic`'s public effect rows match these rows:
   `run(v)` and `run(client)`: `A < (Async & S)`;
-  `run(aeronDir)`: `A < (Async & Abort[TopicTransportFailedException] & S)`;
+  `run(settings)` and `run(aeronDir)`: `A < (Async & Abort[TopicTransportFailedException] & S)`;
   `AeronClient.connect`: `AeronClient < (Scope & Async & Abort[TopicTransportFailedException])`;
   `publish`: `Unit < (Topic & S & Abort[TopicBackpressureException | TopicPublishException | TopicTransportException] & Async)`;
   `stream`: `Stream[A, Topic & Abort[TopicBackpressureException | TopicTransportException] & Async]`.
