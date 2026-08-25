@@ -34,7 +34,7 @@ private[kyo] object McpReverseDispatch:
     def buildRoutes(
         userHandlers: Seq[McpClientHandler[?, ?, ?]],
         clientCapabilities: McpCapabilities.Client,
-        serverRef: AtomicRef[Maybe[McpServer.Unsafe]]
+        serverRef: Fiber.Promise[McpServer.Unsafe, Any]
     )(using Frame): Seq[JsonRpcRoute[?, ?, ?]] =
         val samplingRoute    = buildSamplingRoute(clientCapabilities)
         val rootsRoute       = buildRootsRoute(clientCapabilities)
