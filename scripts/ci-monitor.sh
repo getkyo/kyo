@@ -4,13 +4,18 @@ set -uo pipefail
 # ci-monitor.sh - resource monitor for CI and local dev runs. Runs until signalled (TERM/INT).
 #
 # Pure logging: one "[ci-mon] ..." line per interval to stdout (the job log). No files, no artifacts.
-# Grep it back with `ci-logs.sh --metrics`. Two best-effort layers per line:
+# Grep it back with `ci-logs.sh --metrics`. Best-effort layers per line:
 #
 #   1) kyo scheduler snapshot - always, cross-platform. The compact line the scheduler's topStatusFile
 #      sink writes to $KYO_SCHED_FILE (workers/blocked/stalled/load/exec/done/...).
 #   2) OS headline - /proc on Linux (MemAvailable, SwapFree, disk, load, PSI memory some-avg10,
 #      cumulative CPU steal ticks); vm_stat/sysctl on macOS (avail, swap, disk, load; PSI and steal are
 #      Linux-only so they read `na`); nothing where neither is available.
+#   3) Fork-pressure headline - live task (thread) count against the RLIMIT_NPROC ceiling (tasks=N/M),
+#      process count, and conmon count. Diagnoses in-container `sh: Cannot fork` (EAGAIN) and the
+#      reap/cleanup backlog a container-heavy suite exhausts a rootless runner with. Task count is
+#      Linux-only (macOS reads `na`).
+#   4) proc_top - top 3 commands by aggregate RSS, for "whose memory is it" when the box overcommits.
 #
 # Disk watch: the per-interval line always carries diskFreeMB. When free disk first drops below
 # CI_MON_DISK_WARN_MB (and again below CI_MON_DISK_CRIT_MB) the monitor prints a one-shot
@@ -155,16 +160,42 @@ proc_top() {
     [ -n "$rows" ] && printf 'top=[%s]' "$rows"
 }
 
+# Fork-pressure headline: the numbers that explain an in-container `sh: Cannot fork` (EAGAIN) or a host
+# fork failure. `tasks=N/M` is the user's live task (thread) count N against the RLIMIT_NPROC ceiling M
+# (`ulimit -u`) - a rising N nearing M is the fork wall, whether it is a genuine peak or a thread leak.
+# `conmon=C` is the container/exec monitor count (podman leaves ~2 conmon per live exec/container): C
+# climbing while the container count is flat is a reap or cleanup backlog, the shape a container-heavy
+# suite exhausts a runner with. Best-effort: three cheap `ps`/`pgrep` summaries per interval; degrades
+# to `na` where a field cannot be sampled (macOS has no cross-process thread count; minimal containers
+# lack ps).
+tasks_headline() {
+    command -v ps >/dev/null 2>&1 || return 0
+    local tasks procs nprocmax conmon
+    nprocmax=$(ulimit -u 2>/dev/null || echo '?')
+    procs=$(ps -e -o pid= 2>/dev/null | wc -l | tr -d ' ')
+    conmon=$( { pgrep -x conmon 2>/dev/null || true; } | wc -l | tr -d ' ')
+    case "$MON_SRC" in
+        proc)
+            tasks=$(ps -eL -o pid= 2>/dev/null | wc -l | tr -d ' ')
+            printf 'tasks=%s/%s procs=%s conmon=%s' "${tasks:-?}" "$nprocmax" "${procs:-?}" "${conmon:-?}"
+            ;;
+        *)
+            printf 'tasks=na/%s procs=%s conmon=%s' "$nprocmax" "${procs:-?}" "${conmon:-?}"
+            ;;
+    esac
+}
+
 ncpu=$( (command -v nproc >/dev/null 2>&1 && nproc) || sysctl -n hw.ncpu 2>/dev/null || echo '?')
 log "started interval=${INTERVAL}s src=$MON_SRC cores=$ncpu sched=${SCHED_FILE:-none} diskWarnMB=$DISK_WARN_MB diskCritMB=$DISK_CRIT_MB diskAbortMB=${DISK_ABORT_MB:-off}"
 while true; do
     os="$(os_headline)"
+    tasks="$(tasks_headline)"
     top="$(proc_top)"
     sc="$(sched_snapshot)"
     free_mb=$(df -Pm . 2>/dev/null | awk 'NR==2{print $4}')
     disk_check "$free_mb"
     crit=""
     [ "$disk_critted" = "1" ] && crit=" DISK-CRIT"
-    echo "[ci-mon $(date -u +%H:%M:%S)]${os:+ $os}${top:+ $top}${sc:+ $sc}${crit}"
+    echo "[ci-mon $(date -u +%H:%M:%S)]${os:+ $os}${tasks:+ $tasks}${top:+ $top}${sc:+ $sc}${crit}"
     sleep "$INTERVAL"
 done

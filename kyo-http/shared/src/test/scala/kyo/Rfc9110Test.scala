@@ -19,7 +19,7 @@ class Rfc9110Test extends BaseHttpTest:
     def withServer[A, S](handlers: HttpHandler[?, ?, ?]*)(
         test: Int => A < (S & Async & Abort[HttpException])
     )(using Frame): A < (S & Async & Scope & Abort[HttpException]) =
-        HttpServer.init(0, "localhost")(handlers*).map(server => test(server.port))
+        HttpServer.init(0, "127.0.0.1")(handlers*).map(server => test(server.port))
 
     def send[In, Out](
         port: Int,
@@ -515,7 +515,7 @@ class Rfc9110Test extends BaseHttpTest:
         val route = HttpRoute.postRaw("upload").request(_.bodyText).response(_.bodyText)
         val ep    = route.handler(req => HttpResponse.ok("ok"))
         // Use small maxContentLength
-        val config = HttpServerConfig.default.port(0).host("localhost").maxContentLength(10)
+        val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(10)
         Scope.run {
             HttpServer.init(config)(ep).map { server =>
                 val bigBody   = "x" * 100 // exceeds 10-byte limit
@@ -1028,7 +1028,7 @@ class Rfc9110Test extends BaseHttpTest:
             // We need the port to construct the absolute URL, so use a different approach
             val route1b = HttpRoute.getRaw("abs-redir2").response(_.bodyText)
             val ep1b = route1b.handler(_ =>
-                HttpResponse.halt(HttpResponse(HttpStatus.Found).setHeader("Location", s"http://localhost:$port/abs-dest"))
+                HttpResponse.halt(HttpResponse(HttpStatus.Found).setHeader("Location", s"http://127.0.0.1:$port/abs-dest"))
             )
             withServer(ep1b, ep2) { port2 =>
                 HttpClient.withConfig(noTimeout) {

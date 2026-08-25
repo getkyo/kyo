@@ -50,6 +50,11 @@ class NioIoDriverTest extends Test:
         end try
     end withDriverAndHandle
 
+    /** How many times a standing grace probe is read while its peer is open. Each read re-checks the armed probe, so a latch on any is the
+      * regression; the "stays false" leaves assert over the reads, not over a clock.
+      */
+    private val liveWatchReads = 25
+
     /** Poll `cond` on the fiber scheduler (never a thread block) until it holds or `bound` elapses; returns whether it held. */
     private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
         val deadline = java.lang.System.nanoTime() + bound.toNanos
@@ -277,15 +282,24 @@ class NioIoDriverTest extends Test:
         driver.registerChannel(handle)
         discard(driver.start())
 
-        // The peer stays open and sends nothing: the probe reads n == 0 and stays armed as a standing FIN watch, never latching.
+        // The peer stays open and sends nothing: the probe reads n == 0 and stays armed as a standing FIN watch. It is read a fixed count of
+        // times rather than over a wall-clock window, and every read must report false.
         assert(!driver.isPeerClosed(handle), "the first isPeerClosed arms the probe and returns false")
-        Async.sleep(300.millis).map { _ =>
-            val stillOpen = !driver.isPeerClosed(handle)
+        Loop(0) { i =>
+            if i >= liveWatchReads then Loop.done(true)
+            else if driver.isPeerClosed(handle) then Loop.done(false)
+            else Async.sleep(1.milli).andThen(Loop.continue(i + 1))
+        }.map { stayedOpen =>
+            assert(stayedOpen, "isPeerClosed must stay false for a live peer that has not sent a FIN")
+        }.andThen {
+            // The watch was armed, not dead: closing the peer now latches it. Without this, a probe that never ran would report false just as
+            // happily and the reads above would prove nothing.
             sv.close()
-            driver.closeHandle(handle)
-            driver.close()
-            assert(stillOpen, "isPeerClosed must stay false for a live peer that has not sent a FIN")
-            succeed
+            awaitCondition(5.seconds)(driver.isPeerClosed(handle)).map { latched =>
+                driver.closeHandle(handle)
+                driver.close()
+                assert(latched, "the standing FIN watch was not live: the peer FIN never latched peerClosed")
+            }
         }
     }
 
@@ -765,11 +779,29 @@ class NioIoDriverTest extends Test:
             handle.upgrading = true
             val p = new IOPromise[Closed, ReadOutcome]
             driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
-            Async.sleep(100.millis).andThen {
-                assert(
-                    !p.done(),
-                    "pre-CAS arm was spuriously completed: nothing may fail a read before the upgrade's state CAS and sweep have run"
-                )
+            // A second registered handle whose peer writes exposes the arm to the poll carrier: its read completes in dispatchReadyKeys, the LAST
+            // step of a cycle body, so its completion proves one full cycle ran with the pre-CAS arm registered, past any path that could spuriously fail it.
+            val (barrierClient, barrierPeer) = openLoopbackPair()
+            val barrier                      = NioHandle.init(barrierClient, 4096, Duration.Infinity, Frame.internal)
+            driver.registerChannel(barrier)
+            Sync.ensure(Sync.defer {
+                barrierPeer.close()
+                driver.closeHandle(barrier)
+            }) {
+                val barrierRead = new IOPromise[Closed, ReadOutcome]
+                driver.awaitRead(barrier, barrierRead.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
+                discard(barrierPeer.write(ByteBuffer.wrap(Array[Byte](1))))
+                awaitOutcome(barrierRead, 10.seconds).map { dispatched =>
+                    assert(
+                        dispatched.exists(_.isSuccess),
+                        s"the barrier read never dispatched, so the pre-CAS arm was never exposed to a poll cycle: $dispatched"
+                    )
+                    assert(
+                        !p.done(),
+                        "pre-CAS arm was spuriously completed: nothing may fail a read before the upgrade's state CAS and sweep have run"
+                    )
+                }
+            }.andThen {
                 driver.detachForUpgrade(handle)
                 awaitOutcome(p, 10.seconds).map {
                     case Present(Result.Failure(_)) => succeed

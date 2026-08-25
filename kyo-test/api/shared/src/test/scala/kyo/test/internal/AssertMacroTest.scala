@@ -33,6 +33,12 @@ class AssertMacroTest extends AsyncFreeSpec with NonImplicitAssertions:
     // class-body code via the private[kyo] ctor (this test is under package kyo).
     private given AssertScope = new AssertScope(Chunk.empty)
 
+    // The subexpression value diagram is compiled in only when KYO_TEST_POWER_ASSERT (or -Dkyo.test.powerAssert) is set (see
+    // AssertMacro). Tests asserting on those values gate on the same flag, read at runtime (compile and run share the env under sbt/CI).
+    private val powerAssertOn: Boolean =
+        sys.props.get("kyo.test.powerAssert").orElse(sys.env.get("KYO_TEST_POWER_ASSERT"))
+            .exists(v => Set("1", "true", "on", "yes").contains(v.trim.toLowerCase))
+
     // Tracks whether a by-name argument was evaluated
     private def expensive(): Boolean =
         throw new RuntimeException("expensive() should not have been called: short-circuit broken")
@@ -56,6 +62,7 @@ class AssertMacroTest extends AsyncFreeSpec with NonImplicitAssertions:
         }
 
         "assert diagram includes subexpression values" in {
+            assume(powerAssertOn)
             val x = 5
             try
                 TestAssertHelper.doAssert(x > 10)
@@ -136,6 +143,7 @@ class AssertMacroTest extends AsyncFreeSpec with NonImplicitAssertions:
         }
 
         "assert handles string equality with diff" in {
+            assume(powerAssertOn)
             try
                 TestAssertHelper.doAssert("foo" == "bar")
                 fail("Expected AssertionFailed to be thrown")
@@ -232,6 +240,7 @@ class AssertMacroTest extends AsyncFreeSpec with NonImplicitAssertions:
         }
 
         "assert still records a normal value qualifier in the diagram (failing)" in {
+            assume(powerAssertOn)
             val s = "abc"
             try
                 TestAssertHelper.doAssert(s.length == 4)

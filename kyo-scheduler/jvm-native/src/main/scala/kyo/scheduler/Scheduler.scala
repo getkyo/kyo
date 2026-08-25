@@ -5,7 +5,6 @@ import java.util.ArrayList
 import java.util.concurrent.AbstractExecutorService
 import java.util.concurrent.Callable
 import java.util.concurrent.Executor
-import java.util.concurrent.Executors
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ThreadPoolExecutor
@@ -21,6 +20,7 @@ import kyo.scheduler.top.Status
 import kyo.scheduler.util.LoomSupport
 import kyo.scheduler.util.Sleep
 import kyo.scheduler.util.Threads
+import kyo.scheduler.util.WorkerExecutors
 import kyo.scheduler.util.XSRandom
 import scala.annotation.nowarn
 import scala.annotation.tailrec
@@ -567,9 +567,14 @@ final class Scheduler(
 
 object Scheduler {
 
-    private lazy val defaultWorkerExecutor = Executors.newCachedThreadPool(Threads("kyo-scheduler-worker", new Worker.WorkerThread(_)))
-    private lazy val defaultClockExecutor  = Executors.newSingleThreadExecutor(Threads("kyo-scheduler-clock"))
-    private lazy val defaultTimerExecutor  = Executors.newScheduledThreadPool(4, Threads("kyo-scheduler-timer"))
+    private lazy val defaultWorkerExecutor =
+        WorkerExecutors.worker(
+            Threads("kyo-scheduler-worker", new Worker.WorkerThread(_)),
+            Config.default.coreWorkers,
+            Config.default.maxWorkers
+        )
+    private lazy val defaultClockExecutor = WorkerExecutors.clock(Threads("kyo-scheduler-clock"))
+    private lazy val defaultTimerExecutor = WorkerExecutors.timer(4, Threads("kyo-scheduler-timer"))
 
     val get = new Scheduler()
 

@@ -104,11 +104,19 @@ class RealisticInteractionItTest extends UITest:
                 ref.map(v => UI.span(s"sig:$v").id("v"))
             )
         withUI(app) {
+            // Windows Chrome can drop a synthetic fill (no input event fires), so the signal never updates and a plain
+            // assert exhausts its budget. Retry fill+assert together; fill replaces the value, so re-runs are idempotent.
             for
-                _ <- Browser.fill(Selector.id("i"), "hello")
-                _ <- Browser.assertText(Selector.id("v"), "sig:hello")
-                _ <- Browser.fill(Selector.id("i"), "hello!")
-                _ <- Browser.assertText(Selector.id("v"), "sig:hello!")
+                _ <- Retry[BrowserReadException](Schedule.fixed(300.millis).take(5)) {
+                    Browser.fill(Selector.id("i"), "hello").andThen(
+                        Browser.assertText(Selector.id("v"), "sig:hello", Present(Schedule.fixed(100.millis).take(2)))
+                    )
+                }
+                _ <- Retry[BrowserReadException](Schedule.fixed(300.millis).take(5)) {
+                    Browser.fill(Selector.id("i"), "hello!").andThen(
+                        Browser.assertText(Selector.id("v"), "sig:hello!", Present(Schedule.fixed(100.millis).take(2)))
+                    )
+                }
             yield ()
         }
     }

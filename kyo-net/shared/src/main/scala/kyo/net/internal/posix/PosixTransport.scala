@@ -69,6 +69,9 @@ final private[net] class PosixTransport private[posix] (
     engineFactory: PosixTransport.TlsEngineFactory,
     // Claim flag for the process-global stdio handle, so stdio is claimed at most once.
     stdioClaimed: AtomicBoolean.Unsafe,
+    // Called once per resource-exhaustion re-arm of an accept loop, just before the backoff timer is scheduled. Production is a no-op;
+    // the test tree passes a counter so the re-arm cadence is observable as an event count, not elapsed wall-clock time.
+    onAcceptResourceBackoff: () => Unit,
     // Count of accept loops that have started but not yet exited. Each loop increments it on start and decrements it on exit (every path), so a
     // caller that closed the listeners can observe via [[activeAcceptLoops]] when every blocking `accept` has actually returned and its loop has
     // wound down. That matters for orderly shutdown: a blocking `accept` cannot be cancelled, so after closing a listen fd the only way to know
@@ -1082,6 +1085,7 @@ final private[net] class PosixTransport private[posix] (
         // schedules a timer on the clock executor and returns a fiber; its completion callback re-enters scheduleNextAccept. If the listener
         // closed during the backoff, scheduleNextAccept observes isClosed and winds the loop down (no re-arm on a dead fd).
         def scheduleAcceptAfterBackoff()(using AllowUnsafe, Frame): Unit =
+            onAcceptResourceBackoff()
             Clock.live.unsafe.sleep(acceptResourceBackoff).onComplete(_ => scheduleNextAccept())
 
         def acceptAll()(using AllowUnsafe, Frame): AcceptDrain =
@@ -2473,7 +2477,8 @@ private[net] object PosixTransport:
         representative: IoDriver[PosixHandle],
         sockets: SocketBindings,
         backendIsEpoll: Boolean,
-        engineFactory: TlsEngineFactory = realEngineFactory
+        engineFactory: TlsEngineFactory = realEngineFactory,
+        onAcceptResourceBackoff: () => Unit = () => ()
     )(using AllowUnsafe): PosixTransport =
         new PosixTransport(
             pool = pool,
@@ -2482,6 +2487,7 @@ private[net] object PosixTransport:
             backendIsEpoll = backendIsEpoll,
             engineFactory = engineFactory,
             stdioClaimed = AtomicBoolean.Unsafe.init(false),
+            onAcceptResourceBackoff = onAcceptResourceBackoff,
             acceptLoopsActive = AtomicLong.Unsafe.init(0)
         )
 

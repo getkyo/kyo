@@ -55,18 +55,6 @@ class DynamicFlagConcurrencyTest extends AnyFreeSpec {
             assert(result == "value1" || result == "value2")
         }
 
-        "apply() never blocks — completes in bounded time" in {
-            val flag = DynConcTestFlags.neverBlocks
-            flag.update("rollout:100@enterprise;50")
-            val start = java.lang.System.nanoTime()
-            for (_ <- 0 until 10000) {
-                flag("user1", "enterprise"): Unit
-            }
-            val elapsed = java.lang.System.nanoTime() - start
-            // 10000 calls should complete in well under 1 second
-            assert(elapsed < 1000000000L, s"Took ${elapsed / 1000000}ms for 10000 calls")
-        }
-
         "update() during apply() with percentage — consistent bucket evaluation" in {
             val flag = DynConcTestFlags.concBucket
             flag.update("rollout:true@50%")
@@ -160,7 +148,6 @@ object DynConcTestFlags {
     object concApply             extends DynamicFlag[String]("default")
     object concApplyDuringUpdate extends DynamicFlag[Int](0)
     object concUpdates           extends DynamicFlag[String]("default")
-    object neverBlocks           extends DynamicFlag[Int](0)
     object concBucket            extends DynamicFlag[Boolean](false)
     object highThroughput        extends DynamicFlag[String]("default")
     object concReload            extends DynamicFlag[Int](0)

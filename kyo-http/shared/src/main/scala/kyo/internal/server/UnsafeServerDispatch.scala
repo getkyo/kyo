@@ -70,6 +70,9 @@ private[kyo] object UnsafeServerDispatch:
     /** Set up parser-driven dispatch for a connection.
       *
       * Called once per accepted connection. Proceeds directly with HTTP/1.1 parsing.
+      *
+      * @param clock
+      *   Clock the keep-alive idle timer is scheduled on. Defaults to `Clock.live`, the wall clock the transport runs on.
       */
     def serve(
         router: HttpRouter,
@@ -77,9 +80,10 @@ private[kyo] object UnsafeServerDispatch:
         outbound: Channel.Unsafe[Span[Byte]],
         config: HttpServerConfig,
         onClosing: Maybe[Fiber.Unsafe[Unit, Any]] = Absent,
-        closeConnection: Maybe[() => Unit] = Absent
+        closeConnection: Maybe[() => Unit] = Absent,
+        clock: Clock = Clock.live
     )(using AllowUnsafe, Frame): Unit =
-        serveH1(router, inbound, outbound, config, Array.emptyByteArray, 0, onClosing, closeConnection)
+        serveH1(router, inbound, outbound, config, Array.emptyByteArray, 0, onClosing, closeConnection, clock)
 
     /** Set up HTTP/1.1 dispatch. Injects any pre-read bytes into the parser. */
     private def serveH1(
@@ -90,7 +94,8 @@ private[kyo] object UnsafeServerDispatch:
         initialBytes: Array[Byte],
         initialLen: Int,
         onClosing: Maybe[Fiber.Unsafe[Unit, Any]] = Absent,
-        closeConnection: Maybe[() => Unit] = Absent
+        closeConnection: Maybe[() => Unit] = Absent,
+        clock: Clock = Clock.live
     )(using AllowUnsafe, Frame): Unit =
         val builder   = new ParsedRequestBuilder
         val headerBuf = new GrowableByteBuffer
@@ -149,7 +154,7 @@ private[kyo] object UnsafeServerDispatch:
 
         def startIdleTimer(): Unit =
             if idleTimeoutEnabled then
-                val fiber = Clock.live.unsafe.sleep(idleTimeout)
+                val fiber = clock.unsafe.sleep(idleTimeout)
                 idleTimerFiber = Present(fiber)
                 fiber.onComplete { result =>
                     result match
@@ -225,9 +230,8 @@ private[kyo] object UnsafeServerDispatch:
                     val cl  = request.contentLength
                     val max = config.maxContentLength
 
-                    // Content-Length enforcement: reject before routing if body exceeds limit.
-                    // Per RFC 9110 section 8.6, when both Content-Length and Transfer-Encoding
-                    // are present, Transfer-Encoding wins and Content-Length is ignored.
+                    // Reject before routing if the declared body exceeds the limit. Both Content-Length and Transfer-Encoding is already
+                    // 400'd upstream (RFC 9112 section 9.5); the `!request.isChunked` guard skips a chunked body, whose length no header declares.
                     if cl > max && !request.isChunked then
                         // The over-limit body is never consumed (417 withholds it, 413 declined it), so the connection
                         // cannot be reused: answerAndContinue closes it (RFC 9112 section 9.3). The 417-vs-413
@@ -279,16 +283,10 @@ private[kyo] object UnsafeServerDispatch:
                 // Answering is only half of it. Not restarting keep-alive is not the same as closing, and answering
                 // without closing is worse than staying silent: the peer sees a complete, well-framed 400, keeps a
                 // connection it believes is healthy, and sends its next request into a socket nothing is reading. So the
-                // answer carries Connection: close (RFC 9112 section 9.6) and the connection is actually torn down.
-                // Closing through closeFn also flushes the queued 400 rather than dropping it, and reclaims the fd,
-                // which the idle timer can no longer do for us because onClosed has just cancelled it.
+                // answer carries Connection: close (RFC 9112 section 9.6) and the connection is torn down through the same
+                // answer-then-close teardown, which delivers the queued 400 and reclaims the fd onClosed's cancel left behind.
                 writeBadRequest(streamCtx, connectionClose = true)
-                closeConnection match
-                    case Present(closeFn) => closeFn()
-                    case Absent =>
-                        discard(inbound.close())
-                        discard(outbound.close())
-                end match
+                closeConnectionNow()
         )
 
         // Inject any pre-read bytes into the parser

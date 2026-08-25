@@ -6,6 +6,7 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicLongArray
 import kyo.*
 import scala.annotation.tailrec
+import scala.util.control.NonFatal
 
 /** Per-host idle connection pool with bounded capacity, health checks, and idle eviction.
   *
@@ -23,12 +24,18 @@ final private[kyo] class ConnectionPool[K, C](
     idleConnectionTimeoutNanos: Long,
     pools: ConcurrentHashMap[K, ConnectionPool.HostPool],
     isAlive: C => Boolean,
-    discardConn: C => Unit
+    discardConn: C => Unit,
+    clock: Clock,
+    frame: Frame
 ):
 
     import ConnectionPool.*
 
     @volatile private var closed = false
+
+    // Background fiber that closes connections idle past the timeout, so a socket is released even when the pool is never
+    // polled again and its client never closed. Absent for an infinite timeout; interrupted by close().
+    @volatile private var reaper: Maybe[Fiber.Unsafe[Unit, Any]] = Absent
 
     /** True once `close()` has run. For testing the client's close/release path only. */
     private[kyo] def isClosed(using AllowUnsafe): Boolean = closed
@@ -41,7 +48,7 @@ final private[kyo] class ConnectionPool[K, C](
     /** Try to get a live idle connection for the given host. */
     def poll(key: K)(using AllowUnsafe): Maybe[C] =
         if closed then Maybe.empty
-        else getPool(key).poll(idleConnectionTimeoutNanos, isAlive, discardConn)
+        else getPool(key).poll(clock.unsafe.nowMonotonic().toNanos, idleConnectionTimeoutNanos, isAlive, discardConn)
 
     /** Return a connection to the idle pool. If the ring is full, discard it. */
     def release(key: K, conn: C)(using AllowUnsafe): Unit =
@@ -49,7 +56,7 @@ final private[kyo] class ConnectionPool[K, C](
         else
             raceProbe()
             val hostPool = getPool(key)
-            hostPool.release(conn, discardConn)
+            hostPool.release(clock.unsafe.nowMonotonic().toNanos, conn, discardConn)
             // close() can race this release: it sets `closed`, drains every host pool, and clears the map, any of which may
             // fall between the `closed` read above and the publish just done. A connection published into a ring close()
             // already drained (or a fresh pool getPool re-created after pools.clear()) would otherwise never be drained again
@@ -80,6 +87,12 @@ final private[kyo] class ConnectionPool[K, C](
         if closed then Chunk.empty
         else
             closed = true
+            reaper match
+                case Present(r) =>
+                    given Frame = frame
+                    kyo.discard(r.interrupt())
+                case Absent => ()
+            end match
             val builder = ChunkBuilder.init[C]
             pools.forEach { (_, hostPool) =>
                 hostPool.close(builder)
@@ -96,6 +109,27 @@ final private[kyo] class ConnectionPool[K, C](
     private def getPool(key: K): HostPool =
         pools.computeIfAbsent(key, newHostPool)
 
+    // Launch the idle-expiry reaper (init calls this only for a finite timeout). One scheduler fiber that parks on
+    // Clock.sleep between passes: no thread blocking, no per-request cost. close() interrupts it.
+    private def startReaper(interval: Duration)(using AllowUnsafe): Unit =
+        given Frame = frame
+        reaper =
+            Present(
+                Sync.Unsafe.evalOrThrow(
+                    // Bind the pool's own clock, not the ambient one: the pool may be initialized under a controlled clock
+                    // that the ambient clock would leave parked forever, and a test's clock drives cadence and idle-age reads.
+                    Clock.let(clock)(Clock.repeatWithDelay(interval, interval)(Sync.Unsafe.defer(sweepExpiredHosts())))
+                ).unsafe
+            )
+    end startReaper
+
+    // One reaper pass: close every connection idle past the timeout, across all host pools.
+    private def sweepExpiredHosts()(using AllowUnsafe): Unit =
+        given Frame = frame
+        val now     = clock.unsafe.nowMonotonic().toNanos
+        pools.forEach((_, hostPool) => hostPool.sweepExpired(now, idleConnectionTimeoutNanos, discardConn))
+    end sweepExpiredHosts
+
 end ConnectionPool
 
 private[kyo] object ConnectionPool:
@@ -108,15 +142,29 @@ private[kyo] object ConnectionPool:
         idleConnectionTimeout: Duration,
         isAlive: C => Boolean,
         discard: C => Unit
-    )(using AllowUnsafe): ConnectionPool[K, C] =
-        require(maxConnectionsPerHost >= 2, s"maxConnectionsPerHost must be >= 2: $maxConnectionsPerHost")
-        new ConnectionPool(
-            maxConnectionsPerHost,
-            idleConnectionTimeout.toNanos,
-            new ConcurrentHashMap(),
-            isAlive,
-            discard
-        )
+    )(using frame: Frame): ConnectionPool[K, C] < Sync =
+        // Capture the ambient clock (Clock.live, or a test's clock under Clock.withTimeControl). The pool stamps
+        // idle-start instants and runs its reaper against it, so eviction is exercisable under virtual time.
+        Clock.use { clock =>
+            Sync.Unsafe.defer {
+                require(maxConnectionsPerHost >= 2, s"maxConnectionsPerHost must be >= 2: $maxConnectionsPerHost")
+                val pool: ConnectionPool[K, C] = new ConnectionPool(
+                    maxConnectionsPerHost,
+                    idleConnectionTimeout.toNanos,
+                    new ConcurrentHashMap(),
+                    isAlive,
+                    discard,
+                    clock,
+                    frame
+                )
+                // Finite timeout only (an infinite-timeout pool needs no reaper). Sweep cadence is half the idle timeout,
+                // floored at 50ms, so an idle connection closes within about 1.5x the idle timeout.
+                if idleConnectionTimeout != Duration.Infinity then
+                    val intervalNanos = math.max(idleConnectionTimeout.toNanos / 2, 50L * 1000000L)
+                    pool.startReaper(intervalNanos.nanos)
+                pool
+            }
+        }
     end init
 
     /** Lock-free MPMC ring buffer for idle connections, based on Dmitry Vyukov's MPMC queue.
@@ -137,8 +185,11 @@ private[kyo] object ConnectionPool:
         private val tail        = new AtomicLong(0)
         private val inFlight    = new AtomicInteger(0)
 
-        /** Try to take an idle connection. Discards expired or dead connections and retries. */
+        /** Try to take an idle connection. Discards expired or dead connections and retries. `now` is one monotonic
+          * reading for the whole poll, so retries compare idle age against a stable instant.
+          */
         final def poll[C](
+            now: Long,
             idleTimeoutNanos: Long,
             isAlive: C => Boolean,
             discardConn: C => Unit
@@ -149,37 +200,75 @@ private[kyo] object ConnectionPool:
             if seq < currentHead + 1 then
                 Maybe.empty
             else if !head.compareAndSet(currentHead, currentHead + 1) then
-                poll(idleTimeoutNanos, isAlive, discardConn)
+                poll(now, idleTimeoutNanos, isAlive, discardConn)
             else
                 val conn = connections(idx).get.asInstanceOf[C]
                 val ts   = timestamps(idx)
                 connections(idx) = Absent
                 sequences.lazySet(idx, currentHead + capacity)
-                val elapsed = java.lang.System.nanoTime() - ts
+                val elapsed = now - ts
                 if elapsed > idleTimeoutNanos then
                     discardConn(conn)
-                    poll(idleTimeoutNanos, isAlive, discardConn)
+                    poll(now, idleTimeoutNanos, isAlive, discardConn)
                 else if !isAlive(conn) then
                     discardConn(conn)
-                    poll(idleTimeoutNanos, isAlive, discardConn)
+                    poll(now, idleTimeoutNanos, isAlive, discardConn)
                 else
                     Present(conn)
                 end if
             end if
         end poll
 
-        /** Return a connection to the ring. If full, discard it. */
-        final def release[C](conn: C, discardConn: C => Unit): Unit =
+        /** Close every connection idle past the timeout, scanning from the head.
+          *
+          * The ring is ordered by idle age head to tail, so the scan stops at the first non-stale head (a rare out-of-order
+          * `release` self-heals next sweep, never a leak). A stale head is claimed with the same `head` CAS `poll` uses, so
+          * the reaper is race-free and exactly-once against a concurrent `poll`/`close`; an unreadable sequence is
+          * mid-publish, so stop. A close failure is logged so one bad connection can't stall the rest.
+          */
+        final def sweepExpired[C](now: Long, idleTimeoutNanos: Long, discardConn: C => Unit)(using AllowUnsafe, Frame): Unit =
+            @tailrec def loop(): Unit =
+                val currentHead = head.get()
+                val currentTail = tail.get()
+                if currentHead >= currentTail then ()
+                else
+                    val idx = (currentHead % capacity).toInt
+                    val seq = sequences.get(idx)
+                    if seq < currentHead + 1 then ()                          // head mid-publish (fresh): stop
+                    else if now - timestamps(idx) <= idleTimeoutNanos then () // head still fresh => all behind fresher => done
+                    else if head.compareAndSet(currentHead, currentHead + 1) then
+                        val conn = connections(idx).get.asInstanceOf[C]
+                        connections(idx) = Absent
+                        sequences.lazySet(idx, currentHead + capacity)
+                        try discardConn(conn)
+                        catch
+                            case ex: Throwable if NonFatal(ex) =>
+                                Log.live.unsafe.error(
+                                    s"kyo.net: ConnectionPool reaper failed to close an idle connection: ${ex.getMessage}"
+                                )
+                        end try
+                        loop()
+                    else loop() // lost the CAS to a concurrent poll/close/sweep: re-read
+                    end if
+                end if
+            end loop
+            loop()
+        end sweepExpired
+
+        /** Return a connection to the ring, or discard it if full. `now` is the idle-start instant stamped on the
+          * connection, read once from the pool's clock.
+          */
+        final def release[C](now: Long, conn: C, discardConn: C => Unit): Unit =
             val currentTail = tail.get()
             val idx         = (currentTail % capacity).toInt
             val seq         = sequences.get(idx)
             if seq < currentTail then
                 discardConn(conn)
             else if !tail.compareAndSet(currentTail, currentTail + 1) then
-                release(conn, discardConn)
+                release(now, conn, discardConn)
             else
                 connections(idx) = Present(conn.asInstanceOf[AnyRef])
-                timestamps(idx) = java.lang.System.nanoTime()
+                timestamps(idx) = now
                 sequences.lazySet(idx, currentTail + 1)
             end if
         end release
