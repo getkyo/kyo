@@ -52,30 +52,39 @@ jobs:
         run: |
           bash kyo-net/build/boringssl/build-boringssl.sh darwin-aarch64
           bash kyo-net/build/boringssl/build-boringssl.sh darwin-x86_64
-      - name: Compile kyo-net natives (darwin-aarch64 + darwin-x86_64)
+      # ONE compile for every FFI module. The plugin knows which projects declare ffiLibraries, so the
+      # workflow does not enumerate them: adding an FFI module needs no edit here. Previously this job
+      # carried a hand-written block per module (compile, collect, upload), which is how a module ends up
+      # published with no native for a platform it needs.
+      - name: Compile every module's darwin natives (darwin-aarch64 + darwin-x86_64)
         shell: bash
         run: |
           # Host build: build.sbt resolves the BoringSSL staged dir and the target to darwin-aarch64.
-          sbt -Dplatform=JVM 'kyo-netJVM/ffiCompile'
+          sbt -Dplatform=JVM ffiCompileAll
           # Cross build: -Dos.arch=x86_64 points the host-keyed resolution at darwin-x86_64 (so the
           # boringssl shim links the x86_64 archives), -arch x86_64 makes clang emit x86_64 code.
-          # ffiCFlags is a per-project setting, so scope the set to kyo-netJVM (ThisBuild / ffiCFlags
-          # is undefined in this build).
-          sbt -Dplatform=JVM -Dos.arch=x86_64 'set LocalProject("kyo-netJVM") / ffiCFlags ++= Seq("-arch", "x86_64")' 'kyo-netJVM/ffiCompile'
+          # `set every` applies the flag to every project, since ffiCFlags is per-project and this leg
+          # cross-builds all of them.
+          sbt -Dplatform=JVM -Dos.arch=x86_64 'set every ffiCFlags ++= Seq("-arch", "x86_64")' ffiCompileAll
       - name: Collect darwin natives
         shell: bash
         run: |
-          mkdir -p kyonet-natives
-          find kyo-net -path '*/ffi/lib*-darwin-*.dylib' -exec cp {} kyonet-natives/ \;
-          for f in libkyonet_posix_uring-darwin-aarch64.dylib libkyonet_boringssl-darwin-aarch64.dylib \
-                   libkyonet_posix_uring-darwin-x86_64.dylib  libkyonet_boringssl-darwin-x86_64.dylib; do
-            test -s "kyonet-natives/$f" || { echo "producer natives-darwin is missing $f" >&2; exit 1; }
+          mkdir -p natives-out
+          # Repo-wide: whatever any FFI module built for this os-arch. The publish host sorts out which
+          # module gets which, by library id, through ffiPrebuiltPool.
+          find . -path '*/target/ffi/lib*-darwin-*.dylib' -exec cp -n {} natives-out/ \;
+          test -n "$(ls -A natives-out)" || { echo "producer natives-darwin built nothing" >&2; exit 1; }
+          # Every collected file must actually be a Mach-O object. Per-module completeness is checked at
+          # publish time by ffiPackagingCheck, which knows what each module requires; this step only
+          # guarantees the producer did its job and produced the right kind of file.
+          for f in natives-out/*; do
+            file "$f" | grep -qi 'Mach-O' || { echo "$f is not a Mach-O object" >&2; exit 1; }
           done
-          ls -l kyonet-natives
+          ls -l natives-out
       - uses: actions/upload-artifact@v7
         with:
           name: natives-darwin
-          path: kyonet-natives
+          path: natives-out
           if-no-files-found: error
 
   # ubuntu-latest is x86_64: it produces the glibc linux-x86_64 natives directly, and the linux-musl-x86_64
@@ -110,9 +119,9 @@ jobs:
         shell: bash
         run: |
           bash kyo-net/build/boringssl/build-boringssl.sh linux-x86_64
-          sbt -Dplatform=JVM 'kyo-netJVM/ffiCompile'
-          mkdir -p kyonet-natives
-          find kyo-net -path '*/ffi/lib*-linux-x86_64.so' -exec cp {} kyonet-natives/ \;
+          sbt -Dplatform=JVM ffiCompileAll
+          mkdir -p natives-out
+          find . -path '*/target/ffi/lib*-linux-x86_64.so' -exec cp -n {} natives-out/ \;
       - name: Build linux-musl-x86_64 natives (Alpine)
         shell: bash
         run: |
@@ -126,22 +135,24 @@ jobs:
             curl -fsSL "https://github.com/sbt/sbt/releases/download/v${sbt_ver}/sbt-${sbt_ver}.tgz" | tar -xz -C /opt
             export PATH="/opt/sbt/bin:$PATH"
             bash kyo-net/build/boringssl/build-boringssl.sh linux-musl-x86_64
-            sbt -Dplatform=JVM kyo-netJVM/ffiCompile
-            mkdir -p kyonet-natives
-            find kyo-net -path "*/ffi/lib*-linux-musl-x86_64.so" -exec cp {} kyonet-natives/ \;
+            sbt -Dplatform=JVM ffiCompileAll
+            mkdir -p natives-out
+            find . -path "*/target/ffi/lib*-linux-musl-x86_64.so" -exec cp -n {} natives-out/ \;
           '
       - name: Verify + list natives
         shell: bash
         run: |
-          for f in libkyonet_posix_uring-linux-x86_64.so      libkyonet_boringssl-linux-x86_64.so \
-                   libkyonet_posix_uring-linux-musl-x86_64.so libkyonet_boringssl-linux-musl-x86_64.so; do
-            test -s "kyonet-natives/$f" || { echo "producer natives-linux-x86_64 is missing $f" >&2; exit 1; }
+          test -n "$(ls -A natives-out)" || { echo "this producer built nothing" >&2; exit 1; }
+          # Per-module completeness is checked at publish time by ffiPackagingCheck, which knows what
+          # each module requires; here we only prove the producer ran and emitted ELF objects.
+          for f in natives-out/*; do
+            file "$f" | grep -qi 'ELF' || { echo "$f is not an ELF object" >&2; exit 1; }
           done
-          ls -l kyonet-natives
+          ls -l natives-out
       - uses: actions/upload-artifact@v7
         with:
           name: natives-linux-x86_64
-          path: kyonet-natives
+          path: natives-out
           if-no-files-found: error
 
   # ubuntu-24.04-arm is arm64: the glibc linux-aarch64 natives directly, the linux-musl-aarch64 natives via
@@ -174,9 +185,9 @@ jobs:
         shell: bash
         run: |
           bash kyo-net/build/boringssl/build-boringssl.sh linux-aarch64
-          sbt -Dplatform=JVM 'kyo-netJVM/ffiCompile'
-          mkdir -p kyonet-natives
-          find kyo-net -path '*/ffi/lib*-linux-aarch64.so' -exec cp {} kyonet-natives/ \;
+          sbt -Dplatform=JVM ffiCompileAll
+          mkdir -p natives-out
+          find . -path '*/target/ffi/lib*-linux-aarch64.so' -exec cp -n {} natives-out/ \;
       - name: Build linux-musl-aarch64 natives (Alpine)
         shell: bash
         run: |
@@ -187,22 +198,24 @@ jobs:
             curl -fsSL "https://github.com/sbt/sbt/releases/download/v${sbt_ver}/sbt-${sbt_ver}.tgz" | tar -xz -C /opt
             export PATH="/opt/sbt/bin:$PATH"
             bash kyo-net/build/boringssl/build-boringssl.sh linux-musl-aarch64
-            sbt -Dplatform=JVM kyo-netJVM/ffiCompile
-            mkdir -p kyonet-natives
-            find kyo-net -path "*/ffi/lib*-linux-musl-aarch64.so" -exec cp {} kyonet-natives/ \;
+            sbt -Dplatform=JVM ffiCompileAll
+            mkdir -p natives-out
+            find . -path "*/target/ffi/lib*-linux-musl-aarch64.so" -exec cp -n {} natives-out/ \;
           '
       - name: Verify + list natives
         shell: bash
         run: |
-          for f in libkyonet_posix_uring-linux-aarch64.so      libkyonet_boringssl-linux-aarch64.so \
-                   libkyonet_posix_uring-linux-musl-aarch64.so libkyonet_boringssl-linux-musl-aarch64.so; do
-            test -s "kyonet-natives/$f" || { echo "producer natives-linux-aarch64 is missing $f" >&2; exit 1; }
+          test -n "$(ls -A natives-out)" || { echo "this producer built nothing" >&2; exit 1; }
+          # Per-module completeness is checked at publish time by ffiPackagingCheck, which knows what
+          # each module requires; here we only prove the producer ran and emitted ELF objects.
+          for f in natives-out/*; do
+            file "$f" | grep -qi 'ELF' || { echo "$f is not an ELF object" >&2; exit 1; }
           done
-          ls -l kyonet-natives
+          ls -l natives-out
       - uses: actions/upload-artifact@v7
         with:
           name: natives-linux-aarch64
-          path: kyonet-natives
+          path: natives-out
           if-no-files-found: error
 
   publish:
@@ -225,19 +238,20 @@ jobs:
       # Shared with release-probe.yml so the probe builds in this exact environment. A native
       # dependency added for publishing has one place to be added, and the probe inherits it.
       - uses: ./.github/actions/release-setup
-      # Fold every producer's per-os-arch natives into one tree; the JVM ci-release below points
-      # kyo-netJVM's ffiPrebuiltDir at it, so the classifier slice covers every os-arch (not just this
-      # host's). merge-multiple flattens the per-producer artifacts into one directory; the filenames
-      # (lib<id>-<os>-<arch>.<ext>) are unique across producers, so nothing collides.
-      - name: Download producer natives into ffiPrebuiltDir
+      # Fold every producer's per-os-arch natives into ONE pool, shared by every FFI module. Each project
+      # takes only the natives whose library id it declares (ffiPrebuiltPool) and ignores the rest, so the
+      # publish step below names no module and adding an FFI module needs no edit here. merge-multiple
+      # flattens the per-producer artifacts into one directory; filenames (lib<id>-<os>-<arch>.<ext>) are
+      # unique across producers, so nothing collides.
+      - name: Download every producer's natives into the shared pool
         uses: actions/download-artifact@v8
         with:
           pattern: natives-*
-          path: kyonet-prebuilt
+          path: ffi-prebuilt
           merge-multiple: true
-      - name: List staged prebuilt natives
+      - name: List the shared native pool
         shell: bash
-        run: ls -l kyonet-prebuilt
+        run: ls -l ffi-prebuilt
       # Phase 1: build, sign, and stage EVERY platform into one local bundle (target/sona-staging).
       # dottydoc crashes intermittently while rendering per-module javadoc; that happens here, inside
       # +publishSigned (no upload), so each stage is independently retriable. CI_SONATYPE_RELEASE=""
@@ -256,7 +270,7 @@ jobs:
         with:
           max_attempts: 3
           timeout_minutes: 120
-          command: rm -rf target/sona-staging && sbt -Dplatform=JVM 'set LocalProject("kyo-netJVM") / ffiPrebuiltDir := Some(file("kyonet-prebuilt"))' "ci-release"
+          command: rm -rf target/sona-staging && sbt -Dplatform=JVM 'set every ffiPrebuiltPool := Some(file("ffi-prebuilt"))' "ci-release"
         env:
           CI_SONATYPE_RELEASE: ""
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
@@ -268,7 +282,9 @@ jobs:
         with:
           max_attempts: 3
           timeout_minutes: 120
-          command: sbt -Dplatform=JS "ci-release"
+          # The Scala.js artifact bundles the same shim (under kyo-ffi/native/<os>-<arch>), and koffi loads
+          # it on macOS exactly as the JVM does, so the JS stage stages the darwin natives too.
+          command: sbt -Dplatform=JS 'set every ffiPrebuiltPool := Some(file("ffi-prebuilt"))' "ci-release"
         env:
           CI_SONATYPE_RELEASE: ""
           CI_CLEAN: ""
@@ -291,14 +307,25 @@ jobs:
           SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
       # The pre-sonaRelease belt (DECISION-P2b Decision 5): fail the release if any kyo-net library the
       # state manifest declares `native`/`prebuilt` has no real native in the merged resource tree, or if
-      # any classifier would ship a `stub`. Runs against the same ffiPrebuiltDir the JVM stage sliced, so
-      # it validates the full cross-os-arch set, not just this host's.
+      # any classifier would ship a `stub`. Runs against the shared pool the JVM stage sliced, so it
+      # validates the full cross-os-arch set, not just this host's.
       - name: Native classifier completeness guard (pre-release belt)
         shell: bash
         run: |
           sbt -Dplatform=JVM \
-            'set LocalProject("kyo-netJVM") / ffiPrebuiltDir := Some(file("kyonet-prebuilt"))' \
+            'set every ffiPrebuiltPool := Some(file("ffi-prebuilt"))' \
             kyo-netJVM/kyoNetNativeClassifierGuard
+      # Every FFI module, on both publishing platforms: each staged native must match the platform
+      # directory it sits in (read from the object-file magic, not the path), and each library must have a
+      # native for every platform its own osTargets say it builds for. The required set is DERIVED per
+      # module (ffiReleasePlatforms), so this step names no module and a new FFI module is covered the day
+      # it is added. RC6 shipped kyo-stats-machine with one native, the macOS shim compiled on the Linux
+      # runner and filed under linux-x86_64, so no Mac could read a single host metric and nothing said so.
+      - name: FFI native packaging guard, every module (pre-release belt)
+        shell: bash
+        run: |
+          sbt -Dplatform=JVM 'set every ffiPrebuiltPool := Some(file("ffi-prebuilt"))' ffiPackagingCheckAll
+          sbt -Dplatform=JS  'set every ffiPrebuiltPool := Some(file("ffi-prebuilt"))' ffiPackagingCheckAll
       # Phase 2: upload and publish the whole staged bundle as ONE Central Portal deployment. Single
       # attempt: re-uploading would collide on the portal. It bundles target/sona-staging and does not
       # re-run doc. Tag pushes only; snapshots were already published by the stage steps above.
