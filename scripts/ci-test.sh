@@ -214,6 +214,33 @@ if [ "${1:-}" = "--self-test" ]; then
     then record ok "a heavy --only failure aborts before the --exclude aggregate run"
     else record no "a heavy --only failure aborts before the --exclude aggregate run"; fi
 
+    # 8c. NATIVE_SKIP (with no heavy) threads --exclude into BOTH compile phases and the aggregate run, and
+    # runs no isolated --only session.
+    : > "$CALLS"; : > "$HEAP"; make_fake_sbt 'case "$*" in *--phase*) exit 0;; esac; echo "Tests: succeeded 100, failed 0"; exit 0'
+    PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 \
+        NATIVE_SKIP="kyo-aeron,kyo-sql" "$SELF" Native test >/dev/null 2>&1
+    CT_EXIT=$?
+    if calls_count 3 \
+       && call_nth_is 1 "testKyo --phase compile-main --exclude kyo-aeron,kyo-sql --all Native" \
+       && call_nth_is 2 "testKyo --phase compile-test --exclude kyo-aeron,kyo-sql --all Native" \
+       && call_nth_is 3 "-J-Xmx6G testKyo --exclude kyo-aeron,kyo-sql --all Native" \
+       && calls_lack "--only" && exit_is 0
+    then record ok "NATIVE_SKIP excludes in both compiles and the aggregate; no --only session"
+    else record no "NATIVE_SKIP excludes in both compiles and the aggregate; no --only session"; fi
+
+    # 8d. A heavy module that is also in NATIVE_SKIP is dropped from --only (an isolated session that selected
+    # nothing would fail on "no test output"); with no heavy left, the whole KEPT set runs in the aggregate,
+    # which excludes the skip set.
+    : > "$CALLS"; : > "$HEAP"; make_fake_sbt 'case "$*" in *--phase*) exit 0;; esac; echo "Tests: succeeded 100, failed 0"; exit 0'
+    PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 \
+        NATIVE_HEAVY="kyo-schema-tests" NATIVE_SKIP="kyo-schema-tests,kyo-aeron" "$SELF" Native test >/dev/null 2>&1
+    CT_EXIT=$?
+    if calls_count 3 && calls_lack "--only" \
+       && call_nth_is 3 "-J-Xmx6G testKyo --exclude kyo-schema-tests,kyo-aeron --all Native" \
+       && exit_is 0
+    then record ok "a heavy module also in NATIVE_SKIP is dropped from --only; aggregate excludes the skip set"
+    else record no "a heavy module also in NATIVE_SKIP is dropped from --only; aggregate excludes the skip set"; fi
+
     # 9-20: Native crash-retry / check_log scenarios.
     # The two compile phases must pass, so the body exits 0 for any --phase call and applies the
     # scenario ($3) to the aggregate run.
@@ -392,6 +419,16 @@ RESOLVE_BACKOFF=${RESOLVE_BACKOFF:-20}
 # the capped Native driver. The aggregate run excludes these via `testKyo --exclude`, so each is
 # linked and run exactly once. Empty by default; the CI workflow sets it for the Native target.
 NATIVE_HEAVY="${NATIVE_HEAVY:-}"
+
+# Space- or comma-separated base names dropped from the Native leg ENTIRELY (the app/integration tier:
+# database, messaging, container, browser/UI, and interop modules whose behavior is platform-shared and
+# already covered on JVM/JS). Native link is the dominant CI cost (~90s+ per module, one link each), so
+# excluding these keeps the Native rows viable. Applied as `--exclude` to every native phase (both
+# compile phases and the run), so an excluded module is neither compiled-for-test nor linked nor run. A
+# KEPT module that dependsOn an excluded one still compiles that dependency's main on demand, so the build
+# never breaks; only the excluded module's own tests stop running natively. Empty by default (so the
+# self-test and any standalone run keep the full set); the CI workflow sets it for the Native target.
+NATIVE_SKIP="${NATIVE_SKIP:-}"
 
 # When non-empty, the isolated heavy-module native-link drivers run with
 # -XX:ActiveProcessorCount=$NATIVE_LINK_CPUS: the heavy `testKyo --only` link+test session (test path)
@@ -622,13 +659,31 @@ run_native_retry() {
     return 1
 }
 
+# Assemble a native `testKyo` command with no stray double-spaces, folding NATIVE_SKIP into the exclude.
+# Args: phase(or "")  only_csv(or "")  extra_exclude_csv(or "")  skip_csv(or "")  run_arg(or "").
+# With an empty skip and extra the output matches the pre-NATIVE_SKIP form for the `test` action (a non-empty
+# run-arg), so the self-test's exact-match assertions still hold; the empty-arg compile/testDiff actions collapse
+# what used to be a double space to a single one, which sbt ignores.
+native_testkyo() {
+    local phase="$1" only="$2" extra="$3" skip="$4" arg="$5" excl cmd="testKyo"
+    [ -n "$phase" ] && cmd="$cmd --phase $phase"
+    [ -n "$only" ]  && cmd="$cmd --only $only"
+    excl="$extra"; [ -n "$skip" ] && excl="${extra:+$extra,}$skip"
+    [ -n "$excl" ]  && cmd="$cmd --exclude $excl"
+    [ -n "$arg" ]   && cmd="$cmd $arg"
+    printf '%s Native' "$cmd"
+}
+
 run_native() {
     local arg; arg=$(run_arg)
 
+    # Comma-separated base names to drop from every native phase (empty by default; CI sets NATIVE_SKIP).
+    local skip_csv; skip_csv=$(printf '%s' "$NATIVE_SKIP" | tr -s ', ' ',' | sed 's/^,//; s/,$//')
+
     # compile: compile main and test only, no link, no run.
     if [ "$ACTION" = "compile" ]; then
-        sbt_resolve_retry "testKyo --phase compile-main $arg Native" || return $?
-        sbt_resolve_retry "testKyo --phase compile-test $arg Native" || return $?
+        sbt_resolve_retry "$(native_testkyo compile-main '' '' "$skip_csv" "$arg")" || return $?
+        sbt_resolve_retry "$(native_testkyo compile-test '' '' "$skip_csv" "$arg")" || return $?
         return 0
     fi
 
@@ -648,30 +703,43 @@ run_native() {
     # test / testDiff: single-link. Compile upfront (no link) so a compile error fails fast, then run
     # the heavy modules isolated and the rest in the aggregate. Each module links exactly once, inside
     # its test session (see the file header on scala-native #2514 / #1822).
-    sbt_resolve_retry "testKyo --phase compile-main $arg Native" || return $?
-    sbt_resolve_retry "testKyo --phase compile-test $arg Native" || return $?
+    sbt_resolve_retry "$(native_testkyo compile-main '' '' "$skip_csv" "$arg")" || return $?
+    sbt_resolve_retry "$(native_testkyo compile-test '' '' "$skip_csv" "$arg")" || return $?
 
     # Comma-separated base names for the --only / --exclude split (NATIVE_HEAVY is space-separated).
     local heavy_csv; heavy_csv=$(printf '%s' "$NATIVE_HEAVY" | tr -s ' ' ',' | sed 's/^,//; s/,$//')
+    # Drop any heavy module that is also in NATIVE_SKIP: a `--only` session that selected nothing would make
+    # run_native_retry fail on "no test output". After the drop an all-skipped heavy leaves heavy_csv empty and
+    # the `--only` session is skipped, so the whole KEPT set runs in the aggregate.
+    if [ -n "$heavy_csv" ] && [ -n "$skip_csv" ]; then
+        local kept_heavy="" h
+        for h in $(printf '%s' "$heavy_csv" | tr ',' ' '); do
+            case ",$skip_csv," in *",$h,"*) : ;; *) kept_heavy="${kept_heavy:+$kept_heavy,}$h" ;; esac
+        done
+        heavy_csv="$kept_heavy"
+    fi
     if [ -n "$heavy_csv" ]; then
         # Heavy modules: link+run in their own full-heap driver (the .jvmopts 12G, uncapped) so the
         # whole-program optimize does not stack on the aggregate's accumulated heap, CPU-capped so the
         # clang fork fleet does not overcommit the runner. --only is diff-gated by testKyo, so in a diff
-        # run the heavy runs only when it is actually affected.
-        log "linking+running heavy native modules isolated: sbt testKyo --only $heavy_csv $arg Native"
+        # run the heavy runs only when it is actually affected. A heavy module that is also in NATIVE_SKIP
+        # is excluded here, so its --only session runs nothing.
+        local heavy_cmd; heavy_cmd=$(native_testkyo '' "$heavy_csv" '' "$skip_csv" "$arg")
+        log "linking+running heavy native modules isolated: sbt $heavy_cmd"
         (
             if [ -n "$NATIVE_LINK_CPUS" ]; then
                 export JAVA_OPTS="${JAVA_OPTS:-} -XX:ActiveProcessorCount=$NATIVE_LINK_CPUS"
                 export JVM_OPTS="${JVM_OPTS:-} -XX:ActiveProcessorCount=$NATIVE_LINK_CPUS"
             fi
-            run_native_retry "testKyo --only $heavy_csv $arg Native"
+            run_native_retry "$heavy_cmd"
         ) || return $?
         # The rest: the run-phase heap cap keeps headroom for the podman/chrome forks the container and
-        # browser modules spawn; every heavy module is excluded, already run above.
-        log "linking+running remaining native modules: sbt testKyo --exclude $heavy_csv $arg Native"
-        run_native_retry $(run_phase_heap) "testKyo --exclude $heavy_csv $arg Native"
+        # browser modules spawn; every heavy module (and every skipped module) is excluded here.
+        local rest_cmd; rest_cmd=$(native_testkyo '' '' "$heavy_csv" "$skip_csv" "$arg")
+        log "linking+running remaining native modules: sbt $rest_cmd"
+        run_native_retry $(run_phase_heap) "$rest_cmd"
     else
-        run_native_retry $(run_phase_heap) "testKyo $arg Native"
+        run_native_retry $(run_phase_heap) "$(native_testkyo '' '' '' "$skip_csv" "$arg")"
     fi
 }
 
