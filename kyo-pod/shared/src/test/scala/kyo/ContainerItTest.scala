@@ -730,12 +730,23 @@ class ContainerItTest extends BasePodTest:
         }
 
         "a published port with a live listener starts normally" - runBackends {
-            // busybox httpd rather than an `nc` loop: nc serves one connection and exits, and
-            // `echo ok | nc` hangs up as soon as it has written, which is the accept-and-drop
-            // shape the probe now (correctly) calls not-ready. httpd holds every connection
-            // until its request completes, which is what a real service does.
+            // Two things this command has to get right, and an earlier version of it got both wrong.
+            //
+            // The listener must HOLD an accepted connection: `echo ok | nc` hangs up as soon as it has
+            // written, which is the accept-and-drop shape the probe now correctly calls not-ready.
+            // `sleep 60 |` keeps nc's stdin open so it holds the connection the way a real service does,
+            // and the loop restarts it because busybox nc serves one connection and exits (the
+            // in-container health check consumes one, the host-side probe another).
+            //
+            // The listener must also not BE the container: run it in the background behind
+            // `sleep infinity & wait`, the shape every other listener case here uses, so a hiccup in
+            // the listener cannot exit the container and get reported as "the fixture died".
             val config = Container.Config("alpine")
-                .command("sh", "-c", "trap 'exit 0' TERM; busybox httpd -f -p 8080 -h /tmp")
+                .command(
+                    "sh",
+                    "-c",
+                    "trap 'exit 0' TERM; while true; do sleep 60 | nc -l -p 8080; done & sleep infinity & wait"
+                )
                 .port(8080, 0)
                 .requireService(true)
                 .portMappingTimeout(60.seconds)

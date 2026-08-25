@@ -1413,6 +1413,39 @@ class ContainerTest extends BasePodTest:
     // Port readiness — the second half of requireService.
     // =========================================================================
 
+    "Container.isAliveState" - {
+        // This predicate is why `requireService` cannot fail a container on its own startup. A
+        // container between `start` and `Running` reports Created, so the health check keeps polling
+        // its schedule; only a state it cannot come back from ends the wait. Podman's `configured`
+        // and `initialized` reach here as Created via ContainerBackend.parseState.
+        "a running container may become healthy" in {
+            assert(Container.isAliveState(Container.State.Running))
+        }
+
+        "a created container may become healthy — the not-yet-running window is not a verdict" in {
+            assert(Container.isAliveState(Container.State.Created))
+        }
+
+        "podman's pre-start states arrive as Created and count as alive" in {
+            assert(Container.isAliveState(kyo.internal.ContainerBackend.parseState("configured")))
+            assert(Container.isAliveState(kyo.internal.ContainerBackend.parseState("initialized")))
+        }
+
+        "a stopped or dead container cannot" in {
+            assert(!Container.isAliveState(Container.State.Stopped))
+            assert(!Container.isAliveState(Container.State.Dead))
+        }
+
+        "a container being removed cannot" in {
+            assert(!Container.isAliveState(Container.State.Removing))
+        }
+
+        "paused and restarting do not count as alive for a startup wait" in {
+            assert(!Container.isAliveState(Container.State.Paused))
+            assert(!Container.isAliveState(Container.State.Restarting))
+        }
+    }
+
     "Container.portProbeDeadline" - {
         // Both readiness waits share one portMappingTimeout budget. A mapping wait that exhausts it
         // fails on its own terms; what this floor exists for is the adjacent case, where the binding

@@ -2295,12 +2295,22 @@ object Container:
                 val backend = new ShellBackend(cmd, meter, streamBufferSize)
                 backend.detect().andThen(backend)
 
-    /** Returns true if the container is still running or created; false if it has stopped, died, or been removed. A false result means the
-      * caller should abandon the current health-check attempt without raising an error.
+    /** Whether a container in `state` may still become healthy.
+      *
+      * `Created` counts as alive, and that is what keeps a `requireService` fixture from failing on its own startup: the window between
+      * `start` returning and the container reaching `Running` reports `Created` (podman's `configured` and `initialized` map there too, see
+      * `ContainerBackend.parseState`), so a health check issued in that window keeps polling on its schedule rather than reaching a verdict.
+      * Only a state the container cannot come back from ends the wait.
+      */
+    private[kyo] def isAliveState(state: State): Boolean =
+        state == State.Running || state == State.Created
+
+    /** Returns true if the container may still become healthy; false if it has stopped, died, or been removed. A false result means the
+      * caller should abandon the current health-check attempt.
       */
     private def isContainerAlive(container: Container)(using Frame): Boolean < (Async & Abort[ContainerException]) =
         Abort.runWith[ContainerException](container.backend.state(container.id)) {
-            case Result.Success(st)                           => st == State.Running || st == State.Created
+            case Result.Success(st)                           => isAliveState(st)
             case Result.Failure(_: ContainerMissingException) => false
             case Result.Failure(e)                            => Abort.fail(e)
             case Result.Panic(ex)                             => Abort.panic(ex)
@@ -2335,9 +2345,18 @@ object Container:
                         Abort.runWith[ContainerException](hc.check(container)) {
                             case Result.Success(_) =>
                                 container.healthState.set(ContainerHealthState(Present(hc)))
-                            case Result.Failure(e: ContainerMissingException) =>
-                                if !container.config.requireService then ()
-                                else Abort.fail(e)
+                            // The container vanished under the check. Same condition as the two
+                            // liveness escapes, so it produces the same verdict rather than a second
+                            // exception type for one meaning: the CI run that first exercised this
+                            // reported ContainerMissingException on one transport and
+                            // ContainerHealthCheckException on another for the very same dead container.
+                            case Result.Failure(_: ContainerMissingException) =>
+                                onDeadContainer(
+                                    container,
+                                    "container disappeared while its health check was running",
+                                    attempts = attempts,
+                                    lastError = formatRecentHealthCheckErrors(recentErrors)
+                                )
                             case failure =>
                                 val errorMsg = failure match
                                     // Prefer the structured `lastError` for HealthCheckException — `getMessage` on
