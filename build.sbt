@@ -3200,15 +3200,19 @@ lazy val `openssl-native-settings` = Seq(
     }
 )
 
-// Reads the FFI native-flag manifests KyoFfiPlugin writes per FFI dependency (one *.flags file per module
-// under `relDir`), one flag per line, deduped first-seen so a BoringSSL `-I` precedes a later system include.
-// A downstream Native module folds a dependency's flags in so the dep's bundled C compiles and links the way
-// it does in the owning module (see `native-settings`).
-def readFfiNativeManifest(cp: Seq[Attributed[File]], relDir: Seq[String]): Seq[String] =
-    cp.flatMap { entry =>
-        val dir = relDir.foldLeft(entry.data)(_ / _)
-        if (dir.isDirectory) (dir * "*.flags").get.flatMap(IO.readLines(_)) else Seq.empty[String]
-    }.map(_.trim).filter(_.nonEmpty).distinct
+// Reads the FFI native-flag manifests KyoFfiPlugin writes per FFI dependency (one `<module>-<os>.flags` file
+// per module under `relDir`), one flag per line, deduped first-seen so a BoringSSL `-I` precedes a later system
+// include. A downstream Native module folds a dependency's flags in so the dep's bundled C compiles and links
+// the way it does in the owning module (see `native-settings`).
+//
+// Only THIS target's OS is read. The manifests ride a classpath that also carries published artifacts, and a
+// flag set produced for another OS does not merely fail to help: `-luring` and the GNU-ld options ld64 rejects
+// break a Darwin link outright.
+// Delegates to KyoFfiPlugin, which owns the manifest layout and the in-build / packaged precedence. This build
+// reads them here because `native-settings` applies to every Native module, including the many that do not enable
+// KyoFfiPlugin and so have no `ffiNativeDependencyLinkingOptions` of their own.
+def readFfiNativeManifest(cp: Seq[Attributed[File]], relDir: Seq[String], inBuildRelDir: Seq[String]): Seq[String] =
+    KyoFfiPlugin.readNativeFlagManifests(cp.map(_.data), relDir, inBuildRelDir, KyoFfiPlugin.ffiManifestTargetOs)
 
 // Everything a Native row needs that does not assume the project is itself a Scala Native module, so
 // the kyoNative aggregate (which has no native sources, hence no Test / nativeLink to transform) can
@@ -3230,8 +3234,8 @@ lazy val `native-settings-base` = Seq(
     nativeConfig := {
         val base         = nativeConfig.value
         val cp           = (Compile / dependencyClasspath).value
-        val linkExtra    = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeLinkFlagsDir)
-        val compileExtra = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeCompileFlagsDir)
+        val linkExtra    = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeLinkFlagsDir, KyoFfiPlugin.ffiNativeInBuildLinkFlagsDir)
+        val compileExtra = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeCompileFlagsDir, KyoFfiPlugin.ffiNativeInBuildCompileFlagsDir)
         val withLink     = if (linkExtra.isEmpty) base else base.withLinkingOptions(base.linkingOptions ++ linkExtra)
         if (compileExtra.isEmpty) withLink else withLink.withCompileOptions(withLink.compileOptions ++ compileExtra)
     }
