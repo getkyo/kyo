@@ -303,6 +303,43 @@ object Codec:
         def nil(): Unit
         def mapStart(size: Int): Unit
         def mapEnd(): Unit
+
+        /** Starts a map whose keys are not plain strings; each entry is written via [[mapEntryStart]], the key value, [[mapEntryValue]],
+          * the value, and [[mapEntryEnd]], followed by [[mapEntriesEnd]].
+          *
+          * The defaults write the array-of-`{key, value}`-records envelope, so wire codecs represent non-string maps exactly as before. A
+          * writer that models maps natively (StructureValueWriter) overrides these hooks to keep the map identity instead. String-keyed
+          * maps use [[mapStart]]/[[mapEnd]] with each key written as a field.
+          */
+        def mapEntriesStart(size: Int): Unit = arrayStart(size)
+
+        /** Starts one entry of a non-string map; the key value is written next. */
+        def mapEntryStart(): Unit =
+            objectStart("", 2)
+            field("key", 1)
+        end mapEntryStart
+
+        /** Marks the key-to-value transition inside a map entry; the entry's value is written next. */
+        def mapEntryValue(): Unit = field("value", 2)
+
+        /** Ends the entry started by [[mapEntryStart]]. */
+        def mapEntryEnd(): Unit = objectEnd()
+
+        /** Ends the map started by [[mapEntriesStart]]. */
+        def mapEntriesEnd(): Unit = arrayEnd()
+
+        /** Starts the active variant of a sum type; the variant payload is written next, followed by [[variantEnd]].
+          *
+          * The default writes the wrapper-object envelope (`{variantName: payload}`), so wire codecs represent sums exactly as before. A
+          * writer that models sums natively (StructureValueWriter) overrides both hooks to keep the variant identity instead.
+          */
+        def variantStart(name: String, variantName: String, variantNameBytes: Array[Byte], variantFieldId: Int): Unit =
+            objectStart(name, 1)
+            fieldBytes(variantNameBytes, variantFieldId)
+        end variantStart
+
+        /** Ends the variant started by [[variantStart]]. */
+        def variantEnd(): Unit = objectEnd()
         def bytes(value: Span[Byte]): Unit
         def bigInt(value: BigInt): Unit
         def bigDecimal(value: BigDecimal): Unit

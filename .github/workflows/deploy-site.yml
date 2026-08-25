@@ -26,19 +26,36 @@ concurrency:
 
 jobs:
   build:
+    if: github.repository == 'getkyo/kyo'
     runs-on: ubuntu-latest
     env:
       JAVA_OPTS: -Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M
       JVM_OPTS:  -Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
       - uses: coursier/cache-action@v8.1.1
-      - uses: coursier/setup-action@v3.0.0
+      - uses: coursier/setup-action@v3.0.2
         with:
           jvm: corretto:25
           apps: sbt
+      # The site reaches kyo-net through kyo-http, so rendering it compiles kyo-net's C shims. This
+      # workflow does not use .github/actions/setup, so the native build deps are installed here, as
+      # readme.yml does for the same reason.
+      #
+      # liburing (build-time only): the io_uring shim (kyo_uring.c) statically links -luring.
+      - name: Install liburing (Linux)
+        run: bash scripts/apt-install.sh liburing-dev
+      # BoringSSL has to be staged, not stubbed. Without the staged tree build.sbt compiles the
+      # c-boringssl-stub shim, and kyo-net's `Compile / packageBin` runs kyoNetNativeClassifierGuard
+      # (build.sbt), which fails on a stub. The site render needs kyo-net's packageBin, so it trips
+      # the guard even though it publishes nothing.
+      - name: Prepare BoringSSL
+        shell: bash
+        run: |
+          bash scripts/apt-install.sh --if-missing cmake go:golang-go
+          bash kyo-net/build/boringssl/build-boringssl.sh linux-x86_64
       - name: Link the browser bundle (fullLinkJS)
         run: sbt 'kyo-website-bundleJS/Compile/fullLinkJS'
       - name: Render and assemble the site from the current repo
@@ -48,6 +65,7 @@ jobs:
           path: site
   deploy:
     needs: build
+    if: github.repository == 'getkyo/kyo'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

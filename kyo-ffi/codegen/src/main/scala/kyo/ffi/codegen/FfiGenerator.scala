@@ -78,7 +78,8 @@ object FfiGenerator:
     final case class Result(
         files: Seq[Path],
         warnings: Seq[String],
-        traits: Seq[TraitSpec]
+        traits: Seq[TraitSpec],
+        reachabilityMetadata: String = ""
     )
 
     /** Entry point.
@@ -118,7 +119,13 @@ object FfiGenerator:
         }
         val warnings = collectWarnings(specs, config)
         val files    = specs.map(spec => writeSpec(spec, outputDir, platform, config.includeDirs))
-        Result(files = files, warnings = warnings, traits = specs)
+        // GraalVM native-image reachability metadata is a JVM-only concern (native-image runs JVM bytecode). One merged
+        // manifest per module carries the FFM downcalls/upcalls and the generated impls' reflective instantiation; the plugin
+        // writes it into the module's managed resources.
+        val reachabilityMetadata =
+            if platform == Platform.JVM && specs.nonEmpty then ReachabilityMetadataEmitter.emitModule(specs)
+            else ""
+        Result(files = files, warnings = warnings, traits = specs, reachabilityMetadata = reachabilityMetadata)
     end generate
 
     private[codegen] def writeSpec(spec: TraitSpec, outputDir: Path, platform: Platform, includeDirs: Seq[String] = Nil): Path =

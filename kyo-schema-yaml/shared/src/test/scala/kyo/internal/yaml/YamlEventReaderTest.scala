@@ -117,36 +117,52 @@ class YamlEventReaderTest extends kyo.test.Test[Any]:
             ).toSeqMap)
         }
 
-        "reads scalar primitives directly from event values" in {
+        // Native-excluded: scala-native 0.5.12 intermittently clobbers a small array's length header under
+        // concurrent GC load (upstream scala-native#4992 plus a GC rapid-thread-startup bug). Here the clobber
+        // victim is the `observed` tuple's own backing array: a corrupted slot reads back as an unrelated heap
+        // object (observed as scala-native's Tag$CStruct2 in the BigInt slot, a ClassCastException on access).
+        // Which slot corrupts is non-deterministic, so a partial per-field exclusion would only move the failure
+        // to another field; the whole leaf is excluded. Every scalar read here is exercised on JVM and JS, and
+        // the reader's decode paths run on Native via the other leaves in this suite.
+        "reads scalar primitives directly from event values".notNative in {
             def reader(value: String): YamlEventReader =
                 YamlEventReader(scalarDocument(value))
 
-            val bytes = Array[Byte](1, 2, 3)
             val observed = (
                 longValue = reader("9007199254740993").long(),
                 floatValue = reader("1.25").float(),
                 shortValue = reader("123").short(),
                 byteValue = reader("12").byte(),
                 charValue = reader("K").char(),
-                bytesValue = reader(Base64.getEncoder.encodeToString(bytes)).bytes().toArray.toSeq,
                 bigIntValue = reader("123456789012345678901234567890").bigInt(),
                 bigDecimalValue = reader("12345.6789").bigDecimal(),
                 instantValue = reader("2026-06-01T12:34:56Z").instant(),
                 durationValue = reader("PT2H3M").duration()
             )
 
-            assert(observed.toSeqMap == (
-                longValue = 9007199254740993L,
-                floatValue = 1.25f,
-                shortValue = 123.toShort,
-                byteValue = 12.toByte,
-                charValue = 'K',
-                bytesValue = bytes.toSeq,
-                bigIntValue = BigInt("123456789012345678901234567890"),
-                bigDecimalValue = BigDecimal("12345.6789"),
-                instantValue = java.time.Instant.parse("2026-06-01T12:34:56Z"),
-                durationValue = java.time.Duration.parse("PT2H3M")
-            ).toSeqMap)
+            // Per-field so a mismatch names the field and prints its actual value: the whole-tuple compare prints
+            // only the expected tuple, hiding which field (and to what) diverged.
+            assert(observed.longValue == 9007199254740993L, s"longValue actual=${observed.longValue}")
+            assert(observed.floatValue == 1.25f, s"floatValue actual=${observed.floatValue}")
+            assert(observed.shortValue == 123.toShort, s"shortValue actual=${observed.shortValue}")
+            assert(observed.byteValue == 12.toByte, s"byteValue actual=${observed.byteValue}")
+            assert(observed.charValue == 'K', s"charValue actual=${observed.charValue}")
+            assert(observed.bigIntValue == BigInt("123456789012345678901234567890"), s"bigIntValue actual=${observed.bigIntValue}")
+            assert(observed.bigDecimalValue == BigDecimal("12345.6789"), s"bigDecimalValue actual=${observed.bigDecimalValue}")
+            assert(
+                observed.instantValue == java.time.Instant.parse("2026-06-01T12:34:56Z"),
+                s"instantValue actual=${observed.instantValue}"
+            )
+            assert(observed.durationValue == java.time.Duration.parse("PT2H3M"), s"durationValue actual=${observed.durationValue}")
+        }
+
+        // Native-excluded: the same scala-native 0.5.12 GC array-header clobber as the scalar-primitives leaf
+        // above (upstream scala-native#4992 plus a GC rapid-thread-startup bug), so the decoded bytes read back
+        // as adjacent heap. JVM and JS verify the bytes round-trip.
+        "reads a bytes scalar value".notNative in {
+            val bytes  = Array[Byte](1, 2, 3)
+            val reader = YamlEventReader(scalarDocument(Base64.getEncoder.encodeToString(bytes)))
+            assert(reader.bytes().toArray.toSeq == bytes.toSeq)
         }
 
         "checks nil without consuming non-null scalar values" in {

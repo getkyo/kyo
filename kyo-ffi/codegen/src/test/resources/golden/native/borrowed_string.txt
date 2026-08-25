@@ -10,7 +10,7 @@ import kyo.ffi.*
 import kyo.ffi.internal.{AbiCheck, NativePtr, StructAbiCheck}
 
 @EnableReflectiveInstantiation final class BorrowedStringBindingsImpl extends BorrowedStringBindings:
-    import `BorrowedStringBindings$externs` as ext
+    import `BorrowedStringBindings_externs` as ext
 
     def getenvLike(name: String)(using kyo.AllowUnsafe): Ffi.Borrowed[String] =
         Zone.acquire { implicit z =>
@@ -27,6 +27,6 @@ end BorrowedStringBindingsImpl
 
 @extern
 @link("kyo_borrowed_str")
-private[example] object `BorrowedStringBindings$externs`:
+private[example] object `BorrowedStringBindings_externs`:
     def getenv(name: CString): CString = extern
-end `BorrowedStringBindings$externs`
+end `BorrowedStringBindings_externs`

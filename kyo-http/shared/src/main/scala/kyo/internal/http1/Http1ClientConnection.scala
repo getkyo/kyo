@@ -45,7 +45,7 @@ final private[kyo] class Http1ClientConnection(
             responsePromise.completeDiscard(Result.succeed(response))
         ,
         onClosed = () =>
-            responsePromise.completeDiscard(Result.panic(new java.io.IOException("connection closed")))
+            responsePromise.completeDiscard(Http1ClientConnection.connectionClosedPanic)
     )
 
     /** Sends an HTTP request and returns a fiber that completes when response headers are parsed.
@@ -128,7 +128,13 @@ final private[kyo] class Http1ClientConnection(
     /** The inbound channel for reading remaining body bytes (for streaming or large bodies). */
     def bodyChannel: Channel.Unsafe[Span[Byte]] = inbound
 
-    /** Resets and returns the connection-scoped DecoderState for reuse on a new chunked response. */
+    /** Resets and returns the connection-scoped DecoderState for a new BUFFERED chunked response.
+      *
+      * Buffered decodes only: a buffered decode is strictly intra-request (the connection is not released until the
+      * response promise completes), so reusing one zero-alloc state across responses is safe. A STREAMING decode
+      * outlives the request scope (its body IOTask runs past response delivery), so it allocates its own state; sharing
+      * this one would let the next request's reset corrupt a live decode.
+      */
     def chunkedDecoderState: ChunkedBodyDecoder.DecoderState =
         decoderState.reset()
         decoderState
@@ -149,13 +155,22 @@ final private[kyo] class Http1ClientConnection(
 
     /** Close the connection. Fails any pending response promise so waiting fibers unblock. */
     def close()(using AllowUnsafe): Unit =
-        responsePromise.completeDiscard(
-            Result.panic(new java.io.IOException("connection closed"))
-        )
+        responsePromise.completeDiscard(Http1ClientConnection.connectionClosedPanic)
 
 end Http1ClientConnection
 
 private[kyo] object Http1ClientConnection:
+
+    /** The completion sentinel for a connection that closed with a response outstanding.
+      *
+      * NoStackTrace, and allocated once: the sentinel marks WHERE the wait ended, never a failure
+      * site, so a trace carries no information. Capturing one would also walk the unwinder on
+      * whatever carrier delivers the close, and a driver carrier's stack crosses C poller frames
+      * the Scala Native unwinder cannot step through on arm64 (observed SIGSEGV inside
+      * fillInStackTrace).
+      */
+    private val connectionClosedPanic: Result[Nothing, Nothing] =
+        Result.panic(new java.io.IOException("connection closed") with scala.util.control.NoStackTrace)
 
     private val HttpVersion             = " HTTP/1.1\r\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII)
     private val ContentLengthPrefix     = "Content-Length: ".getBytes(java.nio.charset.StandardCharsets.US_ASCII)

@@ -65,7 +65,7 @@ class IoUringEngineFifoFreeOrderingTest extends Test:
         val server = TlsRealEngines.singleEngine(isServer = true)
         assert(TlsEngineLoopback.handshake(client, server), "handshake must complete so the engine ops run on a live session")
         val recordingServer = RecordingTlsEngine(server)
-        val handle          = PosixHandle.socket(7, PosixHandle.DefaultReadBufferSize, Absent)
+        val handle          = PosixHandle.socket(7, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
         handle.tls = Present(recordingServer)
         val scratch = Buffer.alloc[Byte](1)
         val cleanup = () =>

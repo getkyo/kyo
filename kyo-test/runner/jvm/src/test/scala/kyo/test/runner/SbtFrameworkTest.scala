@@ -212,11 +212,8 @@ class SbtFrameworkTest extends AnyFunSuite with NonImplicitAssertions:
                     val generation = callCount.getAndIncrement()
                     val content    = if generation == 0 then firstBogus + "\n" else secondBogus + "\n"
                     val bytes      = makeBytes(content)
-                    val url = new URL(
-                        "jar",
-                        null,
-                        0,
-                        s"synthetic-gen-$generation",
+                    val url = URL.of(
+                        java.net.URI.create(s"jar:synthetic-gen-$generation"),
                         new java.net.URLStreamHandler:
                             def openConnection(u: URL): java.net.URLConnection =
                                 new java.net.URLConnection(u):

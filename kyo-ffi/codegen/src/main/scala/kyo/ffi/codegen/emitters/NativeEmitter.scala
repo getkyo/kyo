@@ -6,7 +6,7 @@ import kyo.ffi.codegen.model.*
   *
   * Given a [[kyo.ffi.codegen.model.TraitSpec]], [[NativeEmitter.emit]] returns the full contents of `{TraitName}Impl.scala`:
   *
-  *   - A top-level `@extern @link(library)` object named `` `{Trait}$externs` `` holding the C signatures. Scala Native requires `@extern`
+  *   - A top-level `@extern @link(library)` object named `` `{Trait}_externs` `` holding the C signatures. Scala Native requires `@extern`
   *     methods to sit on a top-level object, never inside a class.
   *   - A `final class {Trait}Impl extends {Trait}` that marshals Scala values into the `@extern` signatures and captures `errno` after
   *     every call.
@@ -68,7 +68,7 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
         // `@EnableReflectiveInstantiation` tells the Scala Native linker to retain the nullary constructor so
         // `scala.reflect.Reflect.lookupInstantiatableClass` (used by `Ffi.load`) can instantiate it at runtime.
         sb ++= s"@EnableReflectiveInstantiation final class ${spec.simpleName}Impl extends ${spec.simpleName}:\n"
-        sb ++= s"    import `${spec.simpleName}$$externs` as ext\n"
+        sb ++= s"    import `${spec.simpleName}_externs` as ext\n"
         // Import packed-struct byte-size constants from the companion so method bodies can reference them.
         if spec.structs.exists(_.packed) then
             sb ++= s"    import ${spec.simpleName}Impl.*\n"
@@ -895,8 +895,8 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
         val visibility =
             if spec.packageName.isEmpty then "private"
             else s"private[${spec.packageName.split('.').last}]"
-        sb ++= s"$visibility object `${spec.simpleName}$$externs`:\n"
-        sb ++= s"end `${spec.simpleName}$$externs`\n"
+        sb ++= s"$visibility object `${spec.simpleName}_externs`:\n"
+        sb ++= s"end `${spec.simpleName}_externs`\n"
         sb.toString
     end emitEmptyExternObject
 
@@ -962,7 +962,7 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
         val visibility =
             if spec.packageName.isEmpty then "private"
             else s"private[${spec.packageName.split('.').last}]"
-        sb ++= s"$visibility object `${spec.simpleName}$$externs`:\n"
+        sb ++= s"$visibility object `${spec.simpleName}_externs`:\n"
         // The extern object is the linker-facing C-symbol table, so it holds exactly one declaration per distinct C symbol. Two binding
         // methods may resolve to the same symbol (e.g. a `@Ffi.blocking` overload and a synchronous one bound via the `symbols` override),
         // which would otherwise emit two `def <symbol>` externs with the same erased signature and fail to compile. Keep the first method per
@@ -975,7 +975,7 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
                 val anyBlocking = spec.methods.exists(o => !o.hasVarargs && o.cSymbol == m.cSymbol && o.blocking)
                 sb ++= emitExternDecl(m, spec, forceBlocking = anyBlocking)
         }
-        sb ++= s"end `${spec.simpleName}$$externs`\n"
+        sb ++= s"end `${spec.simpleName}_externs`\n"
         sb.toString
     end emitExternObject
 

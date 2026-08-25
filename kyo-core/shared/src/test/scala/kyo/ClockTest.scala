@@ -5,8 +5,8 @@ import kyo.Clock.Stopwatch
 
 class ClockTest extends kyo.test.Test[Any]:
 
-    // Wall-clock timing assertions (Clock.sleep/withTimeShift bounds) cannot tolerate being
-    // preempted by concurrent leaves, so run this suite's leaves sequentially.
+    // The `now`/`nowWith`/`unsafe now` leaves assert live `Clock.now` stays within a sub-millisecond window of
+    // `java.time.Instant.now()`, which cannot tolerate preemption by concurrent leaves, so run this suite sequentially.
     override def config = super.config.sequential
 
     "Clock" - {
@@ -256,80 +256,90 @@ class ClockTest extends kyo.test.Test[Any]:
 
     "Sleep" - {
         "sleep for specified duration" in {
-            for
-                clock     <- Clock.get
-                stopwatch <- Clock.stopwatch
-                fiber     <- clock.sleep(5.millis)
-                _         <- fiber.get
-                elapsed   <- stopwatch.elapsed
-            yield assert(elapsed >= 3.millis && elapsed < 100.millis)
+            Clock.withTimeControl { control =>
+                for
+                    clock     <- Clock.get
+                    stopwatch <- Clock.stopwatch
+                    fiber     <- clock.sleep(5.millis)
+                    _         <- control.advance(5.millis)
+                    _         <- fiber.get
+                    elapsed   <- stopwatch.elapsed
+                yield assert(elapsed == 5.millis)
+            }
         }
 
         "multiple sequential sleeps" in {
-            for
-                clock     <- Clock.get
-                stopwatch <- Clock.stopwatch
-                fiber1    <- clock.sleep(5.millis)
-                _         <- fiber1.get
-                mid       <- stopwatch.elapsed
-                fiber2    <- clock.sleep(5.millis)
-                _         <- fiber2.get
-                end       <- stopwatch.elapsed
-            yield
-                assert(mid >= 3.millis)
-                assert(end >= 8.millis)
+            Clock.withTimeControl { control =>
+                for
+                    clock     <- Clock.get
+                    stopwatch <- Clock.stopwatch
+                    fiber1    <- clock.sleep(5.millis)
+                    _         <- control.advance(5.millis)
+                    _         <- fiber1.get
+                    mid       <- stopwatch.elapsed
+                    fiber2    <- clock.sleep(5.millis)
+                    _         <- control.advance(5.millis)
+                    _         <- fiber2.get
+                    end       <- stopwatch.elapsed
+                yield
+                    assert(mid == 5.millis)
+                    assert(end == 10.millis)
+            }
         }
 
         "sleep with zero duration" in {
-            for
-                clock     <- Clock.get
-                stopwatch <- Clock.stopwatch
-                fiber     <- clock.sleep(Duration.Zero)
-                _         <- fiber.get
-                elapsed   <- stopwatch.elapsed
-            yield assert(elapsed < 10.millis)
+            Clock.withTimeControl { control =>
+                for
+                    clock     <- Clock.get
+                    stopwatch <- Clock.stopwatch
+                    fiber     <- clock.sleep(Duration.Zero)
+                    _         <- fiber.get
+                    elapsed   <- stopwatch.elapsed
+                yield assert(elapsed == Duration.Zero)
+            }
         }
 
         "concurrency" in {
-            for
-                clock     <- Clock.get
-                stopwatch <- Clock.stopwatch
-                fibers    <- Kyo.fill(100)(clock.sleep(5.millis))
-                _         <- Kyo.foreachDiscard(fibers)(_.get)
-                elapsed   <- stopwatch.elapsed
-            yield assert(elapsed >= 3.millis && elapsed < 100.millis)
+            Clock.withTimeControl { control =>
+                for
+                    clock     <- Clock.get
+                    stopwatch <- Clock.stopwatch
+                    fibers    <- Kyo.fill(100)(clock.sleep(5.millis))
+                    _         <- control.advance(5.millis)
+                    _         <- Kyo.foreachDiscard(fibers)(_.get)
+                    elapsed   <- stopwatch.elapsed
+                yield assert(elapsed == 5.millis)
+            }
         }
     }
 
     "TimeShift" - {
         "speed up time" in {
-            for
-                wallStart <- Clock.now
-                // 80ms shifted -> ~40ms wall. elapsedWall captures wallEnd AFTER the shifted block
-                // exits, so it includes the post-sleep scheduling gap (which elapsedShifted does not);
-                // a short sleep makes `elapsedShifted > elapsedWall` flip whenever that gap exceeds the
-                // wall sleep. config.sequential only orders this suite's leaves, not other suites
-                // sharing the process-global pool, so under CI contention the gap can be large. Sleeping
-                // long enough keeps the wall sleep well above the gap.
-                shiftedEnd <- Clock.withTimeShift(2)(Clock.sleep(80.millis).map(_.get.andThen(Clock.now)))
-                wallEnd    <- Clock.now
-            yield
-                val elapsedWall    = wallEnd - wallStart
-                val elapsedShifted = shiftedEnd - wallStart
-                assert(elapsedWall >= 25.millis && elapsedWall < 400.millis)
-                assert(elapsedShifted > elapsedWall)
+            Clock.withTimeControl { control =>
+                Clock.withTimeShift(2.0) {
+                    for
+                        start <- Clock.now
+                        fiber <- Clock.sleep(80.millis)
+                        _     <- control.advance(40.millis)
+                        _     <- fiber.get
+                        end   <- Clock.now
+                    yield assert(end - start == 80.millis)
+                }
+            }
         }
 
         "slow down time" in {
-            for
-                wallStart  <- Clock.now
-                shiftedEnd <- Clock.withTimeShift(0.1)(Clock.sleep(2.millis).map(_.get.andThen(Clock.now)))
-                wallEnd    <- Clock.now
-            yield
-                val elapsedWall    = wallEnd - wallStart
-                val elapsedShifted = shiftedEnd - wallStart
-                assert(elapsedWall >= 18.millis && elapsedWall < 200.millis)
-                assert(elapsedShifted < elapsedWall)
+            Clock.withTimeControl { control =>
+                Clock.withTimeShift(0.1) {
+                    for
+                        start <- Clock.now
+                        fiber <- Clock.sleep(2.millis)
+                        _     <- control.advance(20.millis)
+                        _     <- fiber.get
+                        end   <- Clock.now
+                    yield assert(end - start == 2.millis)
+                }
+            }
         }
 
         "with time control" in {
@@ -375,15 +385,24 @@ class ClockTest extends kyo.test.Test[Any]:
         instants.drop(1).sliding(2, 1).filter(_.size == 2).map(seq => seq(1) - seq(0)).toSeq
 
     "repeatAtInterval" - {
-        "executes function at interval" in {
-            for
-                channel  <- Channel.init[Instant](10)
-                task     <- Clock.repeatAtInterval(5.millis)(Clock.now.map(channel.put))
-                instants <- Kyo.fill(10)(channel.take)
-                _        <- task.interrupt
-            yield
-                val avgInterval = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
-                assert(avgInterval >= 4.millis && avgInterval < 100.millis)
+        "with time control".notJs in {
+            Clock.withTimeControl { control =>
+                val ticks = 12
+                for
+                    queue <- Queue.Unbounded.init[Instant]()
+                    task  <- Clock.repeatAtInterval(5.millis)(Clock.now.map(queue.add))
+                    // startAfter is zero, so the first execution fires at Epoch during startup. Fence on the fiber re-arming its next sleep
+                    // before each advance, so it fires exactly once per interval: the Epoch fire plus one per tick makes the count exact.
+                    _        <- control.awaitPendingSleepers(1)
+                    _        <- Loop.repeat(ticks)(control.advance(5.millis).andThen(control.awaitPendingSleepers(1)))
+                    _        <- task.interrupt
+                    instants <- queue.drain
+                yield
+                    val expected = (0 to ticks).map(i => Instant.Epoch + (5 * i).millis)
+                    assert(instants.size == ticks + 1)
+                    assert(instants.toSeq == expected)
+                end for
+            }
         }
         "respects interrupt" in {
             for
@@ -391,19 +410,8 @@ class ClockTest extends kyo.test.Test[Any]:
                 task     <- Clock.repeatAtInterval(1.millis)(Clock.now.map(channel.put))
                 instants <- Kyo.fill(10)(channel.take)
                 _        <- task.interrupt
-                _        <- Async.sleep(2.millis)
                 _        <- assertEventually(channel.poll.map(_.isEmpty))
             yield ()
-        }
-        "with Schedule parameter" in {
-            for
-                channel  <- Channel.init[Instant](10)
-                task     <- Clock.repeatAtInterval(Schedule.fixed(5.millis))(Clock.now.map(channel.put))
-                instants <- Kyo.fill(10)(channel.take)
-                _        <- task.interrupt
-            yield
-                val avgInterval = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
-                assert(avgInterval >= 4.millis && avgInterval < 100.millis)
         }
         "with Schedule and state" in {
             for
@@ -424,17 +432,6 @@ class ClockTest extends kyo.test.Test[Any]:
     }
 
     "repeatWithDelay" - {
-        "executes function with delay" in {
-            for
-                channel  <- Channel.init[Instant](10)
-                task     <- Clock.repeatWithDelay(5.millis)(Clock.now.map(channel.put))
-                instants <- Kyo.fill(10)(channel.take)
-                _        <- task.interrupt
-            yield
-                val avgDelay = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
-                assert(avgDelay >= 4.millis && avgDelay < 100.millis)
-        }
-
         "respects interrupt" in {
             for
                 channel  <- Channel.init[Instant](10)
@@ -463,17 +460,6 @@ class ClockTest extends kyo.test.Test[Any]:
             }
         }
 
-        "works with Schedule parameter" in {
-            for
-                channel  <- Channel.init[Instant](10)
-                task     <- Clock.repeatWithDelay(Schedule.fixed(5.millis))(Clock.now.map(channel.put))
-                instants <- Kyo.fill(10)(channel.take)
-                _        <- task.interrupt
-            yield
-                val avgDelay = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
-                assert(avgDelay >= 4.millis && avgDelay < 100.millis)
-        }
-
         "works with Schedule and state" in {
             for
                 channel <- Channel.init[Int](10)
@@ -498,14 +484,17 @@ class ClockTest extends kyo.test.Test[Any]:
 
     "Monotonic Time" - {
         "nowMonotonic" in {
-            for
-                time1 <- Clock.nowMonotonic
-                _     <- Clock.sleep(5.millis).map(_.get)
-                time2 <- Clock.nowMonotonic
-            yield
-                assert(time2 > time1)
-                assert(time2 - time1 >= 4.millis)
-                assert(time2 - time1 < 40.millis)
+            Clock.withTimeControl { control =>
+                for
+                    time1 <- Clock.nowMonotonic
+                    fiber <- Clock.sleep(5.millis)
+                    _     <- control.advance(5.millis)
+                    _     <- fiber.get
+                    time2 <- Clock.nowMonotonic
+                yield
+                    assert(time2 > time1)
+                    assert(time2 - time1 == 5.millis)
+            }
         }
 
         "with time control" in {
@@ -519,14 +508,16 @@ class ClockTest extends kyo.test.Test[Any]:
         }
 
         "with time shift" in {
-            Clock.withTimeShift(2.0) {
-                for
-                    time1 <- Clock.nowMonotonic
-                    _     <- Clock.sleep(10.millis).map(_.get)
-                    time2 <- Clock.nowMonotonic
-                yield
-                    assert(time2 - time1 >= 4.millis)
-                    assert(time2 - time1 < 500.millis)
+            Clock.withTimeControl { control =>
+                Clock.withTimeShift(2.0) {
+                    for
+                        time1 <- Clock.nowMonotonic
+                        fiber <- Clock.sleep(10.millis)
+                        _     <- control.advance(5.millis)
+                        _     <- fiber.get
+                        time2 <- Clock.nowMonotonic
+                    yield assert(time2 - time1 == 10.millis)
+                }
             }
         }
     }

@@ -3,6 +3,8 @@ package kyo
 import kyo.Browser.*
 import kyo.UI.*
 
+// Non-blank iframe srcs here are fast-refused loopback URLs, not reachable external domains: an unreachable src stays
+// pending, blocks the window `load` event, and times out withUI's settle on slow-DNS CI. Loopback port 1 refuses at once.
 class IframeTest extends UITest:
 
     "iframe renders as an iframe element" in {
@@ -13,8 +15,8 @@ class IframeTest extends UITest:
     }
 
     "iframe src attribute" in {
-        withUI(UI.div(UI.iframe("https://example.com/page").id("f"))) {
-            Browser.assertAttributeSatisfies(Selector.id("f"), "src", "ignore")(_.contains("example.com/page")).unit
+        withUI(UI.div(UI.iframe("http://127.0.0.1:1/page").id("f"))) {
+            Browser.assertAttributeSatisfies(Selector.id("f"), "src", "ignore")(_.contains("127.0.0.1:1/page")).unit
         }
     }
 
@@ -26,9 +28,9 @@ class IframeTest extends UITest:
 
     "iframe reactive src updates" in {
         val app: UI < Async =
-            for sig <- Signal.initRef("https://a.test/old")
+            for sig <- Signal.initRef("http://127.0.0.1:1/old")
             yield UI.div(
-                UI.button("Go").id("b").onClick(sig.set("https://a.test/new")),
+                UI.button("Go").id("b").onClick(sig.set("http://127.0.0.1:1/new")),
                 sig.map(s => UI.iframe(s).id("f"))
             )
         withUI(app) {

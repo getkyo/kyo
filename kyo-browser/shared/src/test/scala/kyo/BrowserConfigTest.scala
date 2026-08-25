@@ -59,16 +59,17 @@ class BrowserConfigTest extends BrowserTest:
             onPage("<div>nothing here</div>") {
                 val fastSchedule  = Schedule.fixed(50.millis).maxDuration(500.millis)
                 val neverSelector = Browser.Selector.id("nonexistent-element-12345")
-                val start         = java.lang.System.currentTimeMillis()
-                Browser.withConfig(_.retrySchedule(fastSchedule)) {
-                    Abort.run[BrowserElementException] {
-                        Browser.assertExists(neverSelector)
+                // Outer config is effectively-infinite: if the inner fastSchedule didn't apply, assertExists would fall
+                // back and retry forever (leaf timeout). BrowserElementNotFoundException means the fast budget aborted it.
+                Browser.withConfig(_.retrySchedule(Schedule.fixed(1.hour))) {
+                    Browser.withConfig(_.retrySchedule(fastSchedule)) {
+                        Abort.run[BrowserElementException] {
+                            Browser.assertExists(neverSelector)
+                        }
                     }
                 }.map { result =>
-                    val elapsed = java.lang.System.currentTimeMillis() - start
                     result match
-                        case Result.Failure(_: BrowserElementNotFoundException) =>
-                            assert(elapsed < 5000L, s"expected abort within budget, took ${elapsed}ms")
+                        case Result.Failure(_: BrowserElementNotFoundException) => succeed
                         case other => fail(s"expected BrowserElementNotFoundException, got $other")
                     end match
                 }
@@ -81,16 +82,17 @@ class BrowserConfigTest extends BrowserTest:
             onPage("<div>nothing here</div>") {
                 val fastSchedule  = Schedule.fixed(50.millis).maxDuration(200.millis)
                 val neverSelector = Browser.Selector.id("nonexistent-xyz-99999")
-                val start         = java.lang.System.currentTimeMillis()
-                Browser.withConfig(_.retrySchedule(fastSchedule)) {
-                    Abort.run[BrowserElementException] {
-                        Browser.assertExists(neverSelector)
+                // Outer config is effectively-infinite: if the inner maxDuration weren't honored, assertExists would
+                // retry forever (leaf timeout). BrowserElementNotFoundException means the 200ms budget bounded the retry.
+                Browser.withConfig(_.retrySchedule(Schedule.fixed(1.hour))) {
+                    Browser.withConfig(_.retrySchedule(fastSchedule)) {
+                        Abort.run[BrowserElementException] {
+                            Browser.assertExists(neverSelector)
+                        }
                     }
                 }.map { result =>
-                    val elapsed = java.lang.System.currentTimeMillis() - start
                     result match
-                        case Result.Failure(_: BrowserElementNotFoundException) =>
-                            assert(elapsed < 3000L, s"custom schedule maxDuration should fire within a reasonable bound, took ${elapsed}ms")
+                        case Result.Failure(_: BrowserElementNotFoundException) => succeed
                         case other => fail(s"expected BrowserElementNotFoundException, got $other")
                     end match
                 }

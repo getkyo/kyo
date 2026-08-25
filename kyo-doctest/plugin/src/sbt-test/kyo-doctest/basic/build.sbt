@@ -2,7 +2,7 @@
 //
 // Validates that a project with one passing scala fence in README.md succeeds.
 
-ThisBuild / scalaVersion := "3.8.3"
+ThisBuild / scalaVersion := sys.props("kyo.doctest.scalaVersion")
 
 lazy val root = (project in file("."))
     .enablePlugins(KyoDoctestPlugin)

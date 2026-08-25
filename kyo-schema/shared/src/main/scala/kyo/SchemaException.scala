@@ -145,6 +145,40 @@ case class TrailingInputException(format: Codec, detail: String)(using Frame)
     extends SchemaException(s"Unexpected trailing content: $detail")
     with DecodeException
 
+/** Thrown when one record in a multi-record stream fails to decode.
+  *
+  * Line-delimited formats (JSONL, NDJSON) and multi-document formats decode a sequence of
+  * independent values, so a failure needs to say which one failed and where it sat in the
+  * input. Without that, a fault in a large transcript reports only the shape of the error
+  * and leaves the reader to find the offending record by hand.
+  *
+  * `byteOffset` is the offset of the record's first byte within the input this decode framed,
+  * which is a file offset only when framing began at the file's first byte. A consumer resuming
+  * from it adds back the position framing began at, and treats it as invalidated by anything that
+  * restarts framing, such as a follower replaying a truncated file.
+  *
+  * The name is format-agnostic because this type lives in the format-agnostic core.
+  *
+  * The record's own bytes are deliberately absent. A record of an application log or an agent
+  * transcript is the payload, and a payload placed on an exception reaches every log line, crash
+  * report, and error page that renders it. The index and the offset locate the record for anyone
+  * holding the input, without copying it anywhere the input is not already.
+  *
+  * @param recordIndex
+  *   zero-based position of the record among the non-blank records of the framed input
+  * @param byteOffset
+  *   offset of the record's first byte within the framed input
+  * @param cause
+  *   the underlying decode failure
+  */
+case class RecordDecodeException(
+    recordIndex: Long,
+    byteOffset: Long,
+    cause: DecodeException
+)(using Frame)
+    extends SchemaException(s"Failed to decode record $recordIndex at byte $byteOffset", cause)
+    with DecodeException
+
 /** Thrown when a configured safety limit is exceeded during decoding. */
 case class LimitExceededException(limit: String, actual: Int, maximum: Int)(using Frame)
     extends SchemaException(s"$limit $actual exceeds maximum $maximum")
@@ -154,6 +188,26 @@ case class LimitExceededException(limit: String, actual: Int, maximum: Int)(usin
 case class RangeException(value: Long, targetType: String, min: Long, max: Long)(using Frame)
     extends SchemaException(s"Value $value out of range for $targetType ($min to $max)")
     with DecodeException derives CanEqual
+
+/** Thrown when a smart constructor refuses the decoded fields.
+  *
+  * Raised only by schemas built with `Schema.derivedVia`, at the point a plain derived schema would
+  * have called the primary constructor. The fields themselves decoded successfully; the type's own
+  * invariant is what rejected them, so this is a decode failure and not a panic: it surfaces as the
+  * `Result.Failure` every other malformed-input outcome surfaces as.
+  *
+  * `rejection` carries whatever the constructor reported: the error value of a `Result` or `Either`
+  * failure, the exception of a `Try` failure, or a fixed description when the constructor reports
+  * absence with no detail (`Option` / `Maybe`).
+  */
+case class ConstructorRejectedException(path: Seq[String], typeName: String, rejection: String | Throwable)(using Frame)
+    extends SchemaException(
+        s"Constructor rejected the decoded value for '$typeName'" + SchemaException.pathSuffix(path) +
+            s": ${String.valueOf(rejection)}. The fields decoded successfully; the smart constructor refused them. " +
+            "Correct the input, or decode with a schema whose constructor accepts it.",
+        rejection
+    )
+    with DecodeException
 
 // --- Validation ---
 

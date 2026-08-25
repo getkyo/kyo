@@ -83,7 +83,7 @@ class IoUringDriverShortSubmitTest extends Test:
             PosixTestSockets.assumeUring()
             withShortSubmitDriver { (drv, recording) =>
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val payload   = Array.tabulate[Byte](16)(i => (i + 1).toByte)
                     // The peer sends the bytes first; they sit in accepted's recv buffer waiting for a read. Arm the one-shot short-submit
                     // override BEFORE awaitRead so the very first io_uring_submit that would flush this recv SQE reports a short count and does

@@ -4,7 +4,7 @@ This guide complements the root [CONTRIBUTING.md](../CONTRIBUTING.md), which cov
 
 **The headline invariant:** every op is cancellable by interrupting the calling fiber, and there is no `cancel` method. This is the load-bearing design property of the module, not a convenience. The `Compiler` surface deliberately carries no cancel lever (`Compiler.scala:38-55`), and `CompilerTest` pins that absence with a compile-fail witness (`typeCheckFailure("c.cancel()")`, `CompilerTest.scala:103`). Cancellation is the ordinary Kyo mechanism: interrupt the fiber running the op. Every backend, present and future, must translate that fiber interrupt into real cancellation of the underlying work, never a leaked running future or a stranded pending request. Internalise both halves before touching anything in this module.
 
-kyo-compiler is JVM-only. The whole module lives under `kyo-compiler/jvm/src/main/scala/kyo/`; there is no `shared` tree (`build.sbt:1188`, `crossProject(JVMPlatform)`). It depends on `kyo-core` and `kyo-aeron` (`build.sbt:1191`) and pulls in `scala3-presentation-compiler` (`build.sbt:1203`). Tests `fork := true` with `--add-opens` flags so the presentation compiler reaches the JDK internals it needs (`build.sbt:1195-1201`).
+kyo-compiler is JVM-only. The whole module lives under `kyo-compiler/jvm/src/main/scala/kyo/`; there is no `shared` tree (`build.sbt:1188`, `crossProject(JVMPlatform)`). It depends on `kyo-core` and `kyo-aeron` (`build.sbt:1191`) and pulls in `scala3-presentation-compiler` (`build.sbt:1203`). Tests `fork := true` and pass `--enable-native-access=ALL-UNNAMED`, since the pool's shared media driver is kyo-aeron's C driver reached through Panama. The four `--add-opens` that used to be here belonged to the io.aeron Java driver and went with it.
 
 ---
 
@@ -45,7 +45,7 @@ Offsets everywhere are UTF-16 code-unit offsets into `text`; line/column mapping
 
 ### The `Compiler.Pool` manager
 
-`Compiler.Pool.init(settings)` returns a `Pool < (Sync & Scope)`; on scope close every live instance is closed and every spawned worker JVM is force-killed (`Compiler.scala:93-100`). `pool.compiler(config)` is a `Sync` resolve that returns a thin per-config view (`Compiler.scala:82-89`). Creation is lazy: the view holds no instance, and the backend is built on the first op (`CompilerPool.scala:31-37`, and `CompilerPoolTest` "Pool.compiler is a Sync resolve with no instance created" `:482-509`).
+`Compiler.Pool.init(settings)` returns a `Pool < (Async & Scope)` (`Async` because opening the pool starts the shared `AeronDriver`, a suspending handshake); on scope close every live instance is closed and every spawned worker JVM is force-killed (`Compiler.scala:93-100`). `pool.compiler(config)` is a `Sync` resolve that returns a thin per-config view (`Compiler.scala:82-89`). Creation is lazy: the view holds no instance, and the backend is built on the first op (`CompilerPool.scala:31-37`, and `CompilerPoolTest` "Pool.compiler is a Sync resolve with no instance created" `:482-509`).
 
 `Pool.Settings` (`Compiler.scala:117-122`):
 
@@ -64,7 +64,7 @@ Offsets everywhere are UTF-16 code-unit offsets into `text`; line/column mapping
 
 ### Neutral result and wire types
 
-The result ADTs (`Span`, `Severity`, `Diagnostic`, `Completion` + `Completion.Kind`, `Hover`, `Signature` + `Signature.Param`, `SymbolInfo` + `SymbolInfo.Kind`, `CompilerError`) all `derive CanEqual, Compiler.AsMessage` (`Compiler.scala:171-231`). `AsMessage[A] = ReadWriter[A]` is the upickle wire codec alias and mirrors kyo-aeron's `Topic.AsMessage`, so a result type rides the aeron transport directly (`Compiler.scala:148-152`). `Uri` is an opaque type over `String` with a `given ReadWriter[Uri]` that keeps it opaque through serialization (`Compiler.scala:154-163`), and there is a `given ReadWriter[Maybe[A]]` lifted from `Option` (`Compiler.scala:165-169`).
+The result ADTs (`Span`, `Severity`, `Diagnostic`, `Completion` + `Completion.Kind`, `Hover`, `Signature` + `Signature.Param`, `SymbolInfo` + `SymbolInfo.Kind`, `CompilerError`) all `derive CanEqual, Compiler.AsMessage` (`Compiler.scala:173-231`). `AsMessage[A] = Schema[A]` is the kyo-schema wire codec alias (`Compiler.scala:156-159`), so a result type carries a `Schema` and rides the kyo-aeron `Topic` transport directly, whose `publish` and `stream` take `Schema[A]`. `Uri` is an opaque type over `String` with a `given Schema[Uri]`, derived by `transform` over the `String` schema, that keeps it opaque through serialization (`Compiler.scala:161-170`).
 
 `CompilerError` has two leaves: `InitializationFailed(message)` (a backend that could not start) and `Fatal(message)` (an op-level failure surfaced in-band), `Compiler.scala:228-231`.
 
@@ -90,7 +90,7 @@ Because ops serialize per instance (next section), the interrupted op was the on
 
 ## The pool
 
-`CompilerPool` is the locked implementation of the `Compiler.Pool` trait (`CompilerPool.scala:14-29`). It owns a close-on-evict `Cache[Config, Instance]`, the global compile-cap `Meter`, the one shared embedded `MediaDriver` every Spawn worker connects to, a never-evicting per-config create-lock map (a `java.util.concurrent.ConcurrentHashMap`, each entry removed when its create completes), and a monotonic stream-id counter that hands each spawned worker a unique stream-id base.
+`CompilerPool` is the locked implementation of the `Compiler.Pool` trait (`CompilerPool.scala:14-29`). It owns a close-on-evict `Cache[Config, Instance]`, the global compile-cap `Meter`, the one shared embedded `AeronDriver` every Spawn worker connects to, a never-evicting per-config create-lock map (a `java.util.concurrent.ConcurrentHashMap`, each entry removed when its create completes), and a monotonic stream-id counter that hands each spawned worker a unique stream-id base.
 
 ### Op path: per-instance mutex inside the global semaphore
 
@@ -133,7 +133,7 @@ This is the treat-closed-as-recreate contract: a returned `Compiler` whose insta
 
 Load-bearing details:
 
-- **Distinct stream-ids off a pool-owned counter.** The request and reply ride distinct aeron `stream-id`s, per direction and per config: `reqStreamId = streamIdBase * 2`, `respStreamId = streamIdBase * 2 + 1` (`SpawnBackend.scala:66-67`). The `streamIdBase` is a unique per-worker value the pool allocates from a monotonic `CompilerPool.streamIdCounter.getAndIncrement()` and threads into `init` (`CompilerPool.scala:24`, `:139`). The even/odd split per direction means a host never reads its own request back; the distinct base per config means two configs' workers never cross-talk on the one shared medium. The base comes from the counter rather than `config.hashCode` because a 32-bit hashCode could collide and silently mis-route one worker's reply to another host's request (`SpawnBackend.scala:60-65`). The host computes the ids and threads them to the worker through `-D` properties so both sides agree across the process boundary (`SpawnBackend.scala:122-139`, read back in `Worker.scala:23-26`). `SpawnBackendTest` "one shared MediaDriver per pool: two Spawn workers both reach it" gives the two workers distinct bases (0, 1), sends distinguishable buffers, and asserts no cross-talk (`:209-243`).
+- **Distinct stream-ids off a pool-owned counter.** The request and reply ride distinct aeron `stream-id`s, per direction and per config: `reqStreamId = streamIdBase * 2`, `respStreamId = streamIdBase * 2 + 1` (`SpawnBackend.scala:66-67`). The `streamIdBase` is a unique per-worker value the pool allocates from a monotonic `CompilerPool.streamIdCounter.getAndIncrement()` and threads into `init` (`CompilerPool.scala:24`, `:139`). The even/odd split per direction means a host never reads its own request back; the distinct base per config means two configs' workers never cross-talk on the one shared medium. The base comes from the counter rather than `config.hashCode` because a 32-bit hashCode could collide and silently mis-route one worker's reply to another host's request (`SpawnBackend.scala:60-65`). The host computes the ids and threads them to the worker through `-D` properties so both sides agree across the process boundary (`SpawnBackend.scala:122-139`, read back in `Worker.scala:23-26`). `SpawnBackendTest` "one shared driver per pool: two Spawn workers both reach it" gives the two workers distinct bases (0, 1), sends distinguishable buffers, and asserts no cross-talk (`:209-243`).
 
 - **Bounded readiness probe with an interrupt-safe finalizer.** `ready` runs a cheap, idempotent `DidClose` probe under `Async.timeout(readyTimeout)` (30 seconds); a failure or timeout becomes `InitializationFailed("worker failed to start: ...")` (`SpawnBackend.scala:104-113`). A worker that cannot start (for example an unusable classpath whose publication never sees a subscriber) thus fails as `InitializationFailed` rather than hanging forever on the caller's first real op. **The readiness step is wrapped in a `Sync.ensure` finalizer that force-kills the partial worker and closes the aeron client on a failure OR an interrupt during the up-to-30s probe** (an IDE routinely cancels a cold start), transferring ownership to `close` only once the probe succeeds, so a worker that never starts leaks no aeron conductor thread or orphaned JVM (`SpawnBackend.scala:80-91`). `init` also takes a defaulted, test-only `onSpawn: Process => Unit` seam fired once the kill is armed and just before the probe (a no-op at the real call site, `SpawnBackend.scala:57`), so a test can interrupt mid-probe and assert the partial worker dies. `CompilerPoolTest`'s version-mismatch leaf exercises the failure path: an empty-classpath worker cannot load `kyo.compiler.Worker`, so the probe surfaces a worker-start `InitializationFailed` (`:140-181`); `SpawnBackendTest` "interrupting init during the readiness probe force-kills the partial worker" exercises the interrupt path (`:245-271`).
 
@@ -143,7 +143,7 @@ Load-bearing details:
 
 - **Module-opener flags are forwarded.** `moduleArgs` copies the parent JVM's `--add-opens` / `--add-exports` / `--add-modules` / `--enable-native-access` flags to the worker so its pc reaches the same internal modules the host opened (`SpawnBackend.scala:149-163`).
 
-`SpawnBackendTest` also runs a parity leaf comparing Local and Spawn results for the same buffer over a real embedded `MediaDriver` (`:55-92`).
+`SpawnBackendTest` also runs a parity leaf comparing Local and Spawn results for the same buffer over a real embedded `AeronDriver` (`:55-92`).
 
 ---
 
@@ -198,7 +198,7 @@ Reliability is a primary goal: a resource you acquire must never leak. Close eve
 
 ### JVM-only, no shared tree
 
-The module is `crossProject(JVMPlatform)` (`build.sbt:1188`), so all source and tests live under `kyo-compiler/jvm/`. There is no cross-platform discipline to maintain here, but tests `fork := true` and require the `--add-opens` JVM flags (`build.sbt:1195-1201`); a test that drives a real pc or a real worker needs them.
+The module is `crossProject(JVMPlatform)` (`build.sbt:1188`), so all source and tests live under `kyo-compiler/jvm/`. There is no cross-platform discipline to maintain here, but tests `fork := true`; a test that drives a real worker also loads kyo-aeron's native shim, so it wants `--enable-native-access=ALL-UNNAMED` to stay warning-free.
 
 ### Kyo types and totality
 
@@ -231,17 +231,17 @@ All tests extend the module's `kyo.test.Test[Any]` base, never ScalaTest directl
 
 | Test | What it grounds | How |
 |------|-----------------|-----|
-| `CompilerTest` | the public surface | result-ADT upickle round-trips, `Uri` opacity, the three-state `isolate` default, and compile-fail witnesses that no `cancel`/`spawn`/lsp4j surface exists |
+| `CompilerTest` | the public surface | result-ADT MsgPack round-trips, `Uri` opacity, the three-state `isolate` default, and compile-fail witnesses that no `cancel`/`spawn`/lsp4j surface exists |
 | `WireTest` | the adapter | pure `Wire` tests: `LineIndex` offsets, null / `Either` handling, hover / signature / symbol adapters, request/response/envelope round-trips, and a corrupt-envelope decode raising a contained throw |
 | `LocalBackendTest` | the in-JVM pc | a real pc built from classpath jars: diagnostics, completions, `sourceRoots` `-sourcepath` resolution, interrupt-cancel, exceptional-future-as-Fatal, pc-throw-as-typed, didClose-then-recompile |
 | `WorkerTest` | the worker-side path | `WorkerConfig.fromEnv` + `LocalBackend`, proving the diagnostics opt-in survives |
 | `CompilerPoolTest` | pool policy | seeds the instances cache with stub backends (`makePool`, null driver) to exercise single-flight, per-instance serialization, the global cap, cross-config parallelism, isolation, lazy create, and eviction-close, without spawning |
-| `SpawnBackendTest` | the forked worker | real cross-process round-trips over an embedded `MediaDriver` via `withDriver`: parity, kill-and-no-leak, comms-failure-as-Fatal, shared-driver no-cross-talk, interrupt-init-during-readiness, plus an in-memory-Exchange interrupt leaf |
+| `SpawnBackendTest` | the forked worker | real cross-process round-trips over an embedded `AeronDriver` via `withDriver`: parity, kill-and-no-leak, comms-failure-as-Fatal, shared-driver no-cross-talk, interrupt-init-during-readiness, plus an in-memory-Exchange interrupt leaf |
 
 Two patterns are worth copying when you add a test:
 
-- **Stub-backend pool tests.** `CompilerPoolTest.makePool` constructs a real `CompilerPool` with a fresh semaphore and create-locks but a caller-supplied instances cache pre-seeded with stub `Backend`s; the `MediaDriver` is `null` because `SpawnBackend.init` is never reached when stubs are seeded (`CompilerPoolTest.scala:24-30`). Use this to test pool policy deterministically. Reach for `makePoolWithDriver` (a real shared driver) only when a leaf must drive a real `SpawnBackend`, as the version-mismatch routing leaf does (`:35-43`).
-- **Real-driver worker tests.** `SpawnBackendTest.withDriver` runs a body against a fresh embedded `MediaDriver` closed on scope exit (`:49-53`), and `fullClasspath` builds the worker's `-cp` from the test JVM's classpath so the spawned worker can load `kyo.compiler.Worker`, kyo-aeron, and the pc (`:14-22`). The interrupt leaf instead wires `run` through a controlled in-memory `Exchange` with a throwaway child process for a real `Process` handle, so it never opens a real aeron session (`:94-153`).
+- **Stub-backend pool tests.** `CompilerPoolTest.makePool` constructs a real `CompilerPool` with a fresh semaphore and create-locks but a caller-supplied instances cache pre-seeded with stub `Backend`s; the `AeronDriver` is `null` because `SpawnBackend.init` is never reached when stubs are seeded (`CompilerPoolTest.scala:24-30`). Use this to test pool policy deterministically. Reach for `makePoolWithDriver` (a real shared driver) only when a leaf must drive a real `SpawnBackend`, as the version-mismatch routing leaf does (`:35-43`).
+- **Real-driver worker tests.** `SpawnBackendTest.withDriver` runs a body against a fresh embedded `AeronDriver` closed on scope exit (`:49-53`), and `fullClasspath` builds the worker's `-cp` from the test JVM's classpath so the spawned worker can load `kyo.compiler.Worker`, kyo-aeron, and the pc (`:14-22`). The interrupt leaf instead wires `run` through a controlled in-memory `Exchange` with a throwaway child process for a real `Process` handle, so it never opens a real aeron session (`:94-153`).
 
 Per the root guide: every test asserts a concrete value (the suites here compare full neutral values, not just non-emptiness), keeps its reproducing assertions named with the source it covers, and leaves no orphan or scratch test behind.
 

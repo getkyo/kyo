@@ -30,7 +30,7 @@ class NetTlsConfigTest extends Test:
                     .getMessage.contains("handshakeTimeout")
             )
             assert(
-                intercept[IllegalArgumentException](NetTlsConfig.default.copy(handshakeTimeout = -1.seconds))
+                intercept[IllegalArgumentException](NetTlsConfig.default.copy(handshakeTimeout = (-1).seconds))
                     .getMessage.contains("handshakeTimeout")
             )
             succeed

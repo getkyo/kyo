@@ -11,18 +11,18 @@ import sbtprojectmatrix.ProjectMatrixPlugin
   * The library author writes:
   * {{{
   * import _root_.io.getkyo.compat.given
-  * import _root_.io.getkyo.compat.{ KyoLib, ZioLib, CeLib, OxLib }
+  * import _root_.io.getkyo.compat.{ KyoLib, ZioLib, OxLib }
   * import sbt.VirtualAxis
   *
   * lazy val myLib = (projectMatrix in file("my-lib"))
-  *     .compatLibrary(KyoLib, ZioLib, CeLib, OxLib)(
+  *     .compatLibrary(KyoLib, ZioLib, OxLib)(
   *         VirtualAxis.jvm, VirtualAxis.js, VirtualAxis.native
   *     )(Seq("3.3.4"))
   *     .settings(/* common settings */)
   * }}}
   *
   * `compatLibrary` adds one `customRow` per (backend × platform-supported-by-backend × scalaVersion). `Future` is always implicit. Cells
-  * the backend cannot support (Ce/Native, Ox/JS, Ox/Native) are silently skipped; an empty intersection errors at build-load.
+  * the backend cannot support (Ox/JS, Ox/Native) are silently skipped; an empty intersection errors at build-load.
   */
 object CompatPlugin extends AutoPlugin {
 
@@ -48,6 +48,11 @@ object CompatPlugin extends AutoPlugin {
         type CompatBackendAxis      = _root_.io.getkyo.compat.CompatBackendAxis
         type NoSuchBackendException = _root_.io.getkyo.compat.NoSuchBackendException
 
+        // Re-export the companion as a term too, so `CompatBackendAxis.external(...)`
+        // (and the bare `CompatBackendAxis(...)` apply) resolve in a build.sbt that
+        // declares an externally-published backend without a `_root_.io.getkyo.compat.*` import.
+        val CompatBackendAxis = _root_.io.getkyo.compat.CompatBackendAxis
+
         // Backend axis instances. The `Lib` suffix avoids collisions with
         // `scala.concurrent.Future` and the `kyo` package object.
         val FutureLib: CompatBackendAxis =
@@ -56,8 +61,6 @@ object CompatPlugin extends AutoPlugin {
             _root_.io.getkyo.compat.CompatBackendAxis("kyo", "Kyo", "-kyo", Set("jvm", "js", "native"))
         val ZioLib: CompatBackendAxis =
             _root_.io.getkyo.compat.CompatBackendAxis("zio", "Zio", "-zio", Set("jvm", "js", "native"))
-        val CeLib: CompatBackendAxis =
-            _root_.io.getkyo.compat.CompatBackendAxis("ce", "Ce", "-ce", Set("jvm", "js", "native"))
         val OxLib: CompatBackendAxis =
             _root_.io.getkyo.compat.CompatBackendAxis("ox", "Ox", "-ox", Set("jvm"))
         val TwitterFutureLib: CompatBackendAxis =
@@ -121,6 +124,22 @@ object CompatPlugin extends AutoPlugin {
                 m
             }
 
+            /** Wire the kyo-compat cross-binding conformance suite into every generated row's Test scope. The suite (the same
+              * `kyo-compat/test` + `kyo-compat/test-streams` sources the built-in bindings pass) is bundled in this plugin's jar; each row
+              * extracts the sources for its platform into `Test / sourceManaged`, and scalatest plus `-Xmax-inlines` are added. This lets a
+              * binding, in particular one published outside the kyo repo, prove it satisfies the same contract as the built-in bindings.
+              *
+              * Must be called BEFORE first access to the matrix's `componentProjects` / `projectRefs` (like `bindLocally` and the
+              * per-platform settings, it is re-read at row-materialization time).
+              *
+              * @param scalatestVersion
+              *   scalatest version to add to each row's Test scope; defaults to the version the bundled suite is written against.
+              */
+            def compatConformance(scalatestVersion: String = "3.2.20"): ProjectMatrix = {
+                CompatLibrary.enableConformance(m.id, scalatestVersion)
+                m
+            }
+
             /** Apply settings to JVM cells only. Mirrors sbt-crossproject's `.jvmSettings(...)`. Per-platform settings are applied AFTER
               * the receiver's universal `.settings(...)`, so per-platform overrides win on conflicts.
               */
@@ -161,9 +180,6 @@ object CompatPlugin extends AutoPlugin {
 
             /** Named accessor: returns a view onto every (Zio, *) row. */
             def zio: CompatBackendProjects = lookup(ZioLib)
-
-            /** Named accessor: returns a view onto every (Ce, *) row. */
-            def ce: CompatBackendProjects = lookup(CeLib)
 
             /** Named accessor: returns a view onto every (Ox, *) row. */
             def ox: CompatBackendProjects = lookup(OxLib)

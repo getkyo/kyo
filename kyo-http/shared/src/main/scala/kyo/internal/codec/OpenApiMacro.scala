@@ -12,9 +12,11 @@ private[kyo] object OpenApiMacro:
     def deriveImpl(path: Expr[String])(using Quotes): Expr[Any] =
         import quotes.reflect.*
 
-        val filePath   = path.valueOrAbort
-        val sourcePath = Position.ofMacroExpansion.sourceFile.getJPath
-        val sourceDir  = sourcePath.map(_.getParent)
+        val filePath = path.valueOrAbort
+        // sourceFile.path is a virtual path when the unit is not on disk (IDE, REPL); the
+        // Files.exists check below rejects that the same way a missing directory would.
+        val sourcePath = Option(Position.ofMacroExpansion.sourceFile.path).map(java.nio.file.Paths.get(_))
+        val sourceDir  = sourcePath.flatMap(p => Option(p.getParent))
 
         val resolved = sourceDir match
             case Some(dir) => dir.resolve(filePath)
@@ -163,47 +165,52 @@ private[kyo] object OpenApiMacro:
 
             val nameType = ConstantType(StringConstant(param.name))
 
-            codecType.asType match
-                case '[a] =>
-                    val codec = Expr.summon[kyo.HttpCodec[a]] match
-                        case Some(c) => c
-                        case None =>
-                            report.errorAndAbort(
-                                s"No HttpCodec[${codecType.show}] found for ${param.in} parameter '${param.name}'$context. " +
-                                    s"Hint: add `given HttpCodec[${codecType.show}]` in scope."
-                            )
-                    val nameExpr = Expr(param.name)
-                    val fieldExpr =
-                        if optional then
-                            '{
-                                kyo.HttpRoute.Field.Param[String, a, kyo.Maybe[a]](
-                                    $location,
-                                    $nameExpr,
-                                    "",
-                                    $codec,
-                                    kyo.Absent,
-                                    true,
-                                    ""
-                                )
-                            }
-                        else
-                            '{
-                                kyo.HttpRoute.Field.Param[String, a, a](
-                                    $location,
-                                    $nameExpr,
-                                    "",
-                                    $codec,
-                                    kyo.Absent,
-                                    false,
-                                    ""
-                                )
-                            }
-                    fieldExprs = fieldExprs :+ fieldExpr.asInstanceOf[Expr[kyo.HttpRoute.Field[?]]]
+            nameType.asType match
+                case '[n] =>
+                    codecType.asType match
+                        case '[a] =>
+                            val codec = Expr.summon[kyo.HttpCodec[a]] match
+                                case Some(c) => c
+                                case None =>
+                                    report.errorAndAbort(
+                                        s"No HttpCodec[${codecType.show}] found for ${param.in} parameter '${param.name}'$context. " +
+                                            s"Hint: add `given HttpCodec[${codecType.show}]` in scope."
+                                    )
+                            val nameExpr  = Expr(param.name)
+                            val nameExprN = nameExpr.asExprOf[n & String & scala.Singleton]
+                            val fieldExpr =
+                                if optional then
+                                    '{
+                                        kyo.HttpRoute.Field.Param[n & String & scala.Singleton, a, kyo.Maybe[a]](
+                                            $location,
+                                            $nameExprN,
+                                            "",
+                                            $codec,
+                                            kyo.Absent,
+                                            true,
+                                            ""
+                                        )
+                                    }
+                                else
+                                    '{
+                                        kyo.HttpRoute.Field.Param[n & String & scala.Singleton, a, a](
+                                            $location,
+                                            $nameExprN,
+                                            "",
+                                            $codec,
+                                            kyo.Absent,
+                                            false,
+                                            ""
+                                        )
+                                    }
+                            fieldExprs = fieldExprs :+ fieldExpr.asInstanceOf[Expr[kyo.HttpRoute.Field[?]]]
 
-                    // Accumulate type: In & "name" ~ A or In & "name" ~ Maybe[A]
-                    val tildeType      = TypeRepr.of[kyo.Record.~].appliedTo(List(nameType, codecType))
-                    val tildeMaybeType = TypeRepr.of[kyo.Record.~].appliedTo(List(nameType, TypeRepr.of[kyo.Maybe].appliedTo(codecType)))
-                    resultType = AndType(resultType, if optional then tildeMaybeType else tildeType)
+                            // Accumulate type: In & "name" ~ A or In & "name" ~ Maybe[A]
+                            val tildeType = TypeRepr.of[kyo.Record.~].appliedTo(List(nameType, codecType))
+                            val tildeMaybeType =
+                                TypeRepr.of[kyo.Record.~].appliedTo(List(nameType, TypeRepr.of[kyo.Maybe].appliedTo(codecType)))
+                            resultType = AndType(resultType, if optional then tildeMaybeType else tildeType)
+                    end match
             end match
         end for
 
@@ -253,7 +260,7 @@ private[kyo] object OpenApiMacro:
                                 )
 
                         val bodyField = '{
-                            kyo.HttpRoute.Field.Body[String, a](
+                            kyo.HttpRoute.Field.Body["body", a](
                                 "body",
                                 kyo.HttpRoute.ContentType.Json($s, kyo.Json.jsonSchema[a](using $s)),
                                 ""
@@ -321,19 +328,23 @@ private[kyo] object OpenApiMacro:
         val tildeType = TypeRepr.of[kyo.Record.~].appliedTo(List(nameType, codecType))
         val pathType  = TypeRepr.of[kyo.HttpPath].appliedTo(tildeType)
 
-        codecType.asType match
-            case '[a] =>
-                val codec = Expr.summon[kyo.HttpCodec[a]] match
-                    case Some(c) => c
-                    case None =>
-                        report.errorAndAbort(
-                            s"No HttpCodec[${codecType.show}] found for path parameter '$paramName'$context. " +
-                                s"Hint: add `given HttpCodec[${codecType.show}]` in scope."
+        nameType.asType match
+            case '[n] =>
+                codecType.asType match
+                    case '[a] =>
+                        val codec = Expr.summon[kyo.HttpCodec[a]] match
+                            case Some(c) => c
+                            case None =>
+                                report.errorAndAbort(
+                                    s"No HttpCodec[${codecType.show}] found for path parameter '$paramName'$context. " +
+                                        s"Hint: add `given HttpCodec[${codecType.show}]` in scope."
+                                )
+                        val nameExprN = nameExpr.asExprOf[n & String & scala.Singleton]
+                        Typed(
+                            '{ kyo.HttpPath.Capture[n & String & scala.Singleton, a]($nameExprN, "", $codec) }.asTerm,
+                            Inferred(pathType)
                         )
-                Typed(
-                    '{ kyo.HttpPath.Capture[String, a]($nameExpr, "", $codec) }.asTerm,
-                    Inferred(pathType)
-                )
+                end match
         end match
     end buildCapture
 

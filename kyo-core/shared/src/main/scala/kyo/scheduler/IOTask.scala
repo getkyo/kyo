@@ -126,10 +126,30 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
 
     final def run(startMillis: Long, clock: InternalClock, deadline: Long): Task.Result =
         val safepoint = Safepoint.get
-        val next      = eval(startMillis, clock, deadline)(using safepoint)
+        val next =
+            try eval(startMillis, clock, deadline)(using safepoint)
+            catch
+                case ex =>
+                    // A fatal error unwinds eval before the normal termination path below runs. The task's promise
+                    // is already completed with a Panic, but its finalizers would be skipped, stranding whatever
+                    // resource or awaited promise they release. Run the finalizers and release the trace, then
+                    // re-propagate the fatal.
+                    if !finalizers.isEmpty then
+                        finalizers.run(pollError())
+                        finalizers = Finalizers.empty
+                    if trace ne null then
+                        safepoint.releaseTrace(trace)
+                        trace = null.asInstanceOf[Trace]
+                    curr = nullResult
+                    throw ex
         if !isPending() then
-            if !isNull(curr) && curr.evalNow.isEmpty then
-                ensureInterrupt()(using safepoint)
+            // On an interrupt that lands mid-slice, `next` is the accurate remainder whose head is the
+            // suspension eval stopped in front of (for example an Async.Join), while `curr` is the stale
+            // slice-start snapshot. Walking the stale `curr` head-only misses a join sitting one step
+            // behind a Defer prefix and leaves the awaited promise without the interrupt cascade.
+            val remainder = if !isNull(next) then next else curr
+            if !isNull(remainder) && remainder.evalNow.isEmpty then
+                ensureInterrupt(remainder)(using safepoint)
             if !finalizers.isEmpty then
                 finalizers.run(pollError())
                 finalizers = Finalizers.empty
@@ -147,12 +167,14 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
     end run
 
     // Handle race when interrupted before processing Async.Join and linking interrupts.
-    // Bypasses the Safepoint via dispatchFirst: by the time this runs the fiber's promise
-    // is already complete (interrupt), so the preempt flag is set and handleFirst would
-    // short-circuit before reaching the matcher. Invoking joinInput(this) registers the
-    // cascade link on this IOTask so the interrupt propagates to the awaited promise.
-    private def ensureInterrupt()(using Safepoint): Unit =
-        ArrowEffect.dispatchFirst(Tag[Async.Join], curr.asInstanceOf[Any < Async.Join]) {
+    // Walks the interrupted remainder head-only via dispatchFirst: no Defer body is drained, so it
+    // runs no user code and cannot reintroduce the Sync.ensure finalizer-drop reverted in 33bb29bd94.
+    // Bypasses the Safepoint via dispatchFirst: by the time this runs the fiber's promise is already
+    // complete (interrupt), so the preempt flag is set and handleFirst would short-circuit before
+    // reaching the matcher. Invoking joinInput(this) registers the cascade link on this IOTask so the
+    // interrupt propagates to the awaited promise.
+    private def ensureInterrupt(remainder: A < (Ctx & Async & Abort[E]))(using Safepoint): Unit =
+        ArrowEffect.dispatchFirst(Tag[Async.Join], remainder.asInstanceOf[Any < Async.Join]) {
             [C] => joinInput => discard(joinInput(this))
         }
     end ensureInterrupt
@@ -169,10 +191,17 @@ object IOTask:
     private val _frame                = Frame.internal
     private inline given frame: Frame = _frame
 
+    /** When `parent` is present, it is linked to interrupt the new task BEFORE the task is scheduled. This closes the window where the parent
+      * is interrupted after a child starts but before the child is registered for interruption, orphaning the child. Doing it here, before
+      * `schedule`, means the child cannot run unlinked. The caller reads the parent once (from the Safepoint interceptor) and passes it, so
+      * this does not read the thread-local per child. Detached creators (top-level and `Fiber.initUnscoped`, which must not inherit their
+      * creator's cancellation) pass `Absent`.
+      */
     def apply[Ctx, E, A](
         curr: A < (Ctx & Async & Abort[E]),
         trace: Trace,
         context: Context,
+        parent: Maybe[IOPromise[?, ?]] = Absent,
         finalizers: Finalizers = Finalizers.empty,
         runtime: Int = 0
     ): IOTask[Ctx, E, A] =
@@ -184,6 +213,10 @@ object IOTask:
                 new IOTask(curr, trace, finalizers):
                     override def context = ctx
         task.addRuntime(runtime)
+        // Link the parent to interrupt this task BEFORE it is scheduled, so a parent interrupt that lands
+        // while children are still launching cannot orphan a child that started but was not yet registered.
+        // The caller reads the parent once and passes it, instead of this reading the Safepoint per task.
+        parent.foreach(p => p.interrupts(task))
         Scheduler.get.schedule(task)
         task
     end apply

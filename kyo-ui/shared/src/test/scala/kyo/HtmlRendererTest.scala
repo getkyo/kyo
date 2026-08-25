@@ -757,12 +757,14 @@ class HtmlRendererTest extends UITest:
     }
 
     "ImgSrc.Absolute renders full URL" in {
-        withUI(UI.div(UI.img(ImgSrc.Absolute(HttpUrl.parse("https://example.com/logo.png").getOrThrow), "logo").id("i"))) {
+        // Fast-refused loopback URL, not an external domain: an unreachable external img src stays pending, blocks the
+        // window `load` event, and times out withUI's settle on slow-DNS CI.
+        withUI(UI.div(UI.img(ImgSrc.Absolute(HttpUrl.parse("http://127.0.0.1:1/logo.png").getOrThrow), "logo").id("i"))) {
             Browser.assertAttributeSatisfies(
                 Selector.id("i"),
                 "src",
                 "ignore"
-            )(s => s.contains("example.com") && s.contains("logo.png")).unit
+            )(s => s.contains("127.0.0.1") && s.contains("logo.png")).unit
         }
     }
 
@@ -822,6 +824,15 @@ class HtmlRendererTest extends UITest:
     // ---- clientJs transport (pure string inspection; no browser) ----
 
     "clientJs transport" - {
+
+        "the mask parser emits a well-formed backslash literal" in {
+            // The mask escape is the one place the client script needs a backslash, and getting it wrong yields an
+            // unterminated string literal that stops the entire blob from parsing, disabling every client behavior
+            // at once rather than just the escape. `inputMaskJs` is kept uninterpolated so the source reads as the
+            // browser sees it; this pins the emitted form against anyone folding it back into the interpolated blob.
+            val page = kyo.internal.HtmlRenderer.renderPage("t", "<div></div>", "", "/app")
+            assert(page.contains("""if(c==="\\"&&i+1<mask.length)"""))
+        }
 
         "rendered page opens a WebSocket and carries no EventSource or fetch-POST queue" in {
             val page = kyo.internal.HtmlRenderer.renderPage("t", "<div></div>", "", "/app")

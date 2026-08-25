@@ -4,14 +4,16 @@ import scala.scalajs.js
 
 /** Internal seam between [[JsGuard]] and [[KoffiFacade]] for callback unregistration.
   *
-  * Why this exists: the kyo-ffi JS test environment does NOT have the koffi npm package installed. Any `@JSImport("koffi", ...)` call is
-  * reachability-tracked by the Scala.js linker: if [[JsGuard.close]] directly called [[KoffiFacade.unregister]], every reachable test that
-  * exercises `close()` (including the shared [[kyo.ffi.GuardSpec]]) would transitively attempt to link the koffi module and fail.
+  * Why this exists: a guard whose native transport never loaded koffi, a koffi-less JS/Wasm host that degraded to the Node floor, or a test
+  * that never opened a native socket (including the shared [[kyo.ffi.GuardSpec]]), must still `close()` cheaply, without resolving koffi.
+  * If [[JsGuard.close]] called [[KoffiFacade.unregister]] directly, every `close()` would force koffi to be resolved even when no koffi
+  * callback was ever retained.
   *
-  * The indirection through `var unregister` breaks that reachability chain, the linker sees the initial value of the var (a no-op lambda)
-  * and can prove that only the mutator is reached by non-koffi users. Real-world (end-user) deployments replace the mutator via
-  * [[CallbackRegistry.installKoffi]]; the [[KoffiFacade.load]] call does this as part of its static block so generated impl companions
-  * inherit the wiring automatically. Tests may install a counter-backed mock via [[CallbackRegistry.setUnregister]] directly.
+  * The indirection through `var unregister` keeps the default a no-op lambda, so a koffi-less `close()` stays a no-op. Only once
+  * [[KoffiFacade.load]] actually resolves koffi (koffi is loaded DYNAMICALLY on first use, not via a static `@JSImport`, so this is a runtime
+  * concern, not the link-time reachability it originally guarded) does it swap in the real koffi-backed unregister via
+  * [[CallbackRegistry.installKoffi]], so generated impl companions inherit the wiring automatically. Tests may install a counter-backed mock
+  * via [[CallbackRegistry.setUnregister]] directly.
   *
   * No synchronization: Scala.js is single-threaded.
   */

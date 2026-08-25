@@ -21,7 +21,7 @@ object TlsTestCert:
     /** Write the embedded cert and key to fresh temp files and return their absolute paths (used by `NetTlsConfig.certChainPath` /
       * `privateKeyPath`). The files are marked delete-on-exit.
       */
-    lazy val (certPath, keyPath): (String, String) =
+    lazy val (certPath, keyPath) =
         val certFile = java.io.File.createTempFile("kyo-net-tls-cert", ".pem")
         val keyFile  = java.io.File.createTempFile("kyo-net-tls-key", ".pem")
         certFile.deleteOnExit()

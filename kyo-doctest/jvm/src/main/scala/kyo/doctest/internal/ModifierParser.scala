@@ -5,9 +5,10 @@ import kyo.doctest.*
 
 /** Parses the doctest modifier DSL from a code block info string.
   *
-  * Grammar: modifier-block := token+ token := axis-key "=" axis-value | "setup" axis-key := "scope" | "expect" | "platform" scope-value :=
-  * "isolated" | "inherited" | "nested" | "env:" NAME expect-value := "compiles" | "runs" | "fails-compile" | "warns" | "crashes" |
-  * "skipped" platform-value := platform-id ("," platform-id)* platform-id := "jvm" | "js" | "native" | "all"
+  * Grammar: modifier-block := token+ token := axis-key "=" axis-value | "setup" axis-key := "scope" | "expect" | "platform" | "timeout"
+  * scope-value := "isolated" | "inherited" | "nested" | "env:" NAME expect-value := "compiles" | "runs" | "fails-compile" | "warns" |
+  * "crashes" | "skipped" platform-value := platform-id ("," platform-id)* platform-id := "jvm" | "js" | "native" | "all" timeout-value
+  * := a finite positive [[kyo.Duration]]
   *
   * The "setup" keyword (no "=") expands to scope=env:__doc__. Unknown doctest: modifier keys return a ParseError. Unknown non-doctest:
   * tokens are silently ignored.
@@ -20,11 +21,12 @@ private[kyo] object ModifierParser:
     case class Parsed(
         scope: Maybe[Block.Visibility],
         expect: Maybe[Block.Expectation],
-        platform: Maybe[Set[Block.Target]]
+        platform: Maybe[Set[Block.Target]],
+        timeout: Maybe[Duration] = Absent
     ) derives CanEqual
 
     object Parsed:
-        val empty: Parsed = Parsed(Maybe.Absent, Maybe.Absent, Maybe.Absent)
+        val empty: Parsed = Parsed(Absent, Absent, Absent, Absent)
     end Parsed
 
     private val DoctestPrefix = "doctest:"
@@ -137,10 +139,27 @@ private[kyo] object ModifierParser:
             case "scope"    => parseScope(value, file, line).map(s => acc.copy(scope = Maybe.Present(s)))
             case "expect"   => parseExpect(value, file, line).map(e => acc.copy(expect = Maybe.Present(e)))
             case "platform" => parsePlatform(value, file, line).map(p => acc.copy(platform = Maybe.Present(p)))
+            case "timeout"  => parseTimeout(value, file, line).map(t => acc.copy(timeout = Present(t)))
             case unknown =>
                 Abort.fail[Doctest.Error.ParseError](
                     Doctest.Error.ParseError(file, line, s"unknown doctest modifier key: '$unknown'")
                 )
+
+    private def parseTimeout(
+        value: String,
+        file: kyo.Path,
+        line: Int
+    )(using Frame): Duration < Abort[Doctest.Error.ParseError] =
+        Duration.parse(value) match
+            case Result.Success(duration) if duration > Duration.Zero && duration < Duration.Infinity =>
+                duration
+            case Result.Success(_) =>
+                Abort.fail(Doctest.Error.ParseError(file, line, "timeout must be finite and greater than zero"))
+            case Result.Failure(error) =>
+                Abort.fail(Doctest.Error.ParseError(file, line, s"invalid timeout '$value': ${error.getMessage}"))
+            case Result.Panic(error) =>
+                Abort.fail(Doctest.Error.ParseError(file, line, s"invalid timeout '$value': ${error.getMessage}"))
+    end parseTimeout
 
     private def parseScope(value: String, file: kyo.Path, line: Int)(using
         Frame
@@ -306,11 +325,12 @@ private[kyo] object ModifierParser:
     private[internal] def applyDefaults(
         perBlock: Parsed,
         perFile: Parsed
-    ): (Block.Visibility, Block.Expectation, Set[Block.Target]) =
+    ): (visibility: Block.Visibility, expectation: Block.Expectation, platform: Set[Block.Target], timeout: Duration) =
         val scope    = perBlock.scope.orElse(perFile.scope).getOrElse(Block.Visibility.Isolated)
         val expect   = perBlock.expect.orElse(perFile.expect).getOrElse(Block.Expectation.Compiles)
         val platform = perBlock.platform.orElse(perFile.platform).getOrElse(Set(Block.Target.JVM, Block.Target.JS, Block.Target.Native))
-        (scope, expect, platform)
+        val timeout  = perBlock.timeout.orElse(perFile.timeout).getOrElse(Block.DefaultTimeout)
+        (scope, expect, platform, timeout)
     end applyDefaults
 
 end ModifierParser

@@ -35,21 +35,31 @@ class AsyncTest extends kyo.test.Test[Any]:
     }
 
     "sleep" in {
-        for
-            start <- Sync.defer(java.lang.System.currentTimeMillis())
-            _     <- Async.sleep(10.millis)
-            end   <- Sync.defer(java.lang.System.currentTimeMillis())
-        yield assert(end - start >= 8)
+        Clock.withTimeControl { control =>
+            for
+                fiber <- Fiber.initUnscoped(Async.sleep(10.millis))
+                // the sleep does not complete until virtual time reaches its deadline
+                early    <- fiber.done
+                advancer <- Fiber.initUnscoped(Loop.forever(control.advance(10.millis)))
+                _        <- fiber.get
+                _        <- advancer.interrupt
+            yield assert(!early)
+        }
     }
 
     "delay" in {
-        for
-            start <- Sync.defer(java.lang.System.currentTimeMillis())
-            res   <- Async.delay(5.millis)(42)
-            end   <- Sync.defer(java.lang.System.currentTimeMillis())
-        yield
-            assert(end - start >= 4)
-            assert(res == 42)
+        Clock.withTimeControl { control =>
+            for
+                fiber <- Fiber.initUnscoped(Async.delay(5.millis)(42))
+                // the delayed value is withheld until virtual time reaches the deadline
+                early    <- fiber.done
+                advancer <- Fiber.initUnscoped(Loop.forever(control.advance(5.millis)))
+                res      <- fiber.get
+                _        <- advancer.interrupt
+            yield
+                assert(!early)
+                assert(res == 42)
+        }
     }
 
     "runAndBlock" - {
@@ -86,6 +96,24 @@ class AsyncTest extends kyo.test.Test[Any]:
                     case Result.Failure(_: Timeout) => succeed("expected multiple-fiber timeout")
                     case v                          => fail(v.toString())
                 }
+        }
+    }
+
+    "Async.timeout arms the deadline before the guarded body starts (deterministic under time control)".notJs in {
+        // The timeout must arm its deadline before the guarded body runs, so a body that starts and suspends cannot outrun the
+        // timer. If the body forked before the sleep armed, advancing past the deadline would find no pending sleep and land in the past, hanging.
+        Clock.withTimeControl { control =>
+            for
+                started <- Latch.init(1)
+                fiber <- Fiber.initUnscoped(
+                    Abort.run[Timeout](Async.timeout(100.millis)(started.release.andThen(Async.never)))
+                )
+                _       <- started.await
+                _       <- control.advance(101.millis)
+                outcome <- fiber.get
+            yield outcome match
+                case Result.Failure(_: Timeout) => succeed
+                case other                      => fail(s"expected Timeout, got $other")
         }
     }
 
@@ -147,6 +175,35 @@ class AsyncTest extends kyo.test.Test[Any]:
                 if n <= 0 then ()
                 else once.map(i => if i then repeat(n - 1) else fail("interrupt returned false"))
             repeat(50).andThen(succeed("all 50 interrupt attempts returned true"))
+        }
+        "interrupting a parent stops all its Async.foreach children".notJs in {
+            // Regression: Async.foreach forks its children but links each to the parent's interrupt cascade
+            // only when the parent processes the child's join. A parent interrupted while the children are
+            // still launching could leave one unlinked and running (orphaned). Asserts the children STOP
+            // advancing after the parent is interrupted, independent of finalizers, by checking that a shared
+            // progress counter stops changing once every fiber has been awaited.
+            val progress          = new java.util.concurrent.atomic.AtomicLong(0)
+            def spin: Unit < Sync = Sync.defer(discard(progress.incrementAndGet())).andThen(spin)
+            def once: Unit < Async =
+                for
+                    fiber <- Fiber.initUnscoped(Async.foreachDiscard(1 to 16)(_ => spin))
+                    _     <- fiber.interrupt(panic)
+                    _     <- fiber.getResult
+                yield ()
+            def repeat(n: Int): Unit < Async =
+                if n <= 0 then ()
+                else once.andThen(repeat(n - 1))
+            repeat(200).andThen {
+                // Every child was interrupted and awaited, so the counter is settled: two reads a scheduling gap apart
+                // agree. An orphaned child still running would keep incrementing it and never let them converge.
+                assertEventually {
+                    for
+                        before <- Sync.defer(progress.get())
+                        _      <- Async.sleep(10.millis)
+                        after  <- Sync.defer(progress.get())
+                    yield before == after
+                }
+            }
         }
     }
 
@@ -801,6 +858,13 @@ class AsyncTest extends kyo.test.Test[Any]:
         val a: Int < Abort[Nothing] = 42
         val b: Int < Async          = a
         succeed("compile-time subtyping check: Abort[Nothing] <: Async")
+    }
+
+    "defaultConcurrency flag key matches the documented -D property" in {
+        // StaticFlag derives its key from the enclosing objects' JVM class name, so renaming or
+        // renesting `async.concurrency.default` would silently change the key and break the
+        // -Dkyo.async.concurrency.default override documented in kyo-core/README.md.
+        assert(async.concurrency.default.name == "kyo.async.concurrency.default")
     }
 
     "collectAll concurrency" - {

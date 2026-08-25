@@ -1,6 +1,5 @@
 package kyo
 
-import io.aeron.driver.MediaDriver
 import kyo.internal.*
 
 class SpawnBackendTest extends kyo.test.Test[Any]:
@@ -8,7 +7,7 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
     override def timeout = 300.seconds
 
     /** Every entry on the test JVM's classpath, as `Path`s. A spawned worker's `-cp` is built from the
-      * config classpath, so it must carry the kyo.internal.CompilerWorker class, kyo-aeron, and the presentation
+      * config classpath, so it must carry kyo.internal.CompilerWorker, kyo-aeron, and the presentation
       * compiler; the full test classpath supplies all three.
       */
     private def fullClasspath: Chunk[Path] =
@@ -22,7 +21,7 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
         )
 
     /** A real forked-worker Config: the full test classpath as both the worker's runtime classpath and
-      * the pc's target classpath, the own scala version, and `isolate = true`. `scalacOptions`
+      * the pc's target classpath, its own Scala version, and `isolate = true`. `scalacOptions`
       * distinguishes otherwise-equal configs (a distinct config routes to a distinct worker session).
       */
     private def spawnConfig(scalacOptions: Chunk[String] = Chunk.empty): Compiler.Config =
@@ -46,17 +45,37 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
     private val javaBin =
         Path(java.lang.System.getProperty("java.home"), "bin", "java").toString
 
-    /** Runs `f` against a fresh embedded MediaDriver, closed on scope exit. */
-    private def withDriver[A](f: MediaDriver => A < (Async & Abort[CompilerException] & Scope))(using
+    /** Runs `f` against a fresh embedded driver, closed on scope exit. */
+    private def withDriver[A](f: AeronDriver => A < (Async & Abort[CompilerException] & Scope))(using
         Frame
     ): A < (Async & Abort[CompilerException]) =
-        Scope.run(Scope.acquireRelease(Sync.defer(MediaDriver.launchEmbedded()))(d => Sync.defer(d.close())).map(f))
+        Scope.run(Abort.run[TopicTransportFailedException](AeronDriver.launch(CompilerPool.driverSettings)).map {
+            case Result.Success(driver) => f(driver)
+            case Result.Failure(e)      => Abort.panic(e)
+            case Result.Panic(t)        => Abort.panic(t)
+        })
+
+    /** Scope-binds a spawned backend so its close runs on every exit path: an assertion failure
+      * mid-test must never leak the worker process or its aeron client (a leaked client's conductor
+      * thread is non-daemon and keeps the forked test JVM alive past the suite). Close is safe to run
+      * twice, so tests that close mid-body as part of their scenario still hold.
+      */
+    private def scopedSpawn(config: Compiler.Config, driver: AeronDriver, streamIdBase: Int)(using
+        Frame
+    ): SpawnBackend < (Async & Abort[CompilerException] & Scope) =
+        Scope.acquireRelease(SpawnBackend.init(config, driver, streamIdBase))(b => Abort.run[Throwable](b.close).unit)
+
+    /** Scope-binds an in-process backend so its pc shuts down on every exit path. */
+    private def scopedLocal(config: Compiler.Config)(using
+        Frame
+    ): Backend < (Async & Abort[CompilerException] & Scope) =
+        Scope.acquireRelease(LocalBackend.init(config))(b => Abort.run[Throwable](b.close).unit)
 
     "a fixed buffer yields equal results on Local and Spawn (parity)" in {
         withDriver { driver =>
             for
-                local <- LocalBackend.init(localConfig())
-                spawn <- SpawnBackend.init(spawnConfig(), driver, 0)
+                local <- scopedLocal(localConfig())
+                spawn <- scopedSpawn(spawnConfig(), driver, 0)
                 uri       = Compiler.Uri("Parity.scala")
                 cleanText = "object Main { val x: Int = 1 }"
                 errorText = "object Main { val x: Int = \"not an int\" }"
@@ -110,15 +129,14 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
                                 case _                           => Exchange.Message.Skip
                     )
                     // A throwaway child process supplies a real Process handle; this leaf drives `run`
-                    // through a controlled in-memory Exchange (not a real aeron session), so the aeron
-                    // client is unused (passed null) and teardown is exchange.close plus a direct
-                    // process kill, never SpawnBackend.close.
+                    // through a controlled in-memory Exchange (not a real aeron session), so aeron is
+                    // unused (passed null) and teardown is exchange.close plus a direct process kill.
                     proc <- Abort.run[CommandException](Command(javaBin, "-version").spawnUnscoped).map {
                         case Result.Success(p) => p
                         case Result.Failure(e) => Abort.panic(e)
                         case Result.Panic(t)   => Abort.panic(t)
                     }
-                    backend = new SpawnBackend(proc, null, exchange)
+                    backend = new SpawnBackend(proc, null.asInstanceOf[AeronClient], exchange)
                     uri     = Compiler.Uri("Interrupt.scala")
 
                     // op1 registers (id 0) and parks: no response for id 0 is ever fed.
@@ -155,7 +173,7 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
     "no thread leak after a kill: close kills the worker and every later op fails with a typed Fatal" in {
         withDriver { driver =>
             for
-                backend <- SpawnBackend.init(spawnConfig(), driver, 0)
+                backend <- scopedSpawn(spawnConfig(), driver, 0)
                 uri = Compiler.Uri("Kill.scala")
 
                 // A live round-trip proves the worker is up and serving before the kill.
@@ -188,7 +206,7 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
     "a worker-comms failure surfaces didClose as a typed CompilerTransportException; a live worker yields Closed" in {
         withDriver { driver =>
             for
-                backend <- SpawnBackend.init(spawnConfig(), driver, 0)
+                backend <- scopedSpawn(spawnConfig(), driver, 0)
                 uri = Compiler.Uri("DidClose.scala")
 
                 liveResult <- Abort.run[CompilerException](backend.run(Request.DidClose(uri)))
@@ -207,18 +225,22 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
         }
     }
 
-    "one shared MediaDriver per pool: two Spawn workers both reach it; the driver closes on scope close" in {
+    "one shared driver per pool: two Spawn workers both reach it; the driver closes on scope close" in {
         val launched = new java.util.concurrent.atomic.AtomicInteger(0)
         val closed   = new java.util.concurrent.atomic.AtomicInteger(0)
         Scope.run {
             Scope.acquireRelease(
-                Sync.defer { discard(launched.incrementAndGet()); MediaDriver.launchEmbedded() }
-            )(d => Sync.defer { discard(closed.incrementAndGet()); d.close() }).map { driver =>
+                Abort.run[TopicTransportFailedException](AeronDriver.launchUnscoped(CompilerPool.driverSettings)).map {
+                    case Result.Success(d) => discard(launched.incrementAndGet()); d
+                    case Result.Failure(e) => Abort.panic(e)
+                    case Result.Panic(t)   => Abort.panic(t)
+                }
+            )(d => Sync.Unsafe.defer { discard(closed.incrementAndGet()); d.unsafe.close() }).map { driver =>
                 for
                     // Two distinct configs force two distinct worker sessions over the one shared driver;
                     // distinct stream-id bases (0, 1) keep their req/resp streams disjoint.
-                    b1 <- SpawnBackend.init(spawnConfig(Chunk.empty), driver, 0)
-                    b2 <- SpawnBackend.init(spawnConfig(Chunk("-deprecation")), driver, 1)
+                    b1 <- scopedSpawn(spawnConfig(Chunk.empty), driver, 0)
+                    b2 <- scopedSpawn(spawnConfig(Chunk("-deprecation")), driver, 1)
                     uri = Compiler.Uri("Driver.scala")
 
                     // Distinguishable buffers: a cross-talk between the two sessions would swap these.
@@ -247,15 +269,14 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
         withDriver { driver =>
             for
                 // Capture THIS init's worker process via the onSpawn seam (fired once the interrupt-safe
-                // kill is armed, just before the readiness probe), so the assertion targets exactly the
-                // worker this test spawns rather than the noisy global worker count.
+                // kill is armed, just before the readiness probe), targeting this test's own worker.
                 spawned <- Sync.defer(new java.util.concurrent.atomic.AtomicReference[Maybe[Process]](Absent))
                 fiber <- Fiber.initUnscoped(
                     Abort.run[CompilerException](SpawnBackend.init(spawnConfig(), driver, 7, p => spawned.set(Present(p))))
                 )
-                // The worker JVM has spawned but cannot answer the probe for seconds, so once the process
-                // is captured the init fiber is parked in the readiness probe and has NOT completed.
-                // Interrupting now lands squarely mid-probe (no fixed sleep that a fast boot could outrun).
+                // The worker JVM has spawned but cannot answer the probe for seconds, so once captured the
+                // init fiber is parked in the readiness probe, not yet completed. Interrupting now lands
+                // squarely mid-probe, with no fixed sleep that a fast boot could outrun.
                 captured <- pollUntil(500, 10.millis)(Sync.defer(spawned.get().isDefined))
                 _       = assert(captured, "the worker process must spawn before the readiness probe completes")
                 process = spawned.get().get

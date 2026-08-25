@@ -170,9 +170,9 @@ class PollerIoDriverWriteBackpressureTest extends Test:
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 smallBufferedPair(sndBuf = 2048, rcvBuf = 2048).map { case (client, accepted) =>
-                    val clientH = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent)
+                    val clientH = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     clientH.tls = Present(clientEngine)
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     Async.timeout(14.seconds) {
                         for
                             // Handshake the engines on the FIFO worker so the client encrypt and server decrypt both run on one carrier.
@@ -219,12 +219,12 @@ class PollerIoDriverWriteBackpressureTest extends Test:
             Sync.ensure(Sync.defer(driver.close())) {
                 smallBufferedPair(sndBuf = 2048, rcvBuf = 2048).map { case (client1, accepted1) =>
                     smallBufferedPair(sndBuf = 65536, rcvBuf = 65536).map { case (client2, accepted2) =>
-                        val client1H = PosixHandle.socket(client1, PosixHandle.DefaultReadBufferSize, Absent)
+                        val client1H = PosixHandle.socket(client1, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         client1H.tls = Present(clientEngine1)
-                        val client2H = PosixHandle.socket(client2, PosixHandle.DefaultReadBufferSize, Absent)
+                        val client2H = PosixHandle.socket(client2, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         client2H.tls = Present(clientEngine2)
-                        val accepted1H = PosixHandle.socket(accepted1, PosixHandle.DefaultReadBufferSize, Absent)
-                        val accepted2H = PosixHandle.socket(accepted2, PosixHandle.DefaultReadBufferSize, Absent)
+                        val accepted1H = PosixHandle.socket(accepted1, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        val accepted2H = PosixHandle.socket(accepted2, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         Async.timeout(14.seconds) {
                             for
                                 // Handshake both pairs on the FIFO worker so every client encrypt and server decrypt runs on one carrier.

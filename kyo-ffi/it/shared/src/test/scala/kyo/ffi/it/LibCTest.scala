@@ -261,7 +261,17 @@ class LibCTest extends ItTestBase:
     }
 
     "labs" - {
+        // C `long` is 32 bits on Windows (LLP64) for both tiers: Panama binds C `long` to a 32-bit
+        // layout there and koffi does the same, so a 64-bit argument is truncated to its low 32 bits
+        // (labs(Long.MaxValue) returns 1). The fixed-value 64-bit expectations below therefore hold
+        // only on LP64 hosts, so they cancel on every Windows target. The does-not-crash leaf and the
+        // labs(x) == labs(-x) invariant (symmetric under truncation) stay unconditional.
+        def assumeLp64Long(): Unit =
+            if kyo.internal.Platform.isWindows then
+                cancel("C long is 32-bit on Windows (LLP64)")
+
         "labs(Long.MinValue + 1) is Long.MaxValue" in {
+            assumeLp64Long()
             // labs(Long.MinValue) is UB. Long.MinValue + 1 is well-defined and
             // equals Long.MaxValue after abs.
             val libc = Ffi.load[LibCBindings]
@@ -269,6 +279,7 @@ class LibCTest extends ItTestBase:
         }
 
         "labs(Long.MaxValue) is Long.MaxValue" in {
+            assumeLp64Long()
             // D8: Long.MaxValue is positive, labs must return it unchanged.
             val libc = Ffi.load[LibCBindings]
             assert(libc.labs(Long.MaxValue) == Long.MaxValue)
@@ -285,6 +296,7 @@ class LibCTest extends ItTestBase:
 
         // Table-driven labs rows.
         "table-driven: varied signed long inputs" in {
+            assumeLp64Long()
             val libc = Ffi.load[LibCBindings]
             val cases: Seq[(Long, Long)] = Seq(
                 0L                   -> 0L,

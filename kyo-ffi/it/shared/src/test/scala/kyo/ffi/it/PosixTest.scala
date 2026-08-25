@@ -1,24 +1,32 @@
 package kyo.ffi.it
 
 import kyo.ffi.Ffi
+import kyo.internal.Platform
 
-/** POSIX bindings spec. Runs on JVM + Native only, `jvm-native/src/test/`, because Scala.js does not ship portable POSIX coverage for
-  * `process.h`-family calls.
+/** POSIX bindings spec, shared across platforms. The bindings resolve the bare POSIX names (`getpid`, `time`) through the native linker's
+  * default lookup; the Windows CRT exports these only under underscore-prefixed variants (`_getpid`, `_time64`), and neither Panama's (JVM)
+  * nor koffi's (Node) default lookup finds the bare names there, so every Windows target cancels. The leaves run on the Unix JVM, Native, and
+  * Node targets.
   *
-  * Six assertions spanning `getpid` and `time`. `getenv` coverage is deferred; see `PosixBindings` for the rationale (kyo-ffi codegen does
-  * not yet support `String` or borrowed `Buffer[Byte]` as a top-level return, which is what a stock `getenv` binding needs).
-  *
-  * Extends getpid stability + time monotonicity to more iterations and cross-call invariants.
+  * Covers `getpid` (positive, stable across two calls, a tight loop, and a longer burst), `time` (positive, monotonic non-decreasing, and
+  * bracketed against the JVM wall clock), and `getenv` (borrowed-String return round-tripped against `java.lang.System.getenv`), extending the
+  * stability and cross-call invariants over longer iteration counts.
   */
 class PosixTest extends ItTestBase:
 
+    private def assumePosixSymbols(): Unit =
+        if Platform.isWindows then
+            cancel("bare POSIX symbol names are unavailable in Windows CRT exports")
+
     "getpid" - {
         "returns a positive process id" in {
+            assumePosixSymbols()
             val posix = Ffi.load[PosixBindings]
             assert(posix.getpid() > 0)
         }
 
         "returns the same id across two calls in the same process" in {
+            assumePosixSymbols()
             val posix = Ffi.load[PosixBindings]
             val a     = posix.getpid()
             val b     = posix.getpid()
@@ -26,6 +34,7 @@ class PosixTest extends ItTestBase:
         }
 
         "agrees across repeated calls in a tight loop" in {
+            assumePosixSymbols()
             // Stronger than the pair-of-calls test above: 16 back-to-back getpid()
             // calls must all agree (fork-in-middle is the only way this would fail,
             // and the test process does not fork). Avoids Scala Native's linker
@@ -42,6 +51,7 @@ class PosixTest extends ItTestBase:
         }
 
         "stability holds over a longer burst" in {
+            assumePosixSymbols()
             // 256 rapid-fire calls: if errno scratch-slot reuse or the
             // generated stub leaks state, this is where it would manifest.
             val posix = Ffi.load[PosixBindings]
@@ -55,6 +65,7 @@ class PosixTest extends ItTestBase:
         }
 
         "all returned pids are positive" in {
+            assumePosixSymbols()
             val posix      = Ffi.load[PosixBindings]
             var i          = 0
             var last: Unit = succeed
@@ -67,21 +78,24 @@ class PosixTest extends ItTestBase:
 
     "time(0)" - {
         "returns a positive epoch-seconds value" in {
+            assumePosixSymbols()
             val posix = Ffi.load[PosixBindings]
             assert(posix.time(0L) > 0L)
         }
 
-        "is close to java.lang.System.currentTimeMillis / 1000" in {
-            val posix    = Ffi.load[PosixBindings]
-            val cSeconds = posix.time(0L)
-            val jSeconds = java.lang.System.currentTimeMillis() / 1000L
-            // Absolute skew tolerance: 5 seconds. If the two read points straddle a
-            // wall-clock adjustment of more than this, the assertion would (correctly)
-            // flag a genuine clock anomaly.
-            assert(math.abs(cSeconds - jSeconds) <= 5L)
+        "reads the same epoch clock as java.lang.System (bracketed)" in {
+            assumePosixSymbols()
+            val posix = Ffi.load[PosixBindings]
+            // Bracket the C read between two Java reads: a same-clock value falls within [before, after]
+            // however slow the host, and a broken binding (wrong unit/epoch/garbage) falls outside. No tolerance.
+            val jBefore = java.lang.System.currentTimeMillis() / 1000L
+            val cSecs   = posix.time(0L)
+            val jAfter  = java.lang.System.currentTimeMillis() / 1000L
+            assert(jBefore <= cSecs && cSecs <= jAfter, s"time()=$cSecs not in [$jBefore, $jAfter]")
         }
 
         "two calls are monotonic non-decreasing" in {
+            assumePosixSymbols()
             val posix = Ffi.load[PosixBindings]
             val a     = posix.time(0L)
             val b     = posix.time(0L)
@@ -89,6 +103,7 @@ class PosixTest extends ItTestBase:
         }
 
         "monotonic non-decreasing across a longer burst" in {
+            assumePosixSymbols()
             // 64 calls in sequence: every subsequent reading >= prior. Wall
             // clock is not globally monotonic (NTP slews), but over a ~ms
             // duration within the same process this is effectively monotone.
@@ -106,6 +121,7 @@ class PosixTest extends ItTestBase:
         }
 
         "each value is positive across multiple reads" in {
+            assumePosixSymbols()
             val posix      = Ffi.load[PosixBindings]
             var i          = 0
             var last: Unit = succeed
@@ -115,18 +131,17 @@ class PosixTest extends ItTestBase:
             last
         }
 
-        "values are within a narrow window of each other across rapid calls" in {
-            // Sanity check: 32 rapid-fire time() calls should span at most a
-            // few seconds. 30s is a very generous upper bound that will flag
-            // any wildly broken binding (e.g. returning uninitialized scratch)
-            // while tolerating slow CI hosts.
+        "each rapid read stays bracketed by java.lang.System reads" in {
+            assumePosixSymbols()
+            // Same bracketing across a 32-call burst: every read falls within its own [before, after] Java pair.
             val posix      = Ffi.load[PosixBindings]
-            val first      = posix.time(0L)
             var i          = 0
             var last: Unit = succeed
             while i < 32 do
-                val cur = posix.time(0L)
-                last = assert((cur - first) <= 30L)
+                val jBefore = java.lang.System.currentTimeMillis() / 1000L
+                val cur     = posix.time(0L)
+                val jAfter  = java.lang.System.currentTimeMillis() / 1000L
+                last = assert(jBefore <= cur && cur <= jAfter, s"time()=$cur not in [$jBefore, $jAfter]")
                 i += 1
             end while
             last
@@ -135,6 +150,7 @@ class PosixTest extends ItTestBase:
 
     "getenv (Borrowed[String] return)" - {
         "PATH returns the same value as java.lang.System.getenv" in {
+            assumePosixSymbols()
             val posix = Ffi.load[PosixBindings]
             val jVal  = java.lang.System.getenv("PATH")
             // PATH is expected to be set on every Unix test host.
@@ -144,6 +160,7 @@ class PosixTest extends ItTestBase:
         }
 
         "a variable that is definitely not set returns null" in {
+            assumePosixSymbols()
             val posix = Ffi.load[PosixBindings]
             // Name crafted to be implausible; the java-side result must agree for the assumption to hold.
             val name = "KYO_FFI_DEFINITELY_NOT_SET_1234567890"
@@ -152,6 +169,7 @@ class PosixTest extends ItTestBase:
         }
 
         "repeated calls return the same value (String is copied, not aliased)" in {
+            assumePosixSymbols()
             val posix = Ffi.load[PosixBindings]
             assume(java.lang.System.getenv("PATH") != null)
             val a = posix.getenv("PATH").value

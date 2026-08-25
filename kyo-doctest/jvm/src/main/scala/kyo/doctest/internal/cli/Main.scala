@@ -24,6 +24,8 @@ object Main extends KyoApp:
         else
             val configPathStr = args(0).toString
             val resultPathStr = args(1).toString
+            // The two Abort.recover wrappers each translate a filesystem failure into a
+            // context-specific IOException message.
             for
                 configJson <-
                     Abort.recover[FileReadException](e =>

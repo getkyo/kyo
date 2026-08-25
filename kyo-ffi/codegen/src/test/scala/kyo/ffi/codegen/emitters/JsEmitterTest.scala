@@ -971,10 +971,10 @@ class JsEmitterTest extends kyo.test.Test[Any]:
         )
         val src = JsEmitter.emit(spec)
         // A struct out-buffer is allocated from the koffi-registered struct name and passed FIRST.
-        assert(src.contains("""val __kyoStructOut$ = KoffiFacade.outStruct("Point")"""))
-        assert(src.contains("facade.makePoint(__kyoStructOut$.buf, seed)"))
+        assert(src.contains("""val __kyoStructOut = KoffiFacade.outStruct("Point")"""))
+        assert(src.contains("facade.makePoint(__kyoStructOut.buf, seed)"))
         // The filled buffer is decoded via the shared struct-decode-from-bytes path (NOT koffi's native object decode).
-        assert(src.contains("""val result = __kyoStructOut$.read()"""))
+        assert(src.contains("""val result = __kyoStructOut.read()"""))
         // The koffi descriptor gains a leading struct out-pointer and a void return.
         assert(src.contains(
             """KoffiFn("makePoint", "make_point", "void", Seq[js.Any]("Point*".asInstanceOf[js.Any], "int".asInstanceOf[js.Any]))"""

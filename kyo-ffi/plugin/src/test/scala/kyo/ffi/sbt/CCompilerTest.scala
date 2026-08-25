@@ -94,6 +94,35 @@ class CCompilerTest extends AnyFunSuite with Matchers {
         cmd should contain("-pthread")
     }
 
+    test("buildCommand: MSVC routes /LIBPATH and libs through /link so the linker finds a vendored .lib") {
+        // Regression: `/LIBPATH:` is a linker option cl silently ignores on the compiler command line,
+        // so a vendored library named by linkLibs + libDirs (e.g. aeron_driver_static.lib staged under a
+        // build dir) is unfindable unless the search dir and the lib follow `/link` (LNK1181 otherwise).
+        val src    = new File("/tmp/kyo_aeron.c")
+        val out    = new File("/tmp/kyo_aeron-windows-x86_64.dll")
+        val libDir = new File("/tmp/staged/lib")
+        val cmd = CCompiler.buildCommand(
+            cc = "cl",
+            family = CCompiler.Msvc,
+            cFlags = Seq("/MD"),
+            linkFlags = Nil,
+            linkLibs = Seq("aeron_driver_static", "ws2_32"),
+            sources = Seq(src),
+            includes = Nil,
+            outFile = out,
+            staticLink = false,
+            libDirs = Seq(libDir),
+            os = "windows"
+        )
+        val linkIdx    = cmd.indexOf("/link")
+        val libPathIdx = cmd.indexWhere(_ == "/LIBPATH:" + libDir.getAbsolutePath)
+        val libIdx     = cmd.indexOf("aeron_driver_static.lib")
+        linkIdx should be >= 0
+        libPathIdx should be > linkIdx
+        libIdx should be > linkIdx
+        cmd should contain("ws2_32.lib")
+    }
+
     test("buildCommand: linkFlags (C++ runtime) come AFTER linkLibs so GNU ld resolves archive C++ symbols") {
         // Regression: a vendored C++ static archive (e.g. BoringSSL) needs its C++ runtime (-lstdc++ / -lc++)
         // AFTER the archive on the GNU ld command line; before, ld leaves the archive's C++ symbols undefined
@@ -178,6 +207,7 @@ class CCompilerTest extends AnyFunSuite with Matchers {
         cmd should contain("/O2")
         cmd should contain("/W3")
         cmd should contain("/I" + inc.getAbsolutePath)
+        cmd should contain("/Fo:" + out.getAbsoluteFile.getParentFile.getAbsolutePath + File.separator)
         cmd should contain("/Fe:" + out.getAbsolutePath)
         cmd should contain("ws2_32.lib")
         // -fPIC is dropped on Windows (PIC is default for DLLs):
@@ -335,12 +365,14 @@ class CCompilerTest extends AnyFunSuite with Matchers {
 
     test("vendoredArchiveLinkFlags: darwin static links each .a by full path (no -Bstatic)") {
         // ld64 has no -Bstatic; the staged archive is named by full path so the link is static.
+        // The path is a HOST filesystem path (the linker runs on the host), so the expectation
+        // is derived through File rather than a hardcoded separator style.
         val libDir = new File("/tmp/bssl/lib")
         val flags  = CCompiler.vendoredArchiveLinkFlags(Seq(libDir), Seq("ssl", "crypto"), staticLink = true, os = "darwin")
         // Archives are named by absolute path under libDir; no -L, no -Bstatic on darwin.
         flags should have size 2
-        flags(0) should endWith("/tmp/bssl/lib/libssl.a")
-        flags(1) should endWith("/tmp/bssl/lib/libcrypto.a")
+        flags(0) shouldBe new File(libDir, "libssl.a").getAbsolutePath
+        flags(1) shouldBe new File(libDir, "libcrypto.a").getAbsolutePath
         flags should not contain ("-Wl,-Bstatic")
         flags should not contain ("-Wl,-Bdynamic")
         flags.foreach(f => f should not startWith ("-L"))
@@ -379,9 +411,8 @@ class CCompilerTest extends AnyFunSuite with Matchers {
         val libDir = new File("/tmp/bssl/lib")
         val flags  = CCompiler.vendoredArchiveForceLoadFlags(Seq(libDir), Seq("ssl", "crypto"), staticLink = true, os = "darwin")
         flags should have size 2
-        flags(0) should startWith("-Wl,-force_load,")
-        flags(0) should endWith("/tmp/bssl/lib/libssl.a")
-        flags(1) should endWith("/tmp/bssl/lib/libcrypto.a")
+        flags(0) shouldBe s"-Wl,-force_load,${new File(libDir, "libssl.a").getAbsolutePath}"
+        flags(1) shouldBe s"-Wl,-force_load,${new File(libDir, "libcrypto.a").getAbsolutePath}"
         flags should not contain ("-Wl,--whole-archive")
     }
 
@@ -442,8 +473,8 @@ class CCompilerTest extends AnyFunSuite with Matchers {
         )
         cmd should contain("-shared")
         cmd.containsSlice(Seq("-I", incDir.getAbsolutePath)) shouldBe true
-        cmd.exists(_.endsWith("/tmp/bssl/lib/libssl.a")) shouldBe true
-        cmd.exists(_.endsWith("/tmp/bssl/lib/libcrypto.a")) shouldBe true
+        cmd should contain(new File(libDir, "libssl.a").getAbsolutePath)
+        cmd should contain(new File(libDir, "libcrypto.a").getAbsolutePath)
         cmd should not contain ("-Wl,-Bstatic")
         cmd should not contain ("-static")
     }
@@ -545,5 +576,110 @@ class CCompilerTest extends AnyFunSuite with Matchers {
 
     test("detectOs: windows unaffected by musl probe") {
         CCompiler.detectOsWith("Windows 11", _ => true) shouldBe "windows"
+    }
+
+    // --- Target os/arch resolution --------------------------------------------
+    //
+    // The target is what names the artifact and its resource directory. Unset means the host, so an
+    // ordinary build is unchanged; set means a cross-build or a foreign staging lands where the
+    // runtime for THAT platform looks, not where this machine's runtime would.
+
+    test("resolveTargetOsArch: None is the build host") {
+        CCompiler.resolveTargetOsArch(None) shouldBe ((CCompiler.detectOs(), CCompiler.detectArch()))
+    }
+
+    test("resolveTargetOsArch: an explicit tag overrides the host") {
+        CCompiler.resolveTargetOsArch(Some("darwin-x86_64")) shouldBe (("darwin", "x86_64"))
+        CCompiler.resolveTargetOsArch(Some("linux-aarch64")) shouldBe (("linux", "aarch64"))
+    }
+
+    test("parseOsArch: splits at the last hyphen so linux-musl keeps its own hyphen") {
+        CCompiler.parseOsArch("linux-musl-x86_64") shouldBe (("linux-musl", "x86_64"))
+        CCompiler.parseOsArch("linux-musl-aarch64") shouldBe (("linux-musl", "aarch64"))
+        CCompiler.parseOsArch("linux-x86_64") shouldBe (("linux", "x86_64"))
+        CCompiler.parseOsArch("windows-x86_64") shouldBe (("windows", "x86_64"))
+    }
+
+    test("parseOsArch: an unsupported tag is a hard error, never a plausible-looking guess") {
+        // Silently accepting `linux-armv7` would name an artifact no NativeLoader lookup resolves.
+        val e = intercept[RuntimeException](CCompiler.parseOsArch("linux-armv7"))
+        e.getMessage should include("linux-armv7")
+        intercept[RuntimeException](CCompiler.parseOsArch("solaris-x86_64"))
+        intercept[RuntimeException](CCompiler.parseOsArch("x86_64"))
+        intercept[RuntimeException](CCompiler.parseOsArch(""))
+    }
+
+    test("supportedOsArchTags: the full matrix, in os-then-arch order") {
+        CCompiler.supportedOsArchTags shouldBe Seq(
+            "linux-x86_64",
+            "linux-aarch64",
+            "linux-musl-x86_64",
+            "linux-musl-aarch64",
+            "darwin-x86_64",
+            "darwin-aarch64",
+            "windows-x86_64",
+            "windows-aarch64"
+        )
+    }
+
+    // --- Artifact naming ------------------------------------------------------
+
+    test("libExtension: linux-musl shares linux's .so (the diagnostic task used to reject it)") {
+        CCompiler.libExtension("linux") shouldBe "so"
+        CCompiler.libExtension("linux-musl") shouldBe "so"
+        CCompiler.libExtension("darwin") shouldBe "dylib"
+        CCompiler.libExtension("windows") shouldBe "dll"
+        intercept[RuntimeException](CCompiler.libExtension("solaris"))
+    }
+
+    test("artifactName: names the output for the TARGET os/arch, not the host") {
+        CCompiler.artifactName("kyo_tcp", "linux", "x86_64") shouldBe "libkyo_tcp-linux-x86_64.so"
+        CCompiler.artifactName("kyo_tcp", "linux-musl", "aarch64") shouldBe "libkyo_tcp-linux-musl-aarch64.so"
+        CCompiler.artifactName("kyo_tcp", "darwin", "x86_64") shouldBe "libkyo_tcp-darwin-x86_64.dylib"
+        CCompiler.artifactName("kyo_tcp", "darwin", "aarch64") shouldBe "libkyo_tcp-darwin-aarch64.dylib"
+        // Windows drops the `lib` prefix.
+        CCompiler.artifactName("kyo_tcp", "windows", "x86_64") shouldBe "kyo_tcp-windows-x86_64.dll"
+    }
+
+    test("artifactName: the unset-target name is the host's, unchanged from the host-only behavior") {
+        val (os, arch) = CCompiler.resolveTargetOsArch(None)
+        val expected   = s"${CCompiler.libPrefix(os)}kyo_tcp-$os-$arch.${CCompiler.libExtension(os)}"
+        CCompiler.artifactName("kyo_tcp", os, arch) shouldBe expected
+        // And an override moves the name off the host (checked against a target this host is not).
+        val foreign      = if (os == "darwin") "linux-x86_64" else "darwin-aarch64"
+        val (fOs, fArch) = CCompiler.parseOsArch(foreign)
+        CCompiler.artifactName("kyo_tcp", fOs, fArch) should not be expected
+    }
+
+    // --- Artifact-name parsing (attributing a staged prebuilt) -----------------
+
+    test("parseArtifactName: round-trips every supported tag") {
+        CCompiler.supportedOsArchTags.foreach { tag =>
+            val (os, arch) = CCompiler.parseOsArch(tag)
+            val name       = CCompiler.artifactName("kyo_tcp", os, arch)
+            CCompiler.parseArtifactName(name) shouldBe Some(("kyo_tcp", os, arch))
+        }
+    }
+
+    test("parseArtifactName: prefers the longest tag so linux-musl is not read as linux") {
+        CCompiler.parseArtifactName("libkyo_tcp-linux-musl-x86_64.so") shouldBe Some(("kyo_tcp", "linux-musl", "x86_64"))
+    }
+
+    test("parseArtifactName: rejects a name whose extension contradicts its os") {
+        // `libfoo-darwin-x86_64.so` is not something the plugin produces; treating it as a darwin
+        // artifact would package a .so under darwin-x86_64/.
+        CCompiler.parseArtifactName("libfoo-darwin-x86_64.so") shouldBe None
+        CCompiler.parseArtifactName("libfoo-linux-x86_64.dylib") shouldBe None
+    }
+
+    test("parseArtifactName: None for names outside the convention") {
+        CCompiler.parseArtifactName("libfoo.so") shouldBe None
+        CCompiler.parseArtifactName("libfoo-linux-armv7.so") shouldBe None
+        CCompiler.parseArtifactName("lib-linux-x86_64.so") shouldBe None // empty library id
+        CCompiler.parseArtifactName("README") shouldBe None
+    }
+
+    test("parseArtifactName: a library id containing a hyphen is preserved") {
+        CCompiler.parseArtifactName("libkyo-tcp-linux-x86_64.so") shouldBe Some(("kyo-tcp", "linux", "x86_64"))
     }
 }

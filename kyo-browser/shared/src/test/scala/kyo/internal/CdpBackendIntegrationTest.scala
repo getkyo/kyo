@@ -228,24 +228,34 @@ class CdpBackendIntegrationTest extends BrowserTest:
             SharedChrome.init.map { wsUrl =>
                 CdpBackend.initUnscoped(wsUrl, Browser.LaunchConfig.default).map { backend =>
                     for
-                        start   <- Clock.now
-                        _       <- backend.close(1.second)
-                        elapsed <- Clock.now.map(_ - start)
-                    yield assert(elapsed < 5.seconds, s"close(1.second) took $elapsed (expected < 5s)")
+                        // Nothing is in flight, so close returns immediately (a hang trips the leaf timeout).
+                        _ <- backend.close(1.second)
+                        // Assert the close effect, not just that it returned: a subsequent send must raise ConnectionLost.
+                        afterClose <- Abort.run[BrowserConnectionException](CdpBackend.getTargets(backend))
+                    yield afterClose match
+                        case Result.Failure(_: BrowserConnectionLostException) => succeed
+                        case Result.Success(_) =>
+                            fail("expected the connection to be closed after close(1.second) but a send succeeded")
+                        case other => fail(s"expected BrowserConnectionLostException after close, got $other")
                 }
             }
         }.orFail("Unexpected")
     }
 
-    "CdpBackend.closeNow returns in less than 100ms" in {
+    "CdpBackend.closeNow closes the connection" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
                 CdpBackend.initUnscoped(wsUrl, Browser.LaunchConfig.default).map { backend =>
                     for
-                        start   <- Clock.now
-                        _       <- backend.closeNow
-                        elapsed <- Clock.now.map(_ - start)
-                    yield assert(elapsed < 1.second, s"closeNow took $elapsed (expected < 1s)")
+                        // Assert the close effect (like the close(grace) sibling), not elapsed time: after closeNow a send must raise
+                        // ConnectionLost. Promptness comes free from the leaf timeout, which a blocking closeNow would trip.
+                        _          <- backend.closeNow
+                        afterClose <- Abort.run[BrowserConnectionException](CdpBackend.getTargets(backend))
+                    yield afterClose match
+                        case Result.Failure(_: BrowserConnectionLostException) => succeed
+                        case Result.Success(_) =>
+                            fail("expected the connection to be closed after closeNow but a send succeeded")
+                        case other => fail(s"expected BrowserConnectionLostException after closeNow, got $other")
                 }
             }
         }.orFail("Unexpected")

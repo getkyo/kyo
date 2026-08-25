@@ -20,6 +20,7 @@ import kyo.net.NetTlsHandshakeException
 import kyo.net.NetTlsHandshakeTimeoutException
 import kyo.net.NetUnixConnectException
 import kyo.net.NetUnixConnectTimeoutException
+import kyo.net.TransportCapabilities
 import kyo.net.internal.transport.*
 import kyo.scheduler.IOPromise
 import scala.scalajs.js
@@ -51,8 +52,13 @@ final private[kyo] class JsTransport private (
     /** JS terminates TLS with Node's `tls` module, so it serves only the "node" implementation. A connection pinning any other
       * [[NetTlsConfig.tlsProvider]] fails closed (see `connect(tls)`/`listen(tls)`/`upgradeToTls`). The cross-backend test matrix reads this to
       * skip non-node cells against the node backend.
+      *
+      * Node implements the local domain with named pipes on Windows: a filesystem path handed to `server.listen` or `net.createConnection`
+      * fails EACCES there (only `\\.\pipe\` names bind), so AF_UNIX sockets exist for this transport only off Windows. The host check is read
+      * at construction; the OS does not change under a running process.
       */
-    override private[net] def supportedTlsProviders: Set[String] = Set("node")
+    override private[net] val capabilities: TransportCapabilities =
+        TransportCapabilities(Set("node"), unixSockets = !kyo.internal.Platform.isWindows)
 
     /** The fail-closed explanation for a [[NetTlsConfig.tlsProvider]] pin other than "node", shared by the three TLS entry points so all reject a
       * non-node pin identically. Carried as the cause of a [[NetTlsHandshakeException]].
@@ -369,7 +375,7 @@ final private[kyo] class JsTransport private (
         host: String,
         port: Int,
         connectTimeout: Duration
-    )(using AllowUnsafe, Frame): () => Unit =
+    )(using allow: AllowUnsafe, frame: Frame): () => Unit =
         if connectTimeout.isFinite then
             // Disarming INTERRUPTS the timer, which completes it and fires the callback below, so that callback must distinguish "the deadline
             // elapsed" from "the deadline was called off". Harmless while the only disarm ran after `promise` had already settled (the
@@ -388,7 +394,7 @@ final private[kyo] class JsTransport private (
             def disarm(): Unit =
                 // Set BEFORE the interrupt, so the callback the interrupt triggers observes it.
                 disarmed.set(true)
-                timer.interruptDiscard(Result.Panic(Closed("JsTransport", summon[Frame], "connect completed before deadline")))
+                timer.interruptDiscard(Result.Panic(Interrupted(frame, "connect completed before deadline")))
             end disarm
             // Backstop for every way this connect can end before its TCP phase completes.
             promise.onComplete(_ => disarm())
@@ -406,8 +412,8 @@ final private[kyo] class JsTransport private (
         config: kyo.net.NetConfig,
         handshakeTimeout: Duration = Duration.Infinity
     )(using
-        AllowUnsafe,
-        Frame
+        allow: AllowUnsafe,
+        frame: Frame
     ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
         val promise = new IOPromise[NetException, Connection[JsHandle]]
         val driver  = pool.next()
@@ -447,11 +453,7 @@ final private[kyo] class JsTransport private (
                                 discard(socket.destroy())
                         }
                         promise.onComplete { _ =>
-                            deadline.interruptDiscard(Result.Panic(Closed(
-                                "JsTransport",
-                                summon[Frame],
-                                "handshake settled before deadline"
-                            )))
+                            deadline.interruptDiscard(Result.Panic(Interrupted(frame, "handshake settled before deadline")))
                         }
                     end if
                 }: js.Function0[Unit]
@@ -465,8 +467,9 @@ final private[kyo] class JsTransport private (
             connectEvent,
             { () =>
                 if tcpNoDelay then discard(socket.setNoDelay(true))
-                val handle     = JsHandle.init(socket, driver)
-                val connection = Connection.init(handle, driver, config.channelCapacity)
+                val handle = JsHandle.init(socket, driver, frame)
+                handle.peerCloseGrace = config.peerCloseGrace
+                val connection = Connection.init(handle, driver, config.channelCapacity, config.peerCloseGrace)
                 // Wire upgrade function so upgradeToTls dispatches to this transport.
                 connection.upgradeFn = Present { (tls, frame) =>
                     given Frame = frame
@@ -543,7 +546,7 @@ final private[kyo] class JsTransport private (
         config: kyo.net.NetConfig,
         onClose: Maybe[() => Unit] = Absent,
         acceptHandshakeCount: Maybe[() => Int] = Absent
-    )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
+    )(using allow: AllowUnsafe, frame: Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
         val promise = new IOPromise[NetException, NetListener]
         rejectUnsupportedBuffers(config) match
             case Present(e) =>
@@ -552,7 +555,7 @@ final private[kyo] class JsTransport private (
                 return promise.asInstanceOf[Fiber.Unsafe[NetListener, Abort[NetException]]]
             case Absent => ()
         end match
-        val listener = new JsListener(server, NetAddress.Tcp(host, port))
+        val listener = new JsListener(server, NetAddress.Tcp(host, port), frame)
         onClose.foreach(listener.onClose)
         acceptHandshakeCount.foreach(listener.acceptHandshakeCount)
 
@@ -563,8 +566,9 @@ final private[kyo] class JsTransport private (
                 if tcpNoDelay then discard(socket.setNoDelay(true))
 
                 val connDriver = pool.next()
-                val handle     = JsHandle.init(socket, connDriver)
-                val connection = Connection.init(handle, connDriver, config.channelCapacity)
+                val handle     = JsHandle.init(socket, connDriver, listener.createdAt)
+                handle.peerCloseGrace = config.peerCloseGrace
+                val connection = Connection.init(handle, connDriver, config.channelCapacity, config.peerCloseGrace)
                 // Accepted connection: a STARTTLS upgrade through the public upgradeToTls runs in the TLS server role (upgradeToTls reads
                 // isServerOrigin).
                 connection.isServerOrigin = true
@@ -622,8 +626,8 @@ final private[kyo] class JsTransport private (
     end listenServer
 
     def connectUnix(path: String, connectTimeout: Duration, config: kyo.net.NetConfig)(using
-        AllowUnsafe,
-        Frame
+        allow: AllowUnsafe,
+        frame: Frame
     ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
         kyo.net.Transport.checkConnectTimeout(connectTimeout)
         val promise = new IOPromise[NetException, Connection[JsHandle]]
@@ -653,8 +657,9 @@ final private[kyo] class JsTransport private (
             "connect",
             { () =>
                 // Unix sockets do not support TCP_NODELAY: skip setNoDelay
-                val handle     = JsHandle.init(socket, driver)
-                val connection = Connection.init(handle, driver, config.channelCapacity)
+                val handle = JsHandle.init(socket, driver, frame)
+                handle.peerCloseGrace = config.peerCloseGrace
+                val connection = Connection.init(handle, driver, config.channelCapacity, config.peerCloseGrace)
                 // Wire upgrade function so upgradeToTls dispatches to this transport.
                 connection.upgradeFn = Present { (tls, frame) =>
                     given Frame = frame
@@ -686,8 +691,8 @@ final private[kyo] class JsTransport private (
     end connectUnix
 
     override def stdio(channelCapacity: Int, readChunkSize: Int)(using
-        AllowUnsafe,
-        Frame
+        allow: AllowUnsafe,
+        frame: Frame
     ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
         if !stdioClaimed.compareAndSet(false, true) then
             // Exactly one stdio per process: fds 0/1 are process-global, so double-ownership is rejected.
@@ -697,8 +702,9 @@ final private[kyo] class JsTransport private (
             // A duplex shim over the two Node streams: reads route to process.stdin, writes to process.stdout.
             // JsHandle/JsIoDriver expect a single socket-like object, so the shim presents one whose read events
             // come from stdin and whose write goes to stdout. destroy() is a no-op: the process owns fds 0/1.
-            val shim       = stdioShim()
-            val handle     = JsHandle.init(shim, driver)
+            val shim   = stdioShim()
+            val handle = JsHandle.init(shim, driver, frame)
+            // stdio keeps peerCloseGrace = Infinity: no TCP peer to reclaim against.
             val connection = Connection.init(handle, driver, channelCapacity)
             if connection.start() then
                 Fiber.Unsafe.fromResult(Result.succeed(connection: NetConnection))
@@ -761,7 +767,7 @@ final private[kyo] class JsTransport private (
 
     def listenUnix(path: String, backlog: Int, config: kyo.net.NetConfig)(
         handler: NetConnection => Unit
-    )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
+    )(using allow: AllowUnsafe, frame: Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
         val promise = new IOPromise[NetException, NetListener]
         rejectUnsupportedBuffers(config) match
             case Present(e) =>
@@ -773,7 +779,7 @@ final private[kyo] class JsTransport private (
         val net    = js.Dynamic.global.require("net")
         val server = net.createServer()
 
-        val listener = new JsListener(server, NetAddress.Unix(path))
+        val listener = new JsListener(server, NetAddress.Unix(path), frame)
 
         discard(server.on(
             "connection",
@@ -782,8 +788,9 @@ final private[kyo] class JsTransport private (
                 // Unix sockets do not support TCP_NODELAY: skip setNoDelay
 
                 val connDriver = pool.next()
-                val handle     = JsHandle.init(socket, connDriver)
-                val connection = Connection.init(handle, connDriver, config.channelCapacity)
+                val handle     = JsHandle.init(socket, connDriver, listener.createdAt)
+                handle.peerCloseGrace = config.peerCloseGrace
+                val connection = Connection.init(handle, connDriver, config.channelCapacity, config.peerCloseGrace)
                 // Accepted connection: a STARTTLS upgrade through the public upgradeToTls runs in the TLS server role (upgradeToTls reads
                 // isServerOrigin).
                 connection.isServerOrigin = true
@@ -835,7 +842,7 @@ final private[kyo] class JsTransport private (
         conn: NetConnection,
         tls: kyo.net.NetTlsConfig,
         channelCapacity: Int
-    )(using AllowUnsafe, Frame): Fiber.Unsafe[NetConnection, Abort[NetException]] =
+    )(using allow: AllowUnsafe, frame: Frame): Fiber.Unsafe[NetConnection, Abort[NetException]] =
         // The SNI host the upgrade engine verifies against; also the host reported by any handshake failure (an upgrade has no fresh port, so -1).
         val upgradeHost = tls.sniHostname.getOrElse("")
         // Honor a NetTlsConfig.tlsProvider pin: JS upgrades via Node's tls module, so a pin to any non-"node" provider fails closed.
@@ -939,25 +946,33 @@ final private[kyo] class JsTransport private (
             return promise.asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
         end if
 
-        // Pre-read bytes: if the peer sent data before detachForUpgrade drained the inbound channel,
-        // push them back into the socket so the TLS engine sees them as the first bytes.
-        preRead match
-            case Present(chunks) if chunks.nonEmpty =>
-                val totalLen = chunks.map(_.size).sum
-                val buf      = new Array[Byte](totalLen)
-                var off      = 0
-                chunks.foreach { span =>
-                    val arr = span.toArray
-                    // System.arraycopy: no kyo equivalent for a bulk primitive-array copy; fully qualified so kyo.System does not shadow it.
-                    java.lang.System.arraycopy(arr, 0, buf, off, arr.length)
-                    off += arr.length
-                }
-                val nodeBuffer = js.Dynamic.global.Buffer.from(
-                    js.typedarray.byteArray2Int8Array(buf).buffer
-                )
-                discard(socket.unshift(nodeBuffer))
-            case _ => ()
-        end match
+        // Push pre-read bytes and any peer-close-probe-staged leftover back into the socket (unshift) so the TLS engine sees them first. Order:
+        // channel-drained preRead is older than the listener-stashed leftover, so preRead precedes it; draining leftover here also fixes its pre-existing silent drop at upgrade.
+        var replay: Chunk[Array[Byte]] = preRead match
+            case Present(chunks) => chunks.map(_.toArray)
+            case Absent          => Chunk.empty
+        var draining = true
+        while draining do
+            handle.dequeueLeftover() match
+                case Present(JsHandle.Leftover(buf, off, len)) =>
+                    replay = replay.append(if off == 0 && len == buf.length then buf else java.util.Arrays.copyOfRange(buf, off, off + len))
+                case Absent => draining = false
+            end match
+        end while
+        if replay.nonEmpty then
+            val totalLen = replay.foldLeft(0)(_ + _.length)
+            val buf      = new Array[Byte](totalLen)
+            var off      = 0
+            replay.foreach { arr =>
+                // System.arraycopy: no kyo equivalent for a bulk primitive-array copy; fully qualified so kyo.System does not shadow it.
+                java.lang.System.arraycopy(arr, 0, buf, off, arr.length)
+                off += arr.length
+            }
+            val nodeBuffer = js.Dynamic.global.Buffer.from(
+                js.typedarray.byteArray2Int8Array(buf).buffer
+            )
+            discard(socket.unshift(nodeBuffer))
+        end if
 
         // Remove the JsHandle's permanent listeners from the plaintext socket. They were registered
         // by JsHandle.init and would intercept TLS handshake bytes if left in place after the
@@ -1048,7 +1063,7 @@ final private[kyo] class JsTransport private (
                     discard(tlsSocket.destroy())
             }
             promise.onComplete { _ =>
-                deadline.interruptDiscard(Result.Panic(Closed("JsTransport", summon[Frame], "upgrade settled before deadline")))
+                deadline.interruptDiscard(Result.Panic(Interrupted(frame, "upgrade settled before deadline")))
             }
         end if
 
@@ -1058,8 +1073,9 @@ final private[kyo] class JsTransport private (
                 // Pause the TLS socket now that the handshake is done: kyo controls data flow.
                 // (We cannot pause before the handshake as that blocks TLS record delivery.)
                 discard(tlsSocket.pause())
-                val newHandle = JsHandle.init(tlsSocket, driver)
-                val newConn   = Connection.init(newHandle, driver, channelCapacity)
+                val newHandle = JsHandle.init(tlsSocket, driver, frame)
+                newHandle.peerCloseGrace = handle.peerCloseGrace // the upgraded connection inherits the original connection's reclaim grace
+                val newConn = Connection.init(newHandle, driver, channelCapacity, handle.peerCloseGrace)
                 // Preserve the upgrade role on the new TLS connection so a further upgrade does not silently flip client/server.
                 newConn.isServerOrigin = isServerSide
                 // Wire upgrade function on the new TLS connection so further upgrade attempts
@@ -1110,10 +1126,11 @@ private[kyo] object JsTransport:
       */
     final private[internal] case class AcceptHandshakeTracking(discharge: () => Unit, inFlightCount: () => Int)
     def init(poolSize: Int = 1)(using AllowUnsafe, Frame): JsTransport =
-        // Obtain each driver through the capability-probed registry rather than constructing JsIoDriver
-        // directly. The JS registry holds only NodeBackend, so the selected driver is the same JsIoDriver used
-        // before the registry existed; -Dkyo.net.backend can force/observe the selection.
-        val drivers = Array.fill[IoDriver[JsHandle]](poolSize)(kyo.net.internal.backend.IoBackendPlatform.driver())
+        // This is NodeBackend's own transport, so it builds NodeBackend's `JsIoDriver` directly. The registry is now
+        // heterogeneous (NodeBackend over `JsHandle` plus the koffi posix backends over `PosixHandle`), so a driver
+        // obtained through selection could be a posix driver; each backend builds its OWN transport via `Entry.build`,
+        // and `NodeBackend.build` delegates here.
+        val drivers = Array.fill[IoDriver[JsHandle]](poolSize)(kyo.net.internal.backend.NodeBackend.createDriver())
         val pool    = IoDriverPool.init(drivers)
         pool.start()
         new JsTransport(pool)
@@ -1126,7 +1143,8 @@ end JsTransport
   */
 final private[net] class JsListener(
     private val server: js.Dynamic,
-    private var _address: NetAddress
+    private var _address: NetAddress,
+    val createdAt: Frame
 ) extends NetListener:
 
     /** Extra teardown the transport attaches, currently reclaiming the accepted sockets whose TLS handshake never settled. Written once at

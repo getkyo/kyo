@@ -223,6 +223,32 @@ You must not use an intersection type, yet have provided scala.Int & scala.Doubl
                     yield assert(r.isInterrupted)
                     end for
                 }
+
+                // TODO(kyo-zio): re-enable once the interrupt-orphan race in ZIOs.run is closed. A ZIO interrupt can still race the
+                // bridge's wiring in a window onInterrupt/interruptAndAwait leaves open, orphaning a bridged kyo fiber (progress advances after interrupt+await), failing intermittently on CI.
+                "interrupt racing acquisition never orphans the bridged kyo fiber".ignore(
+                    "flaky: residual interrupt-orphan race in ZIOs.run bridge, pending a fix"
+                ) in runZIO {
+                    // A ZIO interrupt that lands between ZIOs.run's fork and the wiring of its interruption
+                    // path must still stop the bridged kyo fiber. Each iteration forks a busy spin loop and
+                    // interrupts it immediately, maximizing that window; a dropped interrupt leaves a worker
+                    // spinning, so progress keeps advancing after every fiber has been awaited.
+                    val progress = new java.util.concurrent.atomic.AtomicLong(0)
+                    def spin: Unit < Sync =
+                        Sync.defer {
+                            discard(progress.incrementAndGet())
+                            spin
+                        }
+                    val iteration: Task[Unit] =
+                        ZIOs.run(spin).fork.flatMap(f => (f.interrupt *> f.await).unit)
+                    for
+                        _  <- ZIO.foreachDiscard(1 to 400)(_ => iteration)
+                        p1 <- ZIO.succeed(progress.get())
+                        _  <- ZIO.sleep(zio.Duration.fromMillis(200))
+                        p2 <- ZIO.succeed(progress.get())
+                    yield assert(p1 == p2)
+                    end for
+                }
             }
 
             "runKyo" - {

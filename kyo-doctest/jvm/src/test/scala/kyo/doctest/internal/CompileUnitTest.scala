@@ -9,7 +9,8 @@ class CompileUnitTest extends kyo.test.Test[Any]:
         body: String,
         visibility: Block.Visibility = Block.Visibility.Isolated,
         file: String = "README.md",
-        lineStart: Int = 1
+        lineStart: Int = 1,
+        expect: Block.Expectation = Block.Expectation.Compiles
     ): Block =
         Block(
             file = kyo.Path(file),
@@ -17,7 +18,7 @@ class CompileUnitTest extends kyo.test.Test[Any]:
             lineEnd = lineStart + 3,
             body = body,
             visibility = visibility,
-            expect = Block.Expectation.Compiles,
+            expect = expect,
             platform = Set(Block.Target.JVM, Block.Target.JS, Block.Target.Native),
             carrier = Block.Carrier.Visible
         )
@@ -132,6 +133,53 @@ class CompileUnitTest extends kyo.test.Test[Any]:
     "empty block list produces empty Chunk of compile units" in {
         val units = CompileUnit.group(Chunk.empty)
         assert(units.isEmpty, s"expected empty Chunk but got ${units.size} units")
+    }
+
+    "Skipped blocks never contribute to compile units or preludes" in {
+        val inherited = makeBlock("val inherited = 1", Block.Visibility.Inherited, lineStart = 1)
+        val skippedInherited = makeBlock(
+            "this is invalid skipped inherited pseudocode",
+            Block.Visibility.Inherited,
+            lineStart = 10,
+            expect = Block.Expectation.Skipped
+        )
+        val inheritedUse = makeBlock("val inheritedUse = inherited", Block.Visibility.Inherited, lineStart = 20)
+        val skippedSetup = makeBlock(
+            "this is invalid skipped setup pseudocode",
+            Block.Visibility.Env("__doc__"),
+            lineStart = 30,
+            expect = Block.Expectation.Skipped
+        )
+        val skippedEnv = makeBlock(
+            "this is invalid skipped env pseudocode",
+            Block.Visibility.Env("shared"),
+            lineStart = 40,
+            expect = Block.Expectation.Skipped
+        )
+        val env = makeBlock("val envValue = 1", Block.Visibility.Env("shared"), lineStart = 50)
+
+        val units            = CompileUnit.group(Chunk(inherited, skippedInherited, inheritedUse, skippedSetup, skippedEnv, env))
+        val plannedBlocks    = units.flatMap(_.blocks.map(_.block))
+        val syntheticSources = units.map(_.syntheticSource.content)
+
+        assert(!plannedBlocks.contains(skippedInherited), "skipped inherited block must not be planned")
+        assert(!plannedBlocks.contains(skippedSetup), "skipped setup block must not be planned")
+        assert(!plannedBlocks.contains(skippedEnv), "skipped env block must not be planned")
+        assert(
+            syntheticSources.forall(!_.contains("this is invalid skipped inherited pseudocode")),
+            "skipped inherited body must not appear in synthetic sources"
+        )
+        assert(
+            syntheticSources.forall(!_.contains("this is invalid skipped setup pseudocode")),
+            "skipped setup body must not appear in synthetic sources"
+        )
+        assert(
+            syntheticSources.forall(!_.contains("this is invalid skipped env pseudocode")),
+            "skipped env body must not appear in synthetic sources"
+        )
+        assert(syntheticSources.exists(_.contains("val inherited = 1")), "active inherited body must be planned")
+        assert(syntheticSources.exists(_.contains("val inheritedUse = inherited")), "active inherited use must be planned")
+        assert(syntheticSources.exists(_.contains("val envValue = 1")), "active env body must be planned")
     }
 
     // Additional: Env("tutorial") blocks in a file with a setup block carry the setup block in WrappedBlock.setupBlocks.

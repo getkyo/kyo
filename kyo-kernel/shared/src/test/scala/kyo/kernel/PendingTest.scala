@@ -351,6 +351,23 @@ class PendingTest extends kyo.test.Test[Any]:
                 ContextEffect.handle(Tag[TestEffect3], value)(v)
         end TestEffect3
 
+        // A fresh interceptor per call (it is stateful) that denies entry into the second pending computation: the
+        // resumption over a nested `A < S` value, where map/flatMap/andThen must re-apply their continuation.
+        def denyNestedResumption: Safepoint.Interceptor =
+            new Safepoint.Interceptor:
+                var seenNested                                                 = 0
+                def addFinalizer(f: Maybe[Result.Error[Any]] => Unit): Unit    = ()
+                def removeFinalizer(f: Maybe[Result.Error[Any]] => Unit): Unit = ()
+                def enter(frame: Frame, value: Any): Boolean =
+                    value match
+                        case _: kyo.kernel.internal.Kyo[?, ?] =>
+                            seenNested += 1
+                            seenNested != 2
+                        case _ => true
+
+        def nestedScenario: Int < TestEffect2 < TestEffect1 =
+            Kyo.lift(TestEffect1(10)).map(_.map(s => Kyo.lift(TestEffect2(s))))
+
         "basic nesting operations" in {
             val nested: String < TestEffect1 < Any = Kyo.lift(TestEffect1(42))
             assert(TestEffect1.run(nested.flatten).eval == "Effect1:42")
@@ -368,6 +385,40 @@ class PendingTest extends kyo.test.Test[Any]:
 
             val result2 = comp.flatten.handle(TestEffect2.run).handle(TestEffect1.run)
             assert(result2.eval == "Effect1:10".length + 10)
+        }
+
+        // When the safepoint denies entry (as it does under fiber preemption), map/flatMap/andThen defer the
+        // resumption over a nested `A < S` value; each must still apply its continuation so the inner effect stays
+        // handled and does not leak past its handler. `denyNestedResumption` forces that deferral deterministically.
+        // One leaf per operation.
+
+        "multiple effects with the nested map deferred at a denied safepoint" in {
+            assert(nestedScenario.map(_.handle(TestEffect2.run)).handle(TestEffect1.run).eval == "Effect1:10".length + 10)
+            val deferred =
+                Safepoint.immediate(denyNestedResumption) {
+                    nestedScenario.map(_.handle(TestEffect2.run)).handle(TestEffect1.run)
+                }
+            assert(deferred.eval == "Effect1:10".length + 10)
+        }
+
+        "multiple effects with the nested flatMap deferred at a denied safepoint" in {
+            assert(nestedScenario.flatMap(_.handle(TestEffect2.run)).handle(TestEffect1.run).eval == "Effect1:10".length + 10)
+            val deferred =
+                Safepoint.immediate(denyNestedResumption) {
+                    nestedScenario.flatMap(_.handle(TestEffect2.run)).handle(TestEffect1.run)
+                }
+            assert(deferred.eval == "Effect1:10".length + 10)
+        }
+
+        "discarding a nested computation with andThen deferred at a denied safepoint" in {
+            // andThen discards the inner `Int < TestEffect2`; the deferred resumption must drop the whole nested
+            // value rather than re-evaluate it at the wrong nesting.
+            assert(nestedScenario.andThen(99).handle(TestEffect1.run).eval == 99)
+            val deferred =
+                Safepoint.immediate(denyNestedResumption) {
+                    nestedScenario.andThen(99).handle(TestEffect1.run)
+                }
+            assert(deferred.eval == 99)
         }
 
         "map" in {

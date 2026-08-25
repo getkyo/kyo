@@ -38,7 +38,7 @@ class PollerIoDriverCloseDuringIoTest extends Test:
             val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
             discard(driver.start())
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                val handle               = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle               = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val closeCountAtSendTime = new AtomicInteger(-1)
                 spy.onSend = () =>
                     // beginWrite is already held by write() at this point (writeRaw calls sockets.send from inside it, before this hook's
@@ -80,7 +80,7 @@ class PollerIoDriverCloseDuringIoTest extends Test:
             val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
             discard(driver.start())
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                val handle               = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle               = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val closeCountAtRecvTime = new AtomicInteger(-1)
                 spy.onRecvNow = (fd: Int) =>
                     // beginDispatch is already held by dispatchRead() at this point (recvNow is called from inside it, before this hook's

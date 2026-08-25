@@ -10,16 +10,24 @@ import kyo.*
   * listener reports the Unix address with port `-1`.
   *
   * The path uses `nanoTime` for a fresh name per run (no `java.util.UUID` / `SecureRandom`, which Native lacks; no `java.io.File`, which Scala.js
-  * lacks). `/tmp` exists on Linux and macOS, the two OSes any of these backends runs on.
+  * lacks). `/tmp` exists on Linux and macOS, and resolves to a drive-relative `\tmp` on the Windows JVM runner.
+  *
+  * Every leaf gates on [[Transport.supportsUnixSockets]] and cancels where the transport cannot bind AF_UNIX paths (Node on Windows maps the
+  * local domain to named pipes, so a filesystem listen path fails EACCES there); the capability lives on the transport, not as a platform
+  * check here.
   */
 class TransportUnixSocketTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
+    private def assumeUnixSockets(transport: Transport)(using Frame): Unit =
+        if !transport.supportsUnixSockets then cancel("AF_UNIX sockets unsupported on this platform")
+
     "Transport UDS round-trip (every backend via NetPlatform.transport)" - {
         "connectUnix + listenUnix round-trips a known message through an echo handler" in {
             val transport = NetPlatform.transport
-            val path      = s"/tmp/kyo-uds-${java.lang.System.nanoTime()}.sock"
+            assumeUnixSockets(transport)
+            val path = s"/tmp/kyo-uds-${java.lang.System.nanoTime()}.sock"
             for
                 accepted <- Channel.init[Unit](1)
                 listener <- transport.listenUnix(path, 16) { serverConn =>
@@ -65,7 +73,8 @@ class TransportUnixSocketTest extends Test:
         // parked ones, so this runs on every platform.
         "a finite deadline does not disturb a Unix connect that completes" in {
             val transport = NetPlatform.transport
-            val path      = s"/tmp/kyo-uds-deadline-${java.lang.System.nanoTime()}.sock"
+            assumeUnixSockets(transport)
+            val path = s"/tmp/kyo-uds-deadline-${java.lang.System.nanoTime()}.sock"
             transport.listenUnix(path, 16)(_ => ()).safe.get.map { listener =>
                 Scope.ensure(Sync.defer(listener.close())).andThen {
                     Abort.run[NetException | Closed](transport.connectUnix(path, 5.seconds).safe.get).map { outcome =>

@@ -1,9 +1,10 @@
 name: setup
 description: >-
   Provision a kyo build job: JDK + sbt (coursier), the coursier and kyo-browser
-  caches under one key namespace, and conditional Node, native libraries, and
-  rootless podman. Each conditional step is derived from os and target alone;
-  the caller passes no provisioning flags. Checkout is the caller's responsibility.
+  caches under one key namespace, and conditional Node, native libraries,
+  rootless podman (Linux), and the Windows build environment. Each conditional
+  step is derived from os and target alone; the caller passes no provisioning
+  flags. Checkout is the caller's responsibility.
 inputs:
   os:
     description: 'Target os/arch identifier (e.g. linux-x64, linux-arm64).'
@@ -18,6 +19,14 @@ runs:
       if: ${{ inputs.target == 'JS' || inputs.target == 'Wasm' }}
       with:
         node-version: '24'
+
+    # jsdom for the DOM-backed Scala.js unit tests (kyo-ui DomTestEnv); loaded lazily via require,
+    # so only suites that install the DOM need it. JS only: the helper lives in the js-only test tree.
+    # The repo ignores *.json, so the version is pinned here rather than in a package.json.
+    - name: Install Node.js test dependencies
+      if: ${{ inputs.target == 'JS' }}
+      shell: bash
+      run: npm install --no-save --no-fund --no-audit jsdom@^30
 
     - uses: actions/cache@v5
       env:
@@ -45,10 +54,9 @@ runs:
       if: ${{ contains(inputs.os, 'linux') }}
       shell: bash
       run: |
-        # The Native link phase can overcommit the 16GB runner (a large sbt driver heap plus
-        # forked clang jobs), and the stock runner swap has been observed fully exhausted right
-        # before kernel OOM kills. Extra swap turns a marginal overcommit into slowdown instead
-        # of a SIGKILL. Best-effort: a runner that cannot host the file keeps its stock swap.
+        # The Native link phase can overcommit the 16GB runner (large sbt driver heap plus forked
+        # clang jobs); extra swap turns a marginal overcommit into slowdown instead of an OOM kill.
+        # Best-effort: a runner that cannot host the file keeps its stock swap.
         for dir in /mnt "${RUNNER_TEMP:-/tmp}"; do
           swapfile="$dir/kyo-swapfile"
           if sudo fallocate -l 8G "$swapfile" 2>/dev/null \
@@ -72,24 +80,49 @@ runs:
       run: bash scripts/apt-install.sh libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3
 
     # liburing is a build-time-only dependency of the kyo-net io_uring shim (kyo_uring.c), statically
-    # linked so the shipped artifact has no runtime liburing dependency. The JVM target compiles the shim
-    # via the kyo-ffi plugin's cc; the Native target links it through the Scala Native linker.
+    # linked so the shipped artifact has no runtime liburing dependency. Every platform target compiles the
+    # shim on Linux (JVM/JS/Wasm via the kyo-ffi plugin's cc, Native via the Scala Native linker), so this
+    # installs unconditionally on Linux; io_uring is Linux-only, so the shim is header-gated to stubs elsewhere.
     - name: Install liburing (Linux)
-      if: ${{ contains(inputs.os, 'linux') && (inputs.target == 'JVM' || inputs.target == 'Native') }}
+      if: ${{ contains(inputs.os, 'linux') }}
       shell: bash
       run: bash scripts/apt-install.sh liburing-dev
 
     - name: Install podman (Linux)
       if: ${{ contains(inputs.os, 'linux') }}
       shell: bash
-      run: bash scripts/apt-install.sh podman uidmap
+      run: |
+        # --if-missing keeps the runner image's podman when it ships one. Since image 20260810.x
+        # the runners carry podman under /usr/local with matching helpers (conmon, netavark) in
+        # /usr/local/lib/podman, and installing Ubuntu's podman package ON TOP of that breaks
+        # every container start: the package's containers.conf selects the journald log driver,
+        # the image's conmon is built without journald support, conmon exits 1, the container
+        # never leaves the "created" state, and each exec then fails with HTTP 500 "container
+        # state improper" across the kyo-pod suites. See #1881. The apt stack is only coherent
+        # on its own, so it is installed only when the image provides no podman at all.
+        bash scripts/apt-install.sh --if-missing podman uidmap
+        # runc goes in a separate call because Ubuntu's runc package Conflicts with Docker's
+        # containerd.io: a plain `apt-get install runc` resolves the conflict by REMOVING
+        # containerd.io and docker-ce, which leaves no Docker daemon, fails the `docker version`
+        # probe below, and costs the kyo-pod suite the half of its container cases that run
+        # against docker. The runners already carry a runc binary alongside containerd.io, so
+        # --if-missing normally installs nothing.
+        bash scripts/apt-install.sh --if-missing runc
 
     - name: Start podman (Linux)
       if: ${{ contains(inputs.os, 'linux') }}
       shell: bash
       run: |
         uid="$(id -u)"
+        # Delegate cgroup controllers (notably pids) to the rootless user's systemd manager so podman
+        # can create per-container cgroups. Some runner images delegate to user slices by default and
+        # some do not; this drop-in makes it deterministic across images. It must be in place before
+        # the user manager starts, so write it, reload, then (re)start user@$uid.service to pick it up.
+        sudo mkdir -p /etc/systemd/system/user@.service.d
+        printf '[Service]\nDelegate=yes\n' | sudo tee /etc/systemd/system/user@.service.d/delegate.conf >/dev/null
+        sudo systemctl daemon-reload
         sudo loginctl enable-linger "$uid"
+        sudo systemctl restart "user@$uid.service" 2>/dev/null || true
         for _ in $(seq 1 20); do
           [ -d "/run/user/$uid" ] && break
           sleep 1
@@ -99,6 +132,16 @@ runs:
           exit 1
         fi
         export XDG_RUNTIME_DIR="/run/user/$uid"
+        # Attribution: make the delegated controller set greppable in the job log next to any
+        # container failure (the 'pids' controller must be present for per-container cgroups).
+        echo "podman cgroup delegation: user-$uid.slice controllers=[$(cat /sys/fs/cgroup/user.slice/user-$uid.slice/cgroup.controllers 2>/dev/null)]"
+        # Force the runc OCI runtime. The crun shipped on the pre-20260810 runner images fails to
+        # start containers with "crun: unknown version specified" (an OCI config version it
+        # rejects), which fails every kyo-pod container integration test; runc accepts the config
+        # podman writes. The image podman on the 20260810.x images works with runc too (verified
+        # by the #1881 probe on both architectures), so the pin is safe in both worlds.
+        mkdir -p "$HOME/.config/containers"
+        printf '[engine]\nruntime = "runc"\n' > "$HOME/.config/containers/containers.conf"
         mkdir -p "$XDG_RUNTIME_DIR/podman"
         sock="$XDG_RUNTIME_DIR/podman/podman.sock"
         # The rootless podman API socket can take well over 10s to appear on a loaded runner. Retry the
@@ -121,29 +164,120 @@ runs:
           exit 1
         fi
         echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+        # Print podman version and cgroup manager so container failures in the log are attributable.
+        echo "podman version: $(podman --version 2>/dev/null); cgroupManager: $(podman info --format '{{.Host.CgroupManager}}' 2>/dev/null)"
         podman info | grep -iE 'cgroup|rootless' || true
         podman version
-        docker version
+        # Health gate: exercises the full podman cycle (create, start, exec) and the docker
+        # daemon, with per-component diagnostics, so a broken container stack fails here with a
+        # named cause instead of surfacing two hours later across the kyo-pod suites (#1881).
+        # Pass --warn-only to degrade the gate to a loud warning annotation.
+        bash scripts/container-check.sh
 
-    - uses: coursier/setup-action@v3.0.0
+    - name: Configure build environment (Windows)
+      if: ${{ contains(inputs.os, 'windows') }}
+      shell: bash
+      run: |
+        # KYO_POD_RUNTIME=none: kyo-pod registers container suites for any runtime whose
+        # CLI answers `version`, and Windows runners can carry a Docker daemon in
+        # Windows-containers mode that answers but cannot run the suites' Linux images.
+        # Pinning to a never-available runtime registers zero container leaves. Written
+        # via GITHUB_ENV (not a conditional workflow `env:` entry) because an
+        # empty-string KYO_POD_RUNTIME would disable the suites on the Linux poles too.
+        # SBT_UPDATE_LIMIT=1: serialize dependency resolution; concurrent resolution
+        # trips Windows file locking (see build.sbt concurrentRestrictions).
+        # CC=gcc: the kyo-ffi plugin and kyo-ffi-it compile C test libraries with `cc`,
+        # which the Windows image does not provide; MinGW gcc does. The version print
+        # doubles as a fail-fast presence check.
+        {
+          echo "KYO_POD_RUNTIME=none"
+          echo "SBT_UPDATE_LIMIT=1"
+          echo "CC=gcc"
+        } >> "$GITHUB_ENV"
+        gcc --version | head -1
+
+    # kyo-aeron's C shim and libaeron build with MSVC on Windows (aeron supports Windows only under
+    # MSVC). The kyo-ffi plugin invokes `cl` for that library, so cl plus its INCLUDE/LIB must be on
+    # the build step's environment. vcvars64 augments PATH/INCLUDE/LIB/LIBPATH; exporting them to
+    # GITHUB_ENV makes them available to the later sbt build. gcc (used for every other C library)
+    # ignores INCLUDE/LIB and keeps resolving to MinGW, so the two toolchains coexist.
+    - name: Set up MSVC environment (Windows)
+      if: ${{ contains(inputs.os, 'windows') }}
+      shell: cmd
+      run: |
+        for /f "usebackq delims=" %%i in (`"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set "VSROOT=%%i"
+        call "%VSROOT%\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
+        echo PATH=%PATH%>>"%GITHUB_ENV%"
+        echo INCLUDE=%INCLUDE%>>"%GITHUB_ENV%"
+        echo LIB=%LIB%>>"%GITHUB_ENV%"
+        echo LIBPATH=%LIBPATH%>>"%GITHUB_ENV%"
+        where cl
+
+    # coursier/setup-action is fetched from codeload like any `uses:`, and the runner retries that
+    # download only a few times with a short backoff, which a transient GitHub 429 (a rate-limit window
+    # of tens of seconds) outlasts, failing setup before any test runs. nick-fields/retry wraps `run:`
+    # commands, not a `uses:` action, so retry the action through wretry: it re-runs coursier/setup-action
+    # up to attempt_limit times with attempt_delay ms between attempts, riding out a throttled download.
+    - name: Set up JDK + sbt (coursier)
+      uses: Wandalen/wretry.action@v3.8.0
       with:
-        jvm: corretto:25
-        apps: sbt
+        action: coursier/setup-action@v3.0.0
+        with: |
+          jvm: corretto:25
+          apps: sbt
+        attempt_limit: 4
+        attempt_delay: 30000
+
+    - name: Verify sbt resolves in bash (Windows)
+      if: ${{ contains(inputs.os, 'windows') }}
+      shell: bash
+      run: |
+        # Build steps run under Git Bash (`shell: bash`), which resolves `sbt` and
+        # `sbt.exe` from PATH but not `sbt.bat`. If coursier installed only the .bat
+        # launcher, bridge it with a wrapper script on PATH.
+        if command -v sbt >/dev/null 2>&1; then
+          echo "sbt resolves: $(command -v sbt)"
+          exit 0
+        fi
+        sbt_bat=$(command -v sbt.bat || true)
+        if [ -z "$sbt_bat" ]; then
+          echo "no sbt or sbt.bat on PATH after coursier setup" >&2
+          exit 1
+        fi
+        shim_dir="$RUNNER_TEMP/kyo-shims"
+        mkdir -p "$shim_dir"
+        printf '#!/usr/bin/env bash\nexec "%s" "$@"\n' "$sbt_bat" > "$shim_dir/sbt"
+        chmod +x "$shim_dir/sbt"
+        echo "$shim_dir" >> "$GITHUB_PATH"
+        echo "sbt shim: $shim_dir/sbt -> $sbt_bat"
 
     # Build and stage the vendored BoringSSL static archives (libssl.a, libcrypto.a) for the runner's
     # os-arch, used by the kyo-net TLS data plane. build-boringssl.sh clones BoringSSL at the pinned commit
     # and builds via CMake plus Go (pre-installed on GitHub-hosted runners; installed defensively if
-    # absent). The staged tree is gitignored, so it is produced on every JVM/Native runner; without it the
-    # kyonet_boringssl shim links a stub and the BoringSSL TLS tests cancel.
+    # absent). The staged tree is gitignored, so it is produced on every platform runner (JVM/Native and,
+    # for the koffi-loaded TLS engine, JS/Wasm all compile the kyonet_boringssl shim); without it the
+    # kyonet_boringssl shim links a stub and the BoringSSL TLS tests cancel. Runs unconditionally: the
+    # os-arch case below skips Windows (no BoringSSL native) and hard-errors on an unmapped os.
     - name: Prepare BoringSSL
-      if: ${{ inputs.target == 'JVM' || inputs.target == 'Native' }}
       shell: bash
       run: |
+        # Map the runner os id to the kyo-net BoringSSL os-arch. Windows ships no BoringSSL native
+        # (NIO + JDK TLS by ruling), so it is an explicit skip. Any OTHER unmapped os is a hard error,
+        # never a silent skip: a bare `exit 0` here would ship the kyonet_boringssl stub and the TLS
+        # tests would cancel with no signal (the P1 hazard-5 silent-stub path).
         case "${{ inputs.os }}" in
-          linux-x64)   OS_ARCH=linux-x86_64 ;;
-          linux-arm64) OS_ARCH=linux-aarch64 ;;
-          macos-arm64) OS_ARCH=darwin-aarch64 ;;
-          *) echo "BoringSSL not staged for ${{ inputs.os }} (unsupported os-arch); skipping" && exit 0 ;;
+          linux-x64)        OS_ARCH=linux-x86_64 ;;
+          linux-arm64)      OS_ARCH=linux-aarch64 ;;
+          linux-musl-x64)   OS_ARCH=linux-musl-x86_64 ;;
+          linux-musl-arm64) OS_ARCH=linux-musl-aarch64 ;;
+          macos-arm64)      OS_ARCH=darwin-aarch64 ;;
+          macos-x64)        OS_ARCH=darwin-x86_64 ;;
+          windows-*)        echo "Windows ships no BoringSSL native (NIO + JDK TLS by ruling); skipping." && exit 0 ;;
+          *)
+            echo "Prepare BoringSSL: no os-arch mapping for '${{ inputs.os }}'." >&2
+            echo "Add a mapping above or exclude this leg; refusing to ship a silent BoringSSL stub." >&2
+            exit 1
+            ;;
         esac
         if [[ "${{ inputs.os }}" == linux-* ]]; then
           command -v cmake >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y -o Acquire::Retries=3 cmake; }
@@ -153,3 +287,30 @@ runs:
           command -v go >/dev/null 2>&1 || brew install go
         fi
         bash kyo-net/build/boringssl/build-boringssl.sh "$OS_ARCH"
+
+    # The staged libaeron tree is gitignored, so every leg that compiles the kyo-aeron C shim has to
+    # build it. That includes the JVM leg, which runs the shared ffiGenerate step even though its
+    # runtime backend is the pure-Java io.aeron client.
+    - name: Prepare libaeron
+      if: ${{ inputs.target == 'JVM' || inputs.target == 'Native' || inputs.target == 'JS' || inputs.target == 'Wasm' }}
+      shell: bash
+      run: |
+        case "${{ inputs.os }}" in
+          linux-x64)    OS_ARCH=linux-x86_64 ;;
+          linux-arm64)  OS_ARCH=linux-aarch64 ;;
+          macos-arm64)  OS_ARCH=darwin-aarch64 ;;
+          windows-x64)  OS_ARCH=windows-x86_64 ;;
+          *) echo "libaeron not staged for ${{ inputs.os }} (unsupported os-arch); skipping" && exit 0 ;;
+        esac
+        if [[ "${{ inputs.os }}" == linux-* ]]; then
+          # The Aeron driver links -luuid on Linux, and the package providing the libuuid.so link
+          # target is not preinstalled. macOS gets uuid from libSystem.
+          bash scripts/apt-install.sh --if-missing cmake uuid-dev
+        elif [[ "${{ inputs.os }}" == windows-* ]]; then
+          # cmake and MSVC are preinstalled on the Windows runner; build-aeron.sh selects the
+          # Visual Studio generator for this os-arch (aeron supports Windows only under MSVC).
+          command -v cmake >/dev/null 2>&1 || { echo "cmake missing on Windows runner" >&2; exit 1; }
+        else
+          command -v cmake >/dev/null 2>&1 || brew install cmake
+        fi
+        bash kyo-aeron/scripts/build-aeron.sh "$OS_ARCH"

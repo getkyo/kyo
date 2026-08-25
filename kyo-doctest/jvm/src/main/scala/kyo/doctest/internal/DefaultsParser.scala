@@ -87,19 +87,19 @@ object DefaultsParser:
 
     /** Applies the three-tier resolution: per-block > per-file > hardcoded defaults.
       *
-      * Hardcoded defaults: Isolated, Compiles, Set(JVM, JS, Native).
+      * Hardcoded defaults: Isolated, Compiles, Set(JVM, JS, Native), and a 30-second timeout.
       *
       * @param perBlock
       *   modifiers explicitly set on the code block info string
       * @param perFile
       *   defaults from the per-README defaults block
       * @return
-      *   fully-resolved (visibility, expectation, platform) triple
+      *   fully resolved modifiers
       */
     def applyDefaults(
         perBlock: ModifierParser.Parsed,
         perFile: ModifierParser.Parsed
-    ): (Block.Visibility, Block.Expectation, Set[Block.Target]) =
+    ): (visibility: Block.Visibility, expectation: Block.Expectation, platform: Set[Block.Target], timeout: Duration) =
         ModifierParser.applyDefaults(perBlock, perFile)
 
 end DefaultsParser

@@ -17,6 +17,19 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
 
     val client = HttpTestPlatformBackend.client
 
+    final private class FixedUUIDGenerator(value: UUID) extends UUIDGenerator:
+        var calls = 0
+
+        def v4(using Frame): UUID < Sync =
+            Sync.defer {
+                calls += 1
+                value
+            }
+
+        def v7(using Frame): UUID < Sync =
+            Sync.defer(value)
+    end FixedUUIDGenerator
+
     // ---------------------------------------------------------------------------
     // Helpers shared by integration tests
     // ---------------------------------------------------------------------------
@@ -25,8 +38,8 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
     def withServer(handlers: HttpHandler[?, ?, ?]*)(
         test: HttpUrl => Unit < (Async & Abort[Any] & Scope)
     )(using Frame): Unit < (Scope & Async & Abort[Any]) =
-        HttpServer.init(0, "localhost")(handlers*).map(s =>
-            test(HttpUrl.parse(s"http://localhost:${s.port}").getOrThrow)
+        HttpServer.init(0, "127.0.0.1")(handlers*).map(s =>
+            test(HttpUrl.parse(s"http://127.0.0.1:${s.port}").getOrThrow)
         )
 
     /** Send a request through the backend directly (bypasses HttpClient). */
@@ -42,6 +55,103 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
                 }
             }
         }
+
+    "multipart UUID boundary plumbing" - {
+        "buffered request transmits one scoped boundary in both header and body" in {
+            val uuid      = UUID.parse("00112233-4455-4677-a899-aabbccddeeff").getOrThrow
+            val generator = new FixedUUIDGenerator(uuid)
+            val route = HttpRoute.postRaw("buffered-multipart")
+                .request(_.bodyMultipart)
+                .response(_.bodyText)
+            val endpoint = route.handler { request =>
+                val header = request.headers.get("Content-Type").getOrElse("")
+                val value  = new String(request.fields.body.head.data.toArrayUnsafe, "UTF-8")
+                HttpResponse.ok(s"$header|$value")
+            }
+            val part = HttpRequest.Part("field", Absent, Absent, Span.fromUnsafe("buffered-value".getBytes("UTF-8")))
+
+            Scope.run {
+                withServer(endpoint) { url =>
+                    UUID.let(generator) {
+                        directSend(
+                            url,
+                            route,
+                            HttpRequest.postRaw(HttpUrl.fromUri("/buffered-multipart")).addField("body", Seq(part))
+                        )
+                    }.map { response =>
+                        assert(generator.calls == 1)
+                        assert(response.fields.body == s"multipart/form-data; boundary=${uuid.show}|buffered-value")
+                    }
+                }
+            }
+        }
+
+        "streaming request transmits one scoped boundary in both header and body" in {
+            val uuid      = UUID.parse("ffeeddcc-bbaa-4988-b766-554433221100").getOrThrow
+            val generator = new FixedUUIDGenerator(uuid)
+            val route = HttpRoute.postRaw("streaming-multipart")
+                .request(_.bodyMultipartStream)
+                .response(_.bodyText)
+            val endpoint = route.handler { request =>
+                request.fields.body.run.map { parts =>
+                    val header = request.headers.get("Content-Type").getOrElse("")
+                    val value  = new String(parts.head.data.toArrayUnsafe, "UTF-8")
+                    HttpResponse.ok(s"$header|$value")
+                }
+            }
+            val part = HttpRequest.Part("field", Absent, Absent, Span.fromUnsafe("streaming-value".getBytes("UTF-8")))
+            val body = Stream.init[HttpRequest.Part, Async](Seq(part))
+
+            Scope.run {
+                withServer(endpoint) { url =>
+                    UUID.let(generator) {
+                        directSend(
+                            url,
+                            route,
+                            HttpRequest.postRaw(HttpUrl.fromUri("/streaming-multipart")).addField("body", body)
+                        )
+                    }.map { response =>
+                        assert(generator.calls == 1)
+                        assert(response.fields.body == s"multipart/form-data; boundary=${uuid.show}|streaming-value")
+                    }
+                }
+            }
+        }
+
+        "303 follow-up GET does not generate a second multipart boundary" in {
+            val uuid      = UUID.parse("00112233-4455-4677-a899-aabbccddeeff").getOrThrow
+            val generator = new FixedUUIDGenerator(uuid)
+            val startRoute = HttpRoute.postRaw("multipart-start")
+                .request(_.bodyMultipart)
+                .response(_.bodyText)
+            val seenRoute = HttpRoute.getRaw("multipart-seen").response(_.bodyText)
+            val redirect = startRoute.handler { _ =>
+                HttpResponse.halt(HttpResponse(HttpStatus.SeeOther).setHeader("Location", "/multipart-seen"))
+            }
+            val seen = seenRoute.handler { request =>
+                HttpResponse.ok(request.method.name)
+            }
+            val part = HttpRequest.Part("field", Absent, Absent, Span.fromUnsafe("value".getBytes("UTF-8")))
+
+            Scope.run {
+                withServer(redirect, seen) { url =>
+                    HttpClient.withConfig(HttpClientConfig(timeout = Duration.Infinity)) {
+                        HttpClient.init().map { httpClient =>
+                            val request = HttpRequest
+                                .postRaw(HttpUrl(url.scheme, url.host, url.port, "/multipart-start", Absent))
+                                .addField("body", Seq(part))
+                            UUID.let(generator) {
+                                httpClient.sendWith(startRoute, request)(identity)
+                            }.map { response =>
+                                assert(response.fields.body == "GET")
+                                assert(generator.calls == 1)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // ---------------------------------------------------------------------------
     // 1. Connect to HTTP URL resolves to port 80
@@ -83,7 +193,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             // Connection should have the right host and port
-                            assert(conn.targetHost == "localhost")
+                            assert(conn.targetHost == "127.0.0.1")
                             assert(conn.targetPort == url.port)
                             assert(!conn.targetSsl)
                         }
@@ -339,8 +449,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
                 directSend(url, route, HttpRequest.getRaw(HttpUrl.fromUri("/host-check"))).map { resp =>
                     assert(resp.status == HttpStatus.OK)
                     val hostHeader = resp.fields.body
-                    // Should contain "localhost" at minimum
-                    assert(hostHeader.contains("localhost"))
+                    assert(hostHeader.contains("127.0.0.1"))
                 }
             }
         }
@@ -598,7 +707,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
     )(using Frame): A < (Async & Abort[Any] & Scope) =
         val bytes = response.getBytes(StandardCharsets.UTF_8)
         Sync.Unsafe.defer {
-            kyo.net.NetPlatform.transport.listen("localhost", 0, 16) { conn =>
+            kyo.net.NetPlatform.transport.listen("127.0.0.1", 0, 16) { conn =>
                 // The response is queued on accept rather than after reading the request: HTTP/1.1 lets a server answer as
                 // soon as it likes, and the client buffers the bytes until its parser runs. This keeps the peer free of
                 // any read/write ordering that could stall the test.
@@ -808,14 +917,14 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         val accepted = Promise.Unsafe.init[kyo.net.Connection, Any]()
         Scope.run {
             Sync.Unsafe.defer {
-                kyo.net.NetPlatform.transport.listen("localhost", 0, 16) { conn =>
+                kyo.net.NetPlatform.transport.listen("127.0.0.1", 0, 16) { conn =>
                     accepted.completeDiscard(Result.succeed(conn))
                     discard(conn.outbound.offer(Span.fromUnsafe(responseBytes)))
                 }
             }.map { fiber =>
                 fiber.safe.use { listener =>
                     Scope.ensure(Sync.Unsafe.defer(listener.close())).andThen {
-                        val url = HttpUrl.parse(s"http://localhost:${listener.port}/raw-leak").getOrThrow
+                        val url = HttpUrl.parse(s"http://127.0.0.1:${listener.port}/raw-leak").getOrThrow
                         // Run connectRaw in a nested Scope so its finalizer fires before the peer observation.
                         Scope.run {
                             Abort.run[HttpException](

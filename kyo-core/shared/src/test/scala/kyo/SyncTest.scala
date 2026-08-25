@@ -148,6 +148,22 @@ class SyncTest extends kyo.test.Test[Any]:
                 ()
             }
 
+            // The way to hold a resource across a computation that can abort, given the gap above: reify
+            // every outcome into a Result inside the bracket so the body always completes, and re-raise it
+            // after the release has run. kyo.Jsonl.writeAll holds one file write handle across a stream fold
+            // this way, so this pins the shape that keeps the handle from leaking on a failing stream.
+            "reifying the body's aborts into a Result makes acquireReleaseWith release on abort" in {
+                var released = 0
+                val computed =
+                    Sync.acquireReleaseWith(Sync.defer("resource"))(_ => Sync.defer { released += 1 }) { _ =>
+                        Abort.run[Any](Abort.fail("boom"))
+                    }.map(outcome => Abort.get(outcome.asInstanceOf[Result[Nothing, Unit]]))
+                Abort.run[String](computed).map { result =>
+                    assert(result == Result.fail("boom"))
+                    assert(released == 1)
+                }
+            }
+
             "runs finalizer exactly once under multiple evaluations" in {
                 var count = 0
                 Sync.ensure { count += 1 }(1).map(_ + 1).map { result =>

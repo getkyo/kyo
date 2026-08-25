@@ -51,8 +51,8 @@ class PollerIoDriverPromiseReuseTest extends Test:
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                    val clientH   = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent)
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val clientH   = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val reused    = new ReusedReadPromise(driver, acceptedH)
 
                     // Part 1 -- REUSE correctness: N back-to-back reads on the reused promise, each delivering its own distinct payload.

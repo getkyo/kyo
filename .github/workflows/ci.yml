@@ -1,12 +1,17 @@
 name: ci
 # Unified trigger workflow. One entry point for every build/test path:
-#   push to main      -> mode=full  across both arches
-#   pull_request      -> mode=diff  across both arches
-#   workflow_dispatch -> flexible: pick targets, mode (full/diff/custom), and arches
+#   push to main      -> mode=full  across all os poles
+#   pull_request      -> mode=diff  across all os poles
+#   workflow_dispatch -> flexible: pick targets, mode (full/diff/custom), and oses
 #
-# prep derives mode + arches + targets from the trigger, then build fans out one
-# build.yml call per arch (each call matrixes JVM/JS/Native/Wasm internally). custom is
-# the single-runner eval escape hatch, fired only on a workflow_dispatch with mode=custom.
+# prep derives mode + os poles + targets from the trigger, then build fans out one
+# build.yml call per pole (each call matrixes the pole's targets internally). The Linux
+# poles run JVM/JS/Native/Wasm; windows-x64 runs JVM/JS (the Native target's
+# libcurl/libh2o/openssl toolchain is provisioned via apt and has no Windows port, and
+# Scala.js's Wasm backend does not instantiate on Windows: every module, with or without
+# native code, dies at startup on an emitted import whose module name is empty).
+# custom is the single-runner eval escape hatch, fired only on a workflow_dispatch
+# with mode=custom.
 on:
   push:
     branches:
@@ -29,31 +34,38 @@ on:
           - diff
           - custom
         default: full
-      arches:
-        description: 'Which arches to run (space-separated subset of x64 arm64).'
-        type: choice
-        options:
-          - 'x64 arm64'
-          - 'x64'
-          - 'arm64'
-        default: 'x64 arm64'
+      oses:
+        description: 'Space-separated os poles to run (subset of linux-x64 linux-arm64 windows-x64).'
+        type: string
+        required: false
+        default: 'linux-x64 linux-arm64 windows-x64'
       command:
         description: 'Used only when mode=custom: the recommended form is ./scripts/ci-test.sh <platform> <action>.'
         type: string
         required: false
         default: './scripts/ci-test.sh JVM test'
+      custom-runner:
+        description: 'Used only when mode=custom: the GitHub-hosted runner label the command runs on.'
+        type: choice
+        options:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+          - windows-latest
+        default: ubuntu-latest
       ref:
         description: 'Git ref (branch or sha) to check out and test. Defaults to the ref the workflow is dispatched on.'
         type: string
         required: false
         default: ''
 
-# A pull request keys its group on the PR number, so a new commit supersedes the in-flight run.
-# A push (to main) keys on the commit sha, so every commit gets its own group and is validated on
-# its own; cancel-in-progress only acts within a group, so a later push never cancels an earlier
-# main run.
+# Both pull requests and main pushes dedup their in-flight runs. A pull request keys on the PR
+# number, so a new commit supersedes the run still validating the previous one. A push to main
+# keys on the branch ref (github.ref is a constant refs/heads/main), so a newer push cancels an
+# earlier main run that is still pending or in progress; only the latest commit is validated.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.sha }}-${{ inputs.mode }}-${{ inputs.targets }}-${{ inputs.arches }}-${{ inputs.command }}
+  # Custom-mode groups key on the run id (no dedup): the free-form command must never reach
+  # the group name, where a multi-line value invalidates the workflow.
+  group: ci-${{ github.event.pull_request.number || github.ref }}-${{ inputs.mode }}-${{ inputs.targets }}-${{ inputs.oses }}-${{ inputs.mode == 'custom' && github.run_id || 0 }}-${{ inputs.custom-runner }}
   cancel-in-progress: true
 
 jobs:
@@ -61,14 +73,13 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       mode: ${{ steps.derive.outputs.mode }}
-      arches: ${{ steps.derive.outputs.arches }}
-      targets: ${{ steps.derive.outputs.targets }}
+      poles: ${{ steps.derive.outputs.poles }}
     steps:
       - id: derive
         env:
           EVENT_NAME: ${{ github.event_name }}
           INPUT_MODE: ${{ inputs.mode }}
-          INPUT_ARCHES: ${{ inputs.arches }}
+          INPUT_OSES: ${{ inputs.oses }}
           INPUT_TARGETS: ${{ inputs.targets }}
         run: |
           case "$EVENT_NAME" in
@@ -78,25 +89,42 @@ jobs:
           esac
 
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            arches=$(jq -cn --arg s "$INPUT_ARCHES" '
-              $s
-              | split(" ")
-              | map(select(length > 0))
-              | map(
-                  if . == "x64" then {os: "linux-x64", image: "ubuntu-latest"}
-                  elif . == "arm64" then {os: "linux-arm64", image: "ubuntu-24.04-arm"}
-                  else empty end
-                )')
+            oses="$INPUT_OSES"
             targets="$INPUT_TARGETS"
           else
-            arches='[{"os":"linux-x64","image":"ubuntu-latest"},{"os":"linux-arm64","image":"ubuntu-24.04-arm"}]'
+            # Full matrix on push and pull_request: all three os poles across every supported target.
+            oses='linux-x64 linux-arm64 windows-x64'
             targets='JVM JS Native Wasm'
           fi
 
+          for os in $oses; do
+            case "$os" in
+              linux-x64|linux-arm64|windows-x64) ;;
+              *) echo "unknown os pole '$os' (expected a subset of: linux-x64 linux-arm64 windows-x64)" >&2; exit 1 ;;
+            esac
+          done
+
+          # One pole per requested os, carrying the intersection of the pole's supported
+          # targets with the requested targets (windows-x64 has no Native or Wasm). A
+          # pole whose intersection is empty is dropped so the matrix never spawns a
+          # no-op build.yml call.
+          poles=$(jq -cn --arg oses "$oses" --arg targets "$targets" '
+            ($targets | split(" ") | map(select(length > 0))) as $req
+            | $oses
+            | split(" ")
+            | map(select(length > 0))
+            | map(
+                if . == "linux-x64" then {os: ., image: "ubuntu-latest", supported: ["JVM","JS","Native","Wasm"]}
+                elif . == "linux-arm64" then {os: ., image: "ubuntu-24.04-arm", supported: ["JVM","JS","Native","Wasm"]}
+                else {os: ., image: "windows-latest", supported: ["JVM","JS"]}
+                end
+              )
+            | map({os, image, targets: (.supported | map(. as $t | select($req | index($t))) | join(" "))})
+            | map(select(.targets != ""))')
+
           {
             echo "mode=$mode"
-            echo "arches=$arches"
-            echo "targets=$targets"
+            echo "poles=$poles"
           } >> "$GITHUB_OUTPUT"
 
   build:
@@ -105,12 +133,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: ${{ fromJSON(needs.prep.outputs.arches) }}
+        pole: ${{ fromJSON(needs.prep.outputs.poles) }}
     uses: ./.github/workflows/build.yml
     with:
-      os: ${{ matrix.arch.os }}
-      runner-image: ${{ matrix.arch.image }}
-      targets: ${{ needs.prep.outputs.targets }}
+      os: ${{ matrix.pole.os }}
+      runner-image: ${{ matrix.pole.image }}
+      targets: ${{ matrix.pole.targets }}
       mode: ${{ needs.prep.outputs.mode }}
       ref: ${{ inputs.ref }}
 
@@ -118,19 +146,29 @@ jobs:
     needs: prep
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'custom' }}
     timeout-minutes: 180
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.custom-runner }}
     env:
       SBT_TASK_LIMIT: 1
       JAVA_OPTS: '-Xmx12G -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
       JVM_OPTS:  '-Xmx12G -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ inputs.ref || github.ref }}
           fetch-depth: 0
+      - id: os
+        shell: bash
+        env:
+          RUNNER_LABEL: ${{ inputs.custom-runner }}
+        run: |
+          case "$RUNNER_LABEL" in
+            windows-*) echo "os=windows-x64" >> "$GITHUB_OUTPUT" ;;
+            *-arm)     echo "os=linux-arm64" >> "$GITHUB_OUTPUT" ;;
+            *)         echo "os=linux-x64" >> "$GITHUB_OUTPUT" ;;
+          esac
       - uses: ./.github/actions/setup
         with:
-          os: linux-x64
+          os: ${{ steps.os.outputs.os }}
           target: JVM
       - name: Run command
         shell: bash

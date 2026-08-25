@@ -31,6 +31,7 @@ final private[kyo] class Driver private (
     ctx: Context,
     compiler: Compiler,
     outputDir: kyo.Path,
+    classpath: Chunk[kyo.Path],
     compilerThread: ExecutorService,
     freshDriver: Boolean,
     driverArgs: Array[String]
@@ -54,6 +55,20 @@ final private[kyo] class Driver private (
             )
             Async.fromCompletionStage(cf)
         }
+
+    /** Executes a compiled synthetic object in an isolated JVM. */
+    def execute(
+        wrapped: WrappedBlock,
+        blockTimeouts: Map[Int, Duration]
+    )(using Frame): RuntimeExecutor.Outcome < (Sync & Async) =
+        wrapped.runtimeClassName match
+            case Present(className) =>
+                RuntimeExecutor.execute(className, wrapped.synthFile, outputDir, classpath, blockTimeouts, Block.DefaultTimeout)
+            case Absent =>
+                Sync.defer(RuntimeExecutor.Outcome.Unsupported(
+                    "runtime expectations do not support blocks with top-level package declarations"
+                ))
+    end execute
 
     private def runOneCompile(source: Driver.Source): Driver.Outcome =
         val reporter = new Driver.CapturingReporter
@@ -116,7 +131,7 @@ final private[kyo] class Driver private (
       */
     def close(using Frame): Unit < Sync =
         // Swallow removeAll errors: if cleanup fails the OS temp cleaner will handle it.
-        Abort.run[FileFsException](outputDir.removeAll).andThen(Sync.defer(compilerThread.shutdown()))
+        Abort.run[FileStructureException](outputDir.removeAll).andThen(Sync.defer(compilerThread.shutdown()))
 
 end Driver
 
@@ -228,8 +243,8 @@ private[kyo] object Driver:
         for
             id <- Random.uuid
             dir = Path.basePaths.tmp / s"doctest-out-$id"
-            _ <- Abort.run[FileFsException](dir.mkDir).flatMap {
-                (r: Result[FileFsException, Unit]) =>
+            _ <- Abort.run[FileStructureException](dir.mkDir).flatMap {
+                (r: Result[FileStructureException, Unit]) =>
                     r match
                         case Result.Success(_) => Sync.defer(())
                         case Result.Failure(e) =>
@@ -283,7 +298,7 @@ private[kyo] object Driver:
                         (configuredCtx, comp)).get()
 
         val (configuredCtx, comp) = setupResult
-        new Driver(configuredCtx, comp, outputDir, compilerThread, freshDriver, allArgs)
+        new Driver(configuredCtx, comp, outputDir, classpath, compilerThread, freshDriver, allArgs)
     end buildDriver
 
 end Driver

@@ -116,6 +116,7 @@ object UI:
     def blockquote(using Frame): Blockquote       = Blockquote()
     def code(using Frame): Code                   = Code()
     def table(using Frame): Table                 = Table()
+    def tbody(using Frame): Tbody                 = Tbody()
     def tr(using Frame): Tr                       = Tr()
     def td(using Frame): Td                       = Td()
     def th(using Frame): Th                       = Th()
@@ -506,6 +507,24 @@ object UI:
         case MediaType(mime: String) // "application/foo", explicit escape for arbitrary MIME types
     end FileAccept
 
+    /** A typed set of characters a text input accepts, replacing a stringly-typed pattern.
+      *
+      * `Digits` and `Decimal` name the two numeric constraints, and `Allowed` is the explicit escape for an arbitrary
+      * character set. A stringly-typed pattern could not express both: a set spelled `"int"` was indistinguishable
+      * from the digits-only keyword, and a typo like `"integer"` silently degraded to "allow i, n, t, e, g and r".
+      *
+      * The filter is applied in the browser as the reader types, so it is a typing convenience rather than a
+      * validation boundary: any client can submit any value, and server-side checks still apply.
+      *
+      * @see
+      *   [[kyo.UI.ConstrainedInput.inputFilter]] for the setter
+      */
+    enum InputFilter derives CanEqual:
+        case Digits                 // "digits"
+        case Decimal                // "decimal", digits plus at most one `.` or `,`
+        case Allowed(chars: String) // "chars:" ++ chars, explicit escape for an arbitrary set
+    end InputFilter
+
     /** The ctrl/alt/shift/meta chord held down when a mouse or keyboard event fired.
       *
       * Carried by [[kyo.UI.MouseEvent]] and [[kyo.UI.KeyboardEvent]] so handlers can branch on modified clicks/keystrokes (for example
@@ -669,6 +688,23 @@ object UI:
               */
             def cssClass(name: String): Self = withAttrs(attrs.copy(cssClasses = attrs.cssClasses :+ name))
 
+            /** Declarative ENTER transition (client-local): when a patch inserts this element newly into the DOM (its
+              * `data-kyo-path` was not present before, or at initial mount), the client adds the space-separated `classes`
+              * after insertion, forces a reflow, then removes them next frame, so a CSS transition runs from the enter-from
+              * state the classes describe. An echo re-render of an already-present element does not replay. Emits
+              * `data-kyo-enter="..."`.
+              */
+            def enterTransition(classes: String): Self = withAttrs(attrs.copy(enterTransition = Present(classes)))
+
+            /** Declarative LEAVE transition (client-local): when a Replace/Remove removes this element, the client captures
+              * its `getBoundingClientRect` before applying the patch (nothing crosses the wire), then appends a visual GHOST
+              * (deep clone, `position:fixed` at the captured rect, `pointer-events:none`) to `document.body` with these
+              * classes added next frame; the ghost is removed on `transitionend`/`animationend` or a 1s safety timeout. Only
+              * the outermost removed leave-element per patch spawns a ghost. The ghost is visual-only: its identifying
+              * `data-kyo-*`/`id` attributes are stripped from the clone. Emits `data-kyo-leave="..."`.
+              */
+            def leaveTransition(classes: String): Self = withAttrs(attrs.copy(leaveTransition = Present(classes)))
+
             // Internal JS property setter (used by Checkbox.indeterminate, etc.)
             private[kyo] def jsProp(name: String, value: String): Self =
                 withAttrs(attrs.copy(jsProps = attrs.jsProps.updated(name, value)))
@@ -681,6 +717,29 @@ object UI:
             def tabIndex(v: Int): Self       = withAttrs(attrs.copy(tabIndex = Present(v)))
             def focusTrap(v: Boolean): Self  = withAttrs(attrs.copy(focusTrap = Present(v)))
             def focusGroup(id: String): Self = withAttrs(attrs.copy(focusGroup = Present(id)))
+
+            /** Declarative focus seeding: when a re-render inserts this element newly into the DOM (its `data-kyo-path` was
+              * not present before), the client calls `.focus()` on it once; re-rendering an already-visible element (same
+              * path) does not re-seed. Seeding runs after focus/caret restore, so opening a panel wins over
+              * restore-to-trigger; on initial load any focus-auto element is seeded (like native autofocus). Does not make
+              * the element focusable, pair with `tabIndex(-1)` for non-natively-focusable elements. The previously focused
+              * element is recorded for [[focusRestore]].
+              */
+            def focusAuto(v: Boolean): Self = withAttrs(attrs.copy(focusAuto = Present(v)))
+
+            /** Declarative focus return: when this focus-seeded element (see [[focusAuto]]) leaves the document, the client
+              * focuses whatever was focused just before seeding (located by `data-kyo-path`, skipped silently if gone). Only
+              * meaningful with `focusAuto(true)`; typical use is a modal that returns focus to its trigger on close.
+              */
+            def focusRestore(v: Boolean): Self = withAttrs(attrs.copy(focusRestore = Present(v)))
+
+            /** Opt-in per-level event consumption: when the dispatch walk (innermost target first, then ancestors) reaches
+              * this element AND it declared a handler for the event's type, the event stops here so handlers on elements
+              * above do not fire. Only consumes event types this element actually handles; others pass through, and the
+              * default (unset/`false`) keeps bubble-through. Applies to bubbling events (click, keydown, keyup, hover,
+              * unhover, scroll). Typical use: nested overlays where Escape closes only the innermost layer.
+              */
+            def stopPropagation(v: Boolean): Self = withAttrs(attrs.copy(stopPropagation = Present(v)))
 
             /** Runs `action` on click, ignoring the event payload. */
             def onClick(action: => Any < Async): Self = withAttrs(attrs.copy(onClick = Present(Sync.defer(action)(using frame))))
@@ -719,6 +778,25 @@ object UI:
 
             /** Runs `f` when the mouse wheel is used over this element, receiving the [[kyo.UI.WheelEvent]] payload. */
             def onScroll(f: WheelEvent => Any < Async): Self = withAttrs(attrs.copy(onScrollEvt = Present(f)))
+
+            /** Marks this element (and its subtree) as a keyboard-navigation region whose page-scrolling keys are
+              * suppressed. While focus is on this element or a descendant, the client calls `preventDefault()`
+              * synchronously for the navigation keys so the browser does not ALSO scroll the page; the keydown is
+              * still forwarded, so this element's own `onKeyDown` (e.g. moving an option highlight) runs unchanged.
+              *
+              * Vertical keys (`ArrowUp`/`ArrowDown`/`PageUp`/`PageDown`) are suppressed unless the focused target
+              * consumes them itself (`textarea`, `select`, contenteditable — there the browser default is caret line
+              * movement or an option change, not a page scroll). A single-line input stays suppressed for vertical keys:
+              * that is the combobox case where `ArrowDown` drives the listbox highlight. Horizontal/edge keys
+              * (`ArrowLeft`/`ArrowRight`/`Home`/`End`) are suppressed only when the focused target is NOT a text-editable
+              * field, so caret movement inside a filter input keeps working.
+              *
+              * Declarative by necessity: a kyo-ui handler runs asynchronously (and remotely on the server-push
+              * transport), so it cannot decline the browser default in time. Both transports therefore read the emitted
+              * `data-kyo-scroll-keys` attribute in the browser before posting the event — the framework's equivalent of
+              * the imperative `event.preventDefault()` a component library calls in every arrow-key handler.
+              */
+            def preventScrollKeys: Self = withAttrs(attrs.copy(dataAttrs = attrs.dataAttrs.updated("kyo-scroll-keys", "1")))
         end Interactive
 
         // ---- Layout traits ----
@@ -885,6 +963,54 @@ object UI:
             def value(v: SignalRef[String]): Self
         end TextInput
 
+        /** Capability trait for text inputs that accept declarative client-local typing constraints.
+          *
+          * Every free-text input mixes this in except `NumberInput`. A `number` field constrains its content through
+          * `type`, `min`, `max` and `step` instead, its `value` reads as the empty string while the content is not a
+          * valid number, and a mask's own literals (`(`, `)`, `-`, space) are never valid there. Leaving the trait off
+          * that one element keeps the combination from compiling rather than failing at runtime.
+          *
+          * Both constraints are enforced in the browser as the reader types, so they are typing conveniences rather
+          * than validation boundaries: any client can submit any value, and server-side checks still apply.
+          *
+          * A composition (an IME, a dead key, mobile autocorrect) is let through and its finished text corrected on
+          * `compositionend`, rather than being cancelled mid-composition, which is what cancelling the composition
+          * event would do.
+          */
+        sealed trait ConstrainedInput extends TextInput:
+            def inputFilter: Maybe[InputFilter]
+            def inputMask: Maybe[String]
+
+            /** Restricts the characters the field accepts, rejecting the rest as they are typed, pasted or dropped.
+              *
+              * The rejected character never enters the field, so the reader sees no flicker and the caret does not
+              * jump, and the server only observes filtered text through the normal input and change events. Emits
+              * `data-kyo-filter`, read by a document-level `beforeinput` capture listener.
+              *
+              * @see
+              *   [[kyo.UI.InputFilter]] for the available character sets
+              */
+            def inputFilter(v: InputFilter): Self
+
+            /** Formats the field progressively against a fixed pattern as the reader types.
+              *
+              * Tokens are `9` for a digit, `a` for an ASCII letter and `*` for either; every other character is a
+              * literal the mask inserts on its own, as in `"(999) 999-9999"`. A backslash escapes the next character,
+              * so `"+4\\9 999"` keeps a literal `9` in the country code rather than opening an input position there.
+              * Each position accepts only its own character class, backspace steps back over literals, and the caret
+              * follows the insertion. Formatting stops at the first position the value cannot fill, so a partial entry
+              * renders without trailing literals.
+              *
+              * The classes are ASCII only: `a` and `*` reject accented and non-Latin letters. The server receives the
+              * formatted value through the normal input and change events. Emits `data-kyo-mask`.
+              *
+              * The mask governs display, not only typing: the initial value and a value bound to a [[kyo.SignalRef]]
+              * are formatted as they render, so a masked field never shows an unformatted value whoever set it. A
+              * value the mask cannot hold is truncated at its capacity.
+              */
+            def inputMask(v: String): Self
+        end ConstrainedInput
+
         /** Capability trait for picker inputs that carry a `String` `value` and an `onChange` but no free-text typing (`select`, date/time/color, ...). */
         sealed trait PickerInput extends Focusable with HasDisabled:
             def value: Maybe[Bound[String]]
@@ -922,6 +1048,11 @@ object UI:
             tabIndex: Maybe[Int] = Absent,
             focusTrap: Maybe[Boolean] = Absent,
             focusGroup: Maybe[String] = Absent,
+            focusAuto: Maybe[Boolean] = Absent,
+            focusRestore: Maybe[Boolean] = Absent,
+            stopPropagation: Maybe[Boolean] = Absent,
+            enterTransition: Maybe[String] = Absent,
+            leaveTransition: Maybe[String] = Absent,
             uiStyle: Style = Style.empty,
             onClick: Maybe[Any < Async] = Absent,
             onClickEvt: Maybe[MouseEvent => Any < Async] = Absent,
@@ -1075,6 +1206,18 @@ object UI:
             def apply(cs: HtmlChildVal*): Table = copy(children = children ++ Chunk.from(cs.map(_.value)))
         end Table
 
+        /** Explicit table row group. The HTML parser only synthesizes an implicit `<tbody>` while PARSING row
+          * content; rows patched into a live table programmatically (a reactive region between comment markers)
+          * become direct `<table>` children, which renders fine but breaks `tbody`-scoped selectors and
+          * semantics. Wrap a row region in `UI.tbody` to get a real row group.
+          */
+        final case class Tbody(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Block
+            with Interactive:
+            type Self = Tbody
+            def withAttrs(a: Attrs): Tbody      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): Tbody = copy(children = children ++ Chunk.from(cs.map(_.value)))
+        end Tbody
+
         // ====== Headings (Block) ======
 
         final case class H1(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Block
@@ -1171,7 +1314,7 @@ object UI:
         final case class Textarea(
             attrs: Attrs = Attrs(),
             textInputAttrs: TextInputAttrs = TextInputAttrs()
-        )(using val frame: Frame) extends Block with Interactive with TextInput with Void:
+        )(using val frame: Frame) extends Block with Interactive with ConstrainedInput with Void:
             type Self = Textarea
             def withAttrs(a: Attrs): Textarea = copy(attrs = a)
 
@@ -1181,6 +1324,8 @@ object UI:
             def disabled: Maybe[Boolean]               = textInputAttrs.disabled
             def onInput: Maybe[String => Any < Async]  = textInputAttrs.onInput
             def onChange: Maybe[String => Any < Async] = textInputAttrs.onChange
+            def inputFilter: Maybe[InputFilter]        = textInputAttrs.inputFilter
+            def inputMask: Maybe[String]               = textInputAttrs.inputMask
 
             def value(v: String): Textarea                   = copy(textInputAttrs = textInputAttrs.copy(value = Present(Bound.Const(v))))
             def value(v: SignalRef[String]): Textarea        = copy(textInputAttrs = textInputAttrs.copy(value = Present(Bound.Ref(v))))
@@ -1189,6 +1334,8 @@ object UI:
             def disabled(v: Boolean): Textarea               = copy(textInputAttrs = textInputAttrs.copy(disabled = Present(v)))
             def onInput(f: String => Any < Async): Textarea  = copy(textInputAttrs = textInputAttrs.copy(onInput = Present(f)))
             def onChange(f: String => Any < Async): Textarea = copy(textInputAttrs = textInputAttrs.copy(onChange = Present(f)))
+            def inputFilter(v: InputFilter): Textarea        = copy(textInputAttrs = textInputAttrs.copy(inputFilter = Present(v)))
+            def inputMask(v: String): Textarea               = copy(textInputAttrs = textInputAttrs.copy(inputMask = Present(v)))
         end Textarea
 
         final case class Select(
@@ -1336,13 +1483,15 @@ object UI:
             readOnly: Maybe[Boolean] = Absent,
             disabled: Maybe[Boolean] = Absent,
             onInput: Maybe[String => Any < Async] = Absent,
-            onChange: Maybe[String => Any < Async] = Absent
+            onChange: Maybe[String => Any < Async] = Absent,
+            inputFilter: Maybe[InputFilter] = Absent,
+            inputMask: Maybe[String] = Absent
         )
 
         final case class Input(
             attrs: Attrs = Attrs(),
             textInputAttrs: TextInputAttrs = TextInputAttrs()
-        )(using val frame: Frame) extends Inline with Interactive with TextInput with Void:
+        )(using val frame: Frame) extends Inline with Interactive with ConstrainedInput with Void:
             type Self = Input
             def withAttrs(a: Attrs): Input = copy(attrs = a)
 
@@ -1352,6 +1501,8 @@ object UI:
             def disabled: Maybe[Boolean]               = textInputAttrs.disabled
             def onInput: Maybe[String => Any < Async]  = textInputAttrs.onInput
             def onChange: Maybe[String => Any < Async] = textInputAttrs.onChange
+            def inputFilter: Maybe[InputFilter]        = textInputAttrs.inputFilter
+            def inputMask: Maybe[String]               = textInputAttrs.inputMask
 
             def value(v: String): Input                   = copy(textInputAttrs = textInputAttrs.copy(value = Present(Bound.Const(v))))
             def value(v: SignalRef[String]): Input        = copy(textInputAttrs = textInputAttrs.copy(value = Present(Bound.Ref(v))))
@@ -1360,12 +1511,14 @@ object UI:
             def disabled(v: Boolean): Input               = copy(textInputAttrs = textInputAttrs.copy(disabled = Present(v)))
             def onInput(f: String => Any < Async): Input  = copy(textInputAttrs = textInputAttrs.copy(onInput = Present(f)))
             def onChange(f: String => Any < Async): Input = copy(textInputAttrs = textInputAttrs.copy(onChange = Present(f)))
+            def inputFilter(v: InputFilter): Input        = copy(textInputAttrs = textInputAttrs.copy(inputFilter = Present(v)))
+            def inputMask(v: String): Input               = copy(textInputAttrs = textInputAttrs.copy(inputMask = Present(v)))
         end Input
 
         final case class PasswordInput(
             attrs: Attrs = Attrs(),
             textInputAttrs: TextInputAttrs = TextInputAttrs()
-        )(using val frame: Frame) extends Inline with Interactive with TextInput with Void:
+        )(using val frame: Frame) extends Inline with Interactive with ConstrainedInput with Void:
             type Self = PasswordInput
             def withAttrs(a: Attrs): PasswordInput = copy(attrs = a)
 
@@ -1375,6 +1528,8 @@ object UI:
             def disabled: Maybe[Boolean]               = textInputAttrs.disabled
             def onInput: Maybe[String => Any < Async]  = textInputAttrs.onInput
             def onChange: Maybe[String => Any < Async] = textInputAttrs.onChange
+            def inputFilter: Maybe[InputFilter]        = textInputAttrs.inputFilter
+            def inputMask: Maybe[String]               = textInputAttrs.inputMask
 
             def value(v: String): PasswordInput            = copy(textInputAttrs = textInputAttrs.copy(value = Present(Bound.Const(v))))
             def value(v: SignalRef[String]): PasswordInput = copy(textInputAttrs = textInputAttrs.copy(value = Present(Bound.Ref(v))))
@@ -1383,12 +1538,14 @@ object UI:
             def disabled(v: Boolean): PasswordInput        = copy(textInputAttrs = textInputAttrs.copy(disabled = Present(v)))
             def onInput(f: String => Any < Async): PasswordInput  = copy(textInputAttrs = textInputAttrs.copy(onInput = Present(f)))
             def onChange(f: String => Any < Async): PasswordInput = copy(textInputAttrs = textInputAttrs.copy(onChange = Present(f)))
+            def inputFilter(v: InputFilter): PasswordInput        = copy(textInputAttrs = textInputAttrs.copy(inputFilter = Present(v)))
+            def inputMask(v: String): PasswordInput               = copy(textInputAttrs = textInputAttrs.copy(inputMask = Present(v)))
         end PasswordInput
 
         final case class EmailInput(
             attrs: Attrs = Attrs(),
             textInputAttrs: TextInputAttrs = TextInputAttrs()
-        )(using val frame: Frame) extends Inline with Interactive with TextInput with Void:
+        )(using val frame: Frame) extends Inline with Interactive with ConstrainedInput with Void:
             type Self = EmailInput
             def withAttrs(a: Attrs): EmailInput = copy(attrs = a)
 
@@ -1398,6 +1555,8 @@ object UI:
             def disabled: Maybe[Boolean]               = textInputAttrs.disabled
             def onInput: Maybe[String => Any < Async]  = textInputAttrs.onInput
             def onChange: Maybe[String => Any < Async] = textInputAttrs.onChange
+            def inputFilter: Maybe[InputFilter]        = textInputAttrs.inputFilter
+            def inputMask: Maybe[String]               = textInputAttrs.inputMask
 
             def value(v: String): EmailInput                   = copy(textInputAttrs = textInputAttrs.copy(value = Present(Bound.Const(v))))
             def value(v: SignalRef[String]): EmailInput        = copy(textInputAttrs = textInputAttrs.copy(value = Present(Bound.Ref(v))))
@@ -1406,12 +1565,14 @@ object UI:
             def disabled(v: Boolean): EmailInput               = copy(textInputAttrs = textInputAttrs.copy(disabled = Present(v)))
             def onInput(f: String => Any < Async): EmailInput  = copy(textInputAttrs = textInputAttrs.copy(onInput = Present(f)))
             def onChange(f: String => Any < Async): EmailInput = copy(textInputAttrs = textInputAttrs.copy(onChange = Present(f)))
+            def inputFilter(v: InputFilter): EmailInput        = copy(textInputAttrs = textInputAttrs.copy(inputFilter = Present(v)))
+            def inputMask(v: String): EmailInput               = copy(textInputAttrs = textInputAttrs.copy(inputMask = Present(v)))
         end EmailInput
 
         final case class TelInput(
             attrs: Attrs = Attrs(),
             textInputAttrs: TextInputAttrs = TextInputAttrs()
-        )(using val frame: Frame) extends Inline with Interactive with TextInput with Void:
+        )(using val frame: Frame) extends Inline with Interactive with ConstrainedInput with Void:
             type Self = TelInput
             def withAttrs(a: Attrs): TelInput = copy(attrs = a)
 
@@ -1421,6 +1582,8 @@ object UI:
             def disabled: Maybe[Boolean]               = textInputAttrs.disabled
             def onInput: Maybe[String => Any < Async]  = textInputAttrs.onInput
             def onChange: Maybe[String => Any < Async] = textInputAttrs.onChange
+            def inputFilter: Maybe[InputFilter]        = textInputAttrs.inputFilter
+            def inputMask: Maybe[String]               = textInputAttrs.inputMask
 
             def value(v: String): TelInput                   = copy(textInputAttrs = textInputAttrs.copy(value = Present(Bound.Const(v))))
             def value(v: SignalRef[String]): TelInput        = copy(textInputAttrs = textInputAttrs.copy(value = Present(Bound.Ref(v))))
@@ -1429,12 +1592,14 @@ object UI:
             def disabled(v: Boolean): TelInput               = copy(textInputAttrs = textInputAttrs.copy(disabled = Present(v)))
             def onInput(f: String => Any < Async): TelInput  = copy(textInputAttrs = textInputAttrs.copy(onInput = Present(f)))
             def onChange(f: String => Any < Async): TelInput = copy(textInputAttrs = textInputAttrs.copy(onChange = Present(f)))
+            def inputFilter(v: InputFilter): TelInput        = copy(textInputAttrs = textInputAttrs.copy(inputFilter = Present(v)))
+            def inputMask(v: String): TelInput               = copy(textInputAttrs = textInputAttrs.copy(inputMask = Present(v)))
         end TelInput
 
         final case class UrlInput(
             attrs: Attrs = Attrs(),
             textInputAttrs: TextInputAttrs = TextInputAttrs()
-        )(using val frame: Frame) extends Inline with Interactive with TextInput with Void:
+        )(using val frame: Frame) extends Inline with Interactive with ConstrainedInput with Void:
             type Self = UrlInput
             def withAttrs(a: Attrs): UrlInput = copy(attrs = a)
 
@@ -1444,6 +1609,8 @@ object UI:
             def disabled: Maybe[Boolean]               = textInputAttrs.disabled
             def onInput: Maybe[String => Any < Async]  = textInputAttrs.onInput
             def onChange: Maybe[String => Any < Async] = textInputAttrs.onChange
+            def inputFilter: Maybe[InputFilter]        = textInputAttrs.inputFilter
+            def inputMask: Maybe[String]               = textInputAttrs.inputMask
 
             def value(v: String): UrlInput                   = copy(textInputAttrs = textInputAttrs.copy(value = Present(Bound.Const(v))))
             def value(v: SignalRef[String]): UrlInput        = copy(textInputAttrs = textInputAttrs.copy(value = Present(Bound.Ref(v))))
@@ -1452,12 +1619,14 @@ object UI:
             def disabled(v: Boolean): UrlInput               = copy(textInputAttrs = textInputAttrs.copy(disabled = Present(v)))
             def onInput(f: String => Any < Async): UrlInput  = copy(textInputAttrs = textInputAttrs.copy(onInput = Present(f)))
             def onChange(f: String => Any < Async): UrlInput = copy(textInputAttrs = textInputAttrs.copy(onChange = Present(f)))
+            def inputFilter(v: InputFilter): UrlInput        = copy(textInputAttrs = textInputAttrs.copy(inputFilter = Present(v)))
+            def inputMask(v: String): UrlInput               = copy(textInputAttrs = textInputAttrs.copy(inputMask = Present(v)))
         end UrlInput
 
         final case class SearchInput(
             attrs: Attrs = Attrs(),
             textInputAttrs: TextInputAttrs = TextInputAttrs()
-        )(using val frame: Frame) extends Inline with Interactive with TextInput with Void:
+        )(using val frame: Frame) extends Inline with Interactive with ConstrainedInput with Void:
             type Self = SearchInput
             def withAttrs(a: Attrs): SearchInput = copy(attrs = a)
 
@@ -1467,6 +1636,8 @@ object UI:
             def disabled: Maybe[Boolean]               = textInputAttrs.disabled
             def onInput: Maybe[String => Any < Async]  = textInputAttrs.onInput
             def onChange: Maybe[String => Any < Async] = textInputAttrs.onChange
+            def inputFilter: Maybe[InputFilter]        = textInputAttrs.inputFilter
+            def inputMask: Maybe[String]               = textInputAttrs.inputMask
 
             def value(v: String): SearchInput                  = copy(textInputAttrs = textInputAttrs.copy(value = Present(Bound.Const(v))))
             def value(v: SignalRef[String]): SearchInput       = copy(textInputAttrs = textInputAttrs.copy(value = Present(Bound.Ref(v))))
@@ -1475,6 +1646,8 @@ object UI:
             def disabled(v: Boolean): SearchInput              = copy(textInputAttrs = textInputAttrs.copy(disabled = Present(v)))
             def onInput(f: String => Any < Async): SearchInput = copy(textInputAttrs = textInputAttrs.copy(onInput = Present(f)))
             def onChange(f: String => Any < Async): SearchInput = copy(textInputAttrs = textInputAttrs.copy(onChange = Present(f)))
+            def inputFilter(v: InputFilter): SearchInput        = copy(textInputAttrs = textInputAttrs.copy(inputFilter = Present(v)))
+            def inputMask(v: String): SearchInput               = copy(textInputAttrs = textInputAttrs.copy(inputMask = Present(v)))
         end SearchInput
 
         final case class NumberInput(

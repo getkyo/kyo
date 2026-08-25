@@ -1,6 +1,6 @@
 # kyo-schema
 
-Define a case class and get JSON/YAML serialization, Protobuf and MessagePack encoding, field validation, type-safe lenses, structural diffs, and more, all derived from the type's structure. No required annotations, no boilerplate. Works across JVM, JavaScript, and Scala Native. The module depends only on `kyo-data` (pure data structures) and has no dependency on Kyo's effect runtime, so it can be adopted as a standalone library.
+Define a case class and get JSON/YAML serialization, Protobuf and MessagePack encoding, field validation, type-safe lenses, structural diffs, and more, all derived from the type's structure. No required annotations, no boilerplate. Works across JVM, JavaScript, Scala Native, and WASM. The module depends only on `kyo-data` (pure data structures) and has no dependency on Kyo's effect runtime, so it can be adopted as a standalone library.
 
 <!-- doctest:setup
 ```scala
@@ -38,6 +38,7 @@ These are the top-level entry points:
 | Entry point | Purpose |
 |-------------|---------|
 | `Json` / `Ion` / `Yaml` / `Bson` / `Protobuf` / `MsgPack` | Serialize to JSON strings, Ion text or binary, YAML documents, BSON bytes, Protocol Buffers bytes, or MessagePack bytes |
+| `Json.Lines` / `Jsonl` | Frame in-memory JSONL purely, or stream JSONL over bytes and files with effects |
 | `Focus` | Type-safe lens for reading, writing, and updating fields at any depth |
 | `Compare` | Read-only field-by-field comparison of two values |
 | `Modify` | Batched field mutations applied as a single unit |
@@ -53,7 +54,7 @@ The functionality above ships as seven artifacts: a format-agnostic core plus on
 | Artifact | Provides |
 |----------|----------|
 | `kyo-schema` | The core: `Schema`, derivation, validation, annotations, optics, structural conversion, and the `Codec` SPI. No wire format. |
-| `kyo-schema-json` | The `Json` entry point: JSON text and bytes, plus JSON Schema generation. |
+| `kyo-schema-json` | JSON text and bytes, JSON Schema generation, pure `Json.Lines` framing, and effectful `Jsonl` streams and files. |
 | `kyo-schema-protobuf` | The `Protobuf` entry point: Protocol Buffers binary, plus `.proto` schema export. |
 | `kyo-schema-msgpack` | The `MsgPack` entry point: MessagePack binary. |
 | `kyo-schema-bson` | The `Bson` entry point: BSON document bytes. |
@@ -68,7 +69,7 @@ Add the format modules you need to your `build.sbt`. Most projects start with JS
 libraryDependencies += "io.getkyo" %% "kyo-schema-json" % "<latest version>"
 ```
 
-`kyo-schema-json` brings in `kyo-schema` transitively; swap or add `kyo-schema-protobuf`, `kyo-schema-msgpack`, `kyo-schema-bson`, `kyo-schema-ion`, or `kyo-schema-yaml` for the other formats, or depend on `kyo-schema` alone for schemas without a codec.
+`kyo-schema-json` brings in `kyo-schema` and `kyo-system` transitively. Swap or add `kyo-schema-protobuf`, `kyo-schema-msgpack`, `kyo-schema-bson`, `kyo-schema-ion`, or `kyo-schema-yaml` for the other formats, or depend on `kyo-schema` alone for schemas without a codec.
 
 All public types live in the `kyo` package:
 
@@ -368,6 +369,82 @@ strict.decodeString[Json]("""{"id":1,"name":"Ada"}""")
 strict.decodeString[Json]("""{"id":1,"name":"Ada","extra":true}""")
 // Result.Failure(UnknownFieldException(...))  (rejects the first unknown field)
 ```
+
+#### JSONL
+
+Line-delimited JSON (JSONL, also called NDJSON) puts one JSON value on each line. It is the shape append-only record logs are exchanged in, including AI agent session transcripts and structured application logs, because a writer can add a record by appending one line and a reader can consume records without waiting for the file to end. `Json.Lines` is the pure surface over that format: it frames bytes into records and decodes each record with the ordinary JSON reader.
+
+`encodeAll` writes a whole collection, one newline-terminated record per value; `decodeAll` reads it back:
+
+```scala
+val users = List(alice, alice.copy(id = 2, name = "Bob"))
+
+val log: String = Json.Lines.encodeAll(users)
+// {"id":1,"name":"Alice",...}\n{"id":2,"name":"Bob",...}\n
+
+Json.Lines.decodeAll[User](log)
+// Result.Success(Chunk(<alice>, <bob>))
+```
+
+`encodeLine` encodes a single value with its terminating newline, which is what an incremental writer appends per record. `encodeAllBytes` and `decodeAllBytes` are the `Span[Byte]` variants, and they are the ones to prefer when the input is already bytes: framing works on bytes, so handing it a `String` costs a decode and a re-encode.
+
+```scala
+val line: String = Json.Lines.encodeLine(alice)
+
+val bytes: Span[Byte] = Json.Lines.encodeAllBytes(List(alice))
+Json.Lines.decodeAllBytes[User](bytes)
+// Result.Success(Chunk(alice))
+```
+
+A record log is often heterogeneous or half-written, so one bad line should not cost the whole file. `decodeAllBytesResults` returns one `Result` per record instead of failing the input:
+
+```scala
+case class Row(id: Int) derives Schema
+
+val text = """{"id":1}
+             |not json
+             |{"id":3}
+             |""".stripMargin
+
+val mixed: Span[Byte] = Span.from(text.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+
+Json.Lines.decodeAllBytesResults[Row](mixed)
+// Chunk(Result.Success(Row(1)), Result.Failure(RecordDecodeException(...)), Result.Success(Row(3)))
+```
+
+A failure carries `RecordDecodeException`, which names the record it came from: `recordIndex` (counting only non-blank records), `byteOffset` into the original input, and the underlying `DecodeException` as `cause`. That is what lets a consumer report "record 41 at byte 9302 is malformed" rather than "the file is malformed". The record's own bytes are deliberately absent: a record is application payload, and a copy of it on an exception reaches every log line and error page that renders the failure.
+
+Framing splits on `'\n'` and is exact rather than approximate: JSON requires control characters inside strings to be escaped, so a valid record cannot contain an unescaped newline. Blank and whitespace-only lines are skipped without consuming a record index, a leading byte order mark is stripped, `\r\n` terminators are accepted, and a final record with no trailing newline is still emitted.
+
+Framing works on bytes rather than text because a UTF-8 multibyte character can straddle a span boundary. Splitting bytes first and decoding each complete record afterwards removes that hazard with no incremental text decoder. `Json.Lines.Framer` exposes that as a value, so a caller with its own read loop can frame across span boundaries itself:
+
+```scala
+val chunk = """{"id":1}
+              |{"id":2}
+              |{"id""".stripMargin
+
+val framer = Json.Lines.Framer.init()
+
+val framed: Json.Lines.Framed =
+    framer.feed(Span.from(chunk.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+
+framed match
+    case Json.Lines.Framed.Continued(next, lines) =>
+        // `lines` holds Result.Success(Line) for `{"id":1}` and `{"id":2}`. The unterminated `{"id"`
+        // is inside `next`, which frames the next span; `next.finishLine` closes it at end of input.
+        lines.size
+    case Json.Lines.Framed.Halted(lines, breach) =>
+        // Only when the pending bytes outgrew maxLineSize with no newline among them. There is no
+        // record boundary to resume at, so framing is over and no framer comes back.
+        lines.size
+end match
+```
+
+Feeding a framer never mutates it: `feed` returns the advanced framer inside `Framed.Continued` and the receiver stays usable. Each `Json.Lines.Line` carries `bytes` (its own UTF-8 encoding, terminator removed), `index`, and `byteOffset`, and `text` decodes those bytes. Equality is structural over all three, so two lines framed from the same input at different span sizes compare equal.
+
+`maxLineSize` (default `Json.Lines.DefaultMaxLineSize`, 16 MiB) bounds a single record. It is a `ByteSize`, so a ceiling reads as `8.bytes` or `1.mib` rather than as a bare number. Without it a byte stream that never contains a newline would grow the framer's residual without bound, and neither `maxDepth` nor `maxCollectionSize` covers that, since both operate inside one document. What a breach costs depends on whether the offending line was terminated. A terminated one has a known boundary, so it arrives as a failure element among the lines, framing resumes after its newline, and `decodeAllBytesResults` reports one `LimitExceededException` failure in its place and decodes the records after it. An oversized residual has no boundary to skip to, so `feed` returns `Framed.Halted` and `decodeAllBytesResults` appends that breach as its last element.
+
+All of the above is pure and takes whole inputs. The same `kyo-schema-json` artifact also provides `Jsonl`, which drives this framer over arbitrary byte streams and files under `Sync` and `Async`. See the [kyo-schema-json README](../kyo-schema-json/README.md) for `pipe`, `read`, `watch`, `encode`, `write`, and `append` examples.
 
 ### Ion
 
@@ -821,12 +898,15 @@ Schemas are provided for all common types out of the box:
 | Category | Types |
 |----------|-------|
 | Primitives | `String`, `Boolean`, `Int`, `Long`, `Float`, `Double`, `Short`, `Byte`, `Char`, `BigDecimal`, `BigInt`, `Unit` |
-| Time | `java.time.Instant`, `java.time.Duration`, `kyo.Instant`, `kyo.Duration`, `LocalDate`, `LocalTime`, `LocalDateTime` |
-| Identifiers | `UUID`, `Frame`, `Tag[A]` |
-| Collections | `List[A]`, `Vector[A]`, `Set[A]`, `Seq[A]`, `Chunk[A]`, `Span[A]`, `Map[String, V]`, `Dict[K, V]`, `OrderedDict[K, V]` |
+| Time | `java.time.Instant`, `java.time.Duration`, `scala.concurrent.duration.Duration`, `scala.concurrent.duration.FiniteDuration`, `kyo.Instant`, `kyo.Duration`, `java.time.LocalDate`, `java.time.LocalTime`, `java.time.LocalDateTime` |
+| Identifiers | `kyo.UUID`, `java.util.UUID`, `Frame`, `Tag[A]` |
+| Collections | `List[A]`, `Vector[A]`, `Set[A]`, `Seq[A]`, `Chunk[A]`, `Span[A]`, `Map[K, V]`, `Dict[K, V]`, `OrderedDict[K, V]` |
 | Optional | `Option[A]`, `Maybe[A]` |
 | Sums | `Either[A, B]`, `Result[E, A]` |
+| Scheduling | `kyo.Schedule` |
 | Tuples | `(A, B)`, `(A, B, C)`, `(A, B, C, D)`, `(A, B, C, D, E)` |
+
+Prefer `kyo.UUID` in new schemas. `Schema.uuidSchema` now names `Schema[kyo.UUID]`: it writes canonical lowercase UUID text through `UUID.show` and reads through `UUID.parse`. Explicit Java UUID schema references should use `Schema.javaUuidSchema`, while ordinary `summon[Schema[java.util.UUID]]` remains available. Both UUID types use a string wire representation, but their runtime schema tags remain type-specific.
 
 Any case class or sealed trait composed of these types derives a `Schema` automatically. Nested case classes work without additional setup.
 
@@ -860,6 +940,53 @@ object Username:
     given Schema[Username] =
         Schema[String].transform[Username](Username(_))(identity)
 end Username
+```
+
+### Validating smart constructors
+
+`derives Schema` emits a decoder that calls the type's primary constructor. For a type whose invariant lives in a smart constructor that is the wrong route: decoding would construct a value the constructor would have rejected. `Schema.derivedVia` takes the constructor and routes decoding through it. Encoding is untouched, so the wire shape stays the one the same fields would have on a plain case class.
+
+The `sealed abstract case class` idiom is the clearest case, since `abstract` suppresses `apply` and `copy` so the companion's constructor is the only route to a value at all:
+
+```scala
+sealed abstract case class Port private (value: Int)
+
+object Port:
+    def make(value: Int): Result[String, Port] =
+        if value > 0 && value < 65536 then Result.succeed(new Port(value) {})
+        else Result.fail(s"port out of range: $value")
+
+    given Schema[Port] = Schema.derivedVia(make)
+end Port
+
+Port.make(8080).map(Json.encode(_))
+// Result.Success({"value":8080})
+
+Json.decode[Port]("""{"value":0}""")
+// Result.Failure(ConstructorRejectedException(Nil, "Port", "port out of range: 0"))
+```
+
+A rejection is a `ConstructorRejectedException`, which subtypes `DecodeException`, so it arrives as the same `Result.Failure` any other malformed input arrives as rather than as a thrown exception or a silently bypassed check.
+
+The constructor takes the case fields one for one in declaration order, up to eight of them; a mismatch in arity or in a field's type is a compile error naming the field. Its result may be the constructed type itself or any shape `Schema.Constructed` reads a value out of: `Result`, `Maybe`, `Option`, `Either`, or `Try`. Any other outcome type works once it has its own `given Schema.Constructed` instance.
+
+Nothing about this is specific to types with no usable constructor. A refined type, a newtype carrying an invariant, or a domain primitive that rejects bad input all have public constructors that decoding should not reach for:
+
+```scala
+case class Slug(value: String)
+
+object Slug:
+    def make(value: String): Option[Slug] =
+        Option.when(value.nonEmpty && value.forall(c => c.isLetterOrDigit || c == '-'))(Slug(value))
+
+    given Schema[Slug] = Schema.derivedVia(make)
+end Slug
+
+Json.decode[Slug]("""{"value":"hello-world"}""")
+// Result.Success(Slug("hello-world"))
+
+Json.decode[Slug]("""{"value":"hello world"}""")
+// Result.Failure(ConstructorRejectedException(Nil, "Slug", "the constructor returned None"))
 ```
 
 ## Annotations
@@ -1684,7 +1811,7 @@ The `Structure.Type` tree ships with a small set of operations for runtime inspe
 
 ## Custom Formats
 
-`Json`, `Ion`, `Yaml`, and `Protobuf` are the built-in formats, but the serialization pipeline itself is format-agnostic. A schema describes a value as a sequence of typed events (`objectStart`, `field`, `int`, `arrayStart`, ...) and a matching sequence on the way back. A format is the code that turns those events into bytes and back.
+`Json`, `Ion`, `Yaml`, `Bson`, `Protobuf`, and `MsgPack` are the built-in formats, but the serialization pipeline itself is format-agnostic. A schema describes a value as a sequence of typed events (`objectStart`, `field`, `int`, `arrayStart`, ...) and a matching sequence on the way back. A format is the code that turns those events into bytes and back.
 
 ### The Codec trait
 
@@ -1762,7 +1889,7 @@ When writing a custom schema for an opaque or wrapper type, you can also constru
 
 ## Exceptions
 
-All errors raised by kyo-schema extend the sealed `SchemaException` hierarchy. The most useful subtypes:
+Errors raised by the schema core and schema codecs extend the sealed `SchemaException` hierarchy. Format-specific helper APIs may define their own error types, for example YAML CST edit operations return `Yaml.Cst.EditException`. The most useful `SchemaException` subtypes:
 
 | Exception | Raised when |
 |-----------|-------------|
@@ -1779,8 +1906,10 @@ All errors raised by kyo-schema extend the sealed `SchemaException` hierarchy. T
 | `AmbiguousVariantMatchException` | an untagged or type-union decode under the default `Strict` policy matches more than one member (lists the matched members) |
 | `DuplicateRepresentationException` | a `representations(...)` or `orElseRepresentation(...)` chain contains the same representation twice (raised at the builder call, not at encode time) |
 | `TruncatedInputException` | the input stream ends before decoding completes |
+| `TrailingInputException` | decode finishes one complete value but the input still contains extra content |
 | `LimitExceededException` | `maxDepth` or `maxCollectionSize` is exceeded |
 | `RangeException` | a numeric value overflows the target type |
+| `ConstructorRejectedException` | a `Schema.derivedVia` decode reaches the smart constructor and the constructor refuses the decoded fields; carries the `typeName` and the constructor's own rejection |
 | `ValidationFailedException` | a `.check` / `checkMin` / ... predicate fails |
 | `TransformFailedException` | a schema transform cannot complete |
 | `PathNotFoundException` | a `Structure.Path` segment does not exist |
@@ -1824,8 +1953,8 @@ cs.applyTo(alice) // Result.Success(renamed)
 
 ## Cross-platform behavior
 
-kyo-schema runs on JVM, Scala.js, and Scala Native, but two areas behave differently across platforms:
+kyo-schema runs on JVM, Scala.js, Scala Native, and WASM. Runtime format implementations are shared across these platforms. JSON output strings are constructed from the written byte range with the public UTF-8 `String` constructor in the shared `JsonWriter`, providing consistent behavior without platform-specific runtime code.
 
-- **ASCII bytes to String conversion**: the JVM uses a zero-copy path that constructs `String` directly from the underlying byte array via the private LATIN1 String constructor, sharing the array without copying. Scala.js and Scala Native copy the bytes via `new String(bytes, StandardCharsets.US_ASCII)`. This is an implementation detail that does not affect correctness, but may appear in allocations-per-request profiling on high-throughput JVM workloads.
+One API area depends on platform emulation:
 
-- **Regex support in `checkPattern`**: `checkPattern` uses `java.util.regex.Pattern`. Scala.js and Scala Native emulate this API but do not support all JVM regex features. Features unavailable off-JVM include possessive quantifiers (`a++`, `a*+`), atomic groups (`(?>...)`), some Unicode property classes (`\p{...}`), and lookbehind on older JS engines. For cross-platform constraints, stick to POSIX features: character classes, anchors, alternation, basic quantifiers, capture groups, backreferences, and simple lookahead.
+- **Regex support in `checkPattern`**: `checkPattern` uses `java.util.regex.Pattern`. Scala.js, Scala Native, and WASM emulate this API but do not support all JVM regex features. Features unavailable off-JVM include possessive quantifiers (`a++`, `a*+`), atomic groups (`(?>...)`), some Unicode property classes (`\p{...}`), and lookbehind on older JS engines. For cross-platform constraints, stick to POSIX features: character classes, anchors, alternation, basic quantifiers, capture groups, backreferences, and simple lookahead.

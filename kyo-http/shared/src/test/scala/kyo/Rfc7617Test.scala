@@ -12,7 +12,7 @@ class Rfc7617Test extends BaseHttpTest:
     def withServer[A, S](handlers: HttpHandler[?, ?, ?]*)(
         test: Int => A < (S & Async & Abort[HttpException])
     )(using Frame): A < (S & Async & Scope & Abort[HttpException]) =
-        HttpServer.init(0, "localhost")(handlers*).map(server => test(server.port))
+        HttpServer.init(0, "127.0.0.1")(handlers*).map(server => test(server.port))
 
     def send[In, Out](port: Int, route: HttpRoute[In, Out, Any], request: HttpRequest[In])(using
         Frame

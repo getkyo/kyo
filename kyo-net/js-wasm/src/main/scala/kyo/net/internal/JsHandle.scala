@@ -1,6 +1,7 @@
 package kyo.net.internal
 
 import kyo.*
+import kyo.net.NetConnectionIoException
 import kyo.net.internal.transport.*
 import kyo.net.internal.util.HandleId
 import scala.scalajs.js
@@ -13,22 +14,35 @@ import scala.scalajs.js
   * Leftover bytes are stored when a `"data"` chunk arrives before `awaitRead` has been called (or when a chunk contains more data than the
   * pending read can consume). They are delivered on the next `awaitRead` call without resuming the socket.
   */
-final private[kyo] class JsHandle private[kyo] (val socket: js.Dynamic, val id: HandleId):
+final private[kyo] class JsHandle private[kyo] (val socket: js.Dynamic, val id: HandleId, val createdAt: Frame):
     // Pending read promise (at most one). Absent when no read is pending.
     var pendingRead: Maybe[Promise.Unsafe[ReadOutcome, Abort[Closed]]] = Absent
 
-    // Leftover bytes from an oversized chunk
-    private var leftoverState: Maybe[JsHandle.Leftover] = Absent
+    // Peer-close grace window the ReadPump applies when backpressured (see kyo.net.NetConfig.peerCloseGrace); on the handle so an in-place STARTTLS
+    // upgrade (same socket) inherits it without re-threading. Duration.Infinity (no reclaim) for handles created without a config (stdio).
+    var peerCloseGrace: Duration = Duration.Infinity
 
-    def hasLeftover: Boolean = leftoverState.isDefined
+    // FIFO of undelivered chunks, delivered one per awaitRead. Two producers: an oversized "data" chunk's tail, and the peer-close grace probe's
+    // resume() draining kernel bytes into the "data" listener while the pump is parked (JsIoDriver.isPeerClosed). A single slot would let the probe's
+    // chunk clobber the tail (byte loss), so a queue; the single-threaded event loop makes a plain mutable queue safe. stagedBytesTotal bounds it (JsIoDriver.PeerProbeBufferCap).
+    private val leftoverQueue: scala.collection.mutable.Queue[JsHandle.Leftover] = scala.collection.mutable.Queue.empty
+    private var stagedBytesTotal: Int                                            = 0
 
-    def leftover: Maybe[JsHandle.Leftover] = leftoverState
+    def hasLeftover: Boolean = leftoverQueue.nonEmpty
 
-    def setLeftover(buf: Array[Byte], off: Int, len: Int): Unit =
-        leftoverState = Present(JsHandle.Leftover(buf, off, len))
+    /** Total undelivered staged bytes across the queue, the peer-close probe's cap check. */
+    def stagedBytes: Int = stagedBytesTotal
 
-    def clearLeftover(): Unit =
-        leftoverState = Absent
+    def enqueueLeftover(buf: Array[Byte], off: Int, len: Int): Unit =
+        leftoverQueue.enqueue(JsHandle.Leftover(buf, off, len))
+        stagedBytesTotal += len
+
+    def dequeueLeftover(): Maybe[JsHandle.Leftover] =
+        if leftoverQueue.isEmpty then Absent
+        else
+            val head = leftoverQueue.dequeue()
+            stagedBytesTotal -= head.len
+            Present(head)
 
     def clearPendingRead(): Unit =
         pendingRead = Absent
@@ -42,9 +56,9 @@ private[kyo] object JsHandle:
     private[kyo] case class Leftover(buf: Array[Byte], off: Int, len: Int)
 
     /** Create a `JsHandle` from a connected, paused Node.js socket and attach permanent `data`, `end`, `close`, and `error` listeners. */
-    def init(socket: js.Dynamic, driver: IoDriver[JsHandle])(using AllowUnsafe, Frame): JsHandle =
+    def init(socket: js.Dynamic, driver: IoDriver[JsHandle], createdAt: Frame)(using AllowUnsafe): JsHandle =
         // JS has no file-descriptor concept; use 0 as the fd placeholder so HandleId.next produces a process-unique id.
-        val handle = new JsHandle(socket, HandleId.next(0))
+        val handle = new JsHandle(socket, HandleId.next(0), createdAt)
 
         // Permanent "data" listener
         discard(socket.on(
@@ -60,8 +74,8 @@ private[kyo] object JsHandle:
                         handle.clearPendingRead()
                         pending.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(arr))))
                     case Absent =>
-                        // No pending read: store as leftover
-                        handle.setLeftover(arr, 0, arr.length)
+                        // No pending read: enqueue as leftover (the pump is parked, or the peer-close grace probe's resume() drained this chunk).
+                        handle.enqueueLeftover(arr, 0, arr.length)
                 end match
             }: js.Function1[js.Dynamic, Unit]
         ))
@@ -78,11 +92,20 @@ private[kyo] object JsHandle:
         discard(socket.on("close", signalEof))
         discard(socket.on(
             "error",
-            { (_: js.Dynamic) =>
+            { (err: js.Dynamic) =>
                 handle.pendingRead match
                     case Present(pending) =>
                         handle.clearPendingRead()
-                        pending.completeDiscard(Result.fail(Closed(driver.label, summon[Frame], "socket error")))
+                        // A Node "error" is a hard receive error on a live read: surface it as a typed receive failure on the read outcome (not a
+                        // closure), carrying the socket's own creation frame and the error's message as the cause.
+                        val cause = if js.typeOf(err.message) == "string" then err.message.toString else ""
+                        pending.completeDiscard(Result.succeed(ReadOutcome.Failed(
+                            NetConnectionIoException(
+                                s"connection socket#${handle.id}",
+                                NetConnectionIoException.Operation.Receive,
+                                cause
+                            )(using handle.createdAt)
+                        )))
                     case Absent => ()
             }: js.Function1[js.Dynamic, Unit]
         ))

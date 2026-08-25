@@ -499,7 +499,7 @@ private[kyo] object ChartTransitions:
             // keeps colliding-toString categories distinct. lowerArea emits one path per category in the
             // ordinal order of collectColorCategoriesWithRaw, so rawPaths(i) corresponds to transKeys(i).
             // For the no-color single-series case, use TransKey.SingleSeries(markIdx).
-            val (seriesTransKeys, seriesRepRows): (Chunk[TransKey], Chunk[Maybe[A]]) = mark.color match
+            val seriesPair: (Chunk[TransKey], Chunk[Maybe[A]]) = mark.color match
                 case Absent => (Chunk(TransKey.SingleSeries(markIdx)), Chunk(rows.headMaybe))
                 case Present(colorEnc) =>
                     val colorEncAny: Encoding[A, ?] = colorEnc
@@ -512,6 +512,8 @@ private[kyo] object ChartTransitions:
                         ChartFoundations.groupByKey(rows, r => ChartFoundations.categoryKey(colorEncAny.tag, colorEncAny.accessor(r)))
                     val repRows = catKeys.map(catKey => rowsByKey.getOrElse(catKey, Chunk.empty).headMaybe)
                     (transKeys, repRows)
+            val (seriesTransKeys, seriesRepRows) = seriesPair
+
             // TransKey is stable per (mark identity, series category identity): a prior mark's
             // geometry-count change does NOT shift this mark's key, and removing/reordering a color
             // series does not cause a surviving series to look up a different series' prior geometry.

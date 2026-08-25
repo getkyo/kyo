@@ -80,6 +80,14 @@ private[completion] object ClaudeCodeWire:
     private[completion] def stoppedAtOutputLimit(out: String)(using Frame): Boolean < Abort[AIGenException] =
         readEvents(out, lenient = true).map(_.exists(_.error.contains("max_output_tokens")))
 
+    /** True when the CLI emitted its structured authentication failure code.
+      *
+      * This deliberately ignores prose and terminal result text. Only the decoded `error` field can classify a failed command as an
+      * authentication problem, preserving the same no-text-scraping rule used for provider status codes and output limits.
+      */
+    private[completion] def authenticationFailed(out: String)(using Frame): Boolean < Abort[AIGenException] =
+        readEvents(out, lenient = true).map(_.exists(_.error.contains("authentication_failed")))
+
     case class ExecutedTool(name: String, arguments: Structure.Value, output: String)
 
     val mcpServerName = "kyo"
@@ -440,7 +448,14 @@ private[completion] object ClaudeCodeWire:
       * last line. Always reports `turns = 1`: the invocation is one kyo turn whether or not the CLI
       * flushed its numbers.
       */
-    def turnUsage(output: String)(using Frame): AIStats < Abort[AIGenException] =
+    /** The turn's reported spend.
+      *
+      * `toolCalls` is how many tool calls the CLI asked kyo to run during this turn. Like Codex, this
+      * harness runs its own tool loop inside one kyo turn, so counting the replies kyo received reports 1
+      * however much ran. Each call implies the model turn that produced it, plus the turn that answers
+      * with its result, so `calls + 1` is what a reader can reconcile against the calls they saw.
+      */
+    def turnUsage(output: String, toolCalls: Int)(using Frame): AIStats < Abort[AIGenException] =
         readEvents(output, lenient = true).map { events =>
             val resultUsage = events.foldLeft(Maybe.empty[Usage]) { (last, event) =>
                 if event.`type` == "result" then event.usage.orElse(last) else last
@@ -461,7 +476,7 @@ private[completion] object ClaudeCodeWire:
                                 case _ => (byId, anonymous)
                         }
                     (Chunk.from(byId.toMap.values) ++ anonymous).foldLeft(AIStats.empty)((acc, u) => acc.add(usageStats(u)))
-            base.copy(turns = 1)
+            base.copy(turns = math.max(toolCalls + 1, 1))
         }
     end turnUsage
 

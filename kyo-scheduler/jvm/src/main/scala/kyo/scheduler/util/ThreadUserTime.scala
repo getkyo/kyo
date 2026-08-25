@@ -51,9 +51,13 @@ private[scheduler] object ThreadUserTime {
 
     /** Probes the platform's cross-thread CPU time counter resolution. Returns the smallest interval in nanos where two consecutive
       * cross-thread samples reliably show advancing time. Used by BlockingMonitor as the minimum scan interval.
+      *
+      * The probe explores intervals well past the 2ms default so coarse counters are discovered rather than papered over: Windows'
+      * GetThreadTimes advances in ~15.6ms scheduler ticks, and treating it as a 2ms counter makes every running thread sample as flat.
       */
     def probeResolution(): Long = {
         val default = 2000000L
+        val ceiling = 40000000L
         mxBean match {
             case None => default
             case Some(bean) =>
@@ -64,15 +68,15 @@ private[scheduler] object ThreadUserTime {
                 spinner.start()
                 try {
                     if (!started.await(5, java.util.concurrent.TimeUnit.SECONDS)) return default
-                    probeLoop(bean, spinner.getId, 100000L, default)
+                    probeLoop(bean, spinner.getId, 100000L, ceiling, default)
                 } finally { stop.set(true); spinner.join(1000) }
         }
     }
 
-    @tailrec private def probeLoop(bean: com.sun.management.ThreadMXBean, tid: Long, intervalNs: Long, default: Long): Long =
-        if (intervalNs > default) default
+    @tailrec private def probeLoop(bean: com.sun.management.ThreadMXBean, tid: Long, intervalNs: Long, ceiling: Long, default: Long): Long =
+        if (intervalNs > ceiling) default
         else if (probeVerify(bean, tid, intervalNs, 5)) intervalNs
-        else probeLoop(bean, tid, intervalNs * 2, default)
+        else probeLoop(bean, tid, intervalNs * 2, ceiling, default)
 
     // Verify that the counter advances in N consecutive samples at the given interval
     @tailrec private def probeVerify(bean: com.sun.management.ThreadMXBean, tid: Long, intervalNs: Long, remaining: Int): Boolean =

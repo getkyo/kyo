@@ -34,7 +34,11 @@ abstract private[kyo] class ContainerBackend(val meter: Meter):
 
     def rename(id: Container.Id, newName: String)(using Frame): Unit < (Async & Abort[ContainerException])
 
-    def waitForExit(id: Container.Id)(using Frame): ExitCode < (Async & Abort[ContainerException])
+    /** Wait for the container to exit and return its exit code. `timeout` bounds how long the caller is prepared to wait; pass
+      * `Duration.Infinity` to wait indefinitely. Backend implementations use `timeout` for both the transport-level deadline and the
+      * outer supervision so callers do not have to layer their own `Async.timeout` on top.
+      */
+    def waitForExit(id: Container.Id, timeout: Duration)(using Frame): ExitCode < (Async & Abort[ContainerException])
 
     // --- Checkpoint/Restore ---
 
@@ -414,7 +418,7 @@ private[kyo] object ContainerBackend:
                         if paths.isEmpty then Absent
                         else
                             val head = paths.head
-                            Path(head).exists.map { exists =>
+                            Abort.recover[FileReadException](_ => false)(Path(head).exists).map { exists =>
                                 if exists then Present(head)
                                 else findExisting(paths.tail)
                             }

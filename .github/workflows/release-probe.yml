@@ -1,0 +1,49 @@
+name: release-probe
+# Builds every artifact the release workflow publishes, without credentials and without
+# uploading anything, so a change that would break publishing fails on its PR instead of after
+# it lands on main.
+#
+# publishLocal runs the same resolve, compile, ffiCompile, javadoc, and packaging that
+# publishSigned does, and differs only in signing and uploading. That means no secrets, so it
+# runs on pull requests from forks, and no snapshots are published as a side effect. The
+# existing `/release` comment trigger is the heavyweight alternative: it needs secrets and does
+# publish snapshots, so it is not usable as a routine per-PR check.
+#
+# JVM only. Both failures this exists to catch surfaced on the JVM leg: a plugin dependency that
+# could not be resolved (kyo-compat-plugin / update) and a missing native library for a C shim
+# (kyo-aeronJVM / ffiCompile, which the JVM leg compiles). ci.yml covers JS, Native, and Wasm.
+#
+# The provisioning is shared with release.yml through .github/actions/release-setup rather than
+# copied, so this probe cannot drift away from the environment it is vouching for.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# One probe per PR: a follow-up push supersedes the run it invalidated rather than queueing a
+# second full build behind it.
+concurrency:
+  group: release-probe-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    # release.yml already builds the release artifacts on an upstream main push, so there the probe
+    # only needs to run for pull requests. In a fork release.yml is guarded off, so the probe also
+    # runs on pushes to the fork's main to keep publishability checked. On an upstream main push the
+    # guard skips the job, so no runner is used and the run entry is inert.
+    if: github.event_name == 'pull_request' || github.repository != 'getkyo/kyo'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      JAVA_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
+      JVM_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: ./.github/actions/release-setup
+      - name: Build publishable artifacts (JVM)
+        run: sbt -Dplatform=JVM publishLocal

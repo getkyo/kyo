@@ -127,8 +127,7 @@ object Meter:
       *   A Meter effect that represents a mutex.
       */
     def useMutex[A, S](f: Meter => A < S)(using Frame): A < (Sync & S) =
-        initMutexUnscoped.map: meter =>
-            Sync.ensure(meter.close)(f(meter))
+        Sync.acquireReleaseWith(initMutexUnscoped)(_.close)(f)
 
     /** Use a **reentrant** Meter that acts as a mutex (binary semaphore). Meter is closed automatically after usage.
       *
@@ -136,8 +135,7 @@ object Meter:
       *   A Meter effect that represents a mutex.
       */
     def useMutex(reentrant: Boolean)[A, S](f: Meter => A < S)(using Frame): A < (Sync & S) =
-        initMutexUnscoped(reentrant).map: meter =>
-            Sync.ensure(meter.close)(f(meter))
+        Sync.acquireReleaseWith(initMutexUnscoped(reentrant))(_.close)(f)
 
     /** Creates a **reentrant** Meter that acts as a mutex (binary semaphore). Does not ensure meter is cleaned up.
       *
@@ -179,8 +177,7 @@ object Meter:
       *   A Meter effect that represents a semaphore.
       */
     def useSemaphore(concurrency: Int, reentrant: Boolean = true)[A, S](f: Meter => A < S)(using Frame): A < (Sync & S) =
-        initSemaphoreUnscoped(concurrency, reentrant).map: meter =>
-            Sync.ensure(meter.close)(f(meter))
+        Sync.acquireReleaseWith(initSemaphoreUnscoped(concurrency, reentrant))(_.close)(f)
 
     /** Creates a Meter that acts as a semaphore with the specified concurrency. Does not ensure meter is cleaned up.
       *
@@ -194,10 +191,10 @@ object Meter:
     def initSemaphoreUnscoped(concurrency: Int, reentrant: Boolean = true)(using Frame): Meter < Sync =
         Sync.Unsafe.defer {
             new Base(concurrency, reentrant):
-                def dispatch[A, S](v: => A < S) =
-                    // Release the permit right after the computation
-                    Sync.ensure(discard(release()))(v)
-                def onClose(): Unit = ()
+                // The permit is returned when the body ends; `settle` runs this from the one ensure
+                // installed before the take, so an interrupt in the step after the take still releases.
+                def settleAcquired(): Unit = discard(release())
+                def onClose(): Unit        = ()
         }
 
     /** Creates a Meter that acts as a rate limiter. Does not ensure meter is cleaned up.
@@ -228,8 +225,7 @@ object Meter:
     def useRateLimiter(rate: Int, period: Duration, reentrant: Boolean = true)[A, S](f: Meter => A < S)(using
         initFrame: Frame
     ): A < (Sync & S) =
-        initRateLimiterUnscoped(rate, period, reentrant).map: meter =>
-            Sync.ensure(meter.close)(f(meter))
+        Sync.acquireReleaseWith(initRateLimiterUnscoped(rate, period, reentrant))(_.close)(f)
 
     /** Creates a Meter that acts as a rate limiter. Does not ensure meter is cleaned up.
       *
@@ -249,9 +245,8 @@ object Meter:
                     // Schedule periodic task to replenish permits
                     Sync.Unsafe.evalOrThrow(Clock.repeatAtInterval(period, period)(replenish()))
 
-                def dispatch[A, S](v: => A < S) =
-                    // Don't release a permit since it's managed by the timer task
-                    v
+                // A consumed permit is not returned on completion; the timer task replenishes it.
+                def settleAcquired(): Unit = ()
 
                 @tailrec def replenish(i: Int = 0): Unit =
                     if i < rate && release() then
@@ -362,18 +357,63 @@ object Meter:
 
     private val acquiredMeters = Local.initNoninheritable(Set.empty[Meter])
 
+    /** Packed ledger for [[Base]], a single AtomicLong holding both halves of the state.
+      *
+      *   - bit 63: closed flag (a snapshot is closed iff it is negative)
+      *   - bits 62-32: free permits (31 bits, capped at the meter's `permits`)
+      *   - bits 31-0: registered waiters (32 bits)
+      *
+      * Free permits and waiters are separate fields, not the two signs of one counter, so a snapshot
+      * can hold a free permit AND a registered waiter at once. That is what lets a registration
+      * give-back touch only the waiter field (never a permit), and lets a released permit always land
+      * in the free field visible to the next claimant. Mirrors the `Gate` `State` convention.
+      */
+    private type State = State.Impl
+
+    private object State:
+
+        opaque type Impl = AtomicLong.Unsafe
+
+        opaque type Snapshot = Long
+
+        private inline def pack(free: Int, waiters: Int): Long =
+            (free.toLong << 32) | (waiters.toLong & 0xffffffffL)
+
+        def init(free: Int)(using AllowUnsafe): State =
+            AtomicLong.Unsafe.init(pack(free, 0))
+
+        extension (self: State)
+            def get()(using AllowUnsafe): Snapshot = AtomicLong.Unsafe.get(self)()
+            def cas(expected: Snapshot, update: Snapshot)(using AllowUnsafe): Boolean =
+                AtomicLong.Unsafe.compareAndSet(self)(expected, update)
+            def getAndClose()(using AllowUnsafe): Snapshot =
+                AtomicLong.Unsafe.getAndSet(self)(Long.MinValue)
+        end extension
+
+        extension (self: Snapshot)
+            inline def free: Int              = ((self & 0x7fffffff00000000L) >>> 32).toInt
+            inline def waiters: Int           = (self & 0xffffffffL).toInt
+            inline def isClosed: Boolean      = self < 0
+            inline def addPermit: Snapshot    = self + (1L << 32)
+            inline def takePermit: Snapshot   = self - (1L << 32)
+            inline def addWaiter: Snapshot    = self + 1L
+            inline def removeWaiter: Snapshot = self - 1L
+        end extension
+    end State
+
     sealed abstract private class Base(permits: Int, reentrant: Boolean)(using initFrame: Frame, allow: AllowUnsafe) extends Meter:
 
-        // MinValue => closed
-        // >= 0     => # of permits
-        // < 0      => # of waiters
-        val state   = AtomicInt.Unsafe.init(permits)
+        val state   = State.init(permits)
         val waiters = new MpmcUnboundedUnsafeQueue[Promise.Unsafe[Unit, Abort[Closed]]](8)
         val closed  = Promise.Unsafe.init[Nothing, Abort[Closed]]()
 
-        protected def dispatch[A, S](v: => A < S): A < (S & Sync)
+        // The two per-kind hooks: settleAcquired returns a claimed permit (semaphore) or does nothing
+        // (rate limiter, whose timer replenishes instead); onClose releases kind-specific resources.
+        protected def settleAcquired(): Unit
         protected def onClose(): Unit
 
+        // Reentrancy: if this fiber already holds this meter (tracked in the acquiredMeters fiber-local),
+        // a nested call reenters the body WITHOUT taking a second permit, so it cannot self-deadlock.
         private inline def withReentry[A, S](inline reenter: => A < S)(acquire: AllowUnsafe ?=> A < S): A < (Sync & S) =
             if reentrant then
                 Sync.withLocal(acquiredMeters) { meters =>
@@ -383,6 +423,8 @@ object Meter:
             else
                 acquire
 
+        // Marks this meter as held in the fiber-local set for the duration of the body, so a nested
+        // acquire (via withReentry) sees it and reenters instead of taking another permit.
         private inline def withAcquiredMeter[A, S](inline v: => A < S) =
             if reentrant then
                 acquiredMeters.update(_ + this)(v)
@@ -391,114 +433,186 @@ object Meter:
 
         final def run[A, S](v: => A < S)(using Frame) =
             withReentry(v) {
-                @tailrec def loop(): A < (S & Async & Abort[Closed]) =
-                    val st = state.get()
-                    if st == Int.MinValue then
-                        // Meter is closed
-                        closed.safe.get
-                    else if state.compareAndSet(st, st - 1) then
-                        if st > 0 then
-                            // Permit available, dispatch immediately
-                            dispatch(withAcquiredMeter(v))
+                // Permits are claimed from `free` by CAS; a completed promise means only "re-check the
+                // ledger", never "here is a permit", so a woken waiter re-competes as a fresh caller (one
+                // park shape). `waiterPromise`/`registered`/`taken` are this run's private, single-fiber
+                // state, so plain vars are safe: they record what this acquisition owes the ledger, and
+                // `settle` (installed before any take) reconciles them on every exit, so an interrupt at
+                // any suspension still settles correctly.
+                var waiterPromise: Maybe[Promise.Unsafe[Unit, Abort[Closed]]] = Maybe.Absent
+                var registered                                                = false
+                var taken                                                     = false
+                Sync.ensure(settle(waiterPromise, registered, taken)) {
+                    def loop(): A < (S & Async & Abort[Closed]) =
+                        val s = state.get()
+                        if s.isClosed then
+                            closed.safe.get
+                        else if s.free > 0 then
+                            // Fast path: claim a free permit. `taken` is set in the same step as the take
+                            // CAS, so the pre-installed `settle` owns the release from here on.
+                            if state.cas(s, s.takePermit) then
+                                taken = true
+                                withAcquiredMeter(v)
+                            else loop()
                         else
-                            // No permit available, add to waiters queue
+                            // No free permit: register as a waiter and park.
                             val p = Promise.Unsafe.init[Unit, Abort[Closed]]()
+                            waiterPromise = Maybe.Present(p)
+                            // Queue-before-register: a releaser that witnesses `waiters > 0` finds the
+                            // entry. The register CAS is on the whole word, so it re-validates `free == 0`
+                            // in the same step; if a permit appeared, the CAS fails and the loop claims it.
                             discard(waiters.offer(p))
-                            dispatch(p.safe.use(_ => withAcquiredMeter(v)))
-                    else
-                        // CAS failed, retry
-                        loop()
-                    end if
-                end loop
-                loop()
+                            if state.cas(s, s.addWaiter) then
+                                registered = true
+                                p.safe.use { _ =>
+                                    // Woken. The `use` above is the park; the re-entry IS the re-check.
+                                    // Give the registration back and re-enter as a fresh caller: a release
+                                    // never consumes registrations, so a permit freed in the eject window
+                                    // stays visible in `free` for the re-entry to claim.
+                                    registered = false
+                                    giveBack()
+                                    loop()
+                                }
+                            else
+                                retire(p)
+                                loop()
+                            end if
+                        end if
+                    end loop
+                    loop()
+                }
             }
         end run
 
         final def tryRun[A, S](v: => A < S)(using Frame): Maybe[A] < (S & Async & Abort[Closed]) =
             withReentry(v.map(Maybe(_))) {
-                @tailrec def loop(): Maybe[A] < (S & Async & Abort[Closed]) =
-                    val st = state.get()
-                    if st == Int.MinValue then
-                        // Meter is closed
-                        closed.safe.get
-                    else if st <= 0 then
-                        // No permit available, return empty
-                        Maybe.empty
-                    else if state.compareAndSet(st, st - 1) then
-                        // Permit available, dispatch
-                        dispatch(withAcquiredMeter(v.map(Maybe(_))))
-                    else
-                        // CAS failed, retry
-                        loop()
-                    end if
-                end loop
-                loop()
+                var taken = false
+                // The teardown is installed before the take CAS, so a claimed permit is owned even if an
+                // interrupt lands in the step after the CAS. No wait path here (Absent promise, never
+                // registered), so `settle` only ever runs its taken branch.
+                Sync.ensure(settle(Maybe.Absent, false, taken)) {
+                    @tailrec def loop(): Maybe[A] < (S & Async & Abort[Closed]) =
+                        val s = state.get()
+                        if s.isClosed then
+                            // Meter is closed
+                            closed.safe.get
+                        else if s.free <= 0 then
+                            // No permit available, return empty
+                            Maybe.empty
+                        else if state.cas(s, s.takePermit) then
+                            // Permit available, claim it; `settle` returns it after the body.
+                            taken = true
+                            withAcquiredMeter(v.map(Maybe(_)))
+                        else
+                            // CAS failed, retry
+                            loop()
+                        end if
+                    end loop
+                    loop()
+                }
             }
         end tryRun
 
         final def availablePermits(using Frame) =
             Sync.Unsafe.defer {
-                state.get() match
-                    case Int.MinValue => closed.safe.get
-                    case st           => Math.max(0, st)
+                val s = state.get()
+                if s.isClosed then closed.safe.get else s.free
             }
 
         final def pendingWaiters(using Frame) =
             Sync.Unsafe.defer {
-                state.get() match
-                    case Int.MinValue => closed.safe.get
-                    case st           => Math.min(0, st).abs
+                val s = state.get()
+                if s.isClosed then closed.safe.get else s.waiters
             }
 
         final def close(using frame: Frame): Boolean < Sync =
             Sync.Unsafe.defer {
-                val st = state.getAndSet(Int.MinValue)
-                val ok = st != Int.MinValue // The meter wasn't already closed
+                val s  = state.getAndClose()
+                val ok = !s.isClosed // The meter wasn't already closed
                 if ok then
                     val fail = Result.fail(Closed("Meter", initFrame))
                     // Complete the closed promise to fail new operations
                     closed.completeDiscard(fail)
-                    // Drain the pending waiters
-                    @tailrec def drain(st: Int): Unit =
-                        if st < 0 then
-                            // Use pollWaiter to ensure all pending waiters
-                            // as indicated by the state are drained
-                            pollWaiter().completeDiscard(fail)
-                            drain(st + 1)
-                    drain(st)
+                    // Drain the whole queue, not a count taken from `state`: retired promises left by
+                    // abandoned reservations make the queue longer than `state`, so a counted drain
+                    // stops early and strands live waiters. Queue-before-reserve makes emptying it
+                    // sufficient, since every waiter reserved before the getAndSet above is here.
+                    @tailrec def drain(): Unit =
+                        waiters.poll() match
+                            case Maybe.Present(waiter) =>
+                                waiter.completeDiscard(fail)
+                                drain()
+                            case Maybe.Absent => ()
+                    drain()
                     onClose()
                 end if
                 ok
             }
         end close
 
-        final def closed(using Frame) = Sync.defer(state.get() == Int.MinValue)
+        final def closed(using Frame) = Sync.defer(state.get().isClosed)
 
+        /** Releases a permit into the free pool, then nudges one waiter to re-check.
+          *
+          * The permit lands in `free` unconditionally; the wake is best-effort. If every queued entry is
+          * dead, nobody is woken but the permit stays visible in `free`, so any claimant (a fresh arrival,
+          * a woken waiter, a re-parking waiter) takes it by CAS. Capped at `permits`.
+          */
         @tailrec final protected def release(): Boolean =
-            val st = state.get()
-            if st >= permits || st == Int.MinValue then
+            val s = state.get()
+            if s.isClosed || s.free >= permits then
                 // No more permits to release or meter is closed
                 false
-            else if !state.compareAndSet(st, st + 1) then
+            else if !state.cas(s, s.addPermit) then
                 // CAS failed, retry
                 release()
-            else if st < 0 && !pollWaiter().completeUnit() then
-                // Waiter is already complete due to interruption, retry
-                release()
             else
+                if s.waiters > 0 then wake()
                 // Permit released
                 true
             end if
         end release
 
-        @tailrec final private def pollWaiter(): Promise.Unsafe[Unit, Abort[Closed]] =
+        /** Wakes the first still-pending waiter so it re-checks the ledger. A completed promise means
+          * "re-check", never "here is a permit"; already-completed entries are skipped, an empty queue is
+          * benign (the permit is already visible in `free`).
+          */
+        @tailrec final private def wake(): Unit =
             waiters.poll() match
-                case Maybe.Present(waiter) => waiter
-                case _                     =>
-                    // If no waiter is found, retry the poll operation
-                    // This handles the race condition between state change and waiter queuing
-                    pollWaiter()
-        end pollWaiter
+                case Maybe.Present(waiter) => if !waiter.completeUnit() then wake()
+                case Maybe.Absent          => ()
+        end wake
+
+        /** Retires a promise its owner is abandoning. If it had already been woken (completed with
+          * success) but that wake was not converted into a claim, re-issue the wake to the next pending
+          * waiter so a nudge is never lost. A spurious re-wake is absorbed by the claim CAS.
+          */
+        final protected def retire(p: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe): Unit =
+            if !p.complete(Result.fail(Closed("Meter", initFrame))) && p.poll().exists(_.isSuccess) then
+                wake()
+
+        /** Gives back a registration that never became an acquisition. Touches ONLY the waiter field, so
+          * it can never consume a permit; that field-locality is what deletes the lost-wakeup class.
+          */
+        @tailrec final protected def giveBack(): Unit =
+            val s = state.get()
+            if !s.isClosed && !state.cas(s, s.removeWaiter) then giveBack()
+
+        /** Settles an attempt once it ends, however it ends. A claim (`taken`) hands the permit's
+          * lifecycle to [[settleAcquired]] (release for a semaphore, nothing for a rate limiter); the
+          * promise, present only when the claim came off the wait path, is retired without re-issuing a
+          * wake (it was consumed by the claim). A non-claiming exit retires the current promise (re-issuing
+          * a consumed-but-unused wake) and gives back a still-held registration.
+          */
+        private def settle(waiterPromise: Maybe[Promise.Unsafe[Unit, Abort[Closed]]], registered: Boolean, taken: Boolean)(using
+            AllowUnsafe
+        ): Unit =
+            if taken then
+                waiterPromise.foreach(p => discard(p.complete(Result.fail(Closed("Meter", initFrame)))))
+                settleAcquired()
+            else
+                waiterPromise.foreach(retire)
+                if registered then giveBack()
     end Base
 
 end Meter

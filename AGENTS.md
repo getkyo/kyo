@@ -97,6 +97,7 @@ For any bug, regression, or "this shouldn't happen" report, write a failing test
 - **Assert on concrete values, not just types or non-emptiness.** `assert(result == List(1, 2, 3))`, not `assert(result.nonEmpty)` or `assert(result.isInstanceOf[List[_]])`.
 - **Test behavior, not implementation.** Verify what the code does from the caller's perspective, not how it does it internally.
 - **Cover edge cases.** Empty inputs, error paths, boundary conditions, concurrent scenarios, not just the happy path.
+- **Never depend on the real clock.** No assertion on measured wall-clock elapsed, no `Thread.sleep`-then-assert, no real-time delay or timeout as the pass condition. Use `Clock.withTimeControl` for virtual time (sleeps under it are fine) and barriers (`Latch`/`Channel`/`Fiber.get`) to coordinate. Any unavoidable real-clock use is a deviation: validate and report it. Full guide: [CONTRIBUTING.md](CONTRIBUTING.md#deterministic-tests).
 
 ### Write Clean, Simple, and Safe Code
 
@@ -122,6 +123,20 @@ sbt 'kyo-coreJVM/test'
 sbt 'kyo-coreJVM/testOnly kyo.ChannelTest'
 ```
 
+### Containerized and CI-faithful runs: scripts/build.sh
+
+`scripts/build.sh` wraps the same runner CI uses (`ci-test.sh`), so a local run and a CI run execute identical runner code:
+
+```sh
+scripts/build.sh --env direct sbt 'kyo-netJVM/test'    # host sbt, one raw sbt command
+scripts/build.sh --env podman test JVM                 # Linux container over a snapshot of the tree
+scripts/build.sh --env podman-ci --arch arm sbt 'kyo-netJVM/testOnly kyo.net.internal.NioIoDriverTest'
+```
+
+- `--env direct` runs host sbt. `--env podman` runs a Linux container over a clean git-archived snapshot of the working tree (uncommitted changes to tracked files are applied via patch, so a new file must be at least `git add`ed to reach the container; the container never touches the tree). `--env podman-ci` adds the CI resource caps (4 vCPU, 16 GB), `CI=true`, `SBT_TASK_LIMIT=1`, and the CI driver heap, reproducing a CI run.
+- `--arch native|x86|arm` picks the container architecture for the podman envs (`x86` = linux/amd64, `arm` = linux/arm64, qemu-emulated when it differs from the host). This is the way to reproduce an arch-specific CI failure, e.g. a linux-arm64 test failure, from a mac.
+- Actions: `test`, `testDiff`, `compile`, `link` plus one or more platforms (`JVM JS Native Wasm all`), or `sbt <raw command>` to run one arbitrary sbt command in the selected env.
+
 ## Project Structure
 
 Layered stack, each module depends only on the modules above it:
@@ -129,8 +144,8 @@ Layered stack, each module depends only on the modules above it:
 | Layer | Modules | Purpose |
 |-------|---------|---------|
 | Foundation | `kyo-data`, `kyo-kernel` | Data types, effect system kernel |
-| Effects | `kyo-prelude`, `kyo-core`, `kyo-combinators` | Effect definitions and combinators |
-| Integrations | `kyo-caliban`, `kyo-cats`, `kyo-zio`, ... | Library integrations |
+| Effects | `kyo-prelude`, `kyo-core`, `kyo-system`, `kyo-combinators` | Effect definitions, the file system/OS process/environment module, and combinators |
+| Integrations | `kyo-caliban`, `kyo-zio`, ... | Library integrations |
 | Applications | `kyo-http`, `kyo-stm`, `kyo-actor`, ... | Higher-level modules |
 
 Source layout within each module:
@@ -173,7 +188,7 @@ To create or rewrite a module's README, invoke the `/readme <module-path>` skill
 
 ## Common Gotchas
 
-1. **`kyo.System` shadows `java.lang.System`**: use fully qualified `java.lang.System` when needed
+1. **`kyo.System` shadows `java.lang.System`**, and **`kyo.SecureRandom` shadows `java.security.SecureRandom`**: use the fully qualified JDK name when both are in scope
 2. **Effect handlers are not inline**: `Abort.run`, `Var.run` are regular methods; only suspend/create methods are inline
 3. **`Frame` required on every effectful method**, but not on pure data accessors like `capacity` or `size`
 4. **Overloads delegate to canonical**: never duplicate logic across method variants

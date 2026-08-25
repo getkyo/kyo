@@ -1126,8 +1126,8 @@ class BrowserMutationTest extends BrowserTest:
             ).andThen {
                 Scope.run {
                     for
-                        tmp1 <- Path.tempScoped("kyo-setFiles-a-", ".txt")
-                        tmp2 <- Path.tempScoped("kyo-setFiles-b-", ".txt")
+                        tmp1 <- Path.temp("kyo-setFiles-a-", ".txt")
+                        tmp2 <- Path.temp("kyo-setFiles-b-", ".txt")
                         _    <- tmp1.write("alpha")
                         _    <- tmp2.write("beta")
                         paths = Chunk(tmp1, tmp2)
@@ -1185,8 +1185,8 @@ class BrowserMutationTest extends BrowserTest:
             ).andThen {
                 Scope.run {
                     for
-                        tmp1 <- Path.tempScoped("kyo-setFiles-seq-a-", ".txt")
-                        tmp2 <- Path.tempScoped("kyo-setFiles-seq-b-", ".txt")
+                        tmp1 <- Path.temp("kyo-setFiles-seq-a-", ".txt")
+                        tmp2 <- Path.temp("kyo-setFiles-seq-b-", ".txt")
                         _    <- tmp1.write("alpha")
                         _    <- tmp2.write("beta")
                         // Use an explicit List[Path] to exercise the widened Seq parameter type.
@@ -1331,9 +1331,8 @@ class BrowserMutationTest extends BrowserTest:
             ) {
                 for
                     _ <- Browser.fill(Browser.Selector.id("q"), "hello")
-                    // Wait for the 50ms re-render to complete (and a margin) so the destruction is observable.
-                    _ <- Async.sleep(150.millis)
-                    // Deterministic guard: the inline script sets window.__replaced_input_ready after replacement.focus().
+                    // Deterministic guard: the inline script sets window.__replaced_input_ready after the 50ms re-render
+                    // calls replacement.focus(); waiting on it is the real barrier, so no settle sleep is needed.
                     _ <- Browser.waitFor("window.__replaced_input_ready === true")
                     // Original #q no longer exists, but the new input is focused. The no-selector press dispatches there.
                     _         <- Browser.press(Browser.Key.Enter)

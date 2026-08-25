@@ -5,7 +5,6 @@ import java.util.ArrayList
 import java.util.concurrent.AbstractExecutorService
 import java.util.concurrent.Callable
 import java.util.concurrent.Executor
-import java.util.concurrent.Executors
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ThreadPoolExecutor
@@ -21,8 +20,10 @@ import kyo.scheduler.top.Status
 import kyo.scheduler.util.LoomSupport
 import kyo.scheduler.util.Sleep
 import kyo.scheduler.util.Threads
+import kyo.scheduler.util.WorkerExecutors
 import kyo.scheduler.util.XSRandom
 import scala.annotation.nowarn
+import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext
 import scala.util.control.NonFatal
 
@@ -412,6 +413,7 @@ final class Scheduler(
         blockingMonitor.stop()
         admissionRegulator.stop()
         concurrencyRegulator.stop()
+        clock.stop()
         top.close()
     }
 
@@ -423,8 +425,26 @@ final class Scheduler(
       *   - Maintains count between minWorkers and maxWorkers
       */
     private def updateWorkers(delta: Int) = {
-        currentWorkers = Math.max(minWorkers, Math.min(maxWorkers, currentWorkers + delta))
+        // Blocked-carrier floor: never let the worker count sit below the number of blocked carriers plus minWorkers, so
+        // blocked carriers (parked I/O drivers, blocking fibers) cannot starve runnable work even when the concurrency
+        // regulator, reading host jitter, would otherwise fail to grow or shrink the pool below the blocked count. When
+        // nothing is blocked the floor is minWorkers (the unchanged idle sizing).
+        val floor = Math.min(maxWorkers, blockedWorkerCount() + minWorkers)
+        currentWorkers = Math.max(floor, Math.min(maxWorkers, currentWorkers + delta))
         ensureWorkers()
+    }
+
+    /** Counts the active workers currently flagged blocked (parked in a syscall or on a lock), as maintained by the
+      * BlockingMonitor. Read by updateWorkers to floor the worker count at blocked + minWorkers.
+      */
+    private def blockedWorkerCount(): Int = {
+        @tailrec def loop(i: Int, acc: Int): Int =
+            if (i >= currentWorkers) acc
+            else {
+                val w = workers(i)
+                loop(i + 1, if ((w ne null) && w.blocked) acc + 1 else acc)
+            }
+        loop(0, 0)
     }
 
     /** Ensures required number of workers are allocated and initialized.
@@ -547,9 +567,14 @@ final class Scheduler(
 
 object Scheduler {
 
-    private lazy val defaultWorkerExecutor = Executors.newCachedThreadPool(Threads("kyo-scheduler-worker", new Worker.WorkerThread(_)))
-    private lazy val defaultClockExecutor  = Executors.newSingleThreadExecutor(Threads("kyo-scheduler-clock"))
-    private lazy val defaultTimerExecutor  = Executors.newScheduledThreadPool(4, Threads("kyo-scheduler-timer"))
+    private lazy val defaultWorkerExecutor =
+        WorkerExecutors.worker(
+            Threads("kyo-scheduler-worker", new Worker.WorkerThread(_)),
+            Config.default.coreWorkers,
+            Config.default.maxWorkers
+        )
+    private lazy val defaultClockExecutor = WorkerExecutors.clock(Threads("kyo-scheduler-clock"))
+    private lazy val defaultTimerExecutor = WorkerExecutors.timer(4, Threads("kyo-scheduler-timer"))
 
     val get = new Scheduler()
 

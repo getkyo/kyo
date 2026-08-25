@@ -13,14 +13,14 @@ final class BorrowedStringBindingsImpl extends BorrowedStringBindings:
     import BorrowedStringBindingsImpl.*
 
     def getenvLike(name: String)(using kyo.AllowUnsafe): Ffi.Borrowed[String] =
-        val __kyoScratch$ = Scratch.currentFor("kyo.example.BorrowedStringBindings", Scratch.configuredSize)
-        val __kyoMark$ = __kyoScratch$.mark()
+        val __kyoScratch = Scratch.currentFor("kyo.example.BorrowedStringBindings", Scratch.configuredSize)
+        val __kyoMark = __kyoScratch.mark()
         try
-            val nameSeg = __kyoScratch$.allocUtf8(name, "kyo.example.BorrowedStringBindings", "getenvLike")
-            val errnoSeg = __kyoScratch$.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), "kyo.example.BorrowedStringBindings", "getenvLike")
+            val nameSeg = __kyoScratch.allocUtf8(name, "kyo.example.BorrowedStringBindings", "getenvLike")
+            val errnoSeg = __kyoScratch.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), "kyo.example.BorrowedStringBindings", "getenvLike")
             val retVal: MemorySegment = getenvLikeMH.invokeExact(errnoSeg, nameSeg)
             Ffi.Borrowed.wrap(if retVal.address() == 0L then null else Scratch.readCStringBounded(retVal.reinterpret(4096L), 0L, 4096L, "kyo.example.BorrowedStringBindings", "getenvLike", "<return>"))
-        finally __kyoScratch$.reset(__kyoMark$)
+        finally __kyoScratch.reset(__kyoMark)
 end BorrowedStringBindingsImpl
 
 object BorrowedStringBindingsImpl:

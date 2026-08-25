@@ -1,8 +1,8 @@
-// Scripted test — all 5 backends, all 3 platforms.
+// Scripted test — all 4 backends, all 3 platforms.
 //
 // Per-backend supportedPlatforms intersection means:
-//   Kyo / Zio / Ce  : JVM + JS + Native
-//   Future / Ox     : JVM              (JS + Native skipped)
+//   Kyo / Zio    : JVM + JS + Native
+//   Future / Ox  : JVM              (JS + Native skipped)
 
 ThisBuild / scalaVersion     := "3.3.4"
 ThisBuild / compatKyoVersion := "STUB-FOR-SCRIPTED-TEST"
@@ -12,7 +12,7 @@ lazy val myLib = (projectMatrix in file("my-lib"))
         organization := "com.example",
         version      := "0.1.0-TEST"
     )
-    .compatLibrary(KyoLib, ZioLib, CeLib, OxLib)(
+    .compatLibrary(KyoLib, ZioLib, OxLib)(
         VirtualAxis.jvm, VirtualAxis.js, VirtualAxis.native
     )(Seq("3.3.4"))
 
@@ -32,7 +32,6 @@ checkProjects := {
         "myLibFuture",
         "myLibKyo",    "myLibKyoJS",    "myLibKyoNative",
         "myLibZio",    "myLibZioJS",    "myLibZioNative",
-        "myLibCe",     "myLibCeJS",     "myLibCeNative",
         "myLibOx"
     )
     val actual  = ext.structure.allProjectRefs.map(_.project).toSet
@@ -68,9 +67,9 @@ checkDepsPerPlatform := {
     val cases = Seq(
         Case(myLib.future.jvm,    "kyo-compat-future", "jvm"),
         Case(myLib.kyo.js,        "kyo-compat-kyo",    "sjs1"),
+        Case(myLib.kyo.native,    "kyo-compat-kyo",    "native"),
+        Case(myLib.zio.js,        "kyo-compat-zio",    "sjs1"),
         Case(myLib.zio.native,    "kyo-compat-zio",    "native"),
-        Case(myLib.ce.js,         "kyo-compat-ce",     "sjs1"),
-        Case(myLib.ce.native,     "kyo-compat-ce",     "native"),
         Case(myLib.ox.jvm,        "kyo-compat-ox",     "jvm")
     )
 
@@ -124,7 +123,6 @@ checkSharedSourcesAcrossPlatforms := {
         myLib.future.jvm,
         myLib.kyo.jvm,    myLib.kyo.js,    myLib.kyo.native,
         myLib.zio.jvm,    myLib.zio.js,    myLib.zio.native,
-        myLib.ce.jvm,     myLib.ce.js,     myLib.ce.native,
         myLib.ox.jvm
     )
 

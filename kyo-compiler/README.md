@@ -54,7 +54,7 @@ You do not run a compiler; you open a pool and ask it for a handle. The pool is 
 
 ### Opening the pool
 
-`Compiler.Pool.init` returns a `Pool < (Sync & Scope)`: the pool is acquired when the effect runs and released when the enclosing `Scope` closes. Inside the pool, `pool.compiler(config)` hands back the per-config handle.
+`Compiler.Pool.init` returns a `Pool < (Async & Scope)`: the pool is acquired when the effect runs and released when the enclosing `Scope` closes. It is `Async` rather than `Sync` because opening a pool starts the shared Aeron media driver, whose handshake suspends the calling fiber instead of blocking its carrier. Inside the pool, `pool.compiler(config)` hands back the per-config handle.
 
 ```scala
 val opened: Compiler < Async =
@@ -234,17 +234,15 @@ assert(span.start == 7 && span.end == 9)
 
 ### AsMessage: the wire codec
 
-`Compiler.AsMessage[A]` is a type alias for upickle's `ReadWriter[A]`, and every result type derives it. That single derive is what lets a result round-trip to a forked worker, ride a `Topic`, or serialize onto an LSP connection.
+`Compiler.AsMessage[A]` is a type alias for kyo-schema's `Schema[A]`, and every result type derives it. That single derive is what lets a result round-trip to a forked worker, ride a `Topic`, or serialize onto an LSP connection.
 
 ```scala
-import upickle.default.*
-
 val diag = Compiler.Diagnostic(
     span = Compiler.Span(7, 9),
     severity = Compiler.Severity.Warning,
     message = "unused value xs"
 )
-val decoded = readBinary[Compiler.Diagnostic](writeBinary(diag))
+val decoded = MsgPack.decode[Compiler.Diagnostic](MsgPack.encode(diag)).getOrThrow
 assert(decoded == diag)
 assert(diag.code == Absent)
 ```

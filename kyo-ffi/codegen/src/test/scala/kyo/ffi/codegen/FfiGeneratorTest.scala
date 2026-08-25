@@ -821,7 +821,7 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
                 js.files.find(_.getFileName.toString == "ByValueBindingsImpl.scala").getOrElse(fail("JS impl not generated"))
             )
             assert(jsSrc.contains("""KoffiFacade.outStruct("ByValuePoint")"""))
-            assert(jsSrc.contains("facade.byValuePoint(__kyoStructOut$.buf, seed)"))
+            assert(jsSrc.contains("facade.byValuePoint(__kyoStructOut.buf, seed)"))
             assert(jsSrc.contains("""Seq[js.Any]("ByValuePoint*".asInstanceOf[js.Any], "int".asInstanceOf[js.Any])"""))
         }
     }

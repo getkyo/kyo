@@ -4,6 +4,7 @@ import kyo.Codec.Reader
 import kyo.Codec.Writer
 import kyo.internal.StructureValueReader
 import kyo.internal.StructureValueWriter
+import scala.annotation.implicitNotFound
 import scala.annotation.nowarn
 import scala.annotation.publicInBinary
 import scala.annotation.tailrec
@@ -1587,6 +1588,24 @@ object Schema:
         def objectEnd(): Unit =
             delegate.objectEnd()
 
+        override def variantStart(name: String, variantName: String, variantNameBytes: Array[Byte], variantFieldId: Int): Unit =
+            beforeValue()
+            delegate.variantStart(name, variantName, variantNameBytes, variantFieldId)
+        end variantStart
+
+        override def variantEnd(): Unit =
+            delegate.variantEnd()
+
+        override def mapEntriesStart(size: Int): Unit =
+            beforeValue()
+            delegate.mapEntriesStart(size)
+        end mapEntriesStart
+
+        override def mapEntryStart(): Unit = delegate.mapEntryStart()
+        override def mapEntryValue(): Unit = delegate.mapEntryValue()
+        override def mapEntryEnd(): Unit   = delegate.mapEntryEnd()
+        override def mapEntriesEnd(): Unit = delegate.mapEntriesEnd()
+
         def arrayStart(size: Int): Unit =
             beforeValue()
             delegate.arrayStart(size)
@@ -1975,7 +1994,137 @@ object Schema:
       */
     inline given derived[A]: Schema[A] = ${ internal.SchemaDerivedMacro.derivedImpl[A] }
 
+    /** Derives a Schema[A] that decodes through a validating smart constructor.
+      *
+      * The encode side is the one [[derived]] emits: the wire shape is A's case fields, so a type derived this way is byte-identical on the
+      * wire to the same fields on a plain case class. The decode side reads those fields and then hands them to `construct` instead of
+      * calling A's primary constructor, so the type's invariant is enforced on the way in. A rejected value surfaces as a
+      * `ConstructorRejectedException`, a `DecodeException` like any other malformed input, never as a bypassed check or a raw throw.
+      *
+      * This is the entry point for the `sealed abstract case class` idiom, where `abstract` deliberately suppresses `apply` and `copy` so the
+      * companion's constructor is the only route to a value and [[derived]] has no constructor to call:
+      *
+      * {{{
+      * sealed abstract case class Port private (value: Int)
+      * object Port:
+      *     def make(value: Int): Result[String, Port] =
+      *         if value > 0 && value < 65536 then Result.succeed(new Port(value) {})
+      *         else Result.fail("port out of range")
+      *
+      *     given Schema[Port] = Schema.derivedVia(make)
+      * }}}
+      *
+      * It applies just as well to a type with a perfectly usable public constructor that should not be used for decoding: a refined type, a
+      * newtype with an invariant, a domain primitive that rejects bad input.
+      *
+      * `construct`'s arguments must match the case fields one for one in declaration order; a mismatch in arity or type is a compile error
+      * naming the offending field. Its outcome may be A itself or any shape [[Constructed]] recognizes: `Result`, `Maybe`, `Option`,
+      * `Either`, or `Try`.
+      *
+      * @param construct
+      *   the smart constructor, taking the case fields in declaration order
+      */
+    inline def derivedVia[B1, R, A](construct: B1 => R)(using c: Constructed[R, A]): Schema[A] =
+        ${ internal.SchemaDerivedMacro.derivedViaImpl[A, R]('construct, 'c) }
+
+    /** Two-field overload of [[derivedVia]]. */
+    inline def derivedVia[B1, B2, R, A](construct: (B1, B2) => R)(using c: Constructed[R, A]): Schema[A] =
+        ${ internal.SchemaDerivedMacro.derivedViaImpl[A, R]('construct, 'c) }
+
+    /** Three-field overload of [[derivedVia]]. */
+    inline def derivedVia[B1, B2, B3, R, A](construct: (B1, B2, B3) => R)(using c: Constructed[R, A]): Schema[A] =
+        ${ internal.SchemaDerivedMacro.derivedViaImpl[A, R]('construct, 'c) }
+
+    /** Four-field overload of [[derivedVia]]. */
+    inline def derivedVia[B1, B2, B3, B4, R, A](construct: (B1, B2, B3, B4) => R)(using c: Constructed[R, A]): Schema[A] =
+        ${ internal.SchemaDerivedMacro.derivedViaImpl[A, R]('construct, 'c) }
+
+    /** Five-field overload of [[derivedVia]]. */
+    inline def derivedVia[B1, B2, B3, B4, B5, R, A](construct: (B1, B2, B3, B4, B5) => R)(using c: Constructed[R, A]): Schema[A] =
+        ${ internal.SchemaDerivedMacro.derivedViaImpl[A, R]('construct, 'c) }
+
+    /** Six-field overload of [[derivedVia]]. */
+    inline def derivedVia[B1, B2, B3, B4, B5, B6, R, A](construct: (B1, B2, B3, B4, B5, B6) => R)(using
+        c: Constructed[R, A]
+    ): Schema[A] =
+        ${ internal.SchemaDerivedMacro.derivedViaImpl[A, R]('construct, 'c) }
+
+    /** Seven-field overload of [[derivedVia]]. */
+    inline def derivedVia[B1, B2, B3, B4, B5, B6, B7, R, A](construct: (B1, B2, B3, B4, B5, B6, B7) => R)(using
+        c: Constructed[R, A]
+    ): Schema[A] =
+        ${ internal.SchemaDerivedMacro.derivedViaImpl[A, R]('construct, 'c) }
+
+    /** Eight-field overload of [[derivedVia]]. */
+    inline def derivedVia[B1, B2, B3, B4, B5, B6, B7, B8, R, A](construct: (B1, B2, B3, B4, B5, B6, B7, B8) => R)(using
+        c: Constructed[R, A]
+    ): Schema[A] =
+        ${ internal.SchemaDerivedMacro.derivedViaImpl[A, R]('construct, 'c) }
+
     // --- Public nested types ---
+
+    /** Reads the constructed value out of whatever shape a smart constructor reports its outcome in.
+      *
+      * [[derivedVia]] summons one of these for the constructor's return type so a rejection folds into a decode failure. Instances exist for
+      * a total constructor (`R = A`, nothing to unwrap) and for `Result`, `Maybe`, `Option`, `Either`, and `Try`. A constructor reporting its
+      * outcome some other way is supported by giving that type its own instance:
+      *
+      * {{{
+      * given Schema.Constructed[Validated[String, Port], Port] with
+      *     def asResult(outcome: Validated[String, Port]): Result[Any, Port] = outcome.fold(Result.fail, Result.succeed)
+      * }}}
+      *
+      * @tparam R
+      *   the constructor's return type
+      * @tparam A
+      *   the constructed type
+      */
+    @implicitNotFound(
+        "Schema.derivedVia cannot read a constructed ${A} out of '${R}'. Supported outcomes are ${A} itself, " +
+            "Result[E, ${A}], Maybe[${A}], Option[${A}], Either[E, ${A}], and Try[${A}]. " +
+            "For any other shape, provide a given Schema.Constructed[${R}, ${A}]."
+    )
+    abstract class Constructed[R, A]:
+        /** Reports the constructor's outcome as a Result: a success carries the value, a failure carries whatever the constructor rejected
+          * it with.
+          */
+        def asResult(outcome: R): Result[Any, A]
+    end Constructed
+
+    /** Lower-priority half of [[Constructed]]'s instances.
+      *
+      * `total` matches any R at all, including the wrapped shapes, so it sits below them. Without the split, a constructor returning
+      * `Result[String, Port]` would match both `total` (constructing a `Result`) and `fromResult` (constructing a `Port`), and the search
+      * would be ambiguous wherever A is not already pinned by an expected type.
+      */
+    sealed trait ConstructedFallback:
+        /** A total constructor reports the value itself, with nothing to unwrap and no way to reject. */
+        given total[A]: Constructed[A, A] with
+            def asResult(outcome: A): Result[Any, A] = Result.succeed(outcome)
+    end ConstructedFallback
+
+    object Constructed extends ConstructedFallback:
+
+        given fromResult[E, A]: Constructed[Result[E, A], A] with
+            def asResult(outcome: Result[E, A]): Result[Any, A] = outcome
+
+        // Absence carries no error value, so these two supply the description the message reports;
+        // the other shapes already carry one and convert through Result's own constructors.
+        given fromMaybe[A]: Constructed[Maybe[A], A] with
+            def asResult(outcome: Maybe[A]): Result[Any, A] =
+                outcome.toResult(Result.fail("the constructor returned Absent"))
+
+        given fromOption[A]: Constructed[Option[A], A] with
+            def asResult(outcome: Option[A]): Result[Any, A] =
+                Maybe.fromOption(outcome).toResult(Result.fail("the constructor returned None"))
+
+        given fromEither[E, A]: Constructed[Either[E, A], A] with
+            def asResult(outcome: Either[E, A]): Result[Any, A] = Result.fromEither(outcome)
+
+        given fromTry[A]: Constructed[scala.util.Try[A], A] with
+            def asResult(outcome: scala.util.Try[A]): Result[Any, A] = Result.fromTry(outcome)
+
+    end Constructed
 
     /** Typed constraint for a field in a Schema.
       *
@@ -2534,11 +2683,25 @@ object Schema:
         )
 
     /** Schema for java.util.UUID values. Serializes as string. */
-    given uuidSchema: Schema[java.util.UUID] =
+    given javaUuidSchema: Schema[java.util.UUID] =
         Schema.init[java.util.UUID](
             writeFn = (v, w) => w.string(v.toString),
             readFn = r => java.util.UUID.fromString(r.string()),
             structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[java.util.UUID].asInstanceOf[Tag[Any]])
+        )
+
+    /** Schema for kyo.UUID values. Serializes as canonical string. */
+    given uuidSchema: Schema[kyo.UUID] =
+        Schema.init[kyo.UUID](
+            writeFn = (v, w) => w.string(v.show),
+            readFn = r =>
+                val value = r.string()
+                kyo.UUID.parse(value)(using r.frame).foldOrThrow(
+                    identity,
+                    _ => throw TypeMismatchException(Seq.empty, "UUID", value)(using r.frame)
+                )
+            ,
+            structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[kyo.UUID].asInstanceOf[Tag[Any]])
         )
 
     /** Schema for Unit values.
@@ -2860,16 +3023,15 @@ object Schema:
         lazy val vSchema = vSchema0
         Schema.init[Map[K, V]](
             writeFn = (value, writer) =>
-                writer.arrayStart(value.size)
+                writer.mapEntriesStart(value.size)
                 value.foreach { (k, v) =>
-                    writer.objectStart("", 2)
-                    writer.field("key", 1)
+                    writer.mapEntryStart()
                     kSchema.serializeWrite(k, writer)
-                    writer.field("value", 2)
+                    writer.mapEntryValue()
                     vSchema.serializeWrite(v, writer)
-                    writer.objectEnd()
+                    writer.mapEntryEnd()
                 }
-                writer.arrayEnd()
+                writer.mapEntriesEnd()
             ,
             readFn = reader =>
                 discard(reader.arrayStart())
@@ -3101,16 +3263,15 @@ object Schema:
         lazy val vSchema = vSchema0
         Schema.init[Dict[K, V]](
             writeFn = (value, writer) =>
-                writer.arrayStart(value.size)
+                writer.mapEntriesStart(value.size)
                 value.foreach { (k, v) =>
-                    writer.objectStart("", 2)
-                    writer.field("key", 1)
+                    writer.mapEntryStart()
                     kSchema.serializeWrite(k, writer)
-                    writer.field("value", 2)
+                    writer.mapEntryValue()
                     vSchema.serializeWrite(v, writer)
-                    writer.objectEnd()
+                    writer.mapEntryEnd()
                 }
-                writer.arrayEnd()
+                writer.mapEntriesEnd()
             ,
             readFn = reader =>
                 discard(reader.arrayStart())
@@ -3212,16 +3373,15 @@ object Schema:
         lazy val vSchema = vSchema0
         Schema.init[OrderedDict[K, V]](
             writeFn = (value, writer) =>
-                writer.arrayStart(value.size)
+                writer.mapEntriesStart(value.size)
                 value.foreach { (k, v) =>
-                    writer.objectStart("", 2)
-                    writer.field("key", 1)
+                    writer.mapEntryStart()
                     kSchema.serializeWrite(k, writer)
-                    writer.field("value", 2)
+                    writer.mapEntryValue()
                     vSchema.serializeWrite(v, writer)
-                    writer.objectEnd()
+                    writer.mapEntryEnd()
                 }
-                writer.arrayEnd()
+                writer.mapEntriesEnd()
             ,
             readFn = reader =>
                 discard(reader.arrayStart())

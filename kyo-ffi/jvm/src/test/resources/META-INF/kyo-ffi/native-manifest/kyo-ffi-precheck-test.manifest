@@ -1,0 +1,4 @@
+kyo_ffi_precheck_absent.platforms=darwin-x86_64,darwin-aarch64,linux-x86_64,linux-aarch64,linux-musl-x86_64,linux-musl-aarch64,windows-x86_64,windows-aarch64
+kyo_ffi_precheck_absent.version=0.0.0
+kyo_ffi_precheck_absent.minRuntime=0.0.0
+trait.kyo.ffi.internal.NativeManifestPrecheckTest$PrecheckAbsentBinding=kyo_ffi_precheck_absent

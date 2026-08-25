@@ -13,7 +13,8 @@ import kyo.*
   * Truncated requires raw socket access; it is covered at the driver level in NioTransportTlsCloseReasonTest (JVM NIO) and
   * PollerIoDriverTlsHalfCloseEtTest (posix).
   *
-  * All leaves run via [[eachBackendTls]]. JS never wires `statusFn`, so every JS leaf asserts [[Connection.Status.Active]].
+  * All leaves run via [[eachBackendTls]]. A transport reports the close reason only when it terminates TLS in-process (posix on every platform
+  * including JS, NIO on JVM); the Node transport delegates TLS to Node, never observes the close_notify, and its connections read Active.
   */
 class ConnectionStatusTest extends Test:
 
@@ -21,6 +22,13 @@ class ConnectionStatusTest extends Test:
 
     private def drainInbound(conn: Connection)(using Frame): Unit < (Async & Abort[Closed]) =
         Abort.run[Closed](Loop.foreach(conn.inbound.safe.take.map(_ => Loop.continue))).map(_ => ())
+
+    /** Whether this cell's transport reports the TLS close reason through [[Connection.status]]: true when it terminates TLS in-process (posix
+      * on every platform including JS, NIO on JVM), false for the Node transport, which delegates TLS to Node, never observes the close_notify,
+      * and wires no `statusFn`. The Node transport is exactly the one driving the `node` TLS provider.
+      */
+    private def reportsCloseReason(transport: Transport): Boolean =
+        !transport.supportedTlsProviders.contains("node")
 
     "clean-close: after server close_notify, status is CleanClose and not confused with Truncated or LocalClose" - eachBackendTls {
         (transport, serverTls, clientTls) =>
@@ -43,10 +51,10 @@ class ConnectionStatusTest extends Test:
                 val reason = client.status
                 client.close()
                 listener.close()
-                if kyo.internal.Platform.isJS then
+                if !reportsCloseReason(transport) then
                     assert(
                         reason == Connection.Status.Active,
-                        s"JS: status must be Active (statusFn not wired on JS); got $reason"
+                        s"the Node transport wires no statusFn, so status must be Active; got $reason"
                     )
                 else
                     assert(
@@ -86,10 +94,10 @@ class ConnectionStatusTest extends Test:
                 val reason = client.status
                 serverConn.close()
                 listener.close()
-                if kyo.internal.Platform.isJS then
+                if !reportsCloseReason(transport) then
                     assert(
                         reason == Connection.Status.Active,
-                        s"JS: status must be Active (statusFn not wired on JS); got $reason"
+                        s"the Node transport wires no statusFn, so status must be Active; got $reason"
                     )
                 else
                     assert(

@@ -167,35 +167,88 @@ private[runner] object LeakCheck:
         sb.toString
     end runningThreadsDump
 
-    /** Outcome of [[awaitSchedulerIdle]]. */
+    /** Outcome of [[awaitSchedulerIdle]]. `Accounted` means work is still running but every worker holding it is allowlisted, which is
+      * quiescent for this check's purposes and must not be conflated with `Idle` in the report.
+      */
     enum IdleResult derives CanEqual:
         case Idle
+        case Accounted(loadAvg: Double)
         case Busy(loadAvg: Double, frame: Maybe[String])
+    end IdleResult
 
-    /** Polls the scheduler until its load has been `0.0` continuously for `settleNanos`, or until `budgetNanos` elapses.
+    /** True when at least one worker holds work and EVERY such worker is matched by `allowlist`, against either its kyo trace or its JVM
+      * stack.
       *
-      * The settle window lets transient tail activity (a reporter fiber, a finalizer) drain before a verdict, so only work that persists past
-      * the budget is reported as `Busy`. Blocking by design: called at the sbt `done()` boundary, outside any fiber, so parking the caller is
-      * correct here rather than an `Async` suspension.
+      * `forall`, not `exists`: one allowlisted carrier must not excuse a second, unrelated busy worker. An empty busy set is `Idle`, never
+      * `Accounted`, so the caller keeps those two outcomes distinct.
       */
-    def awaitSchedulerIdle(budgetNanos: Long, settleNanos: Long, pollNanos: Long): IdleResult =
-        val deadline                  = System.nanoTime() + budgetNanos
-        var idleSince: Long           = -1L
+    def busyWorkAllAccounted(allowlist: Chunk[String]): Boolean =
+        val busy = Scheduler.get.busyFiberTraces()
+        busy.nonEmpty && busy.forall { w =>
+            val text = w.fiberTrace + "\n" + stackOfThread(w.mount).getOrElse("")
+            allowlist.exists(text.contains)
+        }
+    end busyWorkAllAccounted
+
+    /** Polls until the scheduler holds no UNACCOUNTED work continuously for `settleNanos`, or until `budgetNanos` elapses.
+      *
+      * Quiescence is `loadAvg() == 0` OR every busy worker allowlisted, because a process-lifetime carrier (kyo-net's shared transport, which
+      * marks itself `processSharedTransport`) never lets load reach zero. Waiting on load alone made every fork holding one spend the whole
+      * budget and then be excused by the allowlist anyway: the verdict was right, the wait was pure cost. [[awaitFdDrain]] already applies the
+      * allowlist before it waits, for the same reason.
+      *
+      * The settle window still lets transient tail activity (a reporter fiber, a finalizer) drain before a verdict, so only work that persists
+      * past the budget is reported as `Busy`. Blocking by design: called at the sbt `done()` boundary, outside any fiber, so parking the caller
+      * is correct here rather than an `Async` suspension.
+      *
+      * Canonical form: `loadNow` and `allAccounted` are injected so the loop is testable without a live scheduler, as `awaitFdDrain` takes its
+      * probe.
+      */
+    def awaitSchedulerIdle(
+        budgetNanos: Long,
+        settleNanos: Long,
+        pollNanos: Long,
+        loadNow: () => Double,
+        allAccounted: () => Boolean,
+        now: () => Long = () => System.nanoTime(),
+        park: Long => Unit = LockSupport.parkNanos(_)
+    ): IdleResult =
+        // now/park are the loop's only real-time dependencies, defaulting to the monotonic clock and a real park; a test overrides them with a
+        // virtual clock (park advances the clock instead of sleeping) to drive the settle/budget logic deterministically.
+        val deadline                  = now() + budgetNanos
+        var quietSince: Long          = -1L
+        var lastAccountedAt: Long     = 0L
+        var accountedChecked          = false
+        var accounted                 = false
         var result: Maybe[IdleResult] = Maybe.empty
-        while result.isEmpty && System.nanoTime() < deadline do
-            val now = System.nanoTime()
-            if loadAvg() == 0.0 then
-                if idleSince < 0 then idleSince = now
-                else if now - idleSince >= settleNanos then result = Maybe(IdleResult.Idle)
-            else idleSince = -1L
+        while result.isEmpty && now() < deadline do
+            val sampledAt = now()
+            val idle      = loadNow() == 0.0
+            // busyFiberTraces renders a kyo trace per busy worker and is documented as a leak probe rather than a monitoring surface, so the
+            // accounted branch is re-evaluated at most once per settle window instead of on every poll.
+            if !idle && (!accountedChecked || sampledAt - lastAccountedAt >= settleNanos) then
+                accounted = allAccounted()
+                lastAccountedAt = sampledAt
+                accountedChecked = true
             end if
-            if result.isEmpty then LockSupport.parkNanos(pollNanos)
+            if idle || accounted then
+                if quietSince < 0 then quietSince = sampledAt
+                else if sampledAt - quietSince >= settleNanos then
+                    result = Maybe(if idle then IdleResult.Idle else IdleResult.Accounted(loadNow()))
+            else quietSince = -1L
+            end if
+            if result.isEmpty then park(pollNanos)
         end while
         result.getOrElse {
-            if loadAvg() == 0.0 then IdleResult.Idle
-            else IdleResult.Busy(loadAvg(), busyWorkerFrame())
+            if loadNow() == 0.0 then IdleResult.Idle
+            else if allAccounted() then IdleResult.Accounted(loadNow())
+            else IdleResult.Busy(loadNow(), busyWorkerFrame())
         }
     end awaitSchedulerIdle
+
+    /** Production binding of [[awaitSchedulerIdle]]: samples the live scheduler and treats `allowlist` as the accounted set. */
+    def awaitSchedulerIdle(budgetNanos: Long, settleNanos: Long, pollNanos: Long, allowlist: Chunk[String]): IdleResult =
+        awaitSchedulerIdle(budgetNanos, settleNanos, pollNanos, () => loadAvg(), () => busyWorkAllAccounted(allowlist))
 
     /** Re-samples the leaked-descriptor set until it drains to empty or `budgetNanos` elapses, parking `settleNanos` between samples, and
       * returns the descriptors that persisted through EVERY sample. A descriptor still mid-teardown at `done()` (an async deferred close
@@ -365,8 +418,8 @@ private[runner] object LeakCheck:
 
         // Always settle on scheduler quiescence first: it lets in-flight fibers finish and release their resources before the thread and
         // descriptor diffs run, which trims false positives for every category. Record a fiber finding only when that category is enabled.
-        awaitSchedulerIdle(idleBudgetNanos, settleNanos, pollNanos) match
-            case IdleResult.Idle => ()
+        awaitSchedulerIdle(idleBudgetNanos, settleNanos, pollNanos, effectiveAllowlist) match
+            case IdleResult.Idle | IdleResult.Accounted(_) => ()
             case IdleResult.Busy(la, frame) =>
                 if checkFibers then
                     val busy = Scheduler.get.busyFiberTraces()
@@ -436,8 +489,9 @@ private[runner] object LeakCheck:
             s"kyo-test leak check failed:$report\n\nThese resources outlived the test run; a leaked fiber, thread, or descriptor means a " +
                 "test (or the code under test) did not release a resource. To attribute each leaked descriptor to the test that opened it, " +
                 "re-run with KYO_TEST_LEAK_DEBUG=1 (runs leaves serially and appends `opened by test: <leaf>` to each descriptor). Disable " +
-                "for a suite with `override def config = super.config.leakCheck(false)`, or excuse one expected resource with " +
-                "`super.config.leakCheckAllowlist(\"<stack-or-target-substring>\")`."
+                "for a suite with `override def config = super.config.leakCheck(false)`. A fiber or thread finding can be excused with " +
+                "`super.config.leakCheckAllowlist(\"<stack-substring>\")`, which matches stack frames; a socket cannot, since its target is " +
+                "an inode that changes every run, so exempt that category with `super.config.leakCheckSockets(false)` instead."
         )
 
 end LeakCheck

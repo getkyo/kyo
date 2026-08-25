@@ -30,8 +30,8 @@ class HttpSecurityServerTest extends BaseHttpTest:
     def withEchoServer(
         test: (String, Int) => Unit < (Async & Abort[Any] & Scope)
     )(using Frame): Unit < (Scope & Async & Abort[Any]) =
-        HttpServer.init(0, "localhost")(echoHandler, bodyHandler, markerHandler, streamHandler, emptyHandler).map { s =>
-            test("localhost", s.port)
+        HttpServer.init(0, "127.0.0.1")(echoHandler, bodyHandler, markerHandler, streamHandler, emptyHandler).map { s =>
+            test("127.0.0.1", s.port)
         }
 
     /** Opens a connection, writes each of `writes` with a pause between them, then reads everything the server sends
@@ -329,9 +329,9 @@ class HttpSecurityServerTest extends BaseHttpTest:
         // than on the connection being closed, which is a different mechanism and not the one under test. At 30 seconds
         // against a 10 second read budget, only an explicit close can produce EOF.
         def assertReaped(raw: String, description: String)(using Frame, kyo.test.AssertScope): Unit < (Async & Abort[Any] & Scope) =
-            val cfg = HttpServerConfig.default.port(0).host("localhost").idleTimeout(30.seconds)
+            val cfg = HttpServerConfig.default.port(0).host("127.0.0.1").idleTimeout(30.seconds)
             HttpServer.init(cfg)(echoHandler).map { server =>
-                reapedAfter("localhost", server.port, raw).map { reaped =>
+                reapedAfter("127.0.0.1", server.port, raw).map { reaped =>
                     assert(reaped, s"$description: the server answered but never released the connection")
                 }
             }
@@ -361,9 +361,9 @@ class HttpSecurityServerTest extends BaseHttpTest:
         // Earlier versions of these leaves used a one second idle timeout, which made this case indistinguishable from
         // the closing ones: all four went to EOF and three of them were passing on the timer.
         "an invalid Host on a keep-alive request is answered without closing" in {
-            val cfg = HttpServerConfig.default.port(0).host("localhost").idleTimeout(30.seconds)
+            val cfg = HttpServerConfig.default.port(0).host("127.0.0.1").idleTimeout(30.seconds)
             HttpServer.init(cfg)(echoHandler).map { server =>
-                reapedAfter("localhost", server.port, "GET /echo HTTP/1.1\r\nHost: a\r\nHost: b\r\n\r\n").map { reaped =>
+                reapedAfter("127.0.0.1", server.port, "GET /echo HTTP/1.1\r\nHost: a\r\nHost: b\r\n\r\n").map { reaped =>
                     assert(!reaped, "a keep-alive request with a bad Host must be answered, not disconnected")
                 }
             }
@@ -403,12 +403,12 @@ class HttpSecurityServerTest extends BaseHttpTest:
         //
         // Origin: the unconsumed-body-reinterpreted smuggling class on a rejected-by-size request (RFC 9112 section 9.3).
         "a 413-rejected request's unconsumed body is not parsed as the next request" in {
-            val cfg = HttpServerConfig.default.port(0).host("localhost").maxContentLength(10)
+            val cfg = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(10)
             HttpServer.init(cfg)(echoHandler, bodyHandler, markerHandler, streamHandler).map { server =>
                 val smuggled = "GET /marker HTTP/1.1\r\nHost: localhost\r\n\r\n"
                 // Content-Length is the smuggled request length, well over the 10-byte limit, so the POST is 413'd.
                 val headers = s"POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${smuggled.length}\r\n\r\n"
-                sendStaged("localhost", server.port, Seq(headers, smuggled)).map { response =>
+                sendStaged("127.0.0.1", server.port, Seq(headers, smuggled)).map { response =>
                     assert(response.contains("413"), s"expected a 413, got:\n${response.take(300)}")
                     assert(
                         !response.contains("SMUGGLED-MARKER"),
@@ -536,7 +536,7 @@ class HttpSecurityServerTest extends BaseHttpTest:
 
         "a finite handshakeTimeout reaps a stalled TLS accept handshake (CWE-400, slowloris)" in {
             val tc = HttpTransportConfig.default.handshakeTimeout(150.millis)
-            val serverConfig = HttpServerConfig.default.port(0).host("localhost")
+            val serverConfig = HttpServerConfig.default.port(0).host("127.0.0.1")
                 .tls(serverTls)
                 .transportConfig(tc)
             HttpServer.init(serverConfig)(echoHandler).map { server =>
@@ -547,7 +547,7 @@ class HttpSecurityServerTest extends BaseHttpTest:
                 // EOF span).
                 Sync.Unsafe.defer {
                     val transport = kyo.net.NetPlatform.transport
-                    transport.connect("localhost", server.port).safe.get.map { conn =>
+                    transport.connect("127.0.0.1", server.port).safe.get.map { conn =>
                         Abort.run[Timeout](Async.timeout(5.seconds)(Abort.run[Closed](conn.inbound.safe.take))).map { outcome =>
                             conn.close()
                             val reaped = outcome match
@@ -568,13 +568,13 @@ class HttpSecurityServerTest extends BaseHttpTest:
             // request round-trips. This proves the finite deadline does not reap completed handshakes and that the owned
             // per-config transport serves real TLS traffic.
             val tc = HttpTransportConfig.default.handshakeTimeout(30.seconds)
-            val serverConfig = HttpServerConfig.default.port(0).host("localhost")
+            val serverConfig = HttpServerConfig.default.port(0).host("127.0.0.1")
                 .tls(serverTls)
                 .transportConfig(tc)
             initTrustAllClient().map { httpClient =>
                 HttpServer.init(serverConfig)(okHandler).map { server =>
                     HttpClient.let(httpClient) {
-                        HttpClient.getText(s"https://localhost:${server.port}/ok").map { body =>
+                        HttpClient.getText(s"https://127.0.0.1:${server.port}/ok").map { body =>
                             assert(body == "served")
                         }
                     }

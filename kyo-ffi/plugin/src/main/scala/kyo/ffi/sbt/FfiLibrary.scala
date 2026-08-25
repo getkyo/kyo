@@ -38,8 +38,9 @@ import sbt._
   *   system libraries to link against on every OS (no `lib` prefix, no
   *   extension).
   * @param linkLibsByOs
-  *   OS-specific link libraries, keyed by the platform name `CCompiler.detectOs`
-  *   resolves (`"linux"`, `"darwin"`, `"windows"`). The `"linux"` key also
+  *   OS-specific link libraries, keyed by the resolved TARGET platform name
+  *   (`ffiTargetOsArch`, defaulting to the host `CCompiler.detectOs`:
+  *   `"linux"`, `"darwin"`, `"windows"`). The `"linux"` key also
   *   covers `linux-musl`. Merged with `linkLibs` for the building OS only, so a
   *   library that links a Linux-only system lib (e.g. `uring`) leaves the macOS
   *   and Windows builds untouched. A binding whose C is header-gated to a stub
@@ -67,17 +68,30 @@ final case class FfiLibrary(
     cFlags: Seq[String] = Nil,
     linkFlags: Seq[String] = Nil,
     staticLink: Boolean = false,
-    dependsOn: Seq[String] = Nil
+    dependsOn: Seq[String] = Nil,
+    compilerByOs: Map[String, String] = Map.empty
 ) {
 
     /** Effective link libraries for the OS being built: the always-on `linkLibs`
-      * plus the entry in `linkLibsByOs` for `os` (the value `CCompiler.detectOs`
-      * returns). `linux-musl` resolves the `linux` key. Order is stable:
+      * plus the entry in `linkLibsByOs` for `os` (the resolved TARGET os,
+      * `ffiTargetOsArch` defaulting to the host `CCompiler.detectOs`).
+      * `linux-musl` resolves the `linux` key. Order is stable:
       * always-on libs first, then OS-specific, deduplicated.
       */
     def resolvedLinkLibs(os: String): Seq[String] = {
         val key        = if (os == "linux-musl") "linux" else os
         val osSpecific = linkLibsByOs.getOrElse(key, Nil)
         (linkLibs ++ osSpecific).distinct
+    }
+
+    /** The C compiler this library requires for the OS being built, overriding the global
+      * `ffiCCompiler` for that OS only. `linux-musl` resolves the `linux` key. Absent (the default,
+      * empty map) means use the global compiler, so a library that does not set `compilerByOs`
+      * behaves exactly as before on every OS. A vendored library that only builds under a specific
+      * toolchain (e.g. Aeron, which supports Windows only under MSVC) names it here for that OS.
+      */
+    def compilerFor(os: String): Option[String] = {
+        val key = if (os == "linux-musl") "linux" else os
+        compilerByOs.get(key)
     }
 }

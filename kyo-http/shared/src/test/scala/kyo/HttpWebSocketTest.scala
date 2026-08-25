@@ -12,8 +12,8 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
     def withWsServer[A, S](handlers: HttpHandler[?, ?, ?]*)(
         test: HttpUrl => A < (S & Async & Abort[HttpException])
     )(using Frame): A < (S & Async & Scope & Abort[HttpException]) =
-        HttpServer.init(0, "localhost")(handlers*).map(server =>
-            test(HttpUrl.parse(s"http://localhost:${server.port}").getOrThrow)
+        HttpServer.init(0, "127.0.0.1")(handlers*).map(server =>
+            test(HttpUrl.parse(s"http://127.0.0.1:${server.port}").getOrThrow)
         )
 
     // ==================== Basic connectivity ====================
@@ -1200,6 +1200,7 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
                 }
             }
         }
+    end withWsUnixServer
 
     private def mkWsUrl(socketPath: String, wsPath: String): String =
         mkUrl(socketPath, wsPath)
@@ -1461,7 +1462,9 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
                 }
                 withWsServer(handler) { url =>
                     HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/srv-close") { ws =>
-                        ws.close(4321, "client-bye").andThen(Async.sleep(300.millis))
+                        // Keep the client connection open until the server has observed the close (it completes
+                        // `observed` from its closeReason), so the close frame is delivered before teardown, not after a settle.
+                        ws.close(4321, "client-bye").andThen(observed.get.unit)
                     }.andThen(observed.get).map { snapshot =>
                         discard(assert(snapshot.exists(_._1 == 4321), s"expected 4321, got $snapshot"))
                     }

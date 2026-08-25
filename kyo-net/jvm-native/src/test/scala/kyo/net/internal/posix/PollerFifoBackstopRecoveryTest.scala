@@ -40,7 +40,7 @@ class PollerFifoBackstopRecoveryTest extends Test:
                 // Arm a read through the public path: awaitRead -> submitChange enqueues an OpRegisterRead and returns. No poll loop is started and
                 // submitChange does not spawn a drain task, so nothing drains the FIFO yet (the stranded state a per-burst spawn-loss could wedge in).
                 val readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
-                driver.awaitRead(PosixHandle.socket(targetFd, PosixHandle.DefaultReadBufferSize, Absent), readPromise)
+                driver.awaitRead(PosixHandle.socket(targetFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal), readPromise)
 
                 assert(
                     !backend.callLog.contains(s"registerRead($targetFd)"),

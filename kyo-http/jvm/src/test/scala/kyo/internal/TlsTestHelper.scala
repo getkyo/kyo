@@ -81,7 +81,7 @@ object TlsTestHelper:
     end TrustAllManager
 
     /** Export the self-signed certificate and private key as PEM files from the PKCS12 keystore. */
-    lazy val (certPath, keyPath): (String, String) =
+    lazy val (certPath, keyPath) =
         val ks  = KeyStore.getInstance("PKCS12")
         val fis = new java.io.FileInputStream(keystorePath)
         try ks.load(fis, password)

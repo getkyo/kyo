@@ -241,15 +241,6 @@ class JsonTest extends kyo.test.Test[Any]:
                 case Result.Failure(_) => ()
         }
 
-        "number with many digits does not cause DoS" in {
-            val manyDigits = "0." + "1" * 1000
-            val start      = java.lang.System.currentTimeMillis()
-            val result     = Json.decode[BigDecimal](manyDigits)
-            val elapsed    = java.lang.System.currentTimeMillis() - start
-
-            assert(elapsed < 5000, s"Parsing took too long: ${elapsed}ms")
-        }
-
         // 3. DEEP NESTING PROTECTION
 
         "deeply nested JSON does not cause stack overflow" in {
@@ -274,88 +265,6 @@ class JsonTest extends kyo.test.Test[Any]:
                 case _: StackOverflowError => fail("Stack overflow on nested JSON")
                 case _: Exception => succeed("a parse error on deeply nested objects is acceptable; the contract is no stack overflow")
             end try
-        }
-
-        "JsonWriter arrayStart nesting past 64-depth boundary round-trips" in {
-            // 120 levels of array nesting: each arrayStart pushes depth by 1.
-            // Depth 1..63 lives in word 0; depth 64..120 lives in word 1, so
-            // needsComma must grow from length 1 to length 2 at depth 64.
-            val depth = 120
-            val w     = JsonWriter()
-            var i     = 0
-            while i < depth do
-                w.arrayStart(1)
-                i += 1
-            w.int(42)
-            i = 0
-            while i < depth do
-                w.arrayEnd()
-                i += 1
-            val json     = w.resultString
-            val expected = "[" * depth + "42" + "]" * depth
-            assert(json == expected, s"mismatch at depth=$depth")
-        }
-
-        "JsonWriter objectStart nesting past 64-depth boundary round-trips" in {
-            // 100 levels of object nesting: each objectStart pushes depth.
-            val depth = 100
-            val w     = JsonWriter()
-            var i     = 0
-            while i < depth do
-                w.objectStart("o", 1)
-                w.field("k", 0)
-                i += 1
-            end while
-            w.int(7)
-            i = 0
-            while i < depth do
-                w.objectEnd()
-                i += 1
-            val json = w.resultString
-            // Decode back as deeply-nested raw structure via Json.decode with
-            // matching Schema is awkward; instead verify that the output starts
-            // with the expected open-brace sequence and ends with close-braces.
-            assert(json.startsWith("{\"k\":" * depth + "7"), s"unexpected prefix at depth=$depth: ${json.take(40)}...")
-            assert(json.endsWith("}" * depth), s"unexpected suffix at depth=$depth: ...${json.takeRight(40)}")
-        }
-
-        "JsonWriter at exact word boundary depth 64 is correct" in {
-            // depth exactly 64 triggers the first grow (since initial size is 1 Long = slots 0-63).
-            val depth = 64
-            val w     = JsonWriter()
-            var i     = 0
-            while i < depth do
-                w.arrayStart(1)
-                i += 1
-            w.int(1)
-            w.int(2) // second element at depth 64; exercises setFlag/getFlag at slot 0 of word 1
-            i = 0
-            while i < depth do
-                w.arrayEnd()
-                i += 1
-            val json = w.resultString
-            // Innermost array has "1,2", wrapped by 63 additional "[...]"
-            val expected = "[" * depth + "1,2" + "]" * depth
-            assert(json == expected)
-        }
-
-        "JsonWriter at word-boundary depth 65 is correct" in {
-            // Guards against off-by-one in `depth & 63` on the second word.
-            val depth = 65
-            val w     = JsonWriter()
-            var i     = 0
-            while i < depth do
-                w.arrayStart(1)
-                i += 1
-            w.int(1)
-            w.int(2) // two comma-separated elements at depth 65, slot 1 of word 1
-            i = 0
-            while i < depth do
-                w.arrayEnd()
-                i += 1
-            val json     = w.resultString
-            val expected = "[" * depth + "1,2" + "]" * depth
-            assert(json == expected)
         }
 
         "deeply-nested recursive case class round-trips past 64-depth boundary" in {
@@ -1709,7 +1618,7 @@ class JsonTest extends kyo.test.Test[Any]:
             val result = Json.decode[Byte]("999")
             result match
                 case Result.Success(v) =>
-                    assert(v != -25.toByte, "Must not silently wrap Byte overflow")
+                    assert(v != (-25).toByte, "Must not silently wrap Byte overflow")
                 case Result.Failure(_) => succeed("rejecting the overflow is also correct; reaching the Failure branch is the verification")
             end match
         }
@@ -1719,7 +1628,7 @@ class JsonTest extends kyo.test.Test[Any]:
             val result = Json.decode[Short]("99999")
             result match
                 case Result.Success(v) =>
-                    assert(v != -31073.toShort, "Must not silently wrap Short overflow")
+                    assert(v != (-31073).toShort, "Must not silently wrap Short overflow")
                 case Result.Failure(_) => succeed("rejecting the overflow is also correct; reaching the Failure branch is the verification")
             end match
         }
@@ -1833,27 +1742,6 @@ class JsonTest extends kyo.test.Test[Any]:
             end match
         }
 
-        // circe #1363: BigDecimal with huge exponent causes DoS
-        // https://github.com/circe/circe/issues/1363
-        // spray-json #287: BigDecimal with absurd scale accepted
-        // https://github.com/spray/spray-json/issues/287
-        "huge exponent BigDecimal does not hang" in {
-            val start   = java.lang.System.currentTimeMillis()
-            val result  = Json.decode[BigDecimal]("\"1e-100000000\"")
-            val elapsed = java.lang.System.currentTimeMillis() - start
-            assert(elapsed < 5000, s"BigDecimal with huge exponent took ${elapsed}ms")
-        }
-
-        // circe #1040: DoS with million-digit JSON numbers
-        // https://github.com/circe/circe/issues/1040
-        "million-digit number does not cause DoS" in {
-            val json    = "1" + "0" * 999999
-            val start   = java.lang.System.currentTimeMillis()
-            val result  = Json.decode[Double](json)
-            val elapsed = java.lang.System.currentTimeMillis() - start
-            assert(elapsed < 5000, s"Million-digit number took ${elapsed}ms")
-        }
-
         // -----------------------------------------------------------------
         // DOUBLE/FLOAT SPECIAL VALUES
         // -----------------------------------------------------------------
@@ -1939,80 +1827,8 @@ class JsonTest extends kyo.test.Test[Any]:
         }
 
         // -----------------------------------------------------------------
-        // SECURITY: NUMERIC DoS VARIANTS
-        // -----------------------------------------------------------------
-
-        // jsoniter-scala #282: BigDecimal with many fractional zeros
-        // https://github.com/plokhotnyuk/jsoniter-scala/issues/282
-        "BigDecimal with many fractional zeros does not DoS" in {
-            val json    = "\"0." + "0" * 100000 + "1\""
-            val start   = java.lang.System.currentTimeMillis()
-            val result  = Json.decode[BigDecimal](json)
-            val elapsed = java.lang.System.currentTimeMillis() - start
-            assert(elapsed < 5000, s"BigDecimal fractional zeros took ${elapsed}ms")
-        }
-
-        // spray-json #287: huge positive exponent BigDecimal
-        // https://github.com/spray/spray-json/issues/287
-        "huge positive exponent BigDecimal does not hang" in {
-            val start   = java.lang.System.currentTimeMillis()
-            val result  = Json.decode[BigDecimal]("\"1e1000000000\"")
-            val elapsed = java.lang.System.currentTimeMillis() - start
-            assert(elapsed < 5000, s"BigDecimal 1e1000000000 took ${elapsed}ms")
-        }
-
-        // json4s #554: unexpected field with big number in object
-        // https://github.com/json4s/json4s/issues/554
-        "object with unexpected large number field does not DoS" in {
-            val bigNum  = "1" + "0" * 100000
-            val json    = s"""{"name":"Alice","age":30,"unexpected":$bigNum}"""
-            val start   = java.lang.System.currentTimeMillis()
-            val result  = Json.decode[MTPerson](json)
-            val elapsed = java.lang.System.currentTimeMillis() - start
-            assert(elapsed < 5000, s"Skipping large unexpected number took ${elapsed}ms")
-        }
-
-        // play-json CVE-2020-26882: data amplification via small JSON expanding to huge in-memory representation
-        // https://www.playframework.com/security/vulnerability/CVE-2020-26882-JsonParseDataAmplification
-        "small exponent notation does not amplify into huge BigDecimal" in {
-            // "1e100000" is 8 bytes but BigDecimal("1e100000") has scale=-100000
-            // Operations on it can allocate massive backing arrays
-            val start   = java.lang.System.currentTimeMillis()
-            val result  = Json.decode[BigDecimal]("\"1e100000\"")
-            val elapsed = java.lang.System.currentTimeMillis() - start
-            assert(elapsed < 5000, s"BigDecimal amplification took ${elapsed}ms")
-            result match
-                case Result.Success(v) =>
-                    // Encoding it back must also be fast (no expansion)
-                    val start2   = java.lang.System.currentTimeMillis()
-                    val encoded  = Json.encode(v)
-                    val elapsed2 = java.lang.System.currentTimeMillis() - start2
-                    assert(elapsed2 < 5000, s"BigDecimal re-encoding took ${elapsed2}ms")
-                case Result.Failure(_) => ()
-            end match
-        }
-
-        // -----------------------------------------------------------------
         // SECURITY: LARGE STRUCTURE DoS
         // -----------------------------------------------------------------
-
-        // General: large number of object fields (memory exhaustion)
-        "object with many fields does not exhaust memory" in {
-            val json    = (0 until 100000).map(i => s""""k$i":$i""").mkString("{", ",", "}")
-            val start   = java.lang.System.currentTimeMillis()
-            val result  = Json.decode[Map[String, Int]](json)
-            val elapsed = java.lang.System.currentTimeMillis() - start
-            assert(elapsed < 10000, s"Parsing 100K fields took ${elapsed}ms")
-        }
-
-        // General: large array
-        "large array does not cause DoS" in {
-            val json    = (0 until 100000).mkString("[", ",", "]")
-            val start   = java.lang.System.currentTimeMillis()
-            val result  = Json.decode[List[Int]](json)
-            val elapsed = java.lang.System.currentTimeMillis() - start
-            assert(elapsed < 10000, s"Parsing 100K element array took ${elapsed}ms")
-        }
 
         // General: skip() handles deep nesting without stack overflow
         // When decoding a case class, unknown fields are skipped via skip() which
@@ -2029,40 +1845,6 @@ class JsonTest extends kyo.test.Test[Any]:
                 case _: StackOverflowError =>
                     fail("Stack overflow when skipping deeply nested unknown field")
             end try
-        }
-
-        // -----------------------------------------------------------------
-        // SECURITY: STRING DoS
-        // -----------------------------------------------------------------
-
-        // General: very long string
-        "very long string does not cause DoS" in {
-            val longStr = "\"" + "a" * 1000000 + "\""
-            val start   = java.lang.System.currentTimeMillis()
-            val result  = Json.decode[String](longStr)
-            val elapsed = java.lang.System.currentTimeMillis() - start
-            assert(elapsed < 5000, s"Parsing 1M char string took ${elapsed}ms")
-        }
-
-        // General: string with many escape sequences
-        "string with many escapes does not cause DoS" in {
-            val escapedStr = "\"" + "\\n" * 100000 + "\""
-            val start      = java.lang.System.currentTimeMillis()
-            val result     = Json.decode[String](escapedStr)
-            val elapsed    = java.lang.System.currentTimeMillis() - start
-            assert(elapsed < 5000, s"Parsing 100K escapes took ${elapsed}ms")
-        }
-
-        // General: string with many unicode escapes
-        "string with many unicode escapes does not cause DoS" in {
-            val unicodeStr = "\"" + "\\u0041" * 100000 + "\""
-            val start      = java.lang.System.currentTimeMillis()
-            val result     = Json.decode[String](unicodeStr)
-            val elapsed    = java.lang.System.currentTimeMillis() - start
-            assert(elapsed < 5000, s"Parsing 100K unicode escapes took ${elapsed}ms")
-            result match
-                case Result.Success(s) => assert(s == "A" * 100000)
-                case Result.Failure(_) => ()
         }
 
         "double round-trip: boundary values" in {

@@ -63,10 +63,13 @@ class JvmPosixBackendSelectionTest extends Test:
                 assert(IoBackendPlatform.selected.name == only, s"selected=${IoBackendPlatform.selected.name}, expected=$only")
             case None =>
                 if PosixConstants.isMacOrBsd then
-                    assert(KqueueBackend.isAvailable, "kqueue must be available on this macOS/BSD host")
+                    assert(
+                        KqueueBackend.probe.isAvailable,
+                        s"kqueue must be available on this macOS/BSD host: ${KqueueBackend.probe.describe}"
+                    )
                     assert(IoBackendPlatform.selected.name == "kqueue", s"selected=${IoBackendPlatform.selected.name}")
                 else if PosixConstants.isLinux then
-                    val expected = if IoUringBackend.isAvailable then "io_uring" else "epoll"
+                    val expected = if IoUringBackend.probe.isAvailable then "io_uring" else "epoll"
                     assert(IoBackendPlatform.selected.name == expected, s"selected=${IoBackendPlatform.selected.name}")
                 else
                     cancel("no posix backend on this host; selection round-trip needs epoll/kqueue/io_uring")
@@ -91,11 +94,8 @@ class JvmPosixBackendSelectionTest extends Test:
         // -Dkyo.net.backend -> forced-selection wiring works.
         val forced = IoBackend.select[Entry, NetBackendUnavailableException](
             IoBackendPlatform.registered,
-            _.name,
-            _.priority,
-            _.isAvailable,
             forced = Present("nio"),
-            onUnavailable = NetBackendUnavailableException(_)
+            onUnavailable = (name, report) => NetBackendUnavailableException(name, report.render)
         ).getOrThrow
         assert(forced.name == "nio", s"forced selected=${forced.name}")
         // The forced floor must build the NioTransport, not a PosixTransport, and that floor must round-trip as production.
@@ -111,7 +111,43 @@ class JvmPosixBackendSelectionTest extends Test:
         val nioEntries = IoBackendPlatform.registered.filter(_.name == "nio")
         assert(nioEntries.size == 1, s"expected exactly one nio floor entry, got ${IoBackendPlatform.registered.map(_.name)}")
         assert(nioEntries.head.priority == 10)
-        assert(nioEntries.head.isAvailable, "the nio floor must be unconditionally available")
+        assert(nioEntries.head.probe.isAvailable, "the nio floor must be unconditionally available")
+    }
+
+    "a posix backend whose bundled shim cannot load demotes to the nio floor instead of crashing" in {
+        // A posix host whose bundled kyonet_posix_uring native is absent must demote its posix backend to the nio floor rather than select it
+        // and crash at the first socket op, where the data path calls the shim's kyo_posix_set_nonblocking. PosixShimBindings' load state is
+        // cached JVM-wide, so the missing-native case cannot be induced in-process; a fresh child JVM with the bundled lib pointed at a
+        // nonexistent path drives the probe to fail there. Runs on any posix host (kqueue on macOS/BSD, epoll on Linux).
+        if !PosixConstants.isMacOrBsd && !PosixConstants.isLinux then cancel("no posix backend on this host to demote")
+        else
+            val javaBin = java.nio.file.Paths.get(sys.props("java.home"), "bin", "java").toString
+            val cp      = sys.props("java.class.path")
+            val out = scala.sys.process.Process(Seq(
+                javaBin,
+                "-Dkyo.ffi.kyonet_posix_uring.path=/nonexistent-kyo-posix-shim",
+                "-cp",
+                cp,
+                "kyo.net.internal.backend.BackendSelectionProbeMain"
+            )).!!.trim
+            assert(
+                out.linesIterator.contains("SELECTED=nio"),
+                s"expected the posix backend to demote to nio when its bundled shim is unavailable, child output:\n$out"
+            )
+        end if
     }
 
 end JvmPosixBackendSelectionTest
+
+/** Child-JVM entry point for the shim-missing degrade leaf above. Prints the selected backend so the parent can assert it fell to the nio
+  * floor. It runs in a fresh JVM (launched with the bundled `kyonet_posix_uring` pointed at a nonexistent path) because `PosixShimBindings`'
+  * load state is cached JVM-wide and cannot be re-failed in-process. It deliberately does not extend `kyo.net.Test`, so no `KYO_NET_ONLY`
+  * bridge runs here and selection walks the natural priority gradient.
+  */
+object BackendSelectionProbeMain:
+    def main(args: Array[String]): Unit =
+        import AllowUnsafe.embrace.danger
+        given Frame = Frame.internal
+        println("SELECTED=" + IoBackendPlatform.selected.name)
+    end main
+end BackendSelectionProbeMain

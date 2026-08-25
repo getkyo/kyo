@@ -7,13 +7,13 @@ name: build
 # Serial within a target: SBT_TASK_LIMIT=1 (set in env below) runs one sbt task at a time inside
 # each job, bounding peak memory to a single module's compile/link/test on the 16GB runners.
 #
-# Parallel across archs: the parent workflow (build-pr.yml / build-main.yml) calls this workflow
-# once per arch. Those calls have no `needs:` between them so the archs run as independent CI jobs.
+# Parallel across os poles: the parent workflow (ci.yml) calls this workflow once per pole.
+# Those calls have no `needs:` between them so the poles run as independent CI jobs.
 on:
   workflow_call:
     inputs:
       os:
-        description: 'Target os/arch identifier (e.g. linux-x64, linux-arm64).'
+        description: 'Target os/arch identifier (e.g. linux-x64, linux-arm64, windows-x64).'
         type: string
         required: true
       runner-image:
@@ -51,9 +51,13 @@ jobs:
 
   build:
     needs: prep
-    # JVM full runs peak at ~95-100 min (browser/UI/caliban suites serialize under a shared Chrome
-    # instance that cannot take concurrent CDP connections). 180 min gives headroom above that peak.
-    timeout-minutes: 180
+    # JVM full runs peak at ~95-100 min on Linux (browser/UI/caliban suites serialize under a
+    # shared Chrome instance that cannot take concurrent CDP connections) and run slower on the
+    # Windows pole, where runner-slot contention has pushed a full JVM run past 180 min. The binding
+    # pole is the Native aggregate build+test on the slower linux-arm64 runner: linux-x64 Native
+    # completes in ~200 min, so arm64 needs headroom well past 240 min and hit the old cap. 360 min
+    # (the GitHub-hosted job ceiling) bounds a genuine hang while giving the slowest pole real headroom.
+    timeout-minutes: 360
     strategy:
       fail-fast: false
       max-parallel: 4
@@ -76,23 +80,35 @@ jobs:
       # because .jvmopts holds no conflicting duplicates for them.
       JAVA_OPTS: "-Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
       JVM_OPTS:  "-Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
-      # Link kyo-schema-tests' native test binary in its own sbt driver before the aggregate link: its
-      # whole-program optimize runs against a fresh heap instead of a driver that has accumulated
-      # ~10 prior modules of heap and metaspace. ci-test.sh honors this only for the Native target.
-      NATIVE_HEAVY: "${{ matrix.target == 'Native' && 'kyo-schema-tests' || '' }}"
-      # Cap the Native link drivers to 2 CPUs (-XX:ActiveProcessorCount). The scala-native
-      # toolchain sizes its optimizer pool and its concurrent clang forks from
-      # availableProcessors, and the fork fleet stacked on the driver heap is what overcommits
-      # the 16GB runner (kernel OOM, exit 143). ci-test.sh applies this to the nativeLink
-      # invocations only; compile and the test run keep all 4 CPUs.
+      # No heavy-module isolation on Native: the previous heavy (kyo-schema-tests, whose whole-program
+      # optimize needed its own ~12G driver) is dropped from the Native leg via NATIVE_SKIP below, and every
+      # remaining (KEPT) native module already ran inside the heap-capped aggregate before, so none needs its
+      # own driver. Left empty so ci-test.sh runs the whole KEPT set in one aggregate session.
+      NATIVE_HEAVY: ""
+      # Drop the app/integration tier from the Native leg entirely: native link is ~90s+ per module and one
+      # link per module dominates the Native rows, while these modules' behavior is platform-shared and
+      # already covered on JVM/JS. ci-test.sh applies this as `--exclude` to every native phase (both compile
+      # phases and the run), so a skipped module is neither compiled-for-test nor linked nor run; a KEPT module
+      # that dependsOn a skipped one still compiles that dependency's main on demand, so the build never breaks.
+      # KEPT (native-specific behavior): the effect-runtime foundation, kyo-net, kyo-tasty, the schema readers
+      # (json/yaml/ion), kyo-http, kyo-test-*, stm/actor/flow, and modules with native-specific source.
+      NATIVE_SKIP: "${{ matrix.target == 'Native' && 'kyo-aeron,kyo-sql,kyo-sql-postgres,kyo-sql-mysql,kyo-sql-tests,kyo-pod,kyo-ui,kyo-browser,kyo-slack,kyo-mcp,kyo-jsonrpc,kyo-jsonrpc-http,kyo-lsp,kyo-ai,kyo-markdown,kyo-zio,kyo-zio-test,kyo-scheduler-zio,kyo-stats-otlp,kyo-reactive-streams,kyo-case-app,kyo-compat-future,kyo-compat-kyo,kyo-compat-zio,kyo-schema-tests,kyo-schema-protobuf,kyo-schema-msgpack,kyo-schema-bson,kyo-stats-registry,kyo-tasty-fixtures-internal' || '' }}"
+      # Cap the isolated heavy-module link+test driver to 2 CPUs (-XX:ActiveProcessorCount). The
+      # scala-native toolchain sizes its optimizer pool and its concurrent clang forks from
+      # availableProcessors, and that fork fleet stacked on the driver heap is what overcommits the
+      # 16GB runner (kernel OOM, exit 143). ci-test.sh applies this to the heavy --only session only;
+      # the compile phases and the aggregate run keep all 4 CPUs.
       NATIVE_LINK_CPUS: "${{ matrix.target == 'Native' && '2' || '' }}"
+      # Below 512MB free the runner is minutes from dying WITHOUT uploading its log (observed twice
+      # on Native rows). ci-monitor.sh then prints the disk attribution and TERM-kills the build,
+      # converting an unattributable runner loss into a normal red job with the evidence in the log.
+      CI_MON_DISK_ABORT_MB: "512"
 
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
         with:
           # github.sha, not github.ref: a queued job must validate the commit that triggered the
-          # run, not whatever the branch tip is when the job starts. The concurrency group in
-          # ci.yml keys main pushes on the sha for the same reason.
+          # run, not whatever the branch tip is when the job starts.
           ref: ${{ inputs.ref || github.sha }}
           fetch-depth: 0
 
@@ -104,6 +120,17 @@ jobs:
       # kyo-browser auto-downloads `chrome-headless-shell` (~120 MB) on first launch and caches it under the
       # platform's user cache dir; the setup action restores it. The action also installs Node, the native
       # libraries, and podman conditionally on the target and os, and provisions corretto:25 + sbt.
+
+      # Guards issue #1821. The `native-settings` hook drops each module's Scala Native work directory
+      # right after its test binary links, to keep the row's ~40 modules inside the runner's disk; a
+      # drop that leaves state describing the deleted IR makes the next link hand clang object paths
+      # for files nobody wrote, and the row dies an hour in on a missing .ll.o with no diagnostic. This
+      # guard reproduces the link-prune-relink cycle on kyo-data (the cheapest module with a Native test
+      # binary), so a hook regression fails fast in a couple of minutes instead of hours into the row.
+      - name: native relink guard (${{ inputs.os }})
+        if: ${{ matrix.target == 'Native' }}
+        shell: bash
+        run: ./scripts/native-relink-selftest.sh
 
       - name: ${{ inputs.mode }} ${{ matrix.target }} (${{ inputs.os }})
         shell: bash

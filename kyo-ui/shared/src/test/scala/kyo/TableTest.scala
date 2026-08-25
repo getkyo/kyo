@@ -183,4 +183,13 @@ class TableTest extends UITest:
         }
     }
 
+    "explicit tbody renders as a real row group" in {
+        withUI(UI.div(UI.table(UI.tbody(UI.tr(UI.td("B").id("tb-cell")))).id("tb-table"))) {
+            for
+                _ <- Browser.assertText(Selector.css("#tb-table tbody td"), "B")
+                _ <- Browser.assertText(Selector.id("tb-cell"), "B")
+            yield ()
+        }
+    }
+
 end TableTest

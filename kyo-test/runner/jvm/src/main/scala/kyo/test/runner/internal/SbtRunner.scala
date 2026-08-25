@@ -129,12 +129,19 @@ final private[runner] class SbtRunner(
                     checkThreads = checkThreads,
                     checkFileDescriptors = checkFileDescriptors,
                     checkSockets = checkSockets,
-                    idleBudgetNanos = 2_000_000_000L,
-                    settleNanos = 200_000_000L,
+                    // Both budgets are ceilings a fork spends only when it holds work nothing accounts for: awaitSchedulerIdle returns as
+                    // soon as the scheduler holds no unaccounted work for one settle window (load zero, or every busy worker allowlisted),
+                    // and awaitFdDrain returns immediately when its first sample is empty. A fork carrying a process-lifetime transport is
+                    // therefore not charged for it. The ceiling is sized for the slowest runner rather than the common case: 2s was tuned
+                    // on an unloaded box and is not enough on a CI runner with four contended cores, where a teardown cascade (a FIN round
+                    // trip, a pump unwind, a deferred close discharging on the io_uring reap thread) can outlast it and read as a leak that
+                    // would have drained a moment later.
+                    idleBudgetNanos = 30_000_000_000L,
+                    // Paid on every run, twice: the scheduler must stay idle this long before quiescence is believed, and the post-gc park
+                    // waits this long for Cleaner-closed channels to drop out. Kept short for that reason.
+                    settleNanos = 500_000_000L,
                     pollNanos = 10_000_000L,
-                    // Forgive an async deferred close still discharging on the io_uring reap thread after scheduler quiescence: re-sample
-                    // the fd leak set for up to 2s so a completing teardown drains out, while a genuine leak (never closes) still fails.
-                    fdDrainBudgetNanos = 2_000_000_000L
+                    fdDrainBudgetNanos = 30_000_000_000L
                 ) match
                     case kyo.Maybe.Present(report) => throw new LeakCheck.Detected(report)
                     case kyo.Maybe.Absent          => ()

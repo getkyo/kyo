@@ -14,16 +14,16 @@ final class MultiValueBindingsImpl extends MultiValueBindings:
 
     def readInto(fd: Int, buf: Buffer[Byte])(using kyo.AllowUnsafe): kyo.Fiber.Unsafe[kyo.example.golden.ReadResult, Any] =
         kyo.ffi.internal.BlockingBridge.run {
-            val __kyoScratch$ = Scratch.currentFor("kyo.example.MultiValueBindings", Scratch.configuredSize)
-            val __kyoMark$ = __kyoScratch$.mark()
+            val __kyoScratch = Scratch.currentFor("kyo.example.MultiValueBindings", Scratch.configuredSize)
+            val __kyoMark = __kyoScratch.mark()
             try
                 val bufSeg = kyo.ffi.internal.FfiUnsafe.expect[MemorySegment](buf.raw.asInstanceOf[AnyRef], classOf[MemorySegment], "MemorySegment on JVM", "kyo.example.MultiValueBindings", "readInto")
-                val __kyoMultiOut$ = __kyoScratch$.alloc(4L, 4L, "kyo.example.MultiValueBindings", "readInto")
-                val eofOut = __kyoMultiOut$.asSlice(0L, 4L)
-                val errnoSeg = __kyoScratch$.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), "kyo.example.MultiValueBindings", "readInto")
+                val __kyoMultiOut = __kyoScratch.alloc(4L, 4L, "kyo.example.MultiValueBindings", "readInto")
+                val eofOut = __kyoMultiOut.asSlice(0L, 4L)
+                val errnoSeg = __kyoScratch.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), "kyo.example.MultiValueBindings", "readInto")
                 val retVal: Int = readIntoMH.invokeExact(errnoSeg, fd, bufSeg, eofOut)
                 kyo.example.golden.ReadResult(retVal, eofOut.get(JAVA_INT, 0L) != 0)
-            finally __kyoScratch$.reset(__kyoMark$)
+            finally __kyoScratch.reset(__kyoMark)
         }
 end MultiValueBindingsImpl
 

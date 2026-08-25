@@ -70,7 +70,7 @@ class FlagTest extends AnyFreeSpec {
             // Use a rollout expression where the terminal is the expected result.
             // This works regardless of the Rollout.path state.
             // The expression has a non-matching conditional + a terminal.
-            java.lang.System.setProperty("kyo.FlagTestFlags.rolloutExpr", "50@__nonexistent_path__;10")
+            java.lang.System.setProperty("kyo.FlagTestFlags.rolloutExpr", "rollout:50@__nonexistent_path__;10")
             try {
                 val flag = FlagTestFlags.rolloutExpr
                 // The conditional won't match any realistic path, so terminal "10" is selected
@@ -82,7 +82,7 @@ class FlagTest extends AnyFreeSpec {
 
         "rollout no match uses default" in {
             // Use a path that won't match any realistic rollout path
-            java.lang.System.setProperty("kyo.FlagTestFlags.rolloutNoMatch", "50@__nonexistent_x_y_z__")
+            java.lang.System.setProperty("kyo.FlagTestFlags.rolloutNoMatch", "rollout:50@__nonexistent_x_y_z__")
             try {
                 val flag = FlagTestFlags.rolloutNoMatch
                 // No match and no terminal, so uses constructor default (7)
@@ -93,7 +93,7 @@ class FlagTest extends AnyFreeSpec {
         }
 
         "rollout error fail-fast" in {
-            java.lang.System.setProperty("kyo.FlagTestFlags.rolloutError", "50@prod/abc%")
+            java.lang.System.setProperty("kyo.FlagTestFlags.rolloutError", "rollout:50@prod/abc%")
             try {
                 val cause = interceptInitError {
                     FlagTestFlags.rolloutError
@@ -101,6 +101,29 @@ class FlagTest extends AnyFreeSpec {
                 assert(cause.getMessage.contains("rollout expression error"))
             } finally {
                 java.lang.System.clearProperty("kyo.FlagTestFlags.rolloutError"): Unit
+            }
+        }
+
+        "plain value containing semicolons resolves verbatim (never rollout-interpreted)" in {
+            // A Windows-style path list: without the explicit rollout marker the whole value is the
+            // flag's value, so the semicolons never split it into rollout choices.
+            val pathList = "C:\\a\\scala3-library.jar;C:\\b\\scala-library.jar"
+            java.lang.System.setProperty("kyo.FlagTestFlags.plainSemicolons", pathList)
+            try {
+                val flag = FlagTestFlags.plainSemicolons
+                assert(flag.value == pathList)
+            } finally {
+                java.lang.System.clearProperty("kyo.FlagTestFlags.plainSemicolons"): Unit
+            }
+        }
+
+        "plain value containing @ resolves verbatim (never rollout-interpreted)" in {
+            java.lang.System.setProperty("kyo.FlagTestFlags.plainAt", "user@example.com")
+            try {
+                val flag = FlagTestFlags.plainAt
+                assert(flag.value == "user@example.com")
+            } finally {
+                java.lang.System.clearProperty("kyo.FlagTestFlags.plainAt"): Unit
             }
         }
 
@@ -211,6 +234,9 @@ object FlagTestFlags {
     object rolloutExpr    extends StaticFlag[Int](0)
     object rolloutNoMatch extends StaticFlag[Int](7)
     object rolloutError   extends StaticFlag[Int](0)
+
+    object plainSemicolons extends StaticFlag[String]("")
+    object plainAt         extends StaticFlag[String]("")
 
     object applyTest extends StaticFlag[String]("test")
 

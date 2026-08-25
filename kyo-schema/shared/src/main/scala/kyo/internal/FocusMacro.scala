@@ -279,7 +279,9 @@ import scala.quoted.*
         val sym      = tpe.typeSymbol
         val expanded = ExpandMacro.expandType(TypeRepr.of[A])
 
-        val isCaseClass   = sym.isClassDef && sym.flags.is(Flags.Case)
+        rejectAbstractCaseClass(tpe, sym)
+
+        val isCaseClass   = isConstructibleCaseClass(sym)
         val isSealedTrait = sym.flags.is(Flags.Sealed)
 
         expanded.asType match
@@ -1241,6 +1243,12 @@ import scala.quoted.*
       * pattern-matches on container or primitive type symbols; recursive cycles are handled by the
       * by-name `Structure.Field` thunk plus the `lazy val structure` cycle break on the generated
       * Schema's `structure` member.
+      *
+      * The product test comes FIRST, before the sealed test. `sealed` and `case` are independent
+      * flags: `sealed` restricts where subclasses may be declared and does not change a type's shape,
+      * so a `sealed case class` is a product with a public constructor and derives exactly as the same
+      * class without `sealed`. Testing `Flags.Sealed` first sent every such class down the sum path,
+      * where its empty `children` list aborted derivation and reported the class as a sealed trait.
       */
     def derivedImpl[A: Type](using Quotes): Expr[Schema[A]] =
         import quotes.reflect.*
@@ -1248,15 +1256,17 @@ import scala.quoted.*
         val tpe = TypeRepr.of[A].dealias
         val sym = tpe.typeSymbol
 
-        if sym.isClassDef && sym.flags.is(Flags.Sealed) then
-            emitSealedSchemaStatic[A](tpe, sym, sourceFields = '{ Seq.empty[kyo.Field[?, ?]] }, focusedType = tpe)
-        else if sym.isClassDef && sym.flags.is(Flags.Case) then
+        rejectAbstractCaseClass(tpe, sym)
+
+        if isConstructibleCaseClass(sym) then
             rejectPrivateCaseFields(tpe, sym)
             rejectSumOnlyAnnotations(tpe, sym)
             val sourceFieldsExpr: Expr[Seq[kyo.Field[?, ?]]] = Expr.summon[kyo.Fields[A]] match
                 case Some(fieldsExpr) => '{ $fieldsExpr.fields }
                 case None             => '{ Seq.empty[kyo.Field[?, ?]] }
             emitProductSchemaStatic[A](tpe, sym, sourceFields = sourceFieldsExpr, focusedType = tpe)
+        else if sym.isClassDef && sym.flags.is(Flags.Sealed) then
+            emitSealedSchemaStatic[A](tpe, sym, sourceFields = '{ Seq.empty[kyo.Field[?, ?]] }, focusedType = tpe)
         else if isOrType(tpe) then
             // Reject sum-representation annotations placed on a union type alias.
             rejectSumOnlyAnnotations(TypeRepr.of[A], TypeRepr.of[A].typeSymbol)
@@ -1268,6 +1278,91 @@ import scala.quoted.*
             )
         end if
     end derivedImpl
+
+    /** Derives `Schema[A]` whose encode side is the plain product emission and whose decode side runs
+      * the decoded fields through `construct`, a smart constructor.
+      *
+      * The wire shape comes from `A`'s case fields, so a type derived this way encodes and decodes
+      * exactly like the same fields on a plain case class; the only difference is the last step of the
+      * read body, where [[emitProductSchemaStatic]]'s primary-constructor call is replaced by a call
+      * to `construct` folded through `Constructed` (see the `constructVia` hook). That is what makes
+      * the idiom reachable at all for a `sealed abstract case class`, whose suppressed `apply` leaves
+      * no constructor to call, and what keeps a validating constructor's invariant on the decode path
+      * for any other type: a rejection becomes a `ConstructorRejectedException` decode failure rather
+      * than a bypassed check.
+      *
+      * `construct`'s parameters must match the case fields one for one, in declaration order. The
+      * types are checked here rather than at the call site because the overloads in `Schema.derivedVia`
+      * infer their parameter types from the supplied function, not from `A`.
+      */
+    def derivedViaImpl[A: Type, R: Type](using
+        Quotes
+    )(
+        construct: Expr[Any],
+        constructed: Expr[Schema.Constructed[R, A]]
+    ): Expr[Schema[A]] =
+        import quotes.reflect.*
+
+        val tpe = TypeRepr.of[A].dealias
+        val sym = tpe.typeSymbol
+
+        if !sym.isClassDef || !sym.flags.is(Flags.Case) then
+            report.errorAndAbort(
+                s"Cannot derive Schema for ${tpe.show} via a constructor: the type is not a case class. " +
+                    "Schema.derivedVia reads the wire shape from the case fields, so it needs one. " +
+                    "Provide a given Schema built with Schema.init for a type with no case fields."
+            )
+        end if
+        rejectPrivateCaseFields(tpe, sym)
+        rejectSumOnlyAnnotations(tpe, sym)
+
+        val fields     = sym.caseFields
+        val fieldTypes = fields.map(f => tpe.memberType(f))
+        val fnTerm     = construct.asTerm
+        val paramTypes = fnTerm.tpe.widen.dealias match
+            case AppliedType(tycon, args) if tycon.typeSymbol.fullName.startsWith("scala.Function") => args.init
+            case other =>
+                report.errorAndAbort(
+                    s"Schema.derivedVia expects a function over ${tpe.show}'s case fields; got ${other.show}."
+                )
+        end paramTypes
+
+        def signature = fields.zip(fieldTypes).map((f, ft) => s"${f.name}: ${ft.show}").mkString(", ")
+
+        if paramTypes.length != fields.length then
+            report.errorAndAbort(
+                s"Schema.derivedVia for ${tpe.show} expects a constructor of ${fields.length} argument(s), " +
+                    s"one per case field ($signature); the supplied function takes ${paramTypes.length}."
+            )
+        end if
+
+        fields.zip(fieldTypes).zip(paramTypes).zipWithIndex.foreach { case (((field, fieldType), paramType), idx) =>
+            if !(fieldType <:< paramType) then
+                report.errorAndAbort(
+                    s"Schema.derivedVia for ${tpe.show}: case field '${field.name}' of type ${fieldType.show} cannot be " +
+                        s"passed to constructor argument ${idx + 1} of type ${paramType.show}. " +
+                        s"The constructor's arguments must match the case fields in declaration order ($signature)."
+                )
+        }
+
+        val typeNameExpr = Expr(sym.name)
+        val sourceFieldsExpr: Expr[Seq[kyo.Field[?, ?]]] = Expr.summon[kyo.Fields[A]] match
+            case Some(fieldsExpr) => '{ $fieldsExpr.fields }
+            case None             => '{ Seq.empty[kyo.Field[?, ?]] }
+
+        emitProductSchemaStatic[A](
+            tpe,
+            sym,
+            sourceFields = sourceFieldsExpr,
+            focusedType = tpe,
+            constructVia = Some { (args, reader) =>
+                val applied = Apply(Select.unique(fnTerm, "apply"), args).asExprOf[R]
+                '{
+                    kyo.internal.constructedOrThrow[A]($constructed.asResult($applied), $typeNameExpr)(using $reader.frame)
+                }.asTerm
+            }
+        )
+    end derivedViaImpl
 
     /** True iff `tpe` is a Scala type union (`A | B`). */
     private def isOrType(using Quotes)(tpe: quotes.reflect.TypeRepr): Boolean =
@@ -1357,10 +1452,9 @@ import scala.quoted.*
                 val mName    = Expr(memberNames(idx))
                 val mFieldId = Expr(kyo.internal.CodecMacro.fieldId(memberNames(idx)))
                 val arm = '{
-                    $w.objectStart($mName, 1)
-                    $w.fieldBytes(${ Ref(nameByteSyms(idx)).asExprOf[Array[Byte]] }, $mFieldId)
+                    $w.variantStart($mName, $mName, ${ Ref(nameByteSyms(idx)).asExprOf[Array[Byte]] }, $mFieldId)
                     ${ Ref(variantSyms(idx)).asExprOf[Schema[Any]] }.serializeWrite($v, $w)
-                    $w.objectEnd()
+                    $w.variantEnd()
                 }.asTerm
                 If(cond, arm, elseTerm)
             }
@@ -1453,6 +1547,43 @@ import scala.quoted.*
         Block(nameBytesValDefs ++ (selfDef :: variantDefs), selfRef).asExprOf[Schema[A]]
     end emitUnionSchemaStatic
 
+    /** True iff `sym` is a case class whose primary constructor the generated decoder can call.
+      *
+      * `case` and `sealed` are independent: `sealed` restricts where subclasses may be declared and
+      * leaves the shape a product, so a `sealed case class` qualifies. `abstract` does change the
+      * shape: it suppresses `apply`/`copy` synthesis and leaves no constructor the emitted read body
+      * can invoke, so an abstract case class does not qualify and is reported by
+      * [[rejectAbstractCaseClass]].
+      */
+    private[internal] def isConstructibleCaseClass(using Quotes)(sym: quotes.reflect.Symbol): Boolean =
+        import quotes.reflect.*
+        sym.isClassDef && sym.flags.is(Flags.Case) && !sym.flags.is(Flags.Abstract)
+    end isConstructibleCaseClass
+
+    /** Rejects an abstract case class, naming the missing constructor rather than the type's shape.
+      *
+      * `sealed abstract case class R private (v: Int)` is the validating-smart-constructor idiom:
+      * `abstract` deliberately suppresses `apply` and `copy` so the only way to a value is the
+      * companion's constructor. Derived code can reach the fields for encoding but has no route to
+      * construct one, which is a different obstacle from the type having the wrong shape.
+      * `Schema.derivedVia`, which takes that constructor, is the entry point for the idiom.
+      */
+    private[internal] def rejectAbstractCaseClass(using
+        Quotes
+    )(
+        tpe: quotes.reflect.TypeRepr,
+        sym: quotes.reflect.Symbol
+    ): Unit =
+        import quotes.reflect.*
+        if sym.isClassDef && sym.flags.is(Flags.Case) && sym.flags.is(Flags.Abstract) then
+            report.errorAndAbort(
+                s"Cannot derive Schema for ${tpe.show}: no accessible constructor (abstract case class). " +
+                    "An abstract case class synthesizes no apply, so derived code cannot construct one. " +
+                    "Derive through its smart constructor with Schema.derivedVia(make), or provide a given Schema explicitly."
+            )
+        end if
+    end rejectAbstractCaseClass
+
     /** Rejects case classes with private case-fields (would otherwise leak storage names on the wire). */
     private def rejectPrivateCaseFields(using
         Quotes
@@ -1496,7 +1627,8 @@ import scala.quoted.*
         sym: quotes.reflect.Symbol,
         sourceFields: Expr[Seq[kyo.Field[?, ?]]],
         focusedType: quotes.reflect.TypeRepr,
-        parentSelf: Option[(quotes.reflect.TypeRepr, quotes.reflect.Term)] = None
+        parentSelf: Option[(quotes.reflect.TypeRepr, quotes.reflect.Term)] = None,
+        constructVia: Option[(List[quotes.reflect.Term], Expr[Reader]) => quotes.reflect.Term] = None
     ): Expr[Schema[A]] =
         import quotes.reflect.*
 
@@ -1791,13 +1923,19 @@ import scala.quoted.*
             tpe.asType match
                 case '[a] =>
                     val ctorArgs: List[Term] = localSyms.map(Ref(_))
-                    val ctor: Term           = Select(New(TypeTree.of[a]), sym.primaryConstructor)
-                    val typeArgsList = tpe match
-                        case AppliedType(_, targs) => targs
-                        case _                     => List.empty
-                    val construct: Term =
-                        if typeArgsList.isEmpty then Apply(ctor, ctorArgs)
-                        else TypeApply(ctor, typeArgsList.map(t => Inferred(t))).appliedToArgs(ctorArgs)
+                    // `constructVia` replaces the primary-constructor call with a caller-supplied
+                    // build step over the same decoded field locals, which is what Schema.derivedVia
+                    // routes decoding through a smart constructor with. Everything before this point
+                    // (field decoding, defaults, the required-field bitmap) is shared verbatim.
+                    val construct: Term = constructVia match
+                        case Some(build) => build(ctorArgs, r)
+                        case None =>
+                            val ctor: Term = Select(New(TypeTree.of[a]), sym.primaryConstructor)
+                            val typeArgsList = tpe match
+                                case AppliedType(_, targs) => targs
+                                case _                     => List.empty
+                            if typeArgsList.isEmpty then Apply(ctor, ctorArgs)
+                            else TypeApply(ctor, typeArgsList.map(t => Inferred(t))).appliedToArgs(ctorArgs)
 
                     val resultSym = Symbol.newVal(owner, "_result", tpe, Flags.EmptyFlags, Symbol.noSymbol)
                     val resultDef = ValDef(resultSym, Some(construct))
@@ -1940,10 +2078,14 @@ import scala.quoted.*
         val childName       = child.name.stripSuffix("$")
         val isSingletonCase = !child.isType || child.flags.is(Flags.Module)
 
-        // Sealed-trait child (an intermediate sealed trait in a multi-level hierarchy): derive its
-        // own Schema[T], which routes back through the static sealed emitter, so the parent sum
-        // delegates to it instead of mis-treating it as a zero-field product.
-        if childSym.flags.is(Flags.Sealed) && childSym.flags.is(Flags.Trait) && !child.flags.is(Flags.Module) then
+        // Sealed intermediate child in a multi-level hierarchy: derive its own Schema[T], which routes
+        // back through the static sealed emitter, so the parent sum delegates to it instead of
+        // mis-treating it as a zero-field product. The child qualifies when it is itself a sealed
+        // parent, whether written as a trait or as an abstract class; a `sealed case class` child is
+        // constructible and takes the product path below.
+        if childSym.flags.is(Flags.Sealed) && !child.flags.is(Flags.Module) && !isConstructibleCaseClass(childSym) &&
+            (childSym.flags.is(Flags.Trait) || childSym.flags.is(Flags.Abstract))
+        then
             '{ kyo.Schema.derived[T] }
         else if isSingletonCase && childSym.caseFields.isEmpty then
             // Case object variant: serialize as empty object
@@ -2071,10 +2213,14 @@ import scala.quoted.*
             ) { (idx, elseTerm) =>
                 val cond = variantCheck(idx, v).asTerm
                 val arm = '{
-                    $w.objectStart(${ Expr(typeName) }, 1)
-                    $w.fieldBytes(${ Ref(nameByteSyms(idx)).asExprOf[Array[Byte]] }, ${ Expr(CodecMacro.fieldId(childNames(idx))) })
+                    $w.variantStart(
+                        ${ Expr(typeName) },
+                        ${ Expr(childNames(idx)) },
+                        ${ Ref(nameByteSyms(idx)).asExprOf[Array[Byte]] },
+                        ${ Expr(CodecMacro.fieldId(childNames(idx))) }
+                    )
                     ${ Ref(variantSyms(idx)).asExprOf[Schema[Any]] }.serializeWrite($v, $w)
-                    $w.objectEnd()
+                    $w.variantEnd()
                 }.asTerm
                 If(cond, arm, elseTerm)
             }

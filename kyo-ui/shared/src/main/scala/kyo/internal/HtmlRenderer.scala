@@ -213,10 +213,10 @@ private[kyo] object HtmlRenderer:
 
     private def renderTextareaValue(sb: StringBuilder, ta: Textarea)(using Frame): Unit < Sync =
         ta.value match
-            case Present(Bound.Const(s)) => w(sb, esc(s))
+            case Present(Bound.Const(s)) => w(sb, esc(masked(ta.inputMask, s)))
             case Present(Bound.Ref(ref)) =>
                 for str <- ref.get
-                yield w(sb, esc(str))
+                yield w(sb, esc(masked(ta.inputMask, str)))
             case _ => ()
 
     // ---- Dropdown (custom div-based overlay) ----
@@ -308,6 +308,7 @@ private[kyo] object HtmlRenderer:
         case _: Ul             => "ul"
         case _: Ol             => "ol"
         case _: Table          => "table"
+        case _: Tbody          => "tbody"
         case _: H1             => "h1"
         case _: H2             => "h2"
         case _: H3             => "h3"
@@ -388,6 +389,13 @@ private[kyo] object HtmlRenderer:
         attrs.tabIndex.foreach(n => w(sb, s""" tabindex="$n""""))
         attrs.focusTrap.foreach(v => if v then w(sb, """ data-kyo-focus-trap="1""""))
         attrs.focusGroup.foreach(id => w(sb, s""" data-kyo-focus-group="${esc(id)}""""))
+        attrs.focusAuto.foreach(v => if v then w(sb, """ data-kyo-focus-auto="1""""))
+        attrs.focusRestore.foreach(v => if v then w(sb, """ data-kyo-focus-restore="1""""))
+        // Marker only: stop-propagation is decided server-side in ReactiveUI.dispatchToElement; the client never reads this.
+        attrs.stopPropagation.foreach(v => if v then w(sb, """ data-kyo-stop="1""""))
+        // enter/leave transition class lists (read client-side by the patch-application code).
+        attrs.enterTransition.foreach(c => w(sb, s""" data-kyo-enter="${esc(c)}""""))
+        attrs.leaveTransition.foreach(c => w(sb, s""" data-kyo-leave="${esc(c)}""""))
         // A generated pseudoClass already carries the base props in its own rule (see
         // registerPseudoClass); rendering them inline too would shadow the pseudo-state override.
         if pseudoClass.isEmpty then
@@ -407,7 +415,20 @@ private[kyo] object HtmlRenderer:
 
     // ---- Element-specific attributes ----
 
+    /** The typing constraints, read client-side by the `beforeinput` capture listener.
+      *
+      * Only [[kyo.UI.Ast.ConstrainedInput]] carries these, so they are emitted here rather than with the universal
+      * attributes: a `div` or a chart datum has no use for them.
+      */
+    private def renderInputConstraints(sb: StringBuilder, ci: ConstrainedInput): Unit =
+        ci.inputFilter.foreach(f => w(sb, s""" data-kyo-filter="${esc(InputMasking.filterWire(f))}""""))
+        ci.inputMask.foreach(m => w(sb, s""" data-kyo-mask="${esc(m)}""""))
+    end renderInputConstraints
+
     private def renderElementAttrs(sb: StringBuilder, elem: Element)(using Frame): Unit < Sync =
+        elem match
+            case ci: ConstrainedInput => renderInputConstraints(sb, ci)
+            case _                    => ()
         elem match
             case b: Button =>
                 w(sb, " type=\"submit\"")
@@ -424,42 +445,42 @@ private[kyo] object HtmlRenderer:
                 }
             case i: Input =>
                 w(sb, " type=\"text\"");
-                renderValueAttr(sb, i.value)
+                renderValueAttr(sb, i.value, i.inputMask)
                     .andThen {
                         boolAttr(sb, "disabled", i.disabled); boolAttr(sb, "readonly", i.readOnly);
                         i.placeholder.foreach(p => w(sb, s""" placeholder="${esc(p)}""""))
                     }
             case p: PasswordInput =>
                 w(sb, " type=\"password\"");
-                renderValueAttr(sb, p.value)
+                renderValueAttr(sb, p.value, p.inputMask)
                     .andThen {
                         boolAttr(sb, "disabled", p.disabled); boolAttr(sb, "readonly", p.readOnly);
                         p.placeholder.foreach(p2 => w(sb, s""" placeholder="${esc(p2)}""""))
                     }
             case e: EmailInput =>
                 w(sb, " type=\"email\"");
-                renderValueAttr(sb, e.value)
+                renderValueAttr(sb, e.value, e.inputMask)
                     .andThen {
                         boolAttr(sb, "disabled", e.disabled); boolAttr(sb, "readonly", e.readOnly);
                         e.placeholder.foreach(p => w(sb, s""" placeholder="${esc(p)}""""))
                     }
             case t: TelInput =>
                 w(sb, " type=\"tel\"");
-                renderValueAttr(sb, t.value)
+                renderValueAttr(sb, t.value, t.inputMask)
                     .andThen {
                         boolAttr(sb, "disabled", t.disabled); boolAttr(sb, "readonly", t.readOnly);
                         t.placeholder.foreach(p => w(sb, s""" placeholder="${esc(p)}""""))
                     }
             case u: UrlInput =>
                 w(sb, " type=\"url\"");
-                renderValueAttr(sb, u.value)
+                renderValueAttr(sb, u.value, u.inputMask)
                     .andThen {
                         boolAttr(sb, "disabled", u.disabled); boolAttr(sb, "readonly", u.readOnly);
                         u.placeholder.foreach(p => w(sb, s""" placeholder="${esc(p)}""""))
                     }
             case s: SearchInput =>
                 w(sb, " type=\"search\"");
-                renderValueAttr(sb, s.value)
+                renderValueAttr(sb, s.value, s.inputMask)
                     .andThen {
                         boolAttr(sb, "disabled", s.disabled); boolAttr(sb, "readonly", s.readOnly);
                         s.placeholder.foreach(p => w(sb, s""" placeholder="${esc(p)}""""))
@@ -576,6 +597,8 @@ private[kyo] object HtmlRenderer:
                 lbl.forId.foreach(f => w(sb, s""" for="${esc(f)}""""))
             case e: Svg.SvgElement => renderSvgAttrs(sb, e)
             case _                 => ()
+        end match
+    end renderElementAttrs
 
     private def boolAttr(sb: StringBuilder, name: String, value: Maybe[Boolean]): Unit =
         value.foreach(v => if v then w(sb, s" $name"))
@@ -589,12 +612,28 @@ private[kyo] object HtmlRenderer:
             case _ => ()
 
     /** Render a value attribute, reading SignalRef if needed. */
-    private def renderValueAttr(sb: StringBuilder, value: Maybe[Bound[String]])(using Frame): Unit < Sync =
+    /** Formats a value about to be displayed through the element's mask, if it carries one.
+      *
+      * A mask is a display format, so a masked field has to show a masked value whoever set it. Client-side
+      * enforcement only ever sees typing: a value bound to a [[SignalRef]], a server-side transform of what was
+      * typed, and the initial render all reach the field without a `beforeinput` event. Formatting here covers
+      * every one of them at once, in both transports and on both the morph and the replace path, which no amount
+      * of client-side patching would.
+      *
+      * A value the mask already formatted comes back unchanged, so the keystroke echo of a two-way binding still
+      * compares equal and leaves the caret where it is.
+      */
+    private def masked(mask: Maybe[String], value: String): String =
+        mask.fold(value)(InputMasking.maskNormalize(_, value))
+
+    private def renderValueAttr(sb: StringBuilder, value: Maybe[Bound[String]], mask: Maybe[String] = Absent)(using
+        Frame
+    ): Unit < Sync =
         value match
-            case Present(Bound.Const(s)) => w(sb, s""" value="${esc(s)}"""")
+            case Present(Bound.Const(s)) => w(sb, s""" value="${esc(masked(mask, s))}"""")
             case Present(Bound.Ref(ref)) =>
                 for s <- ref.get
-                yield w(sb, s""" value="${esc(s)}"""")
+                yield w(sb, s""" value="${esc(masked(mask, s))}"""")
             case _ => ()
 
     private def renderPickerAttrs(sb: StringBuilder, pi: PickerInput)(using Frame): Unit < Sync =
@@ -690,7 +729,7 @@ private[kyo] object HtmlRenderer:
     // U+2028 -> U+2028  (LINE SEPARATOR, JS line terminator)
     // U+2029 -> U+2029  (PARAGRAPH SEPARATOR, JS line terminator)
     //  </  -> <\/  (prevents </script> from closing the element; < alone is harmless in JS)
-    private def jsStr(s: String): String =
+    private[kyo] def jsStr(s: String): String =
         val sb = new StringBuilder(s.length)
         @scala.annotation.tailrec
         def loop(i: Int): Unit =
@@ -729,10 +768,60 @@ private[kyo] object HtmlRenderer:
 
     // ---- Client JS ----
 
+    /** The pure half of the client-side input filter and mask: the JavaScript mirror of [[InputMasking]].
+      *
+      * Kept out of [[clientJs]] as a named fragment for two reasons. It is the part that has an exact Scala
+      * counterpart, so having it standalone lets `InputMaskingJsParityTest` load it into a page and drive the same
+      * case table through both implementations, which is what keeps the two from drifting. And unlike [[clientJs]]
+      * this is not an interpolated string, so a backslash written here is the backslash the browser sees; inlined,
+      * the mask parser's escape had to be doubled, and getting that wrong produced an unterminated JavaScript
+      * literal that took down the whole client script.
+      *
+      * Only DOM-free functions belong here. Everything that touches an element stays in [[clientJs]].
+      */
+    private[kyo] val inputMaskJs: String =
+        """// Mirrors kyo.internal.InputMasking.filterStr: keep the two in step.
+          |// An unrecognized wire value admits everything, so a page cached from an older build stays usable.
+          |function kyoFilterStr(pat,str,cur){
+          |  var isChars=pat.indexOf("chars:")===0;var allowed=isChars?pat.slice(6):"";
+          |  if(!isChars&&pat!=="digits"&&pat!=="decimal")return str;
+          |  var out="";var hasSep=(pat==="decimal")&&(cur.indexOf(".")>=0||cur.indexOf(",")>=0);
+          |  for(var i=0;i<str.length;i++){var ch=str.charAt(i);
+          |    if(isChars){if(allowed.indexOf(ch)>=0)out+=ch;}
+          |    else if(pat==="digits"){if(ch>="0"&&ch<="9")out+=ch;}
+          |    else if(ch>="0"&&ch<="9")out+=ch;
+          |    else if((ch==="."||ch===",")&&!hasSep){out+=ch;hasSep=true;}}
+          |  return out;
+          |}
+          |// Mirrors kyo.internal.InputMasking.parseMask: the mask is parsed once into positions, {k:class} or
+          |// {l:literal}, so the backslash escape is handled in one place rather than in every function.
+          |function kyoMaskParse(mask){var ts=[];for(var i=0;i<mask.length;){var c=mask.charAt(i);
+          |  if(c==="\\"&&i+1<mask.length){ts.push({l:mask.charAt(i+1)});i+=2;}
+          |  else{if(c==="9"||c==="a"||c==="*")ts.push({k:c});else ts.push({l:c});i++;}}
+          |  return ts;}
+          |function kyoMaskClassAt(ts,idx){var c=0;for(var i=0;i<ts.length;i++){if(ts[i].k!==undefined){if(c===idx)return ts[i].k;c++;}}return null;}
+          |function kyoMaskOk(cls,ch){if(cls==="9")return ch>="0"&&ch<="9";if(cls==="a")return (ch>="a"&&ch<="z")||(ch>="A"&&ch<="Z");return (ch>="0"&&ch<="9")||(ch>="a"&&ch<="z")||(ch>="A"&&ch<="Z");}
+          |function kyoMaskFormat(ts,raw){var out="";var ri=0;for(var i=0;i<ts.length;i++){
+          |  if(ts[i].k!==undefined){if(ri<raw.length){out+=raw.charAt(ri);ri++;}else break;}
+          |  else{if(ri<raw.length)out+=ts[i].l;else break;}}
+          |  return out;}
+          |function kyoMaskRaw(ts,val){var raw="";var vi=0;for(var i=0;i<ts.length&&vi<val.length;i++){
+          |  if(ts[i].k!==undefined){raw+=val.charAt(vi);vi++;}
+          |  else{if(val.charAt(vi)===ts[i].l)vi++;else{raw+=val.charAt(vi);vi++;}}}
+          |  return raw;}
+          |// Mirrors kyo.internal.InputMasking.maskNormalize.
+          |function kyoMaskNormalize(mask,val){var ts=kyoMaskParse(mask);return kyoMaskFormat(ts,kyoMaskRaw(ts,val));}""".stripMargin
+
     private def clientJs(basePath: String): String =
         s"""(function(){
            |var base="$basePath";
            |var __q=[];
+           |// Mirrors DomBackend.setSelection: the one place that knows the two ways a caret move can be a no-op.
+           |// Elements outside input and textarea (select, contenteditable) have no setSelectionRange at all, and
+           |// on input types without a text selection (email, number) it throws InvalidStateError; in both cases
+           |// the value is set and only the caret stays put. Every other exception is a real failure and propagates.
+           |function kyoSetCaret(t,s,e){if(typeof t.setSelectionRange!=="function")return;
+           |  try{t.setSelectionRange(s,e);}catch(er){if(er.name!=="InvalidStateError")throw er;}}
            |var ws=new WebSocket((location.protocol===\"https:\"?\"wss:\":\"ws:\")+"//"+location.host+base+"/_kyo/ws");
            |ws.onopen=function(){__q.forEach(function(m){ws.send(m);});__q=[];};
            |ws.onmessage=function(e){
@@ -771,14 +860,24 @@ private[kyo] object HtmlRenderer:
            |      var ap=ae&&ae!==document.body&&ae.getAttribute?ae.getAttribute("data-kyo-path"):null;
            |      var ss=(ae&&typeof ae.selectionStart==='number')?ae.selectionStart:null;
            |      var se=(ae&&typeof ae.selectionEnd==='number')?ae.selectionEnd:null;
+           |      var __en=faEnterPaths(el);
+           |      var __gh=kyoLeavePrepare(el,kyoLeaveSurv(op.Replace.html));
+           |      var __fa=focusAutoPaths(el);
            |      el.outerHTML=op.Replace.html;
            |      var nel=document.querySelector('[data-kyo-path="'+p+'"]');if(nel){applyJsProps(nel);ba(nel);}
-           |      if(ap){var rf=document.querySelector('[data-kyo-path="'+ap+'"]');if(rf&&rf.hasAttribute&&rf.hasAttribute('data-kyo-reactive')){var inner=rf.querySelector('input,textarea,select,[contenteditable]');if(inner)rf=inner;}if(rf){rf.focus();if(ss!==null&&typeof rf.setSelectionRange==='function'){try{rf.setSelectionRange(ss,se);}catch(e){if(e.name!=='InvalidStateError')throw e;}}}}
+           |      if(ap){var rf=document.querySelector('[data-kyo-path="'+ap+'"]');if(rf&&rf.hasAttribute&&rf.hasAttribute('data-kyo-reactive')){var inner=rf.querySelector('input,textarea,select,[contenteditable]');if(inner)rf=inner;}if(rf){rf.focus();if(ss!==null)kyoSetCaret(rf,ss,se);}}
+           |      // Seed AFTER focus/caret restore so a newly-appeared focus-auto element wins restore-to-trigger (the morph path never seeds).
+           |      if(nel){kyoEnterSeed(nel,__en);seedFocusAuto(nel,__fa);}
+           |      kyoSpawnGhosts(__gh);
            |    }
+           |    sweepFocusAuto();
            |  }else if(op.Remove){
            |    var p=op.Remove.path.join(".");
            |    var el=document.querySelector('[data-kyo-path="'+p+'"]');
+           |    var __rgh=el?kyoLeavePrepare(el,{}):[];
            |    if(el)el.remove();
+           |    kyoSpawnGhosts(__rgh);
+           |    sweepFocusAuto();
            |  }else if(op.InjectCss){
            |    var s=document.createElement("style");
            |    s.textContent=op.InjectCss.css;
@@ -854,7 +953,132 @@ private[kyo] object HtmlRenderer:
            |  if(!an.length)return;
            |  requestAnimationFrame(function(){for(var i=0;i<an.length;i++){try{an[i].beginElement();}catch(e){}}});
            |}
+           |// ---- enter/leave transition helpers (client-local; nothing crosses the wire) ----
+           |// Set of data-kyo-enter paths under root (root included): the enter elements present BEFORE a patch.
+           |function faEnterPaths(root){
+           |  var s={};if(!root)return s;
+           |  if(root.hasAttribute&&root.hasAttribute("data-kyo-enter")){var rp=root.getAttribute("data-kyo-path");if(rp!==null)s[rp]=true;}
+           |  var els=root.querySelectorAll?root.querySelectorAll("[data-kyo-enter]"):[];
+           |  for(var i=0;i<els.length;i++){var ep=els[i].getAttribute("data-kyo-path");if(ep!==null)s[ep]=true;}
+           |  return s;
+           |}
+           |// For each data-kyo-enter element under newRoot (root included) whose path is NOT in oldSet (newly appeared):
+           |// add its enter classes, force a reflow (offsetWidth), then remove them next frame so the CSS transition runs.
+           |function kyoEnterSeed(newRoot,oldSet){
+           |  if(!newRoot)return;
+           |  var cand=[];
+           |  if(newRoot.hasAttribute&&newRoot.hasAttribute("data-kyo-enter"))cand.push(newRoot);
+           |  var els=newRoot.querySelectorAll?newRoot.querySelectorAll("[data-kyo-enter]"):[];
+           |  for(var i=0;i<els.length;i++)cand.push(els[i]);
+           |  for(var j=0;j<cand.length;j++){
+           |    var el=cand[j];var pth=el.getAttribute("data-kyo-path");
+           |    if(pth===null||oldSet[pth])continue;
+           |    var cls=el.getAttribute("data-kyo-enter").split(/\\s+/);
+           |    for(var k=0;k<cls.length;k++){if(cls[k])el.classList.add(cls[k]);}
+           |    void el.offsetWidth;
+           |    (function(e2,cs){requestAnimationFrame(function(){for(var m=0;m<cs.length;m++){if(cs[m])e2.classList.remove(cs[m]);}});})(el,cls);
+           |  }
+           |}
+           |// Set of paths of data-kyo-LEAVE elements in an HTML fragment (which leave-elements SURVIVE a Replace).
+           |// Keyed on leave-carrying elements, NOT all data-kyo-path: a reactive wrapper span shares its path with
+           |// the (leaving) element it wraps, so an all-path set would wrongly report the element as surviving.
+           |function kyoLeaveSurv(html){
+           |  var s={};var t=document.createElement("template");t.innerHTML=html;
+           |  var els=t.content.querySelectorAll("[data-kyo-leave]");
+           |  for(var i=0;i<els.length;i++){var pp=els[i].getAttribute("data-kyo-path");if(pp!==null)s[pp]=true;}
+           |  return s;
+           |}
+           |// Strip data-kyo-* and id from a subtree so a ghost clone is inert (no data-kyo-path/focus-auto selector collisions).
+           |function kyoStrip(el){
+           |  var all=[el];if(el.querySelectorAll){var ds=el.querySelectorAll("*");for(var i=0;i<ds.length;i++)all.push(ds[i]);}
+           |  for(var j=0;j<all.length;j++){var e2=all[j];if(!e2.getAttributeNames)continue;var ns=e2.getAttributeNames();
+           |    for(var k=0;k<ns.length;k++){if(ns[k].indexOf("data-kyo-")===0||ns[k]==="id")e2.removeAttribute(ns[k]);}}
+           |}
+           |// Prepare leave ghosts for the OUTERMOST data-kyo-leave elements under root being removed (path not in survSet).
+           |// Captures rect+clone WHILE the node is still in the DOM (getBoundingClientRect on a detached node is zero).
+           |function kyoLeavePrepare(root,survSet){
+           |  if(!root)return [];
+           |  var cand=[];
+           |  if(root.getAttribute&&root.getAttribute("data-kyo-leave")!==null)cand.push(root);
+           |  var els=root.querySelectorAll?root.querySelectorAll("[data-kyo-leave]"):[];
+           |  for(var i=0;i<els.length;i++)cand.push(els[i]);
+           |  var removed=[];
+           |  for(var j=0;j<cand.length;j++){var pp=cand[j].getAttribute("data-kyo-path");if(pp===null||!survSet[pp])removed.push(cand[j]);}
+           |  var out=[];
+           |  for(var k=0;k<removed.length;k++){var inside=false;
+           |    for(var m=0;m<removed.length;m++){if(m!==k&&removed[m].contains(removed[k])){inside=true;break;}}
+           |    if(!inside)out.push(removed[k]);}
+           |  var ghosts=[];
+           |  for(var n=0;n<out.length;n++){
+           |    var node=out[n];var rect=node.getBoundingClientRect();var leave=node.getAttribute("data-kyo-leave");
+           |    var g=node.cloneNode(true);kyoStrip(g);
+           |    g.style.position="fixed";g.style.left=rect.left+"px";g.style.top=rect.top+"px";
+           |    g.style.width=rect.width+"px";g.style.height=rect.height+"px";g.style.margin="0";g.style.pointerEvents="none";
+           |    g.setAttribute("data-kyo-ghost","1");
+           |    ghosts.push({node:g,leave:leave});
+           |  }
+           |  return ghosts;
+           |}
+           |// Append prepared ghosts to <body>, add their leave classes next frame, remove on transitionend/animationend or a 1s safety.
+           |function kyoSpawnGhosts(ghosts){
+           |  if(!ghosts)return;
+           |  for(var i=0;i<ghosts.length;i++){(function(gh){
+           |    var g=gh.node;document.body.appendChild(g);
+           |    var cls=(gh.leave||"").split(/\\s+/);
+           |    requestAnimationFrame(function(){for(var c=0;c<cls.length;c++){if(cls[c])g.classList.add(cls[c]);}});
+           |    var done=false;
+           |    function cleanup(){if(done)return;done=true;if(g.parentNode)g.parentNode.removeChild(g);}
+           |    g.addEventListener("transitionend",cleanup);g.addEventListener("animationend",cleanup);
+           |    setTimeout(cleanup,1000);
+           |  })(ghosts[i]);}
+           |}
+           |// Focus seeding/restore for [data-kyo-focus-auto]/[data-kyo-focus-restore]; __focusReturnStack stacks {fa, ret|null, restore}.
+           |// Mirrors DomBackend.focusReturnStack for the SPA transport.
+           |var __focusReturnStack=[];
+           |// Object-set (keyed by path) of every [data-kyo-focus-auto] path inside root, root included.
+           |function focusAutoPaths(root){
+           |  var s={};
+           |  if(!root||!root.querySelectorAll)return s;
+           |  if(root.hasAttribute&&root.hasAttribute("data-kyo-focus-auto")){var rp=root.getAttribute("data-kyo-path");if(rp!==null)s[rp]=true;}
+           |  var els=root.querySelectorAll("[data-kyo-focus-auto]");
+           |  for(var i=0;i<els.length;i++){var ep=els[i].getAttribute("data-kyo-path");if(ep!==null)s[ep]=true;}
+           |  return s;
+           |}
+           |// Seed the FIRST newly-appeared focus-auto element under newRoot (path not in oldSet); record prior focus for the sweep.
+           |function seedFocusAuto(newRoot,oldSet){
+           |  if(!newRoot||!newRoot.querySelectorAll)return;
+           |  var cand=[];
+           |  if(newRoot.hasAttribute&&newRoot.hasAttribute("data-kyo-focus-auto"))cand.push(newRoot);
+           |  var els=newRoot.querySelectorAll("[data-kyo-focus-auto]");
+           |  for(var i=0;i<els.length;i++)cand.push(els[i]);
+           |  for(var j=0;j<cand.length;j++){
+           |    var fa=cand[j].getAttribute("data-kyo-path");
+           |    if(fa!==null&&!oldSet[fa]){
+           |      var ae=document.activeElement;
+           |      var ret=(ae&&ae!==document.body&&ae.getAttribute)?ae.getAttribute("data-kyo-path"):null;
+           |      __focusReturnStack.push({fa:fa,ret:ret,restore:cand[j].hasAttribute("data-kyo-focus-restore")});
+           |      if(typeof cand[j].focus==='function')cand[j].focus();
+           |      return;
+           |    }
+           |  }
+           |}
+           |// Unwind entries whose seeded element left the document, returning focus at most once. Mirrors DomBackend.sweepFocusAuto.
+           |function sweepFocusAuto(){
+           |  var restored=false;
+           |  while(__focusReturnStack.length>0){
+           |    var top=__focusReturnStack[__focusReturnStack.length-1];
+           |    // Stop at the first seed still on screen: restoring an entry below it would move focus out of it.
+           |    if(document.querySelector('[data-kyo-path="'+top.fa+'"][data-kyo-focus-auto]'))return;
+           |    __focusReturnStack.pop();
+           |    // At most one restore per unwind: a deeper entry belongs to a seed that closed while a newer one stayed
+           |    // open, so its return target is stale and must not override the one just restored.
+           |    if(!restored&&top.restore&&top.ret){var re=document.querySelector('[data-kyo-path="'+top.ret+'"]');if(re&&typeof re.focus==='function'){re.focus();restored=true;}}
+           |  }
+           |}
            |applyJsProps(document.body);ba(document.body);
+           |kyoEnterSeed(document.body,{});
+           |// Initial mount: everything server-rendered is new (empty old set), like native autofocus.
+           |seedFocusAuto(document.body,{});
            |// Dropdown helpers: close all dropdowns except the given id
            |function kyoCloseDropdown(exceptId){
            |  var all=document.querySelectorAll('[data-kyo-dropdown-options]');
@@ -910,6 +1134,14 @@ private[kyo] object HtmlRenderer:
            |    else post({Change:{path:p,value:tgt.value}});
            |  }else if(t==="submit"){e.preventDefault();if(!window._kyoClickSubmit&&he(el,"submit")){var smid=e.target&&e.target.id?e.target.id:null;post({Submit:{path:p,mouse:mkMouse({ctrl:false,alt:false,shift:false,meta:false},smid)}});}}
            |  else if(t==="keydown"){
+           |    // preventScrollKeys: suppress native page-scroll for nav keys in a data-kyo-scroll-keys region; keydown still posts below.
+           |    if(e.target&&e.target.closest&&e.target.closest('[data-kyo-scroll-keys]')){
+           |      var __sk=e.target,__ed=(/^(INPUT|TEXTAREA|SELECT)$$/.test(__sk.tagName)||__sk.isContentEditable);
+           |      var __vc=(/^(TEXTAREA|SELECT)$$/.test(__sk.tagName)||__sk.isContentEditable);
+           |      var __vk=(e.key==="ArrowUp"||e.key==="ArrowDown"||e.key==="PageUp"||e.key==="PageDown");
+           |      var __hk=(e.key==="ArrowLeft"||e.key==="ArrowRight"||e.key==="Home"||e.key==="End");
+           |      if((__vk&&!__vc)||(__hk&&!__ed))e.preventDefault();
+           |    }
            |    // Focus-trap: when Tab is pressed inside a [data-kyo-focus-trap="1"] container,
            |    // wrap focus within the trap's focusable children instead of escaping to the page.
            |    // Escape falls through so the element's onKeyDown handler can close the modal.
@@ -1053,10 +1285,64 @@ private[kyo] object HtmlRenderer:
            |  // Do NOT auto-call preventDefault: leave native-scroll suppression to the handler, matching DomBackend. Server-side rendering cannot synchronously decline the event, so the default is to NOT prevent.
            |  else if(t==="wheel"&&he(el,"wheel")){var whtid=e.target&&e.target.id?e.target.id:null;var sc={path:p,deltaX:e.deltaX,deltaY:e.deltaY,modifiers:{ctrl:e.ctrlKey,alt:e.altKey,shift:e.shiftKey,meta:e.metaKey}};if(whtid)sc.targetId=whtid;post({Scroll:sc});}
            |}
+           |// ---- client-local input filter/mask (document-level beforeinput capture listener) ----
+           |$inputMaskJs
+           |function kyoSetVal(t,v){t.value=v;kyoSetCaret(t,v.length,v.length);t.dispatchEvent(new Event("input",{bubbles:true}));}
+           |function kyoSetValAt(t,txt,s,en){var v=t.value;t.value=v.slice(0,s)+txt+v.slice(en);var np=s+txt.length;kyoSetCaret(t,np,np);t.dispatchEvent(new Event("input",{bubbles:true}));}
+           |function kyoBeforeInput(e){
+           |  var t=e.target;if(!t||!t.getAttribute)return;
+           |  // Interactive.data lets any element carry data-kyo-filter, and everything below assumes a value
+           |  // property and a text selection. Throwing from a beforeinput capture listener would break typing
+           |  // for the whole page, so anything but a text field is left alone.
+           |  if(t.tagName!=="INPUT"&&t.tagName!=="TEXTAREA")return;
+           |  var filt=t.getAttribute("data-kyo-filter");var mask=t.getAttribute("data-kyo-mask");
+           |  if(!filt&&!mask)return;
+           |  var it=e.inputType||"";
+           |  // insertCompositionText is deliberately absent below: preventDefault on it does not filter the input,
+           |  // it aborts the composition, which breaks CJK input, dead keys and mobile autocorrect. Composition is
+           |  // let through and the finished text is corrected in kyoCompositionEnd instead.
+           |  if(filt){
+           |    if(it.indexOf("delete")===0)return;
+           |    if(it==="insertText"||it==="insertReplacementText"){
+           |      var data=e.data;if(data==null)return;
+           |      var f1=kyoFilterStr(filt,data,t.value);
+           |      if(f1!==data){e.preventDefault();if(f1){var s=(typeof t.selectionStart==="number")?t.selectionStart:t.value.length;var en=(typeof t.selectionEnd==="number")?t.selectionEnd:s;kyoSetValAt(t,f1,s,en);}}
+           |    }else if(it==="insertFromPaste"||it==="insertFromDrop"){
+           |      e.preventDefault();var pasted=e.dataTransfer?e.dataTransfer.getData("text"):(e.data||"");
+           |      var f2=kyoFilterStr(filt,pasted,t.value);if(f2){var s2=(typeof t.selectionStart==="number")?t.selectionStart:t.value.length;var e2=(typeof t.selectionEnd==="number")?t.selectionEnd:s2;kyoSetValAt(t,f2,s2,e2);}
+           |    }
+           |    return;
+           |  }
+           |  if(mask){
+           |    var mts=kyoMaskParse(mask);
+           |    if(it.indexOf("delete")===0){e.preventDefault();var raw=kyoMaskRaw(mts,t.value);raw=raw.slice(0,raw.length-1);kyoSetVal(t,kyoMaskFormat(mts,raw));return;}
+           |    if(it==="insertText"||it==="insertReplacementText"||it==="insertFromPaste"||it==="insertFromDrop"){
+           |      e.preventDefault();var ins=e.data;if((it==="insertFromPaste"||it==="insertFromDrop")&&e.dataTransfer)ins=e.dataTransfer.getData("text");if(ins==null)ins="";
+           |      var raw2=kyoMaskRaw(mts,t.value);
+           |      for(var ci=0;ci<ins.length;ci++){var cls=kyoMaskClassAt(mts,raw2.length);if(cls===null)break;var ch=ins.charAt(ci);if(kyoMaskOk(cls,ch))raw2+=ch;}
+           |      kyoSetVal(t,kyoMaskFormat(mts,raw2));return;
+           |    }
+           |  }
+           |}
+           |// Corrects the whole value once a composition finishes. Mirrors DomBackend's compositionend listener:
+           |// the composed text is only known when it ends, so it is filtered or formatted here rather than
+           |// per keystroke. Writing back only on a change keeps a conforming composition free of a caret jump.
+           |function kyoCompositionEnd(e){
+           |  var t=e.target;if(!t||!t.getAttribute)return;
+           |  if(t.tagName!=="INPUT"&&t.tagName!=="TEXTAREA")return;
+           |  var filt=t.getAttribute("data-kyo-filter");var mask=t.getAttribute("data-kyo-mask");
+           |  var v=t.value;var nv;
+           |  if(filt)nv=kyoFilterStr(filt,v,"");
+           |  else if(mask)nv=kyoMaskNormalize(mask,v);
+           |  else return;
+           |  if(nv!==v)kyoSetVal(t,nv);
+           |}
            |["click","input","change","submit","keydown","keyup","focus","blur","mouseover","mouseout"].forEach(function(t){
            |  document.body.addEventListener(t,handle,true);
            |});
            |document.body.addEventListener("wheel",handle,{capture:true,passive:false});
+           |document.body.addEventListener("beforeinput",kyoBeforeInput,true);
+           |document.body.addEventListener("compositionend",kyoCompositionEnd,true);
            |})();""".stripMargin
 
     // ---- SVG tag and attribute rendering ----

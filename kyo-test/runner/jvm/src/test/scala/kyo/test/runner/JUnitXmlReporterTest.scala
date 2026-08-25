@@ -242,6 +242,13 @@ class JUnitXmlReporterTest extends kyo.test.Test[Any]:
     }
 
     "write failure to read-only path logs to stderr without propagating exception" in {
+        // root bypasses the directory permission this relies on, so the write would succeed and log
+        // nothing. Containers commonly run as root, including the repo's own build.sh --env podman-ci.
+        if java.lang.System.getProperty("user.name") == "root" then
+            cancel("read-only directories do not block writes for root")
+        // Windows is the same: File.setWritable(false) on a directory doesn't stop file creation inside it.
+        if java.lang.System.getProperty("os.name", "").toLowerCase.startsWith("windows") then
+            cancel("read-only directories do not block writes on Windows")
         val readOnlyDir = Files.createTempDirectory("junit-readonly")
         try
             // Make the directory read-only so writing fails

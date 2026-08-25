@@ -123,6 +123,12 @@ abstract class Transport:
         channelCapacity: Int
     )(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]]
 
+    /** What this transport can do beyond the operations above: the TLS providers it drives and whether it binds AF_UNIX paths. The one
+      * member an implementation supplies for all of them, so a new capability is a field on [[TransportCapabilities]] rather than another
+      * abstract method appended here. The accessors below read it.
+      */
+    private[net] def capabilities: TransportCapabilities
+
     /** The TLS provider ids this transport can drive (e.g. "boringssl"/"jdk" for the posix transport, "jdk" for the NIO floor, "node" for JS).
       * A connection requesting a [[NetTlsConfig.tlsProvider]] outside this set fails closed (see [[upgradeToTls]] / `connect(tls)`). The set is
       * the transport's architectural capability, independent of host availability (whether a provider's library is staged is a separate probe).
@@ -130,7 +136,15 @@ abstract class Transport:
       * matrix reads this to skip (backend x impl) cells the transport cannot serve, so the set of valid combinations lives here in production and
       * evolves with the transport rather than being duplicated as a fixed table in the tests.
       */
-    private[net] def supportedTlsProviders: Set[String]
+    final private[net] def supportedTlsProviders: Set[String] = capabilities.tlsProviders
+
+    /** Whether this transport can bind and connect AF_UNIX filesystem paths ([[listenUnix]] / [[connectUnix]]). True on the posix and NIO
+      * transports, which drive real Unix sockets on every host they run on. False for Node on Windows: Node implements the local domain
+      * with named pipes there, so a filesystem listen path fails EACCES and no AF_UNIX socket can exist. The UDS test suites read this to
+      * cancel on hosts that cannot bind, so the capability lives here in production and evolves with the transport rather than being
+      * duplicated as per-suite platform checks.
+      */
+    final private[kyo] def supportsUnixSockets: Boolean = capabilities.unixSockets
 end Transport
 
 object Transport:

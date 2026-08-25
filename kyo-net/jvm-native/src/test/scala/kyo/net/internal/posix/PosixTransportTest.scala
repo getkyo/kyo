@@ -61,7 +61,7 @@ class PosixTransportTest extends Test:
 
     "PosixTransport.stdio" - {
         "the stdio handle splits the fds to (readFd=0, writeFd=1)" in {
-            val h = PosixHandle.stdio(PosixHandle.DefaultReadBufferSize)
+            val h = PosixHandle.stdio(PosixHandle.DefaultReadBufferSize, Frame.internal)
             assert(h.readFd == 0, s"readFd=${h.readFd}")
             assert(h.writeFd == 1, s"writeFd=${h.writeFd}")
         }
@@ -71,6 +71,7 @@ class PosixTransportTest extends Test:
         "a second concurrent stdio aborts NetStdioAlreadyOpenException (the stdioClaimed CAS)" in {
             // Use a transport with a real PollerIoDriver (unstarted; no driver method is invoked here).
             // The test exercises the stdioClaimed CAS, not fstat.
+            assumePoller()
             val driver    = PollerIoDriver.init()
             val transport = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
             transport.stdio().safe.use { first =>
@@ -98,13 +99,13 @@ class PosixTransportTest extends Test:
                     loopbackPair().map { case (client, accepted) =>
                         val writer =
                             transport.openWith(
-                                PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent),
+                                PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal),
                                 driver,
                                 kyo.net.NetConfig.DefaultChannelCapacity
                             )
                         val reader =
                             transport.openWith(
-                                PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent),
+                                PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal),
                                 driver,
                                 kyo.net.NetConfig.DefaultChannelCapacity
                             )
@@ -134,7 +135,7 @@ class PosixTransportTest extends Test:
             val real     = PollerBackend.default()
             val pollerFd = real.create()
             val driver   = TestDrivers.forBackend(RecordingPollerBackend(real), pollerFd, spy)
-            val handle   = PosixHandle.stdio(PosixHandle.DefaultReadBufferSize) // readFd=0, writeFd=1
+            val handle   = PosixHandle.stdio(PosixHandle.DefaultReadBufferSize, Frame.internal) // readFd=0, writeFd=1
             // closeHandle issues sockets.close ONLY when readFd == writeFd (a socket); the split stdio handle (0 != 1) skips that branch.
             driver.closeHandle(handle)
             // Free the real poller fd and scratch the recording backend allocated (the poll loop was never started).
@@ -153,6 +154,7 @@ class PosixTransportTest extends Test:
         // Anti-flakiness: fstat is synchronous; the selection predicate is a pure function. No async, no sleep.
         // Real temp file fd (S_IFREG) + backendIsEpoll=true -> non-pollable -> BlockingReaderDriver selected.
         "regular-file stdin under epoll selects the BlockingReaderDriver" in {
+            assumePoller()
             val (transport, tempFd, driver) = transportForRegularFile(backendIsEpoll = true)
             try
                 assert(!transport.pollable(tempFd), "regular file under epoll must be non-pollable")
@@ -166,6 +168,7 @@ class PosixTransportTest extends Test:
 
         // Real temp file fd (S_IFREG) + backendIsEpoll=false -> pollable (kqueue streams regular files natively).
         "regular-file stdin under kqueue does NOT fall back" in {
+            assumePoller()
             val (kqueue, tempFd, driver) = transportForRegularFile(backendIsEpoll = false)
             try
                 assert(kqueue.pollable(tempFd), "regular file under kqueue must be pollable")
@@ -180,6 +183,7 @@ class PosixTransportTest extends Test:
         // (no BlockingReaderDriver fallback) because the io_uring driver streams regular files natively. A RecordingIoDriver over a real
         // PollerIoDriver, relabeled "IoUringDriver", exercises this label branch; every behavioral method still delegates to the real driver.
         "regular-file stdin under a non-poller driver label does NOT fall back" in {
+            assumePoller()
             val (tempFd, _) = PosixTestSockets.tempFileFd(Array.empty[Byte])
             val driver      = PollerIoDriver.init()
             val spy         = new RecordingIoDriver(driver)
@@ -200,6 +204,7 @@ class PosixTransportTest extends Test:
 
         // Real socket fd (S_IFSOCK) -> isRegularFile=false -> pollable on every backend.
         "non-regular-file fds (socket/pipe/tty) are pollable on every backend" in {
+            assumePoller()
             // A real socket fd has S_IFSOCK mode, not S_IFREG. isRegularFile returns false, so pollable returns true on any backend.
             val sockets = sock
 

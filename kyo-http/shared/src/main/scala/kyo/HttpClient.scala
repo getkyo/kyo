@@ -29,8 +29,9 @@ import kyo.internal.transport.NetConfigTranslation
   * (`getTextResponse`, `getJsonResponse`, etc.) also fail by default, but accept `failOnError = false` to return the raw response for
   * manual status handling. `head` and `options` follow the same convention.
   *
-  * Note: The default shared client is created lazily on first use. It holds at most 100 idle connections per host and releases connections
-  * after 60 seconds of inactivity. Use `HttpClient.init` when you need isolated connection pools or non-default limits.
+  * Note: The default shared client is created lazily on first use. It holds a bounded number of idle connections per host (default 100, set via
+  * `-Dkyo.http.client.defaultMaxConnectionsPerHost`) and releases them after an idle timeout (default 60s, set via
+  * `-Dkyo.http.client.defaultIdleTimeout`). Use `HttpClient.init` when you need isolated connection pools or non-default limits.
   *
   * @see
   *   [[kyo.HttpRoute]] The endpoint contract that drives typed serialization
@@ -52,7 +53,7 @@ object HttpClient:
         import AllowUnsafe.embrace.danger
         given Frame   = Frame.internal
         val transport = kyo.net.NetPlatform.transport
-        initUnsafe(transport, 100, 60.seconds)
+        initUnsafe(transport, kyo.http.client.defaultMaxConnectionsPerHost(), kyo.http.client.defaultIdleTimeout())
     end defaultClient
 
     private val local: Local[(HttpClient, HttpClientConfig)] =

@@ -48,7 +48,7 @@ class WritePumpTest extends Test:
             val spy    = new RecordingIoDriver(real)
             discard(spy.start())
             PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
-                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](N + 1)
                 val pump = new WritePump(
                     handle,
@@ -76,7 +76,7 @@ class WritePumpTest extends Test:
 
                 PosixTestSockets.drainPeer(
                     spy,
-                    PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent),
+                    PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal),
                     peerFd,
                     totalBytes
                 ).map { received =>
@@ -103,7 +103,7 @@ class WritePumpTest extends Test:
             val spy  = new RecordingIoDriver(real)
             discard(spy.start())
             PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
-                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
                 val pump = new WritePump(
@@ -124,7 +124,7 @@ class WritePumpTest extends Test:
                 // Anti-flakiness: payload fits in a single kernel send; Done is returned synchronously.
                 PosixTestSockets.drainPeer(
                     spy,
-                    PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent),
+                    PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal),
                     peerFd,
                     payload.length
                 ).map { received =>
@@ -147,7 +147,7 @@ class WritePumpTest extends Test:
             val spy  = new RecordingIoDriver(real)
             discard(spy.start())
             PosixTestSockets.smallBufferedPair(4096, 4096).map { case (clientFd, peerFd) =>
-                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
                 val pump = new WritePump(
@@ -168,7 +168,7 @@ class WritePumpTest extends Test:
                 // The WritePump's awaitWritable fires when the peer drains space (real kernel event).
                 PosixTestSockets.drainPeer(
                     spy,
-                    PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent),
+                    PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal),
                     peerFd,
                     payload.length
                 ).map { received =>
@@ -199,7 +199,7 @@ class WritePumpTest extends Test:
             val closedLatch = Promise.Unsafe.init[Unit, Any]()
             discard(spy.start())
             PosixTestSockets.smallBufferedPair(2048, 2048).map { case (clientFd, peerFd) =>
-                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
                 val pump = new WritePump(
@@ -244,7 +244,7 @@ class WritePumpTest extends Test:
             val closedLatch = Promise.Unsafe.init[Unit, Any]()
             discard(spy.start())
             PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
-                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](64)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
                 val pump = new WritePump(
@@ -264,7 +264,12 @@ class WritePumpTest extends Test:
                 pump.start()
 
                 // drainPeer receives the first write before we reset the peer.
-                PosixTestSockets.drainPeer(spy, PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent), peerFd, 8).map { _ =>
+                PosixTestSockets.drainPeer(
+                    spy,
+                    PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal),
+                    peerFd,
+                    8
+                ).map { _ =>
                     // Now reset the peer, causing ECONNRESET on a subsequent write.
                     PosixTestSockets.resetPeer(sock, peerFd)
 
@@ -295,7 +300,7 @@ class WritePumpTest extends Test:
             val spy  = new RecordingIoDriver(real)
             discard(spy.start())
             PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
-                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
                 val pump = new WritePump(
@@ -328,7 +333,7 @@ class WritePumpTest extends Test:
             val spy  = new RecordingIoDriver(real)
             discard(spy.start())
             PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
-                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
                 val pump = new WritePump(
@@ -359,7 +364,7 @@ class WritePumpTest extends Test:
             val spy  = new RecordingIoDriver(real)
             discard(spy.start())
             PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
-                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
                 val pump = new WritePump(
@@ -383,7 +388,7 @@ class WritePumpTest extends Test:
                 val totalBytes = firstPayload.length + secondPayload.length + thirdPayload.length
                 PosixTestSockets.drainPeer(
                     spy,
-                    PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent),
+                    PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal),
                     peerFd,
                     totalBytes
                 ).map { received =>
@@ -408,7 +413,7 @@ class WritePumpTest extends Test:
             val closedLatch = Promise.Unsafe.init[Unit, Any]()
             discard(spy.start())
             PosixTestSockets.smallBufferedPair(4096, 4096).map { case (clientFd, peerFd) =>
-                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](64)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
                 val pump = new WritePump(
@@ -430,7 +435,7 @@ class WritePumpTest extends Test:
                 // drainPeer unblocks the retry by draining the peer buffer.
                 PosixTestSockets.drainPeer(
                     spy,
-                    PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent),
+                    PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal),
                     peerFd,
                     payload.length
                 ).map { _ =>
@@ -461,7 +466,7 @@ class WritePumpTest extends Test:
             val spy  = new RecordingIoDriver(real)
             discard(spy.start())
             PosixTestSockets.smallBufferedPair(4096, 4096).map { case (clientFd, peerFd) =>
-                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
                 val pump = new WritePump(
@@ -479,7 +484,7 @@ class WritePumpTest extends Test:
 
                 PosixTestSockets.drainPeer(
                     spy,
-                    PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent),
+                    PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal),
                     peerFd,
                     payload.length
                 ).map { received =>
@@ -521,7 +526,7 @@ class WritePumpTest extends Test:
             val spy  = new RecordingIoDriver(real)
             discard(spy.start())
             PosixTestSockets.smallBufferedPair(4096, 4096).map { case (clientFd, peerFd) =>
-                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
                 val pump = new WritePump(
@@ -544,7 +549,7 @@ class WritePumpTest extends Test:
                 val totalBytes = payload.length + extra.size
                 PosixTestSockets.drainPeer(
                     spy,
-                    PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent),
+                    PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal),
                     peerFd,
                     totalBytes
                 ).map { received =>
@@ -571,7 +576,7 @@ class WritePumpTest extends Test:
             val spy  = new RecordingIoDriver(real)
             discard(spy.start())
             PosixTestSockets.smallBufferedPair(2048, 2048).map { case (clientFd, peerFd) =>
-                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val pump    = new WritePump(handle, spy, channel, () => (), AtomicRef.Unsafe.init[WriteState](WriteState.Idle))
 
@@ -584,7 +589,7 @@ class WritePumpTest extends Test:
 
                 PosixTestSockets.drainPeer(
                     spy,
-                    PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent),
+                    PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal),
                     peerFd,
                     payload.length
                 ).map { received =>
@@ -600,16 +605,17 @@ class WritePumpTest extends Test:
         // Mirrors the writable-wait-failure test above (same setup: smallBufferedPair(2048,2048), a 1 MB payload guaranteeing EAGAIN, the
         // onAwaitWritable hook closing the handle the instant the writable wait registers), but pins the DROP-CORRECTNESS half of the lost-CAS
         // contract: once teardown wins (state swings to TornDown), the pump must never resurrect and must never issue
-        // another write for the now-undeliverable captured tail. closedLatch latches the teardown; the two extra assertions (writeCalls stays
-        // at 1, state reads TornDown) are the load-bearing ones a CAS-retry regression would break.
+        // another write for the now-undeliverable captured tail. The load-bearing assertions a CAS-retry regression would break: the state
+        // reads TornDown, and the pump's FINAL write count (read once the driver loop has died) still equals the count at teardown.
         "an error teardown racing a partial write drops the tail without resurrection" in {
             assumePoller()
             val real        = PollerIoDriver.init()
             val spy         = new RecordingIoDriver(real)
             val closedLatch = Promise.Unsafe.init[Unit, Any]()
-            discard(spy.start())
+            // The driver loop completes only after the terminal exit settles every promise the pump awaits, making the write count below final.
+            val driverLoop = spy.start()
             PosixTestSockets.smallBufferedPair(2048, 2048).map { case (clientFd, peerFd) =>
-                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
                 val state   = AtomicRef.Unsafe.init[WriteState](WriteState.Idle)
@@ -644,20 +650,24 @@ class WritePumpTest extends Test:
                         state.get() == WriteState.TornDown,
                         s"the pump must not be resurrected after teardown won, state was ${state.get()}"
                     )
-                    // A survival window, not a settle: a resurrection issues its write shortly AFTER teardown, so the count must be given a
-                    // chance to move before it is read as final.
-                    Async.sleep(50.millis).andThen {
+                    // Closing the driver settles every promise the pump awaits; the loop fiber completing is the point past which no callback
+                    // can reach the pump, so the write count read there is final, not a snapshot mid-resurrection.
+                    spy.close()
+                    Abort.run[Timeout](Async.timeout(10.seconds)(driverLoop.safe.get)).map { exit =>
+                        // closeHandle closed clientFd; only peerFd remains to close.
+                        discard(sock.close(peerFd))
+                        assert(
+                            exit.isSuccess,
+                            s"the driver loop never exited, so the pump's outstanding callbacks were never delivered and the count below " +
+                                s"would be read off a live pump: $exit"
+                        )
                         val atTeardown = writesAtTeardown.get()
                         val now        = spy.writeCalls.get()
                         assert(
                             now == atTeardown,
                             s"no write may be issued for the undeliverable captured tail after teardown won: the pump had issued " +
-                                s"$atTeardown write(s) when teardown ran and $now afterwards, so it resurrected"
+                                s"$atTeardown write(s) when teardown ran and $now by the time the driver died, so it resurrected"
                         )
-                        spy.close()
-                        // closeHandle closed clientFd; only peerFd remains to close.
-                        discard(sock.close(peerFd))
-                        succeed
                     }
                 }
             }

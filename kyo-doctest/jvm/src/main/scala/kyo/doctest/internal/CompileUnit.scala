@@ -31,7 +31,9 @@ final private[kyo] case class CompileUnit(syntheticSource: Driver.Source, blocks
   */
 private[kyo] object CompileUnit:
 
-    private val Newline = "\n"
+    private val Newline          = "\n"
+    private val ProgressProperty = "kyo.doctest.progress"
+    private type RuntimeMarker = (synthLine: Int, blockLine: Int)
 
     /** Produces compile units from a file's blocks.
       *
@@ -41,18 +43,55 @@ private[kyo] object CompileUnit:
       *   Compile units ready to feed to Driver.compile.
       */
     def group(blocks: Chunk[Block]): Chunk[CompileUnit] =
-        if blocks.isEmpty then Chunk.empty
+        val activeBlocks = blocks.filter(_.expect != Block.Expectation.Skipped)
+        if activeBlocks.isEmpty then Chunk.empty
         else
-            val setupBlocks    = extractSetupBlocks(blocks)
-            val nonSetupBlocks = blocks.filter(f => !isSetup(f))
+            val setupBlocks    = extractSetupBlocks(activeBlocks)
+            val nonSetupBlocks = activeBlocks.filter(f => !isSetup(f))
             if nonSetupBlocks.isEmpty then
                 // Only setup blocks: compile them as a standalone Env("__doc__") unit.
-                groupEnvBlocks(blocks.filter(isSetup), Chunk.empty)
+                groupEnvBlocks(activeBlocks.filter(isSetup), Chunk.empty)
             else
                 groupNonSetup(nonSetupBlocks, setupBlocks)
             end if
         end if
     end group
+
+    /** Inserts a progress marker immediately before each block body and adjusts its synthetic line map. */
+    def instrumentRuntime(unit: CompileUnit): CompileUnit =
+        val markers: Seq[RuntimeMarker] = unit.blocks.toSeq.filter { wrapped =>
+            wrapped.runtimeClassName match
+                case Present(_) => true
+                case Absent     => false
+        }.flatMap { wrapped =>
+            wrapped.lineMap.toSeq.collect { case (synthLine, bodyLine) if bodyLine >= 1 => synthLine }.minOption.map { synthLine =>
+                (synthLine = synthLine, blockLine = wrapped.block.lineStart)
+            }
+        }.sortBy(_.synthLine)
+
+        val markersByLine = markers.groupMap(_.synthLine)(_.blockLine)
+        val sourceLines   = unit.syntheticSource.content.split(Newline, -1).toList.dropRight(1)
+        val instrumentedContent = sourceLines.zipWithIndex.flatMap { case (line, index) =>
+            val synthLine = index + 1
+            val indent    = line.takeWhile(_.isWhitespace)
+            val inserted = markersByLine.getOrElse(synthLine, Seq.empty).map { blockLine =>
+                s"$indent val _ = java.nio.file.Files.writeString(java.nio.file.Path.of(java.lang.System.getProperty(\"$ProgressProperty\")), \"$blockLine\")$Newline"
+            }
+            inserted :+ (line + Newline)
+        }.mkString
+
+        val instrumentedBlocks = unit.blocks.map { wrapped =>
+            val adjustedMap = wrapped.lineMap.map { case (synthLine, bodyLine) =>
+                val shift = markers.count(_.synthLine <= synthLine)
+                (synthLine + shift, bodyLine)
+            }
+            wrapped.copy(syntheticContent = instrumentedContent, lineMap = adjustedMap)
+        }
+        CompileUnit(
+            Driver.Source(unit.syntheticSource.name, instrumentedContent),
+            instrumentedBlocks
+        )
+    end instrumentRuntime
 
     // Extract the setup blocks (Env("__doc__")) in document order.
     private def extractSetupBlocks(blocks: Chunk[Block]): Chunk[Block] =
@@ -101,7 +140,7 @@ private[kyo] object CompileUnit:
         // Emit env groups in first-seen order.
         val envOrder: List[String] = blockList
             .collect {
-                case b @ Block(_, _, _, _, Block.Visibility.Env(name), _, _, _) => name
+                case b @ Block(_, _, _, _, Block.Visibility.Env(name), _, _, _, _) => name
             }
             .distinct
 

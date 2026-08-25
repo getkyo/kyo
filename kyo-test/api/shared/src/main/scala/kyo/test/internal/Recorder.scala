@@ -131,9 +131,19 @@ object Recorder:
       * diagram or diff. `String.valueOf` renders `null` as `"null"` without a NullPointerException (unlike
       * `value.toString`); control characters are escaped so a multi-line value cannot break the
       * column-aligned diagram layout.
+      *
+      * Total by construction: `String.valueOf` calls the value's `toString`, which can throw (on Scala.js
+      * an opaque foreign object such as a koffi `void*` pointer rejects any string coercion). The macro
+      * renders every captured subexpression eagerly, for passing asserts too, so a throwing value would
+      * otherwise crash a leaf that was about to pass. A diagram is diagnostic output, so it degrades to
+      * a placeholder instead.
       */
     private[internal] def render(value: Any): String =
-        val s = String.valueOf(value.asInstanceOf[AnyRef])
+        // The placeholder is a bare constant because reflecting on the offending value (getClass.getName)
+        // is itself unsafe: a foreign Scala.js object has no class metadata, so the lookup throws in turn.
+        val s =
+            try String.valueOf(value.asInstanceOf[AnyRef])
+            catch case scala.util.control.NonFatal(_) => Unrenderable
         val flat = s
             .replace("\\", "\\\\")
             .replace("\n", "\\n")
@@ -142,5 +152,8 @@ object Recorder:
         if flat.length <= MaxRenderedValue then flat
         else flat.substring(0, MaxRenderedValue) + s"...(${s.length} chars total)"
     end render
+
+    /** Placeholder rendered in place of a value whose `toString` threw. */
+    private[internal] val Unrenderable = "<unrenderable>"
 
 end Recorder

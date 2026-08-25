@@ -59,24 +59,20 @@ class BrowserLauncherTest extends BaseBrowserTest:
 
     "very short timeout fails fast" in {
         for
-            timedRes <- timed(Abort.run[BrowserSetupException] {
+            result <- Abort.run[BrowserSetupException] {
                 Scope.run {
                     BrowserLauncher.launch(
                         Browser.LaunchConfig.chromium("/nonexistent/browser").launchTimeout(500.millis)
                     )
                 }
-            })
-            (elapsedDur, result) = timedRes
-            elapsed              = elapsedDur.toMillis
+            }
         yield
-            // Behavior contract: the launch MUST fail with BrowserSetupFailedException; that is the deterministic shape
-            // ("fails for the right reason"). The timing bound is a soft envelope: cold-start on CI can exceed 5s, but if
-            // we exceed 30s (60× the configured 500ms timeout) something is genuinely wrong.
+            // A nonexistent executable fails at spawn immediately (not a launch-timeout path), so the typed
+            // BrowserSetupFailedException IS the property. A genuine hang is caught by the per-leaf timeout; no wall-clock envelope.
             result match
-                case Result.Success(_) => fail("Expected failure for invalid executable")
-                case Result.Failure(_: BrowserSetupFailedException) =>
-                    assert(elapsed < 30000, s"Took too long: ${elapsed}ms (>30s soft envelope, 60× the configured 500ms timeout)")
-                case Result.Panic(ex) => fail(s"Expected Failure, got Panic: ${ex.getMessage}")
+                case Result.Success(_)                              => fail("Expected failure for invalid executable")
+                case Result.Failure(_: BrowserSetupFailedException) => succeed
+                case Result.Panic(ex)                               => fail(s"Expected Failure, got Panic: ${ex.getMessage}")
             end match
     }
 
@@ -181,7 +177,6 @@ class BrowserLauncherTest extends BaseBrowserTest:
         Scope.run {
             for
                 tmp <- Path.tempDir("kyo-browser-pollDevTools-test-")
-                _   <- Scope.ensure(Abort.run[FileFsException](tmp.removeAll).unit)
                 outcome <- Abort.run[BrowserSetupException] {
                     BrowserLauncher.pollDevToolsActivePort(tmp, timeout, 50.millis)
                 }
@@ -203,7 +198,6 @@ class BrowserLauncherTest extends BaseBrowserTest:
         Scope.run {
             for
                 tmp <- Path.tempDir("kyo-browser-pollDevTools-happy-")
-                _   <- Scope.ensure(Abort.run[FileFsException](tmp.removeAll).unit)
                 _   <- (tmp / BrowserLauncher.devToolsActivePortFile).write("9222\n/devtools/browser/test-uuid\n")
                 url <- BrowserLauncher.pollDevToolsActivePort(tmp, 5.seconds, 50.millis)
             yield assert(url == "ws://127.0.0.1:9222/devtools/browser/test-uuid")
@@ -251,26 +245,37 @@ class BrowserLauncherTest extends BaseBrowserTest:
     // for the single-stmt form.
     "killOrphans kills processes matching the kyo-browser user-data-dir pattern" in {
         Scope.run {
-            for
-                n <- Random.nextLong
-                uniqueId = f"$n%016x"
-                pattern  = s"kyo-browser-orphans-test-$uniqueId"
-                script   = s"true; sleep 30 # --user-data-dir=$pattern"
-                proc        <- Command("sh", "-c", script).spawn
-                pid         <- proc.pid
-                aliveBefore <- isPidAlive(pid)
-                _           <- BrowserLauncher.killOrphans(pattern, command = "pgrep")
-                killed <- Loop(0) { attempt =>
-                    isPidAlive(pid).map { alive =>
-                        if !alive then Loop.done(true)
-                        else if attempt >= 5 then Loop.done(false)
-                        else Async.delay(50.millis)(Kyo.unit).andThen(Loop.continue(attempt + 1))
+            System.operatingSystem.map {
+                case System.OS.Windows =>
+                    // The sweep is documented as a silent no-op where pgrep does not exist
+                    // (Windows, minimal Docker). The POSIX sentinel below cannot run here, so
+                    // this platform asserts the production contract instead: the sweep with the
+                    // real `pgrep` command completes without failing.
+                    Abort.run[Throwable](BrowserLauncher.killOrphans("kyo-browser-orphans-test-none", command = "pgrep")).map { result =>
+                        assert(result.isSuccess, s"killOrphans must be a silent no-op without pgrep, got $result")
                     }
-                }
-            yield
-                assert(aliveBefore, s"sentinel pid=$pid should be alive before killOrphans")
-                assert(killed, s"sentinel pid=$pid should be killed by killOrphans within ~250ms")
-            end for
+                case _ =>
+                    for
+                        n <- Random.nextLong
+                        uniqueId = f"$n%016x"
+                        pattern  = s"kyo-browser-orphans-test-$uniqueId"
+                        script   = s"true; sleep 30 # --user-data-dir=$pattern"
+                        proc        <- Command("sh", "-c", script).spawn
+                        pid         <- proc.pid
+                        aliveBefore <- isPidAlive(pid)
+                        _           <- BrowserLauncher.killOrphans(pattern, command = "pgrep")
+                        killed <- Loop(0) { attempt =>
+                            isPidAlive(pid).map { alive =>
+                                if !alive then Loop.done(true)
+                                else if attempt >= 5 then Loop.done(false)
+                                else Async.delay(50.millis)(Kyo.unit).andThen(Loop.continue(attempt + 1))
+                            }
+                        }
+                    yield
+                        assert(aliveBefore, s"sentinel pid=$pid should be alive before killOrphans")
+                        assert(killed, s"sentinel pid=$pid should be killed by killOrphans within ~250ms")
+                    end for
+            }
         }
     }
 

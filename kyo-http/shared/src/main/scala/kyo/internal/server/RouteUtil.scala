@@ -31,9 +31,34 @@ private[kyo] object RouteUtil:
 
     // ==================== Client: encode request ====================
 
-    inline def encodeRequest[In, Out, S, A](
+    inline def encodeRequest[In, Out, S, A, S2](
         route: HttpRoute[In, Out, S],
         request: HttpRequest[In]
+    )(
+        inline onEmpty: ( /* url */ String, HttpHeaders) => A < S2,
+        inline onBuffered: ( /* url */ String, HttpHeaders, Span[Byte]) => A < S2,
+        inline onStreaming: ( /* url */ String, HttpHeaders, Stream[Span[Byte], Async]) => A < S2
+    )(using Frame): A < (S2 & Sync) =
+        val bodyField =
+            findBodyField(route.request.fields)
+                .filter(_ => request.method != HttpMethod.GET && request.method != HttpMethod.HEAD)
+        if requiresMultipartBoundary(bodyField) then
+            multipartBoundaryFromHeaders(request.headers) match
+                case Present(boundary) =>
+                    encodeRequestWithBoundary(route, request, Present(boundary))(onEmpty, onBuffered, onStreaming)
+                case Absent =>
+                    UUID.v4String.map { boundary =>
+                        encodeRequestWithBoundary(route, request, Present(boundary))(onEmpty, onBuffered, onStreaming)
+                    }
+        else
+            encodeRequestWithBoundary(route, request, Absent)(onEmpty, onBuffered, onStreaming)
+        end if
+    end encodeRequest
+
+    private[kyo] inline def encodeRequestWithBoundary[In, Out, S, A](
+        route: HttpRoute[In, Out, S],
+        request: HttpRequest[In],
+        boundary: Maybe[String]
     )(
         inline onEmpty: ( /* url */ String, HttpHeaders) => A,
         inline onBuffered: ( /* url */ String, HttpHeaders, Span[Byte]) => A,
@@ -74,20 +99,31 @@ private[kyo] object RouteUtil:
                     else basePath
             val hdrs = if extraHeaders.isEmpty then request.headers
             else request.headers.concat(extraHeaders)
-            encodeBody(effectiveBodyField, dict, url, hdrs)(onEmpty, onBuffered, onStreaming)
+            encodeBody(effectiveBodyField, dict, url, hdrs, boundary)(onEmpty, onBuffered, onStreaming)
         else
             val url = request.url.rawQuery match
                 case Present(rq) => s"$basePath?$rq"
                 case _           => basePath
-            encodeBody(effectiveBodyField, dict, url, request.headers)(onEmpty, onBuffered, onStreaming)
+            encodeBody(effectiveBodyField, dict, url, request.headers, boundary)(onEmpty, onBuffered, onStreaming)
         end if
-    end encodeRequest
+    end encodeRequestWithBoundary
+
+    private[kyo] def multipartBoundaryForRequest[In, Out, S](
+        route: HttpRoute[In, Out, S],
+        request: HttpRequest[In]
+    )(using Frame): Maybe[String] < Sync =
+        val bodyField =
+            findBodyField(route.request.fields)
+                .filter(_ => request.method != HttpMethod.GET && request.method != HttpMethod.HEAD)
+        multipartBoundary(bodyField, request.headers)
+    end multipartBoundaryForRequest
 
     private inline def encodeBody[A](
         bodyField: Maybe[HttpRoute.Field.Body[?, ?]],
         dict: Dict[String, Any],
         url: String,
-        headers: HttpHeaders
+        headers: HttpHeaders,
+        boundary: Maybe[String]
     )(
         inline onEmpty: (String, HttpHeaders) => A,
         inline onBuffered: (String, HttpHeaders, Span[Byte]) => A,
@@ -97,15 +133,14 @@ private[kyo] object RouteUtil:
             case Absent => onEmpty(url, headers)
             case Present(body) =>
                 val value = dict(body.fieldName)
-                val hasCt = headers.contains("Content-Type")
                 if isStreamingContentType(body.contentType) then
-                    encodeStreamBodyValueWith(body.contentType, value) { (ct, stream) =>
-                        val hdrs = if hasCt then headers else headers.add("Content-Type", ct)
+                    encodeStreamBodyValueWith(body.contentType, value, boundary) { (ct, stream) =>
+                        val hdrs = encodedBodyHeaders(body.contentType, headers, ct)
                         onStreaming(url, hdrs, stream)
                     }
                 else
-                    encodeBufferedBodyValueWith(body.contentType, value) { (ct, bytes) =>
-                        val hdrs = if hasCt then headers else headers.add("Content-Type", ct)
+                    encodeBufferedBodyValueWith(body.contentType, value, boundary) { (ct, bytes) =>
+                        val hdrs = encodedBodyHeaders(body.contentType, headers, ct)
                         onBuffered(url, hdrs, bytes)
                     }
                 end if
@@ -193,19 +228,21 @@ private[kyo] object RouteUtil:
 
         val builder = DictBuilder.init[String, Any]
 
-        if !hasParams then
-            bodyField.foreach(bf =>
-                discard(builder.add(bf.fieldName, decodeStreamBodyValue(bf.contentType, stream, headers, method, url)))
-            )
-            Result.succeed(HttpResponse(status, headers, Record(builder.result())))
-        else
-            decodeParamFields(fields, headers, Absent, builder, method, url, isResponse = true).map { _ =>
+        validateStreamingMultipartBoundary(bodyField, headers, method, url).flatMap { _ =>
+            if !hasParams then
                 bodyField.foreach(bf =>
                     discard(builder.add(bf.fieldName, decodeStreamBodyValue(bf.contentType, stream, headers, method, url)))
                 )
-                HttpResponse(status, headers, Record(builder.result()))
-            }
-        end if
+                Result.succeed(HttpResponse(status, headers, Record(builder.result())))
+            else
+                decodeParamFields(fields, headers, Absent, builder, method, url, isResponse = true).map { _ =>
+                    bodyField.foreach(bf =>
+                        discard(builder.add(bf.fieldName, decodeStreamBodyValue(bf.contentType, stream, headers, method, url)))
+                    )
+                    HttpResponse(status, headers, Record(builder.result()))
+                }
+            end if
+        }
     end decodeStreamingResponse
 
     def decodeStreamingResponseWith[In, Out, S, A, S2](
@@ -270,24 +307,49 @@ private[kyo] object RouteUtil:
         val hasParams = fields.size > (if bodyField.isDefined then 1 else 0)
         val builder   = DictBuilder.init[String, Any]
 
-        decodeCaptures(route.request.path, pathCaptures, builder, ctxMethod, ctxUrl).flatMap { _ =>
-            val paramsResult =
-                if hasParams then decodeParamFields(fields, headers, queryParam, builder, ctxMethod, ctxUrl)
-                else Result.unit
-            paramsResult.map { _ =>
-                bodyField.foreach(bf =>
-                    discard(builder.add(bf.fieldName, decodeStreamBodyValue(bf.contentType, stream, headers, ctxMethod, ctxUrl)))
-                )
-                buildRequest(route, headers, builder, path, methodOverride)
+        validateStreamingMultipartBoundary(bodyField, headers, ctxMethod, ctxUrl).flatMap { _ =>
+            decodeCaptures(route.request.path, pathCaptures, builder, ctxMethod, ctxUrl).flatMap { _ =>
+                val paramsResult =
+                    if hasParams then decodeParamFields(fields, headers, queryParam, builder, ctxMethod, ctxUrl)
+                    else Result.unit
+                paramsResult.map { _ =>
+                    bodyField.foreach(bf =>
+                        discard(builder.add(bf.fieldName, decodeStreamBodyValue(bf.contentType, stream, headers, ctxMethod, ctxUrl)))
+                    )
+                    buildRequest(route, headers, builder, path, methodOverride)
+                }
             }
         }
     end decodeStreamingRequest
 
     // ==================== Server: encode response ====================
 
-    def encodeResponse[In, Out, S, A](
+    def encodeResponse[In, Out, S, A, S2](
         route: HttpRoute[In, Out, S],
         response: HttpResponse[Out]
+    )(
+        onEmpty: (HttpStatus, HttpHeaders) => A < S2,
+        onBuffered: (HttpStatus, HttpHeaders, Span[Byte]) => A < S2,
+        onStreaming: (HttpStatus, HttpHeaders, Stream[Span[Byte], Async]) => A < S2
+    )(using Frame): A < (S2 & Sync) =
+        val bodyField = findBodyField(route.response.fields)
+        if requiresMultipartBoundary(bodyField) then
+            multipartBoundaryFromHeaders(response.headers) match
+                case Present(boundary) =>
+                    encodeResponseWithBoundary(route, response, Present(boundary))(onEmpty, onBuffered, onStreaming)
+                case Absent =>
+                    UUID.v4String.map { boundary =>
+                        encodeResponseWithBoundary(route, response, Present(boundary))(onEmpty, onBuffered, onStreaming)
+                    }
+        else
+            encodeResponseWithBoundary(route, response, Absent)(onEmpty, onBuffered, onStreaming)
+        end if
+    end encodeResponse
+
+    private def encodeResponseWithBoundary[In, Out, S, A](
+        route: HttpRoute[In, Out, S],
+        response: HttpResponse[Out],
+        boundary: Maybe[String]
     )(
         onEmpty: (HttpStatus, HttpHeaders) => A,
         onBuffered: (HttpStatus, HttpHeaders, Span[Byte]) => A,
@@ -301,7 +363,7 @@ private[kyo] object RouteUtil:
 
         // Fast path: no param headers to encode
         if !hasParams then
-            encodeResponseBody(bodyField, response.fields.dict, status, response.headers)(onEmpty, onBuffered, onStreaming)
+            encodeResponseBody(bodyField, response.fields.dict, status, response.headers, boundary)(onEmpty, onBuffered, onStreaming)
         else
             val dict          = response.fields.dict
             val headerBuilder = ChunkBuilder.init[String]
@@ -309,15 +371,16 @@ private[kyo] object RouteUtil:
             val extraHeaders = HttpHeaders.fromChunk(headerBuilder.result())
             val headers = if extraHeaders.isEmpty then response.headers
             else response.headers.concat(extraHeaders)
-            encodeResponseBody(bodyField, dict, status, headers)(onEmpty, onBuffered, onStreaming)
+            encodeResponseBody(bodyField, dict, status, headers, boundary)(onEmpty, onBuffered, onStreaming)
         end if
-    end encodeResponse
+    end encodeResponseWithBoundary
 
     private def encodeResponseBody[A](
         bodyField: Maybe[HttpRoute.Field.Body[?, ?]],
         dict: Dict[String, Any],
         status: HttpStatus,
-        headers: HttpHeaders
+        headers: HttpHeaders,
+        boundary: Maybe[String]
     )(
         onEmpty: (HttpStatus, HttpHeaders) => A,
         onBuffered: (HttpStatus, HttpHeaders, Span[Byte]) => A,
@@ -327,15 +390,14 @@ private[kyo] object RouteUtil:
             case Absent => onEmpty(status, headers)
             case Present(body) =>
                 val value = dict(body.fieldName)
-                val hasCt = headers.contains("Content-Type")
                 if isStreamingContentType(body.contentType) then
-                    encodeStreamBodyValueWith(body.contentType, value) { (ct, stream) =>
-                        val hdrs = if hasCt then headers else headers.add("Content-Type", ct)
+                    encodeStreamBodyValueWith(body.contentType, value, boundary) { (ct, stream) =>
+                        val hdrs = encodedBodyHeaders(body.contentType, headers, ct)
                         onStreaming(status, hdrs, stream)
                     }
                 else
-                    encodeBufferedBodyValueWith(body.contentType, value) { (ct, bytes) =>
-                        val hdrs = if hasCt then headers else headers.add("Content-Type", ct)
+                    encodeBufferedBodyValueWith(body.contentType, value, boundary) { (ct, bytes) =>
+                        val hdrs = encodedBodyHeaders(body.contentType, headers, ct)
                         onBuffered(status, hdrs, bytes)
                     }
                 end if
@@ -603,7 +665,11 @@ private[kyo] object RouteUtil:
 
     // ==================== Internal: body encoding ====================
 
-    private def encodeBufferedBodyValueWith[A](ct: HttpRoute.ContentType[?], value: Any)(f: (String, Span[Byte]) => A)(using Frame): A =
+    private def encodeBufferedBodyValueWith[A](
+        ct: HttpRoute.ContentType[?],
+        value: Any,
+        boundary: Maybe[String]
+    )(f: (String, Span[Byte]) => A)(using Frame): A =
         ct match
             case HttpRoute.ContentType.Text =>
                 f("text/plain; charset=utf-8", stringToSpan(value.asInstanceOf[String]))
@@ -616,15 +682,19 @@ private[kyo] object RouteUtil:
                 val str = form.codec.asInstanceOf[HttpFormCodec[Any]].encode(value)
                 f("application/x-www-form-urlencoded", stringToSpan(str))
             case HttpRoute.ContentType.Multipart =>
-                val parts    = value.asInstanceOf[Seq[HttpRequest.Part]]
-                val boundary = java.util.UUID.randomUUID().toString
-                val bytes    = encodeMultipartParts(parts, boundary)
-                f(s"multipart/form-data; boundary=$boundary", bytes)
+                val parts          = value.asInstanceOf[Seq[HttpRequest.Part]]
+                val boundaryString = requireMultipartBoundary(boundary)
+                val bytes          = encodeMultipartParts(parts, boundaryString)
+                f(s"multipart/form-data; boundary=$boundaryString", bytes)
             case _ =>
                 throw new IllegalStateException(s"Cannot encode streaming ContentType as buffered: $ct")
     end encodeBufferedBodyValueWith
 
-    private def encodeStreamBodyValueWith[A](ct: HttpRoute.ContentType[?], value: Any)(
+    private def encodeStreamBodyValueWith[A](
+        ct: HttpRoute.ContentType[?],
+        value: Any,
+        boundary: Maybe[String]
+    )(
         f: (String, Stream[Span[Byte], Async]) => A
     )(using Frame): A =
         ct match
@@ -680,16 +750,166 @@ private[kyo] object RouteUtil:
                 }(using sseText.emitTag, Tag[Emit[Chunk[Span[Byte]]]])
                 f("text/event-stream", byteStream)
             case HttpRoute.ContentType.MultipartStream =>
-                val stream   = value.asInstanceOf[Stream[HttpRequest.Part, Async]]
-                val boundary = java.util.UUID.randomUUID().toString
+                val stream         = value.asInstanceOf[Stream[HttpRequest.Part, Async]]
+                val boundaryString = requireMultipartBoundary(boundary)
                 val byteStream = stream.mapPure { part =>
-                    encodeMultipartPart(part, boundary)
+                    encodeMultipartPart(part, boundaryString)
                 }(using Tag[Emit[Chunk[HttpRequest.Part]]], Tag[Emit[Chunk[Span[Byte]]]])
-                val closingBoundary = Stream.init(Seq(stringToSpan(s"--$boundary--\r\n")))
-                f(s"multipart/form-data; boundary=$boundary", byteStream.concat(closingBoundary))
+                val closingBoundary = Stream.init(Seq(stringToSpan(s"--$boundaryString--\r\n")))
+                f(s"multipart/form-data; boundary=$boundaryString", byteStream.concat(closingBoundary))
             case _ =>
                 throw new IllegalStateException(s"Cannot encode non-streaming ContentType as stream: $ct")
     end encodeStreamBodyValueWith
+
+    private def multipartBoundary(
+        bodyField: Maybe[HttpRoute.Field.Body[?, ?]],
+        headers: HttpHeaders
+    )(using Frame): Maybe[String] < Sync =
+        if requiresMultipartBoundary(bodyField) then
+            multipartBoundaryFromHeaders(headers) match
+                case boundary @ Present(_) => boundary
+                case Absent                => UUID.v4String.map(Present(_))
+        else Absent
+    end multipartBoundary
+
+    private def multipartBoundaryFromHeaders(headers: HttpHeaders): Maybe[String] =
+        headers.get("Content-Type").flatMap { contentType =>
+            val separator = contentType.indexOf(';')
+            val mediaType = if separator < 0 then contentType else contentType.substring(0, separator)
+            if !mediaType.trim.equalsIgnoreCase("multipart/form-data") then Absent
+            else
+                val length                         = contentType.length
+                def isWhitespace(c: Char): Boolean = c == ' ' || c == '\t'
+
+                def loop(offset: Int): Maybe[String] =
+                    var start = offset
+                    while start < length && (contentType.charAt(start) == ';' || isWhitespace(contentType.charAt(start))) do
+                        start += 1
+                    if start >= length then Absent
+                    else
+                        var equals = start
+                        while equals < length && contentType.charAt(equals) != '=' && contentType.charAt(equals) != ';' do
+                            equals += 1
+                        if equals >= length then Absent
+                        else if contentType.charAt(equals) == ';' then loop(equals + 1)
+                        else
+                            val name       = contentType.substring(start, equals).trim
+                            var valueStart = equals + 1
+                            while valueStart < length && isWhitespace(contentType.charAt(valueStart)) do valueStart += 1
+
+                            val value  = new StringBuilder
+                            var next   = valueStart
+                            var valid  = true
+                            val quoted = valueStart < length && contentType.charAt(valueStart) == '"'
+                            if quoted then
+                                next = valueStart + 1
+                                var closed = false
+                                while next < length && !closed do
+                                    contentType.charAt(next) match
+                                        case '"' =>
+                                            closed = true
+                                            next += 1
+                                        case '\\' if next + 1 < length =>
+                                            discard(value.append(contentType.charAt(next + 1)))
+                                            next += 2
+                                        case '\\' =>
+                                            valid = false
+                                            next += 1
+                                        case c =>
+                                            discard(value.append(c))
+                                            next += 1
+                                end while
+                                valid = valid && closed
+                                while next < length && isWhitespace(contentType.charAt(next)) do next += 1
+                                valid = valid && (next >= length || contentType.charAt(next) == ';')
+                            else
+                                val end = contentType.indexOf(';', valueStart) match
+                                    case -1 => length
+                                    case i  => i
+                                discard(value.append(contentType.substring(valueStart, end).trim))
+                                next = end
+                            end if
+
+                            if name.equalsIgnoreCase("boundary") then
+                                val boundary = value.toString
+                                if valid && isValidMultipartBoundary(boundary) && (quoted || isMimeToken(boundary)) then
+                                    Present(boundary)
+                                else Absent
+                            else if next >= length then Absent
+                            else loop(next + 1)
+                            end if
+                        end if
+                    end if
+                end loop
+                loop(if separator < 0 then length else separator + 1)
+            end if
+        }
+    end multipartBoundaryFromHeaders
+
+    private def isValidMultipartBoundary(boundary: String): Boolean =
+        val length = boundary.length
+        if length == 0 || length > 70 || boundary.charAt(length - 1) == ' ' then false
+        else
+            @tailrec def loop(index: Int): Boolean =
+                if index >= length then true
+                else
+                    val c = boundary.charAt(index)
+                    val valid =
+                        c >= '0' && c <= '9' ||
+                            c >= 'A' && c <= 'Z' ||
+                            c >= 'a' && c <= 'z' ||
+                            c == '\'' || c == '(' || c == ')' || c == '+' || c == '_' ||
+                            c == ',' || c == '-' || c == '.' || c == '/' || c == ':' ||
+                            c == '=' || c == '?' || c == ' '
+                    valid && loop(index + 1)
+            loop(0)
+        end if
+    end isValidMultipartBoundary
+
+    private def isMimeToken(value: String): Boolean =
+        value.nonEmpty && value.forall { c =>
+            c >= '!' && c <= '~' &&
+            c != '(' && c != ')' && c != '<' && c != '>' && c != '@' &&
+            c != ',' && c != ';' && c != ':' && c != '\\' && c != '"' &&
+            c != '/' && c != '[' && c != ']' && c != '?' && c != '='
+        }
+    end isMimeToken
+
+    private def validateStreamingMultipartBoundary(
+        bodyField: Maybe[HttpRoute.Field.Body[?, ?]],
+        headers: HttpHeaders,
+        method: String,
+        url: HttpUrl
+    )(using Frame): Result[HttpException, Unit] =
+        val multipartStream = bodyField.exists(_.contentType == HttpRoute.ContentType.MultipartStream)
+        if multipartStream && multipartBoundaryFromHeaders(headers).isEmpty then
+            Result.fail(HttpMissingBoundaryException(method, url.toString))
+        else Result.unit
+    end validateStreamingMultipartBoundary
+
+    private def encodedBodyHeaders(
+        bodyContentType: HttpRoute.ContentType[?],
+        headers: HttpHeaders,
+        encodedContentType: String
+    ): HttpHeaders =
+        if !headers.contains("Content-Type") then headers.add("Content-Type", encodedContentType)
+        else
+            bodyContentType match
+                case HttpRoute.ContentType.Multipart | HttpRoute.ContentType.MultipartStream =>
+                    if multipartBoundaryFromHeaders(headers).isDefined then headers
+                    else headers.set("Content-Type", encodedContentType)
+                case _ => headers
+    end encodedBodyHeaders
+
+    private def requiresMultipartBoundary(bodyField: Maybe[HttpRoute.Field.Body[?, ?]]): Boolean =
+        bodyField.exists { body =>
+            body.contentType match
+                case HttpRoute.ContentType.Multipart | HttpRoute.ContentType.MultipartStream => true
+                case _                                                                       => false
+        }
+
+    private def requireMultipartBoundary(boundary: Maybe[String]): String =
+        boundary.getOrElse(throw new IllegalStateException("multipart encoding requires a generated boundary"))
 
     // ==================== Internal: body decoding ====================
 
@@ -854,12 +1074,7 @@ private[kyo] object RouteUtil:
         stream: Stream[Span[Byte], Async],
         headers: HttpHeaders
     )(using Frame): Stream[HttpRequest.Part, Async] =
-        val boundary = headers.get("Content-Type").flatMap { ct =>
-            val idx = ct.indexOf("boundary=")
-            if idx >= 0 then Present(ct.substring(idx + 9).trim)
-            else Absent
-        }
-        boundary match
+        multipartBoundaryFromHeaders(headers) match
             case Absent =>
                 Stream.empty[HttpRequest.Part]
             case Present(b) =>
@@ -988,12 +1203,7 @@ private[kyo] object RouteUtil:
     private def parseMultipartBody(body: Span[Byte], headers: HttpHeaders, method: String, url: HttpUrl)(using
         Frame
     ): Result[HttpException, Seq[HttpRequest.Part]] =
-        val boundaryOpt = headers.get("Content-Type").flatMap { ct =>
-            val idx = ct.indexOf("boundary=")
-            if idx >= 0 then Present(ct.substring(idx + 9).trim)
-            else Absent
-        }
-        boundaryOpt match
+        multipartBoundaryFromHeaders(headers) match
             case Absent =>
                 Result.fail(HttpMissingBoundaryException(method, url.toString))
             case Present(boundary) =>

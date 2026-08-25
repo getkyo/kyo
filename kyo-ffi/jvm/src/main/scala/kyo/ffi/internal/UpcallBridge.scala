@@ -10,6 +10,7 @@ import java.lang.invoke.MethodHandle
 import java.lang.invoke.MethodHandles
 import java.lang.invoke.MethodType
 import java.lang.reflect.Method
+import kyo.discard
 
 /** Bridges a Scala `FunctionN[...]` value to a Panama upcall stub.
   *
@@ -354,7 +355,9 @@ object UpcallBridge:
             val allArgs: Array[Class[?]] = (fnCls +: argClses).toArray
             val mt                       = MethodType.methodType(retCls, allArgs).nn
             val raw                      = MethodHandles.lookup().nn.findVirtual(moduleClass, s"invokeShape_$shape", mt).nn
-            val _                        = m.put(shape, raw.bindTo(UpcallBridge).nn)
+            // `val _ = <MethodHandle>` crashes the Scala 3.9.0 compiler (CyclicReference on the JDK's
+            // java.lang.invoke.ClassSpecializer, present since 3.9.0-RC1). discard is equivalent here.
+            discard(m.put(shape, raw.bindTo(UpcallBridge).nn))
         end bind
         bind("V_U", classOf[scala.Function0[?]], java.lang.Void.TYPE.nn)
         bind("I_U", classOf[scala.Function1[?, ?]], java.lang.Void.TYPE.nn, java.lang.Integer.TYPE.nn)
@@ -755,6 +758,7 @@ object UpcallBridge:
         case _: ValueLayout.OfBoolean => classOf[Boolean]
         case _: ValueLayout.OfChar    => classOf[Char]
         case _: AddressLayout         => classOf[MemorySegment]
-        case other =>
-            throw new IllegalArgumentException(s"UpcallBridge: unsupported callback value layout: $other")
+        // ValueLayout is sealed and every permitted subtype is matched above, so only null reaches here.
+        case null =>
+            throw new IllegalArgumentException("UpcallBridge: null callback value layout")
 end UpcallBridge

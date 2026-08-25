@@ -21,7 +21,7 @@ import sys.process._
   *
   * For MSVC the flag shape is:
   * {{{
-  *   cl.exe /LD /O2 /W3 /I<dir> <sources> /Fe:<outFile> <linkFlags> <lib>.lib
+  *   cl.exe /LD /O2 /W3 /I<dir> <sources> /Fo:<objectDir> /Fe:<outFile> <linkFlags> <lib>.lib
   * }}}
   *
   * When `staticLink` is true the named `linkLibs` are folded statically into the produced
@@ -36,9 +36,27 @@ import sys.process._
   *     so this toggle is only ever emitted under GNU ld / lld.
   *
   * The output filename embeds os+arch for unambiguous CI artifact naming; `Packager`
-  * strips that suffix when copying into `META-INF/native/{os}-{arch}/`.
+  * strips that suffix when copying into `META-INF/native/{os}-{arch}/`. That os/arch pair is the
+  * BUILD TARGET (`ffiTargetOsArch`, defaulting to the host), threaded in as a parameter: this
+  * object owns the target resolver and the artifact-naming vocabulary every producer reads, so a
+  * cross-built artifact is named and packaged for the platform it actually runs on.
   */
 private[sbt] object CCompiler {
+
+    /** The OS tags the plugin compiles for. Shared with `NativeLoader.Os.tagName` (kyo-ffi/jvm),
+      * which resolves the packaged resource path at runtime; keep the two in sync.
+      */
+    val supportedOs: Seq[String] = Seq("linux", "linux-musl", "darwin", "windows")
+
+    /** The CPU-architecture tags the plugin compiles for. Shared with `NativeLoader.Arch.tagName`. */
+    val supportedArch: Seq[String] = Seq("x86_64", "aarch64")
+
+    /** Every `<os>-<arch>` tag an artifact can be named for. */
+    val supportedOsArchTags: Seq[String] =
+        for {
+            os   <- supportedOs
+            arch <- supportedArch
+        } yield s"$os-$arch"
 
     sealed trait Family
     case object Gcc   extends Family
@@ -168,12 +186,17 @@ private[sbt] object CCompiler {
             val staticFlag      = if (staticLink) Seq("/MT") else Nil
             val libDirFlags     = libDirs.map(d => "/LIBPATH:" + d.getAbsolutePath)
             val libFlags        = linkLibs.map(l => l + ".lib")
-            // cl.exe builds a DLL with /LD; /Fe: sets output exe/dll name.
-            // Note: `cl` reads the command line positionally; sources + libs go after flags.
+            val objectDirFlag   = "/Fo:" + outFile.getAbsoluteFile.getParentFile.getAbsolutePath + File.separator
+            // cl.exe builds a DLL with /LD; /Fo: keeps intermediate objects beside the target DLL and
+            // /Fe: sets its name. `/LIBPATH:` is a linker option: cl silently ignores it on the compiler
+            // command line, so the search dirs and the named import libs must follow `/link`, otherwise
+            // the linker cannot find a vendored .lib (LNK1181). The libs found via the LIB env (winsock,
+            // the CRT) resolve either way.
+            val linkerArgs = linkFlags ++ libDirFlags ++ libFlags
             splitCc(cc) ++ Seq("/LD") ++ translatedFlags ++ staticFlag ++ includeFlags ++
                 sources.map(_.getAbsolutePath) ++
-                Seq("/Fe:" + outFile.getAbsolutePath) ++
-                linkFlags ++ libDirFlags ++ libFlags
+                Seq(objectDirFlag, "/Fe:" + outFile.getAbsolutePath) ++
+                (if (linkerArgs.nonEmpty) Seq("/link") ++ linkerArgs else Nil)
         case _ =>
             val includeFlags = includes.flatMap(d => Seq("-I", d.getAbsolutePath))
             // staticLink folds the named libs into the .so via the GNU ld / lld static toggle,
@@ -226,6 +249,91 @@ private[sbt] object CCompiler {
         else trimmed.split("\\s+").toSeq
     }
 
+    /** Shared-library filename extension for a target OS. The one os→ext mapping in the plugin:
+      * `compile`, `ffiDumpCcCommand` and the artifact-name parser all read it here, so the
+      * diagnostic task can never disagree with what the compile actually produces (it used to
+      * hard-error on `linux-musl`).
+      */
+    def libExtension(os: String): String = os match {
+        case "linux" | "linux-musl" => "so"
+        case "darwin"               => "dylib"
+        case "windows"              => "dll"
+        case other                  => sys.error(s"Unsupported OS for C compilation: $other")
+    }
+
+    /** Shared-library filename prefix for a target OS: `lib` everywhere but Windows. */
+    def libPrefix(os: String): String = if (os == "windows") "" else "lib"
+
+    /** The compile-output filename for `libraryId` on a target os/arch:
+      * `lib<id>-<os>-<arch>.<ext>` (POSIX) or `<id>-<os>-<arch>.dll` (Windows). `Packager` strips
+      * the `-<os>-<arch>` suffix when staging into the resource layout.
+      */
+    def artifactName(libraryId: String, os: String, arch: String): String =
+        s"${libPrefix(os)}$libraryId-$os-$arch.${libExtension(os)}"
+
+    /** Split an `<os>-<arch>` tag into its parts, at the LAST hyphen because the OS itself carries
+      * one (`linux-musl-x86_64` is `linux-musl` + `x86_64`). A tag outside the supported matrix is a
+      * hard error: naming an artifact for a platform no runtime looks up is the silent failure this
+      * whole path exists to prevent.
+      */
+    def parseOsArch(tag: String): (String, String) = {
+        val cut = tag.lastIndexOf('-')
+        val parsed =
+            if (cut <= 0) None
+            else {
+                val os   = tag.substring(0, cut)
+                val arch = tag.substring(cut + 1)
+                if (supportedOs.contains(os) && supportedArch.contains(arch)) Some((os, arch)) else None
+            }
+        parsed.getOrElse(
+            sys.error(s"[kyo-ffi-plugin] Unsupported os-arch '$tag'. Supported: ${supportedOsArchTags.mkString(", ")}.")
+        )
+    }
+
+    /** Resolve the `(os, arch)` a build produces natives for: the explicit `<os>-<arch>` override
+      * when set (`ffiTargetOsArch`), otherwise the build host. Every producer reads the target
+      * through here (the output filename, the packaged resource directory, the stripped suffix, the
+      * OS-specific link libs), so an unset build behaves exactly as the host-only build did and an
+      * override moves all of them together.
+      */
+    def resolveTargetOsArch(explicit: Option[String]): (String, String) =
+        explicit match {
+            case Some(tag) => parseOsArch(tag)
+            case None      => (detectOs(), detectArch())
+        }
+
+    /** Split a filename produced by `artifactName` back into `(libraryId, os, arch)`. `None` when
+      * the name carries no recognized `<os>-<arch>` suffix, or carries one whose extension does not
+      * match its OS. Used to attribute a staged prebuilt (`ffiPrebuiltDir`) to its library and to
+      * its own platform, rather than to the build host's.
+      */
+    def parseArtifactName(name: String): Option[(String, String, String)] = {
+        val dot = name.lastIndexOf('.')
+        if (dot < 0) None
+        else {
+            val base = name.substring(0, dot)
+            val ext  = name.substring(dot + 1)
+            // Longest tag first: `linux-musl-x86_64` must win over a shorter suffix match.
+            supportedOsArchTags.sortBy(-_.length).find(tag => base.endsWith("-" + tag)).flatMap { tag =>
+                val (os, arch) = parseOsArch(tag)
+                val stem       = base.substring(0, base.length - tag.length - 1)
+                val prefix     = libPrefix(os)
+                if (ext != libExtension(os)) None
+                else if (!stem.startsWith(prefix) || stem.length == prefix.length) None
+                else Some((stem.substring(prefix.length), os, arch))
+            }
+        }
+    }
+
+    /** Compile `sources` into a shared library for the target `(os, arch)`.
+      *
+      * `os` / `arch` are the BUILD TARGET, not the host: they decide the output filename, its
+      * extension, and the link shape (`buildCommand`'s darwin-vs-GNU-ld archive handling). The
+      * caller resolves them through `resolveTargetOsArch`, so an unset `ffiTargetOsArch` compiles
+      * for the host exactly as before. Making the target foreign does NOT by itself make the
+      * compiler emit foreign code: the toolchain flags for that (e.g. `-arch x86_64` on darwin)
+      * come from `ffiCFlags`.
+      */
     def compile(
         cc: String,
         cFlags: Seq[String],
@@ -233,24 +341,16 @@ private[sbt] object CCompiler {
         linkLibs: Seq[String],
         sources: Seq[File],
         libraryId: String,
+        os: String,
+        arch: String,
         outputDir: File,
         log: Logger,
         includes: Seq[File] = Nil,
         staticLink: Boolean = false,
         libDirs: Seq[File] = Nil
     ): Seq[File] = {
-        val os     = detectOs()
-        val arch   = detectArch()
-        val family = detectFamily(cc)
-        val ext = os match {
-            case "linux" | "linux-musl" => "so"
-            case "darwin"               => "dylib"
-            case "windows"              => "dll"
-            case other                  => sys.error(s"Unsupported OS for C compilation: $other")
-        }
-        val prefix  = if (os == "windows") "" else "lib"
-        val outName = s"$prefix$libraryId-$os-$arch.$ext"
-        val outFile = new File(outputDir, outName)
+        val family  = detectFamily(cc)
+        val outFile = new File(outputDir, artifactName(libraryId, os, arch))
 
         val cmd = buildCommand(
             cc = cc,
@@ -271,6 +371,9 @@ private[sbt] object CCompiler {
         Seq(outFile)
     }
 
+    /** The BUILD HOST's OS tag. Reached only through `resolveTargetOsArch` on the producing paths,
+      * which is what makes the host a default rather than an assumption baked into each producer.
+      */
     def detectOs(): String = detectOsWith(sys.props("os.name"), p => Files.exists(Paths.get(p)))
 
     /** Test-visible OS detection, takes the raw `os.name` and a predicate for filesystem probing so
@@ -290,6 +393,7 @@ private[sbt] object CCompiler {
         else sys.error(s"Unsupported OS: $name")
     }
 
+    /** The BUILD HOST's CPU-architecture tag (see `detectOs`). */
     def detectArch(): String = sys.props("os.arch") match {
         case "amd64" | "x86_64"  => "x86_64"
         case "aarch64" | "arm64" => "aarch64"

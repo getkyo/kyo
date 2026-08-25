@@ -77,7 +77,7 @@ private[kyo] object ChromeDownloader:
             root     <- cacheRoot
             versionDir = root / s"${artifactName(build)}-$v-$platform"
             exec       = executablePath(versionDir, platform, build)
-            cached <- exec.exists
+            cached <- Abort.recover[FileReadException](_ => false)(exec.exists)
             _ <-
                 if cached then Kyo.unit
                 else download(build, v, platform, versionDir)
@@ -182,28 +182,22 @@ private[kyo] object ChromeDownloader:
     end downloadAndExtract
 
     private def createTempDir(using Frame): Path < (Scope & Sync & Abort[BrowserSetupException]) =
-        Abort.recover[FileFsException] { (ex: FileFsException) =>
+        Abort.recover[FileStructureException] { (ex: FileStructureException) =>
             Abort.fail[BrowserSetupException](
                 BrowserSetupFailedException("failed to create Chrome download temp dir", ex)
             )
         } {
-            // `Path.tempScoped` creates a temp FILE; we need a temp DIRECTORY to drop the zip into and
-            // run `unzip -d` against it. `Path.tempDir` is the directory variant; we register the
-            // recursive removal via `Scope.ensure` so the directory plus its contents are torn down
-            // on scope exit (success, abort, or fiber interrupt).
-            Path.tempDir("kyo-browser-dl-").map { p =>
-                Scope.ensure(Abort.run[FileFsException](p.removeAll).unit).andThen(p)
-            }
+            Path.tempDir("kyo-browser-dl-")
         }
 
     private[kyo] def downloadZip(url: String, dest: Path, downloadTimeout: Duration)(using
         Frame
     )
         : Unit < (Async & Abort[BrowserSetupException]) =
-        Abort.recover[HttpException | FileException] { (ex) =>
+        Abort.recover[HttpException | FileSystemException] { (ex) =>
             val cause: Throwable = ex match
-                case e: HttpException => e
-                case e: FileException => e
+                case e: HttpException       => e
+                case e: FileSystemException => e
             Abort.fail[BrowserSetupException](
                 BrowserSetupFailedException(s"failed to download Chrome from $url", cause)
             )
@@ -221,17 +215,25 @@ private[kyo] object ChromeDownloader:
             }
         }
 
+    /** The archive-extraction command line. Windows uses the System32 bsdtar (which reads zip), named absolutely via `systemRoot` because
+      * PATH can shadow it with an MSYS tar (Git for Windows) that cannot read zip and dies on startup outside an MSYS shell. Unix uses
+      * `unzip`.
+      */
+    private[kyo] def extractArgs(os: System.OS, systemRoot: Maybe[String], archive: String, dest: String): Seq[String] =
+        if os == System.OS.Windows then
+            val tar = systemRoot.map(r => s"$r\\System32\\tar.exe").getOrElse("tar")
+            Seq(tar, "-xf", archive, "-C", dest)
+        else Seq("unzip", "-q", archive, "-d", dest)
+
     private[kyo] def extractZip(archive: Path, dest: Path)(using
         Frame
     )
         : Unit < (Async & Abort[BrowserSetupException]) =
         for
-            os <- System.operatingSystem
-            _  <- createDir(dest)
-            // Windows 10+ ships `tar` that handles zip. Unix has `unzip`.
-            cmd =
-                if os == System.OS.Windows then Command("tar", "-xf", archive.toString, "-C", dest.toString)
-                else Command("unzip", "-q", archive.toString, "-d", dest.toString)
+            os   <- System.operatingSystem
+            root <- System.env[String]("SystemRoot")
+            _    <- createDir(dest)
+            cmd = Command(extractArgs(os, root, archive.toString, dest.toString)*)
             _ <- Abort.recover[CommandException | Process.ExitCode] { err =>
                 failSetup(s"failed to extract $archive → $dest: $err", err)
             } {
@@ -240,7 +242,7 @@ private[kyo] object ChromeDownloader:
         yield ()
 
     private def createDir(dir: Path)(using Frame): Unit < (Sync & Abort[BrowserSetupException]) =
-        Abort.recover[FileFsException] { (ex: FileFsException) =>
+        Abort.recover[FileStructureException] { (ex: FileStructureException) =>
             Abort.fail[BrowserSetupException](
                 BrowserSetupFailedException(s"failed to create dir $dir", ex)
             )

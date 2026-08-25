@@ -115,10 +115,13 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
                 Task.Done
             }))
             tasks.foreach(scheduler.schedule)
-            eventually(assert(scheduler.busyFiberTraces().size >= n))
-            val result = scheduler.busyFiberTraces()
+            // The snapshot deliberately includes loaded-but-unmounted workers (a task queued on a
+            // worker whose thread has not mounted yet) with an empty mount name, so the coverage
+            // assertions read the mounted entries: all n busy workers must appear, each on a
+            // distinct mount.
+            eventually(assert(scheduler.busyFiberTraces().count(_.mount.nonEmpty) >= n))
+            val result = scheduler.busyFiberTraces().filter(_.mount.nonEmpty)
             assert(result.size >= n)
-            assert(result.forall(_.mount.nonEmpty))
             assert(result.map(_.mount).distinct.size == result.size)
             assert(result.forall(_.fiberTrace == ""))
             cdl.countDown()
@@ -143,9 +146,119 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
         }
     }
 
-    private def withScheduler[A](testCode: Scheduler => A): A = {
-        val scheduler = new Scheduler(TestExecutors.cached, TestExecutors.scheduled)
+    "blocking compensation" - {
+        // The scheduler's contract (class scaladoc: "When blocking occurs, the concurrency regulator observes increased scheduling delays
+        // and responds by expanding the worker pool"): a task that blocks its carrier (a parked I/O driver, a blocking fiber) must NOT
+        // starve a runnable task. A blocker here parks its carrier (latch await = LockSupport.park, detected by the BlockingMonitor) and is
+        // not interruptible (needsInterrupt=false, the default), so a fresh runnable task runs only if the pool keeps runnable capacity
+        // while the carrier stays parked. If it does not, that task is queued behind the blockers indefinitely.
+
+        "blocked carriers under host CPU load must not wedge the pool (blocked-carrier floor)" in {
+            // Every carrier is blocked while the host is busy with non-scheduler CPU work. The concurrency regulator probes by sleeping
+            // 1ms and measuring the wakeup delay; under host CPU contention that delay exceeds its ~800us shrink threshold, so it shrinks
+            // (or fails to grow) the pool below the blocked count and a freshly scheduled task is never served. The blocked-carrier floor
+            // clamps currentWorkers >= blocked + minWorkers regardless of jitter, keeping minWorkers runnable carriers, so the task runs.
+            // The load is real CPU contention, not an injected jitter value, so this exercises the real probe -> shrink -> floor path;
+            // keep it that way rather than reducing it to a mocked measurement.
+            val cfg = Scheduler.Config.default.copy(cores = 4, coreWorkers = 4, minWorkers = 2, maxWorkers = 400)
+            val hostThreads =
+                Runtime.getRuntime().availableProcessors() * 4 // 4x oversubscription: reliably drives the regulator's probe jitter over its shrink threshold, even on a 4-vCPU CI runner
+            val load = java.util.concurrent.Executors.newFixedThreadPool(hostThreads, kyo.scheduler.util.Threads("host-load"))
+            withScheduler(cfg) { s =>
+                val gate   = new CountDownLatch(1)
+                val canary = new CountDownLatch(1)
+                try {
+                    // Real host CPU load (NOT scheduler tasks): pure external contention delaying the regulator's probe wakeup.
+                    (0 until hostThreads).foreach(_ =>
+                        load.execute(() => {
+                            var x = 0L
+                            while (!Thread.currentThread().isInterrupted()) { x += 1; if (x == Long.MinValue) println(x) }
+                        })
+                    )
+                    // More blockers than carriers (2x coreWorkers): the extra blockers stay queued and refill any carrier the pool
+                    // grows, so a transient growth cannot un-wedge it (many producers contending for few carriers). Real,
+                    // non-interruptible, indefinitely parked, like a parked I/O driver carrier.
+                    (0 until 8).foreach(_ =>
+                        s.schedule(new Task {
+                            def run(startMillis: Long, clock: InternalClock, deadline: Long): Task.Result = {
+                                try gate.await()
+                                catch { case _: InterruptedException => Thread.interrupted(): Unit }
+                                Task.Done
+                            }
+                        })
+                    )
+                    // Wait (poll interval, not a fixed sleep) until the carriers are blocked, so the canary is scheduled into the
+                    // wedge. The 4x host load runs throughout, so the regulator sees sustained jitter and shrinks the pool. Assert on
+                    // the loop's own read that broke the wait, not a fresh re-sample: under heavy load the BlockingMonitor is
+                    // CPU-starved and its blocked flags flicker, so a second sample can momentarily dip below 4.
+                    val deadline = java.lang.System.nanoTime() + 10000000000L
+                    var blk0     = 0
+                    while (
+                        {
+                            blk0 = s.status().workers.count(w => (w ne null) && w.isBlocked); blk0 < 4
+                        } && java.lang.System.nanoTime() < deadline
+                    )
+                        Thread.sleep(5)
+                    assert(blk0 >= 4, s"carriers never became blocked within 10s (blocked=$blk0)")
+                    // Fresh runnable canary: it must be served. Without the floor the jitter-driven regulator shrinks the pool below
+                    // the blocked count and the canary is starved; the floor keeps minWorkers runnable carriers, so it runs.
+                    s.schedule(TestTask(_run = () => { canary.countDown(); Task.Done }))
+                    val served = canary.await(8, java.util.concurrent.TimeUnit.SECONDS)
+                    val st     = s.status()
+                    val r      = st.concurrency.regulator
+                    val blk    = st.workers.count(w => (w ne null) && w.isBlocked)
+                    assert(
+                        served,
+                        s"WEDGE: a fresh task was starved while $blk carriers blocked and host jitter high. The regulator shrank / failed to " +
+                            s"grow the pool below the blocked count instead of holding a blocked-carrier floor. " +
+                            s"[currentWorkers=${st.currentWorkers} blocked=$blk runnable=${st.currentWorkers - blk} " +
+                            s"jitter=${r.measurementsJitter}ns step=${r.step} updates=${r.updates}]"
+                    )
+                } finally {
+                    gate.countDown()
+                    load.shutdownNow()
+                    load.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS): Unit
+                }
+            }
+        }
+    }
+
+    "regulator harness liveness" - {
+        // Each Scheduler permanently pins TWO timer-pool threads with infinite loops: the blocking-monitor scan loop
+        // (BlockingMonitor's submitted task) and the worker-cycle loop (Scheduler.cycleTask). The concurrency and admission
+        // regulators run their probes as PERIODIC tasks on that same pool (collectInterval=10ms), so a pool with headroom
+        // beyond those 2 threads fires them freely. The shared Scheduler.defaultTimerExecutor is size 4, and Scheduler.get
+        // (the global singleton) already pins 2 of its threads for the whole JVM, so a regulator-dependent test sharing that
+        // pool is unreliable. withScheduler gives every test its own adequately sized, torn-down timer pool by default. This
+        // leaf guards that: a live regulator fires within a bounded deadline given a dedicated pool with headroom.
+        val liveCfg = Scheduler.Config.default.copy(cores = 2, coreWorkers = 2, minWorkers = 2, maxWorkers = 4)
+
+        "an adequately sized dedicated timer pool keeps the regulator firing" in withScheduler(liveCfg) { s =>
+            // probesSent increments every ~10ms; a live regulator fires many within a few seconds. Poll to a bounded deadline.
+            val deadline = java.lang.System.nanoTime() + 3000000000L
+            while (s.status().concurrency.regulator.probesSent <= 10 && java.lang.System.nanoTime() < deadline)
+                Thread.sleep(10)
+            val probes = s.status().concurrency.regulator.probesSent
+            assert(probes > 10, s"regulator never fired in the harness (probesSent=$probes) despite an 8-thread dedicated timer pool")
+        }
+    }
+
+    private def withScheduler[A](testCode: Scheduler => A): A =
+        withScheduler(Scheduler.Config.default)(testCode)
+
+    /** Runs `testCode` with a fresh Scheduler on its OWN adequately sized, torn-down timer pool. This is the default for every
+      * scheduler test, so none can accidentally hit the starving shared pool.
+      *
+      * Each Scheduler permanently pins 2 timer-pool threads with infinite loops (the blocking-monitor scan loop and the
+      * worker-cycle loop), so the regulator's periodic probes only fire when the pool has headroom beyond those 2. The process
+      * Scheduler.defaultTimerExecutor is size 4, of which Scheduler.get (the global singleton) already pins 2 for the whole
+      * JVM, so a test sharing it silently freezes the regulator (probesSent stays ~0). A dedicated pool sized well past the
+      * 2 pinned loops removes that trap, and shutting it down afterwards avoids thread accumulation on Native.
+      */
+    private def withScheduler[A](cfg: Scheduler.Config)(testCode: Scheduler => A): A = {
+        val timer     = java.util.concurrent.Executors.newScheduledThreadPool(8, kyo.scheduler.util.Threads("test-timer"))
+        val scheduler = new Scheduler(TestExecutors.cached, TestExecutors.scheduled, timer, cfg)
         try testCode(scheduler)
-        finally scheduler.shutdown()
+        finally { scheduler.shutdown(); timer.shutdownNow(): Unit }
     }
 }
