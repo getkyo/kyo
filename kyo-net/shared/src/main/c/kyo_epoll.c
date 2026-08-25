@@ -21,14 +21,20 @@
  * The Scala side gates on PosixConstants.isLinux before it calls any of these, so
  * the stubs are unreachable in practice; they exist to keep the link graph whole.
  *
- * Guarded on POSIX, like kyo_posix.c: the translation unit is empty on a non-POSIX
- * host (Windows), where kyo-net's posix transport does not build at all.
+ * Every entry point is defined on every target, Windows included, which is what
+ * lets the binding resolve wherever the shared library is loaded. kyo_uring.c is
+ * built the same way. An earlier revision wrapped this file in `#if !defined(_WIN32)`
+ * and emitted nothing on Windows; the two shims then disagreed about a library they
+ * share, and a Windows JVM run of EpollBindingsTest failed looking up a symbol that
+ * had not been compiled. Only <unistd.h> and close(2) are POSIX-specific here, so
+ * only those are guarded.
  */
 
-#if !defined(_WIN32)
-
 #include <errno.h>
+
+#if !defined(_WIN32)
 #include <unistd.h>
+#endif
 
 #if defined(__linux__) && __has_include(<sys/epoll.h>)
 
@@ -137,21 +143,23 @@ int kyo_epoll_eventfd_read(int fd, void* value) {
 #endif
 
 /*
- * close(2) on the epoll fd and the wake eventfd. POSIX everywhere, so it sits
- * outside the Linux guard and is the real close on every platform: the binding
- * reaches it through a kyo-owned name for the same reason the rest of this file
- * exists, not because the underlying call is Linux-specific.
+ * close(2) on the epoll fd and the wake eventfd. It sits outside the Linux guard
+ * because it is POSIX rather than Linux-specific: the binding reaches it through a
+ * kyo-owned name for the same reason the rest of this file exists. On Windows there
+ * is no epoll fd to close, so the call joins the other stubs and reports ENOSYS.
  */
+#if !defined(_WIN32)
+
 int kyo_epoll_close(int fd) {
     return close(fd);
 }
 
 #else
 
-/*
- * Non-POSIX (Windows): empty translation unit. ISO C forbids a file with no
- * external declarations, so emit one harmless typedef to keep the compiler quiet.
- */
-typedef int kyo_epoll_unavailable_t;
+int kyo_epoll_close(int fd) {
+    (void)fd;
+    errno = ENOSYS;
+    return -1;
+}
 
 #endif
