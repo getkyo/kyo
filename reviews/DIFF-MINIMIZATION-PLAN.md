@@ -190,20 +190,26 @@ the whole diff is the ruled swap itself.
   classify (project is new on this branch relative to main? verify)
 
 ### Small modules
-- [ ] (90) kyo-ai/LLM.scala - capture re-spell is session-ruled; classify the rest
+- [x] (34) kyo-ai/LLM.scala - handleLoopState/answer-style (register) + capture-row narrowing
+  from the Isolate fix (session-ruled)
 - [x] (47) kyo-browser/Browser.scala - clone snapshot move, session-ruled
-- [ ] (12) kyo-direct/AsyncShift.scala
-- [ ] (21) kyo-http/HttpHandler.scala; (42) HttpClientBackend.scala; (34) RouteUtil.scala;
-  (93) UnsafeServerDispatch.scala - dispatch fix and merge resolutions are session work;
-  classify remainder
-- [ ] (13) kyo-jsonrpc/JsonRpcEndpointImpl.scala
-- [ ] (80) kyo-parse/Parse.scala
+- [x] kyo-direct/internal/AsyncShift.scala - one-line delta; kernel-forced
+- [x] kyo-http HttpHandler/HttpClientBackend/RouteUtil/UnsafeServerDispatch - kernel-forced:
+  IOTask.unscoped replaces the old (Trace, Context) constructor, RouteUtil answer-style,
+  serveRequest genericized to [In, Out, E] because an Any-erased computation would re-enter
+  the lift and nest as data (which is why HttpHandler's encodeResponseUnchecked is deleted);
+  panic-logging onComplete NOTED in queue
+- [x] (2) kyo-jsonrpc/JsonRpcEndpointImpl.scala - trivial kernel-forced delta
+- [x] (23) kyo-parse/Parse.scala - handleLoopState/answer-style (register) + cast design comment
 - [ ] (26) kyo-scheduler/InternalClockTest.scala
-- [ ] (22/31/67/13) kyo-slack Slack/SlackReconnect/SlackSocketEngine/SlackReconnectTest
+- [x] kyo-slack Slack/SlackReconnect/SlackSocketEngine/SlackReconnectTest - RESTORED to main
+  verbatim (zero diff): the branch had narrowed the Keep to Sync at 11 sites; the session's
+  capture-row fix makes main's `Isolate[S, Abort[SlackException] & Async, S]` workable again,
+  matching the kyo-core combinator restoration. Compile-unverified until sbt is cleared.
 - [ ] (18) kyo-system/PathPlatformSpecific.scala
 - [x] (13) kyo-ui/ReactiveUITeardownTest.scala - session workaround removal, ruled
 - [ ] (138) kyo-workers/ForkQueue.scala; (25) WorkersException.scala
-- [ ] (13) kyo-zio/ZStreams.scala
+- [x] (1) kyo-zio/ZStreams.scala - single line, rides the runFirst FLAG
 
 ### Excluded from minimization (session artifacts; the ship port excludes them)
 reviews/, bench-results/, root-level session .md files, .recovery/, qa-artifacts/, prior-art/,
@@ -248,4 +254,7 @@ optimization-candidates/, backlog-sections/, .claude/ trees.
   release)(use)` on top of the resource-only form, both now built on Effect.bracket. The
   checklist had recorded ensure/acquireRelease as session-approved; the new overload is listed
   here so the approval is explicit rather than remembered.
+- NOTE: UnsafeServerDispatch now logs handler-fiber panics via onComplete (previously they
+  vanished silently since nothing reads a handler fiber's result). Internal behavior addition,
+  listed for visibility.
 - (append here as the pass proceeds)

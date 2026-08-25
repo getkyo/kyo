@@ -72,7 +72,7 @@ private[kyo] object SlackReconnect:
           * terminal `link_disabled`. On a routine disconnect, rotate per policy.
           */
         private[kyo] def start[S](
-            using Isolate[S, Sync, S]
+            using Isolate[S, Abort[SlackException] & Async, S]
         )(
             handler: SlackEnvelope => SlackAck < (S & Async & Abort[SlackException])
         )(using Frame): Unit < (S & Async & Abort[SlackException]) =
@@ -108,7 +108,7 @@ private[kyo] object SlackReconnect:
         AtomicRef.init[SlackSocketEngine](first).map(active => new Controller(active, open, config))
 
     private def loop[S](
-        using Isolate[S, Sync, S]
+        using Isolate[S, Abort[SlackException] & Async, S]
     )(
         active: AtomicRef[SlackSocketEngine],
         dedup: OverlapDedup,
@@ -156,7 +156,7 @@ private[kyo] object SlackReconnect:
       * dedup (no overlap window survives).
       */
     private def rotate[S](
-        using Isolate[S, Sync, S]
+        using Isolate[S, Abort[SlackException] & Async, S]
     )(
         active: AtomicRef[SlackSocketEngine],
         dedup: OverlapDedup,
