@@ -740,30 +740,6 @@ lazy val `kyo-data` =
 // for comparison boards. A separate unpublished project so the external dependencies never
 // reach a published kyo artifact's pom; row names match KernelBench's so result tables join
 // by name.
-lazy val `kyo-kernel-bench-cross` =
-    project
-        .in(file("kyo-kernel/bench-cross"))
-        .enablePlugins(JmhPlugin)
-        .disablePlugins(MimaPlugin)
-        .settings(
-            `kyo-settings`,
-            publish / skip := true,
-            // No tests or doctests here; keep the doctest driver jars (built from the stack
-            // above the kernel, mid-migration) off the Test classpath that Jmh extends.
-            Test / unmanagedJars := Seq.empty,
-            Jmh / javaOptions := (Test / javaOptions).value.filterNot(_ == "-XX:+UseCompactObjectHeaders"),
-            // zio-blocks Async has no trampoline: flatMap over a settled value calls the
-            // continuation directly, so the depth-10000 rows recurse on the JVM stack. Applied
-            // uniformly to every class in this project; the other libraries are stack-insensitive.
-            Jmh / javaOptions += "-Xss32m",
-            libraryDependencies ++= Seq(
-                "dev.zio"            %% "zio"              % zioVersion,
-                "org.typelevel"      %% "cats-effect"      % catsVersion,
-                "dev.zio"            %% "zio-blocks-async" % zioBlocksVersion,
-                "io.github.marcinzh" %% "turbolift-core"   % turboliftVersion
-            )
-        )
-
 // Compile-time benchmark: a warmed in-process dotc compiles fixture files against each
 // kernel's classes, one fixture per cost driver. The project depends only on kyo-data (for
 // the corpus classpath) and the compiler; the kernels enter as -classpath entries, so the
@@ -812,6 +788,19 @@ lazy val `kyo-kernel` =
             // UseCompactObjectHeaders from kyo-settings, and a collector-dependent layout
             // flag must not be baked into the canonical numbers.
             Jmh / javaOptions := (Test / javaOptions).value.filterNot(_ == "-XX:+UseCompactObjectHeaders"),
+            // zio-blocks Async has no trampoline: flatMap over a settled value calls the
+            // continuation directly, so the cross benches' depth-10000 rows recurse on the JVM
+            // stack. Uniform across every fork in this project; the other rows are
+            // stack-insensitive.
+            Jmh / javaOptions += "-Xss32m",
+            // The comparison benches under bench/cross; jmh-scoped so the frameworks stay off
+            // the Compile and Test classpaths.
+            libraryDependencies ++= Seq(
+                "dev.zio"            %% "zio"              % zioVersion,
+                "org.typelevel"      %% "cats-effect"      % catsVersion,
+                "dev.zio"            %% "zio-blocks-async" % zioBlocksVersion,
+                "io.github.marcinzh" %% "turbolift-core"   % turboliftVersion
+            ).map(_ % "jmh"),
             // The Safepoint overflow suite fills the global slot table; a suite running
             // concurrently in the same classloader would see its threads degraded to the
             // overflow slot for the duration.
