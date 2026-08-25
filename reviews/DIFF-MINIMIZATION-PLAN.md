@@ -310,16 +310,18 @@ optimization-candidates/, backlog-sections/, .claude/ trees.
   main's 737 lines. CONTRIBUTING.md rewritten against the current tree (Stack-based evaluator,
   current file inventory and test names, current handler-variant names) with the dangling
   kernel2-*.md links removed. Doctest validation pending sbt.
-- FLAG (design fork, from validation): a kernel bracket inside a runFirst-peeled stream
-  breaks across evals. ZStreamsTest "round trip: get then run" panics with Finalizer$Spent:
-  Emit.runFirst hands the remainder out as a value, the finishing eval's release-on-abandonment
-  drain releases the Scope resource the remainder still carries, and the next peel re-enters
-  the spent scope. Main supported this pattern (old Scope released at Scope.run completion,
-  crossing evals as data freely; the trade was a leak if the remainder was dropped). Kernel2
-  chose release-on-abandonment (no leak, but no cross-eval resumption of a live bracket).
-  Ruling needed: (a) dumps transfer finalizer ownership into the reified continuation
-  (restores main's semantics; a dropped remainder's resources become the holder's
-  responsibility), or (b) keep release-on-abandonment and rework ZStreams.get to manage the
-  ZIO scope outside the kernel bracket. Recommendation: (a), it is what the runFirst/stream
-  ecosystem is built on.
+- FLAG (design fork, from validation; diagnosis CORRECTED by reproduction): a kernel bracket
+  inside a peeled stream breaks only when the remainder crosses a FIBER boundary. New
+  StreamCoreExtensionsTest pins prove the in-evaluation hand-out lane already works (runFirst
+  peel and splitAt both release exactly once, after the remainder is consumed, in the same
+  fiber); the red lane is a fiber completing while its result value still owes a release: the
+  completion drains it, and the next fiber's entry into the spent scope panics. That lane has
+  a minimal in-repo reproduction now ("a resource-carrying remainder crosses a fiber
+  boundary", pendingUntilFixed) and is what ZStreamsTest hits through ZIO (each peel is its
+  own ZIOs.run). The ruling narrows to: should a normally-completing fiber drain finalizers
+  its own result value still carries (current behavior, protects against dropped results,
+  breaks cross-fiber peels), or should the result value keep custody of them (restores main's
+  pattern; a dropped result leaks unless the holder finalizes). Recommendation: keep custody
+  with the value; the fiber cannot know its result carries the scope, and the interrupt path
+  (IOTask.abandon calling finalizeResources) already handles the genuinely-abandoned case.
 - (append here as the pass proceeds)

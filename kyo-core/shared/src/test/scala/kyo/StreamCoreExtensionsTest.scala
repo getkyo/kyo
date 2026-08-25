@@ -988,6 +988,59 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                 }
             }
         }
+
+        // The hand-out lane: a peel captures the rest of the stream as a value, and a resource
+        // acquired inside the stream must survive into whatever evaluation consumes that value,
+        // releasing exactly once when the stream's extent actually ends.
+        "a resource-carrying remainder from a peel is consumable afterwards" in {
+            AtomicInt.init(0).map { released =>
+                val stream = Stream:
+                    Scope.run:
+                        Scope.ensure(released.incrementAndGet.unit).andThen:
+                            Emit.valueWith(Chunk(1))(Emit.value(Chunk(2)))
+                Emit.runFirst(stream.emit).map { (first, cont) =>
+                    Emit.run(cont(())).map { (rest, _) =>
+                        released.get.map { r =>
+                            assert(first == Maybe(Chunk(1)) && rest == Chunk(Chunk(2)) && r == 1)
+                        }
+                    }
+                }
+            }
+        }
+
+        "splitAt hands out a rest stream that still owns its resource" in {
+            AtomicInt.init(0).map { released =>
+                val stream = Stream:
+                    Scope.run:
+                        Scope.ensure(released.incrementAndGet.unit).andThen:
+                            Emit.valueWith(Chunk(1))(Emit.value(Chunk(2)))
+                stream.splitAt(1).map { (head, rest) =>
+                    rest.run.map { tail =>
+                        released.get.map { r =>
+                            assert(head == Chunk(1) && tail == Chunk(2) && r == 1)
+                        }
+                    }
+                }
+            }
+        }
+
+        "a resource-carrying remainder crosses a fiber boundary".pendingUntilFixed(
+            "the peeling fiber's completion releases the scope the handed-out remainder still owes"
+        ) in {
+            AtomicInt.init(0).map { released =>
+                val stream = Stream:
+                    Scope.run:
+                        Scope.ensure(released.incrementAndGet.unit).andThen:
+                            Emit.valueWith(Chunk(1))(Emit.value(Chunk(2)))
+                Fiber.initUnscoped(Emit.runFirst(stream.emit)).map(_.get).map { (first, cont) =>
+                    Emit.run(cont(())).map { (rest, _) =>
+                        released.get.map { r =>
+                            assert(first == Maybe(Chunk(1)) && rest == Chunk(Chunk(2)) && r == 1)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     "mapPar Closed error propagation (#1387)" - {
