@@ -15,8 +15,10 @@ inputs:
 runs:
   using: composite
   steps:
+    # JVM is in this list for the kyo-test-sbt-publish scripted suite: it runs in the 2.12 pass of
+    # the JVM target and its js-plugin sub-build links and runs a real Scala.js test binary.
     - uses: actions/setup-node@v6.4.0
-      if: ${{ inputs.target == 'JS' || inputs.target == 'Wasm' }}
+      if: ${{ inputs.target == 'JS' || inputs.target == 'Wasm' || inputs.target == 'JVM' }}
       with:
         node-version: '24'
 
