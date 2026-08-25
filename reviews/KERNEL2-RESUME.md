@@ -169,3 +169,15 @@ REMAINING rollout (mechanical, mirror the done ones):
   supports, so Safepoint is the whole gap). The single-threaded Safepoint semantics (what stop
   and preemption mean on JS, wasm too) are a design ruling, not a mechanical port; parked for
   the owner. Full Native matrix launched overnight; log scratchpad/native-full.log.
+- Native full-matrix correction (from-zero rebuild): kyo-actorNative fails nativeLink even from
+  a clean build, and the unknown-symbol list mixes OLD-kernel shapes (kyo.kernel.Arrow,
+  Safepoint$.get(): Safepoint, non-inline ContextEffect$.handle) with kernel2 shapes
+  (Safepoint.get(): Int, Pending$package accessors). Root cause is dual-kernel classpath
+  topology, not staleness: both kernels define kyo.kernel.* during the migration, and
+  kyo-test-runner (which imports kyo.kernel.< and splices preludeNative/coreNative
+  fullClasspaths in as unmanagedClasspath, then is itself spliced into every module's Test
+  classpath by withKyoTest) lets both generations meet on non-JVM test classpaths. JVM links
+  lazily and tolerates it; the JS and Native linkers demand closure and fail. kernel2Native and
+  kyo-coreNative pass in isolation (coherent classpaths), which bounds the problem to the
+  splice. Fix is a wiring ruling: single-kernel test-runner stack and old-kernel projects out
+  of the non-JVM test graph. Parked for the owner alongside the JS Safepoint split.
