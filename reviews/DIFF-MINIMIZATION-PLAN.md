@@ -248,6 +248,22 @@ the whole diff is the ruled swap itself.
 reviews/, bench-results/, root-level session .md files, .recovery/, qa-artifacts/, prior-art/,
 optimization-candidates/, backlog-sections/, .claude/ trees.
 
+## Validation record (sbt cleared)
+
+- Kernel suite green on all four platforms: JVM 1151/1151, JS 1111/1111 (the 15 self-stop
+  park tests converted through the SafepointStop platform helper), Native 1134/1134,
+  Wasm 1111/1111.
+- Module suites green: kyo-core 3436 (StreamCompression included), kyo-data, kyo-prelude,
+  kyo-slack (wide-Keep restoration compiles and passes), kyo-zio 21/22, kyo-jsonrpc,
+  kyo-scheduler. Test compiles green additionally for kyo-system, kyo-direct, kyo-actor.
+- The single red repo-wide is ZStreamsTest "round trip: get then run" (the bracket-vs-runFirst
+  design fork below).
+- Doctests: kyo-kernel/README.md 29/29 blocks, kyo-prelude/README.md 34/34; the kernel's
+  doctest task re-enabled (obsolete interim carve-out removed) with the fresh-driver guard
+  restored.
+- Still owed before ship: kyo-test/kyo-doctest migration off the scalatest interim, the JMH
+  board re-run, CI-faithful podman runs.
+
 ## Flag queue (semantic divergences awaiting a ruling; append as found)
 
 - RESOLVED by ruling: kyo.debug.Debug stays removed for now; a future kyo-debugger module
