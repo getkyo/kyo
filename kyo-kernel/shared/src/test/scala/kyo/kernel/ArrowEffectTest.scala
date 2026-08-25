@@ -1762,19 +1762,20 @@ class ArrowEffectTest extends AnyFreeSpec:
         }
 
         "a clause keeps only the values it was given" in {
-            val seen = ListBuffer[(Int, String)]()
+            val seen = ListBuffer[(Int, Unit)]()
             def run(): Int =
                 Eval(ArrowEffect.handleLoopState(Tag[Ask], 0, ask.map(a => ask.map(b => ask.map(c => a + b + c))))(
                     [C] =>
                         (n, i) =>
-                            seen += ((n, i.toString))
+                            seen += ((n, i))
                             Loop.continue(n + 1, n)
                     ,
                     (n, a) => n * 1000 + a
                 ))
             assert(run() == 3003)
             val snapshot = seen.toList
-            assert(snapshot == List((0, "()"), (1, "()"), (2, "()")))
+            // the raw inputs, not a boxed representation: a Nested wrapper would fail the equality
+            assert(snapshot == List((0, ()), (1, ()), (2, ())))
             // a second eval must not disturb what the first clause stored: the arguments were plain
             // values, not aliases of live kernel state
             assert(run() == 3003)
@@ -1829,7 +1830,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                 ArrowEffect.handleLoopState(Tag[Ask], 0, countdown(100))(
                     [C] =>
                         (n, _) =>
-                            if n == 10 then kyo.discard(internal.Safepoint.stop(Thread.currentThread()))
+                            if n == 10 then internal.SafepointStop.request()
                             Loop.continue(n + 1, 1)
                     ,
                     (n, a) => n + a
@@ -1932,7 +1933,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                     [C] =>
                         (_, cont) =>
                             n += 1
-                            if n == 10 then kyo.discard(internal.Safepoint.stop(Thread.currentThread()))
+                            if n == 10 then internal.SafepointStop.request()
                             cont(1)
                     ,
                     a => a
@@ -2060,7 +2061,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                     while i < 100 do
                         acc = acc.map { x =>
                             built += 1
-                            if built == 50 then kyo.discard(internal.Safepoint.stop(Thread.currentThread()))
+                            if built == 50 then internal.SafepointStop.request()
                             x + 1
                         }
                         i += 1
@@ -2130,7 +2131,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                     while i < 100 do
                         acc = acc.map { x =>
                             built += 1
-                            if built == 50 then kyo.discard(internal.Safepoint.stop(Thread.currentThread()))
+                            if built == 50 then internal.SafepointStop.request()
                             x + 1
                         }
                         i += 1

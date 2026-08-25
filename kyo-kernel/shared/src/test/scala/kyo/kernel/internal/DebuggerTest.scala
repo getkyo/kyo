@@ -150,7 +150,7 @@ class DebuggerTest extends AnyFreeSpec:
         session(d) {
             val v: Int < Any =
                 Effect.defer {
-                    discard(Safepoint.stop(Thread.currentThread()))
+                    SafepointStop.request()
                     1
                 }.map(_ + 41)
             val p = Eval.partial(v)

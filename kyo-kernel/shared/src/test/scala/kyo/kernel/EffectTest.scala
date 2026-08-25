@@ -11,7 +11,7 @@ import kyo.discard
 import kyo.kernel.internal.Eval
 import kyo.kernel.internal.Finalizer
 import kyo.kernel.internal.Kyo
-import kyo.kernel.internal.Safepoint
+import kyo.kernel.internal.SafepointStop
 import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
 
@@ -285,7 +285,7 @@ class EffectTest extends AnyFreeSpec:
         // thing more directly: the recovery is a stack entry, so it has to survive the snapshot and come back
         "catching guards a stateful region across a park" in {
             val body = testEffect1(1).map { a =>
-                discard(Safepoint.stop(Thread.currentThread()))
+                SafepointStop.request()
                 testEffect1(2).map(b => a + b)
             }
             val region = ArrowEffect.handleLoopState(Tag[TestEffect1], 7, body)(
@@ -619,11 +619,11 @@ class EffectTest extends AnyFreeSpec:
             var released = 0
             val v: Int < Any =
                 Effect.bracket(Effect.defer {
-                    discard(Safepoint.stop(Thread.currentThread()))
+                    SafepointStop.request()
                     1
                 })(_ => released += 1)(r =>
                     Effect.defer {
-                        discard(Safepoint.stop(Thread.currentThread()))
+                        SafepointStop.request()
                         r + 1
                     }.map(_ + 1)
                 )
@@ -721,7 +721,7 @@ class EffectTest extends AnyFreeSpec:
                     out = r
                 } { r =>
                     Effect.defer {
-                        discard(Safepoint.stop(Thread.currentThread()))
+                        SafepointStop.request()
                         r
                     }.map(x => if x == 1 then throw boom else x)
                 }
@@ -739,7 +739,7 @@ class EffectTest extends AnyFreeSpec:
                 Effect.bracket(Effect.defer(1))(_ => released :+= "outer") { a =>
                     Effect.bracket(Effect.defer(2))(_ => released :+= "inner") { b =>
                         Effect.defer {
-                            discard(Safepoint.stop(Thread.currentThread()))
+                            SafepointStop.request()
                             a + b
                         }.map(_ + 39)
                     }
@@ -756,7 +756,7 @@ class EffectTest extends AnyFreeSpec:
             val v: Int < Any =
                 Effect.bracket(Effect.defer(1))(_ => released += 1)(r =>
                     Effect.defer {
-                        discard(Safepoint.stop(Thread.currentThread()))
+                        SafepointStop.request()
                         r
                     }.map(_ + 41)
                 )
@@ -778,7 +778,7 @@ class EffectTest extends AnyFreeSpec:
                     out = r
                 } { r =>
                     Effect.defer {
-                        discard(Safepoint.stop(Thread.currentThread()))
+                        SafepointStop.request()
                         r
                     }.map(_ + 41)
                 }
@@ -797,7 +797,7 @@ class EffectTest extends AnyFreeSpec:
                 Effect.bracket(Effect.defer(1))(_ => order :+= "outer") { a =>
                     Effect.bracket(Effect.defer(2))(_ => order :+= "inner") { b =>
                         Effect.defer {
-                            discard(Safepoint.stop(Thread.currentThread()))
+                            SafepointStop.request()
                             a + b
                         }.map(_ + 39)
                     }
@@ -810,7 +810,7 @@ class EffectTest extends AnyFreeSpec:
 
         "abandoning a park with no outstanding releases is a no-op" in {
             val v: Int < Any = Effect.defer {
-                discard(Safepoint.stop(Thread.currentThread()))
+                SafepointStop.request()
                 1
             }.map(_ + 41)
             val p = Eval.partial(v)
@@ -826,7 +826,7 @@ class EffectTest extends AnyFreeSpec:
             var released = 0
             val v: Int < Any =
                 Effect.bracket(Effect.defer {
-                    discard(Safepoint.stop(Thread.currentThread()))
+                    SafepointStop.request()
                     1
                 })(_ => released += 1)(r => r + 41)
             val p = Eval.partial(v)
@@ -917,7 +917,7 @@ class EffectTest extends AnyFreeSpec:
                         throw new IllegalStateException("inner-release")
                     } { b =>
                         Effect.defer {
-                            discard(Safepoint.stop(Thread.currentThread()))
+                            SafepointStop.request()
                             a + b
                         }.map(_ + 39)
                     }
