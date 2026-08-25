@@ -52,8 +52,7 @@ private[kyo] trait Recover[+A, -S]:
     /** The answer to a failure, or absent for one this must not answer.
       *
       * Fatal errors pass every recovery untouched. The recovery itself never declines, and never had to: the
-      * consumers pass total functions, `Abort.catching` with an explicit catch-all and `Debug` with a lambda
-      * that rethrows.
+      * consumers pass total functions, `Abort.catching` with an explicit catch-all.
       *
       * The frames are reconstructed before the recovery runs. It is a second place a failure is observed, and
       * the boundary is not the only one, so a handler that reads the carrier has to see what a handler at the

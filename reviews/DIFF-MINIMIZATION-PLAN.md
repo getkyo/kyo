@@ -134,6 +134,8 @@ the whole diff is the ruled swap itself.
 - [x] D (334) internal/TraceTest.scala - old kernel removal
 - [x] (564) outsidekyo/PendingExpansionSiteTest.scala - new file: outside-package expansion
   pins (the accessibility trap the kernel skill documents); new machinery
+- [x] (new) jvm/internal/SafepointConcurrencyTest.scala - new-machinery concurrency pins for
+  the slot/stop protocol (heirs the deleted jvm SafepointTest's concurrency lanes)
 - [x] D jvm-native tests (ThreadingTests, SafepointTest, SafepointUnstartedThreadTest,
   EffectTracePhysicalTest) - this session's platform extraction, ruled
 - [x] D (68) jvm/BytecodeTest.scala - old kernel removal
@@ -248,10 +250,9 @@ optimization-candidates/, backlog-sections/, .claude/ trees.
 
 ## Flag queue (semantic divergences awaiting a ruling; append as found)
 
-- FLAG: kyo.debug.Debug is DELETED on the branch (it rode the old kernel's Safepoint
-  interceptors), taking the public combinators debugValue/debugTrace and DebugTest with it.
-  The kernel2 Debugger seam is the replacement substrate, but no user-facing Debug exists yet.
-  Ruling needed: rebuild Debug on the Debugger seam before ship, or ship without it?
+- RESOLVED by ruling: kyo.debug.Debug stays removed for now; a future kyo-debugger module
+  will carry a real debugging proto. The prelude README's Debug section and the Eval scaladoc
+  mention are cleaned up; the combinators/README fallout stands as-is.
 - kyo-slack, kyo-workers, kyo-zio, kyo-direct, kyo-jsonrpc, kyo-scheduler diffs: not traceable
   to any ruling this session knows; classification pending.
 - FLAG: Chunk.updated and Span.updated are ORPHANED public API additions. Both were added for
@@ -267,16 +268,9 @@ optimization-candidates/, backlog-sections/, .claude/ trees.
   to main verbatim (zero diff).
 - NOTE: ChunkTest gains a toIndexed test block covering API that already exists on main; kept
   as meaningful coverage, listed here for visibility.
-- FLAG: Emit.runFirst and Poll.runFirst now expose Arrow in their public signatures.
-  Main: `(Maybe[V], () => A < (Emit[V | VR] & S))` and `Either[A, Maybe[V] => A < ...]`.
-  Branch: `(Maybe[V], Arrow[Unit, A, ...])` and `Either[A, Arrow[Maybe[V], A, ...]]`.
-  This may fall under the "migration to Arrow is by design" ruling (which was given for the
-  ArrowEffect handle signatures), or it may be incidental: the old shapes are restorable with
-  one cold-path lambda each (`() => cont(())` / `cont(_)`), which would collapse most of
-  StreamCompression's 176-line diff (thunk-typed state fields), a ZStreams line, and
-  Stream.splitAt's `nextEmit(())` calls. Poll's call sites are shape-agnostic either way
-  (Arrow applies like the function). Awaiting ruling: Arrow-in-signature intended here, or
-  restore the function shapes?
+- RESOLVED by ruling: Emit.runFirst and Poll.runFirst are now private[kyo]. The Arrow shape
+  stays (internal surface); the StreamCompression/ZStreams/EmitTest ripple stands as-is. All
+  callers (StreamCompression, ZStreams, Actor, Stream, tests) are in package kyo.
 - NOTE: Local's public surface changed with the fork/join reshape: `init(default)(forkValue,
   joinValue)` is a new overload, the regular/non-inheritable doc model is replaced by
   per-local strategies, and `initNonInheritable` remains as shorthand for
@@ -288,13 +282,11 @@ optimization-candidates/, backlog-sections/, .claude/ trees.
 - NOTE: UnsafeServerDispatch now logs handler-fiber panics via onComplete (previously they
   vanished silently since nothing reads a handler fiber's result). Internal behavior addition,
   listed for visibility.
-- FLAG: kyo-kernel has NO README (main's 743-line README was deleted with the old kernel and
-  nothing replaced it). A new-kernel README is a ship prerequisite; the /readme skill pipeline
-  is the intended tool. Ruling needed on when to run it (it needs sbt for doctest).
-- FLAG: kyo-kernel/CONTRIBUTING.md is stale: titled and worded for "kyo-kernel2", cites APIs
-  that no longer exist in the tree (Handlers, HandlersTest, public evalNow, handleLoop naming),
-  and links ../kernel2-iteration-report.md, ../kernel2-handlers-design.md,
-  ../kernel2-test-api-audit.md, which are root-level session artifacts the ship port excludes
-  (dangling links in the shipped tree). Needs a content pass; also a ruling on whether those
-  history docs ship into kyo-kernel/ or the links go.
+- RESOLVED by ruling: kyo-kernel/README.md restored from main and updated for the new kernel
+  (handleCont naming, fork strategies replacing Noninheritable, answer-style handleLoop,
+  handleFirst section removed as private, repeat runs exactly n, isolate derivation covers
+  context effects, runtime section rewritten for budget + stop preemption); 41+/49- delta vs
+  main's 737 lines. CONTRIBUTING.md rewritten against the current tree (Stack-based evaluator,
+  current file inventory and test names, current handler-variant names) with the dangling
+  kernel2-*.md links removed. Doctest validation pending sbt.
 - (append here as the pass proceeds)

@@ -693,26 +693,6 @@ assert(withCut.eval == "[LOG] value=7")
 
 `Aspect.Cut[I, O, S]` is a `[C] => (I[C], I[C] => O[C] < S) => O[C] < S`; `Cut.andThen(a, b)` composes two cuts; `aspect.asCut` projects an aspect itself into a `Cut` value when you want to plug it into a chain.
 
-## Development utilities
-
-When you are stepping through an effectful computation and want to inspect intermediate values without changing the code shape (no temporary `val`s, no `println` calls), use `Debug`.
-
-`Debug.apply(v)` runs `v` and prints both the current frame and the produced value. `Debug.trace(v)` installs a safepoint interceptor that logs every value at every effect step (verbose: prefer it for narrow scopes). `Debug.values(p1, p2, ...)` prints named parameters using macro-derived names from their source code.
-
-```scala
-import kyo.*
-import kyo.debug.Debug
-
-val program: Int < Any =
-    Debug {
-        Kyo.foreach(Chunk(1, 2, 3))(i => i * 2).map(_.sum)
-    }
-// prints the frame and the final value (12)
-assert(program.eval == 12)
-```
-
-`Debug.Param[T]` is the macro-derived parameter capture that `Debug.values` uses; `Debug.Param.derive` is the inline derivation a regular call relies on through implicits.
-
 ## Sequencing collections over any effect: `Kyo.*`
 
 The `Kyo` object provides sequential collection operations that work over any effect row. There is no dependency on `Sync` or `Async`: the operations sequence effects whatever they happen to be, `Abort[E]`, `Var[V]`, `Env[R]`, or any combination. It lives in kyo-prelude (kyo-kernel, actually, which kyo-prelude re-exports) and is available with a plain `import kyo.*`.

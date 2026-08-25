@@ -160,7 +160,7 @@ object Poll:
       * @return
       *   Either the computation's result, or the continuation that consumes the poll result
       */
-    def runFirst[V](
+    private[kyo] def runFirst[V](
         using Frame
     )[A, VR, S](v: A < (Poll[V] & Poll[VR] & S))(using
         tag: Tag[Poll[V]],

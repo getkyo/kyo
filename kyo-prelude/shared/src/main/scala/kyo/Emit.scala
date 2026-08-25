@@ -190,7 +190,7 @@ object Emit:
       *   - Maybe[V]: The first emitted value if any (None if no values were emitted)
       *   - The continuation that resumes the remaining computation
       */
-    def runFirst[V](using
+    private[kyo] def runFirst[V](using
         Frame
     )[A, VR, S](v: A < (Emit[V] & Emit[VR] & S))(using
         tag: Tag[Emit[V]],
