@@ -783,4 +783,129 @@ class LoopTest extends AnyFreeSpec:
             assert(evaluated == 1)
         }
     }
+
+    "outcome payloads held as data" - {
+
+        def payloadOf(counter: () => Unit): Int < Any =
+            defer {
+                counter()
+                2
+            }
+
+        "stay data when the outcome computation suspends first" in {
+            var evaluated = 0
+            val payload   = payloadOf(() => evaluated += 1)
+            val looped = Loop(0) { _ =>
+                defer(Loop.done[Int, Int < Any](payload))
+            }
+            val data = looped.eval
+            assert(evaluated == 0)
+            assert(data.eval == 2)
+            assert(evaluated == 1)
+        }
+
+        "stay data when suspended iterations precede the done" in {
+            var evaluated = 0
+            val payload   = payloadOf(() => evaluated += 1)
+            val looped = Loop(0) { i =>
+                if i < 3 then defer(Loop.continue(i + 1))
+                else Loop.done[Int, Int < Any](payload)
+            }
+            val data = looped.eval
+            assert(evaluated == 0)
+            assert(data.eval == 2)
+            assert(evaluated == 1)
+        }
+
+        "stay data when a suspended iteration produces the done" in {
+            var evaluated = 0
+            val payload   = payloadOf(() => evaluated += 1)
+            val looped = Loop(0) { i =>
+                defer {
+                    if i < 3 then Loop.continue(i + 1)
+                    else Loop.done[Int, Int < Any](payload)
+                }
+            }
+            val data = looped.eval
+            assert(evaluated == 0)
+            assert(data.eval == 2)
+            assert(evaluated == 1)
+        }
+
+        "stay data through indexed when the outcome computation suspends" in {
+            var evaluated = 0
+            val payload   = payloadOf(() => evaluated += 1)
+            val looped = Loop.indexed { idx =>
+                defer {
+                    if idx == 0 then Loop.continue
+                    else Loop.done[Unit, Int < Any](payload)
+                }
+            }
+            val data = looped.eval
+            assert(evaluated == 0)
+            assert(data.eval == 2)
+            assert(evaluated == 1)
+        }
+
+        "stay data through the two-state loop when the outcome computation suspends" in {
+            var evaluated = 0
+            val payload   = payloadOf(() => evaluated += 1)
+            val looped = Loop(0, 1) { (a, b) =>
+                defer(Loop.done[Int, Int, Int < Any](payload))
+            }
+            val data = looped.eval
+            assert(evaluated == 0)
+            assert(data.eval == 2)
+            assert(evaluated == 1)
+        }
+
+        "stay data through foreach when the outcome computation suspends" in {
+            var evaluated = 0
+            var rounds    = 0
+            val payload   = payloadOf(() => evaluated += 1)
+            val looped = Loop.foreach {
+                defer {
+                    if rounds < 2 then
+                        rounds += 1
+                        Loop.continue
+                    else Loop.done[Unit, Int < Any](payload)
+                }
+            }
+            val data = looped.eval
+            assert(evaluated == 0)
+            assert(data.eval == 2)
+            assert(evaluated == 1)
+        }
+
+        "a continue state that is a computation stays data across iterations" in {
+            var evaluated = 0
+            val payload   = payloadOf(() => evaluated += 1)
+            var first     = true
+            val looped = Loop(payload: Int < Any) { state =>
+                if first then
+                    first = false
+                    defer(Loop.continue(state))
+                else Loop.done[Int < Any, Int < Any](state)
+            }
+            val data = looped.eval
+            assert(evaluated == 0)
+            assert(data.eval == 2)
+            assert(evaluated == 1)
+        }
+
+        "a doubly nested payload loses exactly one level per eval" in {
+            var evaluated                = 0
+            val inner: Int < Any         = payloadOf(() => evaluated += 1)
+            val outer: (Int < Any) < Any = kyo.Kyo.lift[Int < Any, Any](inner)
+            val looped = Loop(0) { _ =>
+                Loop.done[Int, (Int < Any) < Any](outer)
+            }
+            val once = looped.eval
+            assert(evaluated == 0)
+            val twice = once.eval
+            assert(evaluated == 0)
+            assert(twice.eval == 2)
+            assert(evaluated == 1)
+        }
+    }
 end LoopTest
