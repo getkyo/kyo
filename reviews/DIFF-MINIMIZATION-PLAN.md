@@ -129,17 +129,24 @@ the whole diff is the ruled swap itself.
 - [x] (31) Batch.scala - handleCont + Arrow continuation type (register); new design comment kept
 - [x] (39) Check.scala - handleCont/handleLoopState/answer-style (register)
 - [x] (34) Choice.scala - handleCont + cont(_) eta form (register); Debug import removal (flagged)
-- [ ] (102) Emit.scala
-- [ ] (201) Local.scala - reshaped by design (fork/join strategies); restore old docs
+- [x] (102) Emit.scala - answer-style/positional (register); runFirst Arrow-in-signature
+  FLAGGED (see queue, covers Poll.runFirst and the StreamCompression/ZStreams ripple)
+- [x] (201) Local.scala - fork/join reshape (campaign design); docs describe the new
+  semantics accurately so no doc restoration applies; public-surface NOTE in queue
 - [x] (12) Memo.scala - register-covered renames only
-- [ ] (115) Pipe.scala
+- [x] (115) Pipe.scala - answer-style clause migration only (register)
 - [x] (44) Poll.scala - handleLoopState/answer-style (register); doc reword matches new
   continuation shape, kept
-- [ ] (84) Sink.scala
+- [x] (84) Sink.scala - answer-style clause migration only (register)
 - [x] (572) Stream.scala - answer-style loop clauses + handleCont renames (register); Debug import removal (flagged)
 - [x] (27) Var.scala - register-covered renames only
-- [ ] (130) debug/Debug.scala - Debug was deleted-then-reworked per ledger; classify
-- [ ] (91) ChoiceTest.scala; (53) EmitTest.scala; (64) LocalTest.scala; (235) DebugTest.scala
+- [x] (130) debug/Debug.scala - full deletion; covered by the standing Debug FLAG, awaiting
+  ruling (rebuild on Debugger seam vs ship without)
+- [x] (91) ChoiceTest.scala - issue #208 pendingUntilFixed removed (new kernel makes deep
+  Choice stack-safe: test strengthened, keep) + new bracket-interaction coverage
+- [x] (53) EmitTest.scala - runFirst ripple (`cont()` to `cont(())`); rides the runFirst FLAG
+- [x] (64) LocalTest.scala - Isolate API migration (register)
+- [x] (235) DebugTest.scala - deleted with Debug; rides the standing Debug FLAG
 
 ### kyo-core
 - [ ] (16/25/25) scheduler/IOTaskPlatformSpecific (js-wasm/jvm/native) - kernel2 integration
@@ -213,4 +220,18 @@ optimization-candidates/, backlog-sections/, .claude/ trees.
   to main verbatim (zero diff).
 - NOTE: ChunkTest gains a toIndexed test block covering API that already exists on main; kept
   as meaningful coverage, listed here for visibility.
+- FLAG: Emit.runFirst and Poll.runFirst now expose Arrow in their public signatures.
+  Main: `(Maybe[V], () => A < (Emit[V | VR] & S))` and `Either[A, Maybe[V] => A < ...]`.
+  Branch: `(Maybe[V], Arrow[Unit, A, ...])` and `Either[A, Arrow[Maybe[V], A, ...]]`.
+  This may fall under the "migration to Arrow is by design" ruling (which was given for the
+  ArrowEffect handle signatures), or it may be incidental: the old shapes are restorable with
+  one cold-path lambda each (`() => cont(())` / `cont(_)`), which would collapse most of
+  StreamCompression's 176-line diff (thunk-typed state fields), a ZStreams line, and
+  Stream.splitAt's `nextEmit(())` calls. Poll's call sites are shape-agnostic either way
+  (Arrow applies like the function). Awaiting ruling: Arrow-in-signature intended here, or
+  restore the function shapes?
+- NOTE: Local's public surface changed with the fork/join reshape: `init(default)(forkValue,
+  joinValue)` is a new overload, the regular/non-inheritable doc model is replaced by
+  per-local strategies, and `initNonInheritable` remains as shorthand for
+  `init(default)(_ => Absent)`. Campaign-designed machinery; listed for visibility.
 - (append here as the pass proceeds)
