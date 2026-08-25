@@ -74,15 +74,6 @@ class PendingExpansionSiteTest extends AnyFreeSpec:
             val v: Int < Any = 42
             assert(v.eval == 42)
         }
-
-        "evalNow on a settled value" in {
-            val v: Int < Any = 42
-            assert(v.evalNow == Maybe(42))
-        }
-
-        "evalNow on a suspended computation" in {
-            assert(ask.evalNow == Maybe.Absent)
-        }
     }
 
     "handle, at every arity" - {

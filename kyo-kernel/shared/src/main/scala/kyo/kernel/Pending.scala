@@ -167,7 +167,6 @@ object `<` extends Implicits:
             run(self, Arrow.id)
         end unit
 
-
         /** Applies a transformation to this computation.
           *
           * The `handle` method provides a convenient way to pass a computation to a transformation function. It's primarily designed for

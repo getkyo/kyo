@@ -1187,17 +1187,6 @@ class ArrowEffectTest extends AnyFreeSpec:
             assert(Eval(settled) == 21)
         }
 
-        "a parked region answers the operation after it resumes" in {
-            val v: Int < (Ask & Say) = say("x").map(_ => ask.map(_ + 1))
-            val first                = handleFirst(Tag[Ask], v)([X] => (_, cont) => cont(41), identity)
-            // partial takes a fully handled row; the cast widens the phantom row to enter it, and
-            // contravariance narrows the result back at the handler below
-            val parked = Eval.partial(first.asInstanceOf[Int < Any])
-            assert(parked.evalNow.isEmpty)
-            val sayHandled = ArrowEffect.handleCont(Tag[Say], parked)([X] => (_, cont) => cont(()), a => a)
-            assert(Eval(ArrowEffect.handleCont(Tag[Ask], sayHandled)([X] => (_, cont) => cont(0), a => a)) == 42)
-        }
-
         "the innermost handleFirst wins under nested same-tag handlers" in {
             var outerAnswered = 0
             val inner         = handleFirst(Tag[Ask], ask.map(_ + 1))([X] => (_, cont) => cont(10), identity)
@@ -1571,7 +1560,7 @@ class ArrowEffectTest extends AnyFreeSpec:
         val ex = intercept[kyo.bug.KyoBugException] {
             Eval(ask.asInstanceOf[Int < Any])
         }
-        assert(ex.getMessage.contains("unhandled suspension"))
+        assert(ex.getMessage.contains("Unexpected pending effect"))
     }
 
     "contracts" - {

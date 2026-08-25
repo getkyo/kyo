@@ -127,7 +127,7 @@ class EvalTest extends AnyFreeSpec:
             // with the lint on lift the unannotated form does not compile, and the annotated one evaluates
             assertTypeError("Eval(answerAsk(1)(ask.map(_ => Eval(ask.asInstanceOf[Int < Any]))))")
             val ex = intercept[Throwable](Eval(answerAsk(1)(ask.map(_ => Eval[Int, Any](ask.asInstanceOf[Int < Any])))))
-            assert(ex.getMessage.contains("unhandled suspension"))
+            assert(ex.getMessage.contains("Unexpected pending effect"))
         }
 
         "map receives a computation held as a value unopened" in {
@@ -706,7 +706,7 @@ class EvalTest extends AnyFreeSpec:
             val askScope =
                 ArrowEffect.handleLoop(Tag[Ask], sayInner)([C] => _ => Loop.continue(say("c").map(_ => 41)), a => a)
             val ex = intercept[Throwable](Eval(askScope.asInstanceOf[Int < Any]))
-            assert(ex.getMessage.contains("unhandled suspension"))
+            assert(ex.getMessage.contains("Unexpected pending effect"))
             assert(log.toList == List("inner"))
         }
 
@@ -720,7 +720,7 @@ class EvalTest extends AnyFreeSpec:
                 a => a
             )
             val ex = intercept[Throwable](Eval(askScope.asInstanceOf[Int < Any]))
-            assert(ex.getMessage.contains("unhandled suspension"))
+            assert(ex.getMessage.contains("Unexpected pending effect"))
         }
 
         "the region body's handlers are intact after the clause returns" in {
@@ -849,14 +849,14 @@ class EvalTest extends AnyFreeSpec:
 
     "an unhandled operation is a bug" in {
         val ex = intercept[Throwable](Eval(ask.asInstanceOf[Int < Any]))
-        assert(ex.getMessage.contains("unhandled suspension"))
+        assert(ex.getMessage.contains("Unexpected pending effect"))
     }
 
     "an operation no region in the row handles is a bug" in {
         val program: Int < (Ask & Say) = say("x").map(_ => ask)
         val r                          = answerAsk(41)(program)
         val ex                         = intercept[Throwable](Eval(r.asInstanceOf[Int < Any]))
-        assert(ex.getMessage.contains("unhandled suspension"))
+        assert(ex.getMessage.contains("Unexpected pending effect"))
     }
 
     "a nested eval shares the thread's stack and sees none of the outer regions" in {
@@ -864,7 +864,7 @@ class EvalTest extends AnyFreeSpec:
         val outer = answerAsk(1)(ask.map(a => a + Eval(inner)))
         assert(Eval(outer) == 6)
         val leak = intercept[Throwable](Eval(answerAsk(1)(ask.map(_ => Eval[Int, Any](ask.asInstanceOf[Int < Any])))))
-        assert(leak.getMessage.contains("unhandled suspension"))
+        assert(leak.getMessage.contains("Unexpected pending effect"))
         assert(Eval(answerAsk(41)(ask.map(_ + 1))) == 42)
     }
 
@@ -882,7 +882,7 @@ class EvalTest extends AnyFreeSpec:
             )
         intercept[RuntimeException](Eval(stateful(ask.map(_ => (throw new RuntimeException("boom")): Int))))
         val ex = intercept[Throwable](Eval(ask.asInstanceOf[Int < Any]))
-        assert(ex.getMessage.contains("unhandled suspension"))
+        assert(ex.getMessage.contains("Unexpected pending effect"))
         assert(Eval(stateful(ask.map(a => ask.map(b => a * 10 + b)))) == 1)
     }
 

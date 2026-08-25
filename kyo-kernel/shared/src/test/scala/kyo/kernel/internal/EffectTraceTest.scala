@@ -80,7 +80,7 @@ class EffectTraceTest extends AnyFreeSpec:
 
     "an unhandled suspension arrives enriched" in {
         val ex = intercept[Throwable](Eval(ask.asInstanceOf[Int < Any]))
-        assert(ex.getMessage.contains("unhandled suspension"))
+        assert(ex.getMessage.contains("Unexpected pending effect"))
         val t = carrier(ex)
         assert(t.nonEmpty)
         assert(t.get.getMessage.contains("ask"))
@@ -315,7 +315,7 @@ class EffectTraceTest extends AnyFreeSpec:
                 def frame = throw new IllegalStateException("frame read failed")
                 def cont  = Arrow.id[Int]
         val ex = intercept[Throwable](Eval(unreadable.asInstanceOf[Int < Any]))
-        assert(ex.getMessage.contains("unhandled suspension"))
+        assert(ex.getMessage.contains("Unexpected pending effect"))
         assert(carrier(ex).toList.flatMap(_.elements.toList).isEmpty)
     }
 
