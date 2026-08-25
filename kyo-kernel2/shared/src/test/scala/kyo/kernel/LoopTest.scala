@@ -769,11 +769,18 @@ class LoopTest extends AnyFreeSpec:
         }
 
         "a done payload that is a computation held as a value stays data" in {
-            val payload: Int < Any = (1: Int < Any).map(_ + 1)
+            var evaluated = 0
+            val payload: Int < Any = defer {
+                evaluated += 1
+                2
+            }
             val looped = Loop(0) { _ =>
                 Loop.done[Int, Int < Any](payload)
             }
-            assert(looped.eval.eval == 2)
+            val data = looped.eval
+            assert(evaluated == 0)
+            assert(data.eval == 2)
+            assert(evaluated == 1)
         }
     }
 end LoopTest

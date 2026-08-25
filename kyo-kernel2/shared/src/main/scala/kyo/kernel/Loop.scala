@@ -133,7 +133,11 @@ object Loop:
       * @return
       *   An Outcome indicating continuation with Unit state
       */
-    inline def continue[A]: Outcome[Unit, A] = _continueUnit
+    inline def continue[A]: Outcome[Unit, A] < Any =
+        // pending like the other continue arities, so a branch pairing this with a pending sibling
+        // unifies instead of forming a union; the shared instance is never Boxed, so the cast asserts
+        // exactly what the lift would have produced
+        _continueUnit.asInstanceOf[Outcome[Unit, A] < Any]
 
     /** Creates an outcome signaling continuation with a single state value.
       *
@@ -182,11 +186,12 @@ object Loop:
       *   The third state value
       */
     @nowarn("msg=anonymous")
-    inline def continue[A, B, C, O](inline v1: A, inline v2: B, inline v3: C): Outcome3[A, B, C, O] =
-        new Continue3[A, B, C]:
+    inline def continue[A, B, C, O](inline v1: A, inline v2: B, inline v3: C): Outcome3[A, B, C, O] < Any =
+        (new Continue3[A, B, C]:
             val _1 = v1
             val _2 = v2
             val _3 = v3
+        ).asInstanceOf[Outcome3[A, B, C, O] < Any]
 
     /** Creates an outcome signaling continuation with four state values.
       *
@@ -205,24 +210,39 @@ object Loop:
         inline v2: B,
         inline v3: C,
         inline v4: D
-    ): Outcome4[A, B, C, D, O] =
-        new Continue4[A, B, C, D]:
+    ): Outcome4[A, B, C, D, O] < Any =
+        (new Continue4[A, B, C, D]:
             val _1 = v1
             val _2 = v2
             val _3 = v3
             val _4 = v4
+        ).asInstanceOf[Outcome4[A, B, C, D, O] < Any]
 
-    /** Creates an outcome signaling completion with no value. */
+    /** Creates an outcome signaling completion with no value.
+      *
+      * Pending return like the continue constructors, so a branch pairing done with a pending
+      * continue unifies instead of forming a union the conversion cannot adapt; the raw unit is
+      * never Boxed, so the cast asserts exactly what the lift would have produced.
+      */
     @targetName("done0")
-    inline def done[A]: Outcome[A, Unit] = ()
+    inline def done[A]: Outcome[A, Unit] < Any =
+        ().asInstanceOf[Outcome[A, Unit] < Any]
 
     /** Creates an outcome signaling completion with a final value.
+      *
+      * Pending return for the same reason as done0, through the lift rather than a cast: the
+      * payload can be a computation held as data, which the lift's runtime analysis nests so the
+      * evaluator cannot mistake it for a suspension of the outcome itself.
       *
       * @param v
       *   The final value
       */
     @targetName("done1")
-    inline def done[A, O](inline v: O): Outcome[A, O] = v
+    inline def done[A, O](inline v: O): Outcome[A, O] < Any =
+        // the lift, not a cast: a payload held as data is a Kyo node, and only the lift's nest keeps
+        // the drive from mistaking it for a suspension of the outcome (the bare cast fails the
+        // "stays data" pinning test in LoopTest)
+        kyo.Kyo.lift[Outcome[A, O], Any](v)
 
     /** Creates an outcome signaling completion with a final value for a two-state loop.
       *
@@ -230,7 +250,8 @@ object Loop:
       *   The final value
       */
     @targetName("done2")
-    inline def done[A, B, O](inline v: O): Outcome2[A, B, O] = v
+    inline def done[A, B, O](inline v: O): Outcome2[A, B, O] < Any =
+        kyo.Kyo.lift[Outcome2[A, B, O], Any](v)
 
     /** Creates an outcome signaling completion with a final value for a three-state loop.
       *
@@ -238,7 +259,8 @@ object Loop:
       *   The final value
       */
     @targetName("done3")
-    inline def done[A, B, C, O](inline v: O): Outcome3[A, B, C, O] = v
+    inline def done[A, B, C, O](inline v: O): Outcome3[A, B, C, O] < Any =
+        kyo.Kyo.lift[Outcome3[A, B, C, O], Any](v)
 
     /** Creates an outcome signaling completion with a final value for a four-state loop.
       *
@@ -246,7 +268,8 @@ object Loop:
       *   The final value
       */
     @targetName("done4")
-    inline def done[A, B, C, D, O](inline v: O): Outcome4[A, B, C, D, O] = v
+    inline def done[A, B, C, D, O](inline v: O): Outcome4[A, B, C, D, O] < Any =
+        kyo.Kyo.lift[Outcome4[A, B, C, D, O], Any](v)
 
     /** Executes a loop with a single state value.
       *
