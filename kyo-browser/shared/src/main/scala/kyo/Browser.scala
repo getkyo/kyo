@@ -3741,26 +3741,27 @@ object Browser:
 
         /** Creates an isolate that gives each fork a cloned tab (same URL + storage).
           *
-          * Snapshot is captured in `capture`. Tab creation and restoration happen in `isolate` (inside `Scope.run`). `Env.run` strips the
-          * `Env[BrowserTab]` component of the opaque Browser type. The `Isolate.Keep` channel includes `Abort[BrowserReadException]` so
-          * typed Aborts from snapshot capture, child tab creation, snapshot restore, or the user computation flow through the Isolate ABI
-          * directly, without throw-tunneling.
+          * The `capture` phase just reads the parent tab; the snapshot is taken in `isolate`, as each fork begins, followed by tab creation
+          * and restoration (inside `Scope.run`). The forking scope is parked while its forks start, so the snapshot still observes the
+          * parent tab as it stood at the fork. `Env.run` strips the `Env[BrowserTab]` component of the opaque Browser type. The
+          * `Isolate.Keep` channel includes `Abort[BrowserReadException]` so typed Aborts from snapshot capture, child tab creation,
+          * snapshot restore, or the user computation flow through the Isolate ABI directly, without throw-tunneling, and land in the fork
+          * that raised them.
           */
         def clone(using Frame): Isolate[Browser, Async & Abort[BrowserReadException], Any] =
             new Isolate[Browser, Async & Abort[BrowserReadException], Any]:
-                type State        = (BrowserTab, BrowserSnapshot.BrowserSnapshot)
+                type State        = BrowserTab
                 type Transform[A] = A
-                def capture[A, S2](f: ((BrowserTab, BrowserSnapshot.BrowserSnapshot)) => A < S2)(using Frame) =
-                    Env.use[BrowserTab] { tab =>
-                        BrowserSnapshot.captureSnapshot(tab).map(snapshot => f((tab, snapshot)))
-                    }
-                def isolate[A, S2](state: (BrowserTab, BrowserSnapshot.BrowserSnapshot), v: A < (S2 & Browser))(using Frame) =
-                    val (parent, snapshot) = state
+                def capture[A, S2](f: BrowserTab => A < S2)(using Frame) =
+                    Env.use[BrowserTab](f)
+                def isolate[A, S2](state: BrowserTab, v: A < (S2 & Browser))(using Frame) =
                     Scope.run {
-                        BrowserTabSetup.createChildTab(parent).map { tab =>
-                            BrowserSnapshot.restoreSnapshot(tab, snapshot).andThen {
-                                // Reset activeIFrameLocal; handle is session-pinned to parent tab.
-                                activeIFrameLocal.let(Maybe.empty[IFrameHandle])(Env.run(tab)(v))
+                        BrowserSnapshot.captureSnapshot(state).map { snapshot =>
+                            BrowserTabSetup.createChildTab(state).map { tab =>
+                                BrowserSnapshot.restoreSnapshot(tab, snapshot).andThen {
+                                    // Reset activeIFrameLocal; handle is session-pinned to parent tab.
+                                    activeIFrameLocal.let(Maybe.empty[IFrameHandle])(Env.run(tab)(v))
+                                }
                             }
                         }
                     }

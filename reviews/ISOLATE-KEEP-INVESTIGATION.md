@@ -1,7 +1,7 @@
 # Isolate Keep on the new kernel: what actually changed, and the fix shape
 
-Status: analysis complete, no code changed. The two files touched during investigation
-(Async.scala, Fiber.scala) are reverted to HEAD.
+Status: resolved; the landed fix is section 8. Sections 1-7 are the investigation as it stood,
+with the opus reviewer's corrections folded into sections 2 and 6.
 
 ## 1. Symptom
 
@@ -16,14 +16,21 @@ Repo-wide JVM Test/compile fails in two modules that define or need Async-Keep i
 
 ## 2. What did NOT change
 
-Verified byte-identical between kyo-kernel (old) and kyo-kernel2:
+Verified between kyo-kernel (old) and kyo-kernel2:
 
-- The three phase signatures: `capture: A < (Remove & Keep & S)`,
+- The three phase signatures are byte-identical: `capture: A < (Remove & Keep & S)`,
   `isolate: Transform[A] < (Keep & S)`, `restore: A < (Restore & S)`.
-- `deriveImpl` (flatten, the ContextEffect filter, per-member summon) and the single inline given.
+- The single inline given is byte-identical, and deriveImpl's flatten, ContextEffect filter, and
+  per-member summon are identical. The fold SEED is not: the old kernel seeds with `Identity` and
+  short-circuits it away in `andThen`; kernel2 seeds with `Contextual` and deliberately never drops
+  it, because the ambient-binding transport the old kernel did in runtime machinery (`runDetached`
+  reading the live `Context`, `IOTask` installing `context.inherit` in the child) now lives inside
+  the derived isolate as the `Contextual` crossing. Same semantics, relocated; `Contextual` is
+  `Isolate[Any, Any, Any]`, the same type as `Identity`, so nothing in the derivation's TYPING
+  moved.
 - `Fiber.init/use/initUnscoped` take `Isolate[S, Sync, S2]` and answer at `Sync & S` on main too.
 
-Nothing in Isolate broke. The break is where kyo-core applies it.
+Nothing in Isolate's typing broke. The break is where kyo-core applies it.
 
 ## 3. What changed
 
@@ -98,9 +105,9 @@ def race[E, A, S](
 )(iterable: Iterable[A < (Abort[E] & Async & S)])(using frame: Frame): A < (Abort[E] & Async & S)
 ```
 
-This placement is a contract, not style: the isolate is supplied first (inferred, or explicitly
-passed as `Async.zip(using Browser.isolate.fresh)(..)`), so the isolate constrains the site rather
-than the site constraining the isolate. Verified pieces of the mechanism:
+This placement makes the signature's Keep the admission policy for isolates: the given must
+conform to it at implicit-resolution time, whatever the computation argument looks like. Verified
+pieces of the mechanism:
 
 - Keep is contravariant (`Isolate[Remove, -Keep, -Restore]`, identical in both kernels). A request
   with Keep = `Abort[E] & Async` and E free admits `LLM.isolate: Isolate[LLM, Async, LLM]` for any
@@ -109,19 +116,19 @@ than the site constraining the isolate. Verified pieces of the mechanism:
   E with BrowserReadException. That bound is how the isolate's own failure mode is admitted into
   the combinator's row; BrowserIsolateTest's comments state it directly ("carries
   `Abort[BrowserConnectionException]` in its `Isolate.Keep` channel ... and surfaces").
-- So the Keep written in a first-group signature is the admission policy for isolates, enforced at
-  resolution time in parameter group one, before the computation argument is considered.
+- The E-bounding is co-determination by the constraint solver, not sequencing: the reviewer
+  observed that the recorded failures print `Isolate[Browser, Sync, Browser]` with Remove and
+  Restore already solved from the computation argument, so the typer does not seal parameter group
+  one before considering later groups. No ordering claim is needed for the admission point to
+  hold: with Keep HARDCODED to Sync in the signature, no inference from any argument could ever
+  widen it, and every Async-Keep given fails conformance outright.
 
 Consequence: hardcoding Keep = Sync at the 21 sites did not merely move a row. It rejects every
 async isolate at the door (Sync is not <: Async, so contravariance excludes any Async-Keep
-instance), which is exactly the two symptom classes in section 1. It also explains why the Keep
-war could not be won by widening or narrowing signatures while the spawn helpers kept
-`using isolate: Isolate[S, Sync, S2]` in their first group: the exclusion fires at
-implicit-resolution time, not at capture time. A correct arrangement must keep the first-group
-Keep wide (with the site's free E) at the level where USER isolates are supplied, the combinators.
-Both proposals do. (B)'s internals additionally stop being admission points at all: they switch
-from a first-group `using` isolate to an explicit (isolate, state) parameter pair, plumbing rather
-than policy, which is the honest shape once the internals no longer decide who gets in.
+instance), which is exactly the two symptom classes in section 1, and no change to bodies or
+helper plumbing can readmit them while the combinator signatures say Sync. A correct arrangement
+must keep the signature Keep wide (with the site's free E) at the level where USER isolates are
+supplied, the combinators.
 
 ## 7. What a reviewer should attack
 
@@ -138,3 +145,44 @@ than policy, which is the honest shape once the internals no longer decide who g
   using clause that the isolate's Keep bounds participate in solving the site's E before/while the
   computation argument is checked, and whether any call-site pattern (explicitly passed isolates,
   `Isolate.derive` at an abstract S) behaves differently under (B)'s explicit-parameter internals.
+
+## 8. Resolution (supersedes proposals A and B)
+
+The user identified the piece both proposals and all three Keep-war commits treated as fixed:
+capture's declared row. The interface said `capture: A < (Remove & Keep & S)`, and that Keep is
+the whole coupling: a Sync-rowed spawn helper running capture drags Keep into its row, so wide
+Keep and Sync helpers could not coexist with capture inside the helpers, which is exactly where
+the branch architecture put it.
+
+The landed fix narrows capture to its honest contract:
+
+```scala
+def capture[A, S](f: State => A < S)(using Frame): A < (Remove & S)
+```
+
+capture reads the spawner's state through the very effects being isolated (Var.use, Env.use,
+LLM.state, the bindings), so `Remove & S` is its natural row; the Keep allowance was unearned
+generosity. With it gone, a `Sync & S`-rowed helper can run capture for ANY Keep, and the fix
+becomes signatures plus two isolate-side adjustments:
+
+- kernel2 `Isolate.capture` row narrowed to `Remove & S` (old kernel untouched).
+- The 21 Async combinator signatures back to `Isolate[S, Abort[E] & Async, S]`; the Fiber private
+  wrappers and internals widened the same way, their `Sync & S` rows and bodies unchanged; public
+  `Fiber.init/use/initUnscoped` untouched at Sync Keep; `Fiber.internal.initUnscoped` added so
+  mask/_timeout route their wide isolate to the task-side crossing.
+- `LLM.isolate.capture` re-spelled `A < (LLM & S)` (its body never used Async).
+- `Browser.isolate.clone` moves its snapshot from capture into the isolate phase (capture reads
+  the parent tab like `fresh`; the snapshot's Async already fit via Remove = Browser, only its
+  `Abort[BrowserReadException]` needed the move; the failure now lands in the fork that raised it).
+
+The branch's task-side crossing (3bc9822e1d) is preserved end to end. Every capture in the repo
+conforms to the narrowed row; clone's failure channel was the single exception.
+
+Reviewer verdicts folded in above: section 2's deriveImpl wording corrected (the seed changed,
+Identity to Contextual, the typing did not); section 6's ordering assertion replaced with the
+solver's co-determination, which the recorded error text demonstrates.
+
+Open item carried forward: `Fiber.internal.foreachIndexed` applies the isolate per item AND the
+task wraps each worker in the same isolate via `IOTask(isolate)`; the reviewer flagged the outer
+layer as a redundant crossing (its restore is dead code by construction). Not changed here;
+needs its own decision.

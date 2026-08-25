@@ -529,7 +529,7 @@ object LLM:
         new Isolate[LLM, Async, LLM]:
             type State        = LLM.State
             type Transform[A] = (LLM.State, A)
-            def capture[A, S](f: State => A < S)(using Frame): A < (LLM & Async & S) =
+            def capture[A, S](f: State => A < S)(using Frame): A < (LLM & S) =
                 // GetState fires within the runWith handler loop, which answers with the live State.
                 LLM.state.map(f)
             def isolate[A, S](state: State, v: A < (S & LLM))(using Frame): Transform[A] < (Async & S) =

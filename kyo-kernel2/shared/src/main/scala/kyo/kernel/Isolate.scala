@@ -97,15 +97,17 @@ abstract class Isolate[Remove, -Keep, -Restore]:
 
     /** Captures the current state for isolation.
       *
-      * This is the first phase of isolation, obtaining the state that will be managed during the isolated execution. The computation
-      * continues with all original effects plus Keep effects available.
+      * This is the first phase of isolation, obtaining the state that will be managed during the isolated execution. The state is read
+      * through the effects being isolated, so the row is `Remove & S` and nothing more: capture runs where the fork happens, and a fork is
+      * possible from any context that can handle the isolated effects, including ones that cannot handle Keep. Keep effects belong to the
+      * later phases, which run inside the fork and at the join.
       *
       * @param f
       *   Function that receives the captured state
       * @return
-      *   Computation with Remove, Keep, and additional effects
+      *   Computation with Remove and additional effects
       */
-    def capture[A, S](f: State => A < S)(using Frame): A < (Remove & Keep & S)
+    def capture[A, S](f: State => A < S)(using Frame): A < (Remove & S)
 
     /** Executes a computation with isolated state.
       *
