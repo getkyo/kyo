@@ -22,10 +22,56 @@ import kyo.kernel.internal.Kyo.Suspend
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 
-abstract class ArrowEffect[-I[_], +O[_]] extends Effect
+/** Represents abstract functions whose implementations are provided later by a handler.
+  *
+  * ArrowEffect captures the shape of a function without specifying its implementation. It describes a transformation from Input[A] to
+  * Output[A] for any type A, but defers how that transformation actually happens until a handler interprets it. This makes it a powerful
+  * way to write code that is abstract over how its operations are performed.
+  *
+  * ArrowEffect supports multi-shot continuations, meaning that handlers can invoke the continuation function multiple times or not at all.
+  * This enables powerful control flow effects like backtracking, non-determinism, or early returns. For example, a choice effect could
+  * invoke its continuation multiple times with different values to explore multiple execution paths.
+  *
+  * The type parameters Input[_] and Output[_] define the "shape" of the function being abstracted:
+  *
+  * @tparam Input
+  *   The input type constructor - what arguments the function takes
+  * @tparam Output
+  *   The output type constructor - what results the function produces
+  *
+  * Every use of an ArrowEffect creates a suspended function call. This suspended call contains all the information needed to perform the
+  * operation, but doesn't specify how to perform it.
+  *
+  * A handler then provides the actual function implementation that determines what happens when that suspended call is executed. Each
+  * handler takes two parameters: an input value of type I[C] that contains the input of the operation, and a continuation function
+  * representing the remainder of the computation from the point where the effect was suspended to the point where it's being handled.
+  *
+  * ArrowEffect provides two main kinds of handling methods with distinct capabilities:
+  *   - handleCont: Handler with the continuation in hand, free to apply it any number of times
+  *   - handleLoop: Handler that answers occurrences through the Loop abstraction:
+  *     - Without state: When you need to answer occurrences without state between them
+  *     - With state (handleLoopState): When you need state maintenance between occurrences
+  *
+  * When defining concrete effects, ArrowEffect is commonly used with two special type constructors: Const and Id. The Const[X] type
+  * constructor ignores its type parameter and always returns X, while Id[X] simply returns X unchanged. For instance, an effect that needs
+  * to fail with errors of type E would use Const[E] as its input type - it only needs the error value itself, not any type parameters.
+  * Similarly, an effect for making choices among values would use Id as its output type - it passes through the chosen value unchanged.
+  */
+abstract class ArrowEffect[-Input[_], +Output[_]] extends Effect
 
 object ArrowEffect:
 
+    /** Creates a suspended computation that requests a function implementation from an arrow effect. This establishes a requirement for a
+      * function that must be satisfied by a handler higher up in the program. The requirement becomes part of the effect type, ensuring
+      * that handlers must provide the requested function before the program can execute.
+      *
+      * @param effectTag
+      *   Identifies which arrow effect to request the function from
+      * @param effectInput
+      *   The input value to be transformed by the function
+      * @return
+      *   A computation that will receive the requested function when executed
+      */
     @nowarn("msg=anonymous")
     inline def suspend[C](
         using inline _frame: Frame
@@ -39,6 +85,18 @@ object ArrowEffect:
             def input = effectInput
             def cont  = Arrow.id[O[C]]
 
+    /** Creates a suspended computation that requests a function implementation and transforms its result immediately upon receipt. This
+      * combines the operations of requesting and transforming a function into a single step.
+      *
+      * @param effectTag
+      *   Identifies which arrow effect to request the function from
+      * @param effectInput
+      *   The input value to be transformed by the function
+      * @param f
+      *   The function to transform the handler's result
+      * @return
+      *   A computation containing the transformed result
+      */
     @nowarn("msg=anonymous")
     inline def suspendWith[C](
         using inline _frame: Frame
@@ -66,6 +124,23 @@ object ArrowEffect:
     // introduces its own effect (Abort in Check.runAbort, the fold function's row in Emit.runFold)
     // cannot widen it and the site needs explicit instantiation. The previous kernel drew the same
     // split. The internals do not know about the pair: they instantiate at S & S2.
+
+    /** Handles an arrow effect by providing a handler function implementation, with the continuation in hand.
+      *
+      * Each effect occurrence is processed with its captured continuation, which the handler is free to apply any number of times or not at
+      * all, and a done clause transforms the region's final value.
+      *
+      * @param effectTag
+      *   Identifies which arrow effect to handle
+      * @param v
+      *   The computation requiring the function implementation
+      * @param handle
+      *   The function implementation to provide
+      * @param done
+      *   Function to transform the final result
+      * @return
+      *   The computation result with the function implementation provided
+      */
     @nowarn("msg=anonymous")
     inline def handleCont[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
         inline effectTag: Tag[E],
@@ -109,6 +184,24 @@ object ArrowEffect:
     )(using inline _frame: Frame): A < (S & S2) =
         handleCont(effectTag, v)(handle, a => a)
 
+    /** Handles an arrow effect with a loop-based approach for greater flexibility.
+      *
+      * This variant provides two key advantages over handleCont:
+      *   1. It answers each occurrence directly, without materializing the continuation
+      *   2. It provides control flow through the Loop abstraction to continue or terminate processing
+      *
+      * This non-stateful handleLoop is ideal when you need to answer occurrences with effectful operations during handling, but don't need
+      * to maintain state between effect occurrences.
+      *
+      * @param effectTag
+      *   Identifies which arrow effect to handle
+      * @param v
+      *   The computation requiring the function implementation
+      * @param handle
+      *   The function implementation that returns a Loop.Outcome for each iteration
+      * @return
+      *   The computation result with the function implementation provided
+      */
     @nowarn("msg=anonymous")
     inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
         inline effectTag: Tag[E],
@@ -154,6 +247,23 @@ object ArrowEffect:
     )(using inline _frame: Frame): A < (S & S2) =
         handleLoop(effectTag, v)(handle, a => a)
 
+    /** Handles an arrow effect with stateful loop-based approach for maximum flexibility.
+      *
+      * This most powerful variant combines the loop-based answering with state maintenance between effect occurrences through the State
+      * type. The stateful variant should be used when you need to answer occurrences, maintain state between them, and control when to
+      * terminate processing.
+      *
+      * @param effectTag
+      *   Identifies which arrow effect to handle
+      * @param state
+      *   The initial state value
+      * @param v
+      *   The computation requiring the function implementation
+      * @param handle
+      *   The function implementation that returns a Loop.Outcome for each iteration
+      * @return
+      *   The computation result with the function implementation provided
+      */
     @nowarn("msg=anonymous")
     inline def handleLoopState[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2, State](
         inline effectTag: Tag[E],
@@ -235,7 +345,7 @@ object ArrowEffect:
       * one uniform type.
       */
     @nowarn("msg=anonymous")
-    inline def handleFirst[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
+    private[kyo] inline def handleFirst[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
         inline effectTag: Tag[E],
         v: A < (E & S)
     )(

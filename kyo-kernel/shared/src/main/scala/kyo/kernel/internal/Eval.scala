@@ -138,8 +138,10 @@ object Eval:
 
     private def unhandled(kyo: Suspend[IX, OX, EX, CX, AX, SX], stack: Stack): Nothing =
         // the row rules this out for both entry points: a slice takes `A < Any` as well, so an operation
-        // reaching here has no handler anywhere and never will
-        attachThrow(bug.exception(s"unhandled suspension: ${kyo.tag}"), kyo, Arrow.id[Any], stack)
+        // reaching here has no handler anywhere and never will. The failure goes through `bug.failTag`
+        // for the previous kernel's message; the catch attaches the effect trace before rethrowing
+        try bug.failTag(kyo.asInstanceOf[Any < Any], Tag[Any])
+        catch case ex: Throwable => attachThrow(ex, kyo, Arrow.id[Any], stack)
 
     /** The first link a delivered value reaches: a chain delivers through its head, a folded run through its
       * first step, anything else is itself the receiver.

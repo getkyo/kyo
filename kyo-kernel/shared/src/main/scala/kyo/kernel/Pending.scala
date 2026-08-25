@@ -111,6 +111,13 @@ object `<` extends Implicits:
             run(self, Arrow.id)
         end flatMap
 
+        /** Executes this computation, discards its result, and then executes another computation.
+          *
+          * @param f
+          *   The computation to execute after this one
+          * @return
+          *   A computation producing the second result
+          */
         @nowarn("msg=anonymous")
         inline def andThen[B, S2](inline f: => B < S2)(using inline _frame: Frame): B < (S & S2) =
             def arrow =
@@ -133,6 +140,11 @@ object `<` extends Implicits:
             run(self, Arrow.id)
         end andThen
 
+        /** Executes this computation and discards its result.
+          *
+          * @return
+          *   A computation that produces Unit
+          */
         @nowarn("msg=anonymous")
         inline def unit(using inline _frame: Frame): Unit < S =
             def arrow =
@@ -155,39 +167,59 @@ object `<` extends Implicits:
             run(self, Arrow.id)
         end unit
 
-        @nowarn("msg=anonymous")
-        inline def flatten[B, S2](using ev: A <:< (B < S2), inline _frame: Frame): B < (S & S2) =
-            def arrow =
-                new TransformBase[A, B, S2]:
-                    def frame                                          = _frame
-                    def apply[C, S3](v: A < S3, cont: Arrow[B, C, S3]) = run(v, cont)
-            def run[C, S3](v: A < S3, cont: Arrow[B, C, S3]): C < (S2 & S3) =
-                v match
-                    case kyo: Kyo[A, S3] @unchecked =>
-                        Effect.defer(kyo, arrow, cont)
-                    case _ =>
-                        val slot = Safepoint.get()
-                        if !Safepoint.enter(slot) then
-                            Effect.defer(v, arrow, cont)
-                        else
-                            val out = cont.head(ev(Nested.unnest(v)), cont.tail)
-                            Safepoint.exit(slot)
-                            out
-                        end if
-            run(self, Arrow.id)
-        end flatten
 
+        /** Applies a transformation to this computation.
+          *
+          * The `handle` method provides a convenient way to pass a computation to a transformation function. It's primarily designed for
+          * effect handling, allowing a more fluent API style compared to the traditional approach of passing the computation to a handler
+          * function.
+          *
+          * For example, instead of:
+          *
+          * ```scala
+          * Env.run(1)(Abort.run(computation))
+          * ```
+          *
+          * You can write:
+          *
+          * ```scala
+          * computation.handle(Abort.run, Env.run(1))
+          * ```
+          *
+          * While `handle` can be used with any function that processes a computation, its main purpose is to facilitate effect handling and
+          * composition of multiple handlers. The multi-parameter versions of `handle` enable chaining transformations in a readable
+          * sequential style.
+          *
+          * @param f
+          *   The transformation function to apply
+          * @return
+          *   The result of applying the transformation
+          */
         inline def handle[B](inline f: (=> A < S) => B): B =
             def h1 = self
             f(h1)
         end handle
 
+        /** Applies two transformations to this computation in sequence.
+          *
+          * Enables chaining multiple effect handlers or transformations in a readable sequential style.
+          *
+          * @return
+          *   The result after applying both transformations
+          */
         inline def handle[B, C](inline f1: (=> A < S) => B, inline f2: (=> B) => C): C =
             def h1 = self
             def h2 = f1(h1)
             f2(h2)
         end handle
 
+        /** Applies three transformations to this computation in sequence.
+          *
+          * Enables chaining multiple effect handlers or transformations in a readable sequential style.
+          *
+          * @return
+          *   The result after applying all transformations in sequence
+          */
         inline def handle[B, C, D](inline f1: (=> A < S) => B, inline f2: (=> B) => C, inline f3: (=> C) => D): D =
             def h1 = self
             def h2 = f1(h1)
@@ -195,6 +227,13 @@ object `<` extends Implicits:
             f3(h3)
         end handle
 
+        /** Applies four transformations to this computation in sequence.
+          *
+          * Enables chaining multiple effect handlers or transformations in a readable sequential style.
+          *
+          * @return
+          *   The result after applying all transformations in sequence
+          */
         inline def handle[B, C, D, E](
             inline f1: (=> A < S) => B,
             inline f2: (=> B) => C,
@@ -208,6 +247,13 @@ object `<` extends Implicits:
             f4(h4)
         end handle
 
+        /** Applies five transformations to this computation in sequence.
+          *
+          * Enables chaining multiple effect handlers or transformations in a readable sequential style.
+          *
+          * @return
+          *   The result after applying all transformations in sequence
+          */
         inline def handle[B, C, D, E, F](
             inline f1: (=> A < S) => B,
             inline f2: (=> B) => C,
@@ -223,6 +269,13 @@ object `<` extends Implicits:
             f5(h5)
         end handle
 
+        /** Applies six transformations to this computation in sequence.
+          *
+          * Enables chaining multiple effect handlers or transformations in a readable sequential style.
+          *
+          * @return
+          *   The result after applying all transformations in sequence
+          */
         inline def handle[B, C, D, E, F, G](
             inline f1: (=> A < S) => B,
             inline f2: (=> B) => C,
@@ -240,6 +293,13 @@ object `<` extends Implicits:
             f6(h6)
         end handle
 
+        /** Applies seven transformations to this computation in sequence.
+          *
+          * Enables chaining multiple effect handlers or transformations in a readable sequential style.
+          *
+          * @return
+          *   The result after applying all transformations in sequence
+          */
         inline def handle[B, C, D, E, F, G, H](
             inline f1: (=> A < S) => B,
             inline f2: (=> B) => C,
@@ -259,6 +319,13 @@ object `<` extends Implicits:
             f7(h7)
         end handle
 
+        /** Applies eight transformations to this computation in sequence.
+          *
+          * Enables chaining multiple effect handlers or transformations in a readable sequential style.
+          *
+          * @return
+          *   The result after applying all transformations in sequence
+          */
         inline def handle[B, C, D, E, F, G, H, I](
             inline f1: (=> A < S) => B,
             inline f2: (=> B) => C,
@@ -280,6 +347,13 @@ object `<` extends Implicits:
             f8(h8)
         end handle
 
+        /** Applies nine transformations to this computation in sequence.
+          *
+          * Enables chaining multiple effect handlers or transformations in a readable sequential style.
+          *
+          * @return
+          *   The result after applying all transformations in sequence
+          */
         inline def handle[B, C, D, E, F, G, H, I, J](
             inline f1: (=> A < S) => B,
             inline f2: (=> B) => C,
@@ -303,6 +377,13 @@ object `<` extends Implicits:
             f9(h9)
         end handle
 
+        /** Applies ten transformations to this computation in sequence.
+          *
+          * Enables chaining multiple effect handlers or transformations in a readable sequential style.
+          *
+          * @return
+          *   The result after applying all transformations in sequence
+          */
         inline def handle[B, C, D, E, F, G, H, I, J, K](
             inline f1: (=> A < S) => B,
             inline f2: (=> B) => C,
@@ -333,17 +414,9 @@ object `<` extends Implicits:
         // interpreter boundary makes that box a real allocation (measured 14 B and 3ns per settled eval).
         // Unnesting here instead lets escape analysis finish the job, and only a node graph pays the eval.
         // Observationally the interpreter does exactly this for a settled value: unnest, empty stack, return
-        inline def eval(using S =:= Any): A =
-            // bound once, for the reason evalNow binds once
-            val v = self
-            v match
-                case _: Kyo[?, ?] => Eval(v.asInstanceOf[A < Any]).asInstanceOf[A]
-                case _            => Nested.unnest(v)
-        end eval
-
         // bound once: `self` is inline, so every occurrence re-expands the receiver expression, and two
         // occurrences here would build `v.map(f)` twice and run `f` twice on the settled path
-        inline def evalNow: Maybe[A] =
+        private[kyo] inline def evalNow: Maybe[A] =
             val v = self
             v match
                 case _: Kyo[?, ?] => Maybe.empty
@@ -360,6 +433,54 @@ object `<` extends Implicits:
           */
         private[kyo] inline def finalizeResources: Unit =
             Eval.finalizeResources(self.asInstanceOf[Any < Any])
+    end extension
+
+    extension [A, S, S2](self: A < S < S2)
+        /** Flattens a nested pending computation into a single computation.
+          *
+          * @return
+          *   A flattened computation of type `A` with combined effects `S & S2`
+          */
+        @nowarn("msg=anonymous")
+        def flatten(using _frame: Frame): A < (S & S2) =
+            def arrow: Arrow[A < S, A, S] =
+                new TransformBase[A < S, A, S]:
+                    def frame                                                = _frame
+                    def apply[C, S3](v: (A < S) < S3, cont: Arrow[A, C, S3]) = run(v, cont)
+            def run[C, S3](v: (A < S) < S3, cont: Arrow[A, C, S3]): C < (S & S3) =
+                v match
+                    case kyo: Kyo[A < S, S3] @unchecked =>
+                        Effect.defer(kyo, arrow, cont)
+                    case _ =>
+                        val slot = Safepoint.get()
+                        if !Safepoint.enter(slot) then
+                            Effect.defer(v, arrow, cont)
+                        else
+                            val out = cont.head(Nested.unnest[A < S](v), cont.tail)
+                            Safepoint.exit(slot)
+                            out
+                        end if
+            run(self, Arrow.id)
+        end flatten
+    end extension
+
+    extension [A](inline v: A < Any)
+
+        /** Evaluates a pending computation that has no remaining effects (effect type is `Any`).
+          *
+          * This method can only be called on computations where all effects have been handled, leaving only pure computation steps. It will
+          * execute the computation and return the final result.
+          *
+          * @return
+          *   The final result of type `A` after evaluating the computation
+          */
+        inline def eval(using inline frame: Frame): A =
+            // bound once, for the reason evalNow binds once
+            val v0 = v
+            v0 match
+                case _: Kyo[?, ?] => Eval(v0.asInstanceOf[A < Any]).asInstanceOf[A]
+                case _            => Nested.unnest(v0)
+        end eval
     end extension
 
     /** A pending computation renders as its payload wrapped in `Kyo(...)`, with the payload rendered by its own instance, so the wrapper

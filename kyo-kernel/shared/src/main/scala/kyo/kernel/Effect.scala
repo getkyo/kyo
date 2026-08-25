@@ -15,6 +15,19 @@ import kyo.kernel.internal.Kyo.Catching
 import kyo.kernel.internal.Kyo.Defer
 import scala.annotation.nowarn
 
+/** The base trait for all effects in the Kyo effect system.
+  *
+  * When code performs an effectful operation, instead of executing immediately, effects create a suspended computation that captures what
+  * needs to be done. These suspended computations can then be interpreted in different ways through effect handlers.
+  *
+  * This suspension mechanism is the foundation of Kyo's effect system. It allows effectful code to be pure and composable - rather than
+  * performing operations directly, code builds up a description of what operations should occur. This description can then be interpreted
+  * by handlers that determine how the operations are actually executed.
+  *
+  * There are two kinds of effects:
+  *   - [[ArrowEffect]] for suspended computations involving input/output transformations.
+  *   - [[ContextEffect]] for suspended computations requiring contextual values.
+  */
 abstract class Effect private[kernel] ()
 
 object Effect:
@@ -60,6 +73,14 @@ object Effect:
                             out
                         end if
 
+    /** Reifies the application of a continuation to a computation as a node.
+      *
+      * Kernel plumbing, not user API: the combinators' inline expansions and the site-generated
+      * arrow classes call this from downstream modules when an application cannot run strictly (the
+      * input is a suspension, or the budget drained). Public so those expansions reach it without
+      * an accessor; non-inline so the cold arm stays one call instead of a class per site.
+      * `Effect.defer(v, cont)` evaluates to exactly what `cont(v)` evaluates to.
+      */
     def defer[A, B, S](v: A < S, cont: Arrow[A, B, S]): B < S =
         new Defer[A, B, B, S]:
             val value = v
