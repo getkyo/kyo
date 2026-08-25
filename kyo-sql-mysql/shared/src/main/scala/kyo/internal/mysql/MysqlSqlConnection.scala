@@ -174,13 +174,30 @@ final private[kyo] class MysqlSqlConnection private[mysql] (
             // Nothing is running: either no request was in flight, or a stream's cleanup already drained to the
             // terminator (killing the statement itself if that was faster). No sidecar is worth opening for either.
             case false => ()
-            case true =>
-                MysqlSqlConnection.connect(address, password, config, options).flatMap { sidecar =>
-                    closingOnce(sidecar) {
-                        underlying.cancelQuery(sidecar).andThen {
-                            // COM_QUIT is a courtesy: the server notices the socket close either way, so a
-                            // failure here must not turn a delivered kill into a failed cancel.
-                            Abort.run[SqlException](sidecar.quit()).unit
+            case true  =>
+                // Own the sidecar across the connect->closingOnce handover: the reclaim carrier can interrupt here, so a
+                // local custody (openSocket claims into it via custodyLocal) closes a sidecar an interrupt drops first.
+                Sync.Unsafe.defer(new kyo.db.Connection.Custody).map { custody =>
+                    Scope.run {
+                        Scope.ensure { _ =>
+                            Sync.Unsafe.defer(custody.orphan()).map {
+                                case Present(close) => close()
+                                case Absent         => ()
+                            }
+                        }.andThen {
+                            kyo.db.Connection.custodyLocal.let(Present(custody)) {
+                                MysqlSqlConnection.connect(address, password, config, options)
+                            }.map { sidecar =>
+                                closingOnce(sidecar) {
+                                    Sync.Unsafe.defer(custody.take()).andThen {
+                                        underlying.cancelQuery(sidecar).andThen {
+                                            // COM_QUIT is a courtesy: the server notices the socket close either way, so a
+                                            // failure here must not turn a delivered kill into a failed cancel.
+                                            Abort.run[SqlException](sidecar.quit()).unit
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

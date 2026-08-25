@@ -15,15 +15,18 @@ object TestTransports:
       * chosen backend so the driver-selection matrix is exercised deterministically without a real epoll/io_uring/kqueue host, and to substitute
       * a fake/recording [[kyo.net.internal.TlsEngine]] for the handshake engine (`buildEngine`, defaulting to the real
       * [[PosixTransport.realEngineFactory]]) where a test needs to observe or script the engine the transport is otherwise the sole builder of.
+      *
+      * `onAcceptResourceBackoff` fires once per accept-loop re-arm under descriptor exhaustion (`EMFILE`/`ENFILE`), letting a test count re-arms as events, not time.
       */
     def forTesting(
         ioDriver: IoDriver[PosixHandle],
         sockets: SocketBindings,
         backendIsEpoll: Boolean,
-        buildEngine: PosixTransport.TlsEngineFactory = PosixTransport.realEngineFactory
+        buildEngine: PosixTransport.TlsEngineFactory = PosixTransport.realEngineFactory,
+        onAcceptResourceBackoff: () => Unit = () => ()
     )(using AllowUnsafe): PosixTransport =
         val pool = IoDriverPool.init(Array(ioDriver))
-        PosixTransport.init(pool, ioDriver, sockets, backendIsEpoll, buildEngine)
+        PosixTransport.init(pool, ioDriver, sockets, backendIsEpoll, buildEngine, onAcceptResourceBackoff)
     end forTesting
 
 end TestTransports

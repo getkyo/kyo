@@ -464,19 +464,24 @@ object PostgresConnection:
         applicationName: Maybe[String] = Absent,
         socketTimeout: Duration = Duration.Infinity
     )(using Frame): PostgresConnection < (Async & Abort[SqlException]) =
-        kyo.db.Connection.openSocket(host, port, t => onConnectPanic(t, "connect", host, port)) { rawConn =>
-            val connEffect: Connection < (Async & Abort[SqlException]) = tls match
-                case Absent             => rawConn
-                case Present(tlsConfig) => InitSSLExchange.run(rawConn, host, port, tlsConfig)
-            connEffect.flatMap { conn =>
-                PostgresChannel(conn, socketTimeout).flatMap { channel =>
-                    StartupExchange.run(channel, user, db, password, Absent, Absent, applicationName).flatMap { result =>
-                        // Duration.Infinity means "no time-based expiry"; pass Duration.Zero to Cache.init.
-                        val ttl = if preparedStmtTtl == Duration.Infinity then Duration.Zero else preparedStmtTtl
-                        mkConnection(channel, result, preparedStmtCacheSize, ttl)
+        kyo.db.Connection.openSocket(host, port, t => onConnectPanic(t, "connect", host, port), (c: PostgresConnection) => c.close) {
+            rawConn =>
+                val connEffect: Connection < (Async & Abort[SqlException]) = tls match
+                    case Absent             => rawConn
+                    case Present(tlsConfig) => InitSSLExchange.run(rawConn, host, port, tlsConfig)
+                connEffect.flatMap { conn =>
+                    // Second bracket over the post-upgrade connection: a STARTTLS upgrade leaves `rawConn`'s close a no-op,
+                    // so openSocket's outer bracket would not close the upgraded fd if startup or auth then fails.
+                    kyo.db.Connection.closingOnFailure(conn) {
+                        PostgresChannel(conn, socketTimeout).flatMap { channel =>
+                            StartupExchange.run(channel, user, db, password, Absent, Absent, applicationName).flatMap { result =>
+                                // Duration.Infinity means "no time-based expiry"; pass Duration.Zero to Cache.init.
+                                val ttl = if preparedStmtTtl == Duration.Infinity then Duration.Zero else preparedStmtTtl
+                                mkConnection(channel, result, preparedStmtCacheSize, ttl)
+                            }
+                        }
                     }
                 }
-            }
         }
     end connect
 
@@ -538,7 +543,12 @@ object PostgresConnection:
         applicationName: Maybe[String] = Absent,
         socketTimeout: Duration = Duration.Infinity
     )(using Frame): PostgresConnection < (Async & Abort[SqlException]) =
-        kyo.db.Connection.openSocket(host, port, t => onConnectPanic(t, "connectWithNegotiator", host, port)) { rawConn =>
+        kyo.db.Connection.openSocket(
+            host,
+            port,
+            t => onConnectPanic(t, "connectWithNegotiator", host, port),
+            (c: PostgresConnection) => c.close
+        ) { rawConn =>
             // Step 1: apply negotiator (prefer/allow) or strict TLS upgrade (require/verify-*).
             val connEffect: Connection < (Async & Abort[SqlException]) = negotiator match
                 case Present(neg) =>
@@ -550,10 +560,14 @@ object PostgresConnection:
                         case Absent             => rawConn
                         case Present(tlsConfig) => InitSSLExchange.run(rawConn, host, port, tlsConfig)
             connEffect.flatMap { conn =>
-                PostgresChannel(conn, socketTimeout).flatMap { channel =>
-                    StartupExchange.run(channel, user, db, password, Absent, Absent, applicationName).flatMap { result =>
-                        val ttl = if preparedStmtTtl == Duration.Infinity then Duration.Zero else preparedStmtTtl
-                        mkConnection(channel, result, preparedStmtCacheSize, ttl)
+                // Second bracket over the post-upgrade connection, so a startup failure after an upgrade closes the
+                // upgraded fd rather than the raw socket whose close is by then a no-op.
+                kyo.db.Connection.closingOnFailure(conn) {
+                    PostgresChannel(conn, socketTimeout).flatMap { channel =>
+                        StartupExchange.run(channel, user, db, password, Absent, Absent, applicationName).flatMap { result =>
+                            val ttl = if preparedStmtTtl == Duration.Infinity then Duration.Zero else preparedStmtTtl
+                            mkConnection(channel, result, preparedStmtCacheSize, ttl)
+                        }
                     }
                 }
             }
@@ -585,16 +599,25 @@ object PostgresConnection:
         applicationName: Maybe[String] = Absent,
         socketTimeout: Duration = Duration.Infinity
     )(using Frame): PostgresConnection < (Async & Abort[SqlException]) =
-        kyo.db.Connection.openSocket(host, port, t => onConnectPanic(t, "connectWithCertHashOverride", host, port)) { rawConn =>
+        kyo.db.Connection.openSocket(
+            host,
+            port,
+            t => onConnectPanic(t, "connectWithCertHashOverride", host, port),
+            (c: PostgresConnection) => c.close
+        ) { rawConn =>
             val connEffect: Connection < (Async & Abort[SqlException]) = tls match
                 case Absent             => rawConn
                 case Present(tlsConfig) => InitSSLExchange.run(rawConn, host, port, tlsConfig)
             connEffect.flatMap { conn =>
-                PostgresChannel(conn, socketTimeout).flatMap { channel =>
-                    StartupExchange.run(channel, user, db, password, certHashOverride, mechanismCapture, applicationName).flatMap {
-                        result =>
-                            // connectWithCertHashOverride is test-only; no TTL parameter, use Duration.Zero directly.
-                            mkConnection(channel, result, preparedStmtCacheSize, Duration.Zero)
+                // Second bracket over the post-upgrade connection, as in connect: the raw socket's close is a no-op once
+                // it has upgraded, so a startup failure would otherwise leak the upgraded fd.
+                kyo.db.Connection.closingOnFailure(conn) {
+                    PostgresChannel(conn, socketTimeout).flatMap { channel =>
+                        StartupExchange.run(channel, user, db, password, certHashOverride, mechanismCapture, applicationName).flatMap {
+                            result =>
+                                // connectWithCertHashOverride is test-only; no TTL parameter, use Duration.Zero directly.
+                                mkConnection(channel, result, preparedStmtCacheSize, Duration.Zero)
+                        }
                     }
                 }
             }

@@ -57,18 +57,23 @@ class RaceZipTest extends CompatTest:
             case other                 => fail(s"expected Failure, got: $other")
         }
     }
-    "zip runs in parallel (timing canary)" in run {
-        // Both legs sleep ~100ms; concurrent execution should keep elapsed
-        // well under 5s on any backend (5s upper bound is loose to tolerate
-        // shared CI runners). The canary catches obviously sequential
-        // implementations. We measure at the test driver via System.nanoTime
-        // because CIO does not expose `flatMap` through the opaque alias.
-        val a     = CIO.delay(100.millis)(CIO.defer { 1 })
-        val b     = CIO.delay(100.millis)(CIO.defer { 2 })
-        val start = java.lang.System.nanoTime()
-        CIO.zip(a, b).map { tup =>
-            val elapsed = (java.lang.System.nanoTime() - start) / 1_000_000L
-            assert(tup == ((1, 2)) && elapsed < 5_000L, s"tup=$tup elapsed=$elapsed ms (parallelism canary)")
+    "zip runs in parallel (peak-concurrency canary)" in run {
+        // Parallelism is overlap, not duration: each leg marks itself active, samples the peak, and waits at the barrier, so the second to
+        // arrive samples 2. A sequential zip never opens the barrier and fails via CompatTest's testTimeout (a fixed hold would race the sample).
+        val active = new AtomicInteger(0)
+        val peak   = new AtomicInteger(0)
+        def leg(v: Int, barrier: CLatch): CIO[Int] =
+            CIO.defer {
+                val cur = active.incrementAndGet()
+                peak.updateAndGet(_ max cur)
+                ()
+            }.flatMap(_ => barrier.release)
+                .flatMap(_ => barrier.await)
+                .flatMap(_ => CIO.defer { active.decrementAndGet(); v })
+        CLatch.init(2).flatMap { barrier =>
+            CIO.zip(leg(1, barrier), leg(2, barrier)).map { tup =>
+                assert(tup == ((1, 2)) && peak.get() == 2, s"tup=$tup peak=${peak.get()}")
+            }
         }
     }
     "zip arity 4 returns 4-tuple" in run {

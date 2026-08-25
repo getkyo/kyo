@@ -68,19 +68,35 @@ private[kyo] object CancelExchange:
     private def onFreshConnection[A](address: SqlConfig.Address)(
         body: kyo.net.Connection => A < (Async & Abort[SqlException])
     )(using Frame): A < (Async & Abort[SqlException]) =
-        // Unsafe: raw kyo-net transport connect; the cancel sidecar socket is opened outside the safe tier.
-        Abort.run[kyo.net.NetException](Sync.Unsafe.defer(NetPlatform.transport.connect(
-            address.host,
-            address.port
-        ).safe).flatMap(_.use(identity))).flatMap {
-            case Result.Failure(_) =>
-                Abort.fail(SqlConnectionConnectFailedException(address.host, address.port, new Exception("cancel connect failed")))
-            case Result.Panic(t) =>
-                Log.error(s"[kyo-sql] CancelExchange: connect panic: ${t.getMessage}").andThen(
-                    Abort.fail(SqlConnectionConnectFailedException(address.host, address.port, t))
-                )
-            case Result.Success(rawConn) =>
-                closingOnce(rawConn)(body(rawConn))
+        // The pool's cancel budget can interrupt this, so a finalizer closes a connection the interrupt drops before
+        // closingOnce registers (no stranded armed read); unconditional, since after STARTTLS the raw close routes to upgradeAbandon.
+        Scope.run {
+            // Unsafe: raw kyo-net transport connect; the cancel sidecar socket is opened outside the safe tier.
+            Sync.Unsafe.defer(NetPlatform.transport.connect(address.host, address.port).safe).map { connFiber =>
+                Scope.ensure { error =>
+                    if error.isDefined then
+                        connFiber.interrupt.andThen(connFiber.getResult).map {
+                            case Result.Success(rawConn) => Sync.Unsafe.defer(rawConn.close())
+                            case _                       => ()
+                        }
+                    else ()
+                }.andThen {
+                    Abort.run[kyo.net.NetException](connFiber.get).map {
+                        case Result.Failure(_) =>
+                            Abort.fail(SqlConnectionConnectFailedException(
+                                address.host,
+                                address.port,
+                                new Exception("cancel connect failed")
+                            ))
+                        case Result.Panic(t) =>
+                            Log.error(s"[kyo-sql] CancelExchange: connect panic: ${t.getMessage}").andThen(
+                                Abort.fail(SqlConnectionConnectFailedException(address.host, address.port, t))
+                            )
+                        case Result.Success(rawConn) =>
+                            closingOnce(rawConn)(body(rawConn))
+                    }
+                }
+            }
         }
 
     /** Runs `body` and closes `conn` exactly once, on whichever edge ends it.

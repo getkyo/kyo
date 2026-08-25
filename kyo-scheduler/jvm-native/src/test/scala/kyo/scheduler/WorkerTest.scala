@@ -22,14 +22,26 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
     implicit override val patienceConfig: PatienceConfig =
         PatienceConfig(timeout = Span(15, Seconds), interval = Span(50, Millis))
 
-    val executor = TestExecutors.cached
+    // A worker mounts by submitting ITSELF here, so wrapping the executor lets afterEach count in-flight run() invocations and
+    // wait for zero, not a fixed settle. The InternalClock ticker also runs here but is not a Worker, so the isInstanceOf filter excludes it.
+    private val activeWorkers = new AtomicInteger(0)
+    val executor: Executor = command =>
+        TestExecutors.cached.execute { () =>
+            val isWorker = command.isInstanceOf[Worker]
+            if (isWorker) { val _ = activeWorkers.incrementAndGet() }
+            try command.run()
+            finally if (isWorker) { val _ = activeWorkers.decrementAndGet() }
+        }
 
     // Set to true after each test to stop all workers created during that test
     private var globalStop = new AtomicBoolean(false)
 
     override def afterEach(): Unit = {
         globalStop.set(true)
-        Thread.sleep(50)                      // give workers time to exit run() loop
+        // Wait for every mounted worker's run() loop to actually return (activeWorkers back to 0), not for a fixed
+        // delay. The nanoTime bound is a catastrophic-only hang canary, never the pass condition.
+        val deadline = System.nanoTime() + 15000000000L
+        while (activeWorkers.get() > 0 && System.nanoTime() < deadline) Thread.`yield`()
         globalStop = new AtomicBoolean(false) // fresh for next test
     }
 
@@ -950,6 +962,63 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
         assert(!flagAfterTask.get(), "interrupt flag should be cleared between tasks")
     }
 
+    "run clears a stale interrupt left on the reused thread" in {
+        // A reused thread can come back still carrying an interrupt from unrelated work; Worker.run clears it on mount. This
+        // executor hands its single thread back with the flag intact (j.u.c pools clear it before dispatch, hiding the hand-back; one thread makes the reuse exact).
+        val pending = new ConcurrentLinkedQueue[Runnable]()
+        val stopped = new AtomicBoolean(false)
+        val pool: Executor = r => {
+            pending.add(r)
+            ()
+        }
+        val poolThread = new Thread(() => {
+            while (!stopped.get()) {
+                val r = pending.poll()
+                if (r ne null) r.run()
+                else Thread.`yield`()
+            }
+        })
+        poolThread.setDaemon(true)
+        poolThread.start()
+
+        val clock = InternalClock(TestExecutors.cached)
+        try {
+            val stained       = new CountDownLatch(1)
+            val stainedThread = new AtomicReference[Thread](null)
+            pool.execute(() => {
+                stainedThread.set(Thread.currentThread())
+                Thread.currentThread().interrupt()
+                stained.countDown()
+            })
+            assert(stained.await(5, TimeUnit.SECONDS))
+
+            val testStop = globalStop
+            val worker = new Worker(0, pool, (_, _) => ???, _ => null, clock, 5) {
+                def currentInterruptEpoch(): Long = 0L
+                def shouldStop()                  = testStop.get()
+            }
+
+            val flagOnEntry = new AtomicBoolean(false)
+            val ranOn       = new AtomicReference[Thread](null)
+            val done        = new CountDownLatch(1)
+            val task = TestTask(_run = () => {
+                ranOn.set(Thread.currentThread())
+                flagOnEntry.set(Thread.interrupted())
+                done.countDown()
+                Task.Done
+            })
+            worker.enqueue(task)
+
+            assert(done.await(5, TimeUnit.SECONDS))
+            assert(ranOn.get() eq stainedThread.get(), "the task should mount the thread that carries the stale flag")
+            assert(!flagOnEntry.get(), "run() should clear the stale interrupt before mounting a task")
+        } finally {
+            stopped.set(true)
+            clock.stop()
+            poolThread.join(5000)
+        }
+    }
+
     "needsInterrupt" in {
         val task = TestTask()
         assert(!task.needsInterrupt())
@@ -966,25 +1035,36 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
         // subsequent enqueued tasks sit in the dead queue.
         val worker = createWorker(executor = executor)
 
-        val fatalTask = TestTask(_run = () => throw new LinkageError("simulated NoClassDefFoundError"))
+        val mountThread = new AtomicReference[Thread](null)
+        val fatalTask = TestTask(_run = () => {
+            mountThread.set(Thread.currentThread())
+            throw new LinkageError("simulated NoClassDefFoundError")
+        })
         worker.enqueue(fatalTask)
 
         // Worker thread picks it up and dies executing it.
         eventually {
             assert(fatalTask.executions == 1, "fatal task should have been executed once before the thread died")
         }
-        Thread.sleep(200) // let any cleanup paths fire if they exist
+        // The fatal Throwable unwinds run()'s finally (republishing the worker Idle), then kills the pool thread. Wait for that
+        // thread to die: an enqueue landing in the death window is lost outright, so the eventually below could never recover it.
+        eventually {
+            val thread = mountThread.get()
+            assert((thread ne null) && !thread.isAlive(), "the worker's thread should have died from the fatal Throwable")
+        }
 
         // Now enqueue a trivial second task. A healthy Worker re-arms via wakeup() ->
         // exec.execute(this) and runs it. A wedged Worker has state stuck at Running,
-        // so the CAS Idle->Running in wakeup() fails and the task never runs.
+        // so the CAS Idle->Running in wakeup() fails and the task never runs. `eventually` is the
+        // barrier: a wedged worker never runs task2 and fails at its own timeout.
         val task2 = TestTask()
         worker.enqueue(task2)
-        Thread.sleep(500)
 
-        assert(
-            task2.executions == 1,
-            s"Worker should recover and execute the next task after fatal, but task2.executions=${task2.executions}"
-        )
+        eventually {
+            assert(
+                task2.executions == 1,
+                s"Worker should recover and execute the next task after fatal, but task2.executions=${task2.executions}"
+            )
+        }
     }
 }

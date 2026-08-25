@@ -213,7 +213,7 @@ final class StructureValueReader(root: Structure.Value)(using _frame: Frame) ext
         currentValue match
             case Structure.Value.Bytes(value) => value
             case Structure.Value.Str(s) =>
-                Span.from(java.util.Base64.getDecoder.decode(s))
+                Span.fromUnsafe(Base64s.decodeExact(s))
             case other => throw TypeMismatchException(Seq.empty, "Span[Byte]", other.toString)
 
     def bigInt(): BigInt =

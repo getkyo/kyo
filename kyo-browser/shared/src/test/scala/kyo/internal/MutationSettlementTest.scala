@@ -116,22 +116,15 @@ class MutationSettlementTest extends kyo.BrowserTest:
             ).andThen {
                 Browser.withConfig(_.mutationQuiescenceWindow(Duration.Zero)) {
                     for
-                        timedRes <- timed(Browser.click(Selector.id("b")))
-                        (elapsedDur, _) = timedRes
-                        elapsed         = elapsedDur.toMillis
+                        _       <- Browser.click(Selector.id("b"))
                         outText <- Browser.eval("document.getElementById('out').textContent")
                     yield
-                        // Behavioural: under opt-out the click returns before the 200ms deferred mutation.
+                        // Under the Duration.Zero opt-out the click returns BEFORE the 200ms deferred mutation and reads
+                        // the pre-mutation text; settlement would have waited and read "after". Effect, not elapsed.
                         assert(
                             outText == "before",
                             s"expected pre-mutation text 'before' under Duration.Zero opt-out (settlement skipped) but got '$outText'"
                         )
-                        // Timing sanity (3× margin under 200ms): well under the would-be 250ms settlement bound.
-                        assert(
-                            elapsed < 600,
-                            s"expected click under Duration.Zero opt-out to return well under settlement bound but took ${elapsedMsLabel(elapsed)}"
-                        )
-                    end for
                 }
             }
         }
@@ -315,16 +308,11 @@ class MutationSettlementTest extends kyo.BrowserTest:
                             .mutationSettlementTimeout(1500.millis)
                     ) {
                         for
-                            start  <- Clock.nowMonotonic
                             _      <- Browser.click(Selector.id("b"))
-                            stop   <- Clock.nowMonotonic
                             actual <- Browser.eval("document.getElementById('sib').textContent")
                         yield
-                            val elapsedMs = (stop - start).toMillis
-                            assert(
-                                elapsedMs >= 200,
-                                s"expected click to take >= 200ms (settlement waited for the sibling mutation) but elapsed=${elapsedMs}ms; sibling observation is likely not engaged"
-                            )
+                            // The sibling mutation is deferred 200ms. Settlement that waited for it returns with the
+                            // mutation applied (actual == "updated"); an early return reads the pre-mutation value.
                             assert(actual == "updated", s"expected sibling textContent='updated' after settlement returned, got '$actual'")
                         end for
                     }
@@ -370,16 +358,11 @@ class MutationSettlementTest extends kyo.BrowserTest:
                             .mutationSettlementTimeout(1500.millis)
                     ) {
                         for
-                            start  <- Clock.nowMonotonic
                             _      <- Browser.click(Selector.id("b"))
-                            stop   <- Clock.nowMonotonic
                             actual <- Browser.eval("document.getElementById('sib').textContent")
                         yield
-                            val elapsedMs = (stop - start).toMillis
-                            assert(
-                                elapsedMs >= 200,
-                                s"expected click to take >= 200ms (settlement awaited _kyoPostQ) but elapsed=${elapsedMs}ms"
-                            )
+                            // The queued write lands via _kyoPostQ after 200ms. actual == "queued-write" means settlement
+                            // awaited that queue before returning; an early return reads the pre-write value.
                             assert(actual == "queued-write", s"expected sib textContent='queued-write' after settlement, got '$actual'")
                         end for
                     }
@@ -555,9 +538,5 @@ class MutationSettlementTest extends kyo.BrowserTest:
             }
         }
     }
-
-    // Helpers, kept private to this test class so they don't leak into the parser-only scope above.
-
-    private def elapsedMsLabel(ms: Long): String = s"${ms}ms"
 
 end MutationSettlementTest
