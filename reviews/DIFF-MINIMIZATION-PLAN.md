@@ -92,7 +92,7 @@ the whole diff is the ruled swap itself.
 - [x] D (46/83/52) TracePool (js-wasm/jvm/native) - old kernel removals
 
 ### kyo-kernel: tests
-- [ ] (205) kyo/ArrowTest.scala - new machinery test; classify
+- [x] (205) kyo/ArrowTest.scala - new file for new machinery (Arrow did not exist on main)
 - [ ] (66) kyo/KyoForeachCollTest.scala
 - [ ] (29) kyo/KyoForeachTest.scala
 - [x] (163) kyo/KyoTest.scala - classified: interim scalatest base, ruled renames, semantic asserts
@@ -102,27 +102,36 @@ the whole diff is the ruled swap itself.
 - [ ] (672) kernel/IsolateTest.scala
 - [ ] (459) kernel/LoopTest.scala - constructor changes plus this session's battery
 - [ ] (940) kernel/PendingTest.scala
-- [ ] (166) internal/CanLiftTest.scala
+- [x] (166) internal/CanLiftTest.scala - heir audit done by name-and-content map: all 11 main
+  cases have heirs under renamed descriptions, plus new cases (module-object rejection,
+  case-object fast path); nothing missing
 - [x] D (102) internal/ContextTest.scala - old kernel removal
-- [ ] (179) internal/DebuggerTest.scala
-- [ ] (357) internal/EffectTraceTest.scala
-- [ ] (62) internal/EvalCaptureTowerTest.scala
-- [ ] (944) internal/EvalTest.scala
-- [ ] (117) internal/HandlerTest.scala
-- [ ] (167) internal/ImplicitsTest.scala
-- [ ] (85) internal/NestedTest.scala
-- [ ] (541) internal/StackTest.scala
+- [x] (179) internal/DebuggerTest.scala - new file, new machinery (2 ignored tests remain a
+  ship-list item)
+- [x] (357) internal/EffectTraceTest.scala - new file, new machinery; heirs the deleted
+  Trace/TracePool coverage together with EffectTracePhysicalTest and EffectTraceThreadingTest
+- [x] (62) internal/EvalCaptureTowerTest.scala - new file, new machinery
+- [x] (944) internal/EvalTest.scala - new file, new machinery (the evaluator is new)
+- [x] (117) internal/HandlerTest.scala - new file, new machinery
+- [x] (167) internal/ImplicitsTest.scala - new file, new machinery
+- [x] (85) internal/NestedTest.scala - new file, new machinery (representation contract pins)
+- [x] (541) internal/StackTest.scala - new file, new machinery
 - [x] D (132) internal/TracePoolTest.scala - old kernel removal
 - [x] D (334) internal/TraceTest.scala - old kernel removal
-- [ ] (564) outsidekyo/PendingExpansionSiteTest.scala
+- [x] (564) outsidekyo/PendingExpansionSiteTest.scala - new file: outside-package expansion
+  pins (the accessibility trap the kernel skill documents); new machinery
 - [x] D jvm-native tests (ThreadingTests, SafepointTest, SafepointUnstartedThreadTest,
   EffectTracePhysicalTest) - this session's platform extraction, ruled
 - [x] D (68) jvm/BytecodeTest.scala - old kernel removal
-- [ ] (84) jvm/ArrowEffectBytecodeTest.scala; (107) jvm/PendingBytecodeTest.scala - new pins
+- [x] (84) jvm/ArrowEffectBytecodeTest.scala; (107) jvm/PendingBytecodeTest.scala - new
+  bytecode pins; together they heir the deleted jvm/BytecodeTest for the new node shapes
 - [x] D (324/849/73) jvm Safepoint/TracePool concurrency tests - old kernel removals
 - [x] D (455) jmh/KernelBench.scala - new board; (268) ProtoKernelBench - session rows
-- [ ] (342/329/345/309) bench-cross CatsEffect/Turbolift/Zio/ZioBlocks - classify (new project)
-- [ ] (196) CONTRIBUTING.md; (743) README.md - rewrite for the new kernel is expected; verify
+- [x] (342/329/345/309) bench-cross CatsEffect/Turbolift/Zio/ZioBlocks - new comparison-bench
+  project (kyo-kernel-bench-cross), session work; new machinery
+- [x] (196) CONTRIBUTING.md; (743) README.md - BOTH FLAGGED (see queue): README was deleted
+  with no replacement; CONTRIBUTING is stale (kyo-kernel2 naming, Handlers/evalNow references,
+  links to ship-excluded root session docs)
 
 ### kyo-prelude
 - [x] (54) Abort.scala - acceptance-after-region migration (register), design comment; no alignable residue
@@ -186,8 +195,8 @@ the whole diff is the ruled swap itself.
 ### kyo-compile-bench
 - [x] (78) CompileBench.scala; (51) ExpansionDump.scala; (50) CompileBenchNegativeTest.scala -
   session single-kernel rework, ruled by the swap
-- [ ] fixtures/ (13 files) and fixtures-expansion/ (4) and fixtures-negative/ (1) - new corpus;
-  classify (project is new on this branch relative to main? verify)
+- [x] fixtures/ (13 files) and fixtures-expansion/ (4) and fixtures-negative/ (1) - verified:
+  the whole kyo-compile-bench project is new vs main; all fixture files are new machinery
 
 ### Small modules
 - [x] (34) kyo-ai/LLM.scala - handleLoopState/answer-style (register) + capture-row narrowing
@@ -265,4 +274,13 @@ optimization-candidates/, backlog-sections/, .claude/ trees.
 - NOTE: UnsafeServerDispatch now logs handler-fiber panics via onComplete (previously they
   vanished silently since nothing reads a handler fiber's result). Internal behavior addition,
   listed for visibility.
+- FLAG: kyo-kernel has NO README (main's 743-line README was deleted with the old kernel and
+  nothing replaced it). A new-kernel README is a ship prerequisite; the /readme skill pipeline
+  is the intended tool. Ruling needed on when to run it (it needs sbt for doctest).
+- FLAG: kyo-kernel/CONTRIBUTING.md is stale: titled and worded for "kyo-kernel2", cites APIs
+  that no longer exist in the tree (Handlers, HandlersTest, public evalNow, handleLoop naming),
+  and links ../kernel2-iteration-report.md, ../kernel2-handlers-design.md,
+  ../kernel2-test-api-audit.md, which are root-level session artifacts the ship port excludes
+  (dangling links in the shipped tree). Needs a content pass; also a ruling on whether those
+  history docs ship into kyo-kernel/ or the links go.
 - (append here as the pass proceeds)
