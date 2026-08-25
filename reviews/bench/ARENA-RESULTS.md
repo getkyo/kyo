@@ -128,3 +128,23 @@ alloc parity with cats says its 0.18x throughput reading was mostly load. The ma
 (DeepBindMapBench, NarrowBindMapBench) were missed by the recheck selector and remain single-run.
 Trustworthy throughput needs the CI bench runner; the old-vs-new kernel question needs an A/B
 against the old-kernel branch on a quiet machine.
+
+## NarrowBind decomposition (kernel-level isolation)
+
+A new pinned kernel bench row (ProtoKernelBench.deferBindPerStep) plus scratch probes, all with the
+gc profiler, isolating the arena NarrowBind shape one variable at a time:
+
+| shape | B/op | per step |
+|---|---|---|
+| kernel: Effect.defer + bind, depth 1000, map | 80096 | 80.1 |
+| kernel: same, depth 10000, flatMap | 800101 | 80.0 |
+| kernel: same, depth 10000, under Effect.catching | 800117 | 80.0 |
+| arena syncKyo (Sync.defer + flatMap, depth 10000, under Abort.run) | 1280278 | 128.0 |
+| arena cats / zio | 959000 | ~96 |
+
+Sync.defer inlines to the same deferral node the kernel rows build, and rows are erased at runtime,
+so depth, flatMap, the Sync row, and a plain region below are all exonerated: the kernel floor for
+this shape is a stable 80 B per step, already below cats' 96. The remaining 48 B per step appears
+only under Abort.run's handler machinery (evalOrThrow wraps the loop in Abort.run). Open item:
+an allocation-site profile (async-profiler alloc event) of the arena row to name the allocation
+inside the handler path.
