@@ -1,7 +1,11 @@
 package kyo.kernel
 
+import kyo.Arrow
+import kyo.Arrow.TransformBase
 import kyo.Frame
+import kyo.Maybe
 import kyo.kernel.internal.Kyo
+import kyo.kernel.internal.Safepoint
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.annotation.targetName
@@ -283,20 +287,45 @@ object Loop:
       * @return
       *   The final result after loop completion
       */
+    @nowarn("msg=anonymous")
     inline def apply[A, O, S](inline input: A)(inline run: A => Outcome[A, O] < S)(
         using inline _frame: Frame
     ): O < S =
-        def suspended(v: Outcome[A, O] < S): O < S =
-            v.map(loop(_))
-        @tailrec def loop(v: Outcome[A, O] < S): O < S =
+        // the loop's re-entry arrow travels as a parameter: built at the first suspension and
+        // reused by every later one, so an effectful loop pays one node per suspension, not a
+        // node and an arrow. A loop that never suspends never builds it; a resumption re-enters
+        // through the arrow, which passes itself back in
+        @tailrec def loop(step: Maybe[Arrow[Outcome[A, O], O, S]], v: Outcome[A, O] < S): O < S =
             v match
                 case next: Continue[A] @unchecked =>
-                    loop(run(next._1))
-                case _: Kyo[?, ?] =>
-                    suspended(v)
+                    loop(step, run(next._1))
+                case kyo: Kyo[Outcome[A, O], S] @unchecked =>
+                    val arrow = step.getOrElse {
+                        new TransformBase[Outcome[A, O], O, S]:
+                            def frame = _frame
+                            def apply[C, S2](v: Outcome[A, O] < S2, cont: Arrow[O, C, S2]): C < (S & S2) =
+                                v match
+                                    case kyo: Kyo[Outcome[A, O], S2] @unchecked =>
+                                        Effect.defer(kyo, this, cont)
+                                    case _ =>
+                                        val slot = Safepoint.get()
+                                        if !Safepoint.enter(slot) then Effect.defer(v, this, cont)
+                                        else
+                                            // the union passes through whole: the loop's arms speak the
+                                            // representation (a raw Continue, a done value, a boxed payload),
+                                            // so unnesting here and re-lifting at the call would be the
+                                            // identity, and skipping the unnest is what keeps a done payload
+                                            // held as data from being mistaken for a suspended outcome. The
+                                            // cast is the protocol's row erasure: the arrow was built at S
+                                            val out = cont.head(loop(Maybe(this), v.asInstanceOf[Outcome[A, O] < S]), cont.tail)
+                                            Safepoint.exit(slot)
+                                            out
+                                        end if
+                    }
+                    Effect.defer(kyo, arrow, Arrow.id)
                 case res =>
                     res.asInstanceOf[O < S]
-        loop(Loop.continue(input))
+        loop(Maybe.empty, Loop.continue(input))
     end apply
 
     /** Executes a loop with two state values.
