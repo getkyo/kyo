@@ -394,55 +394,54 @@ assert(answering(7)(recovered).eval == 7)
 
 ### Acquire, use, release
 
-`Effect.bracket` binds a resource for the extent of a use and guarantees the release runs, whichever way the extent ends:
+`Effect.bracket` binds a resource for the extent of a use and guarantees the release runs, whichever way the extent ends. The release is told what it is releasing and how the extent ended, which is what lets one commit on success and roll back otherwise:
 
 ```scala
-var openHandles = 0
+def noteOutcome(id: Int, outcome: Result[Any, Int]): String =
+    outcome match
+        case Result.Success(v) => s"handle $id committed at $v"
+        case _                 => s"handle $id did not complete"
 
-val session: Int < Ask =
-    Effect.bracket({ openHandles += 1; openHandles })(_ => openHandles -= 1)(id => ask.map(_ + id))
+val session: Int < Ask = Effect.bracket(1)(noteOutcome)(id => ask.map(_ + id))
 
 assert(answering(41)(session).eval == 42)
-assert(openHandles == 0)
 ```
 
-The second form of `bracket` also tells the release how the extent ended, which is what a release needs in order to commit on success and roll back otherwise:
+The assertion covers what the caller can see: the resource reached the use, and the use's result came back. What the release did is deliberately not visible from here.
+
+> **Note:** the release takes no effects, `Any < Any`, because it has to be able to run where nothing is installed to answer for it, which is all an interpreter that is ending can offer. Its result is discarded for the same reason. A release exists to act outside the computation, closing a socket or handing a permit back, so nothing it does is observable to the computation it belonged to. The shorter form, `Effect.bracket(acquire)(release)(use)` with a release taking only the resource, is this one for releases that do not care how the extent ended.
+
+Three outcomes reach a release: the value the extent completed with, the failure an unwind carried through it, and abandonment, for an extent that never ended because nobody resumed the continuation holding it. That third one is not hypothetical. A clause that discards its continuation drops the whole remainder of the computation, and every bracket outstanding in that remainder still releases, told it was abandoned:
 
 ```scala
-var lastOutcome = ""
-
-val reported: Int < Ask =
-    Effect.bracket(1)((id: Int, outcome: Result[Any, Int]) =>
-        lastOutcome =
-            outcome match
-                case Result.Success(v) => s"$id completed with $v"
-                case _                 => s"$id did not complete"
-    )(id => ask.map(_ + id))
-
-assert(answering(1)(reported).eval == 2)
-assert(lastOutcome == "1 completed with 2")
-```
-
-> **Note:** the release takes no effects, `Any < Any`, because it has to be able to run where nothing is installed to answer for it, which is all an interpreter that is ending can offer. Three outcomes reach it: the value the extent completed with, the failure an unwind carried through it, and `Finalizer.Abandoned` for an extent that never ended because nobody resumed the continuation holding it.
-
-That third outcome is not hypothetical. A clause that discards its continuation drops the whole remainder of the computation, and every bracket outstanding in that remainder still releases, told it was abandoned:
-
-```scala
-var abandoned = 0
-
 val dropped: Int < Any =
-    ArrowEffect.handleCont(Tag[Ask], Effect.bracket(1)(_ => abandoned += 1)(id => ask.map(_ + id)))(
+    ArrowEffect.handleCont(Tag[Ask], Effect.bracket(1)(noteOutcome)(id => ask.map(_ + id)))(
         [C] => (_, _) => -1,
         a => a
     )
 
 assert(dropped.eval == -1)
-assert(abandoned == 1)
 ```
+
+The clause answered `-1` without ever applying `cont`, so the `ask.map(_ + id)` behind it never ran and the region completed at the operation. The bracket inside the dropped remainder still released on the way out.
 
 ### A released scope, entered again
 
-The mirror case is a clause that applies its continuation more than once with a bracket inside the region. The first branch ends the use, so the resource is released; the second branch would resume code that closed over a resource that no longer exists. Entering that scope again raises `Finalizer.Spent`, naming the frame where the resource was opened, rather than handing the second branch a released resource. Re-acquiring cannot rescue this shape, because the continuation starts in the middle of the use and the resource is already captured by the closures the use built.
+The mirror case is a clause that applies its continuation more than once with a bracket inside the region. The first branch ends the use, so the resource is released; the second branch would resume code that closed over a resource that no longer exists. Rather than hand that branch a released resource, entering the scope again is refused:
+
+```scala
+val branched: Int < Any =
+    ArrowEffect.handleCont(Tag[Ask], session)(
+        [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
+        a => a
+    )
+
+val refused: String < Any = Effect.catching(branched.map(_ => "no refusal"))(e => e.getMessage)
+
+assert(refused.eval.contains("was released, and its scope is being entered again"))
+```
+
+That refusal is also the one pure signal that a release ran: the scope could only be spent if the first branch had already released it, and the message names the frame where the resource was opened, which is the half a stack trace cannot show. Re-acquiring cannot rescue this shape, because the continuation starts in the middle of the use and the resource is already captured by the closures the use built.
 
 The arrangement that does work is the other nesting: with the bracket enclosing the multi-shot region rather than sitting inside it, the release point is below the handler, never folded into the captured continuation, and the extent ends once after every branch has run.
 
@@ -496,19 +495,16 @@ A round answers with an `Outcome`, built by `Loop.continue` and `Loop.done`. `Ou
 Four loops carry nothing between rounds and read better than the general form when there is nothing to carry. `Loop.foreach` repeats a body that answers with an outcome, `Loop.repeat(n)` runs a body a fixed number of times, `Loop.whileTrue` tests an effectful condition before each round, and `Loop.forever` never completes on its own:
 
 ```scala
-var ticks = 0
-
-val repeated: Unit < Any  = Loop.repeat(3)(Kyo.lift[Unit, Any] { ticks += 1 })
+val repeated: Unit < Say  = Loop.repeat(3)(say("tick"))
 val ticker: Nothing < Say = Loop.forever(say("tick"))
 
-repeated.eval
-assert(ticks == 3)
+assert(runSay(repeated).eval == ((Chunk("tick", "tick", "tick"), ())))
 assert(sayUntil("tick")(ticker).eval == Maybe.empty[Nothing])
 ```
 
 `ticker` produces `Nothing`, so nothing downstream of it can run and only a handler can end it. `sayUntil` from the previous chapter is such a handler: it ends the region at the first `"tick"`, which is what "never completes on its own" means in practice.
 
-> **Note:** `Loop.repeat(n)` checks the count before reaching the body, so the body is evaluated exactly `n` times rather than `n + 1`.
+> **Note:** `Loop.repeat(n)` checks the count before reaching the body, so the body is evaluated exactly `n` times rather than `n + 1`. The transcript above is the evidence: three rounds, three lines, and a fourth round would have added a fourth.
 
 ## Sequential collection operations
 
