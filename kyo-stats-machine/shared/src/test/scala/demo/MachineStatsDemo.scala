@@ -106,8 +106,12 @@ object MachineStatsDemo:
       * all catches that; a regression that drops only swap, or only two of the four cpu rates, is invisible
       * unless the whole set is named.
       *
-      * Windows has no load-average concept, so the three `load.*` gauges are required only elsewhere. Disk is
-      * checked separately, by mount, since its family names are host-specific.
+      * Two families are required everywhere except Windows, because that host does not report them and the
+      * readers say so rather than faking a value. It has no load-average concept, so the three `load.*`
+      * gauges are absent; and `GlobalMemoryStatusEx` exposes no free-versus-available distinction, so
+      * `memory.free` is never written rather than repeating the available figure under a second label.
+      * Requiring either there would demand a number the module deliberately does not produce. Disk is checked
+      * separately, by mount, since its family names are host-specific.
       */
     def requiredKeys(os: String): Chunk[MachineMetrics.Key] =
         val everywhere = Chunk(
@@ -118,12 +122,18 @@ object MachineStatsDemo:
             MachineMetrics.cpuCores,
             MachineMetrics.memoryTotal,
             MachineMetrics.memoryAvailable,
-            MachineMetrics.memoryFree,
             MachineMetrics.swapTotal,
             MachineMetrics.swapFree
         )
         if os == "Windows" then everywhere
-        else everywhere.concat(Chunk(MachineMetrics.loadOne, MachineMetrics.loadFive, MachineMetrics.loadFifteen))
+        else
+            everywhere.concat(Chunk(
+                MachineMetrics.memoryFree,
+                MachineMetrics.loadOne,
+                MachineMetrics.loadFive,
+                MachineMetrics.loadFifteen
+            ))
+        end if
     end requiredKeys
 
     /** Acceptance check for a Report. Returns Absent when the report proves auto-load fed real host metrics into

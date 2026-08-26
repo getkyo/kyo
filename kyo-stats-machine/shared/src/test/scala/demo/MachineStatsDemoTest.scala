@@ -60,13 +60,18 @@ class MachineStatsDemoTest extends kyo.test.Test[Any]:
             assert(keys.contains("machine.load.fifteen"))
         }
 
-        "drops only the load gauges on Windows, which has no load-average concept" in {
+        "drops the load gauges and memory.free on Windows, the two families that host does not report" in {
             val windows = MachineStatsDemo.requiredKeys("Windows").map(_.dotted)
             val macos   = MachineStatsDemo.requiredKeys("MacOS").map(_.dotted)
-            assert(windows.size == 10)
+            assert(windows.size == 9)
             val dropped = macos.filterNot(windows.contains)
-            assert(dropped.size == 3)
-            assert(dropped.forall(_.startsWith("machine.load.")))
+            assert(dropped.size == 4)
+            assert(dropped.contains("machine.load.one"))
+            assert(dropped.contains("machine.load.five"))
+            assert(dropped.contains("machine.load.fifteen"))
+            // MachineWindows never writes memory.free: GlobalMemoryStatusEx has no free-versus-available
+            // distinction, so requiring it there asks for a value the reader deliberately does not produce.
+            assert(dropped.contains("machine.memory.free"))
             assert(windows.forall(macos.contains))
         }
 
@@ -120,8 +125,24 @@ class MachineStatsDemoTest extends kyo.test.Test[Any]:
             assert(verdict.exists(_.contains("auto-load did not start the sampler")))
         }
 
-        "does not require the load gauges of a Windows host" in {
+        "does not require the load gauges or memory.free of a Windows host" in {
             assert(MachineStatsDemo.validate(healthyReport("Windows")) == Absent)
+        }
+
+        "accepts a Windows snapshot shaped like the one a real Windows host produces" in {
+            // The fixture above draws its readings from requiredKeys itself, so it cannot tell whether that
+            // set asks for a family Windows never writes. This one is built from the full taxonomy minus what
+            // MachineWindows documents it does not write, which is what the host actually hands over.
+            val absentOnWindows = Set(
+                MachineMetrics.memoryFree.dotted,
+                MachineMetrics.loadOne.dotted,
+                MachineMetrics.loadFive.dotted,
+                MachineMetrics.loadFifteen.dotted
+            )
+            val disk = MachineMetrics.disk("C:\\")
+            val readings = readingsFor(MachineStatsDemo.requiredKeys("Linux").filterNot(k => absentOnWindows(k.dotted)))
+                .append(MachineRegistrySnapshot.Reading(disk.total.dotted, "gauge", 1.0, 1L, 1.0))
+            assert(MachineStatsDemo.validate(MachineStatsDemo.report("Windows", readings)) == Absent)
         }
     }
 
