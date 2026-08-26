@@ -1,146 +1,156 @@
-# Staging the eval into the handle-site expansions: exploration
+# Staging the eval through JIT-inlined fragments: exploration, corrected
 
 Prompt, verbatim: "how about we simplify things by 'staging' Eval itself in via JIT in inlined
 classes? the answers impls should be a concern of Eval and might even be able to reuse code
-better. Explore"
+better." Clarified after a first misreading: "The thing isn't inlining Eval. It's generating new
+callsites in already inlined apis like handle* that point to parts of the eval that can be
+inlined by the JIT."
 
-Every claim below is grounded in a read of the current sources (Handler.scala, Eval.scala,
-ArrowEffect.scala, Debugger.scala) on the working branch.
+This supersedes the first version of this document, which wrongly reduced the proposal to
+Scala-level source unification. The corrected model follows, grounded in the compiled classes
+of this tree (bytecode sizes measured with javap) and in HotSpot's actual specialization
+machinery.
 
-## 1. Naming the mechanism precisely
+## 1. The corrected mechanism model
 
-"Staging via JIT" decomposes into two layers, and only one of them is ours to choose:
+Per-site specialization needs two things, and they are separable:
 
-- **The JIT specializes per method, never per class.** An answers loop written once on the
-  abstract `Handler` class would be compiled once, with the clause a megamorphic virtual call
-  inside it; HotSpot does not clone a method per receiver class. So inheritance cannot produce
-  the per-site specialization. The staging annotation available to us is Scala `inline`: each
-  handle site expands its own copy of the loop with the clause spliced in as code, and THAT is
-  what hands the JIT monomorphic call sites, static clause binding, and a scalar-replaceable
-  outcome box.
-- The codebase already states this as its design: Handler.scala's template comment reads "Each
-  call site still emits its own copy with the clause statically bound, which is the mechanism
-  the design exists for; only the source location is shared."
+1. **A per-site compilation root with exact type knowledge.** Each handle site needs its own
+   bytecode method (so it has its own invocation and backedge counters, its own profile, and a
+   `this` whose class is effectively final). This is the part only scalac's `inline` can mint,
+   and the already-inline `handle*` APIs mint it today: each expansion creates an anonymous
+   handler class whose `answers` method is that site's root.
+2. **The specialized logic inside that root.** This does NOT have to be spliced source text.
+   The JIT copies shared bytecode into a root by inlining, and specializes the copy through
+   type propagation: when C2 compiles `AnonHandler.answers`, `this` has a known (effectively
+   final, CHA-clean) class; pass it into an inlined shared fragment and the fragment's virtual
+   calls on it devirtualize to this site's methods, which then inline in turn, which is what
+   lets escape analysis scalar-replace the outcome boxes across the whole window.
 
-So the question is not whether to stage (the kernel already stages) but **what source text is
-the thing being staged, and who owns it**. Today the staged text is a parallel machine
-maintained in Handler.scala; the proposal is that it be the eval's own delivery step.
+My first reading collapsed these into one ("the staging annotation available to us is Scala
+inline"), which is wrong: scalac must mint the call sites, but the logic can be shared bytecode
+that the JIT stages into each root. The codebase already proves the second mechanism works,
+because it already uses it:
 
-## 2. Why "stage the whole Eval" is bounded by recorded evidence
+- The expanded `answers` at a Mask handleCont site measures ~335-352 bytecode bytes (javap,
+  `kyo.Mask$$anon$2`/`$$anon$10`).
+- `nextAnswer`, ~245 bytes, is a shared ordinary method called from inside that hot loop, and
+  it JIT-inlines into each site's root today (under FreqInlineSize 325 at a hot site).
+- `resuspend` (12 bytes) and `Effect.defer` are likewise shared and JIT-inlined.
 
-Two prior measurements close off the maximal version:
+So the current design is already a hybrid: scalac splices the hot window (loop control, clause,
+destructure, Out writes), and the JIT stages the shared classify and rebuild fragments into
+each root. The proposal generalizes the second mechanism; the question is how far it can go.
 
-- **The inline-eval experiment already ran and lost.** Eval.scala records it: "the eval is ~555
-  instructions and HotSpot refuses to inline it at any call site, so an inline definition bought
-  nothing at runtime and emitted a private copy of the whole interpreter per call site.
-  PendingTest alone carried 132 of them." The reason it bought nothing is structural: at an eval
-  call site nothing is statically known, so the copy specializes over nothing.
-- **The compiled unit's inlining budget is finite and already contested.** Eval.scala again: "at
-  1.4KB the budget starved and Integer.valueOf stopped inlining on the hot paths, which the
-  stateful rows paid four times over." A per-site copy of the whole drive would be far over
-  every budget; its callees would stop inlining inside it and the copy would run slower than the
-  shared drive.
+## 2. What HotSpot gives and what it gates
 
-Site knowledge exists at exactly one place: a handle site knows its handler family, its clause,
-and its effect tag. That knowledge pays only inside the same-tag answer window (consecutive
-operations of the handled effect under at most one plain continuation entry). The arms of the
-eval that handle everything else (regions, parks, foreign effects, budget) gain nothing from
-site knowledge and must stay shared. **"Staging Eval" properly scoped means: the eval's
-same-tag delivery window becomes one staged template that Eval owns, and the per-site
-expansions instantiate it.** That is precisely the answers machinery, re-derived instead of
-parallel-maintained.
+The relevant machinery, stated precisely because the feasibility argument turns on it:
 
-## 3. What is actually duplicated today (read, not estimated)
+- **Roots are chosen by counters.** Invocation counters and loop backedge counters decide what
+  gets compiled. Whoever owns the `while` header owns the backedges and becomes the natural
+  root.
+- **Inlining budgets.** MaxInlineSize (35 bytes) for ordinary sites, FreqInlineSize (325) for
+  hot ones, and InlineSmallCode (2500 bytes of MACHINE code): a callee that already has its own
+  compiled nmethod bigger than that is refused with "already compiled into a big method". That
+  refusal string is live in this repository's captured compilation logs (the harness's reason
+  vocabulary records 6 occurrences), so this gate is not hypothetical here.
+- **Devirtualization.** Exact receiver types propagate through inlining (the strongest form:
+  no dependency needed); CHA devirtualizes single-implementor calls (the Debugger seam
+  documents this codebase already relying on it: "the zero-cost mechanism is class hierarchy
+  analysis"); profiles devirtualize up to two receiver types per site and go megamorphic past
+  that (`h.answers` at the eval's dispatch is megamorphic by construction and stays a virtual
+  call once per window, which is fine, amortized).
+- **Profile pollution.** MethodData is per method, per bytecode index, aggregated over every
+  caller. A shared fragment inlined into many roots carries the union profile into each copy:
+  type checks and branches taken by ANY caller stay alive in every copy. Argument-type
+  propagation cuts through this for devirtualization, but branch pruning per site does not
+  happen. This is the structural reason a shared fragment is never quite as clean as spliced
+  text.
+- **Scalar replacement needs one compiled unit.** The outcome box disappears only while the
+  allocation and every use inline into the same root. Any budget failure anywhere in the chain
+  reintroduces one allocation per answer (the morphism probe measured exactly this cost when
+  handler polymorphism broke the chain).
 
-The three loop templates (`answersCont`, `answersLoop`, `answersLoopState`, Handler.scala
-130-393) share a verbatim skeleton:
+## 3. The design spectrum
 
-1. the `armed && Safepoint.stopped(slot)` bail arm (resuspend, kind=1, cont=null),
-2. the clause try/catch with the `ClauseThrew` cell protocol,
-3. the `n = 128` window countdown and its `Effect.defer(next, id)` bail,
-4. the `nextAnswer` result dance (1 continue with in/k from the cell, 2 captured value, 0 bail),
-5. the `Out` writes on every exit arm.
+**A. Today.** The whole hot window (~350 bytes) is spliced per site by scalac; shared fragments
+(nextAnswer, resuspend, Effect.defer) are staged in by the JIT. Specialization is unconditional
+(the clause is text, not a call), warmup compiles the right root immediately (the site method
+owns the backedges), and no budget can break it. Cost: every site carries the window bytecode,
+and the protocol text is maintained in triplicate at the source level.
 
-What differs per family is a kernel of 10 to 25 lines:
+**B. The maximal reading: the window as one shared Eval method.** The per-site `answers`
+becomes a thin stub, `Eval.answersWindow(this, input, k, out)`; the loop lives once in Eval as
+ordinary code. Specialization then depends on the JIT staging the window into the stub root and
+the clause into the window. Three gates stand in the way, now quantifiable:
 
-- **Cont**: the clause consumes `(input, k)` and returns region currency; no destructure; the
-  cell's cont lane is the exception lane only.
-- **Loop**: the clause returns `Outcome`; destructure into suspended clause (kind=2),
-  `Continue(ans)` with a suspended-answer sub-arm (`ans.map(a => k(a))`), and done (kind=3).
-- **LoopState**: the Loop kernel plus `st` threaded through every exit arm.
+  1. The window method owns the backedges, so it becomes a hot root FIRST, with a megamorphic
+     clause call inside (every handler flows through the one copy). Its nmethod will exceed
+     InlineSmallCode with high probability, after which the stub's later request to inline it
+     is refused with exactly the "already compiled into a big method" string this repo's logs
+     already contain.
+  2. Even by bytecode size the window is ~350 bytes, already over FreqInlineSize (325).
+  3. The stub is invoked once per window (1/128th of the answer rate), so it crosses the C2
+     threshold late; everything before that runs the generic megamorphic window, and clause
+     inlining inside it is budget-gated where today it is unconditional.
 
-The same triplication repeats on the eval side: `dispatchContFast`, `dispatchLoopFast`,
-`dispatchLoopStateFast` (plus the general `dispatchLoop`/`dispatchLoopState` and the
-`clauseSuspended` siblings) each carry a copy of the escape/attach choreography, and the three
-gate pairs in the loop are identical. And the protocol itself is already declared to be the
-eval's: "The text lives here because the protocol is the eval's: what the cell means, when
-state commits, how a bail re-enters the eval."
+  B is therefore fragile-by-arithmetic, not impossible: a falsification probe is cheap (one
+  family rewritten as a stub, the effectful rows, PrintInlining grepped for the two refusal
+  strings, gc.alloc.rate.norm watched for the box reappearing).
 
-So the ownership the proposal asks for is the ownership the file comment already concedes.
+**C. The robust reading: shrink the splice to what must own the root.** Keep two things spliced
+per site, because they are exactly what the JIT cannot be trusted to stage: the loop header
+(root ownership from the first warmup iteration; backedge counters at the site) and the clause
+application (unconditional specialization, no budget). Move everything else into Eval-owned
+shared fragments shaped like nextAnswer already is: straight-line, under ~245 bytes, no loops
+of their own (so no competing nmethod root), receiving what they need as arguments. Concretely
+movable out of the current templates: the bail-arm bodies (the Out writes plus the
+Effect.defer rebuilds), the ClauseThrew choreography, the stop-poll bail, and the
+family-specific destructure protocol. The spliced text drops from ~350 bytes toward the loop
+header plus the clause; the protocol becomes ordinary, testable, single-source Eval code; and
+each fragment is individually verifiable with the bytecode reader and PrintInlining.
 
-## 4. The design this points to
+C is also where "the answers impls become a concern of Eval" lands literally: Handler keeps
+the class hierarchy and the Out cell; the protocol methods live with the eval whose protocol
+the file comment already says it is.
 
-**One staged delivery template, owned by Eval, instantiated per site.**
+## 4. Where the eval itself enters
 
-- Eval (or an Eval-adjacent internal object) carries a single `inline def` skeleton: poll, run
-  the clause step, deliver the answer, classify the next shape, bail per the cell protocol. It
-  is parameterized by an `inline` family kernel (the 10-25 line difference above) and the
-  clause. The three `ArrowEffect.handle*` expansions instantiate it; each site still emits its
-  own compiled copy with the clause statically bound. Nothing about the staging mechanism or
-  the measured fast-path numbers changes by construction; what changes is that the protocol has
-  one source of truth, located with its owner.
-- The dispatch trio collapses around one gate predicate, one k computation, one `h.answers`
-  call, and one escape choreography (this is the advisor's dispatch-dedup lane reached from the
-  other side).
-- Post-P1 (canonical shapes), `nextAnswer` collapses toward one compose rule and moves to Eval
-  ownership as the shape-classification step of the staged window.
-- The `Out` cell stays: it is the side channel across the megamorphic `h.answers` boundary, and
-  the throw path needs it precisely when no return value exists. Its lanes simplify once the
-  shape dance does.
+The same fragments serve both compilation contexts, and that is the reuse the proposal buys:
 
-**What it deletes**: two of the three loop skeletons, two of the three fast dispatches and much
-of the general pair, the triplicated catch/escape blocks, and (post-P1) most of `nextAnswer`'s
-arms. Order 300-400 lines of the densest protocol code in the module, while keeping the
-answers-loop performance that D4 would have to re-earn. It is strictly less radical than D4 and
-strictly more than the advisor's lane 3.
+- Called from a per-site root: exact `this` propagates, the fragment's virtual calls
+  devirtualize, the copy specializes to the site.
+- Called from the eval's shared drive (the general path): the same bytecode runs megamorphic,
+  which is what the general path already is.
 
-## 5. Risks and costs, named
+One logic, two compilation contexts, with the specialization decided by where the JIT stages
+the copy rather than by which of three hand-maintained templates scalac spliced. The general
+dispatch pair and the fast dispatch trio then converge on the same fragment calls, which is the
+advisor's dispatch-dedup lane derived from the compilation model instead of from source
+aesthetics.
 
-- **Inline nesting compile time.** The concessions table records that inline nesting measurably
-  inflates compile time; it is the reason the `*With` overloads copy their bodies instead of
-  delegating. The unified skeleton adds one expansion level (handle* expands the skeleton which
-  beta-reduces the family kernel). Today handle* already expands `answersLoop`, so the delta is
-  one inline-lambda application per site, but this is a claim to measure, not to assert: the
-  harness records compile-time figures per leg.
-- **Bytecode identity.** The staged skeleton must expand to the same size class as today's
-  loops or the JIT profile shifts. The check is the full bench class on both variants plus the
-  bytecode reader on one expanded `answers` method.
-- **The family kernels are semantic, not cosmetic.** The suspended-answer sub-arm exists only in
-  the outcome families; Cont has no destructure at all. The parameterization must keep the
-  kernels as supplied code, never force them through a common shape that erases an arm.
-- **State commit points.** LoopState writes `st` at every exit arm; a skeleton that owns the
-  exits must give the kernel a hook at each one, or state commits drift. This is the subtlest
-  part of the unification and the one to pin with tests first (the existing handleLoopState
-  interaction pins in MaskTest and ArrowEffectTest cover replay and threading).
+## 5. Probes, in order
 
-## 6. How it sequences with the running plan
+- **PB (price the maximal version):** rewrite `answersCont` alone as a thin stub over an Eval
+  window method. Run the effectful and suspendWith rows, PrintInlining on. Decisive positive:
+  the stub root inlines the window and the clause, allocation unchanged. Decisive negative:
+  either refusal string appears, or gc.alloc.rate.norm gains a box per answer. Either outcome
+  settles B for this codebase's shapes.
+- **PC (validate the robust version):** extract one bail-arm body into an Eval fragment, full
+  bench class, expect byte-identical allocation and flat times; then proceed arm by arm, one
+  variable per measurement.
+- Both run after P1 and P0, which are built and queued: P1's canonical shapes shrink the
+  classify step the fragments implement, and P0 prices what any of this machinery is worth
+  against the general path.
 
-1. **P1 first** (fusion law + gate word, built and suite-green): canonical delivery shapes are
-   what let the skeleton's classify step be one rule. Unifying before P1 would triplicate the
-   current nextAnswer dance into the template's contract.
-2. **P0 still runs** (fast paths off, full class): if the eval-general path were close, deleting
-   the machinery (D4) would beat unifying it, and the unification would be wasted motion. P0 is
-   the cheap arbiter between "delete it" and "own it once".
-3. **Then the unification as its own measured step**: one variable (source refactor, no
-   protocol change), full bench class both variants, compile-time figures read, bytecode of one
-   expansion compared.
+## 6. Bottom line
 
-## 7. Bottom line
-
-The proposal is sound and lands on a real seam: the staging mechanism is already the design,
-but the staged text is a parallel machine whose protocol belongs to the eval by the file's own
-admission. Scoped to the same-tag delivery window, "stage Eval into the inlined classes" means:
-one Eval-owned inline skeleton, three small family kernels, one dispatch choreography, one
-shape rule. It deletes the duplication D1 exposes without giving up the numbers D4 would
-gamble. The maximal reading (a full per-site eval) is closed off by the recorded inline-eval
-failure and the budget arithmetic, and should stay closed.
+The proposal is about who copies the logic: scalac (splice everything, today) or the JIT
+(stage shared Eval fragments into per-site roots). The codebase already runs the JIT variant
+for its classify and rebuild steps, so the direction is proven in-repo; the open question is
+the boundary. The arithmetic says the loop header and the clause must stay spliced (root
+ownership and unconditional specialization), and everything else is a candidate for Eval-owned
+shared fragments, taken one measured step at a time. The maximal version (the whole window as
+one shared method) is gated by InlineSmallCode and FreqInlineSize with the refusal strings
+already observed in this repo's logs, and gets one cheap falsification probe before being
+believed or buried.
