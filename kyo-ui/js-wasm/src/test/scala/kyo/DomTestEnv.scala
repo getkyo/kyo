@@ -22,10 +22,12 @@ private[kyo] object DomTestEnv:
 
     lazy val install: Unit =
         if js.typeOf(js.Dynamic.global.document) == "undefined" then
-            val g = js.Dynamic.global
             val require =
-                if js.typeOf(g.require) == "function" then g.require
-                else g.process.getBuiltinModule("module").createRequire(g.process.cwd().asInstanceOf[String] + "/")
+                if js.typeOf(js.Dynamic.global.require) == "function" then js.Dynamic.global.require
+                else
+                    js.Dynamic.global.process
+                        .getBuiltinModule("module")
+                        .createRequire(js.Dynamic.global.process.cwd().asInstanceOf[String] + "/")
             val jsdom =
                 try require("jsdom")
                 catch
