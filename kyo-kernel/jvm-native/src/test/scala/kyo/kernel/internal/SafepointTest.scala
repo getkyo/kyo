@@ -3,8 +3,7 @@ package kyo.kernel.internal
 import kyo.kernel.*
 
 class SafepointTest extends kyo.test.Test[Any]:
-    override def config = super.config.globallySequential
-
+    override def config = super.config.globallySequential(true)
 
     private val Period = 512
 

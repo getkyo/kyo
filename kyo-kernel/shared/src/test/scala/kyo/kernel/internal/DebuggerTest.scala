@@ -8,8 +8,7 @@ import kyo.kernel.*
 import scala.collection.mutable.ListBuffer
 
 class DebuggerTest extends kyo.test.Test[Any]:
-    override def config = super.config.globallySequential
-
+    override def config = super.config.globallySequential(true)
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
@@ -97,13 +96,19 @@ class DebuggerTest extends kyo.test.Test[Any]:
         session(d)(assert(Eval(Effect.defer(1).map(_ + 1)) == 11))
     }
 
-    // red: the delivery of the intermediate value no longer routes through onDeliver
-    "an onDeliver swap replaces the delivered value".ignore in {
-        val d = new Recording(route = true):
+    "an onDeliver swap replaces the delivered value" in {
+        // the hook observes values flowing back into a receiving entry, so the swap happens at a
+        // region's delivery; bare chains deliver through their arrows and are the routed steps'
+        // business. The fast paths deliver without the hook by design, so a session that must
+        // observe the delivery turns them off
+        val d = new Recording(route = false):
+            override def fastPathsAllowed = false
             override def onDeliver[A](stack: Stack, frame: Frame, value: A): A =
                 if value.equals(2) then 20.asInstanceOf[A] else value
-        // 1 + 1 delivers 2 into the trailing map, swapped to 20, times 2
-        session(d)(assert(Eval(Effect.defer(1).map(_ + 1).map(_ * 2)) == 40))
+        // the answer 1 runs through the body's + 1, and 2 flows back into the region's entry,
+        // swapped to 20 before the done clause doubles it
+        val region = ArrowEffect.handleCont(Tag[Ask], ask.map(_ + 1))([C] => (_, cont) => cont(1), a => a * 2)
+        session(d)(assert(Eval(region) == 40))
     }
 
     "suspensions report their input" in {
@@ -145,8 +150,7 @@ class DebuggerTest extends kyo.test.Test[Any]:
         assert(!d.events.exists(_._1 == "deliver"))
     }
 
-    // red: Eval.partial runs through an armed Safepoint.stop instead of parking
-    "a park and resume inside a session keeps the stream and the result".ignore in {
+    "a park and resume inside a session keeps the stream and the result" in {
         val d = new Recording(route = false)
         session(d) {
             val v: Int < Any =

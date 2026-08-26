@@ -117,14 +117,16 @@ class EvalTest extends kyo.test.Test[Any]:
         }
 
         "a pending value does not lift into a nested computation implicitly" in {
-            typeCheckFailure("val x: (Int < Any) < Any = (1: Int < Any).map(_ + 1)")("")
+            typeCheckFailure("val x: (Int < Any) < Any = (1: Int < Any).map(_ + 1)")("Required: Int < Any < Any")
         }
 
         "an eval inside a map evaluates its argument rather than nesting it" in {
             // with an unconditional lift, inference solved the unannotated form as
             // Eval[Int < Any](lift(ask)) and the suspension itself came back as the map's result;
             // with the lint on lift the unannotated form does not compile, and the annotated one evaluates
-            typeCheckFailure("Eval(answerAsk(1)(ask.map(_ => Eval(ask.asInstanceOf[Int < Any]))))")("")
+            typeCheckFailure("Eval(answerAsk(1)(ask.map(_ => Eval(ask.asInstanceOf[Int < Any]))))")(
+                "Required: Any < (EvalTest.this.Ask & Nothing) < Nothing"
+            )
             val ex = intercept[Throwable](Eval(answerAsk(1)(ask.map(_ => Eval[Int, Any](ask.asInstanceOf[Int < Any])))))
             assert(ex.getMessage.contains("Unexpected pending effect"))
         }
@@ -926,6 +928,35 @@ class EvalTest extends kyo.test.Test[Any]:
 
         "partial completes when nothing stops" in {
             assert(Eval.partial(answerAsk(21)(ask.map(_ * 2))).evalNow == Maybe(42))
+        }
+
+        "a stop already pending ends the slice before it starts" in {
+            SafepointStop.request()
+            val v      = (1: Int < Any).map(_ + 1)
+            val parked = Eval.partial(v)
+            assert(parked.evalNow.isEmpty)
+            assert(Eval(parked) == 2)
+        }
+
+        "a parked slice re-enters and completes on the next slice" in {
+            val v  = Effect.defer { SafepointStop.request(); 1 }.map(_ + 1)
+            val p1 = Eval.partial(v)
+            assert(p1.evalNow.isEmpty)
+            assert(Eval.partial(p1).evalNow == Maybe(2))
+        }
+
+        "a computation held as a value passes through a parked slice intact" in {
+            val payload: Int < Any = (3: Int < Any).map(_ + 4)
+            val v: (Int < Any) < Any =
+                Effect.defer {
+                    SafepointStop.request()
+                    ()
+                }.map(_ => box(payload))
+            val parked = Eval.partial(v)
+            assert(parked.evalNow.isEmpty)
+            val out = Eval(parked)
+            assert(out.asInstanceOf[AnyRef] eq payload.asInstanceOf[AnyRef])
+            assert(Eval(out) == 7)
         }
 
         // Two cases from an earlier design are gone rather than parked: a slice took a row that could still

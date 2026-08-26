@@ -154,7 +154,7 @@ class EffectTest extends kyo.test.Test[Any]:
         }
 
         "no match" in {
-            intercept[Exception] {
+            interceptThrown[Exception] {
                 Effect.catching {
                     throw new Exception("Test exception")
                 } {
@@ -276,7 +276,7 @@ class EffectTest extends kyo.test.Test[Any]:
             }
             val inner   = boxed.eval
             val handled = ArrowEffect.handleCont(Tag[TestEffect1], inner)([C] => (input, cont) => cont(input.toString))
-            intercept[RuntimeException](handled.eval)
+            interceptThrown[RuntimeException](handled.eval)
         }
 
         // the original parked here by suspending an effect no handler answered, which a slice used to be
@@ -334,67 +334,8 @@ class EffectTest extends kyo.test.Test[Any]:
         assert(effect.eval == 6)
     }
 
-    // // Requires Effect.detach, which is not implemented (see the commented declaration in Effect.scala).
-    // "detach" - {
-    //
-    //     sealed trait TestCtx extends ContextEffect[Int]
-    //
-    //     def testCtx: Int < TestCtx = ContextEffect.suspend(Tag[TestCtx])
-    //
-    //     // a computation nested under detach genuinely raises the effect it uses,
-    //     // but detach itself erases the row to Any, so wrapping the detach call with
-    //     // a ContextEffect.handle over that effect needs the row cast back. Harmless:
-    //     // the row is phantom, and the handler installed dynamically (found on `hs`
-    //     // when the detach suspension is answered) is what makes the transplant
-    //     // real, not this ascription. The same direct cast this file's suite already
-    //     // uses elsewhere to build fixtures whose declared row does not match
-    //     // dynamic behavior (e.g. "the innermost handler of a tag answers")
-    //
-    //     // extracts a still-pending, boxed child from a fully evaluated outer
-    //     // computation. Not `.eval`: its own settle step picks the primitive or
-    //     // the Nested branch from the *static* type, and here the static type is
-    //     // itself a pending type whose payload is a JVM primitive ((Int < TestCtx)
-    //     // < Any), which reads as the primitive case and unboxes the Nested
-    //     // wrapper itself instead of what it carries. Nested.unnest checks the
-    //     // *runtime* shape instead, so it has no such blind spot: the currency
-    //     // discipline's own cast-at-the-boundary pattern (CONTRIBUTING.md) for
-    //     // exactly this class of erased-type read
-    //     def extract[A, S](v: A < S): A = Nested.unnest(Eval(v))
-    //
-    //     "a fork transplants a standing binding onto the detached child" in {
-    //         val forked = Effect.detach(testCtx).asInstanceOf[(Int < TestCtx) < TestCtx]
-    //         val bound  = ContextEffect.handle(Tag[TestCtx], 42)(forked)
-    //         // the child is dynamically self-answering: its own transplanted cell
-    //         // resolves TestCtx on a fresh eval. Its declared row still names
-    //         // TestCtx, so it is cast back to Any to call `.eval`; the value
-    //         // position is a plain Int, so that final `.eval` is not the footgun
-    //         // `extract` exists to route around
-    //         val child = extract(bound).asInstanceOf[Int < Any]
-    //         assert(child.eval == 42)
-    //     }
-    //
-    //     "a computation with no standing bindings detaches unchanged" in {
-    //         val child = Effect.detach(42: Int < Any).eval
-    //         assert(child.eval == 42)
-    //     }
-    //
-    //     "the marker survives an intervening map, resolving against the stack live at that point" in {
-    //         val forked = Effect.detach(testCtx).map(c => c.map(_ + 1)).asInstanceOf[(Int < TestCtx) < TestCtx]
-    //         val bound  = ContextEffect.handle(Tag[TestCtx], 7)(forked)
-    //         assert(extract(bound).asInstanceOf[Int < Any].eval == 8)
-    //     }
-    //
-    //     "the child ships boxed as data and evaluates correctly on a separate, fresh eval" in {
-    //         val forked = Effect.detach(testCtx).asInstanceOf[(Int < TestCtx) < TestCtx]
-    //         val bound  = ContextEffect.handle(Tag[TestCtx], 100)(forked)
-    //         val child  = extract(bound).asInstanceOf[Int < Any]
-    //         // a second, independent Eval call: the child is a self-contained value,
-    //         // not something still wired into the eval that produced it
-    //         assert(Eval(child).eval == 100)
-    //         assert(child.eval == 100)
-    //     }
-    // }
-    //
+    // The detach suite lives on in IsolateTest's "apply" group: the crossing that detach
+    // performed is Isolate.internal.Contextual now, and each behavior has its heir there.
 
     "bracket" - {
 

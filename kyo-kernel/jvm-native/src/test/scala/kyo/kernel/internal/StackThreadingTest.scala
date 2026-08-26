@@ -1,6 +1,5 @@
 package kyo.kernel.internal
 
-
 /** The borrow-pool ownership test that needs a second real thread; the cross-platform Stack
   * coverage stays in the shared StackTest.
   */

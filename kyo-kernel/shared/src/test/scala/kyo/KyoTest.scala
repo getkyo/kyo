@@ -39,7 +39,7 @@ class KyoTest extends kyo.test.Test[Any]:
 
     "eval" in {
         assert(TestEffect1.run(TestEffect1(1).map(_ + 1)).eval == 3)
-        typeCheckFailure("TestEffect1(1).eval")("")
+        typeCheckFailure("TestEffect1(1).eval")("value eval is not a member of Int < KyoTest.this.TestEffect1")
         // bound before the assert: `eval` expands the whole evaluator inline, and scalatest's assert
         // renders its argument into a string constant, which overran the JVM's 64KB limit once the
         // kernel internals became private[kyo]. The diagram for an eval expansion is unreadable

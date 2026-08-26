@@ -445,6 +445,14 @@ class IsolateTest extends kyo.test.Test[Any]:
             assert(Eval(bind1(99)(crossed)) == 8)
         }
 
+        "an intervening map leaves the crossing resolving against the stack live at its point" in {
+            // the crossing is composed under a map before any binding stands; what the capture reads
+            // is what stands when the eval reaches it, not what stood where the crossing was written
+            val composed = crossing(read1).map(child => child.map(_ + 1))
+            val child    = Eval(bind1(7)(composed))
+            assert(Eval(child) == 8)
+        }
+
         "the forking computation keeps what it had" in {
             val v = bind1(5)(crossing(read1).map(crossed => read1.map(mine => (mine, Eval(crossed)))))
             assert(Eval(v) == ((5, 5)))

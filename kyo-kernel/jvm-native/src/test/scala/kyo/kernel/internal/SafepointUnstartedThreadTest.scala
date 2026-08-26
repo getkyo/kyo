@@ -8,8 +8,7 @@ import kyo.kernel.*
   * the shared `SafepointTest`, JVM and Native only.
   */
 class SafepointUnstartedThreadTest extends kyo.test.Test[Any]:
-    override def config = super.config.globallySequential
-
+    override def config = super.config.globallySequential(true)
 
     "stop misses a thread that never evaluated" in {
         assert(!Safepoint.stop(new Thread()))

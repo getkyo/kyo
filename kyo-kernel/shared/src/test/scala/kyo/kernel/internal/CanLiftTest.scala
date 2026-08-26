@@ -9,7 +9,7 @@ class CanLiftTest extends kyo.test.Test[Any]:
 
     sealed trait TestEffect extends ArrowEffect[Const[Int], Const[Int]]
 
-    private inline def rejects(inline code: String): Unit =
+    private inline def rejects(inline code: String)(using kyo.test.AssertScope, kyo.Frame): Unit =
         val errors = typeCheckErrors(code)
         discard(assert(
             errors.exists(_.message.contains("may contain a nested effect computation")),

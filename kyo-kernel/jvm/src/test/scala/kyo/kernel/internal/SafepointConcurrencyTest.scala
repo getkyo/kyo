@@ -7,7 +7,7 @@ import kyo.discard
 import kyo.kernel.*
 
 class SafepointConcurrencyTest extends kyo.test.Test[Any]:
-    override def config = super.config.globallySequential
+    override def config = super.config.globallySequential(true)
 
     private val Period = 512
     private val Slots  = 65536

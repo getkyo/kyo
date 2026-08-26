@@ -30,14 +30,12 @@ class PendingBytecodeTest extends kyo.test.Test[Any]:
     class TestLiftGeneric:
         def test[A](v: A): A < Any = v
 
-    // disabled while the map expansion shape is under active iteration; re-pin
-    // once the design settles
-    "map".ignore in {
+    "map" in {
         // per site: the caller (test), the lifted evaluation body (run, holding f
         // and the successor dispatch), and the Transform mint (arrow, reached only
         // when the computation suspends or the budget runs out)
         val sizes = methodBytecodeSize[TestMap]
-        assert(sizes == Map("test" -> 22, "arrow" -> 9, "run" -> 114))
+        assert(sizes == Map("test" -> 22, "arrow" -> 9, "run" -> 114), s"was $sizes")
     }
 
     "lift of a primitive is a bare cast" in {

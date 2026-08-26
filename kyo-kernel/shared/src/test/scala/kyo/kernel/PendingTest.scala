@@ -369,11 +369,11 @@ class PendingTest extends kyo.test.Test[Any]:
     }
 
     "a pending value does not lift into a nested computation implicitly" in {
-        typeCheckFailure("val x: (Int < Any) < Any = (1: Int < Any).map(_ + 1)")("")
+        typeCheckFailure("val x: (Int < Any) < Any = (1: Int < Any).map(_ + 1)")("Required: Int < Any < Any")
     }
 
     "a kyo module does not lift into a computation" in {
-        typeCheckFailure("val x: ArrowEffect.type < Any = ArrowEffect")("")
+        typeCheckFailure("val x: ArrowEffect.type < Any = ArrowEffect")("Cannot lift 'kyo.kernel.ArrowEffect$' to a 'ArrowEffect$ < S'")
     }
 
     "deep map chains evaluate" in {

@@ -114,9 +114,6 @@ object Effect:
             def value                  = v
             def recover(ex: Throwable) = f(ex)
 
-    /** Detaches a computation from the bindings standing at this point, so the child carries them and can be evaluated elsewhere. */
-    // private[kyo] inline def detach[A, S](inline v: A < S)(using inline _frame: Frame): (A < S) < S
-
     /** Acquires a resource, uses it, and releases it, with the release running whether or not the use completes.
       *
       * A resource is a value scoped to an extent, which is what a binding is, so this is one: the acquire's

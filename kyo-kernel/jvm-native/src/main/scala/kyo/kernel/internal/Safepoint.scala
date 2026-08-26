@@ -148,7 +148,9 @@ object Safepoint:
 
     @static private def enterPark(slot: Slot, s: State): Boolean =
         val d = Debugger.get
-        if (d ne Debugger.Noop) && d.enter() then
+        // preemption outranks the session: an armed slice with a stop pending refuses whatever the
+        // gate would say, so the eval parks instead of running the program to completion unobserved
+        if (d ne Debugger.Noop) && !(s.isArmed && stopped(slot)) && d.enter() then
             // an allowed application proceeds without touching the drained state, so the next one
             // lands here again: per-application consult is the session's contract. The consult is
             // frameless, since carrying a frame here costs every call site an operand; a session

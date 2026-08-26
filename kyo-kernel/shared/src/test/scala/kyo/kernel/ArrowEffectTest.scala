@@ -450,7 +450,7 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
         "a supertype handler leaves a subtype effect in the row" in {
             val v: Int < AskSub = ArrowEffect.suspend[Any](Tag[AskSub], ()).map(_ + 1)
             val r               = ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, cont) => cont(41), a => a)
-            assertDoesNotCompile("val fullyHandled: Int < Any = r")
+            typeCheckFailure("val fullyHandled: Int < Any = r")("Found:    (r : Int < ArrowEffectTest.this.AskSub)")
             val stillOwed: Int < AskSub = r
             assert(Eval(ArrowEffect.handleCont(Tag[AskSub], stillOwed)([C] => (_, cont) => cont(41), a => a)) == 42)
         }
@@ -463,16 +463,6 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
             val r: Int < Any = ArrowEffect.handleCont(Tag[AskSub], v)([C] => (_, cont) => cont(41), a => a)
             assert(Eval(r) == 42)
         }
-
-        // Waiting on partial evaluation, which lands with the Bracket and Park work
-        // (see reviews/BRACKET-PARK-DESIGN.md).
-        //
-        // "installed after a partial evaluation answers the parked operation" in {
-        //     val v            = ask.map(_ + 1)
-        //     val parked       = Eval.partial(v)
-        //     val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], parked)([C] => (_, cont) => cont(41), a => a)
-        //     assert(Eval(r) == 42)
-        // }
 
         "a map chained after the region applies to the result" in {
             val v            = ask.map(_ + 1)
@@ -608,20 +598,22 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
             assert(Eval(r) == 21)
         }
 
-        // Waiting on partial evaluation, which lands with the Bracket and Park work
-        // (see reviews/BRACKET-PARK-DESIGN.md).
-        //
-        // "a parked stateful region resumes with its state and done" in {
-        //     val v: Int < (Ask & Say) = ask.map(_ => say("x")).map(_ => ask)
-        //     val handled: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], 10, v)(
-        //         [C] => (s, _) => Loop.continue(s + 1, s),
-        //         (_, a) => a * 2
-        //     )
-        //     val parked = Eval.partial(handled)
-        //     assert(parked.evalNow.isEmpty)
-        //     val out: Int < Any = ArrowEffect.handleCont(Tag[Say], parked)([C] => (_, cont) => cont(()), a => a)
-        //     assert(Eval(out) == 22)
-        // }
+        "a parked stateful region resumes with its state and done" in {
+            val v = ask.map(a => ask.map(b => a + b))
+            val handled: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 10, v)(
+                [C] =>
+                    (s, _) =>
+                        if s == 10 then internal.SafepointStop.request()
+                        Loop.continue(s + 1, s)
+                ,
+                (s, a) => s * 1000 + a * 2
+            )
+            val parked = Eval.partial(handled)
+            assert(parked.evalNow.isEmpty)
+            // the region parked after the first answer; the resume continues from state 11 and the
+            // done clause observes the final state
+            assert(Eval(parked) == 12 * 1000 + (10 + 11) * 2)
+        }
     }
 
     "handleWith" - {
@@ -1364,7 +1356,7 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
             val r = ArrowEffect
                 .handleCatching(Tag[Ask], ask.map(_ + 1))([X] => (_, cont) => cont(41))(_ => -1)
                 .map(_ => (throw new RuntimeException("boom")): Int)
-            intercept[RuntimeException] {
+            interceptThrown[RuntimeException] {
                 val _ = Eval(r)
             }
         }
@@ -1383,7 +1375,7 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
         "a fatal error in the computation is not recovered" in {
             val v = ask.map(_ => (throw new InterruptedException("fatal")): Int)
             val r = ArrowEffect.handleCatching(Tag[Ask], v)([X] => (_, cont) => cont(0))(_ => -1)
-            intercept[InterruptedException] {
+            interceptThrown[InterruptedException] {
                 val _ = Eval(r)
             }
         }
@@ -1392,7 +1384,7 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
             val r = ArrowEffect.handleCatching(Tag[Ask], ask.map(_ + 1))(
                 [X] => (_, _) => (throw new InterruptedException("fatal")): Int < Ask
             )(_ => -1)
-            intercept[InterruptedException] {
+            interceptThrown[InterruptedException] {
                 val _ = Eval(r)
             }
         }
@@ -1418,7 +1410,7 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
                 [X] => (_, cont) => cont(41),
                 _ => (throw new RuntimeException("boom")): Int
             )(_ => -1)
-            intercept[RuntimeException] {
+            interceptThrown[RuntimeException] {
                 val _ = Eval(r)
             }
         }
@@ -1444,116 +1436,8 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Requires ArrowEffect.handlePartial, which is not implemented.
-    /*
-    "handlePartial" - {
-        "answers operations while the clause allows" in {
-            val v = ask.map(a => ask.map(b => a + b))
-            val r = ArrowEffect.handlePartial(Tag[Ask], v)([X] => (_, cont) => Maybe(cont(21)))
-            assert(Eval(ArrowEffect.handleCont(Tag[Ask], r)([X] => (_, cont) => cont(0), a => a)) == 42)
-        }
-
-        "parks at the first refused operation and re-enters" in {
-            var answered = 0
-            val v        = ask.map(a => ask.map(b => a + b))
-            val first = ArrowEffect.handlePartial(Tag[Ask], v)(
-                [X] =>
-                    (_, cont) =>
-                        if answered == 0 then
-                            answered += 1
-                            Maybe(cont(21))
-                        else Maybe.Absent
-            )
-            val second = ArrowEffect.handlePartial(Tag[Ask], first)([X] => (_, cont) => Maybe(cont(21)))
-            assert(Eval(ArrowEffect.handleCont(Tag[Ask], second)([X] => (_, cont) => cont(0), a => a)) == 42)
-            assert(answered == 1)
-        }
-
-        "parks and an answering handler finishes the remainder" in {
-            val v      = ask.map(a => ask.map(b => a + b))
-            val parked = ArrowEffect.handlePartial(Tag[Ask], v)([X] => (_, _) => Maybe.Absent)
-            val r      = ArrowEffect.handleLoop(Tag[Ask], parked)([X] => _ => Loop.continue(21), a => a)
-            assert(Eval(r) == 42)
-        }
-
-        "an operation after a foreign crossing is not answered by an earlier handlePartial call" in {
-            var answered             = 0
-            val v: Int < (Ask & Say) = ask.map(a => say("x").map(_ => ask.map(b => a + b)))
-            val first = ArrowEffect.handlePartial(Tag[Ask], v)(
-                [X] =>
-                    (_, cont) =>
-                        answered += 1
-                        Maybe(cont(21))
-            )
-            assert(answered == 1)
-            val handledSay = ArrowEffect.handleCont(Tag[Say], first)([X] => (_, cont) => cont(()), a => a)
-            val r          = ArrowEffect.handleCont(Tag[Ask], handledSay)([X] => (_, cont) => cont(21), a => a)
-            assert(Eval(r) == 42)
-            assert(answered == 1)
-        }
-
-        "parks at a region node without evaluating it" in {
-            val region = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([X] => _ => Loop.continue(41), a => a)
-            val parked = ArrowEffect.handlePartial(Tag[Ask], region)([X] => (_, cont) => Maybe(cont(0)))
-            assert(parked.evalNow.isEmpty)
-            assert(Eval(ArrowEffect.handleCont(Tag[Ask], parked)([X] => (_, cont) => cont(0), a => a)) == 42)
-        }
-
-        "parks at a first region node without evaluating it" in {
-            val region = handleFirst(Tag[Ask], ask.map(_ + 1))([X] => (_, cont) => cont(41), identity)
-            val parked = ArrowEffect.handlePartial(Tag[Ask], region)([X] => (_, cont) => Maybe(cont(0)))
-            assert(parked.evalNow.isEmpty)
-            assert(Eval(ArrowEffect.handleCont(Tag[Ask], parked)([X] => (_, cont) => cont(0), a => a)) == 42)
-        }
-
-        "parks at a stateful region node without evaluating it" in {
-            val region =
-                ArrowEffect.handleLoopState(Tag[Ask], 10, ask.map(a => ask.map(b => a * 100 + b)))(
-                    [X] => (state, _) => Loop.continue(state + 1, state),
-                    (_, a) => a
-                )
-            val parked = ArrowEffect.handlePartial(Tag[Ask], region)([X] => (_, cont) => Maybe(cont(0)))
-            assert(parked.evalNow.isEmpty)
-            assert(Eval(ArrowEffect.handleCont(Tag[Ask], parked)([X] => (_, cont) => cont(0), a => a)) == 1011)
-        }
-
-        "answers operations leading into a stateful region and leaves it intact" in {
-            val v: Int < Ask = ask.map { outer =>
-                ArrowEffect.handleLoopState(Tag[Ask], 5, ask.map(a => ask.map(b => outer * 10000 + a * 100 + b)))(
-                    [X] => (state, _) => Loop.continue(state + 1, state),
-                    (_, a) => a
-                )
-            }
-            val parked = ArrowEffect.handlePartial(Tag[Ask], v)([X] => (_, cont) => Maybe(cont(3)))
-            assert(parked.evalNow.isEmpty)
-            assert(Eval(ArrowEffect.handleCont(Tag[Ask], parked)([X] => (_, cont) => cont(0), a => a)) == 30506)
-        }
-
-        "passes a boxed computation through intact" in {
-            val payload: Int < Say   = say("p").map(_ => 7)
-            val v: (Int < Say) < Ask = ask.map(_ => box(payload))
-            val r                    = ArrowEffect.handlePartial(Tag[Ask], v)([X] => (_, cont) => Maybe(cont(0)))
-            val boxed                = Eval(ArrowEffect.handleCont(Tag[Ask], r)([X] => (_, cont) => cont(0), a => box(a)))
-            assert(Eval(ArrowEffect.handleCont(Tag[Say], boxed)([X] => (_, cont) => cont(()), a => a)) == 7)
-        }
-
-        "parks at a pending stop request without answering" in {
-            var answered = 0
-            def burn(n: Int): Int < Any =
-                if n == 0 then 0 else (0: Int < Any).map(_ => burn(n - 1))
-            val v = burn(Period * 2).map(_ => ask)
-            assert(Safepoint.stop(Thread.currentThread()))
-            val parked = ArrowEffect.handlePartial(Tag[Ask], v)(
-                [X] =>
-                    (_, cont) =>
-                        answered += 1
-                        Maybe(cont(21))
-            )
-            assert(answered == 0)
-            assert(Eval(ArrowEffect.handleCont(Tag[Ask], parked)([X] => (_, cont) => cont(21), a => a)) == 21)
-        }
-    }
-     */
+    // The eager clause-driven driver (handlePartial) is gone; slice semantics are Eval.partial's,
+    // pinned in EvalTest's partial section and the jvm-native EvalThreadingTest.
 
     "eval throws on an unhandled suspension" in {
         val ex = intercept[kyo.bug.KyoBugException] {
@@ -1611,13 +1495,13 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
                 [C] => (_, _) => (throw new RuntimeException("boom")): Int < Ask,
                 a => a
             )
-            intercept[RuntimeException] {
+            interceptThrown[RuntimeException] {
                 val _ = Eval(r)
             }
         }
 
         "a throw in a map surfaces at construction on the settled path" in {
-            intercept[RuntimeException] {
+            interceptThrown[RuntimeException] {
                 val _ = (1: Int < Any).map(_ => (throw new RuntimeException("boom")): Int)
             }
         }
@@ -1718,7 +1602,7 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
         }
 
         "evaluation recovers after a thrown handler" in {
-            intercept[RuntimeException] {
+            interceptThrown[RuntimeException] {
                 val failing: Int < Any = ArrowEffect.handleCont(Tag[Ask], ask.map(_ + 1))(
                     [C] => (_, _) => (throw new RuntimeException("boom")): Int < Ask,
                     a => a

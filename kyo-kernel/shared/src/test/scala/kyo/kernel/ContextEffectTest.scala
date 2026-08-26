@@ -15,7 +15,7 @@ class ContextEffectTest extends kyo.test.Test[Any]:
     sealed trait Flag  extends ContextEffect[Boolean]
 
     def count: Int < Count   = ContextEffect.suspend(Tag[Count])
-    def name: String < Name  = ContextEffect.suspend(Tag[Name])
+    def label: String < Name = ContextEffect.suspend(Tag[Name])
     def flag: Boolean < Flag = ContextEffect.suspend(Tag[Flag])
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
@@ -41,7 +41,7 @@ class ContextEffectTest extends kyo.test.Test[Any]:
         }
 
         "bindings of different effects stand together" in {
-            val v = count.map(c => name.map(n => flag.map(f => s"$c-$n-$f")))
+            val v = count.map(c => label.map(n => flag.map(f => s"$c-$n-$f")))
             val r =
                 ContextEffect.handle(Tag[Flag], true, !_) {
                     ContextEffect.handle(Tag[Name], "middle", _.toUpperCase) {
@@ -103,7 +103,7 @@ class ContextEffectTest extends kyo.test.Test[Any]:
         }
 
         "a required read with nothing bound is a bug" in {
-            intercept[Throwable] {
+            interceptThrown[Throwable] {
                 val _ = Eval(count.asInstanceOf[Int < Any])
             }
         }

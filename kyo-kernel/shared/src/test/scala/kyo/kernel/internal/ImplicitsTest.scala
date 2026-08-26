@@ -87,11 +87,11 @@ class ImplicitsTest extends kyo.test.Test[Any]:
         }
 
         "kyo modules do not lift" in {
-            // the conversion is simply not found for module singletons, so the
-            // rejection surfaces as a plain mismatch; the macro's guided message
-            // is unreachable from the conversion path today
-            typeCheckFailure("val bad: ArrowEffect.type < Any = ArrowEffect")("Required: kyo.kernel.ArrowEffect.type < Any")
-            typeCheckFailure("val bad: Loop.type < Any = Loop")("Required: kyo.kernel.Loop.type < Any")
+            // the macro's guided message names the rejected singleton
+            typeCheckFailure("val bad: ArrowEffect.type < Any = ArrowEffect")(
+                "Cannot lift 'kyo.kernel.ArrowEffect$' to a 'ArrowEffect$ < S'"
+            )
+            typeCheckFailure("val bad: Loop.type < Any = Loop")("Cannot lift 'kyo.kernel.Loop$' to a 'Loop$ < S'")
         }
 
         // the abortCastUnit trap (a Unit row mismatch aborts with the issue-903
