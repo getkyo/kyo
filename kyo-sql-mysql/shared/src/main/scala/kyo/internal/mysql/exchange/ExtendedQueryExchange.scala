@@ -152,17 +152,15 @@ private[mysql] object ExtendedQueryExchange:
     )(using Frame): MysqlPreparedStmt < (Async & Abort[SqlException]) =
         val numParams  = ok.numParams.toInt & 0xffff
         val numColumns = ok.numColumns.toInt & 0xffff
-        // Read and discard the param column-def packets: they must be consumed off the socket even
-        // though only stmtId and the result column defs are retained.
+        // Both def blocks are read and discarded: they must be consumed off the socket to leave the connection on a
+        // packet boundary, but only the statement id is worth keeping. The result column defs in particular are the
+        // PREPARE-time ones, and every EXECUTE resends its own, which are the ones that describe the rows it carries.
         readColumnDefs(channel, numParams).flatMap { _ =>
             // Skip optional intermediate EOF after param defs (only if numParams > 0 and not deprecate-EOF).
             skipEofIfNeeded(channel, numParams, deprecateEof).flatMap { _ =>
-                readColumnDefs(channel, numColumns).flatMap { columnDefs =>
+                readColumnDefs(channel, numColumns).flatMap { _ =>
                     skipEofIfNeeded(channel, numColumns, deprecateEof).map { _ =>
-                        MysqlPreparedStmt(
-                            stmtId = ok.stmtId,
-                            columnDefs = columnDefs
-                        )
+                        MysqlPreparedStmt(stmtId = ok.stmtId)
                     }
                 }
             }
@@ -260,9 +258,14 @@ private[mysql] object ExtendedQueryExchange:
                         readColumnDefs(channel, columnCount).flatMap { columnDefs =>
                             skipEofIfNeeded(channel, columnCount, deprecateEof).flatMap { _ =>
                                 val colTypes = columnDefs.map(_.columnType)
+                                // The definitions this response resent, never the ones COM_STMT_PREPARE sent: the server
+                                // describes a bare placeholder's column before any parameter is bound and calls it
+                                // VAR_STRING, then sends the value in the bound parameter's own binary form. Carrying the
+                                // prepare-time definitions would announce VAR_STRING over an eight-byte little-endian
+                                // integer, disagreeing with the types the payload was just parsed with, one row apart.
                                 readBinaryRows(
                                     channel,
-                                    stmt.columnDefs,
+                                    columnDefs,
                                     colTypes,
                                     deprecateEof,
                                     Chunk.empty,

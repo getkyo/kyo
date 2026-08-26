@@ -33,6 +33,14 @@ class SqlRunStaticTest extends Test:
     case class Person(id: Long, name: String, age: Int, deptId: Long)
     case class User(id: Long, email: String)
 
+    /** A class carrying its own `copy`, whose parameters are NOT its fields in declaration order.
+      *
+      * Declaring one suppresses the synthetic `copy`. A fold that reads a copy's arguments as the case fields would put this one's single
+      * `hi` argument where `lo` is looked up.
+      */
+    case class Bounds(lo: Int, hi: Int):
+        def copy(hi: Int): Bounds = Bounds(lo, hi)
+
     // ── Leaf H, a row whose field resolves through a PARAMETERIZED column given ─────────────────
     //
     // Most `SqlSchema.Column` givens are parameterless values; `maybe[A](using Column[A])` and
@@ -77,6 +85,23 @@ class SqlRunStaticTest extends Test:
             rendered.sqlFor(PostgresDialect.id).get ==
                 """SELECT "person"."id", "person"."name", "person"."age", "person"."deptId" FROM "person" "person" WHERE ("person"."age" >= $1)""",
             s"the compile-time render changed; got ${rendered.sqlFor(PostgresDialect.id)}"
+        )
+    }
+
+    /** A LIMIT count is the one folded number that reaches the SQL as text rather than as a bind, so a fold that reads the wrong argument
+      * writes the wrong query and nothing fails: the statement is well-formed, the server accepts it, and it returns a different number of
+      * rows forever.
+      *
+      * The fold reads a `copy`'s arguments as the class's case fields in declaration order, which holds for the compiler's own `copy` and
+      * for no other. `Bounds` declares its own, which suppresses the synthetic one and takes only `hi`, so reading position 0 as `lo`
+      * answers the new `hi`. Folding `Bounds(1, 25).copy(20).lo` therefore rendered `LIMIT 20` where the value is 1.
+      */
+    "a field read off a class's own copy is not folded into the statement as another field's value" in {
+        val errors  = typeCheckErrors("""kyo.SqlStaticProbe.render(kyo.Sql.from[Person].limit(Bounds(1, 25).copy(20).lo))""")
+        val message = errors.map(_.message).mkString(" | ")
+        assert(
+            message.contains("cannot be folded"),
+            s"a copy whose arguments are not the case fields must refuse the fold; got: $message"
         )
     }
 
@@ -212,8 +237,8 @@ class SqlRunStaticTest extends Test:
     // the flag choose only between aborting and answering `Absent`. The LIFT cannot differ either: both
     // entries call the same `liftAst(q)`, which takes no flag at all. So the probe rendering and `.run` folding
     // hold under identical conditions, in both directions: if a probe leaf compiles then the statement folds
-    // for `.run` too, and if the probe cannot render then `.run` falls back. That is what makes the Update
-    // leaf below able to assert a fallback positively rather than by omission.
+    // for `.run` too, and if the probe cannot render then `.run` falls back. That is what lets a `.run` leaf
+    // below assert what the fold did rather than only that the call compiled.
     //
     // WHAT IT DOES NOT PROVE is that the `.run` call beside it is still the same statement. The probe reads
     // the expression written inside its own call, so the two copies are tied together by nothing except this
@@ -240,26 +265,112 @@ class SqlRunStaticTest extends Test:
         succeed
     }
 
-    // ── Leaf E, Update.runStatic fails at compile time (sets lambda not liftable) ─
+    // ── Leaf E, Update.runStatic folds, including a chain of `set` calls ──────────
     //
-    // `Update.Builder.set(inline specs: ...)` applies each spec lambda via `specs.map(_(columns))`
-    // which produces a runtime `Chunk`, not reducible by `FromExpr.derived`. `runStatic` calls
-    // report.errorAndAbort when the AST is not liftable.
+    // This leaf used to require the opposite: an UPDATE could not fold, because the builder that
+    // accumulates assignments hands the statement its `sets` as `<what it had> ++ <what this call adds>`
+    // by name, and none of those three shapes (the concatenation, the copy the builder makes of itself,
+    // the named argument) was readable at compile time. All three are now, so every write folds and
+    // "INSERT and UPDATE never fold" is no longer a boundary anyone has to work around.
 
-    "Update.runStatic fails at compile time (set lambda is not statically liftable)" in {
-        val errors = typeCheckErrors(
-            """def shape(using kyo.Frame): Long < (kyo.Async & kyo.Abort[kyo.SqlException] & kyo.DB) =
-  kyo.Sql.update[User].set(_.email := "new@example.com").where(_.id == 1L).runStatic"""
+    "Update.runStatic folds for a static AST" in {
+        def shape(using Frame): Long < (Abort[SqlException] & DB) =
+            Sql.update[User].set(_.email := "new@example.com").where(_.id == 1L).runStatic
+        succeed
+    }
+
+    // Compiling proves the fold happened; it does not prove WHAT it folded to. A second `set` reaches the macro as a
+    // copy of the builder whose assignments are one chunk concatenated onto another, and a fold that read that
+    // concatenation the wrong way round, or dropped a side of it, would still compile and still be a statement. So
+    // this leaf renders as well, and asserts both assignments in the order they were written.
+    "Update.runStatic folds with assignments from more than one set call" in {
+        def shape(using Frame): Long < (Abort[SqlException] & DB) =
+            Sql.update[User].set(_.email := "a@b.c").set(_.id := 2L).where(_.id == 1L).runStatic
+        val rendered = SqlStaticProbe.render(
+            Sql.update[User].set(_.email := "a@b.c").set(_.id := 2L).where(_.id == 1L)
         )
-        // The assertion names the diagnostic rather than counting errors, because the macro must carry the
-        // `.runStatic` / `cannot be folded` message from SqlStaticMacro.impl's report.errorAndAbort and not
-        // silently fail with an unrelated one. The exact wording is in SqlStaticMacro.scala's .impl error
-        // branches (".runStatic: query cannot be folded at compile time ..."). An empty error list makes
-        // mkString "" and "".contains false, so this fails cleanly when nothing was rejected at all.
-        val message = errors.map(_.message).mkString(" ")
         assert(
-            message.contains(".runStatic") || message.contains("cannot be folded"),
-            s"expected the SqlStaticMacro.impl diagnostic in the error message; got: $message"
+            rendered.sqlFor(PostgresDialect.id).get ==
+                """UPDATE "user" SET "email" = $1, "id" = $2 WHERE ("id" = $3)""",
+            s"both assignments must fold, in the order written; got ${rendered.sqlFor(PostgresDialect.id)}"
+        )
+        assert(rendered.params.size == 3, s"two assignments and the predicate must each bind; got ${rendered.params}")
+    }
+
+    "Update.runStatic folds with no where clause" in {
+        def shape(using Frame): Long < (Abort[SqlException] & DB) =
+            Sql.update[User].set(_.email := "everyone@example.com").build.runStatic
+        succeed
+    }
+
+    // ── Leaf E3, a source named by a transparent inline def still folds ───────────
+    //
+    // The recipe the README gives for a table whose name is not its type's name: name the source once with a
+    // `transparent inline def` rather than repeating the override at every call site. It is only worth giving
+    // if it keeps the statement on the static path, so this asserts the fold and the overridden table name in
+    // the folded text, not merely that it compiles.
+
+    "a source named by a transparent inline def folds, keeping its overridden table name" in {
+        def shape(using Frame): Chunk[SqlRunStaticTest.Account] < (Abort[SqlException] & DB) =
+            SqlRunStaticTest.accounts.where(r => r.u.id == 1L).runStatic
+        val rendered = SqlStaticProbe.render(SqlRunStaticTest.accounts.where(r => r.u.id == 1L))
+        assert(
+            rendered.sqlFor(PostgresDialect.id).get ==
+                """SELECT "u"."id", "u"."email" FROM "user_account" "u" WHERE ("u"."id" = $1)""",
+            s"the named source must fold and keep its table name; got ${rendered.sqlFor(PostgresDialect.id)}"
+        )
+        assert(rendered.params.size == 1, s"the predicate value must be bound; got ${rendered.params}")
+    }
+
+    /** A source can be named by an `inline def`; a FILTERED source cannot. This pins that limitation, and why.
+      *
+      * The leaf above names a source and reuses it, which works. Adding a `where` to the definition does not compile, and it fails at the
+      * DEFINITION rather than at any call site: the predicate's parameter is a `Record`, whose field selection resolves through a
+      * `Fields.Have` instance summoned by macro, and inside an un-expanded `inline def` body that instance's `Value` member is not yet
+      * computed. So `r.u.email` is "not a member of ?1.Value", and the static path has no reusable filtered trunk at all.
+      *
+      * Two mechanisms that would resolve the selection without a summoned instance were tried and are ruled out by the compiler, not by
+      * judgement. A match type over the field intersection cannot be written: `case h & rest` is rejected as "the pattern contains an
+      * unaccounted type parameter" (E191). And a given declared at `Fields.Aux[A, T]` cannot be satisfied, because `T` is unconstrained
+      * at implicit search and a `transparent inline` refinement happens only after the declared type is matched. What remains is changing
+      * how `Record` represents its field type, which is the owner's call and is on record as declined.
+      *
+      * The assertion is deliberately on the compiler's refusal: this is a limitation pinned so it is visible and executable, not a
+      * property anyone wants. The day the selection is resolvable, this leaf goes red and is replaced by the positive one.
+      */
+    "a filtered trunk named by a transparent inline def does not compile, and the record type is not why" in {
+        val errors = typeCheckErrors(
+            """transparent inline def live = SqlRunStaticTest.accounts.where(r => r.u.email != ""); ()"""
+        )
+        val message = errors.map(_.message).mkString(" | ")
+        assert(
+            message.contains("is not a member of"),
+            s"expected the field selection to be what fails; got: $message"
+        )
+        assert(
+            message.contains("Have"),
+            s"the failure must be the summoned field-selection evidence, not the record type; got: $message"
+        )
+    }
+
+    // ── Leaf E2, what the refusal says when a statement genuinely cannot fold ─────
+    //
+    // The message used to name a `val` for every refusal, including statements written out at the
+    // terminal, which is where it was provably wrong. It now names the construct it can prove is there.
+
+    "the refusal names a raw fragment rather than blaming a val" in {
+        val errors = typeCheckErrors(
+            """Sql.from[User]("u").where(r => sql"${r.u.id} = 1".as[Boolean]).runStatic"""
+        )
+        val message = errors.map(_.message).mkString(" ")
+        assert(message.contains(".runStatic"), s"expected the fold diagnostic; got: $message")
+        assert(
+            message.contains("raw `sql") || message.contains("fragment"),
+            s"expected the refusal to name the fragment; got: $message"
+        )
+        assert(
+            !message.contains("stored in a `val`"),
+            s"a statement written out at the terminal must not be blamed on a val; got: $message"
         )
     }
 
@@ -293,9 +404,10 @@ class SqlRunStaticTest extends Test:
     }
 
     // ── Leaf G, .run on Insert, Update and Delete ────────────────────────────────
-    // Insert and Delete fold; Update does not, because `set` applies its spec lambdas through
-    // `specs.map(_(columns))` and produces a runtime Chunk. Each is asserted rather than assumed, by the
-    // probe reasoning in Leaf C above. All three keep the STATIC-SQL-INLINE-ONLY duplication constraint.
+    // All three fold. Update did not until the macro learned to read the accumulating builder's `copy` and
+    // the `Chunk` concatenation `set` produces, which is what left every UPDATE on the runtime renderer.
+    // Each is asserted rather than assumed, by the probe reasoning in Leaf C above. All three keep the
+    // STATIC-SQL-INLINE-ONLY duplication constraint.
 
     "Insert.run's statement folds at compile time, binding every column including the auto-key" in {
         def shape(using Frame): SqlClient.InsertOutcome < (Abort[SqlException] & DB) =
@@ -310,21 +422,18 @@ class SqlRunStaticTest extends Test:
         assert(rendered.params.size == 2, s"both columns must be bound; got ${rendered.params}")
     }
 
-    "Update.run falls back to runtime, and the set lambda is why" in {
+    "Update.run's statement folds at compile time, binding the assignment and the predicate" in {
         def shape(using Frame): Long < (Abort[SqlException] & DB) =
             Sql.update[User].set(_.email := "y").where(_.id == 2L).run
-        // A POSITIVE assertion of the fallback rather than the absence of one. The probe aborts on exactly
-        // the predicates that make `.run` answer `Absent`, so a refusal here IS the evidence that `.run`
-        // takes the runtime path. Asserting the diagnostic rather than an error count, as Leaf E does, so a
-        // rejection for some unrelated reason cannot pass as this one.
-        val errors = typeCheckErrors(
-            """kyo.SqlStaticProbe.render(kyo.Sql.update[User].set(_.email := "y").where(_.id == 2L))"""
-        )
-        val message = errors.map(_.message).mkString(" ")
+        // This leaf used to assert the fallback and name the set lambda as the reason for it. The reason is
+        // gone: the builder's accumulated assignments are readable at compile time now, so an UPDATE folds
+        // like every other statement and the rendered text is what this pins.
+        val rendered = SqlStaticProbe.render(Sql.update[User].set(_.email := "y").where(_.id == 2L))
         assert(
-            message.contains(".runStatic") || message.contains("cannot be folded"),
-            s"expected the SqlStaticMacro.impl diagnostic for a statement that cannot fold; got: $message"
+            rendered.sqlFor(PostgresDialect.id).get == """UPDATE "user" SET "email" = $1 WHERE ("id" = $2)""",
+            s"the compile-time render changed; got ${rendered.sqlFor(PostgresDialect.id)}"
         )
+        assert(rendered.params.size == 2, s"the assignment and the predicate must both bind; got ${rendered.params}")
     }
 
     "Delete.run's statement folds at compile time, binding the predicate value" in {
@@ -499,5 +608,44 @@ class SqlRunStaticTest extends Test:
             "a missing given must fail the compile; answering None is what made a real regression unreadable"
         )
     }
+
+    // ── Leaf I, the builder terminals that are a `copy` ──────────────────────────
+    //
+    // A builder method that answers a copy of its own node reaches the macro as `receiver.copy(field = v)`,
+    // which the fold could not read: it recognised a construction only as `apply` or `new`. Every statement
+    // ending in one therefore refused, and said so with the message for a value known only at run time, which
+    // is not what happened. The compiler's own `copy` takes the case fields in declaration order, which is
+    // exactly what the argument list is read as, so it is a construction as much as `apply` is.
+
+    "a statement ending in .distinct folds at compile time" in {
+        def shape(using Frame): Chunk[String] < (Abort[SqlException] & DB) =
+            Sql.from[User]("u").select(r => r.u.email).distinct.runStatic
+        val rendered = SqlStaticProbe.render(Sql.from[User]("u").select(r => r.u.email).distinct)
+        assert(
+            rendered.sqlFor(PostgresDialect.id).get == """SELECT DISTINCT "u"."email" FROM "user" "u"""",
+            s"the compile-time render changed; got ${rendered.sqlFor(PostgresDialect.id)}"
+        )
+    }
+
+    "a class's own copy is still refused, which is what keeps the field reading honest" in {
+        // The guard the leaf above rests on. Only the compiler's `copy` takes the case fields in declaration
+        // order; a hand-written one is free to take a subset, and reading its arguments as fields would fold a
+        // neighbouring field to the wrong constant. Pinned here as well as at the LIMIT leaf, because that one
+        // reads a field OFF a copy and this one would have the copy AS the construction.
+        val errors  = typeCheckErrors("""kyo.SqlStaticProbe.render(kyo.Sql.from[Person].limit(Bounds(1, 25).copy(20).lo))""")
+        val message = errors.map(_.message).mkString(" | ")
+        assert(message.contains("cannot be folded"), s"a hand-written copy must refuse the fold; got: $message")
+    }
+
+end SqlRunStaticTest
+
+object SqlRunStaticTest:
+    case class Account(id: Long, email: String)
+
+    /** The README's recipe for a table whose name is not its type's name: the source is named once, here, and every query starts from it.
+      *
+      * `transparent` is what makes it usable: without it the record type widens and the lambdas at the call sites cannot name a column.
+      */
+    transparent inline def accounts = Sql.from[Account]("u", "user_account")
 
 end SqlRunStaticTest

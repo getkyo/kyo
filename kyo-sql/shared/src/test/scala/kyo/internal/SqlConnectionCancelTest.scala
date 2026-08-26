@@ -279,11 +279,51 @@ class SqlConnectionCancelTest extends kyo.Test:
             }
         }
 
-    /** Reads exactly `n` reported events, in order. */
+    /** How long [[report]] waits for the events it was told to expect before it reports a shortfall instead.
+      *
+      * Far longer than the reclaim chain takes (the whole suite runs in a third of a second), so it never trips on a slow machine. Its
+      * only job is to be shorter than the suite's own limit, so a shortfall arrives as this file's assertion rather than as that.
+      */
+    private val reportLimit = 30.seconds
+
+    /** Reads exactly `n` reported events, in order, or says how few arrived.
+      *
+      * The bound is the point. `Channel.take` waits forever, so a leaf expecting one event more than the reclaim actually reports used to
+      * hang until the suite's own limit expired, and the failure read as an unattributed two-minute timeout naming neither the leaf's
+      * assertion nor the missing event. That is exactly the shape a regression here takes: a reclaim that pools instead of destroying
+      * reports one event fewer. [[drained]] below already solved it for the leaves whose regression IS a missing event; this closes the
+      * same hole for the leaves that run on the real clock, including the case where an event is merely very late because the machine is
+      * saturated.
+      *
+      * NOT for the two leaves that run under `Clock.withTimeControl`. There the bound is registered on the virtual clock, which only moves
+      * when a leaf advances it, and neither advances anywhere near this far, so the timeout never fires and those two still hang to the
+      * suite's own limit. Bounding them would mean advancing the virtual clock from inside this helper, which would fire the timers the
+      * leaf is controlling.
+      *
+      * The events taken so far are accumulated as they arrive rather than collected at the end, so the shortfall message can name what DID
+      * arrive, which is what says whether the reclaim stopped early or never started.
+      */
     private def report(events: Channel[String], n: Int)(using Frame): Chunk[String] < (Async & Abort[SqlException]) =
-        Abort.run[Closed](Kyo.foreach(Chunk.from(0 until n))(_ => events.take)).flatMap {
-            case Result.Success(seen) => seen
-            case other                => Abort.panic(new AssertionError(s"probe event channel closed early: $other"))
+        AtomicRef.init(Chunk.empty[String]).flatMap { seenRef =>
+            val takeAll =
+                Loop(0) { taken =>
+                    if taken == n then Loop.done(())
+                    else
+                        Abort.run[Closed](events.take).flatMap {
+                            case Result.Success(event) => seenRef.getAndUpdate(_ :+ event).andThen(Loop.continue(taken + 1))
+                            case other                 => Abort.panic(new AssertionError(s"probe event channel closed early: $other"))
+                        }
+                }
+            Abort.run[Timeout](Async.timeout(reportLimit)(takeAll)).flatMap { outcome =>
+                seenRef.get.map { seen =>
+                    outcome match
+                        case Result.Success(_) => seen
+                        case _ =>
+                            Abort.panic(new AssertionError(
+                                s"expected $n reclaim events within ${reportLimit.show}, saw ${seen.size}: $seen"
+                            ))
+                }
+            }
         }
 
     /** Every event reported so far, without waiting for one that may never arrive.

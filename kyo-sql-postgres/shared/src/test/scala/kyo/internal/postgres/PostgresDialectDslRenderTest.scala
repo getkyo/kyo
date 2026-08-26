@@ -17,11 +17,17 @@ class PostgresDialectDslRenderTest extends Test:
     case class Order(id: Long, userId: Long, total: BigDecimal, createdAt: Instant)
     case class NameAge(name: String, age: Int)
     case class Customer(id: Long, name: String, email: Maybe[String], suspended: Boolean)
+    // A foreign key that permits NULL, which is the ordinary shape of one: `customerId` is optional while `Customer.id` is not.
+    case class Ticket(id: Long, customerId: Maybe[Long], subject: String)
+    // `quantity` is the smallint every schema has one of, and the column an aggregate is first asked for.
+    case class OrderLine(orderId: Long, productId: Short, quantity: Short)
 
     val people      = Sql.from[Person]("p")
     val departments = Sql.from[Department]("d")
     val orders      = Sql.from[Order]("o")
     val customers   = Sql.from[Customer]("c")
+    val tickets     = Sql.from[Ticket]("t")
+    val orderLines  = Sql.from[OrderLine]("l")
 
     def sqlOf(q: Query[?]): String      = q.render(PostgresDialect).onlySql.get
     def sqlOf(s: Executable[?]): String = s.render(PostgresDialect).onlySql.get
@@ -130,6 +136,88 @@ class PostgresDialectDslRenderTest extends Test:
         val f = people.fullOuterJoin(orders).on(j => j.p.id == j.o.userId)
         assert(sqlOf(r) == """SELECT * FROM "person" "p" RIGHT JOIN "order" "o" ON ("p"."id" = "o"."userId")""")
         assert(sqlOf(f) == """SELECT * FROM "person" "p" FULL OUTER JOIN "order" "o" ON ("p"."id" = "o"."userId")""")
+    }
+
+    // A nullable foreign key joined to a non-null primary key: the first join anyone writes against a schema that permits NULL there.
+    // Nullability is a property of the Scala type on each side and not of the SQL, which compares the two columns the same way either
+    // way, so the two sides compare and the rendered predicate is the ordinary one.
+    "join a nullable foreign key to a non-null primary key" in {
+        val q = tickets.innerJoin(customers).on(j => j.t.customerId == j.c.id).select(j => (j.t.subject, j.c.name))
+        assert(
+            sqlOf(q) == """SELECT "t"."subject", "c"."name" FROM "ticket" "t" INNER JOIN "customer" "c" ON ("t"."customerId" = "c"."id")"""
+        )
+        assert(paramsOf(q) == 0)
+    }
+
+    "join a non-null primary key to a nullable foreign key" in {
+        val q = customers.innerJoin(tickets).on(j => j.c.id == j.t.customerId).select(j => (j.c.name, j.t.subject))
+        assert(
+            sqlOf(q) == """SELECT "c"."name", "t"."subject" FROM "customer" "c" INNER JOIN "ticket" "t" ON ("c"."id" = "t"."customerId")"""
+        )
+    }
+
+    "an ordering comparison also spans nullability" in {
+        val q = tickets.innerJoin(customers).on(j => j.t.customerId >= j.c.id)
+        assert(sqlOf(q) == """SELECT * FROM "ticket" "t" INNER JOIN "customer" "c" ON ("t"."customerId" >= "c"."id")""")
+    }
+
+    // A column permitting NULL compares against a plain literal. `Present(...)` still works and is what an explicitly optional value is
+    // spelled as; what this asserts is that a caller who has a value in hand does not have to wrap it to ask the ordinary question.
+    "a nullable column compares against a raw literal" in {
+        val q = customers.where(c => c.c.email == "a@b.c")
+        assert(sqlOf(q) == """SELECT "c"."id", "c"."name", "c"."email", "c"."suspended" FROM "customer" "c" WHERE ("c"."email" = $1)""")
+        assert(paramsOf(q) == 1)
+    }
+
+    "a nullable column still compares against Present and Absent" in {
+        val present = customers.where(c => c.c.email == Present("a@b.c"))
+        val absent  = customers.where(c => c.c.email == Absent)
+        assert(sqlOf(present).endsWith("""WHERE ("c"."email" = $1)"""), sqlOf(present))
+        assert(sqlOf(absent).endsWith("""WHERE ("c"."email" IS NULL)"""), sqlOf(absent))
+    }
+
+    "an ordering comparison takes a raw literal against a nullable column" in {
+        val q = people.leftJoin(orders).on(j => j.p.id == j.o.userId).where(j => j.o.total > BigDecimal(100))
+        assert(sqlOf(q).endsWith("""WHERE ("o"."total" > $1)"""), sqlOf(q))
+    }
+
+    // A smallint column is a number: it sums, averages, and takes arithmetic like any other, and a grouped view has no cast to widen
+    // through, so the aggregate has to be reachable from the column type itself.
+    "a smallint column aggregates" in {
+        val summed   = orderLines.groupBy(_.l.orderId).select(view => (view.orderId, view.quantity.sum))
+        val averaged = orderLines.groupBy(_.l.orderId).select(view => (view.orderId, view.quantity.avg))
+        val filtered = orderLines.groupBy(_.l.orderId).having(view => view.quantity.sum >= 200L).select(view => view.orderId)
+        assert(
+            sqlOf(summed) == """SELECT "l"."orderId", SUM("l"."quantity") FROM "orderline" "l" GROUP BY "l"."orderId"""",
+            sqlOf(summed)
+        )
+        assert(sqlOf(averaged).contains("""AVG("l"."quantity")"""), sqlOf(averaged))
+        assert(sqlOf(filtered).contains("""HAVING (SUM("l"."quantity") >= $1)"""), sqlOf(filtered))
+    }
+
+    "a smallint column takes arithmetic" in {
+        val q = orderLines.select(l => l.l.quantity + 1.toShort)
+        assert(sqlOf(q).contains("""("l"."quantity" + $1)"""), sqlOf(q))
+    }
+
+    "a bare column orders ascending" in {
+        val bare     = customers.orderBy(c => c.c.id)
+        val explicit = customers.orderBy(c => c.c.id.asc)
+        assert(sqlOf(bare).endsWith("""ORDER BY "c"."id" ASC"""), sqlOf(bare))
+        assert(sqlOf(bare) == sqlOf(explicit), s"a bare column must order as `.asc` does: ${sqlOf(bare)}")
+    }
+
+    "a tuple mixes bare columns and explicit specs" in {
+        val q = customers.orderBy(c => (c.c.name, c.c.id.desc))
+        assert(sqlOf(q).endsWith("""ORDER BY "c"."name" ASC, "c"."id" DESC"""), sqlOf(q))
+    }
+
+    // `.to[B]` survives the combinators that follow a projection, so the order they are written in is not load-bearing.
+    "to[B] applies after orderBy and after limit" in {
+        val afterOrderBy = people.select(p => (p.p.name, p.p.age)).orderBy(p => p.p.age.desc).to[NameAge]
+        val afterLimit   = people.select(p => (p.p.name, p.p.age)).orderBy(p => p.p.age.desc).limit(3).to[NameAge]
+        assert(sqlOf(afterOrderBy).endsWith("""ORDER BY "p"."age" DESC"""), sqlOf(afterOrderBy))
+        assert(sqlOf(afterLimit).endsWith("""ORDER BY "p"."age" DESC LIMIT 3"""), sqlOf(afterLimit))
     }
 
     "cross join + where" in {

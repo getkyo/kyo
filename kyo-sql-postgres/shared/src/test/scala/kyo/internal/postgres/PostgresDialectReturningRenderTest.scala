@@ -17,7 +17,7 @@ class PostgresDialectReturningRenderTest extends Test:
 
     // Leaf 1: INSERT.returning(id, createdAt) on PG, both columns appear in RETURNING list.
     "INSERT.returning(id, createdAt) emits both columns on PG" in {
-        val s = Sql.insert[Event].values(Event(0L, "boot", "2024-01-01")).returning(_.id, _.createdAt)
+        val s = Sql.insert[Event].values(Event(0L, "boot", "2024-01-01")).returning(r => (r.id, r.createdAt)).statement
         val r = s.render(PostgresDialect)
         assert(r.onlySql.get.contains("RETURNING"))
         assert(r.onlySql.get.contains(""""id""""))
@@ -30,8 +30,10 @@ class PostgresDialectReturningRenderTest extends Test:
     }
 
     // Leaf 2: UPDATE.returning(version) on PG, column appears after RETURNING.
+    // `.statement` because a returning write is typed by the rows it answers; the statement it renders is the
+    // ordinary UPDATE inside that wrapper.
     "UPDATE.returning(version) emits on PG" in {
-        val s = Sql.update[Versioned].set(_.value := "x").returning(_.version).where(_.id == 1L)
+        val s = Sql.update[Versioned].set(_.value := "x").returning(_.version).where(_.id == 1L).statement
         val r = s.render(PostgresDialect)
         assert(r.onlySql.get.contains("UPDATE"))
         assert(r.onlySql.get.contains("RETURNING"))
@@ -42,7 +44,7 @@ class PostgresDialectReturningRenderTest extends Test:
 
     // Leaf 3: DELETE.returning(id) on PG, id appears after RETURNING.
     "DELETE.returning(id) emits on PG" in {
-        val s = Sql.delete[Event].returning(_.id).where(_.name == "boot")
+        val s = Sql.delete[Event].returning(_.id).where(_.name == "boot").statement
         val r = s.render(PostgresDialect)
         assert(r.onlySql.get.startsWith("DELETE FROM"))
         assert(r.onlySql.get.contains("RETURNING"))

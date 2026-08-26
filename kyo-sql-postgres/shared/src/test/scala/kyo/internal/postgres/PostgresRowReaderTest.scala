@@ -367,18 +367,32 @@ class PostgresRowReaderTest extends Test:
         assert(ex.columnIndex == Maybe(0), s"expected column 0 reported, got: ${ex.columnIndex}")
     }
 
-    "an array read over a scalar column raises a decode failure, not an unsupported-operation one" in {
-        // A four-byte int4 payload cannot hold the twenty-byte array header, and the refusal has to be a decode
-        // failure: an Unsupported leaf would say the backend cannot read arrays at all, which is the opposite of
-        // what happened.
+    "an array read over a named scalar column is refused by column type, before its payload is examined" in {
+        // Previously this reported that a four-byte payload cannot hold the twenty-byte array header, which is a
+        // symptom rather than the cause: the column is an int4 and no payload of one would have been an array. The
+        // refusal still has to be a decode failure, since an Unsupported leaf would say the backend cannot read
+        // arrays at all, and SqlDecodeColumnTypeMismatchException is one.
         val fdInt4 = SqlRow.Column("column", 23)
         val row    = pgRow(Chunk(Maybe.Present(encode(1, PostgresEncoder.int4Binary))), Chunk(fdInt4), Format.Binary)
         val r      = reader(row)
-        val ex = intercept[kyo.SqlDecodeArrayFormatException] {
+        val ex = intercept[kyo.SqlDecodeColumnTypeMismatchException] {
             val _ = r.nextArrayOfInt()
         }
-        // The intercepted type IS the assertion: SqlDecodeArrayFormatException is a decode leaf, and an
-        // Unsupported one could not be thrown at it.
+        assert(ex.columnType == "int4", s"the refusal names the column's type, got ${ex.columnType}")
+        assert(ex.scalaType == "Chunk[Int]", s"the refusal names the type that asked, got ${ex.scalaType}")
+        val _: kyo.SqlDecodeException = ex // a decode leaf, not an Unsupported one
+        succeed
+    }
+
+    "an array read whose column type is unknown still reports the payload it could not parse" in {
+        // The column guard is silent on an OID this backend does not name, which is where the array reader's own
+        // format check is still what refuses. Keeps that leaf covered now that a named scalar column is caught
+        // earlier.
+        val fdUnknown = SqlRow.Column("column", 999999)
+        val row       = pgRow(Chunk(Maybe.Present(encode(1, PostgresEncoder.int4Binary))), Chunk(fdUnknown), Format.Binary)
+        val ex = intercept[kyo.SqlDecodeArrayFormatException] {
+            val _ = reader(row).nextArrayOfInt()
+        }
         assert(ex.length == 4, s"the refusal reports the payload length it was handed, got ${ex.length}")
     }
 
@@ -495,6 +509,35 @@ class PostgresRowReaderTest extends Test:
         Span.from(buf.toByteArray)
     end pgTextArrayBytes
 
+    /** Build PG binary array bytes carrying `elemOid` in the header, for the layout-compatible element types. */
+    private def pgArrayBytesOfOid(elemOid: Int, payloads: Array[Byte]*): Span[Byte] =
+        val buf = new java.io.ByteArrayOutputStream
+        def writeInt32BE(v: Int): Unit =
+            buf.write((v >> 24) & 0xff)
+            buf.write((v >> 16) & 0xff)
+            buf.write((v >> 8) & 0xff)
+            buf.write(v & 0xff)
+        end writeInt32BE
+        writeInt32BE(1)             // ndim
+        writeInt32BE(0)             // hasNulls
+        writeInt32BE(elemOid)       // elemOID
+        writeInt32BE(payloads.size) // dim_size
+        writeInt32BE(1)             // lbound
+        for pl <- payloads do
+            writeInt32BE(pl.length)
+            buf.write(pl)
+        end for
+        Span.from(buf.toByteArray)
+    end pgArrayBytesOfOid
+
+    private def utf8(s: String): Array[Byte] = s.getBytes(StandardCharsets.UTF_8)
+
+    private def int8BE(v: Long): Array[Byte] =
+        Array.tabulate(8)(i => ((v >>> (56 - i * 8)) & 0xff).toByte)
+
+    private def int2BE(v: Short): Array[Byte] =
+        Array(((v >> 8) & 0xff).toByte, (v & 0xff).toByte)
+
     "container columns" - {
 
         // A container column is a whole-column read through the vocabulary: `nextArrayOfInt` hands its bytes to
@@ -511,6 +554,48 @@ class PostgresRowReaderTest extends Test:
         "nextArrayOfString reads a binary text[] column" in {
             val row = pgRowCols(("arr", pgTextArrayBytes("a", "b"), PostgresEncoder.OID_TEXT_ARRAY))
             assert(reader(row).nextArrayOfString() == Chunk("a", "b"))
+        }
+
+        // The column guard refuses a NAMED OID the decoder does not claim, and each array decoder claims exactly
+        // one. The array element types below are layout-compatible with the decoder's own: the reader takes the
+        // element OID and format from the array header rather than from the decoder, `textDecoder` reads a
+        // varchar or bpchar element as it reads a text one, and the integral element decode widens per value.
+        // So refusing the container is refusing a column that decodes correctly, and for int8[] and int2[] there
+        // is no other read in the vocabulary to fall back to: the column becomes undecodable outright.
+
+        "nextArrayOfString reads a varchar[] column, whose elements are text-compatible" in {
+            val row = pgRowCols(("arr", pgArrayBytesOfOid(1043, utf8("a"), utf8("b")), 1015))
+            assert(reader(row).nextArrayOfString() == Chunk("a", "b"))
+        }
+
+        "nextArrayOfString reads a bpchar[] column" in {
+            val row = pgRowCols(("arr", pgArrayBytesOfOid(1042, utf8("a"), utf8("b")), 1014))
+            assert(reader(row).nextArrayOfString() == Chunk("a", "b"))
+        }
+
+        "nextArrayOfInt reads an int8[] column, which array_agg over a bigint produces" in {
+            val row = pgRowCols(("arr", pgArrayBytesOfOid(20, int8BE(7L), int8BE(8L)), 1016))
+            assert(reader(row).nextArrayOfInt() == Chunk(7, 8))
+        }
+
+        "nextArrayOfInt reads an int2[] column" in {
+            val row = pgRowCols(("arr", pgArrayBytesOfOid(21, int2BE(7), int2BE(8)), 1005))
+            assert(reader(row).nextArrayOfInt() == Chunk(7, 8))
+        }
+
+        // Accepting int8[] is only correct because the element decode range-checks: a bigint that does not fit an
+        // Int has to refuse rather than truncate, or widening the claim would trade a loud refusal for a silently
+        // wrong number.
+        "an int8[] element that does not fit an Int is refused rather than truncated" in {
+            val tooBig = 1L << 40
+            val row    = pgRowCols(("arr", pgArrayBytesOfOid(20, int8BE(1L), int8BE(tooBig)), 1016))
+            val ex = intercept[kyo.SqlDecodeException] {
+                val _ = reader(row).nextArrayOfInt()
+            }
+            assert(
+                !ex.getMessage.contains("cannot be read as"),
+                s"the refusal must be about the value's range, not the column's type, got: ${ex.getMessage}"
+            )
         }
 
         "an array column hands the row cursor back to the column after it" in {
@@ -826,6 +911,41 @@ class PostgresRowReaderTest extends Test:
         kyo.Abort.run[SqlDecodeException](row.decode[Int]).eval match
             case kyo.Result.Failure(e: kyo.SqlDecodeValueRangeException) => assert(e.scalaType == "Int")
             case other => fail(s"Expected Failure(SqlDecodeValueRangeException) but got $other")
+    }
+
+    // The same table's other half: a column this backend NAMES whose layout a numeric decode has no business
+    // reading. The wire dispatch resolves an OID it does not recognise to the target's own family, and a `date` is
+    // four big-endian bytes exactly as an `int4` is, so the read succeeds and answers the day count since the
+    // PostgreSQL epoch. That is the plausible wrong value this suite exists to rule out, reached from the
+    // opposite direction to the int8 case above.
+
+    "Int over a date column is refused rather than answering the day count" in {
+        val row = pgRowCols(("d", encode(java.time.LocalDate.of(2026, 8, 25), PostgresEncoder.dateBinary), PostgresEncoder.OID_DATE))
+        val ex = intercept[kyo.SqlDecodeColumnTypeMismatchException] {
+            val _ = reader(row).int()
+        }
+        assert(ex.columnType == "date", s"the refusal names the column's type, got ${ex.columnType}")
+        assert(ex.scalaType == "Int", s"the refusal names the type that asked, got ${ex.scalaType}")
+    }
+
+    "Boolean over a date column is refused rather than answering the day count's sign" in {
+        val row = pgRowCols(("d", encode(java.time.LocalDate.of(2026, 8, 25), PostgresEncoder.dateBinary), PostgresEncoder.OID_DATE))
+        val ex = intercept[kyo.SqlDecodeColumnTypeMismatchException] {
+            val _ = reader(row).boolean()
+        }
+        assert(ex.columnType == "date", s"the refusal names the column's type, got ${ex.columnType}")
+    }
+
+    "Double over a uuid column is refused rather than reading the first eight bytes as a double" in {
+        val row = pgRowCols((
+            "u",
+            encode(java.util.UUID.fromString("550e8400-e29b-41d4-a716-446655440000"), PostgresEncoder.uuidBinary),
+            PostgresEncoder.OID_UUID
+        ))
+        val ex = intercept[kyo.SqlDecodeColumnTypeMismatchException] {
+            val _ = reader(row).double()
+        }
+        assert(ex.columnType == "uuid", s"the refusal names the column's type, got ${ex.columnType}")
     }
 
     "Int over a text column parses the rendering rather than reading the UTF-8 bytes as an integer" in {

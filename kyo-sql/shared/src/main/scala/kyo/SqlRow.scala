@@ -21,7 +21,7 @@ import scala.util.control.NonFatal
   */
 final class SqlRow(
     val values: Chunk[Maybe[Span[Byte]]],
-    private[kyo] val columns: Chunk[SqlRow.Column],
+    val columns: Chunk[SqlRow.Column],
     private[kyo] val codec: SqlRow.Codec
 ):
 
@@ -30,6 +30,74 @@ final class SqlRow(
 
     /** The column names, in order. */
     def columnNames: Chunk[String] = columns.map(_.name)
+
+    /** What kind of value the column at `idx` carries, in the neutral vocabulary both backends map their own types onto.
+      *
+      * The reader for a result set nobody typed: a tool running user-written SQL knows a column's name and its bytes, and this is what
+      * says whether those bytes are a number, an instant, or text, without the caller learning either backend's type tags.
+      * [[SqlRow.ColumnKind.Unknown]] for a type the backend has no neutral kind for and for a row assembled without server metadata.
+      */
+    def columnKind(idx: Int): SqlRow.ColumnKind =
+        if idx < 0 || idx >= columns.size then SqlRow.ColumnKind.Unknown
+        else codec.columnKind(columns(idx).typeToken)
+
+    /** What kind of value the column named `name` carries. [[SqlRow.ColumnKind.Unknown]] when the row has no such column. */
+    def columnKind(name: String): SqlRow.ColumnKind =
+        columnKind(columns.indexWhere(_.name == name))
+
+    /** The backend's own name for the type of the column at `idx`: `int4` and `timestamptz` on PostgreSQL, `BIGINT` and `DATETIME` on
+      * MySQL. Absent for a type token the backend does not recognise, which is what a row assembled without server metadata carries.
+      *
+      * For a decision a caller acts on, prefer [[columnKind]], which is the same fact in a vocabulary that does not change with the engine.
+      * This is for showing a human which type the server reported.
+      */
+    def columnTypeName(idx: Int): Maybe[String] =
+        if idx < 0 || idx >= columns.size then Maybe.empty
+        else codec.typeName(columns(idx).typeToken)
+
+    /** The backend's own name for the type of the column named `name`. */
+    def columnTypeName(name: String): Maybe[String] =
+        columnTypeName(columns.indexWhere(_.name == name))
+
+    /** The column at `idx` rendered as text, whatever its wire type, or [[Absent]] for SQL NULL.
+      *
+      * The reader a generic tool needs, and the one operation `decode[String]` deliberately is not: `decode[String]` asks for a column that
+      * IS text and aborts [[SqlDecodeColumnTypeMismatchException]] on one that is not, because a schema declaring `String` for a `date`
+      * column is wrong about the column. This renders the value the column actually holds, decoding it at its own type first, so an `int4`
+      * answers `"42"` and a `date` answers `"2026-08-04"` under either wire format.
+      *
+      * The rendering is the SERVER's, and the same one under either wire format. That is the whole contract: a text-protocol row already
+      * carries the server's rendering and it is handed back, and a binary-protocol row is decoded and re-rendered to match it, so one
+      * stored value reads as one string whichever protocol carried the row. The two do not agree on their own, and not only at the edges:
+      * PostgreSQL writes a bool `t` where Java writes `true`, a timestamp `2026-08-25 10:00:00` where Java writes `2026-08-25T10:00`, and
+      * a float8 1e10 `10000000000` where Java writes `1.0E10`.
+      *
+      * A backend renders the types it names; one it does not name falls back to reading the column's bytes as UTF-8, which is a rendering
+      * of last resort rather than a decode. [[columnKind]] says which case a column is in.
+      *
+      * @throws SqlDecodeException
+      *   if the column is out of bounds, or the value cannot be decoded at the type its column reports
+      */
+    def text(idx: Int)(using Frame): Maybe[String] < Abort[SqlDecodeException] =
+        // Bounded against BOTH, unlike the value reads: a backend's `text` dispatches on the column's type before it
+        // touches the value, so a row carrying fewer column descriptions than values would index past `columns` from
+        // inside the codec, where the raised IndexOutOfBounds is outside the declared Abort. `columnKind` and
+        // `columnTypeName` already guard the same way.
+        if idx < 0 || idx >= values.size || idx >= columns.size then
+            Abort.fail(SqlDecodeColumnOutOfBoundsException(idx, values.size))
+        else if values(idx).isEmpty then Maybe.empty
+        else codec.text(this, idx).map(Maybe(_))
+
+    /** The column named `name` rendered as text, or [[Absent]] for SQL NULL.
+      *
+      * @throws SqlDecodeException
+      *   if the column is not found, or the value cannot be decoded at the type its column reports
+      */
+    def text(name: String)(using Frame): Maybe[String] < Abort[SqlDecodeException] =
+        val idx = columns.indexWhere(_.name == name)
+        if idx < 0 then Abort.fail(SqlDecodeColumnNotFoundException(name, columnNames))
+        else text(idx)
+    end text
 
     /** Returns the raw bytes for the column at `idx`, or [[Absent]] for SQL NULL. */
     def column(idx: Int): Maybe[Span[Byte]] =
@@ -90,7 +158,7 @@ final class SqlRow(
       */
     def decode[A](name: String)(using frame: Frame, evidence: SqlSchema[A]): A < Abort[SqlDecodeException] =
         val idx = columns.indexWhere(_.name == name)
-        if idx < 0 then Abort.fail(SqlDecodeColumnNotFoundException(name))
+        if idx < 0 then Abort.fail(SqlDecodeColumnNotFoundException(name, columnNames))
         else decode[A](idx)
     end decode
 
@@ -168,7 +236,9 @@ object SqlRow:
     /** Neutral column metadata.
       *
       * `typeToken` is the backend's own tag for the column's type (a PostgreSQL OID, a MySQL type byte). Core never interprets it; it exists so
-      * a backend codec can dispatch on the type the server reported.
+      * a backend codec can dispatch on the type the server reported. A caller reading a result set it did not type wants
+      * [[SqlRow.columnKind]] or [[SqlRow.columnTypeName]] rather than the token itself, both of which are this token put through the row's
+      * own backend.
       *
       * @param name
       *   the column name the server reported
@@ -176,6 +246,24 @@ object SqlRow:
       *   the backend's type tag for the column
       */
     final case class Column(val name: String, val typeToken: Int) derives CanEqual
+
+    /** What kind of value a result column carries, in a vocabulary neither backend owns.
+      *
+      * The type information a caller running user-written SQL can act on: which reader to reach for, how to align a value in a table,
+      * whether a filter makes sense. It is deliberately coarser than either engine's type list, since the distinctions it drops (`int2`
+      * against `int8`, `varchar` against `text`) are ones the codecs already handle and a generic caller does not choose between.
+      * [[SqlRow.columnTypeName]] is the engine's own spelling for the same column, for showing a human.
+      *
+      *   - [[Integer]], [[Decimal]], [[Float]]: exact integral, exact scaled decimal, and approximate binary floating point.
+      *   - [[Bool]], [[Text]], [[Json]], [[Uuid]], [[Bytes]]: the non-numeric scalars.
+      *   - [[Date]], [[Time]], [[TimeWithOffset]], [[DateTime]], [[Timestamp]], [[Interval]]: the temporal family, split the way the SQL
+      *     types are.
+      *   - [[Array]]: a one-dimensional array column.
+      *   - [[Unknown]]: a type the backend has no neutral kind for, and a row assembled without server metadata.
+      */
+    enum ColumnKind derives CanEqual:
+        case Integer, Decimal, Float, Bool, Text, Json, Uuid, Bytes, Date, Time, TimeWithOffset, DateTime, Timestamp, Interval, Array,
+            Unknown
 
     /** A backend's decoder for the rows it produced.
       *
@@ -190,6 +278,28 @@ object SqlRow:
         def read[A](schema: SqlSchema[A], row: SqlRow, offset: Int, naming: Maybe[SqlNaming], fieldMatch: SqlRow.FieldMatch)(using
             Frame
         ): A < Abort[SqlDecodeException]
+
+        /** The neutral kind of the type `typeToken` names, backing [[SqlRow.columnKind]].
+          *
+          * Defaults to [[SqlRow.ColumnKind.Unknown]], which is the honest answer for a codec that carries no server type metadata; a
+          * backend that receives it maps its own type tags here.
+          */
+        def columnKind(typeToken: Int): SqlRow.ColumnKind = SqlRow.ColumnKind.Unknown
+
+        /** The backend's own name for the type `typeToken` names, backing [[SqlRow.columnTypeName]]. Absent for a token the backend does
+          * not recognise.
+          */
+        def typeName(typeToken: Int): Maybe[String] = Maybe.empty
+
+        /** Renders the non-NULL column at `idx` as text, backing [[SqlRow.text]]. NULL and bounds are settled by the caller.
+          *
+          * Defaults to reading the column's bytes as UTF-8, which is what a value already in its text rendering needs and all a codec with
+          * no type metadata can do. A backend whose result sets carry binary values decodes the value at its column's own type first.
+          */
+        def text(row: SqlRow, idx: Int)(using Frame): String < Abort[SqlDecodeException] =
+            row.column(idx) match
+                case Maybe.Present(bytes) => new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
+                case Maybe.Absent         => Abort.fail(SqlDecodeColumnAbsentException(idx))
     end Codec
 
     object Codec:

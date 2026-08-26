@@ -612,13 +612,19 @@ private[kyo] object ReactiveUI:
         if rui.isConst then
             Kyo.foreachDiscard(rui.children)(subscribeScoped(_, exchange, signalChangeTime))
         else
+            // The tree this region last rendered, so the exchange can send only what moved instead of the
+            // whole region.
+            // Unsafe: region-scoped, single-writer state created before the observe loop is forked, where no
+            // effect context exists to supply AllowUnsafe; only this region's own loop reads or writes it.
+            val rendered = AtomicRef.Unsafe.init(Maybe.empty[UI])(using AllowUnsafe.embrace.danger)
             // Per-value setup, run inside each value's fresh Scope: render the region and fork its children into
             // that scope, so the next value (or an interrupt) tears them down by cascade.
             def renderValue(current: UI): Unit < (Async & Scope) =
                 for
                     now          <- Clock.now
                     _            <- signalChangeTime.set(now)
-                    _            <- exchange.onChange(rui.path, current)
+                    previous     <- Sync.Unsafe.defer(rendered.getAndSet(Present(current)))
+                    _            <- exchange.onChange(rui.path, previous, current)
                     (newKids, _) <- walkStatic(current, rui.path, rui.svgContext)
                     _            <- Kyo.foreachDiscard(newKids)(subscribeScoped(_, exchange, signalChangeTime))
                 yield ()

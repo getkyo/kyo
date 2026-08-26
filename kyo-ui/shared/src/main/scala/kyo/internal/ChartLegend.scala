@@ -317,11 +317,12 @@ private[kyo] object ChartLegend:
                 val (domLo, domHi) = domainExtentOf(categories, domOv)
                 categories.map { case (_, raw) => sequentialColor(raw, lo, hi, domLo, domHi) }
             case Absent =>
-                spec.theme.palette match
-                    case Present(p) => categories.zipWithIndex.map: (_, i) =>
-                            p(i % p.size)
-                    case Absent => categories.zipWithIndex.map: (_, i) =>
-                            ChartAxes.DefaultPalette(i % ChartAxes.DefaultPalette.size)
+                // Reconciled against the panel: a palette kyo picked must not render a series invisible on
+                // the theme it is paired with. An explicit colorScale above is the caller's own computation
+                // and is passed through untouched.
+                val palette = ChartAxes.themePalette(spec.theme)
+                categories.zipWithIndex.map: (_, i) =>
+                    palette(i % palette.size)
     end resolvePalette
 
     /** Convenience: resolve a palette from DefaultPalette for the stacked-bar Absent-spec fallback. */

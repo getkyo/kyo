@@ -90,6 +90,17 @@ class SqlConfigUrlOptionsTest extends SqlContainerTest:
                                     s"establishment must be bounded by the URL's connectTimeout, was bounded by ${e.timeout}"
                                 )
                                 assert(e.port == listener.port)
+                                // The failure names the knob that supplied the budget, which is the URL's here, and says
+                                // that authentication shares it: this server answers the TCP connect and then nothing, so
+                                // a message pointing only at reachability would send a reader to the wrong place.
+                                assert(
+                                    e.budgetSource == SqlConnectionEstablishTimeoutException.fromConnectTimeout,
+                                    s"the URL's connectTimeout supplied the budget, message said: ${e.budgetSource}"
+                                )
+                                assert(
+                                    e.message.contains("authentication handshake"),
+                                    s"the failure must say the budget covers authentication too, got: ${e.message}"
+                                )
                             case other =>
                                 fail(s"expected establishment to time out, got $other")
                         }

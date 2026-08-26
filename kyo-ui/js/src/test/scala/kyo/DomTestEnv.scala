@@ -10,14 +10,26 @@ import scala.scalajs.js
   * runs unmodified. The load is lazy and idempotent: suites that never touch the DOM never require jsdom, and repeated
   * calls reuse the first window.
   *
-  * jsdom must be resolvable from the repo root: `npm install --no-save jsdom@^30` (CI does this in the setup action;
-  * the repo ignores *.json, so there is no package.json to install from).
+  * jsdom must be resolvable from the repo root: `npm install --no-save --no-fund --no-audit jsdom@^30`, the same
+  * command CI runs in its setup action. The repo ignores *.json, so there is no package.json to install from, and a
+  * fresh checkout has no node_modules; the load below restates Node's resolution failure with that command in it.
   */
 private[kyo] object DomTestEnv:
 
     lazy val install: Unit =
         if js.typeOf(js.Dynamic.global.document) == "undefined" then
-            val jsdom = js.Dynamic.global.require("jsdom")
+            val jsdom =
+                try js.Dynamic.global.require("jsdom")
+                catch
+                    case ex: js.JavaScriptException =>
+                        // Node's own message is "Cannot find module 'jsdom'", which names neither the suite that
+                        // needs it nor the command that supplies it. Restate it so a local run is self-explaining;
+                        // CI installs jsdom in its setup action, so this path is the local-checkout one.
+                        throw new IllegalStateException(
+                            "the DOM-backed kyo-ui tests need jsdom, which is not resolvable from the repository root. " +
+                                "Install it with: npm install --no-save --no-fund --no-audit jsdom@^30",
+                            ex
+                        )
             // pretendToBeVisual enables requestAnimationFrame, which DomBackend uses to start SMIL animations.
             // jsdom still performs no layout: getBoundingClientRect stays zeroed, so measurement behavior belongs
             // in the real-Chrome suites, not here.

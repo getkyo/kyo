@@ -437,9 +437,16 @@ class SqlClientLogTest extends SqlContainerTest:
         }
     }
 
-    // ── server error emits an error-level log with sqlState ───────────────────
+    // ── server error is reported to the caller, and logged below ERROR ────────
 
-    "server error emits an error-level log with sqlState" in {
+    /** A server error the caller is handed as a typed value is not an error the library reports on its own initiative.
+      *
+      * This leaf used to require the ERROR level. What it is really about is the message being available with its sqlState, which DEBUG
+      * carries just as well; the level is what decided whether a tool behaving correctly filled an operator's dashboard. A tool that runs
+      * user-written SQL gets a syntax error back from the server as its ordinary answer, and on a stdio transport anything the library
+      * writes uninvited is a candidate for corrupting the channel.
+      */
+    "server error is logged below ERROR and still carries its sqlState" in {
         Scope.run {
             kyo.internal.FakeServer.listenPort { conn =>
                 pgErrorResponseHandler(conn)
@@ -463,16 +470,20 @@ class SqlClientLogTest extends SqlContainerTest:
                     }
                 }.map { case (sink, _) =>
                     val logs = sink.captured
-                    val errorLogs = logs.filter { case (level, msg) =>
-                        level == Log.Level.error && msg.contains("kyo.sql: server error") && msg.contains("sqlState=")
+                    val serverErrorLogs = logs.filter { case (_, msg) =>
+                        msg.contains("kyo.sql: server error") && msg.contains("sqlState=")
                     }
                     assert(
-                        errorLogs.nonEmpty,
-                        s"Expected 'kyo.sql: server error' error log with 'sqlState='. Captured: ${logs.map(_._2).mkString(", ")}"
+                        serverErrorLogs.nonEmpty,
+                        s"Expected 'kyo.sql: server error' log with 'sqlState='. Captured: ${logs.map(_._2).mkString(", ")}"
                     )
                     assert(
-                        errorLogs.exists { case (_, msg) => msg.contains("42601") },
-                        s"Expected sqlState=42601 in server error log. Got: ${errorLogs.map(_._2).mkString(", ")}"
+                        serverErrorLogs.exists { case (_, msg) => msg.contains("42601") },
+                        s"Expected sqlState=42601 in the server error log. Got: ${serverErrorLogs.map(_._2).mkString(", ")}"
+                    )
+                    assert(
+                        serverErrorLogs.forall { case (level, _) => level == Log.Level.debug },
+                        s"a failure handed back to the caller must not be logged at ERROR. Got: ${serverErrorLogs.mkString(", ")}"
                     )
                 }
             }

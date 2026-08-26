@@ -3,6 +3,7 @@ package kyo.internal.mysql.exchange
 import kyo.*
 import kyo.internal.SqlSharedContainers
 import kyo.internal.mysql.BoundMysqlParam
+import kyo.internal.mysql.MysqlColumnToken
 import kyo.internal.mysql.MysqlConnection
 import kyo.internal.mysql.MysqlRowCodec
 import kyo.internal.mysql.types.MysqlEncoder
@@ -116,6 +117,47 @@ class MysqlExtendedProtocolIntegrationTest extends SqlContainerTest:
                         assert(rows.size == 1)
                         decode[Int](rows(0), 0).map { decoded =>
                             assert(decoded == v, s"Expected $v, got $decoded")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── the column definitions a row carries ──────────────────────────────────
+
+    /** A row must carry the column definitions the EXECUTE response sent, not the ones COM_STMT_PREPARE sent.
+      *
+      * MySQL describes the result column of a bare placeholder at prepare time, before any parameter is bound, and reports `VAR_STRING`
+      * for it. At execute time it resends the definitions and sends the value in the bound parameter's own binary form: an `Int` parameter
+      * comes back as the eight little-endian bytes `2a 00 00 00 00 00 00 00` under a `LONGLONG` definition. A row built from the
+      * prepare-time definitions therefore announces `VAR_STRING` over a binary integer, and every decoder that resolves the wire
+      * representation from the column's type resolves it from a type the value does not have. The row payload was already parsed with the
+      * execute-time types, so the two disagreed inside one row.
+      */
+    "ExtendedQueryExchange rows carry the execute-time column definitions" in {
+        Scope.run {
+            SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.MySQL) { ctx =>
+                withConn(ctx) { conn =>
+                    val params = Chunk(BoundMysqlParam(42, MysqlEncoder.intEncoder))
+                    conn.extendedQuery("SELECT ? AS declared", params).flatMap { rows =>
+                        val neutral   = MysqlRowCodec.row(rows(0))
+                        val typeByte  = MysqlColumnToken.columnType(neutral.columns(0).typeToken)
+                        val byteCount = neutral.column(0).fold(0)(_.size)
+                        assert(
+                            typeByte != MysqlEncoder.TYPE_VAR_STRING,
+                            s"the column announced VAR_STRING over a $byteCount-byte binary payload, which is the prepare-time definition"
+                        )
+                        assert(
+                            typeByte == MysqlEncoder.TYPE_LONGLONG,
+                            s"expected the execute-time LONGLONG definition, got type byte 0x${typeByte.toHexString}"
+                        )
+                        // The consequence a caller sees: an integer column read as text is refused rather than answering its bytes.
+                        Abort.run[SqlException](neutral.decode[String](0)).map {
+                            case Result.Failure(e: SqlDecodeColumnTypeMismatchException) =>
+                                assert(e.scalaType == "String", s"the failure must name the type that asked, got ${e.scalaType}")
+                                assert(e.columnType == "BIGINT", s"the failure must name the column's type, got ${e.columnType}")
+                            case other => assert(false, s"expected a type-mismatch abort reading the integer column as String, got $other")
                         }
                     }
                 }
