@@ -6,8 +6,16 @@ import kyo.doctest.*
 
 /** Computes a stable SHA-256 fingerprint over a classpath.
   *
-  * The fingerprint covers the content of every jar (or class file, for directory entries) on the classpath, keyed by sorted entry path so
-  * the result is invariant to classpath ordering. This is used by BlockCache to invalidate entries when the classpath changes.
+  * The fingerprint covers the content of every jar, and of the `.tasty` files for directory entries, keyed by sorted entry path so the
+  * result is invariant to classpath ordering. This is used by BlockCache to invalidate entries when the classpath changes.
+  *
+  * Directory entries are fingerprinted from TASTy rather than bytecode because bytecode is not reproducible: two clean builds of identical
+  * sources emit `.class` files that differ in emission order and in whether a dead synthetic accessor is generated. Since the fingerprint
+  * is one digest over the whole classpath, a single such file would change it on every build and no cache entry would ever be reused.
+  *
+  * TASTy is the right granularity rather than merely the stable one. The cache stores only COMPILE results, because runtime-bearing units
+  * bypass it entirely (see Orchestrator), and compiling against a classpath reads TASTy. Bytecode layout therefore cannot affect what is
+  * cached.
   */
 private[kyo] object ClasspathFingerprint:
 
@@ -16,8 +24,8 @@ private[kyo] object ClasspathFingerprint:
       * Algorithm: for each classpath entry, produce a (path, contentHash) pair. Pairs are sorted by path string before the final digest is
       * computed so the result is independent of classpath ordering.
       *
-      * For jar files, the content hash is SHA-256 of the jar bytes. For directories, the content hash is SHA-256 over all .class files in
-      * the directory tree, sorted by relative path.
+      * For jar files, the content hash is SHA-256 of the jar bytes. For directories, the content hash is SHA-256 over all `.tasty` files in
+      * the directory tree, sorted by relative path, falling back to `.class` files for directories that carry no TASTy.
       *
       * @param classpath
       *   Classpath entries to fingerprint.
@@ -59,7 +67,7 @@ private[kyo] object ClasspathFingerprint:
         }
     end hashEntry
 
-    // Hash all .class files in a directory tree, sorted by relative path.
+    // Hash a directory tree's TASTy, sorted by relative path, falling back to bytecode.
     // Walk requires Scope; we run that scope locally (Scope.run introduces Async in the row).
     private def hashDirectory(dir: kyo.Path)(using Frame): Array[Byte] < (Sync & Async & Abort[Doctest.Error]) =
         Scope.run {
@@ -67,9 +75,15 @@ private[kyo] object ClasspathFingerprint:
                 dir.walk.run
             }
         }.flatMap { allPaths =>
-            val classFiles = allPaths.filter(_.toString.endsWith(".class"))
+            val tastyFiles = allPaths.filter(_.toString.endsWith(".tasty"))
+            // Prefer TASTy: it is what a downstream compile reads, and unlike bytecode it is
+            // reproducible across clean builds. Fall back to .class for directories that carry no
+            // TASTy at all (Java-only output, resource trees, Scala 2.13 modules), where bytecode
+            // is the only signal available; hashing nothing there would make every such directory
+            // indistinguishable from any other.
+            val selected = if tastyFiles.nonEmpty then tastyFiles else allPaths.filter(_.toString.endsWith(".class"))
             // Sort by path string for stable hashing.
-            val sortedFiles = classFiles.toSeq.sortBy(_.toString)
+            val sortedFiles = selected.toSeq.sortBy(_.toString)
             Kyo.foreach(sortedFiles) { f =>
                 Abort.recover[FileReadException](e => Abort.fail(Doctest.Error.IoError(f, "read", e))) {
                     f.readBytes.map(span => (f.toString, span.toArray))

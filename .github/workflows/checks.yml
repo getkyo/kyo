@@ -128,5 +128,36 @@ jobs:
           bash scripts/apt-install.sh --if-missing cmake uuid-dev
           bash kyo-aeron/scripts/build-aeron.sh linux-aarch64
 
+      # Doctest content-hash cache. Entries are keyed by SHA-256 over the block body, the
+      # classpath fingerprint, the Scala version and the scalac options, so a restored entry
+      # is only reused when all of those match; a stale hit is not possible by construction.
+      #
+      # Caches ONLY the doctest result files, never compiled classes. Entries are empty
+      # files whose name IS the key (a passing block with no warnings writes zero bytes), so
+      # a full snapshot of ~1500 blocks is well under 1 MB.
+      #
+      # main writes, PRs restore. A cache created on a PR run is scoped to that PR's merge
+      # ref and is restorable only by re-runs of the same PR, so PRs cannot see or poison
+      # each other; restoring the default branch's cache is what gives a PR its hits.
+      # The key rotates per run so each generation is its own entry, and restore-keys falls
+      # back to the newest previous generation. GitHub's LRU plus 7-day eviction bounds the
+      # store, which matters for file count rather than size.
+      - name: Restore doctest cache
+        uses: actions/cache/restore@v5
+        with:
+          path: .doctest-cache
+          key: doctest-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
+          restore-keys: |
+            doctest-${{ runner.os }}-${{ runner.arch }}-
+
       - name: README doctests
         run: sbt doctest
+
+      # Save only from main. A PR's cache would be unreadable by anything except that same
+      # PR's re-runs, so writing one costs upload time for no reuse.
+      - name: Save doctest cache
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@v5
+        with:
+          path: .doctest-cache
+          key: doctest-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
