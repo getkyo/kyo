@@ -79,6 +79,11 @@ case "$ARCH" in native|x86|arm) ;; *) die_usage "unknown arch '$ARCH'" ;; esac
 if [ "$ENV_KIND" = podman-ci ]; then
     STAGE_BORINGSSL="${STAGE_BORINGSSL:-1}"
     STAGE_AERON="${STAGE_AERON:-1}"
+    # GitHub runners always carry a container runtime, which the container-backed suites
+    # (kyo-sql, kyo-pod) auto-detect and use to launch sibling DB containers. The CI-faithful
+    # env therefore defaults the socket passthrough on, pointing at the podman VM's own
+    # socket; KYO_POD_SOCKET= (explicitly empty) opts out, and plain podman keeps it opt-in.
+    KYO_POD_SOCKET="${KYO_POD_SOCKET-/run/podman/podman.sock}"
 fi
 
 ACTION="${1:-test}"
