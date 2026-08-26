@@ -79,7 +79,10 @@ jobs:
   # minutes of work, and the build.yml preps another 37 to 41 each, all before the first
   # real build job could even be scheduled.
   prep:
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    # Not on mode=custom either. prep's outputs feed build-dispatch alone, and build-dispatch
+    # skips on custom, so a custom dispatch was paying a zero-work x64 slot to compute a matrix
+    # nothing would read: the same defect this change removes from push and pull_request.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode != 'custom' }}
     runs-on: ubuntu-latest
     outputs:
       mode: ${{ steps.derive.outputs.mode }}
@@ -180,7 +183,9 @@ jobs:
       ref: ${{ inputs.ref }}
 
   custom:
-    needs: prep
+    # No `needs: prep`. This job reads none of prep's outputs, it runs one command on one runner
+    # chosen by `custom-runner`. The dependency only ever cost it a queue wait, and it coupled the
+    # job to the `oses` allowlist, so a typo in an input `custom` ignores entirely used to skip it.
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'custom' }}
     timeout-minutes: 180
     runs-on: ${{ inputs.custom-runner }}
