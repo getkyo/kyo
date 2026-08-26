@@ -423,7 +423,7 @@ When an exception crosses an evaluation boundary, effect-level frames are attach
 
 ## Iteration
 
-Recursion through `map` is stack safe here, so any loop can be written as one. `Loop` is the shape that carries state and performs effects between rounds without allocating per round to do it, and it says what a round decided in the round's own answer rather than in a call.
+Recursion through `map` is stack safe here, so any loop can be written as one. That safety has a shape worth knowing: a deep synchronous chain does not recurse freely, it suspends periodically and is resumed, so its depth is paid in heap rather than in stack. `Loop` is the shape that carries state and performs effects between rounds without allocating per round to do it, and it says what a round decided in the round's own answer rather than in a call.
 
 ### The general loops
 
@@ -486,6 +486,8 @@ assert(sayUntil("tick")(ticker).eval == Maybe.empty[Nothing])
 The standard collection methods do not accept an effectful function, so the `Kyo` object carries their counterparts. Each takes a function returning a computation, runs it over the elements one at a time, and answers with a computation of the collected result.
 
 ### Mapping over a collection
+
+The one to start from is `foreach`: it applies the function to each element in order, waits for each computation before beginning the next, and collects the results into the collection type that went in.
 
 ```scala
 val shifted: Chunk[Int] < Ask = Kyo.foreach(Chunk(1, 2, 3))(n => ask.map(_ + n))
@@ -645,3 +647,24 @@ assert(answering(7)(outerAnswered).eval == ((Chunk("7"), 7)))
 `Say` was handled by the local handler even though it sat inside the mask, and the transcript proves the local handler ran with the answer the outer one supplied. Masking the same effect twice behaves as one mask, so a computation that is already masked can be passed through a second mask without changing where its operations are answered.
 
 Masking moves where a value is answered, and that moves where a scope ends with it. A bracket inside a masked computation releases when the outer handler is done with the tunneled continuation, not at the mask boundary. If that outer handler discards the continuation instead of resuming it, the bracket releases there, told the extent was abandoned, exactly as it would without the mask in between.
+
+## From description to result
+
+One value can carry every move the module makes. `Ask`, `Say` and `Level` were declared once and have not changed since; `ask`, `say` and `level` suspend against them; `levelIsolate.run` prepares the whole thing to cross into another evaluation; and a handler per arrow effect, plus a binding for the context effect, take the row apart from the outside in.
+
+```scala
+val program: Int < (Ask & Say & Level) =
+    level.map(l =>
+        Kyo.foreach(Chunk(1, 2))(n => ask.map(_ * n)).map(answers =>
+            say(s"level $l saw ${answers.size} answers").andThen(answers.sum + l)
+        )
+    )
+
+val prepared: Int < (Ask & Say & Level) = levelIsolate.run(program)
+
+val result: (Chunk[String], Int) < Any = withLevel(10)(answering(3)(runSay(prepared)))
+
+assert(result.eval == ((Chunk("level 10 saw 2 answers"), 19)))
+```
+
+The row on `program` is the list of what the value still needs: an answer for `ask`, a listener for `say`, and a level bound around it. Each of the last three calls discharges exactly one of them, and `eval` type-checks on the final line only because nothing is left in the row. Until that line, none of it had run.
