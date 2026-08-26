@@ -34,7 +34,7 @@ class MysqlEncoderShortTest extends Test:
     private def decode(body: Array[Byte]): Short =
         val row = new SqlRow(
             Chunk(Maybe.Present(Span.from(body))),
-            Chunk(SqlRow.Column("n", MysqlColumnToken(MysqlEncoder.TYPE_SHORT, 0))),
+            Chunk(SqlRow.Column("n", MysqlColumnToken(MysqlEncoder.TYPE_SHORT, 0, charset = 45))),
             MysqlRowCodec(Format.Binary)
         )
         new MysqlRowReader(row, Format.Binary)(using kyo.Frame.derive).short()

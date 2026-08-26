@@ -10,6 +10,7 @@ import kyo.Result
 import kyo.Span
 import kyo.SqlCodec
 import kyo.SqlCodec.Format
+import kyo.SqlDecodeColumnTypeMismatchException
 import kyo.SqlDecodeEmptyStringForCharException
 import kyo.SqlDecodeException
 import kyo.SqlDecodeIntervalException
@@ -72,6 +73,27 @@ final class MysqlRowReader(row: SqlRow, format: Format, matchesFieldAt: Maybe[(I
         new String(bytes.toArray, StandardCharsets.UTF_8)
     end readUtf8String
 
+    /** Refuses a text read of a column whose type is not text, naming the Scala type that asked.
+      *
+      * The guard the text reads owe their caller: every other read resolves the wire representation from the column's type byte, and this
+      * is the one whose target type any byte sequence satisfies, so without the guard an `INT` column read as `String` answers the four
+      * little-endian bytes of the value as UTF-8 rather than failing.
+      */
+    private def requireTextColumn(scalaType: String): Unit =
+        val token = currentToken()
+        MysqlColumnToken.nonTextColumnType(token).foreach { columnType =>
+            throw SqlDecodeColumnTypeMismatchException(
+                scalaType,
+                MysqlDialect.id,
+                columnType,
+                MysqlColumnToken.columnType(token).toString,
+                // Named where the reader knows it, so a row type declaring the wrong type for one field of several
+                // says which field rather than only which types disagreed.
+                if idx < row.columns.size then Maybe(row.columns(idx).name) else Maybe.empty
+            )(using frame)
+        }
+    end requireTextColumn
+
     // --- Nil check, consumes the column when it answers true ---
 
     /** True when the column the cursor is on is SQL NULL, consuming that column; false leaves the cursor where it was.
@@ -116,7 +138,9 @@ final class MysqlRowReader(row: SqlRow, format: Format, matchesFieldAt: Maybe[(I
         readNumeric((bytes, token) => MysqlNumericDecoder.double(bytes, format, token)(using frame))
 
     override def string(): String =
+        requireTextColumn("String")
         readUtf8String(nextBytes())
+    end string
 
     override def bytes(): Span[Byte] =
         nextBytes()
@@ -138,6 +162,7 @@ final class MysqlRowReader(row: SqlRow, format: Format, matchesFieldAt: Maybe[(I
         readNumeric((bytes, token) => MysqlNumericDecoder.byte(bytes, format, token)(using frame))
 
     override def char(): Char =
+        requireTextColumn("Char")
         val s = readUtf8String(nextBytes())
         // A longer value is refused rather than truncated to its first character: taking `charAt(0)`
         // would drop the rest with nothing raised, a silent value change and not a decode.

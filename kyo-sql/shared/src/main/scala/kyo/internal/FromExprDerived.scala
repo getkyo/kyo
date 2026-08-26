@@ -245,6 +245,10 @@ object FromExprDerived:
                 case Block(Nil, inner)    => unwrap(inner, args)
                 case Typed(inner, _)      => unwrap(inner, args)
                 case TypeApply(inner, _)  => unwrap(inner, args)
+                // `f(name = value)`: the name is how the argument was written and says nothing about the value, which is
+                // what the fold reads. A `copy` replacing one field passes it by name, so without this the argument is
+                // not recognised at all.
+                case NamedArg(_, inner) => unwrap(inner, args)
                 // Prepend, so a curried application keeps its arguments in declaration order.
                 case Apply(fun, as) => unwrap(fun, as ::: args)
                 case other          => (other, args)
@@ -433,6 +437,11 @@ object FromExprDerived:
         // Recognises a case-class constructor application `Companion.apply(args)` / `new C(args…)`
         // (including curried / multi-parameter-list `<init>` forms) and returns
         // `(caseClassSymbol, flattenedArgs)`.
+        // Reading a flag off a symbol that has none is a reflection failure rather than a `false`, so every read here
+        // goes through this: an expression that cannot answer is one this fold declines, never one it guesses at.
+        def isSynthetic(s: Symbol): Boolean =
+            try s != Symbol.noSymbol && s.flags.is(Flags.Synthetic)
+            catch case _: Throwable => false
         def asConstruction(t: Term): Option[(Symbol, List[Term])] =
             // Collect every value-argument list down a (possibly nested) `Apply` chain, left-to-right.
             def collect(cur: Term, acc: List[Term]): (Term, List[Term]) =
@@ -444,7 +453,22 @@ object FromExprDerived:
             head match
                 case Select(qual, "apply")      => Some((qual.symbol, args))
                 case Select(New(tpt), "<init>") => Some((tpt.tpe.typeSymbol, args))
-                case _                          => None
+                // `receiver.copy(args)` builds the same case class the receiver is one of, and its arguments are
+                // that class's fields in declaration order, so it is a construction as much as `apply` is. This is
+                // the shape every builder that accumulates produces: `Update.Builder.set` answers a copy of itself
+                // with one more assignment, and a statement built through it reached this macro as a copy whose
+                // fields could not be read, which is what kept every UPDATE off the static path.
+                // Only the compiler's own `copy`, which is the one whose parameters ARE the case fields in
+                // declaration order. A class is free to declare its own, and declaring one suppresses the synthetic
+                // one, so a `copy` that takes a subset of the fields (or something else entirely) would have its
+                // arguments read as fields here and fold a neighbouring field to the wrong constant, silently and at
+                // compile time. Refusing to recognise it leaves the statement on the dynamic path, which is correct.
+                case sel @ Select(qual, "copy") if isSynthetic(sel.symbol) =>
+                    val cls =
+                        try qual.tpe.widen.typeSymbol
+                        catch case _: Throwable => Symbol.noSymbol
+                    if cls == Symbol.noSymbol then None else Some((cls, args))
+                case _ => None
             end match
         end asConstruction
         // Pass 2, substitute `Ident` references to bound symbols with their rhs, AND fold
@@ -461,6 +485,14 @@ object FromExprDerived:
         // recomputation when the same Ident is referenced from N sites). termMemo caches per-input-
         // Term substitution result (preserves referential sharing in the output, so the next
         // iteration's collector, which is visited-set guarded, walks the shared subtree once).
+        // A closure literal is `Block(List(<anonfun DefDef>), Closure(<ref to it>, _))`: the wrapper is the value
+        // itself rather than something wrapping a value, and `Closure.meth` refers to the def beside it, so the
+        // statements cannot be dropped and the term is passed through whole. Any other statement list belongs to a
+        // wrapper and is dead once substitution has run.
+        def isClosureLiteral(expr: Term): Boolean =
+            expr match
+                case _: Closure => true
+                case _          => false
         val identMemo = scala.collection.mutable.Map.empty[Symbol, Term]
         val termMemo  = new java.util.IdentityHashMap[Term, Term]()
         val Fuel      = 1000000
@@ -492,6 +524,23 @@ object FromExprDerived:
                     // field matchers expect the constructor head, and the whole statement silently fails to fold.
                     case TypeApply(Select(inner, "asInstanceOf" | "$asInstanceOf$"), _) =>
                         transformTerm(inner)(owner)
+                    // An omitted `copy` argument is spelled `receiver.copy$default$N`, N being 1-based over the case
+                    // fields. Rewriting it to the field selection it stands for lets the fold below read it like any
+                    // other field, which is what makes a `copy` that omits arguments resolvable at all.
+                    // The polymorphic form: `receiver.copy$default$N[T, F]`. The type arguments belong to the
+                    // defaulted method and mean nothing to the field selection it stands for, so they go with it.
+                    case TypeApply(sel @ Select(_, name), _) if name.startsWith("copy$default$") =>
+                        transformTerm(sel)(owner)
+                    case sel @ Select(receiver, name) if name.startsWith("copy$default$") =>
+                        val fields =
+                            try transformTerm(receiver)(owner).tpe.widen.typeSymbol.caseFields
+                            catch case _: Throwable => Nil
+                        val index =
+                            try name.stripPrefix("copy$default$").toInt - 1
+                            catch case _: Throwable => -1
+                        if index >= 0 && index < fields.length then
+                            transformTerm(Select(receiver, fields(index)))(owner)
+                        else Select.copy(sel)(transformTerm(receiver)(owner), name)
                     case sel @ Select(receiver, fieldName) =>
                         val resolvedReceiver = transformTerm(receiver)(owner)
                         // Peel `Inlined` / `Block` / `Typed` wrappers off the resolved receiver before
@@ -545,6 +594,29 @@ object FromExprDerived:
                                     case _                        => Select.copy(sel)(resolvedReceiver, fieldName)
                             case _ => Select.copy(sel)(resolvedReceiver, fieldName)
                         end match
+                    // `Inlined` and `Block` are the only terms carrying a statement list, so they are the
+                    // only ones whose rebuild runs a definition through a checked constructor: the default
+                    // `TreeMap` transforms the statements, and `ValDef.copy` / `Block.copy` assert that each
+                    // definition's owner matches where it now sits (`-Xcheck-macros`). The compiler relocates
+                    // its own inline bindings without re-owning them, so those assertions fire on definitions
+                    // this rewriter only passes through and never reads. Both wrappers are dropped instead:
+                    // pass 1 has already collected every binding, and the statement lists are dead once the
+                    // `Ident`s referencing them are substituted, which is the same reason `peel` and the
+                    // walkers' `unwrap` strip them.
+                    //
+                    // A closure literal is the exception: its statements are part of the value rather than a
+                    // wrapper around one, so it keeps the default traversal. Dropping them would strand
+                    // `Closure.meth` and destroy the redex `betaReduceFully` looks for, and skipping the body
+                    // would leave the bindings a projection inside it reads unresolved, which stops the
+                    // statement folding. That traversal rebuilds the `DefDef`, so its own check still applies,
+                    // but only to what a closure body actually holds rather than to every wrapper passed
+                    // through on the way.
+                    case in @ Inlined(_, _, expansion) =>
+                        if isClosureLiteral(expansion) then super.transformTerm(in)(owner)
+                        else transformTerm(expansion)(owner)
+                    case bl @ Block(_, expr) =>
+                        if isClosureLiteral(expr) then super.transformTerm(bl)(owner)
+                        else transformTerm(expr)(owner)
                     case other => super.transformTerm(other)(owner)
                 termMemo.put(t, result)
                 result
@@ -1167,12 +1239,19 @@ object FromExprDerived:
                 // The constructor head must name THIS case class, otherwise a 0-arg case class
                 // (`Default()`) would match any term reducing to a non-`Apply` head, and an n-arg
                 // case class would match any unrelated n-arg `Apply`.
+                def isSyntheticCopy(sym: Symbol): Boolean =
+                    try sym.flags.is(Flags.Synthetic)
+                    catch case _: Throwable => false
                 def headMatches(head: Term): Boolean =
                     head match
                         case Select(New(tpt), "<init>") => tpt.tpe.typeSymbol.name == caseClassName
                         case Select(qual, "apply") =>
                             val n = qual.symbol.name
                             n == caseClassName || n == caseClassName + "$"
+                        // See the sibling site: only the compiler's own `copy`, whose parameters ARE the case fields.
+                        case sel @ Select(qual, "copy") if isSyntheticCopy(sel.symbol) =>
+                            (try qual.tpe.widen.typeSymbol.name
+                            catch case _: Throwable => "") == caseClassName
                         case Ident("apply") => false
                         case _              => false
                 collectArgs(term, Nil) match
@@ -1801,7 +1880,12 @@ object FromExprDerived:
                                             case Inlined(_, _, inner) => unwrap(inner)
                                             case Block(_, inner)      => unwrap(inner)
                                             case Typed(inner, _)      => unwrap(inner)
-                                            case other                => other
+                                            // `f(name = value)`: the name is how the argument was written and says nothing about
+                                            // the value, which is what this matches on. A builder that copies itself with one
+                                            // field replaced passes that field by name, so without this the chunk it passes is
+                                            // not recognised as a chunk at all.
+                                            case NamedArg(_, inner) => unwrap(inner)
+                                            case other              => other
                                     // Resolve inline-expansion `Block` `val` bindings so element matchers
                                     // receive binding-free trees (see `deriveProduct` / `resolveBindings`).
                                     val term = unwrap(kyo.internal.FromExprDerived.resolveBindings(x.asTerm))
@@ -1875,19 +1959,45 @@ object FromExprDerived:
                                                 case single                                                      => List(single)
                                             end match
                                         end tupleOrSingle
-                                        val elemsOpt: Option[List[Term]] =
-                                            term match
+                                        // The symbol behind a term, normalised the way `norm` is, so the shapes below can be
+                                        // recognised at any depth rather than only at the term this derivation started from.
+                                        def symbolOf(t: Term): String =
+                                            val n =
+                                                try t.symbol.fullName
+                                                catch case _: Throwable => ""
+                                            n.replace("$package", "").replace("$", "")
+                                        end symbolOf
+                                        // Every shape a chunk of pure data reaches this macro as. `++` is the one a builder that
+                                        // accumulates produces: `Update.Builder.set` appends to the specs it already holds, so an
+                                        // UPDATE arrives as `Chunk.empty ++ Chunk.from(...)` rather than as one literal chunk, and
+                                        // not recognising the concatenation is what kept every UPDATE off the static path. Both
+                                        // sides are themselves shapes recognised here, so the concatenation is as much data as
+                                        // either half.
+                                        def elemsOf(t: Term): Option[List[Term]] =
+                                            unwrap(t) match
+                                                case Apply(Select(left, "++"), List(right)) =>
+                                                    for
+                                                        l <- elemsOf(left)
+                                                        r <- elemsOf(right)
+                                                    yield l ++ r
+                                                case Apply(TypeApply(Select(left, "++"), _), List(right)) =>
+                                                    for
+                                                        l <- elemsOf(left)
+                                                        r <- elemsOf(right)
+                                                    yield l ++ r
+                                                case inner if endsWith(symbolOf(inner), "Chunk.empty") => Some(Nil)
                                                 case Apply(fun, List(reps))
                                                     if isChunkRef(fun) &&
-                                                        (endsWith(norm, "Chunk.apply") ||
-                                                            endsWith(norm, "IterableFactory.apply") ||
+                                                        (endsWith(symbolOf(fun), "Chunk.apply") ||
+                                                            endsWith(symbolOf(fun), "IterableFactory.apply") ||
                                                             // `Chunk.from(varargs)`, produced by inline-def varargs forwarding
                                                             // such as `Insert.Builder.values(rows: T*)` → `Chunk.from(rows)`.
-                                                            endsWith(norm, "Chunk.from")) =>
+                                                            endsWith(symbolOf(fun), "Chunk.from")) =>
                                                     extractElems(reps)
                                                 case Apply(Select(_, "toChunk"), List(arg)) =>
                                                     Some(tupleOrSingle(arg))
                                                 case _ => None
+                                        val elemsOpt: Option[List[Term]] = elemsOf(term)
                                         elemsOpt.flatMap { elems =>
                                             val lifted: List[Option[Any]] =
                                                 elems.map(e => innerFE.unapply(e.asExprOf[Any]))
@@ -2059,12 +2169,23 @@ object FromExprDerived:
                     // The constructor head must name THIS case class, otherwise a 0-arg case class
                     // (`Default()`) matches any non-`Apply` head and an n-arg case class matches any
                     // unrelated n-arg `Apply`.
+                    def isSyntheticCopy(sym: Symbol): Boolean =
+                        try sym.flags.is(Flags.Synthetic)
+                        catch case _: Throwable => false
                     def headMatches(head: Term): Boolean =
                         head match
                             case Select(New(tpt), "<init>") => tpt.tpe.typeSymbol.name == expectedCaseClassName
                             case Select(qual, "apply") =>
                                 val n = qual.symbol.name
                                 n == expectedCaseClassName || n == expectedCaseClassName + "$"
+                            // `receiver.copy(args)` rebuilds the same case class, and the compiler's own `copy` takes the
+                            // case fields in declaration order, which is exactly what the argument list below is read as.
+                            // Only the synthetic one: a class declaring its own suppresses it and is free to take a subset
+                            // or something else entirely, which would fold a neighbouring field to the wrong constant. A
+                            // refusal leaves the statement on the dynamic path, which renders the same SQL.
+                            case sel @ Select(qual, "copy") if isSyntheticCopy(sel.symbol) =>
+                                (try qual.tpe.widen.typeSymbol.name
+                                catch case _: Throwable => "") == expectedCaseClassName
                             case _ => false
                     // Resolve inline-expansion `Block` `val` bindings (see resolveBindings).
                     val term = kyo.internal.FromExprDerived.resolveBindings(x.asTerm)

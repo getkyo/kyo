@@ -186,6 +186,40 @@ class SqlExceptionTest extends Test:
         assert(ex.getMessage.contains("id"))
     }
 
+    "SqlDecodeColumnNotFoundException names the row's own columns" in {
+        val ex = SqlDecodeColumnNotFoundException("executionId", Chunk("execution_id", "flow_id", "status"))
+        assert(ex.columnName == "executionId")
+        assert(ex.availableColumns == Chunk("execution_id", "flow_id", "status"))
+        assert(ex.message.contains("execution_id, flow_id, status"), ex.message)
+    }
+
+    /** A field name that matches a column up to casing is the shape a SqlNaming that did not reach the query leaves behind.
+      *
+      * The given is resolved at the call site of the run, so one declared in an object the run is not inside of (a companion, another
+      * method) is not applied, and every field then looks for its verbatim Scala name against snake_case columns. The failure is a
+      * column-not-found at the first decode, which said only that the column was missing.
+      */
+    "SqlDecodeColumnNotFoundException points at the casing when only the casing differs" in {
+        val ex = SqlDecodeColumnNotFoundException("executionId", Chunk("execution_id", "flow_id"))
+        assert(ex.message.contains("differs from 'executionId' only in casing"), ex.message)
+        assert(ex.message.contains("SqlNaming"), ex.message)
+        assert(ex.message.contains("call site of the run"), ex.message)
+    }
+
+    "SqlDecodeColumnNotFoundException says nothing about casing when nothing matches" in {
+        val ex = SqlDecodeColumnNotFoundException("total", Chunk("execution_id", "flow_id"))
+        // The rendered message carries the raising frame's source context, so the absence is asserted on the hint's own
+        // words rather than on "casing", which the enclosing leaf name would put in the frame regardless.
+        assert(!ex.message.contains("only in casing"), ex.message)
+        assert(ex.message.contains("the row has execution_id, flow_id"), ex.message)
+    }
+
+    "SqlDecodeColumnNotFoundException with no row to report keeps its original message" in {
+        val ex = SqlDecodeColumnNotFoundException("id")
+        assert(ex.message.contains("Column 'id' not found in row"), ex.message)
+        assert(!ex.message.contains("the row has"), ex.message)
+    }
+
     "SqlRequestMysqlLocalInfileRequiresLoadApiException names the dedicated API" in {
         val ex = SqlRequestMysqlLocalInfileRequiresLoadApiException()
         assert(ex.getMessage.contains("LOAD DATA LOCAL INFILE"))

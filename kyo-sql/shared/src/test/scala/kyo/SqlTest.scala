@@ -23,6 +23,7 @@ class SqlTest extends Test:
     case class Survey(id: Long, opinion: Maybe[Boolean]) derives SqlSchema
     case class Reading(id: Long, celsius: Maybe[Int], ratio: Double) derives SqlSchema
     case class Sale(region: String, product: Maybe[String], amount: Int) derives SqlSchema
+    case class Tally(id: Long, small: Byte, mid: Short, huge: BigInt) derives SqlSchema
 
     val people      = Sql.from[Person]("p")
     val departments = Sql.from[Department]("d")
@@ -316,6 +317,222 @@ class SqlTest extends Test:
 
         assert(!typeChecks("Sql.from[Person](\"p\").where(c => c.p.age == Absent)"))
         assert(!typeChecks("Sql.from[Person](\"p\").where(c => c.p.name != Absent)"))
+    }
+
+    // The raw-value comparison that crosses nullability goes one way only: a column permitting NULL against a plain
+    // literal. The other way round is a column that cannot be NULL against a value that may be, and no row can
+    // satisfy it in either polarity: `= NULL` is UNKNOWN for every row, `NOT UNKNOWN` is UNKNOWN too, and a WHERE
+    // keeps neither, so the query answers nothing and so does its negation. A predicate no row can satisfy either way
+    // is not a question worth asking, and it reports nothing at runtime, so it is a compile error. The `Term` forms
+    // keep the other direction, because a join between a nullable foreign key and the non-null key it references is
+    // written that way round as often as not.
+    "a raw value that may be absent is only compared against a column that may be" in {
+        assert(typeChecks("Sql.from[Customer](\"c\").where(c => c.c.email == \"a@b\")"))
+        assert(typeChecks("val e: Maybe[String] = Present(\"a@b\"); Sql.from[Customer](\"c\").where(c => c.c.email == e)"))
+        assert(typeChecks(
+            "Sql.from[Person](\"p\").innerJoin(Sql.from[Customer](\"c\")).on(j => j.p.name == j.c.email)"
+        ))
+        assert(typeChecks(
+            "Sql.from[Customer](\"c\").innerJoin(Sql.from[Person](\"p\")).on(j => j.c.email == j.p.name)"
+        ))
+
+        assert(!typeChecks("val n: Maybe[String] = Present(\"x\"); Sql.from[Person](\"p\").where(c => c.p.name == n)"))
+        assert(!typeChecks("val n: Maybe[String] = Present(\"x\"); Sql.from[Person](\"p\").where(c => c.p.name != n)"))
+        assert(!typeChecks("val a: Maybe[Int] = Present(1); Sql.from[Person](\"p\").where(c => c.p.age > a)"))
+        assert(!typeChecks("val a: Maybe[Int] = Present(1); Sql.from[Person](\"p\").where(c => c.p.age <= a)"))
+    }
+
+    // Lifting a value with `Sql.literal` is the other door into the same comparison, and it used to be open: the
+    // lifted term is a `Term[Maybe[A]]`, which the column-to-column evidence admits against a NOT NULL column
+    // because comparing two COLUMNS across nullability is the ordinary join. A lifted value is not a column, so it
+    // follows the raw-value rule instead.
+    "a lifted value that may be absent is only compared against a column that may be" in {
+        // Allowed: the lifted value has the column's own type.
+        assert(typeChecks("Sql.from[Person](\"p\").where(c => c.p.age > Sql.literal(18))"))
+        assert(typeChecks("Sql.from[Person](\"p\").where(c => c.p.name == Sql.literal(\"ada\"))"))
+        // Allowed: the column permits NULL and the lifted value does not.
+        assert(typeChecks("Sql.from[Customer](\"c\").where(c => c.c.email == Sql.literal(\"a@b\"))"))
+
+        // Refused: a lifted value that may be absent against a column that may not. This renders `= ?` with a NULL
+        // bind, which is the statement the raw form is refused for.
+        assert(!typeChecks(
+            "val e: Maybe[String] = Absent; Sql.from[Person](\"p\").where(c => c.p.name == Sql.literal(e))"
+        ))
+        assert(!typeChecks(
+            "val e: Maybe[String] = Absent; Sql.from[Person](\"p\").where(c => c.p.name != Sql.literal(e))"
+        ))
+        assert(!typeChecks(
+            "val a: Maybe[Int] = Absent; Sql.from[Person](\"p\").where(c => c.p.age >= Sql.literal(a))"
+        ))
+
+        // The join keeps working, which is what the column-to-column evidence exists for and what a blanket
+        // tightening would have broken.
+        assert(typeChecks(
+            "Sql.from[Person](\"p\").innerJoin(Sql.from[Customer](\"c\")).on(j => j.p.name == j.c.email)"
+        ))
+
+        // The control the negations above need. Lifting a `Maybe` is legal on its own and compiles against a column
+        // that permits NULL, so the refusals are about the direction of the comparison rather than about
+        // `Sql.literal` rejecting a `Maybe` outright. Without this, a missing `SqlSchema.Column[Maybe[String]]`
+        // would satisfy every negation for a reason unrelated to the property under test.
+        assert(typeChecks("val e: Maybe[String] = Absent; val t: Term[Maybe[String]] = Sql.literal(e)"))
+        assert(typeChecks(
+            "val e: Maybe[String] = Absent; Sql.from[Customer](\"c\").where(c => c.c.email == Sql.literal(e))"
+        ))
+    }
+
+    // The same rule approached from the other side. `Sql.literal(e) == column` puts the lifted value on the
+    // receiver, so the ARGUMENT is a plain column rather than a `Literal` and the lifted evidence is never
+    // consulted; the column-to-column rule admits it through `SqlComparable.leftOptional`, and the statement
+    // renders `? = "name"` with a NULL bind. That is the same never-matching predicate the form above is refused
+    // for, written the other way round.
+    "a lifted value that may be absent is refused on the left of the comparison too" in {
+        assert(!typeChecks(
+            "val e: Maybe[String] = Absent; Sql.from[Person](\"p\").where(c => Sql.literal(e) == c.p.name)"
+        ))
+        assert(!typeChecks(
+            "val e: Maybe[String] = Absent; Sql.from[Person](\"p\").where(c => Sql.literal(e) != c.p.name)"
+        ))
+        assert(!typeChecks(
+            "val a: Maybe[Int] = Absent; Sql.from[Person](\"p\").where(c => Sql.literal(a) <= c.p.age)"
+        ))
+
+        // The control the negations need: the same shape against a column that DOES permit NULL still compiles,
+        // so the refusals are about the direction rather than about a lifted `Maybe` failing to be a term at all.
+        assert(typeChecks(
+            "val e: Maybe[String] = Absent; Sql.from[Customer](\"c\").where(c => Sql.literal(e) == c.c.email)"
+        ))
+        assert(typeChecks(
+            "Sql.from[Person](\"p\").where(c => Sql.literal(\"ada\") == c.p.name)"
+        ))
+    }
+
+    // Two more doors into the same never-matching predicate, both closed by the receiver-aware evidence.
+    //
+    // Lifted against lifted is two VALUES, so the argument that keeps a nullability crossing for a column does not
+    // reach it in either order: `? = ?` with one NULL bind matches nothing exactly as `? = "col"` does.
+    "two lifted values compare only at the same type, in both orders" in {
+        assert(!typeChecks(
+            "val e: Maybe[String] = Absent; Sql.from[Person](\"p\").where(_ => Sql.literal(e) == Sql.literal(\"ada\"))"
+        ))
+        assert(!typeChecks(
+            "val e: Maybe[String] = Absent; Sql.from[Person](\"p\").where(_ => Sql.literal(\"ada\") == Sql.literal(e))"
+        ))
+        // Controls: equal types compare, whether or not they permit NULL.
+        assert(typeChecks("Sql.from[Person](\"p\").where(_ => Sql.literal(\"ada\") == Sql.literal(\"bob\"))"))
+        assert(typeChecks(
+            "val e: Maybe[String] = Absent; val f: Maybe[String] = Absent; Sql.from[Person](\"p\").where(_ => Sql.literal(e) == Sql.literal(f))"
+        ))
+    }
+
+    // The raw-value and pattern doors, on a lifted receiver.
+    "a lifted value that may be absent takes neither a raw comparison nor a pattern test" in {
+        assert(!typeChecks(
+            "val e: Maybe[String] = Absent; Sql.from[Person](\"p\").where(_ => Sql.literal(e) == \"ada\")"
+        ))
+        assert(!typeChecks(
+            "val e: Maybe[String] = Absent; Sql.from[Person](\"p\").where(_ => Sql.literal(e).like(\"a%\"))"
+        ))
+        // Controls: a lifted PRESENT value takes both, and a nullable COLUMN still takes both.
+        assert(typeChecks("Sql.from[Person](\"p\").where(_ => Sql.literal(\"ada\").like(\"a%\"))"))
+        assert(typeChecks("Sql.from[Customer](\"c\").where(c => c.c.email.like(\"a%\"))"))
+        assert(typeChecks("Sql.from[Customer](\"c\").where(c => c.c.email == \"a@b\")"))
+    }
+
+    // The lifted spelling reached the six comparison operators but not membership or range, so a value that could
+    // be compared could not be tested for membership: the allowed direction did not compile at all. These pin both
+    // halves, so the lifted form cannot be added in one direction only.
+    // Membership and range against a LIFTED value, which the six comparison operators grew a dedicated form for and
+    // these did not. The safety property still holds here without one, because it falls out of the element type
+    // rather than out of evidence: `in` takes `Term[A]*`, and a lifted value that may be absent is a
+    // `Term[Maybe[A]]`, which is not the `Term[A]` a NOT NULL column's form accepts.
+    "membership and range refuse a lifted value that may be absent" in {
+        assert(!typeChecks(
+            "val e: Maybe[String] = Absent; Sql.from[Person](\"p\").where(c => c.p.name.in(Sql.literal(e)))"
+        ))
+        assert(!typeChecks(
+            "val e: Maybe[String] = Absent; Sql.from[Person](\"p\").where(c => c.p.name.notIn(Sql.literal(e)))"
+        ))
+        assert(!typeChecks(
+            "val a: Maybe[Int] = Absent; Sql.from[Person](\"p\").where(c => c.p.age.between(Sql.literal(a), Sql.literal(a)))"
+        ))
+
+        // A lifted value of the column's own type is accepted by the `Term[A]*` form, so the lifted spelling works
+        // here without a dedicated overload.
+        assert(typeChecks("Sql.from[Person](\"p\").where(c => c.p.name.in(Sql.literal(\"ada\")))"))
+        assert(typeChecks("Sql.from[Person](\"p\").where(c => c.p.age.between(Sql.literal(1), Sql.literal(9)))"))
+
+        // Crossing nullability with a lifted value has no form: `Term[A]*` wants the column's own type, and adding a
+        // `Literal[B]*` overload beside it is ambiguous against exactly that form, which the same shape at a single
+        // argument is not. The raw form is the spelling for this case and it carries the same one-way rule.
+        assert(!typeChecks("Sql.from[Customer](\"c\").where(c => c.c.email.in(Sql.literal(\"a@b\")))"))
+        assert(typeChecks("Sql.from[Customer](\"c\").where(c => c.c.email.in(\"a@b\"))"))
+    }
+
+    // The rule `==` follows reached six operators of the fifteen a column has. The rest still took the column's own
+    // type exactly, so a nullable column could be compared to a plain value but not tested for membership in one,
+    // and the pattern operators were gated on `A =:= String`, which left a nullable text column without `like` at
+    // all, in either form.
+    "membership and range over raw values cross nullability the way equality does" in {
+        assert(typeChecks("Sql.from[Customer](\"c\").where(c => c.c.email.in(\"a@b\", \"c@d\"))"))
+        assert(typeChecks("Sql.from[Customer](\"c\").where(c => c.c.email.notIn(\"a@b\"))"))
+        assert(typeChecks("Sql.from[Reading](\"r\").where(c => c.r.celsius.between(0, 100))"))
+
+        // The column's own type still works, which is the overload that was already there.
+        assert(typeChecks("Sql.from[Person](\"p\").where(c => c.p.age.in(1, 2))"))
+        assert(typeChecks("Sql.from[Person](\"p\").where(c => c.p.age.between(0, 100))"))
+
+        // And the direction that renders a comparison against NULL is still refused.
+        assert(!typeChecks("val e: Maybe[String] = Absent; Sql.from[Person](\"p\").where(c => c.p.name.in(e))"))
+        assert(!typeChecks("val a: Maybe[Int] = Absent; Sql.from[Person](\"p\").where(c => c.p.age.between(a, a))"))
+    }
+
+    // The `SqlNumeric` and `SqlIntegral` givens added for Short, Byte and BigInt shipped with only Short
+    // exercised. These pin the result types the servers actually return, in both directions: the type that is
+    // right typechecks, and the operand's own type does not, so a given typed as its operand cannot satisfy them.
+    "sum over a Byte column widens to Long, as it does over Short and Int" in {
+        assert(typeChecks("""val q: Query[Maybe[Long]] = Sql.from[Tally]("t").sum(_.t.small)"""))
+        assert(!typeChecks("""val q: Query[Maybe[Byte]] = Sql.from[Tally]("t").sum(_.t.small)"""))
+        assert(!typeChecks("""val q: Query[Maybe[Int]] = Sql.from[Tally]("t").sum(_.t.small)"""))
+    }
+
+    "sum over a BigInt column widens to BigDecimal, which is what an exact aggregate returns" in {
+        assert(typeChecks("""val q: Query[Maybe[BigDecimal]] = Sql.from[Tally]("t").sum(_.t.huge)"""))
+        assert(!typeChecks("""val q: Query[Maybe[BigInt]] = Sql.from[Tally]("t").sum(_.t.huge)"""))
+    }
+
+    "avg over Byte and BigInt is BigDecimal, as over any exact operand" in {
+        assert(typeChecks("""val q: Query[Maybe[BigDecimal]] = Sql.from[Tally]("t").avg(_.t.small)"""))
+        assert(typeChecks("""val q: Query[Maybe[BigDecimal]] = Sql.from[Tally]("t").avg(_.t.huge)"""))
+        assert(!typeChecks("""val q: Query[Maybe[Double]] = Sql.from[Tally]("t").avg(_.t.small)"""))
+    }
+
+    "division over an integral column answers BigDecimal, which is what the truncation-avoiding cast returns" in {
+        // The one with non-obvious behavior: an integral `/` renders a cast so the server does not truncate, so
+        // the result is not the operand's type. Pinned for each integral width the givens now cover.
+        assert(typeChecks("""val q: Select[?, BigDecimal, ?] = Sql.from[Tally]("t").select(r => r.t.small / 2.toByte)"""))
+        assert(typeChecks("""val q: Select[?, BigDecimal, ?] = Sql.from[Tally]("t").select(r => r.t.mid / 2.toShort)"""))
+        assert(!typeChecks("""val q: Select[?, Byte, ?] = Sql.from[Tally]("t").select(r => r.t.small / 2.toByte)"""))
+        assert(!typeChecks("""val q: Select[?, Short, ?] = Sql.from[Tally]("t").select(r => r.t.mid / 2.toShort)"""))
+    }
+
+    "a text column that permits NULL has the pattern operators" in {
+        assert(typeChecks("Sql.from[Customer](\"c\").where(c => c.c.email.like(\"a%\"))"))
+        assert(typeChecks("Sql.from[Customer](\"c\").where(c => c.c.email.ilike(\"A%\"))"))
+        assert(typeChecks("Sql.from[Customer](\"c\").where(c => c.c.email.notLike(\"a%\"))"))
+        assert(typeChecks("Sql.from[Customer](\"c\").where(c => c.c.email.notIlike(\"A%\"))"))
+
+        // The non-null column keeps them.
+        assert(typeChecks("Sql.from[Person](\"p\").where(c => c.p.name.like(\"a%\"))"))
+
+        // A column that holds neither String nor Maybe[String] still has none of them, which is what says the
+        // evidence widened the text case rather than admitting anything.
+        assert(!typeChecks("Sql.from[Person](\"p\").where(c => c.p.age.like(\"a%\"))"))
+        assert(!typeChecks("Sql.from[Reading](\"r\").where(c => c.r.celsius.like(\"a%\"))"))
+
+        // The operators that RETURN text keep the stricter gate, since a nullable operand's result is nullable and
+        // this substitution would lose that.
+        assert(!typeChecks("Sql.from[Customer](\"c\").select(c => c.c.email.upper)"))
     }
 
     // `Sql.default` is the `DEFAULT` keyword, which every server accepts in an assignment and nowhere else. It is

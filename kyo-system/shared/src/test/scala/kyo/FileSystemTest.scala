@@ -14,7 +14,43 @@ class FileSystemTest extends kyo.test.Test[Any]:
       */
     final private class IsolatedFileSystem(root: Path) extends FileSystem.Write[Sync]:
         private val delegate = FileSystem.host
-        export delegate.{read as _, write as _, *}
+        // Delegated by name, not a wildcard: a wildcard emits one forwarder per member in an order
+        // the compiler does not fix, so this class's TASTy differs between clean builds, which
+        // reaches the doctest classpath fingerprint and costs the module its cached results.
+        // `read` and `write` are absent because this class overrides them below. Omitting any other
+        // member fails to compile, since the class must implement all of FileSystem.Write.
+        export delegate.append
+        export delegate.appendBytes
+        export delegate.appendLines
+        export delegate.copy
+        export delegate.defaultCaseSensitivity
+        export delegate.exists
+        export delegate.isDirectory
+        export delegate.isRegularFile
+        export delegate.isSymbolicLink
+        export delegate.list
+        export delegate.mkDir
+        export delegate.mkFile
+        export delegate.move
+        export delegate.openRead
+        export delegate.openReadLines
+        export delegate.openWalk
+        export delegate.openWrite
+        export delegate.readBytes
+        export delegate.readLines
+        export delegate.realPath
+        export delegate.remove
+        export delegate.removeAll
+        export delegate.removeExisting
+        export delegate.setLastModified
+        export delegate.size
+        export delegate.stat
+        export delegate.tempDir
+        export delegate.truncate
+        export delegate.writeBytes
+        export delegate.writeChunk
+        export delegate.writeLines
+        export delegate.writeString
         def write(path: Path, value: String, options: Path.WriteOptions)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
             delegate.write(root / path, value, options)
         def read(path: Path)(using Frame): String < (Sync & Abort[FileReadException]) =

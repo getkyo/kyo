@@ -7,7 +7,7 @@ name: build
 # Serial within a target: SBT_TASK_LIMIT=1 (set in env below) runs one sbt task at a time inside
 # each job, bounding peak memory to a single module's compile/link/test on the 16GB runners.
 #
-# Parallel across os poles: the parent workflow (ci.yml) calls this workflow once per pole.
+# Parallel across os poles: the calling workflow (ci.yml, or ci-dispatch.yml) calls this once per pole.
 # Those calls have no `needs:` between them so the poles run as independent CI jobs.
 on:
   workflow_call:
@@ -21,10 +21,10 @@ on:
         type: string
         required: true
       targets:
-        description: 'Space-separated platform subset the matrix runs (subset of JVM JS Native Wasm).'
+        description: 'JSON array of platforms the matrix runs (subset of ["JVM","JS","Native","Wasm"]).'
         type: string
         required: false
-        default: 'JVM JS Native Wasm'
+        default: '["JVM","JS","Native","Wasm"]'
       mode:
         description: 'Run-shape selector: full -> test, diff -> testDiff, custom -> the command escape hatch.'
         type: string
@@ -37,20 +37,10 @@ on:
         default: ''
 
 jobs:
-  prep:
-    runs-on: ubuntu-latest
-    outputs:
-      targets: ${{ steps.parse.outputs.targets }}
-    steps:
-      - id: parse
-        env:
-          TARGETS: ${{ inputs.targets }}
-        run: |
-          arr=$(jq -cn --arg s "$TARGETS" '$s | split(" ") | map(select(length > 0))')
-          echo "targets=$arr" >> "$GITHUB_OUTPUT"
-
+  # `targets` arrives as a JSON array so the matrix reads it directly. Parsing it in a separate
+  # job would cost a full runner slot per pole to do no work, and every build here would wait
+  # behind that acquisition.
   build:
-    needs: prep
     # JVM full runs peak at ~95-100 min on Linux (browser/UI/caliban suites serialize under a
     # shared Chrome instance that cannot take concurrent CDP connections) and run slower on the
     # Windows pole, where runner-slot contention has pushed a full JVM run past 180 min. The binding
@@ -64,10 +54,11 @@ jobs:
       fail-fast: false
       max-parallel: 4
       matrix:
-        # prep parses inputs.targets (space-separated) into a JSON array via jq.
-        # An empty or all-blank targets value produces an empty array, so the matrix
-        # spawns zero jobs rather than one invalid job.
-        target: ${{ fromJSON(needs.prep.outputs.targets) }}
+        # Never empty. An empty vector does not spawn zero jobs; it fails with "Matrix vector
+        # 'target' does not contain any values". Emptiness is handled by the callers (ci.yml over a
+        # constant list, ci-dispatch.yml by dropping a pole whose intersection came out empty);
+        # there is no equivalent move available here.
+        target: ${{ fromJSON(inputs.targets) }}
     runs-on: ${{ inputs.runner-image }}
     env:
       # Serialize the whole CI build: one sbt task at a time. Compile and Scala.js/Wasm link run

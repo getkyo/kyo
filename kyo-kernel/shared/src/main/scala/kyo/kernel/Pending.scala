@@ -410,7 +410,12 @@ object `<`:
                         if kyo.tag =:= Tag[Defer] =>
                         evalLoop(kyo((), Context.empty))
                     case kyo: KyoSuspend[?, ?, ?, ?, A, Any] @unchecked =>
-                        bug.failTag(kyo, Tag[Any])
+                        // A KyoSuspend is a member of the union `<` expands to, so the cast states a
+                        // conformance that holds by construction. It is needed because this body is
+                        // inline: expanded into user code and re-checked under -Xcheck-macros, `<` is
+                        // seen through an inline proxy the compiler does not substitute into the union,
+                        // leaving the un-proxied KyoSuspend nothing to conform to. Erased.
+                        bug.failTag(kyo.asInstanceOf[A < Any], Tag[Any])
                     case v =>
                         v.unsafeGet
                 end match
