@@ -330,20 +330,54 @@ Three further parameters describe what happens at the edges of the extent, and e
 
 > **Note:** handler resolution and binding resolution follow different rules. A handler is found by subtyping, so a handler for a subtype answers a supertype's operations and not the reverse. A binding is found by exact tag equality, so a binding for one `ContextEffect` never answers a read of another.
 
-### The continuation as a value
+### A transformation you can hold
 
-Most handlers never build an `Arrow`; they apply the one they are given. Handlers that construct their own continuations, and code that wants a reusable transformation as a value, build them directly:
+So far a computation has been the thing you compose and a handler the thing that consumes it. `Arrow[A, B, S]` is the third piece: a transformation from an `A` to a `B` that may perform `S` on the way, reified as an ordinary value. Reach for one when a transformation has to outlive the expression that built it, so it can be stored, passed around, composed with another, and applied whenever the holder decides.
 
 ```scala
-val plusOne: Arrow[Int, Int, Any] = Arrow(x => x + 1)
-val plusTwo: Arrow[Int, Int, Any] = plusOne.chain(plusOne)
-val sumTo: Arrow[Int, Int, Any]   = Arrow.recursive((self, x) => if x == 0 then 0 else self(x - 1).map(_ + x))
+val doubleIt: Arrow[Int, Int, Any]  = Arrow(n => n * 2)
+val addAnswer: Arrow[Int, Int, Ask] = Arrow(n => ask.map(_ + n))
+val pipeline: Arrow[Int, Int, Ask]  = doubleIt.chain(addAnswer)
+val same: Arrow[Int, Int, Any]      = Arrow.id[Int]
 
-assert(answering(1)(ask.map(a => plusTwo(a))).eval == 3)
-assert(sumTo(4).eval == 10)
+assert(doubleIt(5).eval == 10)
+assert(answering(1)(pipeline(5)).eval == 11)
+assert(same.chain(doubleIt)(4).eval == 8)
 ```
 
-`Arrow.id` is the identity arrow, `chain` composes two, and `Arrow.recursive` hands the body a reference to the arrow being defined, so a recursion runs through the interpreter rather than the JVM stack. An `Arrow` also exposes `frame`, `head` and `tail`, which is what a consumer walking a continuation reads. `Effect.defer` reifies the application of a continuation as a node; it is kernel plumbing that the inline expansions and generated arrow classes call, not something user code writes.
+`Arrow(f)` builds one from an ordinary `A => B < S`, and applying it with `arrow(v)` answers a computation rather than a value, which is how an arrow gets to perform effects of its own: `addAnswer` suspends `Ask`, and that shows up as the third type parameter. `chain` composes two by feeding the first result into the second, intersecting both rows. `Arrow.id` returns its input untouched and is the neutral element of that composition, so a fold over a collection of arrows has somewhere to start.
+
+This is the same type a handler clause is handed. The `cont` in a `handleCont` clause is an `Arrow` from the operation's answer to the region's result, so everything above applies to it: nothing ties it to the frame the operation suspended from, and nothing requires it to be applied where it was received, or only once.
+
+```scala
+var stashed = Maybe.empty[Arrow[Int, Int, Ask]]
+
+val captured: Int < Any =
+    ArrowEffect.handleCont(Tag[Ask], ask.map(_ + 1))(
+        [C] =>
+            (_, cont) =>
+                stashed = Maybe(cont)
+                cont(0)
+        ,
+        a => a
+    )
+
+assert(captured.eval == 1)
+assert(stashed.map(k => answering(0)(k(41)).eval) == Maybe(42))
+```
+
+The region completed with the answer `0`, and the continuation it handed the clause was still a perfectly good arrow afterwards, applied from outside the handler, with a different answer, long after the region it came from was done.
+
+`Arrow.recursive` builds one that can re-enter itself. Its body receives the arrow being defined alongside the value, so a step that loops names `self` rather than constructing a fresh arrow per iteration:
+
+```scala
+val askTimes: Arrow[Int, Int, Ask] =
+    Arrow.recursive((self, n) => if n == 0 then 0 else ask.map(a => self(n - 1).map(_ + a)))
+
+assert(answering(2)(askTimes(3)).eval == 6)
+```
+
+`Arrow` also carries members belonging to the evaluator's protocol rather than to callers, the two-argument `apply` and the `head`/`tail` split among them: they are public only because inline expansions have to reach them, and user code has no reason to call them. The same holds for `Effect.defer`, which reifies the application of a continuation as a node for those expansions to hand back.
 
 ## Failure and resources
 
