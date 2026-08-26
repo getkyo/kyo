@@ -37,6 +37,11 @@ private[net] enum CapabilityOutcome derives CanEqual:
       * libc gate passes on a host with no bundled shim used to win selection and then die per connection at the first bundled-shim call, so
       * the probe reaches this outcome and the backend demotes at selection time instead. Carries the library id the loader could not resolve
       * and the platform tag it searched for.
+      *
+      * On the JVM this is usually a missing line in the reader's build rather than a gap in what kyo publishes, which is why
+      * [[describe]] names the line: kyo-net ships each platform's native as a CLASSIFIER artifact, and the platform tag here IS the
+      * classifier string. Read as a bare statement about kyo's release contents ("not bundled for darwin-aarch64"), it costs hours on the
+      * wrong hypothesis, and it silently leaves the application on the NIO floor while every test still passes.
       */
     case NotBundled(libraryId: String, platform: String)
 
@@ -57,10 +62,12 @@ private[net] enum CapabilityOutcome derives CanEqual:
 
     /** One line for the selection report and for the terminal exception's cause. */
     def describe: String = this match
-        case Available                 => "available"
-        case UnsupportedOS             => "not applicable to this OS/runtime"
-        case Unavailable(reason)       => s"unavailable ($reason)"
-        case NotBundled(id, platform)  => s"native library '$id' is not bundled for $platform"
+        case Available           => "available"
+        case UnsupportedOS       => "not applicable to this OS/runtime"
+        case Unavailable(reason) => s"unavailable ($reason)"
+        case NotBundled(id, platform) =>
+            s"native library '$id' is not on the classpath for $platform; on the JVM, add kyo-net's $platform classifier artifact, " +
+                s"""libraryDependencies += "io.getkyo" %% "kyo-net" % <version> classifier "$platform""""
         case VersionTooOld(have, need) => s"native version $have is below the required $need"
         case ProbeFailed(cause)        => s"probe failed (${NetException.show(cause)})"
 

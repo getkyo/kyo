@@ -20,7 +20,7 @@ class TransportPerOperationConfigTest extends Test:
     import AllowUnsafe.embrace.danger
 
     private def assumeTls(): Unit =
-        if !TlsProviderPlatform.registered.exists(_.probe.isAvailable) then cancel("no TLS provider available on this backend")
+        if !TlsProviderPlatform.hasAvailableEngine then cancel("no TLS engine provider is available on this host")
 
     // 192.0.2.1 is in RFC 5737 TEST-NET-1: reserved and routable but unanswered, so a TCP connect parks in SYN_SENT until a deadline fires
     // rather than being refused. The same black hole TransportConnectTimeoutProducedTest uses.
