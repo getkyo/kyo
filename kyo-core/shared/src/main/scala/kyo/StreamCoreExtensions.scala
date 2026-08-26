@@ -1183,4 +1183,28 @@ object StreamCoreExtensions:
 
 end StreamCoreExtensions
 
-export StreamCoreExtensions.*
+export StreamCoreExtensions.StreamHub
+export StreamCoreExtensions.broadcast2
+export StreamCoreExtensions.broadcast3
+export StreamCoreExtensions.broadcast4
+export StreamCoreExtensions.broadcast5
+export StreamCoreExtensions.broadcastDynamic
+export StreamCoreExtensions.broadcastDynamicWith
+export StreamCoreExtensions.broadcasted
+export StreamCoreExtensions.broadcastN
+export StreamCoreExtensions.collectAll
+export StreamCoreExtensions.collectAllHalting
+export StreamCoreExtensions.defaultAsyncStreamBufferSize
+export StreamCoreExtensions.fromInputStream
+export StreamCoreExtensions.fromIterator
+export StreamCoreExtensions.groupedWithin
+export StreamCoreExtensions.mapChunkPar
+export StreamCoreExtensions.mapChunkParUnordered
+export StreamCoreExtensions.mapPar
+export StreamCoreExtensions.mapParUnordered
+export StreamCoreExtensions.merge
+export StreamCoreExtensions.mergeHalting
+export StreamCoreExtensions.mergeHaltingLeft
+export StreamCoreExtensions.mergeHaltingRight
+export StreamCoreExtensions.readBufferCapacity
+export StreamCoreExtensions.streamFromJavaInputStream

@@ -5,6 +5,10 @@ package kyo
   * These live in kyo-system rather than kyo-core because they are typed in terms of [[kyo.Path]] and [[kyo.FileWriteException]]. Keeping
   * them in kyo-core would make kyo-core depend on kyo-system, which already depends on kyo-core.
   *
+  * The members are re-exported below by name rather than with `export StreamSystemExtensions.*`. A wildcard export emits one forwarder per
+  * member into this file's synthetic `$package` class, and the compiler orders those forwarders differently between runs, so two clean
+  * builds of identical sources emit different class files. Naming the members keeps the emission source-ordered and the build reproducible.
+  *
   * @see
   *   [[kyo.Path]] for the path type these sinks target
   */
@@ -126,4 +130,5 @@ object StreamSystemExtensions:
 
 end StreamSystemExtensions
 
-export StreamSystemExtensions.*
+export StreamSystemExtensions.writeLinesTo
+export StreamSystemExtensions.writeTo
