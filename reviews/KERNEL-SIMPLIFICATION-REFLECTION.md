@@ -116,12 +116,19 @@ fallback, now honestly available because the mechanism is completely named.
 with one slot, and make every kernel construction site compose into it with the region-aware
 discipline (`AndThen` when the facts are statically known, which they are at the kernel's own
 wrap sites: a map's arrow is a plain Step; a handle's is a region and stays eval-visible). The
-eval's Defer arm then pushes ONE entry, so an effectful loop iteration sits at `pos == 1` and
-the EXISTING gate admits it; `nextAnswer` needs one compose rule instead of arity cases; the
-third gate arm from the patch lane dissolves. Risks to check: `parkable`'s receiver walk must
-still see a `BindingStep` through an `AndThen` head; `EffectTrace` walks `contA`/`contB` for
-frames; the 3-arg defer's O(1)-accumulation argument (composing at construction is still one
-node, so the argument may be void, but that is a claim to measure).
+eval's Defer arm then pushes ONE entry, so an effectful loop iteration sits at `pos == 1`; the
+gate must learn to admit it, because a fused entry is an `AndThen`, which is a `Cont` but not a
+`Step`, and the three gates test `Step`. The gate change is itself a simplification: `Cont` is
+the designed name for a normalized region-free run, and `Cont` and `Region` are disjoint by
+construction. `nextAnswer` needs one compose rule instead of arity cases; the third gate arm
+from the patch lane dissolves. Risks to check: `parkable`'s receiver walk must still see a
+`BindingStep` through an `AndThen` head; `EffectTrace` walks `contA`/`contB` for frames;
+`Stack.dump`'s fold sends a non-`Step` entry through `chain`, so a fused `AndThen` under
+further steps would capture as a deferring `Chain` and regress trailing-map delivery unless the
+fold gains a bounded append arm; and fusion must stay depth-bounded, because universal
+construction-time composition right-appends into a head-first `AndThen` at O(depth) per wrap,
+the fused-wrapper failure the skill's catalog records (the O(1)-accumulation argument holds at
+depth 1 only).
 
 **D2. Fold into the suspension.** Generalize suspendWith's law: a region-free transform over a
 suspension IS the suspension with the transform composed into its cont
@@ -177,3 +184,28 @@ is the horizon if the numbers support it.
    region-free delivery) without touching the representation?
 5. In what order should the probes run, and what is the minimal probe for each direction that
    produces a decisive number before any real investment?
+
+## 8. Corrections after the held-out advisory
+
+The advisory (`reviews/KERNEL-SIMPLIFICATION-ADVISORY.md`) verified this report's mechanism map
+against source and flagged three factual problems, each confirmed against the code and corrected
+above:
+
+1. The D1 sketch originally claimed the existing `pos == 1` gate admits the fused shape. Wrong:
+   the fused entry is an `AndThen`, a `Cont` but not a `Step`, and the gates test `Step`
+   (Arrow.scala declares `AndThen extends Cont` only; Eval.scala's three gates test
+   `entry(0).isInstanceOf[Arrow.Step]`). D1 requires the gate to classify by `Cont`.
+2. The D1 parenthetical suggesting the O(1)-accumulation argument "may be void" was misleading:
+   it holds only at fusion depth 1. Universal construction-time composition right-appends into a
+   head-first `AndThen` at O(depth) per wrap. This also rejects D2 as a universal law; D2's
+   narrowed form already exists as `Handler.resuspend` at bail sites.
+3. The D1 risk list omitted `Stack.dump`'s fold, which sends a non-`Step` entry through `chain`
+   (Stack.scala), so fused `AndThen` entries under further steps would capture as deferring
+   `Chain`s and regress trailing-map delivery without a bounded append arm in the fold.
+
+The advisory's own contributions beyond the corrections: the essential/incidental split (three
+essential commitments; the incidental part is consumers classifying by position, identity, and
+arity instead of the sealed `Cont`/`Region` vocabulary), the D1-staged three-edit cut (fusion law
+in the 2-arg `Effect.defer`, gate word `Step` to `Cont`, `nextAnswer` compose rule), the D4a
+midpoint, the eval dispatch dedup lane, and the P0 calibration probe (`fastPathsAllowed` already
+gates all three fast dispatches, so one flag flip prices the eval-general-path ceiling).
