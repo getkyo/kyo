@@ -69,7 +69,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # push and pull_request always run the same full matrix, so it is written out below in
+  # `build` rather than computed. `prep` exists only for workflow_dispatch, where the os
+  # and target inputs genuinely vary.
+  #
+  # Computing it for every event cost four runner slots per run that did zero work: this
+  # job plus one inside build.yml per pole, chained by `needs`, so each was a separate
+  # slot acquisition. Measured on a saturated queue, this job waited 88 minutes to do 0
+  # minutes of work, and the build.yml preps another 37 to 41 each, all before the first
+  # real build job could even be scheduled.
   prep:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     outputs:
       mode: ${{ steps.derive.outputs.mode }}
@@ -82,20 +92,9 @@ jobs:
           INPUT_OSES: ${{ inputs.oses }}
           INPUT_TARGETS: ${{ inputs.targets }}
         run: |
-          case "$EVENT_NAME" in
-            workflow_dispatch) mode="$INPUT_MODE" ;;
-            pull_request)      mode="diff" ;;
-            *)                 mode="full" ;;
-          esac
-
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            oses="$INPUT_OSES"
-            targets="$INPUT_TARGETS"
-          else
-            # Full matrix on push and pull_request: all three os poles across every supported target.
-            oses='linux-x64 linux-arm64 windows-x64'
-            targets='JVM JS Native Wasm'
-          fi
+          mode="$INPUT_MODE"
+          oses="$INPUT_OSES"
+          targets="$INPUT_TARGETS"
 
           for os in $oses; do
             case "$os" in
@@ -119,17 +118,41 @@ jobs:
                 else {os: ., image: "windows-latest", supported: ["JVM","JS"]}
                 end
               )
-            | map({os, image, targets: (.supported | map(. as $t | select($req | index($t))) | join(" "))})
-            | map(select(.targets != ""))')
+            | map({os, image, targets: (.supported | map(. as $t | select($req | index($t))))})
+            | map(select(.targets | length > 0))
+            | map({os, image, targets: (.targets | tojson)})')
 
           {
             echo "mode=$mode"
             echo "poles=$poles"
           } >> "$GITHUB_OUTPUT"
 
+  # push and pull_request: the matrix is a constant, so no prep job gates it and the ten
+  # build jobs enter their queues immediately. windows-x64 carries no Native or Wasm (the
+  # Native toolchain has no Windows port, and Scala.js's Wasm backend does not instantiate
+  # there), which is why its target list is shorter.
   build:
+    if: ${{ github.event_name != 'workflow_dispatch' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        pole:
+          - { os: linux-x64,   image: ubuntu-latest,    targets: '["JVM","JS","Native","Wasm"]' }
+          - { os: linux-arm64, image: ubuntu-24.04-arm, targets: '["JVM","JS","Native","Wasm"]' }
+          - { os: windows-x64, image: windows-latest,   targets: '["JVM","JS"]' }
+    uses: ./.github/workflows/build.yml
+    with:
+      os: ${{ matrix.pole.os }}
+      runner-image: ${{ matrix.pole.image }}
+      targets: ${{ matrix.pole.targets }}
+      # pull_request runs testDiff, push to main runs the full test.
+      mode: ${{ github.event_name == 'pull_request' && 'diff' || 'full' }}
+      ref: ${{ inputs.ref }}
+
+  # workflow_dispatch: poles and targets come from the inputs, so the matrix is computed.
+  build-dispatch:
     needs: prep
-    if: ${{ needs.prep.outputs.mode != 'custom' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode != 'custom' }}
     strategy:
       fail-fast: false
       matrix:
