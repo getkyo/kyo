@@ -57,17 +57,47 @@ object ZStreams:
         Tag[Emit[Chunk[A]]],
         ClassTag[A]
     ): ZStream[Any, E, A] =
-        type EmitType = Unit < (Emit[Chunk[A]] & Abort[E] & Async)
-
-        def peel(emit: EmitType): ZIO[Any, E, Option[(ZChunk[A], EmitType)]] =
-            ZIO.uninterruptibleMask: restore =>
-                restore(ZIOs.run(Emit.runFirst(emit))).map: (maybeChunk, contFn) =>
-                    maybeChunk
-                        .map: chunk =>
-                            ZChunk.fromArray(chunk.toArray) -> contFn(())
-                        .toOption
-
-        ZStream.unfoldChunkZIO(stream.emit)(peel)
+        // One producer fiber owns the whole consumption, so every resource the stream acquires
+        // lives and dies inside a single evaluation's extent; the ZIO scope owns the fiber and
+        // interrupts it when the ZStream ends, which runs the stream's own cleanup. A peel-per-step
+        // design instead hands the remainder across evaluations, and a resource inside the stream
+        // does not survive the peeling evaluation's exit.
+        ZStream.unwrapScoped {
+            ZIO.acquireRelease(
+                ZIOs.run {
+                    Channel.initUnscoped[Chunk[A]](4).map { channel =>
+                        val produce =
+                            // the consumer going away closes the channel: a put failing with Closed is
+                            // that signal, not a stream failure. The producer's own extent owns the
+                            // handoff: however the loop ends (completion, failure, interrupt), the
+                            // scope waits for the consumer to drain what is buffered before closing,
+                            // so no delivered tail is discarded, and the release's hard close unblocks
+                            // that wait when the consumer leaves early
+                            Scope.run {
+                                Scope.ensure(channel.closeAwaitEmpty.unit).andThen {
+                                    Abort.run[Closed](stream.foreachChunk(channel.put)).unit
+                                }
+                            }
+                        Fiber.initUnscoped(produce).map(fiber => (channel, fiber))
+                    }
+                }
+            ) { (channel, fiber) =>
+                ZIOs.run(fiber.interrupt.andThen(channel.close.unit))
+            }.map { (channel, fiber) =>
+                ZStream.repeatZIOChunkOption {
+                    ZIOs.run(Abort.run[Closed](channel.take)).flatMap {
+                        case Result.Success(chunk) => ZIO.succeed(ZChunk.fromArray(chunk.toArray))
+                        case _                     =>
+                            // closed: the producer finished, and its result says how
+                            ZIOs.run(fiber.getResult).flatMap {
+                                case Result.Success(_) => ZIO.fail(None)
+                                case Result.Failure(e) => ZIO.fail(Some(e))
+                                case p: Result.Panic   => ZIO.die(p.exception)
+                            }
+                    }
+                }
+            }
+        }
     end run
 
 end ZStreams

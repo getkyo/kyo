@@ -1024,19 +1024,46 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             }
         }
 
-        "a resource-carrying remainder crosses a fiber boundary".pendingUntilFixed(
-            "the peeling fiber's completion releases the scope the handed-out remainder still owes"
-        ) in {
+        // The law: a stream that closes over its own Scope.run anchors the resource to whichever
+        // evaluation runs it. A remainder handed across a fiber boundary loses the resource at the
+        // peeling fiber's exit (the drain is the leak backstop), and consuming it afterwards panics
+        // on the spent scope. A resource meant to outlive the peel keeps Scope in the row instead:
+        // the next test.
+        "a self-contained stream's resource does not survive a fiber hand-out" in {
             AtomicInt.init(0).map { released =>
                 val stream = Stream:
                     Scope.run:
                         Scope.ensure(released.incrementAndGet.unit).andThen:
                             Emit.valueWith(Chunk(1))(Emit.value(Chunk(2)))
                 Fiber.initUnscoped(Emit.runFirst(stream.emit)).map(_.get).map { (first, cont) =>
-                    Emit.run(cont(())).map { (rest, _) =>
-                        released.get.map { r =>
-                            assert(first == Maybe(Chunk(1)) && rest == Chunk(Chunk(2)) && r == 1)
+                    released.get.map { drained =>
+                        Fiber.initUnscoped(Emit.run(cont(()))).map(_.getResult).map { res =>
+                            assert(first == Maybe(Chunk(1)))
+                            assert(drained == 1)
+                            assert(res.isPanic)
                         }
+                    }
+                }
+            }
+        }
+
+        "a Scope-rowed stream peeled across a fiber releases at the enclosing extent" in {
+            AtomicInt.init(0).map { released =>
+                val stream: Stream[Int, Scope & Sync] = Stream:
+                    Scope.ensure(released.incrementAndGet.unit).andThen:
+                        Emit.valueWith(Chunk(1))(Emit.value(Chunk(2)))
+                Scope.run {
+                    Fiber.initUnscoped(Emit.runFirst(stream.emit)).map(_.get).map { (first, cont) =>
+                        Emit.run(cont(())).map { (rest, _) =>
+                            released.get.map { open =>
+                                assert(first == Maybe(Chunk(1)) && rest == Chunk(Chunk(2)) && open == 0)
+                            }
+                        }
+                    }
+                }.map { inner =>
+                    released.get.map { r =>
+                        assert(r == 1)
+                        inner
                     }
                 }
             }

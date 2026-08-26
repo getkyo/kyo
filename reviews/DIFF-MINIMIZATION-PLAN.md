@@ -310,18 +310,15 @@ optimization-candidates/, backlog-sections/, .claude/ trees.
   main's 737 lines. CONTRIBUTING.md rewritten against the current tree (Stack-based evaluator,
   current file inventory and test names, current handler-variant names) with the dangling
   kernel2-*.md links removed. Doctest validation pending sbt.
-- FLAG (design fork, from validation; diagnosis CORRECTED by reproduction): a kernel bracket
-  inside a peeled stream breaks only when the remainder crosses a FIBER boundary. New
-  StreamCoreExtensionsTest pins prove the in-evaluation hand-out lane already works (runFirst
-  peel and splitAt both release exactly once, after the remainder is consumed, in the same
-  fiber); the red lane is a fiber completing while its result value still owes a release: the
-  completion drains it, and the next fiber's entry into the spent scope panics. That lane has
-  a minimal in-repo reproduction now ("a resource-carrying remainder crosses a fiber
-  boundary", pendingUntilFixed) and is what ZStreamsTest hits through ZIO (each peel is its
-  own ZIOs.run). The ruling narrows to: should a normally-completing fiber drain finalizers
-  its own result value still carries (current behavior, protects against dropped results,
-  breaks cross-fiber peels), or should the result value keep custody of them (restores main's
-  pattern; a dropped result leaks unless the holder finalizes). Recommendation: keep custody
-  with the value; the fiber cannot know its result carries the scope, and the interrupt path
-  (IOTask.abandon calling finalizeResources) already handles the genuinely-abandoned case.
+- RESOLVED by ruling (the structured contract): the kernel's drain-at-boundary law stands
+  unchanged; resource lifetime anchors to an extent the user manages, never to holder memory.
+  Pinned in StreamCoreExtensionsTest: the in-evaluation hand-out lanes work (runFirst peel and
+  splitAt release exactly once after consumption); a self-contained stream's resource does NOT
+  survive a fiber hand-out (drained at the peeling fiber's exit, Spent panic on re-entry: the
+  law, asserted); a Scope-rowed stream peeled across a fiber under one enclosing Scope.run
+  releases exactly once at the extent's end (the structured contract, validated: the binding
+  crossing machinery already carries the arena). ZStreams.run reworked accordingly: one
+  producer fiber owns the whole consumption (channel handoff, ZIO scope interrupts the fiber,
+  closeAwaitEmpty under the producer's own Scope extent so no delivered tail is discarded).
+  ZStreamsTest 22/22 including the previously red round trip; no kernel change.
 - (append here as the pass proceeds)
