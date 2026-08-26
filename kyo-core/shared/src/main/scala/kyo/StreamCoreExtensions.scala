@@ -1197,6 +1197,7 @@ export StreamCoreExtensions.collectAllHalting
 export StreamCoreExtensions.defaultAsyncStreamBufferSize
 export StreamCoreExtensions.fromInputStream
 export StreamCoreExtensions.fromIterator
+export StreamCoreExtensions.fromIteratorCatching
 export StreamCoreExtensions.groupedWithin
 export StreamCoreExtensions.mapChunkPar
 export StreamCoreExtensions.mapChunkParUnordered
