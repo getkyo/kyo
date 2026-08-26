@@ -93,7 +93,9 @@ object KanbanDemo extends KyoApp:
     private val boardStyle = Style.row.gap(16.px)
     private val colStyle =
         Style.column.gap(8.px).padding(12.px).bg(Color.slate).rounded(10.px).flexGrow(1).flexBasis(0.px).minHeight(420.px)
-    private val cardListStyle = Style.column.gap(10.px)
+    // minHeight keeps a drained lane hittable: the sensor runtime resolves the drop target from the pointer
+    // position, and a zero-height list can never contain it, so an empty lane would reject every drop.
+    private val cardListStyle = Style.column.gap(10.px).minHeight(44.px)
     private val headerStyle   = Style.row.gap(8.px).align(Alignment.center).padding(0.px, 0.px, 4.px, 0.px)
     private val titleStyle    = Style.color(Color.white).bold.fontSize(16.px).flexGrow(1)
     private val badgeStyle =

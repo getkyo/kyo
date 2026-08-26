@@ -480,4 +480,48 @@ class DragScenarioItTest extends UITest:
             order <- state.get
         yield assert(order == Chunk("a", "b", "c"))
     }
+
+    // --- Drained-lane drop against the real Kanban board view ---
+
+    private val emptyLaneDragJs =
+        """(function(){
+          |function fire(el,t,x,y){el.dispatchEvent(new PointerEvent(t,{bubbles:true,cancelable:true,clientX:x,clientY:y,pointerId:1}));}
+          |var a=document.getElementById("select-1").closest("li");
+          |var todo=document.querySelectorAll("ul")[0];
+          |var ar=a.getBoundingClientRect();var tr=todo.getBoundingClientRect();
+          |fire(a,"pointerdown",ar.left+40,ar.top+8);
+          |fire(a,"pointermove",ar.left+40,ar.top+28);
+          |fire(todo,"pointermove",tr.left+tr.width/2,tr.top+tr.height/2);
+          |return true;})()""".stripMargin
+
+    private val emptyLaneDropJs =
+        """(function(){
+          |function fire(el,t,x,y){el.dispatchEvent(new PointerEvent(t,{bubbles:true,cancelable:true,clientX:x,clientY:y,pointerId:1}));}
+          |var todo=document.querySelectorAll("ul")[0];
+          |var tr=todo.getBoundingClientRect();
+          |fire(todo,"pointerup",tr.left+tr.width/2,tr.top+tr.height/2);
+          |return true;})()""".stripMargin
+
+    private val emptyLaneCheckJs =
+        """(function(){var todo=document.querySelectorAll("ul")[0];return todo.textContent.indexOf("Only card")>=0;})()"""
+
+    "embedded pointer drop lands in a drained Kanban lane" in {
+        // Regression: the sensor runtime resolves the drop target from the pointer position, so an empty lane is
+        // reachable only while its card list keeps a nonzero hit area (the demo's minHeight). Without it the list
+        // collapses to zero height, the pointer can never be inside it, and every drop on a drained lane is refused.
+        for
+            state     <- Signal.initRef(Board(todo = Chunk.empty, doing = Chunk(Card("1", "Only card")), done = Chunk.empty))
+            selection <- Signal.initRef(Set.empty[String])
+            _ <- withUI(KanbanDemo.boardView(state, selection)) {
+                for
+                    _ <- Browser.evalBoolean(emptyLaneDragJs)
+                    // The runtime coalesces moves on an animation frame; the CDP round trip between the two
+                    // evals guarantees at least one frame has run before the drop.
+                    _ <- Browser.evalBoolean(emptyLaneDropJs)
+                    _ <- assertEventually(Browser.evalBoolean(emptyLaneCheckJs))
+                yield ()
+            }
+            board <- state.get
+        yield assert(board == Board(todo = Chunk(Card("1", "Only card")), doing = Chunk.empty, done = Chunk.empty))
+    }
 end DragScenarioItTest
