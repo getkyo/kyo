@@ -119,14 +119,14 @@ case class ListOpts(store: String = "bench-runs")
 object Cli:
 
     val markerSpecs = Seq(
-        ("withWalk", "next.head(apply(v), next.tail)", "kyo-kernel/shared/src/main/scala/kyo/proto/ArrowEffect.scala"),
-        ("reach", "reach", "kyo-kernel/shared/src/main/scala/kyo/proto/Stack.scala"),
-        ("loopState", "HandlerLoopState", "kyo-kernel/shared/src/main/scala/kyo/proto/Handler.scala")
+        ("fusionLaw", "Arrow.AndThen", "kyo-kernel/shared/src/main/scala/kyo/kernel/Effect.scala"),
+        ("gateCont", "isInstanceOf[Arrow.Cont[", "kyo-kernel/shared/src/main/scala/kyo/kernel/internal/Eval.scala"),
+        ("fastPathsOn", "def fastPathsAllowed: Boolean = true", "kyo-kernel/shared/src/main/scala/kyo/kernel/internal/Debugger.scala")
     )
 
-    val protoPaths = Seq(
-        "kyo-kernel/shared/src/main/scala/kyo/proto",
-        "kyo-kernel/shared/src/test/scala/kyo/proto",
+    val kernelPaths = Seq(
+        "kyo-kernel/shared/src/main/scala/kyo",
+        "kyo-kernel/shared/src/test/scala/kyo",
         "kyo-kernel/jvm/src/jmh/scala/kyo/kernel/bench"
     )
 
@@ -186,7 +186,7 @@ object BenchRun extends KyoCaseApp[RunOpts]:
                 worktree = Path(opts.worktree),
                 label = opts.label,
                 sha = opts.sha,
-                paths = Cli.protoPaths,
+                paths = Cli.kernelPaths,
                 markerSpecs = Cli.markerSpecs,
                 rows = opts.row,
                 forks = opts.forks,
@@ -216,7 +216,7 @@ object BenchBracket extends KyoCaseApp[BracketOpts]:
                 worktree = Path(opts.worktree),
                 control = Bench.Arm(opts.control, opts.controlJvm),
                 variant = Bench.Arm(opts.variant, opts.variantJvm),
-                paths = Cli.protoPaths,
+                paths = Cli.kernelPaths,
                 markerSpecs = Cli.markerSpecs,
                 rows = opts.row,
                 forks = opts.forks,
@@ -347,7 +347,7 @@ object BenchChain extends KyoCaseApp[ChainOpts]:
                 session = session,
                 worktree = Path(opts.worktree),
                 shas = opts.sha,
-                paths = Cli.protoPaths,
+                paths = Cli.kernelPaths,
                 markerSpecs = Cli.markerSpecs,
                 rows = opts.row,
                 forks = opts.forks,

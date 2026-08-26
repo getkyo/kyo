@@ -547,7 +547,7 @@ class BenchTest extends Test[Any]:
     check("one table per benchmark header", byRow.keySet == Set("suspensionBaseline", "evalFixedOverhead"), byRow.keySet.toString)
     check("with that row's frames only", byRow("suspensionBaseline").size == 3 && byRow("evalFixedOverhead").size == 2)
     check("the summary table is not a frame", byRow.values.forall(_.forall(s => !s.method.contains("us/op"))))
-    check("the benchmark package is not the kernel", !Bench.isKernel("kyo.kernel.bench.ProtoKernelBench$$Lambda.apply") && Bench.isKernel("kyo.kernel.internal.Eval$.go") && Bench.isKernel("kyo.proto.Eval$.go"))
+    check("the benchmark package is not the kernel", !Bench.isKernel("kyo.kernel.bench.ProtoKernelBench$$Lambda.apply") && Bench.isKernel("kyo.kernel.internal.Eval$.go") && Bench.isKernel("kyo.Arrow$AndThen.apply"))
     val kernelRun = leg("kernel", Seq(("suspensionBaseline", 88.5, 1.0, 640.0), ("evalFixedOverhead", 0.007, 0.0001, 8.0)))
     val withCpu   = Abort.run(Ingest.attachCpu(kernelRun, cpuLog, "cpu.log")).eval.getOrThrow
     check("every row carries its own profile", withCpu.rows.forall(_.cpu.nonEmpty))
@@ -566,7 +566,7 @@ class BenchTest extends Test[Any]:
     check("and no section without row profiles", !Report.render(Bench.compare(kernelRun, kernelRun)).contains("CPU by row"))
     // the run-level noise frames come from the rows' merged profiles, where one method appears once per
     // row: the -wi 20 report listed boxToInteger three times as its three largest contributors
-    val merged = Chunk(CpuSite("scala.runtime.BoxesRunTime.boxToInteger", 400), CpuSite("kyo.proto.Eval$.go$1", 300),
+    val merged = Chunk(CpuSite("scala.runtime.BoxesRunTime.boxToInteger", 400), CpuSite("kyo.kernel.internal.Eval$.go$1", 300),
         CpuSite("scala.runtime.BoxesRunTime.boxToInteger", 200), CpuSite("java.lang.Integer.valueOf", 100))
     val frames = Bench.noiseFrames(merged, 3)
     check("noise frames are summed by method", frames.map(_._1) == Chunk("scala.runtime.BoxesRunTime.boxToInteger", "java.lang.Integer.valueOf"), frames.toString)

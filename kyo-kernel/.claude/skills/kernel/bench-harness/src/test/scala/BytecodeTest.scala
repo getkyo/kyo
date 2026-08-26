@@ -26,7 +26,7 @@ class BytecodeTest extends Test[Any]:
 
     "the bytecode reader agrees with the compiled classes" in {
         for
-            methods <- Bytecode.of(classpath, "kyo.kernel.proto.Arrow$SuspendWith")
+            methods <- Bytecode.of(classpath, "kyo.Arrow$AndThen")
 
             _ = assert(failed.isEmpty, "claims that did not hold:\n" + failed.mkString("\n"))
         yield ()

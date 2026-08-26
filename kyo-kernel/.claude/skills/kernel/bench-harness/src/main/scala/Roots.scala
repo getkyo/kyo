@@ -26,6 +26,6 @@ object Roots:
     val classes: Path =
         Maybe(java.lang.System.getProperty("bench.classes"))
             .map(Path(_))
-            .getOrElse(Path("/Users/fwbrasil/workspace/kyo/.claude/worktrees/bench-sweep/kyo-kernel/jvm/target/scala-3.8.4/classes"))
+            .getOrElse(repo / "kyo-kernel" / "jvm" / "target" / "scala-3.8.4" / "classes")
 
 end Roots

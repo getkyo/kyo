@@ -28,10 +28,10 @@ object Bench:
       * forever. On the only real profile in the repository it matched `boxToInteger` and nothing else, reporting 29.07% where the
       * answer is 83.97%, understated by 54.9 points and in the direction that flatters the kernel. The kernel is the closed set.
       */
-    val KernelPackages = Seq("kyo.kernel.", "kyo.proto.")
+    val KernelPackages = Seq("kyo.kernel.", "kyo.kernel$package", "kyo.Arrow", "kyo.Kyo", "kyo.Mask")
     val KernelPackage  = KernelPackages.mkString(" or ")
 
-    /** A frame in one of the kernel implementations under measurement: kyo-kernel's `kyo.kernel` or `kyo.proto`. The benchmark package
+    /** A frame in the kernel under measurement: kyo-kernel's `kyo.kernel` machinery plus its top-level `kyo` classes. The benchmark package
       * sits under `kyo.kernel.` and is the workload, not the kernel, so it is excluded here and classified on its own.
       */
     def isKernel(method: String): Boolean =
@@ -84,8 +84,8 @@ object Bench:
       */
     val CompilingShareLimit = 0.5
 
-    val BenchClass  = "kyo.kernel.bench.YetAnotherProtoBench"
-    val BenchSource = "kyo-kernel/jvm/src/jmh/scala/kyo/kernel/bench/YetAnotherProtoBench.scala"
+    val BenchClass  = "kyo.kernel.bench.KernelBench"
+    val BenchSource = "kyo-kernel/jvm/src/jmh/scala/kyo/kernel/bench/KernelBench.scala"
     val AsyncProf   = "/opt/homebrew/opt/async-profiler/lib/libasyncProfiler.dylib"
 
     case class BracketFailed(reason: String) extends Exception(reason) with NoStackTrace
@@ -496,7 +496,7 @@ object Bench:
         for
             _    <- requireThrowaway(worktree)
             // start from a defined tree: a previous bracket leaves its last leg's sources in place
-            _    <- resetWorktree(worktree, Cli.protoPaths)
+            _    <- resetWorktree(worktree, Cli.kernelPaths)
             _    <- requireClean(worktree)
             host <- exec(worktree, "hostname").map(_.trim)
             jvm  <- System.property[String]("java.version", "unknown")
@@ -622,7 +622,7 @@ object Bench:
             // a faster variant whose suite is red is not a result; gate before spending the runs.
             // this also settles the sources: the build formats on compile, so the baseline below
             // must be taken after it or the leg invalidates itself on its own formatting
-            _          <- requireGreenSuite(worktree, "kyo-kernelJVM/testOnly kyo.proto.*")
+            _          <- requireGreenSuite(worktree, "kyo-kernelJVM/test")
             before     <- readMarkers(worktree, markerSpecs)
             hashBefore <- treeHash(worktree, paths)
             measured   <- measureWith(WarmupIterations, 1, declared)

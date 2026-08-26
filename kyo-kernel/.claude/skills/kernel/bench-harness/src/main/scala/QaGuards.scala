@@ -39,7 +39,7 @@ object QaGuards extends KyoApp:
             _  <- dirty.remove
             _   = check("a stray untracked file alone does not block", r3.isEmpty, r3.getOrElse(""))
 
-            edited = throwaway / "kyo-kernel/shared/src/main/scala/kyo/kernel/proto/Arrow.scala"
+            edited = throwaway / "kyo-kernel/shared/src/main/scala/kyo/Arrow.scala"
             before <- edited.read
             _      <- edited.append("\n// qa scratch\n")
             r4     <- refusal(Bench.requireClean(throwaway))
@@ -47,16 +47,16 @@ object QaGuards extends KyoApp:
             _       = check("names the paths", r4.exists(_.contains("Arrow.scala")), r4.getOrElse(""))
 
             _  <- Console.printLine("P2.6 a source edit during a leg invalidates it")
-            h1 <- Bench.treeHash(throwaway, Cli.protoPaths)
+            h1 <- Bench.treeHash(throwaway, Cli.kernelPaths)
             _  <- edited.write(before)
-            h2 <- Bench.treeHash(throwaway, Cli.protoPaths)
+            h2 <- Bench.treeHash(throwaway, Cli.kernelPaths)
             _   = check("hash moves when sources move", h1 != h2, s"$h1 vs $h2")
-            h3 <- Bench.treeHash(throwaway, Cli.protoPaths)
+            h3 <- Bench.treeHash(throwaway, Cli.kernelPaths)
             _   = check("hash is stable when they do not", h2 == h3, s"$h2 vs $h3")
 
             _  <- Console.printLine("P2.7 declaredRows counts bare @Benchmark only")
             n  <- Bench.declaredRows(throwaway)
-            _   = check("counts 15, not 16", n == 15, s"got $n")
+            _   = check("counts 28 bare lines, not the 30 substring matches", n == 28, s"got $n")
 
             _  <- Console.printLine("P2.8 markers read from a real tree")
             ms <- Bench.readMarkers(throwaway, Cli.markerSpecs)

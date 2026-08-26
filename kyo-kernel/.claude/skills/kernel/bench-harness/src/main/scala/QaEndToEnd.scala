@@ -32,7 +32,7 @@ object QaEndToEnd extends KyoApp:
             _       <- Console.printLine(s"       on ${session.host} jvm ${session.jvm}")
 
             _   <- Console.printLine(s"P3.2 control leg at $control")
-            ctl <- Bench.runLeg(session, worktree, "qa-control", control, Cli.protoPaths, Cli.markerSpecs, Seq(row), 1, Evidence.Full)
+            ctl <- Bench.runLeg(session, worktree, "qa-control", control, Cli.kernelPaths, Cli.markerSpecs, Seq(row), 1, Evidence.Full)
             _    = check("rows measured", ctl.rows.size == 1, s"${ctl.rows.size}")
             _    = check("allocation captured", ctl.rows.head.allocPerOp.isDefined)
             _    = check("jit collected", ctl.jit.nonEmpty, s"${ctl.jit.size} entries")
@@ -47,7 +47,7 @@ object QaEndToEnd extends KyoApp:
             _    = check("subset run is recorded as such", !ctl.wholeClass)
 
             _   <- Console.printLine(s"P3.3 variant leg at $variant, same session")
-            vnt <- Bench.runLeg(session, worktree, "qa-variant", variant, Cli.protoPaths, Cli.markerSpecs, Seq(row), 1, Evidence.Full)
+            vnt <- Bench.runLeg(session, worktree, "qa-variant", variant, Cli.kernelPaths, Cli.markerSpecs, Seq(row), 1, Evidence.Full)
             _    = check("markers show the new design", vnt.markers.find(_.name == "applyFolded").exists(_.count > 0), vnt.markers.toString)
             _    = check("both legs share the session", vnt.session.id == ctl.session.id)
 
