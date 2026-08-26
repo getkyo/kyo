@@ -132,3 +132,22 @@ Consequence for optimization: at low concurrency the only lever is handoffs per 
 continuation on the completing carrier where legal, adaptive spin before parking on the block/join
 path, and the worker idle strategy's timed park); the http and eval code paths are invisible at
 this workload shape.
+
+### Park/wake attribution (client, single request)
+
+Park side: 1,527 samples are idle scheduler workers on their `LinkedTransferQueue`; 1,296 are the
+two kyo-core-clock-executor threads cycling on `DelayedWorkQueue.take`; 477 the caller blocked in
+`IOPromise` (`fiber.block`); 339 the scheduler coordinator's periodic loop. Signal side: task
+handoff into the scheduler pool (`SynchronousQueue.offer`, 513), the clock executors re-signaling
+their delay queue (179), and `IOPromise.Pending.flush` unparking the blocked caller (80).
+
+The per-request chain: caller hands off and blocks, an idle worker wakes and runs the request then
+parks, the kevent carrier wakes on readiness and completes the promise, the completion flush
+unparks the caller. Four hops, irreducible at concurrency 1 without inline completion or spin.
+
+The clock executors are ~28% of all parking samples: every request's `Async.timeoutWithError`
+watchdog schedules a task on the ScheduledThreadPoolExecutor and cancels it on completion, and each
+schedule/cancel re-signals the delay queue and wakes a clock-executor thread. Together with the
+per-request `Panic(Interrupted)` allocation this makes the client timeout path the clearest
+optimization target: it pays an exception allocation and a timer-thread wake cycle per request on
+the happy path.
