@@ -342,20 +342,36 @@ object Loop:
       * @return
       *   The final result after loop completion
       */
+    @nowarn("msg=anonymous")
     inline def apply[A, B, O, S](input1: A, input2: B)(inline run: (A, B) => Outcome2[A, B, O] < S)(
         using inline _frame: Frame
     ): O < S =
-        def suspended(v: Outcome2[A, B, O] < S): O < S =
-            v.map(loop(_))
-        @tailrec def loop(v: Outcome2[A, B, O] < S): O < S =
+        // the re-entry arrow is shared across suspensions; see the single-state apply for the shape
+        @tailrec def loop(step: Maybe[Arrow[Outcome2[A, B, O], O, S]], v: Outcome2[A, B, O] < S): O < S =
             v match
                 case next: Continue2[A, B] @unchecked =>
-                    loop(run(next._1, next._2))
-                case _: Kyo[?, ?] =>
-                    suspended(v)
+                    loop(step, run(next._1, next._2))
+                case kyo: Kyo[Outcome2[A, B, O], S] @unchecked =>
+                    val arrow = step.getOrElse {
+                        new TransformBase[Outcome2[A, B, O], O, S]:
+                            def frame = _frame
+                            def apply[C, S2](v: Outcome2[A, B, O] < S2, cont: Arrow[O, C, S2]): C < (S & S2) =
+                                v match
+                                    case kyo: Kyo[Outcome2[A, B, O], S2] @unchecked =>
+                                        Effect.defer(kyo, this, cont)
+                                    case _ =>
+                                        val slot = Safepoint.get()
+                                        if !Safepoint.enter(slot) then Effect.defer(v, this, cont)
+                                        else
+                                            val out = cont.head(loop(Maybe(this), v.asInstanceOf[Outcome2[A, B, O] < S]), cont.tail)
+                                            Safepoint.exit(slot)
+                                            out
+                                        end if
+                    }
+                    Effect.defer(kyo, arrow, Arrow.id)
                 case res =>
                     res.asInstanceOf[O < S]
-        loop(Loop.continue(input1, input2))
+        loop(Maybe.empty, Loop.continue(input1, input2))
     end apply
 
     /** Executes a loop with three state values.
@@ -374,20 +390,36 @@ object Loop:
       * @return
       *   The final result after loop completion
       */
+    @nowarn("msg=anonymous")
     inline def apply[A, B, C, O, S](input1: A, input2: B, input3: C)(
         inline run: (A, B, C) => Outcome3[A, B, C, O] < S
     )(using inline _frame: Frame): O < S =
-        def suspended(v: Outcome3[A, B, C, O] < S): O < S =
-            v.map(loop(_))
-        @tailrec def loop(v: Outcome3[A, B, C, O] < S): O < S =
+        // the re-entry arrow is shared across suspensions; see the single-state apply for the shape
+        @tailrec def loop(step: Maybe[Arrow[Outcome3[A, B, C, O], O, S]], v: Outcome3[A, B, C, O] < S): O < S =
             v match
                 case next: Continue3[A, B, C] @unchecked =>
-                    loop(run(next._1, next._2, next._3))
-                case _: Kyo[?, ?] =>
-                    suspended(v)
+                    loop(step, run(next._1, next._2, next._3))
+                case kyo: Kyo[Outcome3[A, B, C, O], S] @unchecked =>
+                    val arrow = step.getOrElse {
+                        new TransformBase[Outcome3[A, B, C, O], O, S]:
+                            def frame = _frame
+                            def apply[C2, S2](v: Outcome3[A, B, C, O] < S2, cont: Arrow[O, C2, S2]): C2 < (S & S2) =
+                                v match
+                                    case kyo: Kyo[Outcome3[A, B, C, O], S2] @unchecked =>
+                                        Effect.defer(kyo, this, cont)
+                                    case _ =>
+                                        val slot = Safepoint.get()
+                                        if !Safepoint.enter(slot) then Effect.defer(v, this, cont)
+                                        else
+                                            val out = cont.head(loop(Maybe(this), v.asInstanceOf[Outcome3[A, B, C, O] < S]), cont.tail)
+                                            Safepoint.exit(slot)
+                                            out
+                                        end if
+                    }
+                    Effect.defer(kyo, arrow, Arrow.id)
                 case res =>
                     res.asInstanceOf[O < S]
-        loop(Loop.continue(input1, input2, input3))
+        loop(Maybe.empty, Loop.continue(input1, input2, input3))
     end apply
 
     /** Executes a loop with four state values.
@@ -408,20 +440,36 @@ object Loop:
       * @return
       *   The final result after loop completion
       */
+    @nowarn("msg=anonymous")
     inline def apply[A, B, C, D, O, S](input1: A, input2: B, input3: C, input4: D)(
         inline run: (A, B, C, D) => Outcome4[A, B, C, D, O] < S
     )(using inline _frame: Frame): O < S =
-        def suspended(v: Outcome4[A, B, C, D, O] < S): O < S =
-            v.map(loop(_))
-        @tailrec def loop(v: Outcome4[A, B, C, D, O] < S): O < S =
+        // the re-entry arrow is shared across suspensions; see the single-state apply for the shape
+        @tailrec def loop(step: Maybe[Arrow[Outcome4[A, B, C, D, O], O, S]], v: Outcome4[A, B, C, D, O] < S): O < S =
             v match
                 case next: Continue4[A, B, C, D] @unchecked =>
-                    loop(run(next._1, next._2, next._3, next._4))
-                case _: Kyo[?, ?] =>
-                    suspended(v)
+                    loop(step, run(next._1, next._2, next._3, next._4))
+                case kyo: Kyo[Outcome4[A, B, C, D, O], S] @unchecked =>
+                    val arrow = step.getOrElse {
+                        new TransformBase[Outcome4[A, B, C, D, O], O, S]:
+                            def frame = _frame
+                            def apply[C2, S2](v: Outcome4[A, B, C, D, O] < S2, cont: Arrow[O, C2, S2]): C2 < (S & S2) =
+                                v match
+                                    case kyo: Kyo[Outcome4[A, B, C, D, O], S2] @unchecked =>
+                                        Effect.defer(kyo, this, cont)
+                                    case _ =>
+                                        val slot = Safepoint.get()
+                                        if !Safepoint.enter(slot) then Effect.defer(v, this, cont)
+                                        else
+                                            val out = cont.head(loop(Maybe(this), v.asInstanceOf[Outcome4[A, B, C, D, O] < S]), cont.tail)
+                                            Safepoint.exit(slot)
+                                            out
+                                        end if
+                    }
+                    Effect.defer(kyo, arrow, Arrow.id)
                 case res =>
                     res.asInstanceOf[O < S]
-        loop(Loop.continue(input1, input2, input3, input4))
+        loop(Maybe.empty, Loop.continue(input1, input2, input3, input4))
     end apply
 
     /** Executes an indexed loop without state values.
@@ -436,6 +484,9 @@ object Loop:
       *   The final result after loop completion
       */
     inline def indexed[O, S](inline run: Int => Outcome[Unit, O] < S)(using inline _frame: Frame): O < S =
+        // the indexed variants and repeat keep the fresh-arrow-per-suspension map spelling: the
+        // re-entry captures the index at suspension time, and a captured continuation replays from
+        // capture-time state, so the arrow cannot be shared the way the stateless loops share theirs
         def suspended(idx: Int)(v: Outcome[Unit, O] < S): O < S =
             v.map(loop(idx)(_))
         @tailrec def loop(idx: Int)(v: Outcome[Unit, O] < S): O < S =
@@ -581,18 +632,34 @@ object Loop:
       * @return
       *   The final value after the loop completes
       */
+    @nowarn("msg=anonymous")
     inline def foreach[A, S](inline run: Outcome[Unit, A] < S)(using inline _frame: Frame): A < S =
-        def suspended(v: Outcome[Unit, A] < S): A < S =
-            v.map(loop(_))
-        @tailrec def loop(v: Outcome[Unit, A] < S): A < S =
+        // the re-entry arrow is shared across suspensions; see the single-state apply for the shape
+        @tailrec def loop(step: Maybe[Arrow[Outcome[Unit, A], A, S]], v: Outcome[Unit, A] < S): A < S =
             v match
                 case next: Continue[Unit] @unchecked =>
-                    loop(run)
-                case _: Kyo[?, ?] =>
-                    suspended(v)
+                    loop(step, run)
+                case kyo: Kyo[Outcome[Unit, A], S] @unchecked =>
+                    val arrow = step.getOrElse {
+                        new TransformBase[Outcome[Unit, A], A, S]:
+                            def frame = _frame
+                            def apply[C, S2](v: Outcome[Unit, A] < S2, cont: Arrow[A, C, S2]): C < (S & S2) =
+                                v match
+                                    case kyo: Kyo[Outcome[Unit, A], S2] @unchecked =>
+                                        Effect.defer(kyo, this, cont)
+                                    case _ =>
+                                        val slot = Safepoint.get()
+                                        if !Safepoint.enter(slot) then Effect.defer(v, this, cont)
+                                        else
+                                            val out = cont.head(loop(Maybe(this), v.asInstanceOf[Outcome[Unit, A] < S]), cont.tail)
+                                            Safepoint.exit(slot)
+                                            out
+                                        end if
+                    }
+                    Effect.defer(kyo, arrow, Arrow.id)
                 case res =>
                     res.asInstanceOf[A < S]
-        loop(Loop.continue)
+        loop(Maybe.empty, Loop.continue)
     end foreach
 
     /** Repeats an operation a specified number of times.
@@ -643,17 +710,34 @@ object Loop:
       * @return
       *   Nothing, as this loop runs forever unless interrupted
       */
+    @nowarn("msg=anonymous")
     inline def forever[S](inline run: Any < S)(using inline _frame: Frame): Nothing < S =
-        def suspended(v: Any < S): Nothing < S =
-            v.map(_ => loop(run))
-        @tailrec def loop(v: Any < S): Nothing < S =
+        // the re-entry arrow is shared across suspensions; see the single-state apply for the shape.
+        // Delivery discards the settled value, so no representation crosses it
+        @tailrec def loop(step: Maybe[Arrow[Any, Nothing, S]], v: Any < S): Nothing < S =
             v match
-                case _: Kyo[?, ?] =>
-                    suspended(v)
+                case kyo: Kyo[Any, S] @unchecked =>
+                    val arrow = step.getOrElse {
+                        new TransformBase[Any, Nothing, S]:
+                            def frame = _frame
+                            def apply[C, S2](v: Any < S2, cont: Arrow[Nothing, C, S2]): C < (S & S2) =
+                                v match
+                                    case kyo: Kyo[Any, S2] @unchecked =>
+                                        Effect.defer(kyo, this, cont)
+                                    case _ =>
+                                        val slot = Safepoint.get()
+                                        if !Safepoint.enter(slot) then Effect.defer(v, this, cont)
+                                        else
+                                            val out = cont.head(loop(Maybe(this), run), cont.tail)
+                                            Safepoint.exit(slot)
+                                            out
+                                        end if
+                    }
+                    Effect.defer(kyo, arrow, Arrow.id)
                 case _ =>
-                    loop(run)
+                    loop(step, run)
         end loop
-        loop(())
+        loop(Maybe.empty, ())
     end forever
 
     /** Executes an operation repeatedly while a condition remains true.
@@ -665,20 +749,41 @@ object Loop:
       * @return
       *   Unit after the loop completes
       */
+    @nowarn("msg=anonymous")
     inline def whileTrue[S](inline condition: Boolean < S)(inline run: Unit < S)(
         using inline _frame: Frame
     ): Unit < S =
-        def loop(v: Unit < S): Unit < S =
+        // the body's re-entry arrow is shared across suspensions; see the single-state apply for the
+        // shape. Delivery discards the settled body value, so no representation crosses it. The
+        // condition's own suspensions stay on the map spelling: its continuation captures the body
+        // value it sequences after
+        def loop(step: Maybe[Arrow[Any, Unit, S]], v: Unit < S): Unit < S =
             condition.map {
                 case true =>
                     v match
-                        case _: Kyo[?, ?] =>
-                            v.map(_ => loop(run))
+                        case kyo: Kyo[Any, S] @unchecked =>
+                            val arrow = step.getOrElse {
+                                new TransformBase[Any, Unit, S]:
+                                    def frame = _frame
+                                    def apply[C, S2](v: Any < S2, cont: Arrow[Unit, C, S2]): C < (S & S2) =
+                                        v match
+                                            case kyo: Kyo[Any, S2] @unchecked =>
+                                                Effect.defer(kyo, this, cont)
+                                            case _ =>
+                                                val slot = Safepoint.get()
+                                                if !Safepoint.enter(slot) then Effect.defer(v, this, cont)
+                                                else
+                                                    val out = cont.head(loop(Maybe(this), run), cont.tail)
+                                                    Safepoint.exit(slot)
+                                                    out
+                                                end if
+                            }
+                            Effect.defer(kyo, arrow, Arrow.id)
                         case _ =>
-                            loop(run)
+                            loop(step, run)
                 case false => ()
             }
         end loop
-        loop(())
+        loop(Maybe.empty, ())
     end whileTrue
 end Loop
