@@ -62,4 +62,30 @@ class ArrowEffectThreadingTest extends kyo.Test:
         t.join()
         assert(tr == 4)
     }
+
+    "deep state transitions under a suspending clause fit a small stack" in {
+        // every suspending clause re-enters its region with the state rewrapped onto the handler,
+        // and the rewrap must stay one delegation layer over the per-site clause: a layer per
+        // transition walks the whole chain on every answer, which is linear stack per operation.
+        // The small explicit stack is what makes a chain observable as an overflow at this depth
+        @volatile var result = -1
+        def loop(i: Int): Int < Ask =
+            if i == 0 then 0 else ask.map(a => loop(i - a))
+        val t = new Thread(
+            null,
+            () =>
+                val handled = ArrowEffect.handleLoopState(Tag[Ask], 0, loop(20000))(
+                    [C] => (s, _) => Effect.defer(Loop.continue(s + 1, 1)),
+                    (s, a) => s + a
+                )
+                result = Eval(handled)
+            ,
+            "small-stack",
+            256 * 1024
+        )
+        t.start()
+        t.join(30000)
+        assert(!t.isAlive)
+        assert(result == 20000)
+    }
 end ArrowEffectThreadingTest

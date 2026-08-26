@@ -507,6 +507,18 @@ class ArrowEffectTest extends kyo.Test:
             assert(Eval(r) == (12, 21))
         }
 
+        "deep state transitions under a suspending clause are stack safe" in {
+            // a suspending clause re-enters its region with the state rewrapped onto the handler;
+            // the rewrap stays one delegation layer deep however many transitions the region runs
+            def loop(i: Int): Int < Ask =
+                if i == 0 then 0 else ask.map(a => loop(i - a))
+            val r: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 0, loop(10000))(
+                [C] => (s, _) => Effect.defer(Loop.continue(s + 1, 1)),
+                (s, a) => s + a
+            )
+            assert(Eval(r) == 10000)
+        }
+
         "Loop.done bypasses done" in {
             val v = ask.map(a => ask.map(b => a + b))
             val r: String < Any = ArrowEffect.handleLoopState(Tag[Ask], 0, v)(

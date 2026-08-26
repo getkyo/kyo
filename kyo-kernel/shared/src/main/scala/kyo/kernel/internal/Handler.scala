@@ -459,6 +459,14 @@ object Handler:
         def apply(state: State, v: A): B < S
         final override def apply(v: A): B < S = apply(initialState, v)
 
+        /** The per-site handler this one delegates to: itself for the instance an expansion built, and
+          * that instance for the state-carrying wrap the companion builds. A region's state changes on
+          * every clause suspension, and each change rewraps; delegating a rewrap to the same per-site
+          * instance is what keeps the chain one layer deep however many times the state changes, where
+          * wrapping the previous wrap would grow it by one per change and walk it on every answer.
+          */
+        private[kyo] def unwrapped: HandlerLoopState[I, O, E, A, B, S, State] = this
+
         /** Runs the clause and takes its outcome apart, in the class the call site generated.
           *
           * The eval used to do both: call `run` and destructure the `Outcome2`, which made the outcome an
@@ -510,15 +518,20 @@ object Handler:
             h: HandlerLoopState[I, O, E, A, B, S, State],
             state: State
         ): HandlerLoopState[I, O, E, A, B, S, State] =
+            // delegate to the per-site handler, not to `h`: rewrapping a wrap must collapse, or a
+            // region whose clause suspends per operation grows a delegation chain one layer per
+            // state change and walks it on every answer (see `unwrapped`)
+            val base = h.unwrapped
             new HandlerLoopState[I, O, E, A, B, S, State]:
-                def frame                             = h.frame
-                def tag                               = h.tag
+                def frame                             = base.frame
+                def tag                               = base.tag
                 def initialState                      = state
-                def run[X](state: State, input: I[X]) = h.run(state, input)
-                def apply(state: State, v: A)         = h.apply(state, v)
+                override private[kyo] def unwrapped   = base
+                def run[X](state: State, input: I[X]) = base.run(state, input)
+                def apply(state: State, v: A)         = base.apply(state, v)
                 // the wrap changes only what the region starts from; the per-site answer bodies, with
                 // their statically bound clause, must survive a clause suspension's re-entry
-                override def answer[X](state: State, input: I[X], out: Out) = h.answer(state, input, out)
+                override def answer[X](state: State, input: I[X], out: Out) = base.answer(state, input, out)
                 override def answers[X](
                     state: State,
                     input: I[X],
@@ -527,7 +540,9 @@ object Handler:
                     slot: Safepoint.Slot,
                     out: Out
                 ) =
-                    h.answers(state, input, k, armed, slot, out)
+                    base.answers(state, input, k, armed, slot, out)
+            end new
+        end apply
     end HandlerLoopState
 
 end Handler
