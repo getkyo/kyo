@@ -104,3 +104,31 @@ Sampled weight shares are directional (sampling), but every mechanism below is a
 2. kyo-ffi codegen: allocation-free call shape for `@Ffi.blocking` bindings on the JVM.
 3. Rework the client timeout-cancel path to stop allocating an exception per request.
 4. Decide the main-jar-natives question for the published artifact (product call).
+
+## CPU (async-profiler itimer via asprof attach, JFR output, 5ms interval)
+
+Recordings in `~/http-bench-jfr/<Bench>-cpu.jfr` (5,964 to 17,409 execution samples each; the
+JMH-integrated `-prof jfr` recordings are unusable for cpu on macOS, 14 to 189 samples, because the
+JDK sampler only catches on-CPU Java threads and these JVMs are mostly parked per request).
+
+Leaf-frame shares:
+
+| leaf category | client 1 req | client 12 req | server 12 req |
+|---|---|---|---|
+| parking machinery (cvwait + cvsignal + timed-park gettimeofday) | 84% | 46% | 28% |
+| socket I/O (sendto + recvfrom) | 5% | 35% | 56% |
+| kevent poll | 10% | 15% | 13% |
+| Java/kyo computation | ~0% | ~4% | ~3% |
+
+The single-request row measures wake-chain latency: each round trip is a chain of thread handoffs
+(the caller blocks on the fiber, a worker runs the request and parks, the poll carrier wakes on
+kevent, completion signals back), and the syscall plus context-switch cost of those transitions is
+the request cost. Under a request per core the profile inverts to real socket I/O, so the transport
+amortizes correctly. Every `gettimeofday` sample sits under `Unsafe.park`: macOS computing absolute
+deadlines for timed parks, so it belongs to the parking bucket (the workers' timed-park idle
+strategy), not to any clock read in kyo code.
+
+Consequence for optimization: at low concurrency the only lever is handoffs per request (inline
+continuation on the completing carrier where legal, adaptive spin before parking on the block/join
+path, and the worker idle strategy's timed park); the http and eval code paths are invisible at
+this workload shape.
