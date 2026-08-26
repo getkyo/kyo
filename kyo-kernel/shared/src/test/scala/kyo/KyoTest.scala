@@ -6,7 +6,7 @@ import scala.annotation.tailrec
 import scala.collection.Iterable
 import scala.collection.IterableOps
 
-class KyoTest extends org.scalatest.freespec.AnyFreeSpec:
+class KyoTest extends kyo.test.Test[Any]:
 
     sealed trait TestEffect1 extends ArrowEffect[Const[Int], Const[Int]]
     object TestEffect1:
@@ -39,7 +39,7 @@ class KyoTest extends org.scalatest.freespec.AnyFreeSpec:
 
     "eval" in {
         assert(TestEffect1.run(TestEffect1(1).map(_ + 1)).eval == 3)
-        assertTypeError("TestEffect1(1).eval")
+        typeCheckFailure("TestEffect1(1).eval")("")
         // bound before the assert: `eval` expands the whole evaluator inline, and scalatest's assert
         // renders its argument into a string constant, which overran the JVM's 64KB limit once the
         // kernel internals became private[kyo]. The diagram for an eval expansion is unreadable

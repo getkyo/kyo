@@ -10,11 +10,10 @@ import kyo.discard
 import kyo.kernel.internal.Eval
 import kyo.kernel.internal.Safepoint
 import kyo.render
-import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
 import scala.compiletime.testing.typeCheckErrors
 
-class PendingTest extends AnyFreeSpec:
+class PendingTest extends kyo.test.Test[Any]:
 
     private val Period = Safepoint.period()
 
@@ -370,11 +369,11 @@ class PendingTest extends AnyFreeSpec:
     }
 
     "a pending value does not lift into a nested computation implicitly" in {
-        assertTypeError("val x: (Int < Any) < Any = (1: Int < Any).map(_ + 1)")
+        typeCheckFailure("val x: (Int < Any) < Any = (1: Int < Any).map(_ + 1)")("")
     }
 
     "a kyo module does not lift into a computation" in {
-        assertTypeError("val x: ArrowEffect.type < Any = ArrowEffect")
+        typeCheckFailure("val x: ArrowEffect.type < Any = ArrowEffect")("")
     }
 
     "deep map chains evaluate" in {

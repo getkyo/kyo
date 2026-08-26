@@ -8,9 +8,8 @@ import kyo.Result
 import kyo.Tag
 import kyo.discard
 import kyo.kernel.*
-import org.scalatest.freespec.AnyFreeSpec
 
-class StackTest extends AnyFreeSpec:
+class StackTest extends kyo.test.Test[Any]:
 
     given Frame = Frame.internal
 

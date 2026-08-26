@@ -276,8 +276,8 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
       * in hand and never anything the evaluator would have run. A deferral's payload and a recovery's body
       * are methods on purpose, so that reading them runs user code; neither is touched here.
       *
-      * The frame is the operation's own. Deferrals carry none worth showing, which is what leaves a fiber
-      * doing nothing but `Sync.defer` with an empty trace, and the internal frame is dropped by identity so
+      * The frame is the operation's own, or a deferral's call site: a deferral's body lives in its arrows,
+      * whose frames are fields naming where the user built them. Internal frames are dropped by identity so
       * the kernel's own plumbing never surfaces.
       */
     final override def fiberTrace(): String =
@@ -304,8 +304,17 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                         if f eq Frame.internal then Absent else Present(f)
                     case h: Kyo.Handle[?, ?, ?, ?, ?] => loop(h.value, fuel - 1)
                     case p: Kyo.Park[?, ?]            => loop(p.value, fuel - 1)
-                    case d: Kyo.Defer[?, ?, ?, ?]     => loop(d.value, fuel - 1)
-                    case _                            => Absent
+                    case d: Kyo.Defer[?, ?, ?, ?]     =>
+                        // the deferral's applying arrow names the site that built it (a `Sync.defer` body's
+                        // own file:line); the chained continuation is next, and only then the payload
+                        val fa = d.contA.frame
+                        if !(fa eq Frame.internal) then Present(fa)
+                        else
+                            val fb = d.contB.frame
+                            if !(fb eq Frame.internal) then Present(fb)
+                            else loop(d.value, fuel - 1)
+                        end if
+                    case _ => Absent
         loop(v, 16)
     end currentFrame
 

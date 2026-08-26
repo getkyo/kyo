@@ -5,11 +5,10 @@ import kyo.Const
 import kyo.Tag
 import kyo.discard
 import kyo.kernel.*
-import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
 import scala.util.control.NoStackTrace
 
-class EffectTraceTest extends AnyFreeSpec:
+class EffectTraceTest extends kyo.test.Test[Any]:
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())

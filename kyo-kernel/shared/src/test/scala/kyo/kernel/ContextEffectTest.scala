@@ -7,9 +7,8 @@ import kyo.Tag
 import kyo.discard
 import kyo.kernel.internal.Eval
 import kyo.kernel.internal.Safepoint
-import org.scalatest.freespec.AnyFreeSpec
 
-class ContextEffectTest extends AnyFreeSpec:
+class ContextEffectTest extends kyo.test.Test[Any]:
 
     sealed trait Count extends ContextEffect[Int]
     sealed trait Name  extends ContextEffect[String]

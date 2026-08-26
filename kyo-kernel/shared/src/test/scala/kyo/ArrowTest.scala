@@ -2,10 +2,9 @@ package kyo
 
 import kyo.kernel.*
 import kyo.kernel.internal.*
-import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
 
-class ArrowTest extends AnyFreeSpec:
+class ArrowTest extends kyo.test.Test[Any]:
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())

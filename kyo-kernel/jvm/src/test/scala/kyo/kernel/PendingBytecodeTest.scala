@@ -3,14 +3,13 @@ package kyo.kernel
 import kyo.Const
 import kyo.Id
 import kyo.Tag
-import org.scalatest.freespec.AnyFreeSpec
 import scala.reflect.ClassTag
 
 /** Pins the compiled size of the Pending extension expansions: the per-site inline map cost
   * and the emission of the pure-value lift at each static shape. A size change here is a
   * change to what every user call site compiles to and must be deliberate.
   */
-class PendingBytecodeTest extends AnyFreeSpec:
+class PendingBytecodeTest extends kyo.test.Test[Any]:
 
     object TestEffect extends ArrowEffect[Id, Id]
 
@@ -33,7 +32,7 @@ class PendingBytecodeTest extends AnyFreeSpec:
 
     // disabled while the map expansion shape is under active iteration; re-pin
     // once the design settles
-    "map" ignore {
+    "map".ignore in {
         // per site: the caller (test), the lifted evaluation body (run, holding f
         // and the successor dispatch), and the Transform mint (arrow, reached only
         // when the computation suspends or the budget runs out)

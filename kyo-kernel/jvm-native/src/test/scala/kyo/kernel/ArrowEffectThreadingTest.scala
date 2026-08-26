@@ -4,13 +4,12 @@ import kyo.Arrow
 import kyo.Const
 import kyo.Tag
 import kyo.kernel.internal.Eval
-import org.scalatest.freespec.AnyFreeSpec
 
 /** The cross-thread halves of the multi-shot capture pins: a captured continuation is a complete
   * value, replayable on a thread that never ran the eval it escaped. The same-thread replays stay
   * in the shared ArrowEffectTest.
   */
-class ArrowEffectThreadingTest extends AnyFreeSpec:
+class ArrowEffectThreadingTest extends kyo.test.Test[Any]:
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())

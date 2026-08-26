@@ -4,12 +4,11 @@ import kyo.Tag
 import kyo.discard
 import kyo.kernel.internal.Eval
 import kyo.kernel.internal.Safepoint
-import org.scalatest.freespec.AnyFreeSpec
 
 /** The binding tests that park through a cross-thread stop and resume on real threads; the
   * cross-platform binding coverage stays in the shared ContextEffectTest.
   */
-class ContextEffectThreadingTest extends AnyFreeSpec:
+class ContextEffectThreadingTest extends kyo.test.Test[Any]:
 
     sealed trait Count extends ContextEffect[Int]
 

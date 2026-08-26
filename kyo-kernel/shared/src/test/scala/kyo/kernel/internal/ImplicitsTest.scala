@@ -6,24 +6,16 @@ import kyo.Result
 import kyo.Tag
 import kyo.kernel.*
 import kyo.render
-import org.scalatest.freespec.AnyFreeSpec
-import scala.compiletime.testing.typeCheckErrors
 
 final class ImplicitsTestWrapper(val value: Int) extends AnyVal
 
-class ImplicitsTest extends AnyFreeSpec:
+class ImplicitsTest extends kyo.test.Test[Any]:
 
     sealed trait TestEffect1 extends ArrowEffect[Const[Int], Const[Int]]
     sealed trait TestEffect2 extends ArrowEffect[Const[Int], Const[Int]]
 
     final case class Box(value: Int) derives CanEqual
     case object Marker
-
-    private inline def typeCheckFailure(inline code: String)(expected: String): org.scalatest.Assertion =
-        val errors = typeCheckErrors(code)
-        assert(errors.nonEmpty, "expected a type error, code compiled")
-        assert(errors.exists(_.message.contains(expected)), errors.map(_.message).mkString("\n"))
-    end typeCheckFailure
 
     "lift" - {
         "primitives" in {

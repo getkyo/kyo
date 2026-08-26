@@ -768,13 +768,10 @@ lazy val `kyo-kernel` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-data`)
+        .withKyoTest
         .in(file("kyo-kernel"))
         .settings(
-            `kyo-settings`,
-            // Interim while the kernel swap migrates up the stack: kyo-test depends on the
-            // stack above this module, so tests use scalatest directly until the migration
-            // reaches it.
-            libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test
+            `kyo-settings`
         )
         .jvmSettings(
             mimaCheck(false),

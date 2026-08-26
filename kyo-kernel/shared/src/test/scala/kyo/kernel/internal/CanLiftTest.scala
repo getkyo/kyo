@@ -3,10 +3,9 @@ package kyo.kernel.internal
 import kyo.Const
 import kyo.discard
 import kyo.kernel.*
-import org.scalatest.freespec.AnyFreeSpec
 import scala.compiletime.testing.typeCheckErrors
 
-class CanLiftTest extends AnyFreeSpec:
+class CanLiftTest extends kyo.test.Test[Any]:
 
     sealed trait TestEffect extends ArrowEffect[Const[Int], Const[Int]]
 

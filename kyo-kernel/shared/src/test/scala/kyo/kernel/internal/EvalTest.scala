@@ -6,11 +6,10 @@ import kyo.Maybe
 import kyo.Tag
 import kyo.discard
 import kyo.kernel.*
-import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
 import scala.collection.mutable.ListBuffer
 
-class EvalTest extends AnyFreeSpec:
+class EvalTest extends kyo.test.Test[Any]:
 
     private val Period = Safepoint.period()
 
@@ -118,14 +117,14 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a pending value does not lift into a nested computation implicitly" in {
-            assertTypeError("val x: (Int < Any) < Any = (1: Int < Any).map(_ + 1)")
+            typeCheckFailure("val x: (Int < Any) < Any = (1: Int < Any).map(_ + 1)")("")
         }
 
         "an eval inside a map evaluates its argument rather than nesting it" in {
             // with an unconditional lift, inference solved the unannotated form as
             // Eval[Int < Any](lift(ask)) and the suspension itself came back as the map's result;
             // with the lint on lift the unannotated form does not compile, and the annotated one evaluates
-            assertTypeError("Eval(answerAsk(1)(ask.map(_ => Eval(ask.asInstanceOf[Int < Any]))))")
+            typeCheckFailure("Eval(answerAsk(1)(ask.map(_ => Eval(ask.asInstanceOf[Int < Any]))))")("")
             val ex = intercept[Throwable](Eval(answerAsk(1)(ask.map(_ => Eval[Int, Any](ask.asInstanceOf[Int < Any])))))
             assert(ex.getMessage.contains("Unexpected pending effect"))
         }

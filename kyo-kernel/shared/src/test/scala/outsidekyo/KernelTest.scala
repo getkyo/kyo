@@ -5,7 +5,6 @@ import kyo.Arrow
 import kyo.Const
 import kyo.kernel.*
 import kyo.kernel.internal.Eval
-import org.scalatest.freespec.AnyFreeSpec
 
 /** The kernel's public surface, exercised from outside package `kyo`: suspension, transformation, and handling for every entry point.
   *
@@ -25,7 +24,7 @@ import org.scalatest.freespec.AnyFreeSpec
   * discarded result is bound to `val _`. And a `Loop` clause under a region ascribes its resumed value (`1: Int < Any`), because the
   * clause answers at the region's row rather than the successor's.
   */
-class KernelTest extends AnyFreeSpec:
+class KernelTest extends kyo.test.Test[Any]:
 
     sealed trait Ask   extends ArrowEffect[Const[Unit], Const[Int]]
     sealed trait Say   extends ArrowEffect[Const[String], Const[Unit]]

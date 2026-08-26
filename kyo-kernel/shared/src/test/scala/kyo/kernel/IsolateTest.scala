@@ -7,22 +7,14 @@ import kyo.Maybe
 import kyo.Maybe.*
 import kyo.Tag
 import kyo.kernel.internal.Eval
-import org.scalatest.freespec.AnyFreeSpec
-import scala.compiletime.testing.typeCheckErrors
 
-class IsolateTest extends AnyFreeSpec:
+class IsolateTest extends kyo.test.Test[Any]:
 
     sealed trait TestEffect1         extends ContextEffect[Int]
     sealed trait TestEffect2         extends ContextEffect[String]
     sealed trait TestEffect3         extends ContextEffect[Boolean]
     sealed trait NotContextEffect    extends ArrowEffect[Const[Int], Const[Int]]
     sealed trait NotContextEffectSub extends NotContextEffect
-
-    private inline def typeCheckFailure(inline code: String)(expected: String): org.scalatest.Assertion =
-        val errors = typeCheckErrors(code)
-        assert(errors.nonEmpty, "expected a type error, code compiled")
-        assert(errors.exists(_.message.contains(expected)), errors.map(_.message).mkString("\n"))
-    end typeCheckFailure
 
     // a Var-like effect pair: a read (Absent) answers the current value, a write (Present) installs a
     // new one and answers it. Stateful regions over them give the isolates below real state to manage

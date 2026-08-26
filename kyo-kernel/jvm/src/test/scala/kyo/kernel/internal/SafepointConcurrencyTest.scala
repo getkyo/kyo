@@ -5,9 +5,9 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kyo.discard
 import kyo.kernel.*
-import org.scalatest.freespec.AnyFreeSpec
 
-class SafepointConcurrencyTest extends AnyFreeSpec:
+class SafepointConcurrencyTest extends kyo.test.Test[Any]:
+    override def config = super.config.globallySequential
 
     private val Period = 512
     private val Slots  = 65536

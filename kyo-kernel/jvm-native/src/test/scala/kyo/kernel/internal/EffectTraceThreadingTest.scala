@@ -4,12 +4,11 @@ import kyo.Const
 import kyo.Tag
 import kyo.discard
 import kyo.kernel.*
-import org.scalatest.freespec.AnyFreeSpec
 
 /** The trace-attach race needs real threads; the cross-platform trace coverage stays in the shared
   * EffectTraceTest.
   */
-class EffectTraceThreadingTest extends AnyFreeSpec:
+class EffectTraceThreadingTest extends kyo.test.Test[Any]:
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())

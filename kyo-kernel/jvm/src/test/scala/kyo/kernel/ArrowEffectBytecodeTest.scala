@@ -2,14 +2,13 @@ package kyo.kernel
 
 import kyo.Id
 import kyo.Tag
-import org.scalatest.freespec.AnyFreeSpec
 import scala.reflect.ClassTag
 
 /** Pins the compiled size of the ArrowEffect expansions at user call sites: suspend, suspendWith, and the region constructor.
   *
   * A size that moves here is a result to look at, never a baseline to quietly rewrite.
   */
-class ArrowEffectBytecodeTest extends AnyFreeSpec:
+class ArrowEffectBytecodeTest extends kyo.test.Test[Any]:
 
     object TestEffect extends ArrowEffect[Id, Id]
 

@@ -12,10 +12,9 @@ import kyo.kernel.internal.Eval
 import kyo.kernel.internal.Finalizer
 import kyo.kernel.internal.Kyo
 import kyo.kernel.internal.SafepointStop
-import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
 
-class EffectTest extends AnyFreeSpec:
+class EffectTest extends kyo.test.Test[Any]:
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())

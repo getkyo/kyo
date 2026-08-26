@@ -4,12 +4,11 @@ import kyo.Result
 import kyo.discard
 import kyo.kernel.internal.Eval
 import kyo.kernel.internal.Safepoint
-import org.scalatest.freespec.AnyFreeSpec
 
 /** The bracket tests that need real threads: cross-thread stops and racing resumers. The
   * cross-platform bracket coverage stays in the shared EffectTest.
   */
-class EffectThreadingTest extends AnyFreeSpec:
+class EffectThreadingTest extends kyo.test.Test[Any]:
 
     "a cross-thread stop parks inside a bracket and abandonment releases" in {
         @volatile var started       = false

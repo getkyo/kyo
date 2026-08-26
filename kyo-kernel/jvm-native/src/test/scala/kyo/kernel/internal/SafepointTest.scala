@@ -1,9 +1,10 @@
 package kyo.kernel.internal
 
 import kyo.kernel.*
-import org.scalatest.freespec.AnyFreeSpec
 
-class SafepointTest extends AnyFreeSpec:
+class SafepointTest extends kyo.test.Test[Any]:
+    override def config = super.config.globallySequential
+
 
     private val Period = 512
 

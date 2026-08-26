@@ -6,12 +6,11 @@ import kyo.Maybe
 import kyo.Tag
 import kyo.discard
 import kyo.kernel.*
-import org.scalatest.freespec.AnyFreeSpec
 
 /** The captured-continuation-as-value pin that resumes on real threads; the same-thread shots stay
   * in the shared EvalTest.
   */
-class EvalThreadingTest extends AnyFreeSpec:
+class EvalThreadingTest extends kyo.test.Test[Any]:
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())

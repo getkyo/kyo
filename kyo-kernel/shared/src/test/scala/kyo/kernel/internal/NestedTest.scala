@@ -4,13 +4,12 @@ import kyo.Const
 import kyo.Maybe
 import kyo.Tag
 import kyo.kernel.*
-import org.scalatest.freespec.AnyFreeSpec
 
 /** The representation contract: a value crosses the pending type unwrapped, and only a value that would itself read as a computation is
   * boxed. Getting this wrong in either direction is what makes the evaluator mistake a payload for a suspension, or hand a caller a box
   * where it expected a value.
   */
-class NestedTest extends AnyFreeSpec:
+class NestedTest extends kyo.test.Test[Any]:
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())

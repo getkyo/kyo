@@ -3,14 +3,13 @@ package kyo.kernel.internal
 import kyo.Const
 import kyo.Tag
 import kyo.kernel.*
-import org.scalatest.freespec.AnyFreeSpec
 
 /** The cases that assert the shape of the *physical* stack trace, rather than the reconstructed effect frames.
   *
   * Kept out of the shared corpus because those assertions are not portable: Scala.js mangles method names and shapes `getStackTrace` around
   * source maps, so a platform-independent expectation would have to be weakened to the point of proving nothing.
   */
-class EffectTracePhysicalTest extends AnyFreeSpec:
+class EffectTracePhysicalTest extends kyo.test.Test[Any]:
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())

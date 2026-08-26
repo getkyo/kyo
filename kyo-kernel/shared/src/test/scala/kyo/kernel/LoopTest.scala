@@ -2,9 +2,8 @@ package kyo.kernel
 
 import kyo.Frame
 import kyo.kernel.internal.*
-import org.scalatest.freespec.AnyFreeSpec
 
-class LoopTest extends AnyFreeSpec:
+class LoopTest extends kyo.test.Test[Any]:
 
     given Frame = Frame.internal
 

@@ -6,11 +6,10 @@ import kyo.Maybe
 import kyo.Result
 import kyo.Tag
 import kyo.kernel.internal.Eval
-import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
 import scala.collection.mutable.ListBuffer
 
-class ArrowEffectTest extends AnyFreeSpec:
+class ArrowEffectTest extends kyo.test.Test[Any]:
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())

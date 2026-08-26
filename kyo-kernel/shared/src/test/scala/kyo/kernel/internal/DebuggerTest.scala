@@ -5,10 +5,11 @@ import kyo.Frame
 import kyo.Tag
 import kyo.discard
 import kyo.kernel.*
-import org.scalatest.freespec.AnyFreeSpec
 import scala.collection.mutable.ListBuffer
 
-class DebuggerTest extends AnyFreeSpec:
+class DebuggerTest extends kyo.test.Test[Any]:
+    override def config = super.config.globallySequential
+
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
@@ -97,7 +98,7 @@ class DebuggerTest extends AnyFreeSpec:
     }
 
     // red: the delivery of the intermediate value no longer routes through onDeliver
-    "an onDeliver swap replaces the delivered value" ignore {
+    "an onDeliver swap replaces the delivered value".ignore in {
         val d = new Recording(route = true):
             override def onDeliver[A](stack: Stack, frame: Frame, value: A): A =
                 if value.equals(2) then 20.asInstanceOf[A] else value
@@ -145,7 +146,7 @@ class DebuggerTest extends AnyFreeSpec:
     }
 
     // red: Eval.partial runs through an armed Safepoint.stop instead of parking
-    "a park and resume inside a session keeps the stream and the result" ignore {
+    "a park and resume inside a session keeps the stream and the result".ignore in {
         val d = new Recording(route = false)
         session(d) {
             val v: Int < Any =

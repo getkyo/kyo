@@ -1,14 +1,15 @@
 package kyo.kernel.internal
 
 import kyo.kernel.*
-import org.scalatest.freespec.AnyFreeSpec
 
 /** `Safepoint.stop` against a thread that was constructed but never started, and so
   * never claimed a slot. Only expressible where a second, distinct thread handle can
   * exist: JS and Wasm are single-threaded by construction, so this case moves here from
   * the shared `SafepointTest`, JVM and Native only.
   */
-class SafepointUnstartedThreadTest extends AnyFreeSpec:
+class SafepointUnstartedThreadTest extends kyo.test.Test[Any]:
+    override def config = super.config.globallySequential
+
 
     "stop misses a thread that never evaluated" in {
         assert(!Safepoint.stop(new Thread()))

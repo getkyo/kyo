@@ -3,14 +3,13 @@ package kyo.kernel.internal
 import kyo.Const
 import kyo.Tag
 import kyo.kernel.*
-import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
 
 /** A map tower resumed through a captured continuation at every level: each capture holds the trailing maps of all the levels before it, so
   * whatever the capture and the resume cost per entry is paid once per level. Kept apart from the corpus so it can be run and debugged
   * alone.
   */
-class EvalCaptureTowerTest extends AnyFreeSpec:
+class EvalCaptureTowerTest extends kyo.test.Test[Any]:
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
