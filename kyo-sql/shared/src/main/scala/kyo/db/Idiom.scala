@@ -256,7 +256,7 @@ abstract class Idiom:
             case lit: Sql.Literal[a]         => ctx.appendBind(Sql.BoundValue(lit.value, lit.schema, lit.typeName))
             case lt: Sql.LabelledTerm[?, ?]  => term(ctx, lt.term)
             case gc: Sql.GroupedColumn[?, ?] => term(ctx, gc.column)
-            case c: Sql.Comparison[?]        => binary(ctx, c.left, comparisonOp(c.op), c.right)
+            case c: Sql.Comparison           => binary(ctx, c.left, comparisonOp(c.op), c.right)
             case lg: Sql.Logical             => binary(ctx, lg.left, logicalOp(lg.op), lg.right)
             case ar: Sql.Arithmetic[?]       => arithmetic(ctx, ar)
             case sm: Sql.StringMatch         => stringMatch(ctx, sm)

@@ -99,7 +99,9 @@ private[kyo] object DomBackend:
         private def svgContextAt(path: Seq[String]): Boolean =
             ReactiveUI.findNode(root, path).map(_.svgContext).getOrElse(false)
 
-        def onChange(path: Seq[String], ui: UI)(using Frame): Unit < Async =
+        // In-process: the update is a DOM write, not bytes on a wire, so this replaces the region whole
+        // rather than diffing it. `previous` is what the server-side exchange uses to send only what moved.
+        def onChange(path: Seq[String], previous: Maybe[UI], ui: UI)(using Frame): Unit < Async =
             HtmlRenderer.render(ui, path).map { html =>
                 // Always wrap the rendered html in the reactive boundary element so the node carrying
                 // data-kyo-path=path survives subsequent replacements. A Fragment, Text, or RawHtml value

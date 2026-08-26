@@ -103,6 +103,18 @@ object KyoFfiPlugin extends AutoPlugin {
                 "this module's bundled C needs the same headers, so it resolves the same functions the link " +
                 "libs provide. Wire into nativeConfig.compileOptions in a Native project."
         )
+        val ffiNativeDependencyLinkingOptions = taskKey[Seq[String]](
+            "Scala Native linkingOptions the DEPENDENCIES on this project's classpath declare for their own " +
+                "bundled C, read from the flag manifests they ship. Scala Native compiles a dependency's " +
+                "bundled C into this binary, so this binary is the one that has to link its libraries " +
+                "(e.g. -luring for kyo-net's io_uring shim). nativeConfig does not propagate across a " +
+                "dependency, so wire this into nativeConfig.linkingOptions alongside ffiNativeLinkingOptions."
+        )
+        val ffiNativeDependencyCompileOptions = taskKey[Seq[String]](
+            "Scala Native compileOptions the DEPENDENCIES on this project's classpath declare for their own " +
+                "bundled C, read from the flag manifests they ship. The counterpart of " +
+                "ffiNativeDependencyLinkingOptions for the compile side; wire into nativeConfig.compileOptions."
+        )
 
         /** Diagnostic: return the resolved `cc` command line(s) the plugin would
           * invoke for the current library configuration, without executing it. One
@@ -762,8 +774,50 @@ object KyoFfiPlugin extends AutoPlugin {
             val libs     = ffiLibrariesResolved.value
             if (platform != "Native") Nil
             else libs.flatMap(_.includeDirs).distinct.map(d => s"-I${d.getAbsolutePath}")
+        },
+
+        // The flags this project's DEPENDENCIES declare, read off their manifests. Without these a consumer
+        // links a dependency's bundled C with none of the libraries that C needs: kyo-net's io_uring shim is
+        // compiled into the consumer's binary but `-luring` never reaches the link, and it fails on symbols the
+        // consumer never wrote. `nativeConfig` is per-project and does not cross a dependency edge, which is
+        // what the manifests exist to bridge.
+        ffiNativeDependencyLinkingOptions := {
+            val platform = ffiTargetPlatform.value
+            val cp       = (Compile / dependencyClasspath).value.map(_.data)
+            val targetOs = CCompiler.resolveTargetOsArch(ffiTargetOsArch.value)._1
+            if (platform != "Native") Nil
+            else readNativeFlagManifests(cp, ffiNativeLinkFlagsDir, ffiNativeInBuildLinkFlagsDir, targetOs)
+        },
+        ffiNativeDependencyCompileOptions := {
+            val platform = ffiTargetPlatform.value
+            val cp       = (Compile / dependencyClasspath).value.map(_.data)
+            val targetOs = CCompiler.resolveTargetOsArch(ffiTargetOsArch.value)._1
+            if (platform != "Native") Nil
+            else readNativeFlagManifests(cp, ffiNativeCompileFlagsDir, ffiNativeInBuildCompileFlagsDir, targetOs)
         }
-    )
+    ) ++ ffiPackageBinFlagsFilter
+
+    /** Read the native-flag manifests every entry of `cp` carries for `targetOs`, one flag per line, deduped first-seen.
+      *
+      * Each entry is read from its IN-BUILD directory when it has one and from the packaged one otherwise. A module built alongside this one
+      * shares its filesystem, so the vendored tree it compiled against is a real path here and the unfiltered answer is the right one; a
+      * module resolved as a published artifact carries only the portable answer, because the paths in the other one name a machine this
+      * build has never seen.
+      *
+      * Only `targetOs`'s files are read. The classpath carries published artifacts too, and a flag set produced for another OS does not
+      * merely fail to help: `-luring` and the GNU-ld options ld64 rejects break a Darwin link outright.
+      */
+    def readNativeFlagManifests(
+        cp: Seq[File],
+        relDir: Seq[String],
+        inBuildRelDir: Seq[String],
+        targetOs: String
+    ): Seq[String] =
+        cp.flatMap { entry =>
+            val inBuild = inBuildRelDir.foldLeft(entry)(_ / _)
+            val dir     = if (inBuild.isDirectory) inBuild else relDir.foldLeft(entry)(_ / _)
+            if (dir.isDirectory) (dir * s"*-$targetOs.flags").get.flatMap(IO.readLines(_)) else Seq.empty[String]
+        }.map(_.trim).filter(_.nonEmpty).distinct
 
     // --- helpers (settings/task fragments) --------------------------------------
 
@@ -922,6 +976,23 @@ object KyoFfiPlugin extends AutoPlugin {
     val ffiNativeLinkFlagsDir: Seq[String]    = Seq("META-INF", "kyo-ffi", "native-link-flags")
     val ffiNativeCompileFlagsDir: Seq[String] = Seq("META-INF", "kyo-ffi", "native-compile-flags")
 
+    /** The sibling directories carrying the SAME flags unfiltered, for a downstream module in the same build.
+      *
+      * Two audiences want different answers to "what flags does this module's bundled C need". A module built alongside this one shares its
+      * filesystem, so the staged BoringSSL tree this module compiled against is a real path it can use. A module that resolves this one as a
+      * published artifact does not: that path names a machine it has never seen. The packaged manifests answer the second question and these
+      * answer the first, which is why these are dropped from `packageBin` (see [[ffiPackageBinFlagsFilter]]) and never leave the build.
+      */
+    val ffiNativeInBuildLinkFlagsDir: Seq[String]    = Seq("META-INF", "kyo-ffi", "native-link-flags-inbuild")
+    val ffiNativeInBuildCompileFlagsDir: Seq[String] = Seq("META-INF", "kyo-ffi", "native-compile-flags-inbuild")
+
+    /** The OS tag the native-flag manifests are named by: `ffiTargetOsArch`'s OS when it is set, this host's otherwise.
+      *
+      * Public because a reader outside a task context needs it to pick its own target's file, and reading the system property mirrors what
+      * `ffiTargetOsArch` defaults to. A reader with a task context should prefer the setting.
+      */
+    def ffiManifestTargetOs: String = CCompiler.resolveTargetOsArch(sys.props.get("kyo.ffi.targetOsArch"))._1
+
     /** Native-only resource generator: write this module's Scala Native FFI link flags
       * (`ffiNativeLinkingOptions`, e.g. `-Wl,-Bstatic -luring -Wl,-Bdynamic` on Linux, plus the staged
       * BoringSSL force-load) and compile flags (`ffiNativeCompileOptions`, the `-I` include dirs the bundled
@@ -939,6 +1010,13 @@ object KyoFfiPlugin extends AutoPlugin {
       * dependency's manifests and folds them into the downstream `nativeConfig`, mirroring how the bundled C
       * itself propagates.
       *
+      * The manifests are PACKAGED, so they also travel to machines that have never seen this filesystem, and two things follow. The file is
+      * named `<module>-<targetOs>.flags` and a reader keeps only its own target's, because a flag set produced for Linux (`-luring`, GNU-ld
+      * options ld64 rejects) is not merely useless on Darwin, it breaks the link. And the flags are filtered through
+      * [[partitionPortableFlags]], because a path is a fact about the machine that wrote it: a released artifact used to carry the release
+      * runner's `-L/home/runner/work/kyo/kyo/.../boringssl/staged/linux-x86_64/lib` verbatim, pointing at archives no consumer has and the
+      * artifact does not ship. What survives is what means the same thing anywhere: `-l<name>` and bare linker options.
+      *
       * No-op on JVM / JS (they load a shared library at runtime, so there are no native build flags). An
       * empty flag set (e.g. macOS, where liburing does not apply) writes no file and removes a stale one, so
       * a now-flagless build does not leak a previous build's flags downstream.
@@ -951,11 +1029,71 @@ object KyoFfiPlugin extends AutoPlugin {
         val compileFlags = ffiNativeCompileOptions.value
         val resManaged   = (Compile / resourceManaged).value
         val moduleName   = name.value
+        val targetOs     = CCompiler.resolveTargetOsArch(ffiTargetOsArch.value)._1
+        val log          = streams.value.log
+        // The `-l` names that only resolve inside a vendored tree this artifact does not ship. They travel with the tree, so they leave
+        // with it: see `partitionPortableFlags`.
+        val vendoredLinkLibs =
+            ffiLibrariesResolved.value.filter(_.libDirs.nonEmpty).flatMap(_.resolvedLinkLibs(targetOs)).distinct.toSet
         if (platform != "Native") Seq.empty[File]
-        else
-            writeFfiManifest(resManaged, ffiNativeLinkFlagsDir, moduleName + ".flags", linkFlags) ++
-                writeFfiManifest(resManaged, ffiNativeCompileFlagsDir, moduleName + ".flags", compileFlags)
+        else {
+            val (portableLink, droppedLink)       = partitionPortableFlags(linkFlags, vendoredLinkLibs)
+            val (portableCompile, droppedCompile) = partitionPortableFlags(compileFlags, vendoredLinkLibs)
+            val dropped                           = (droppedLink ++ droppedCompile).distinct
+            if (dropped.nonEmpty)
+                log.debug(
+                    s"[kyo-ffi-plugin] $moduleName: ${dropped.size} host-specific flag(s) kept out of the packaged " +
+                        s"native-flag manifest: ${dropped.mkString(" ")}"
+                )
+            writeFfiManifest(resManaged, ffiNativeLinkFlagsDir, s"$moduleName-$targetOs.flags", portableLink) ++
+                writeFfiManifest(resManaged, ffiNativeCompileFlagsDir, s"$moduleName-$targetOs.flags", portableCompile) ++
+                writeFfiManifest(resManaged, ffiNativeInBuildLinkFlagsDir, s"$moduleName-$targetOs.flags", linkFlags) ++
+                writeFfiManifest(resManaged, ffiNativeInBuildCompileFlagsDir, s"$moduleName-$targetOs.flags", compileFlags)
+        }
     }
+
+    /** Drops the in-build flag manifests from `packageBin`, so the paths they name never leave this machine.
+      *
+      * They are generated resources and therefore packaged by default, which is how a release came to ship
+      * `-L/home/runner/work/kyo/kyo/kyo-net/native/../build/boringssl/staged/linux-x86_64/lib` inside its jar. The classpath a downstream
+      * module reads carries the generated `classDirectory` for a project dependency and the jar for a resolved one, so filtering here keeps
+      * the in-build answer available exactly where it is true.
+      */
+    private def ffiPackageBinFlagsFilter: Seq[Setting[?]] = Seq(
+        Compile / packageBin / mappings := {
+            val inBuild = Set(ffiNativeInBuildLinkFlagsDir.mkString("/"), ffiNativeInBuildCompileFlagsDir.mkString("/"))
+            (Compile / packageBin / mappings).value.filterNot { case (_, path) =>
+                inBuild.exists(dir => path.replace('\\', '/').startsWith(dir + "/"))
+            }
+        }
+    )
+
+    /** Split `flags` into the ones that mean the same thing on any machine and the ones that name a path on THIS one.
+      *
+      * The manifests are packaged, so they travel to machines that have never seen this filesystem. A released artifact used to carry the
+      * release runner's own tree verbatim, `-L/home/runner/work/kyo/kyo/kyo-net/native/../build/boringssl/staged/linux-x86_64/lib`, an `-I`
+      * beside it, and `-Wl,-force_load,<abs path to libssl.a>` on Darwin: none of those exist on a consumer's machine, and they point at
+      * archives the artifact does not ship anyway.
+      *
+      * The first test is whether the flag contains a path separator at all, rather than whether it starts with one. A path can sit anywhere
+      * in a flag (`-Wl,-force_load,<path>` carries it third) and a relative path is no more portable than an absolute one, since the
+      * reader's working directory is not this one either.
+      *
+      * The second is `vendoredLinkLibs`: the `-l` names belonging to a library whose archives live in a vendored tree. Those names carry no
+      * path and would survive the first test, but they only mean anything next to the `-L` that finds the tree, and the artifact ships
+      * neither. Left in, `-lssl -lcrypto` would quietly resolve against a consumer's SYSTEM OpenSSL under the vendored library's name,
+      * which links and runs and reports the wrong provider. A vendored library's flags therefore leave as a set, with the tree they need.
+      *
+      * What survives is what names no file and needs no tree: a system `-l<name>` such as `-luring`, and bare linker options.
+      *
+      * The dropped flags are not lost to the build that produced them; they are written to the in-build manifests, which
+      * [[ffiPackageBinFlagsFilter]] keeps out of the jar.
+      */
+    private[sbt] def partitionPortableFlags(flags: Seq[String], vendoredLinkLibs: Set[String] = Set.empty): (Seq[String], Seq[String]) =
+        flags.partition { flag =>
+            val namesVendoredLib = flag.startsWith("-l") && vendoredLinkLibs.contains(flag.drop(2))
+            !namesVendoredLib && !flag.contains('/') && !flag.contains('\\')
+        }
 
     /** The classpath-relative directory KyoFfiPlugin writes each module's library-state manifest into
       * (one `<module>.state` file per FFI module).

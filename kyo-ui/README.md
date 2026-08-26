@@ -217,7 +217,7 @@ In kyo-ui:
 
 - The function that constructs the `UI` value runs once. There is no component function that re-runs on every state change.
 - A `signal.render(f)` boundary is a subscription to the signal at the granularity of `f`. Only `f` re-runs when the signal emits, and the framework patches the DOM only at the path where the boundary was anchored.
-- There is no virtual DOM. The boundary holds the previous rendered AST for that subtree, generates a fresh one, and emits a `Replace` diff at its anchor path. The browser-side runtime applies the diff via `outerHTML` (or the server-push transport pushes it over the WebSocket).
+- There is no virtual DOM. The boundary holds the previous rendered AST for that subtree and generates a fresh one; the server-push transport compares the two and sends a `Replace` only for the nodes that actually differ, addressed by their own paths, so a chart whose data moved but whose axes, gridlines and legend did not sends its marks and nothing else. An unchanged re-render sends nothing. The comparison walks into an SVG subtree, where a node is exactly its attributes and its children, and replaces the enclosing node whole anywhere it cannot decompose. The browser-side runtime applies each diff via `outerHTML`; in-process it replaces the boundary whole, since there the update is a DOM write rather than bytes on a wire.
 - Subscription granularity is determined at the call site. `div(name: Signal[String])` is a fine-grained subscription on one text node. `when(loggedIn)(bigSubtree)` is a coarse subscription that swaps a whole subtree. Both are explicit choices in the code, not framework defaults to argue with.
 - There is no `useMemo`, `useCallback`, or `React.memo` equivalent because nothing gets re-executed that you did not opt into. The cost of "rendering" a subtree is the cost of the closure inside its boundary, and you wrote that closure.
 
@@ -983,7 +983,7 @@ The same `y` also accepts a `Signal[Double]` for a threshold that tracks live st
 
 ### Typed values pick the scale
 
-Each encoding's scale is chosen from the static type of its accessor, so you rarely declare a scale at all. `Int`/`Double` select a linear scale, `String` and enums select a band (categorical) scale, and `Instant` selects a time scale. In the running domain, `month: String` gives a band x-scale and `revenue: Double` a linear y-scale, with nothing to annotate:
+Each encoding's scale is chosen from the static type of its accessor, so you rarely declare a scale at all. `Int`/`Double` select a linear scale, `String` and enums select a band (categorical) scale, and `Instant` selects a time scale, whose default tick labels are times at the granularity the tick step implies rather than epoch numbers. Format them yourself with `.xAxis(_.formatTime(i => ...))`, which is handed the `Instant` the axis was typed with; `.format` remains the formatter for a numeric axis. In the running domain, `month: String` gives a band x-scale and `revenue: Double` a linear y-scale, with nothing to annotate:
 
 ```scala
 val typedChart: Svg.Root < Sync =
@@ -1069,6 +1069,8 @@ val themed: Svg.Root < Sync =
         .theme(_.dark.palette(Chart.Palette.Okabe).font("monospace"))
         .lower
 ```
+
+> **Note:** the named palettes are published against a light panel, and two of them start with a color that is nearly invisible on a dark one (Okabe-Ito's first entry is pure black by definition, Viridis's is near-black purple). Paired with `.dark`, or with a background you chose, kyo lightens or darkens only the entries that fall below WCAG 2.1 SC 1.4.11's 3:1 against that panel and leaves every readable one exactly as published; on the default light panel nothing is changed. A palette you pass as an explicit color list, and an explicit `colorScale`, are your own colors and are used exactly as given wherever they are drawn.
 
 ### A second axis
 

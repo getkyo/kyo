@@ -1,0 +1,141 @@
+name: checks
+# Workflow lint, formatting, and README doctests in one job.
+#
+# One job rather than three because a runner slot costs far more than this work: scalafmt
+# needs ~3 minutes behind a p90 queue wait of ~86 minutes on the x64 pool. Sharing a slot
+# also shares one checkout, one JDK and sbt install, and one coursier cache.
+#
+# Steps run cheapest first, so a formatting or lint error surfaces in ~3 minutes instead of
+# after the ~42 minute doctest step. The cost is that those cheap checks are serial with
+# each other, which only pays while the queue wait dominates the work. On an uncontended
+# pool, three parallel jobs would be the better shape.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+# Without this, rapid pushes each hold a slot to completion while validating a commit that
+# is already stale, which is expensive when the job runs ~50 minutes.
+concurrency:
+  group: checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    # arm64: nothing here is architecture-specific. scalafmt and actionlint are pure
+    # source analysis, and `sbt doctest` validates that README blocks compile and run,
+    # with the staged natives below built for whichever host runs the job. The x64 pool
+    # carries most of the repo's jobs and has roughly twice the p90 queue wait.
+    runs-on: ubuntu-24.04-arm
+    # The job runs ~50 minutes, nearly all of it doctest. Uncapped, a hang would hold a slot
+    # for GitHub's 360-minute default, which is the resource this job is shaped to conserve.
+    timeout-minutes: 120
+    env:
+      # No -Xmx here: the checked-in .jvmopts governs the driver heap (12G). The sbt launcher
+      # appends .jvmopts after JAVA_OPTS on the java command line, so the last -Xmx wins and one
+      # set here would be silently inert. Change the heap in .jvmopts. build.yml carries the same
+      # constraint.
+      JAVA_OPTS: -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
+      JVM_OPTS: -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
+    steps:
+      # Full history is required by `sbt doctest` and by the workflow-change gate below, which
+      # resolves a base commit a shallow clone does not carry. Shallowing this fails quietly:
+      # the base lookup misses and the gate lints every run instead of skipping.
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      # --- cheapest first: workflow lint (~30s) ---
+      # Gated on the changed-file set rather than a `paths:` trigger, since the other steps in
+      # this job must run regardless of whether a workflow changed.
+      - name: Detect workflow changes
+        id: workflow-changes
+        shell: bash
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$base" ]; then
+            # push to main: compare against the previous commit
+            base="${{ github.event.before }}"
+          fi
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            # No usable base (first push, force push, shallow). Lint rather than skip:
+            # a false negative here means a broken workflow lands unchecked.
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only "$base" HEAD -- .github/workflows | grep -q .; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Lint workflows
+        if: steps.workflow-changes.outputs.changed == 'true'
+        uses: rhysd/actionlint@v1.7.12
+
+      # --- then formatting (~3m) ---
+      - uses: coursier/cache-action@v8.1.1
+      - uses: coursier/setup-action@v3.0.2
+        with:
+          jvm: corretto:25
+          apps: sbt
+
+      - name: Check formatting
+        run: |
+          sbt scalafmtAll scalafmtSbt
+          if ! git diff --quiet; then
+            echo "::error::Files are not formatted. Run 'sbt scalafmtAll scalafmtSbt' locally."
+            git diff
+            exit 1
+          fi
+
+      # --- then the expensive one (~42m) ---
+      # liburing (build-time only): `sbt doctest` compiles kyo-net's io_uring FFI shim (kyo_uring.c), which
+      # statically links -luring. This workflow does not use .github/actions/setup, so install it here too.
+      - name: Install liburing (Linux)
+        run: bash scripts/apt-install.sh liburing-dev
+
+      # libaeron (build-time only): `sbt doctest` compiles kyo-aeron's C shim (kyo_aeron.c), which
+      # statically links -laeron_driver_static from the gitignored staged tree. Same reason as liburing
+      # above: this workflow does not use .github/actions/setup, so the staging step is repeated here.
+      # The runner is pinned to ubuntu-24.04-arm, so the os-arch is always linux-aarch64.
+      - name: Prepare libaeron
+        shell: bash
+        run: |
+          # The Aeron driver links -luuid on Linux, and the package providing the libuuid.so link
+          # target is not preinstalled.
+          bash scripts/apt-install.sh --if-missing cmake uuid-dev
+          bash kyo-aeron/scripts/build-aeron.sh linux-aarch64
+
+      # Doctest result cache. Entries are keyed by SHA-256 over the block body, the scope closure
+      # (preceding blocks and the predef), the classpath fingerprint, the Scala version and the
+      # scalac options, so a restored entry is reused only when all of those match. It holds result
+      # files alone, never compiled classes: each entry is an empty file whose name is the key, so
+      # ~1500 blocks fit well under 1 MB.
+      #
+      # The run id in the key never matches, so every run restores through restore-keys from the
+      # newest previous generation. That is deliberate: it gives each run its own entry and lets
+      # GitHub's LRU and 7-day eviction bound the store.
+      - name: Restore doctest cache
+        uses: actions/cache/restore@v5
+        with:
+          path: .doctest-cache
+          key: doctest-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
+          restore-keys: |
+            doctest-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: README doctests
+        run: sbt doctest
+
+      # main writes, PRs only restore. A cache written on a PR run is scoped to that PR's merge
+      # ref, readable by nothing but re-runs of the same PR, so it would cost upload time for no
+      # reuse. A PR gets its hits from the default branch's cache.
+      - name: Save doctest cache
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@v5
+        with:
+          path: .doctest-cache
+          key: doctest-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}

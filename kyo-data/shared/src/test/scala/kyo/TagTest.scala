@@ -1,6 +1,5 @@
 package kyo
 
-import izumi.reflect.Tag as ITag
 import kyo.*
 import kyo.internal.RegisterFunction
 import kyo.internal.TagHash
@@ -218,26 +217,26 @@ class TagTest extends kyo.test.Test[Any]:
 
         "opaque types with explicit bounds" - {
             test[BoundedInt, AnyVal]
-            test[Int, BoundedInt](skipIzumiWarning = true)
+            test[Int, BoundedInt]
             test[BoundedString, AnyRef]
-            test[String, BoundedString](skipIzumiWarning = true)
+            test[String, BoundedString]
         }
 
         "opaque types with bounds different from underlying" - {
             test[BoundedCat, Animal]
-            test[Cat, BoundedCat](skipIzumiWarning = true)
+            test[Cat, BoundedCat]
             test[BoundedCat, Mammal]
         }
 
         "bounded opaque types with union underlying type" - {
             test[UnionWithBounds, Any]
-            test[Int, UnionWithBounds](skipIzumiWarning = true)
+            test[Int, UnionWithBounds]
             test[String, UnionWithBounds]
         }
 
         "bounded opaque types with intersection underlying type" - {
             test[IntersectionWithBounds, Readable]
-            test[FileImpl, IntersectionWithBounds](skipIzumiWarning = true)
+            test[FileImpl, IntersectionWithBounds]
             test[IntersectionWithBounds, Writable]
         }
 
@@ -718,7 +717,7 @@ class TagTest extends kyo.test.Test[Any]:
         }
         "Any" - {
             test[Any, Any]
-            test[Any, AnyRef](skipIzumiWarning = true) // known izumi limitation
+            test[Any, AnyRef]
             test[Any, AnyVal]
             test[List[Any], List[Int]]
         }
@@ -770,7 +769,7 @@ class TagTest extends kyo.test.Test[Any]:
             test[Box[Big.Small], Box[Big.Small]]
 
             class Box2[A]
-            def test2[A: Tag: izumi.reflect.Tag] = test[Box2[A], Box2[A]]
+            def test2[A: Tag] = test[Box2[A], Box2[A]]
             test2[Big.Sub]
         }
     }
@@ -1085,12 +1084,12 @@ class TagTest extends kyo.test.Test[Any]:
 
         "different types with similar string representation" - {
             test[1, 1.0]
-            test[1, 1L](skipIzumiWarning = true)
+            test[1, 1L]
             test['a', "a"]
             test[true, "true"]
-            test[1.0f, 1.0](skipIzumiWarning = true)
+            test[1.0f, 1.0]
             test[0, 0.0]
-            test[0, 0L](skipIzumiWarning = true)
+            test[0, 0L]
             class Box[A]
             test[Box[1], Box[1.0]]
         }

@@ -129,11 +129,68 @@ object HttpStatus:
     /** Status code not covered by the standard enums. */
     final case class Custom(override val code: Int) extends HttpStatus(code)
 
-    export ClientError.*
-    export Informational.*
-    export Redirect.*
-    export ServerError.*
-    export Success.*
+    // Exported by name. A wildcard emits one forwarder per member in an order the compiler does not
+    // fix, so two clean builds of identical sources produce different artifacts. The enums are large
+    // enough for that ordering to shift in practice.
+    export ClientError.BadRequest
+    export ClientError.Conflict
+    export ClientError.ExpectationFailed
+    export ClientError.FailedDependency
+    export ClientError.Forbidden
+    export ClientError.Gone
+    export ClientError.ImATeapot
+    export ClientError.LengthRequired
+    export ClientError.Locked
+    export ClientError.MethodNotAllowed
+    export ClientError.MisdirectedRequest
+    export ClientError.NotAcceptable
+    export ClientError.NotFound
+    export ClientError.PayloadTooLarge
+    export ClientError.PaymentRequired
+    export ClientError.PreconditionFailed
+    export ClientError.PreconditionRequired
+    export ClientError.ProxyAuthRequired
+    export ClientError.RangeNotSatisfiable
+    export ClientError.RequestHeaderFieldsTooLarge
+    export ClientError.RequestTimeout
+    export ClientError.TooEarly
+    export ClientError.TooManyRequests
+    export ClientError.Unauthorized
+    export ClientError.UnavailableForLegalReasons
+    export ClientError.UnprocessableEntity
+    export ClientError.UnsupportedMediaType
+    export ClientError.UpgradeRequired
+    export ClientError.URITooLong
+    export Informational.Continue
+    export Informational.EarlyHints
+    export Informational.Processing
+    export Informational.SwitchingProtocols
+    export Redirect.Found
+    export Redirect.MovedPermanently
+    export Redirect.MultipleChoices
+    export Redirect.NotModified
+    export Redirect.PermanentRedirect
+    export Redirect.SeeOther
+    export Redirect.TemporaryRedirect
+    export Redirect.UseProxy
+    export ServerError.BadGateway
+    export ServerError.GatewayTimeout
+    export ServerError.HTTPVersionNotSupported
+    export ServerError.InsufficientStorage
+    export ServerError.InternalServerError
+    export ServerError.LoopDetected
+    export ServerError.NetworkAuthRequired
+    export ServerError.NotExtended
+    export ServerError.NotImplemented
+    export ServerError.ServiceUnavailable
+    export ServerError.VariantAlsoNegotiates
+    export Success.Accepted
+    export Success.Created
+    export Success.NoContent
+    export Success.NonAuthoritativeInfo
+    export Success.OK
+    export Success.PartialContent
+    export Success.ResetContent
 
     enum Informational(code: Int) extends HttpStatus(code):
         case Continue           extends Informational(100)

@@ -276,7 +276,9 @@ object UI:
                 Channel.use[Unit](256) { channel =>
                     val exchange =
                         new UIExchange:
-                            def onChange(path: Seq[String], changedUI: UI)(using Frame): Unit < Async =
+                            // The stream re-renders the whole page per change, so which nodes moved is not
+                            // information it can use: `previous` is ignored here on purpose.
+                            def onChange(path: Seq[String], previous: Maybe[UI], changedUI: UI)(using Frame): Unit < Async =
                                 // runPartial drops only a Closed (the consumer stopped draining); a Panic propagates.
                                 Abort.runPartial[Closed](channel.put(())).unit
                     // Scope.run owns the root region Fiber.init: when the stream consumer stops draining,

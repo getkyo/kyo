@@ -30,3 +30,7 @@ node_modules
 
 # Local analysis notes, never committed
 analysis-*.md
+
+# Doctest content-hash cache. Lives outside target/ so a clean does not destroy it (CI
+# restores it before the build, and a clean would then wipe what was just restored).
+.doctest-cache/

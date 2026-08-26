@@ -61,54 +61,90 @@ final class PostgresRowReader(row: SqlRow, format: Format, matchesFieldAt: Maybe
     private def currentOid(): Int =
         if idx < row.size then row.columns(idx).typeToken else 0
 
+    /** The name of the column the cursor is on, so a refusal can say which field of a row type disagreed. Absent past the end and for a
+      * row carrying fewer column descriptions than values.
+      */
+    private def currentName(): Maybe[String] =
+        if idx < row.columns.size then Maybe(row.columns(idx).name) else Maybe.empty
+
     /** Reads the current column: hands its bytes and OID to the per-type decoder and advances the cursor. */
     private inline def readPrimitive[A](inline fromColumn: (Span[Byte], Int) => A): A =
         val oid = currentOid()
         fromColumn(nextBytes(), oid)
     end readPrimitive
 
+    /** Reads the current column at a numeric target, refusing a named column outside the numeric and text families.
+      *
+      * Separate from [[readDeclared]] because a numeric read legitimately takes more than one column type: every integral width satisfies
+      * an `Int`, both float widths satisfy a `Double`, and the text family satisfies any of them. What it must not take is a named column
+      * whose layout the decode would misread, which is what
+      * [[kyo.internal.postgres.types.PostgresDecoder.requireNumericColumn]] settles.
+      */
+    private inline def readNumeric[A](scalaType: String, accepts: Set[Int], inline fromColumn: (Span[Byte], Int) => A): A =
+        val oid = currentOid()
+        PostgresDecoder.requireNumericColumn(scalaType, oid, currentName(), accepts)
+        fromColumn(nextBytes(), oid)
+    end readNumeric
+
+    /** Reads the current column with a decoder that resolves its wire layout from the target type rather than from the column.
+      *
+      * Every such read is checked against what the decoder claims, because it cannot fail on its own: handed the wrong column it reads
+      * whatever bytes are there at the layout it expects and answers a plausible value. See
+      * [[kyo.internal.postgres.types.PostgresDecoder.requireAcceptedColumn]] for what it stays silent on.
+      */
+    private inline def readDeclared[A](scalaType: String, decoder: PostgresDecoder[A]): A =
+        val oid = currentOid()
+        PostgresDecoder.requireAcceptedColumn(scalaType, decoder.oids, oid, currentName())
+        decoder.read(format, nextBytes(), oid)
+    end readDeclared
+
     override def boolean(): Boolean =
-        readPrimitive((bytes, oid) => PostgresDecoder.bool.read(format, bytes, oid))
+        // A bool column is the target's own type and outside the numeric family, so it is named here; an int4 or
+        // numeric column reaching a Boolean field is one of the widenings the numeric set already carries.
+        readNumeric("Boolean", PostgresDecoder.numericOrBoolOids, (bytes, oid) => PostgresDecoder.bool.read(format, bytes, oid))
 
     override def short(): Short =
-        readPrimitive((bytes, oid) => PostgresDecoder.int2.read(format, bytes, oid))
+        readNumeric("Short", PostgresDecoder.numericFamilyOids, (bytes, oid) => PostgresDecoder.int2.read(format, bytes, oid))
 
     override def int(): Int =
-        readPrimitive((bytes, oid) => PostgresDecoder.int4.read(format, bytes, oid))
+        readNumeric("Int", PostgresDecoder.numericFamilyOids, (bytes, oid) => PostgresDecoder.int4.read(format, bytes, oid))
 
     override def long(): Long =
-        readPrimitive((bytes, oid) => PostgresDecoder.int8.read(format, bytes, oid))
+        readNumeric("Long", PostgresDecoder.numericFamilyOids, (bytes, oid) => PostgresDecoder.int8.read(format, bytes, oid))
 
     override def float(): Float =
-        readPrimitive((bytes, oid) => PostgresDecoder.float4.read(format, bytes, oid))
+        readNumeric("Float", PostgresDecoder.numericFamilyOids, (bytes, oid) => PostgresDecoder.float4.read(format, bytes, oid))
 
     override def double(): Double =
-        readPrimitive((bytes, oid) => PostgresDecoder.float8.read(format, bytes, oid))
+        readNumeric("Double", PostgresDecoder.numericFamilyOids, (bytes, oid) => PostgresDecoder.float8.read(format, bytes, oid))
 
     override def string(): String =
-        // textDecoder accepts both binary and text format identically (UTF-8 bytes either way).
-        PostgresDecoder.textDecoder.read(format, nextBytes())
+        // The column's OID goes to the decoder: a text read is the one read every wire type's bytes satisfy, so the
+        // decoder refuses a column whose type is not text rather than answering the protocol buffer as UTF-8.
+        readPrimitive((bytes, oid) => PostgresDecoder.textDecoder.read(format, bytes, oid))
 
     override def bytes(): Span[Byte] =
-        PostgresDecoder.bytea.read(format, nextBytes())
+        readDeclared("Span[Byte]", PostgresDecoder.bytea)
 
     override def bigDecimal(): BigDecimal =
         // Use the row's wire format: Binary for extended-protocol results, Text for simple-query results.
-        readPrimitive((bytes, oid) => PostgresDecoder.numeric.read(format, bytes, oid))
+        readNumeric("BigDecimal", PostgresDecoder.numericFamilyOids, (bytes, oid) => PostgresDecoder.numeric.read(format, bytes, oid))
 
     override def instant(): java.time.Instant =
         // timestamptz decoder returns kyo.Instant; convert at the boundary.
-        PostgresDecoder.timestamptz.read(format, nextBytes()).toJava
+        readDeclared("Instant", PostgresDecoder.timestamptz).toJava
 
     override def byte(): Byte =
         // PG has no single-byte integer type, so a Byte field travels as int2 and comes back from a column at least
         // twice as wide as the field. `readByte` range-checks the narrowing instead of wrapping it.
-        readPrimitive((bytes, oid) => PostgresDecoder.readByte(format, bytes, oid))
+        readNumeric("Byte", PostgresDecoder.numericFamilyOids, (bytes, oid) => PostgresDecoder.readByte(format, bytes, oid))
 
     override def char(): Char =
         // char is encoded as a 1-char text string; take the first character. A longer value is refused rather than
         // truncated to its first character: truncating to `s.charAt(0)` would drop the rest silently, a value change
-        // rather than a decode.
+        // rather than a decode. The column-type guard runs first so a non-text column is named against `Char`, the
+        // type that actually asked, rather than against the `String` the text decoder reads on the way there.
+        PostgresDecoder.requireTextColumn("Char", currentOid(), currentName())
         val s = PostgresDecoder.textDecoder.read(format, nextBytes())
         if s.isEmpty then throw SqlDecodeEmptyStringForCharException(Maybe(idx - 1))
         else if s.length > 1 then throw SqlDecodeMultiCharacterForCharException(Maybe(idx - 1), s.length)
@@ -118,10 +154,10 @@ final class PostgresRowReader(row: SqlRow, format: Format, matchesFieldAt: Maybe
     override def bigInt(): BigInt =
         // Use the row's wire format: Binary for extended-protocol results, Text for simple-query results.
         // `readBigInt` rejects a fractional value rather than truncating it, which `.toBigInt` would do silently.
-        readPrimitive((bytes, oid) => PostgresDecoder.readBigInt(format, bytes, oid))
+        readNumeric("BigInt", PostgresDecoder.numericFamilyOids, (bytes, oid) => PostgresDecoder.readBigInt(format, bytes, oid))
 
     override def duration(): java.time.Duration =
-        PostgresDecoder.interval.read(format, nextBytes())
+        readDeclared("Duration", PostgresDecoder.interval)
 
     // --- SQL type vocabulary ---
     //
@@ -131,34 +167,34 @@ final class PostgresRowReader(row: SqlRow, format: Format, matchesFieldAt: Maybe
     // or a JSON document.
 
     override def nextJson(): String =
-        PostgresDecoder.jsonDecoder.read(format, nextBytes())
+        readDeclared("JsonText", PostgresDecoder.jsonDecoder)
 
     override def nextUuid(): java.util.UUID =
-        PostgresDecoder.uuid.read(format, nextBytes())
+        readDeclared("UUID", PostgresDecoder.uuid)
 
     override def nextDate(): java.time.LocalDate =
-        PostgresDecoder.date.read(format, nextBytes())
+        readDeclared("LocalDate", PostgresDecoder.date)
 
     override def nextTime(): java.time.LocalTime =
-        PostgresDecoder.time.read(format, nextBytes())
+        readDeclared("LocalTime", PostgresDecoder.time)
 
     override def nextTimeWithOffset(): java.time.OffsetTime =
-        PostgresDecoder.timetz.read(format, nextBytes())
+        readDeclared("OffsetTime", PostgresDecoder.timetz)
 
     override def nextDateTime(): java.time.LocalDateTime =
-        PostgresDecoder.timestamp.read(format, nextBytes())
+        readDeclared("LocalDateTime", PostgresDecoder.timestamp)
 
     override def nextCalendarInterval(): java.time.Period =
-        PostgresDecoder.intervalPeriod.read(format, nextBytes())
+        readDeclared("Period", PostgresDecoder.intervalPeriod)
 
     override def nextArrayOfInt(): Chunk[Int] =
-        PostgresDecoder.int4Array.read(format, nextBytes())
+        readDeclared("Chunk[Int]", PostgresDecoder.int4Array)
 
     override def nextArrayOfString(): Chunk[String] =
-        PostgresDecoder.textArray.read(format, nextBytes())
+        readDeclared("Chunk[String]", PostgresDecoder.textArray)
 
     override def nextArrayOfJson(): Chunk[String] =
-        PostgresDecoder.jsonbArray.read(format, nextBytes())
+        readDeclared("Chunk[JsonText]", PostgresDecoder.jsonbArray)
 
     /** Returns the next column's bytes for a type PostgreSQL owns, in the PostgreSQL wire form, together with which form that is.
       *

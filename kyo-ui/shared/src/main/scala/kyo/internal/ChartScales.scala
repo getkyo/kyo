@@ -528,6 +528,25 @@ private[kyo] object ChartScales:
     private[kyo] def inferKind[A](ext: Extent, marks: Chunk[Mark[A]], isX: Boolean): Scale.Kind =
         ext match
             case _: Extent.Categories => Scale.Kind.Band
-            case _: Extent.Continuous => Scale.Kind.Linear
+            case _: Extent.Continuous =>
+                // The encoding already declares its scale family, and that is the only place the answer
+                // survives: an Instant folds into Extent.Continuous(epochMillis) exactly like a Double, so
+                // reading the extent alone put every time axis on a linear scale, whose ticks are numbers.
+                // The chart then printed a 13-digit epoch millisecond under every tick of a chart the caller
+                // had typed with Instant precisely so it would not have to.
+                if declaredXKind(marks).contains(Scale.Kind.Time) then Scale.Kind.Time
+                else Scale.Kind.Linear
+
+    /** The scale families the marks' x encodings declare, in mark order. */
+    private[kyo] def declaredXKind[A](marks: Chunk[Mark[A]]): Chunk[Scale.Kind] =
+        marks.flatMap {
+            case m: Mark.Bar[A, ?, ?]      => Chunk(m.x.plottable.kind)
+            case m: Mark.Line[A, ?, ?]     => Chunk(m.x.plottable.kind)
+            case m: Mark.Area[A, ?, ?]     => Chunk(m.x.plottable.kind)
+            case m: Mark.Point[A, ?, ?]    => Chunk(m.x.plottable.kind)
+            case _: Mark.Rule[A]           => Chunk.empty
+            case m: Mark.Text[A, ?, ?]     => Chunk(m.x.plottable.kind)
+            case m: Mark.ErrorBar[A, ?, ?] => Chunk(m.x.plottable.kind)
+        }
 
 end ChartScales

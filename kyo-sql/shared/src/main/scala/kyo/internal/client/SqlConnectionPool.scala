@@ -386,9 +386,15 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                                 }
                             }.andThen {
                                 Abort.run[SqlException](body).flatMap {
-                                    case Result.Success(a) => a
+                                    case Result.Success(a)                     => a
                                     case Result.Failure(e: SqlServerException) =>
-                                        Log.error(s"kyo.sql: server error sqlState=${e.sqlState} msg=${e.serverMessage}")
+                                        // DEBUG, not ERROR. The caller is handed the same failure as a typed value and
+                                        // decides what it is: a tool running user-written SQL gets a syntax error back
+                                        // from the server as its ordinary answer. Writing it at ERROR filled an
+                                        // operator's dashboard with entries for a program behaving correctly, and on a
+                                        // stdio transport anything the library writes on its own initiative is a
+                                        // candidate for corrupting the channel. The typed Abort is the report.
+                                        Log.debug(s"kyo.sql: server error sqlState=${e.sqlState} msg=${e.serverMessage}")
                                             .andThen(Abort.fail[SqlException](e))
                                     case Result.Failure(e) => Abort.fail[SqlException](e)
                                     case Result.Panic(t)   => Abort.error(Result.Panic(t))
@@ -637,11 +643,14 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
             Abort.fail(SqlConnectionTlsNotConfiguredException(config.tlsMode))
         else
             val budget = connectTimeout.getOrElse(config.acquireTimeout)
+            val source =
+                if connectTimeout.isEmpty then SqlConnectionEstablishTimeoutException.fromAcquireTimeout
+                else SqlConnectionEstablishTimeoutException.fromConnectTimeout
             if budget == Duration.Infinity then factory.open(address, password, config)
             else
                 Async.timeoutWithError(
                     budget,
-                    Result.Failure(SqlConnectionEstablishTimeoutException(budget, address.host, address.port))
+                    Result.Failure(SqlConnectionEstablishTimeoutException(budget, address.host, address.port, source))
                 )(factory.open(address, password, config))
             end if
     end connect
@@ -824,16 +833,22 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
     private def releaseToPool(netKey: SqlConnectionPool.Endpoint, conn: C, logger: Log)(using Frame, AllowUnsafe): Unit =
         if pool.isClosed then destroyAndFreeSlot(conn, logger)
         else
-            pool.release(netKey, conn)
+            // The counter goes up before the connection moves, so that anything which can observe the move can already
+            // see the count. The reverse order leaves a window in which a waiter woken by the connection's own
+            // handover reads a counter that has not caught up yet, and a metric that lags what it counts is one a
+            // caller cannot act on the moment it learns the thing happened.
             discard(Sync.Unsafe.evalOrThrow(metrics.recordRelease))
+            pool.release(netKey, conn)
             // Not "closed": this connection is going back into the ring alive. The sibling in destroyAndFreeSlot is
             // the one that closes.
             logger.unsafe.debug(s"kyo.sql: pooled connection id=${conn.id}")
 
     /** Closes a connection instead of pooling it, freeing the place it held. */
     private def destroyAndFreeSlot(conn: C, logger: Log)(using Frame, AllowUnsafe): Unit =
-        pool.discard(conn)
+        // Counted before the close, for the reason releaseToPool spells out: the close is observable, so anything that
+        // sees it must already see the count.
         discard(Sync.Unsafe.evalOrThrow(metrics.recordDiscard))
+        pool.discard(conn)
         logger.unsafe.debug(s"kyo.sql: closed connection id=${conn.id} reason=discarded")
     end destroyAndFreeSlot
 

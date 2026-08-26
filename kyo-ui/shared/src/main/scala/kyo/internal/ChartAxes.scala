@@ -129,9 +129,34 @@ private[kyo] object ChartAxes:
     private[kyo] def pointSeparatorColor(theme: Theme): Style.Color =
         if theme.isDark then DarkBg else LightBg
 
-    /** Resolve the palette used for per-mark default colors: the theme palette when set, else `DefaultPalette`. */
+    /** Resolve the palette used for per-mark default colors: the theme palette when set, else
+      * `DefaultPalette`.
+      *
+      * Where the colors are kyo's own (a named `Chart.Palette`, or this default) they are reconciled against
+      * the panel whenever that panel is not the light one they were published against. Every named palette is
+      * specified against white, and two of them start with a color that is nearly invisible on a dark panel:
+      * Okabe-Ito's first entry is pure black by definition and Viridis's is near-black purple, so the first
+      * series, the one most charts give their headline metric, rendered at 1.4:1 and 1.0:1 on `#1f2937` where
+      * WCAG 2.1 SC 1.4.11 asks for 3:1. `ChartContrast.reconcile` lifts only the entries below that bar.
+      *
+      * An explicit color list, and an explicit `colorScale`, are the caller's own colors and are used exactly
+      * as given. On the default light panel nothing is reconciled at all: the published palettes render as
+      * published.
+      */
     private[kyo] def themePalette(theme: Theme): Chunk[Style.Color] =
-        theme.palette.getOrElse(DefaultPalette)
+        val base = theme.palette.getOrElse(DefaultPalette)
+        // kyo's own colors: a named palette, or the built-in default when the caller set none.
+        val kyoChosen = theme.paletteName.isDefined || theme.palette.isEmpty
+        // The panel these palettes were published against is the light default; anything else (a dark theme,
+        // or a chosen background) is a panel they were not specified for.
+        val publishedPanel = !theme.isDark && theme.background.isEmpty
+        if kyoChosen && !publishedPanel then ChartContrast.reconcilePalette(base, panelBackground(theme))
+        else base
+    end themePalette
+
+    /** The panel fill a mark is drawn against: the theme override when set, else the theme's own default. */
+    private[kyo] def panelBackground(theme: Theme): Style.Color =
+        theme.background.getOrElse(if theme.isDark then DarkBg else LightBg)
 
     /** Resolve the default color for the mark at `markIndex` (cycling the theme palette).
       *
@@ -297,9 +322,7 @@ private[kyo] object ChartAxes:
                             .x2(axisX).y2(py)
                             .stroke(Svg.Paint.Color(chrome))
                 // tick label: apply the formatter to the domain value, not the pixel position
-                val labelStr = cfg.tickFormat match
-                    case Present(f) => f(tick.value)
-                    case Absent     => tick.label
+                val labelStr = tickText(ys, cfg, tick)
                 // Resolve the effective anchor. When the user has not set cfg.tickAnchor
                 // (the default TextAnchor.Middle), keep the side-default (End for left, Start for
                 // right). Only switch to the configured anchor when the user explicitly called
@@ -426,6 +449,55 @@ private[kyo] object ChartAxes:
         else base
     end tickLabel
 
+    /** The text of one tick label, in precedence order.
+      *
+      * A time-typed formatter wins on a time scale, because it is the only one that can see the instant. A
+      * numeric formatter comes next, then the scale's own label, which for a time scale is already a
+      * span-appropriate calendar label rather than a count of milliseconds.
+      */
+    private[kyo] def tickText(scale: Scale, cfg: AxisConfig, tick: Scale.Tick): String =
+        scale match
+            case _: Scale.Time =>
+                cfg.tickFormatTime match
+                    case Present(f) => f(Instant.Epoch + tick.value.toLong.millis)
+                    case Absent =>
+                        cfg.tickFormat match
+                            case Present(f) => f(tick.value)
+                            case Absent     => tick.label
+            case _ =>
+                cfg.tickFormat match
+                    case Present(f) => f(tick.value)
+                    case Absent     => tick.label
+    end tickText
+
+    /** Approximate rendered width of one tick-label glyph, the same average advance the layout's
+      * margin math uses. The labels are short, so one average is accurate enough to decide whether a
+      * label at the plot edge would run off the SVG.
+      */
+    private val TickLabelCharW = 7.0
+
+    /** The anchor for an x tick label, pulled in at the edges so a wide label cannot be cut in half.
+      *
+      * A centred label at the last tick extends half its width past the tick, which on a full-width plot is
+      * past the SVG edge: the label is then truncated mid-value, which reads as a different, wrong number
+      * rather than as a clipped one. Anchoring the overflowing end inward keeps the whole label. Only the
+      * default (unset) anchor is adjusted; an explicit `.anchor(...)` is the caller's decision and stands.
+      */
+    private[kyo] def xTickAnchor(
+        cfg: AxisConfig,
+        labelStr: String,
+        px: Double,
+        svgW: Double,
+        fontSize: Double
+    ): Svg.TextAnchor =
+        if cfg.tickAnchor != TextAnchor.Middle || cfg.tickRotation != 0.0 then toSvgAnchor(cfg.tickAnchor)
+        else
+            val half = labelStr.length * TickLabelCharW * (fontSize / 12.0) / 2.0
+            if px + half > svgW then Svg.TextAnchor.End
+            else if px - half < 0.0 then Svg.TextAnchor.Start
+            else Svg.TextAnchor.Middle
+    end xTickAnchor
+
     /** Build the x-axis: tick marks and tick labels along the bottom. */
     private[kyo] def buildXAxis(
         layout: Layout,
@@ -462,11 +534,10 @@ private[kyo] object ChartAxes:
                         .x2(px).y2(axisY + TickLen)
                         .stroke(Svg.Paint.Color(chrome))
                 // tick label: apply the formatter to the domain value when present
-                val xLabelStr = cfg.tickFormat match
-                    case Present(f) => f(tick.value)
-                    case Absent     => tick.label
-                // Map cfg.tickAnchor to the SVG token and build the tick label element with
-                // font, anchor, and optional rotation applied via the shared tickLabel helper.
+                val xLabelStr = tickText(xs, cfg, tick)
+                // Build the tick label with font, anchor, and optional rotation applied via the shared
+                // tickLabel helper. The anchor is pulled inward at the plot edges so a wide label at the
+                // first or last tick is not cut off by the SVG boundary.
                 val tickLabelElem: Svg.SvgElement =
                     tickLabel(
                         px,
@@ -474,7 +545,7 @@ private[kyo] object ChartAxes:
                         xLabelStr,
                         chrome,
                         Svg.DominantBaseline.Hanging,
-                        toSvgAnchor(cfg.tickAnchor),
+                        xTickAnchor(cfg, xLabelStr, px, layout.svgW, theme.fontSize.getOrElse(12.0)),
                         cfg,
                         theme
                     )
