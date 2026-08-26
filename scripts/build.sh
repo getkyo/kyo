@@ -72,6 +72,15 @@ done
 case "$ENV_KIND" in direct|podman|podman-ci) ;; *) die_usage "unknown env '$ENV_KIND'" ;; esac
 case "$ARCH" in native|x86|arm) ;; *) die_usage "unknown arch '$ARCH'" ;; esac
 
+# The CI setup action stages BoringSSL and Aeron unconditionally (kyo-aeronJVM's ffiCompile links
+# -laeron_driver_static and the kyo-net TLS tests link real libssl/libcrypto), so the CI-faithful
+# env stages them by default too. An explicit STAGE_*=0 still opts out; plain podman keeps them
+# opt-in since they add several minutes of one-off toolchain and build work.
+if [ "$ENV_KIND" = podman-ci ]; then
+    STAGE_BORINGSSL="${STAGE_BORINGSSL:-1}"
+    STAGE_AERON="${STAGE_AERON:-1}"
+fi
+
 ACTION="${1:-test}"
 shift || true
 
