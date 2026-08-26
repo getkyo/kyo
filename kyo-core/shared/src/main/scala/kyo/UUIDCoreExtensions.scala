@@ -1,26 +1,34 @@
 package kyo
 
-/** Effectful UUID generation operations on the [[UUID]] companion.
+/** Effectful UUID generation operations exported onto the [[UUID]] companion.
   *
-  * Declared top-level rather than in an object re-exported with `export …*`. A wildcard export emits one forwarder per member into the
-  * file's synthetic `$package` class, and the compiler orders those forwarders differently between runs, so the emitted class files differ
-  * across two clean builds of identical sources. Top-level definitions are emitted in source order, which keeps the build reproducible.
+  * The members are re-exported below by name rather than with `export UUIDCoreExtensions.*`. A wildcard export emits one forwarder per
+  * member into this file's synthetic `$package` class, and the compiler orders those forwarders differently between runs, so two clean
+  * builds of identical sources emit different class files. Naming the members keeps the emission source-ordered and the build reproducible.
   */
-extension (self: UUID.type)
+object UUIDCoreExtensions:
 
-    /** Generates a secure RFC version 4 UUID with the dynamically scoped generator. */
-    def v4(using Frame): UUID < Sync =
-        UUIDGenerator.v4
+    extension (self: UUID.type)
 
-    /** Generates a secure RFC version 4 UUID and renders its canonical lowercase text. */
-    def v4String(using Frame): String < Sync =
-        UUIDGenerator.v4.map(_.show)
+        /** Generates a secure RFC version 4 UUID with the dynamically scoped generator. */
+        def v4(using Frame): UUID < Sync =
+            UUIDGenerator.v4
 
-    /** Generates a monotonic RFC version 7 UUID with the dynamically scoped generator. */
-    def v7(using Frame): UUID < Sync =
-        UUIDGenerator.v7
+        /** Generates a secure RFC version 4 UUID and renders its canonical lowercase text. */
+        def v4String(using Frame): String < Sync =
+            UUIDGenerator.v4.map(_.show)
 
-    /** Runs `value` with `generator` installed as the dynamically scoped UUID generator. */
-    def let[A, S](generator: UUIDGenerator)(value: A < S)(using Frame): A < (S & Sync) =
-        UUIDGenerator.let(generator)(value)
-end extension
+        /** Generates a monotonic RFC version 7 UUID with the dynamically scoped generator. */
+        def v7(using Frame): UUID < Sync =
+            UUIDGenerator.v7
+
+        /** Runs `value` with `generator` installed as the dynamically scoped UUID generator. */
+        def let[A, S](generator: UUIDGenerator)(value: A < S)(using Frame): A < (S & Sync) =
+            UUIDGenerator.let(generator)(value)
+    end extension
+end UUIDCoreExtensions
+
+export UUIDCoreExtensions.v4
+export UUIDCoreExtensions.v4String
+export UUIDCoreExtensions.v7
+export UUIDCoreExtensions.let
