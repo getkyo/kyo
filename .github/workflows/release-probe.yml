@@ -37,7 +37,12 @@ jobs:
     # runs on pushes to the fork's main to keep publishability checked. On an upstream main push the
     # guard skips the job, so no runner is used and the run entry is inert.
     if: github.event_name == 'pull_request' || github.repository != 'getkyo/kyo'
-    runs-on: ubuntu-latest
+    # arm64, not x64. This is an early warning, not the gate: release.yml builds all three native
+    # platforms (darwin, linux-x86_64, linux-aarch64) on every main push, so whichever arch the
+    # probe picks, the other two are still validated before anything is published. Given that, it
+    # belongs on the pool with queue headroom rather than the saturated one. release-setup stages
+    # the natives for whichever architecture it runs on.
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 120
     env:
       JAVA_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M

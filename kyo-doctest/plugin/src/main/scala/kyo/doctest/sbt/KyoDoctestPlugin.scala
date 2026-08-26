@@ -57,9 +57,18 @@ object KyoDoctestPlugin extends AutoPlugin {
             "Additional scalac options forwarded to the doctest compiler (default: [\"-release\", \"17\"])."
         )
 
-        /** Directory used for the content-hash cache. Created if absent. */
+        /** Directory used for the content-hash cache. Created if absent.
+          *
+          * Defaults OUTSIDE `target/`, and to one shared directory for the whole build rather than one per module. Inside `target/` a
+          * `clean` destroys it, including a clean that runs after CI restored it; and one directory per module means a CI cache has to
+          * enumerate dozens of paths instead of one.
+          *
+          * Sharing across modules is safe because entries are content-addressed: the key covers the block body, the scope closure (the
+          * preceding blocks and the predef it compiles against), the classpath fingerprint, the Scala version and the scalac options, so
+          * two modules can only collide on a key when all of those agree, in which case reusing the entry is correct rather than a bug.
+          */
         val doctestCacheDir: SettingKey[File] = settingKey[File](
-            "Cache directory for doctest results (default: target/doctest-cache)."
+            "Cache directory for doctest results (default: <build root>/.doctest-cache, shared across modules)."
         )
 
         /** Maximum number of blocks compiled concurrently. */
@@ -202,7 +211,7 @@ object KyoDoctestPlugin extends AutoPlugin {
             else Seq.empty
         },
         doctestScalacOptions := Seq("-release", "17"),
-        doctestCacheDir      := target.value / "doctest-cache",
+        doctestCacheDir      := (ThisBuild / baseDirectory).value / ".doctest-cache",
         // Per-module fiber concurrency inside the doctest fork. Block compiles
         // are serialised on a single compiler-thread executor because dotty's
         // ContextBase has a thread-ownership assertion, so a higher value here
