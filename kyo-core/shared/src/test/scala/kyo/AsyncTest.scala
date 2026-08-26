@@ -450,14 +450,14 @@ class AsyncTest extends kyo.test.Test[Any]:
         loop(10000).andThen(succeed("verifies no stack overflow at depth 10000"))
     }
 
-    "mask" in {
+    "uninterruptible" in {
         for
             start  <- Latch.init(1)
             run    <- Latch.init(1)
             stop   <- Latch.init(1)
             result <- AtomicInt.init(0)
             masked =
-                Async.mask {
+                Async.uninterruptible {
                     for
                         _ <- start.release
                         _ <- run.await
@@ -480,7 +480,7 @@ class AsyncTest extends kyo.test.Test[Any]:
             val v: Int < Abort[Int]                            = 1
             val _: Fiber[Int, Abort[Int]] < Sync               = Fiber.initUnscoped(v)
             val _: Int < (Abort[Int | Timeout] & Sync)         = KyoApp.runAndBlock(1.second)(v)
-            val _: Int < (Abort[Int] & Async)                  = Async.mask(v)
+            val _: Int < (Abort[Int] & Async)                  = Async.uninterruptible(v)
             val _: Int < (Abort[Int | Timeout] & Async)        = Async.timeout(1.second)(v)
             val _: Int < (Abort[Int] & Async)                  = Async.race(Seq(v))
             val _: Int < (Abort[Int] & Async)                  = Async.race(v, v)
@@ -494,7 +494,7 @@ class AsyncTest extends kyo.test.Test[Any]:
             val v: Int < Abort[Int]                                     = 1
             val _: Fiber[Int, Abort[Int | String]] < Sync               = Fiber.initUnscoped(v)
             val _: Int < (Abort[Int | Timeout | String] & Sync)         = KyoApp.runAndBlock(1.second)(v)
-            val _: Int < (Abort[Int | String] & Async)                  = Async.mask(v)
+            val _: Int < (Abort[Int | String] & Async)                  = Async.uninterruptible(v)
             val _: Int < (Abort[Int | Timeout | String] & Async)        = Async.timeout(1.second)(v)
             val _: Int < (Abort[Int | String] & Async)                  = Async.race(Seq(v))
             val _: Int < (Abort[Int | String] & Async)                  = Async.race(v, v)
@@ -510,7 +510,7 @@ class AsyncTest extends kyo.test.Test[Any]:
 
                 val _: Fiber[Fiber[Int, Abort[Int]], Any] < Sync      = Fiber.initUnscoped(Fiber.initUnscoped(v))
                 val _: Fiber[Int, Abort[Int | Timeout]] < Sync        = Fiber.initUnscoped(KyoApp.runAndBlock(1.second)(v))
-                val _: Fiber[Int, Abort[Int]] < Sync                  = Fiber.initUnscoped(Async.mask(v))
+                val _: Fiber[Int, Abort[Int]] < Sync                  = Fiber.initUnscoped(Async.uninterruptible(v))
                 val _: Fiber[Int, Abort[Int | Timeout]] < Sync        = Fiber.initUnscoped(Async.timeout(1.second)(v))
                 val _: Fiber[Int, Abort[Int]] < Sync                  = Fiber.initUnscoped(Async.race(Seq(v)))
                 val _: Fiber[Int, Abort[Int]] < Sync                  = Fiber.initUnscoped(Async.race(v, v))
@@ -527,7 +527,7 @@ class AsyncTest extends kyo.test.Test[Any]:
                 val _: (Fiber[Int, Abort[Int]], Fiber[Int, Abort[Int]]) < Async = Async.zip(Fiber.initUnscoped(v), Fiber.initUnscoped(v))
                 val _: (Int, Int) < (Abort[Int | Timeout] & Async) =
                     Async.zip(KyoApp.runAndBlock(1.second)(v), KyoApp.runAndBlock(1.second)(v))
-                val _: (Int, Int) < (Abort[Int] & Async)               = Async.zip(Async.mask(v), Async.mask(v))
+                val _: (Int, Int) < (Abort[Int] & Async)               = Async.zip(Async.uninterruptible(v), Async.uninterruptible(v))
                 val _: (Int, Int) < (Abort[Int | Timeout] & Async)     = Async.zip(Async.timeout(1.second)(v), Async.timeout(1.second)(v))
                 val _: (Int, Int) < (Abort[Int] & Async)               = Async.zip(Async.race(v, v), Async.race(v, v))
                 val _: ((Int, Int), (Int, Int)) < (Abort[Int] & Async) = Async.zip(Async.zip(v, v), Async.zip(v, v))
@@ -539,22 +539,22 @@ class AsyncTest extends kyo.test.Test[Any]:
 
                 val _: Fiber[Int, Abort[Int]] < Async       = Async.race(Fiber.initUnscoped(v), Fiber.initUnscoped(v))
                 val _: Int < (Abort[Int | Timeout] & Async) = Async.race(KyoApp.runAndBlock(1.second)(v), KyoApp.runAndBlock(1.second)(v))
-                val _: Int < (Abort[Int] & Async)           = Async.race(Async.mask(v), Async.mask(v))
+                val _: Int < (Abort[Int] & Async)           = Async.race(Async.uninterruptible(v), Async.uninterruptible(v))
                 val _: Int < (Abort[Int | Timeout] & Async) = Async.race(Async.timeout(1.second)(v), Async.timeout(1.second)(v))
                 val _: Int < (Abort[Int] & Async)           = Async.race(Async.race(v, v), Async.race(v, v))
                 val _: (Int, Int) < (Abort[Int] & Async)    = Async.race(Async.zip(v, v), Async.zip(v, v))
                 succeed("compile-time type inference check")
             }
 
-            "mask" in {
+            "uninterruptible" in {
                 val v: Int < Abort[Int] = 1
 
-                val _: Fiber[Int, Abort[Int]] < Async       = Async.mask(Fiber.initUnscoped(v))
-                val _: Int < (Abort[Int | Timeout] & Async) = Async.mask(KyoApp.runAndBlock(1.second)(v))
-                val _: Int < (Abort[Int] & Async)           = Async.mask(Async.mask(v))
-                val _: Int < (Abort[Int | Timeout] & Async) = Async.mask(Async.timeout(1.second)(v))
-                val _: Int < (Abort[Int] & Async)           = Async.mask(Async.race(v, v))
-                val _: (Int, Int) < (Abort[Int] & Async)    = Async.mask(Async.zip(v, v))
+                val _: Fiber[Int, Abort[Int]] < Async       = Async.uninterruptible(Fiber.initUnscoped(v))
+                val _: Int < (Abort[Int | Timeout] & Async) = Async.uninterruptible(KyoApp.runAndBlock(1.second)(v))
+                val _: Int < (Abort[Int] & Async)           = Async.uninterruptible(Async.uninterruptible(v))
+                val _: Int < (Abort[Int | Timeout] & Async) = Async.uninterruptible(Async.timeout(1.second)(v))
+                val _: Int < (Abort[Int] & Async)           = Async.uninterruptible(Async.race(v, v))
+                val _: (Int, Int) < (Abort[Int] & Async)    = Async.uninterruptible(Async.zip(v, v))
                 succeed("compile-time type inference check")
             }
 
@@ -563,7 +563,7 @@ class AsyncTest extends kyo.test.Test[Any]:
 
                 val _: Fiber[Int, Abort[Int]] < (Abort[Timeout] & Async) = Async.timeout(1.second)(Fiber.initUnscoped(v))
                 val _: Int < (Abort[Int | Timeout] & Async)              = Async.timeout(1.second)(KyoApp.runAndBlock(1.second)(v))
-                val _: Int < (Abort[Int | Timeout] & Async)              = Async.timeout(1.second)(Async.mask(v))
+                val _: Int < (Abort[Int | Timeout] & Async)              = Async.timeout(1.second)(Async.uninterruptible(v))
                 val _: Int < (Abort[Int | Timeout] & Async)              = Async.timeout(1.second)(Async.timeout(1.second)(v))
                 val _: Int < (Abort[Int | Timeout] & Async)              = Async.timeout(1.second)(Async.race(v, v))
                 val _: (Int, Int) < (Abort[Int | Timeout] & Async)       = Async.timeout(1.second)(Async.zip(v, v))
@@ -575,7 +575,7 @@ class AsyncTest extends kyo.test.Test[Any]:
 
                 val _: Fiber[Int, Abort[Int]] < (Abort[Timeout] & Sync) = KyoApp.runAndBlock(1.second)(Fiber.initUnscoped(v))
                 val _: Int < (Abort[Int | Timeout] & Sync)              = KyoApp.runAndBlock(1.second)(KyoApp.runAndBlock(1.second)(v))
-                val _: Int < (Abort[Int | Timeout] & Sync)              = KyoApp.runAndBlock(1.second)(Async.mask(v))
+                val _: Int < (Abort[Int | Timeout] & Sync)              = KyoApp.runAndBlock(1.second)(Async.uninterruptible(v))
                 val _: Int < (Abort[Int | Timeout] & Sync)              = KyoApp.runAndBlock(1.second)(Async.timeout(1.second)(v))
                 val _: Int < (Abort[Int | Timeout] & Sync)              = KyoApp.runAndBlock(1.second)(Async.race(v, v))
                 val _: (Int, Int) < (Abort[Int | Timeout] & Sync)       = KyoApp.runAndBlock(1.second)(Async.zip(v, v))
@@ -922,13 +922,13 @@ class AsyncTest extends kyo.test.Test[Any]:
     }
 
     "with isolates" - {
-        "mask with isolate" in {
+        "uninterruptible with isolate" in {
             Var.runTuple(1) {
                 for
                     start <- Var.get[Int]
                     _ <-
                         Var.isolate.update[Int].use {
-                            Async.mask {
+                            Async.uninterruptible {
                                 for
                                     _ <- Var.set(2)
                                     _ <- Async.sleep(1.millis)

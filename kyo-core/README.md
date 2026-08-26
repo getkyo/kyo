@@ -91,7 +91,7 @@ val cached: Int < (Async & Sync) =
 
 `Async.fromFuture(f)` lifts a `scala.concurrent.Future` into an `Async` computation, bridging existing Future-based code into the Kyo effect model.
 
-`Async.mask` runs a computation with interrupt masking, so the masked portion completes even if an interrupt arrives. The interrupt is delivered after the mask returns, so the surrounding fiber is still cancellable.
+`Async.uninterruptible` runs a computation that interrupts cannot reach, so the protected portion completes even if an interrupt arrives. The interrupt is delivered after the protected computation returns, so the surrounding fiber is still cancellable.
 
 ### Running an application
 
@@ -254,7 +254,7 @@ val safe: Fiber[Int, Any] < (Sync & Scope) = Fiber.init(compute)
 val raw: Fiber[Int, Any] < Sync = Fiber.initUnscoped(compute)
 ```
 
-Fibers expose `get`, `getResult`, `use`, `useResult`, `map`, `flatMap`, `mapResult`, `mask`, `interrupt`, `onComplete`, `onInterrupt`, `block`, and `safe`. `Fiber.Promise[E, A]` is the manually-completable variant: build one with `Fiber.Promise.init[E, A]`, call `succeed`, `fail`, `complete`, or `become` from another fiber. `Fiber.fromFuture(f)` converts a `scala.concurrent.Future` into a `Fiber`, bridging Future-returning APIs into fiber-managed code.
+Fibers expose `get`, `getResult`, `use`, `useResult`, `map`, `flatMap`, `mapResult`, `uninterruptible`, `interrupt`, `onComplete`, `onInterrupt`, `block`, and `safe`. `Fiber.Promise[E, A]` is the manually-completable variant: build one with `Fiber.Promise.init[E, A]`, call `succeed`, `fail`, `complete`, or `become` from another fiber. `Fiber.fromFuture(f)` converts a `scala.concurrent.Future` into a `Fiber`, bridging Future-returning APIs into fiber-managed code.
 
 > **Note:** `Fiber` is a low-level primitive; the public-facing recommendation is to write application code against `Async`'s structured combinators and reach for `Fiber.init` only when none of them fit.
 

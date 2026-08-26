@@ -521,7 +521,7 @@ class FiberTest extends kyo.test.Test[Any]:
         }
     }
 
-    "mask" in {
+    "uninterruptible" in {
         for
             start  <- Latch.init(1)
             run    <- Latch.init(1)
@@ -536,7 +536,7 @@ class FiberTest extends kyo.test.Test[Any]:
                         _ <- stop.release
                     yield ()
                 }
-            masked <- fiber.mask
+            masked <- fiber.uninterruptible
             _      <- masked.interrupt
             r1     <- result.get
             _      <- run.release
@@ -1230,10 +1230,10 @@ class FiberTest extends kyo.test.Test[Any]:
             }.unit
         }
 
-        "masked promise not interruptible (#736)" in {
+        "uninterruptible promise cannot be interrupted (#736)" in {
             for
                 promise <- Promise.init[Int, Any]
-                masked  <- promise.mask
+                masked  <- promise.uninterruptible
                 res     <- masked.interrupt
                 _       <- promise.complete(Result.succeed(42))
                 value   <- masked.get

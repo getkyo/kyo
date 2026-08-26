@@ -160,7 +160,7 @@ private[postgres] object StreamQueryExchange:
       * [[kyo.db.Connection.leftSessionIdle]] is the discriminator, the same predicate the adapter's settle and the pool's exit
       * decision key on, so all three layers classify one exit the same way.
       *
-      * Idle edge: this cleanup owns the resynchronisation. Close + Sync + drain to ReadyForQuery, uninterruptible ([[Async.mask]]) and
+      * Idle edge: this cleanup owns the resynchronisation. Close + Sync + drain to ReadyForQuery, uninterruptible ([[Async.uninterruptible]]) and
       * bounded by `cleanupTimeout`; a cleanup that fails or overruns marks the channel corrupted instead of vanishing, so the connection
       * fails fast rather than serving another statement's bytes. The same discipline as [[CopyExchange]]'s cleanup, minus the latch: a
       * stream's cleanup runs inside the Scope finalizer chain, sequenced before the pool can hand the connection to anyone.
@@ -180,7 +180,7 @@ private[postgres] object StreamQueryExchange:
         error: Maybe[Result.Error[Any]]
     )(using Frame): Unit < Async =
         if Connection.leftSessionIdle(error) then
-            Async.mask {
+            Async.uninterruptible {
                 Abort.run[Timeout](
                     Async.timeout(cleanupTimeout)(
                         Abort.run[SqlException](closePortalAndSync(channel, portalName, onParameterStatus, onNotification))

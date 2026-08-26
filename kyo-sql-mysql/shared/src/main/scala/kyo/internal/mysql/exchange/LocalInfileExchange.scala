@@ -63,7 +63,7 @@ private[mysql] object LocalInfileExchange:
             channel.beginCleanup(latch).andThen {
                 // Register a cleanup finalizer that fires on error exit (including timeout/interrupt).
                 // On error, we attempt graceful cleanup (empty terminator + drain server response)
-                // inside Async.mask so the cleanup cannot itself be interrupted.  A 5-second inner
+                // inside Async.uninterruptible so the cleanup cannot itself be interrupted.  A 5-second inner
                 // timeout prevents the cleanup from hanging forever if the server stops responding.
                 // The latch is always released at the end of this block so waiting callers unblock.
                 Scope.ensure {
@@ -79,7 +79,7 @@ private[mysql] object LocalInfileExchange:
                             case Result.Panic(_)            => true
                             case Result.Failure(_: Timeout) => true
                             case _                          => false
-                        Async.mask {
+                        Async.uninterruptible {
                             Abort.run[Timeout](
                                 Async.timeout(5.seconds) {
                                     Abort.run[SqlException](

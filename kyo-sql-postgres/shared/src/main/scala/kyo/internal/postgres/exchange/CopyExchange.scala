@@ -37,7 +37,7 @@ import kyo.internal.postgres.*
   *
   * Both directions register a [[PostgresChannel.PendingCopyCleanup]] on the channel for the transfer's duration (the latch pattern
   * mirrored from [[kyo.internal.mysql.exchange.LocalInfileExchange]], extended with an exactly-once claim) and resolve it at the protocol
-  * barrier: at the completion drain's ReadyForQuery on the exchange's own paths, or through the bounded, uninterruptible ([[Async.mask]])
+  * barrier: at the completion drain's ReadyForQuery on the exchange's own paths, or through the bounded, uninterruptible ([[Async.uninterruptible]])
   * CopyFail-and-drain on every other edge. A caller reaching [[PostgresChannel.send]] or [[PostgresChannel.receive]] while the cleanup is
   * still pending either runs it (claim won) or waits for the claimant (claim lost), so it sees a clean connection or "unusable", never
   * stale protocol bytes and never an unbounded wait.
@@ -65,7 +65,7 @@ private[postgres] object CopyExchange:
       * refuses fails at the next chunk boundary rather than after the whole stream has been uploaded.
       *
       * On error or cancellation the cleanup path sends CopyFail and drains to [[ReadyForQuery]]. The cleanup runs uninterruptibly
-      * ([[Async.mask]]) with a budget of `cleanupTimeout` to ensure the protocol is always left in a defined state.
+      * ([[Async.uninterruptible]]) with a budget of `cleanupTimeout` to ensure the protocol is always left in a defined state.
       *
       * @param channel
       *   the exclusive Postgres channel for this operation
@@ -139,7 +139,7 @@ private[postgres] object CopyExchange:
       * closes only after the next statement the release unblocks. The [[Scope]] finalizer backstops every other exit (a typed failure
       * from either side, an interrupt, a consumer that stops pulling) by sending CopyFail and draining to [[ReadyForQuery]].
       *
-      * The cleanup runs uninterruptibly ([[Async.mask]]) with a budget of `cleanupTimeout` to ensure the protocol is always left in a
+      * The cleanup runs uninterruptibly ([[Async.uninterruptible]]) with a budget of `cleanupTimeout` to ensure the protocol is always left in a
       * defined state.
       *
       * @param channel
@@ -535,7 +535,7 @@ private[postgres] object CopyExchange:
         label: String,
         cleanupTimeout: Duration
     )(using Frame): Unit < Async =
-        Async.mask {
+        Async.uninterruptible {
             Abort.run[Timeout](
                 Async.timeout(cleanupTimeout) {
                     Abort.run[SqlException](

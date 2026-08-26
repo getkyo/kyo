@@ -116,23 +116,23 @@ object Async extends AsyncPlatformSpecific:
     inline def defer[A, S](inline v: => A < S)(using inline frame: Frame): A < (Async & S) =
         Sync.defer(v)
 
-    /** Runs an asynchronous computation with interrupt masking.
+    /** Runs an asynchronous computation that interrupts cannot reach.
       *
       * This method executes the given computation in a context where interrupts are not propagated to previous "steps" of the computation.
-      * The returned computation can still be interrupted, but the interruption won't affect the masked portion. This is useful for ensuring
-      * that cleanup operations or critical sections complete even if an interrupt occurs.
+      * The returned computation can still be interrupted, but the interruption won't affect the protected portion. This is useful for
+      * ensuring that cleanup operations or critical sections complete even if an interrupt occurs.
       *
       * @param v
-      *   The computation to run with interrupt masking
+      *   The computation to protect from interrupts
       * @return
       *   The result of the computation, which can still be interrupted
       */
-    def mask[E, A, S](
+    def uninterruptible[E, A, S](
         using isolate: Isolate[S, Abort[E] & Async, S]
     )(v: => A < (Abort[E] & Async & S))(
         using frame: Frame
     ): A < (Abort[E] & Async & S) =
-        Fiber.internal.initUnscoped(v).map(_.mask.map(_.get))
+        Fiber.internal.initUnscoped(v).map(_.uninterruptible.map(_.get))
 
     /** Creates a computation that never completes.
       *

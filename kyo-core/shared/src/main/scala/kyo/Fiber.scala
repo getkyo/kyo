@@ -206,17 +206,17 @@ object Fiber:
         def flatMap[B, S2](f: A < S => Fiber[B, S2] < Sync)(using Frame): Fiber[B, S & S2] < Sync =
             Sync.Unsafe.defer(Unsafe.flatMap(self)(r => Sync.Unsafe.evalOrThrow(f(r))))
 
-        /** Creates a new Fiber that runs with interrupt masking.
+        /** Creates a new Fiber that interrupts cannot reach.
           *
           * This method returns a new Fiber that, when executed, will not propagate interrupts to previous "steps" of the computation. The
-          * returned Fiber can still be interrupted, but the interruption won't affect the masked portion. This is useful for ensuring that
-          * critical operations or cleanup tasks complete even if an interrupt occurs.
+          * returned Fiber can still be interrupted, but the interruption won't affect the protected portion. This is useful for ensuring
+          * that critical operations or cleanup tasks complete even if an interrupt occurs.
           *
           * @return
-          *   A new Fiber that runs with interrupt masking
+          *   A new Fiber that interrupts cannot reach
           */
-        def mask(using Frame): Fiber[A, S] < Sync =
-            Sync.Unsafe.defer(Unsafe.mask(self)())
+        def uninterruptible(using Frame): Fiber[A, S] < Sync =
+            Sync.Unsafe.defer(Unsafe.uninterruptible(self)())
 
         /** Gets the number of waiters on this Fiber.
           *
@@ -423,8 +423,8 @@ object Fiber:
         end init
 
         extension [A, S](self: Unsafe[A, S])
-            def done()(using AllowUnsafe): Boolean      = self.lower.done()
-            def mask()(using AllowUnsafe): Unsafe[A, S] = self.lower.mask()
+            def done()(using AllowUnsafe): Boolean                 = self.lower.done()
+            def uninterruptible()(using AllowUnsafe): Unsafe[A, S] = self.lower.mask()
 
             def map[B](f: A => B)(using AllowUnsafe, Frame): Unsafe[B, S] =
                 val p = new IOPromise[Any, B < S](interrupts = self.lower) with (Result[Any, A < S] => Unit):
