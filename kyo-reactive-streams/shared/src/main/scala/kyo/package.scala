@@ -26,4 +26,8 @@ object StreamReactiveStreamsExtensions:
     end extension
 end StreamReactiveStreamsExtensions
 
-export StreamReactiveStreamsExtensions.*
+// Named rather than `export StreamReactiveStreamsExtensions.*`: a wildcard export emits one forwarder per member into this file's
+// synthetic `$package` class and the compiler orders them differently between runs, so two clean builds of identical sources emit
+// different class files. Naming the members keeps the emission source-ordered and the build reproducible.
+export StreamReactiveStreamsExtensions.subscribe
+export StreamReactiveStreamsExtensions.toPublisher
