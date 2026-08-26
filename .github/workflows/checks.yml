@@ -53,6 +53,10 @@ jobs:
       JAVA_OPTS: -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
       JVM_OPTS: -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
     steps:
+      # fetch-depth: 0 is load-bearing twice over. `sbt doctest` wants the full history, and the
+      # workflow-change gate below resolves a base commit that a depth-1 clone does not contain.
+      # Shallowing this does not break the gate loudly: the base lookup just fails and the gate
+      # falls through to linting every run, quietly costing the ~30s it exists to save.
       - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
@@ -61,6 +65,10 @@ jobs:
       # Previously its own workflow gated on `paths: .github/workflows/**`, which saved a
       # whole job when no workflow changed. As a step the same gate saves ~30 seconds, so
       # it is kept, just expressed against the changed-file set instead of the trigger.
+      #
+      # One deliberate widening: actionlint.yml triggered on `pull_request` only, so a
+      # workflow change that reached main by any other route was never linted. Here it runs
+      # on the push too, gated the same way.
       - name: Detect workflow changes
         id: workflow-changes
         shell: bash
