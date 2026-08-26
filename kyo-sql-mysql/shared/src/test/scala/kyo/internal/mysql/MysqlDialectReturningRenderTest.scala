@@ -15,7 +15,7 @@ class MysqlDialectReturningRenderTest extends Test:
 
     // RETURNING on MySQL raises SqlUnsupportedException (requires Frame for typed error).
     "RETURNING on MySQL raises Unsupported" in {
-        val s = Sql.insert[Event].values(Event(0L, "boot", "2024-01-01")).returning(_.id)
+        val s = Sql.insert[Event].values(Event(0L, "boot", "2024-01-01")).returning(_.id).statement
         val ex = intercept[SqlUnsupportedException] {
             s.render(MysqlDialect)
         }
