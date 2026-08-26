@@ -2,20 +2,18 @@
 
 ## Motivation
 
-Allocation profiling of the http benchmarks (kqueue transport, JMH with async-profiler
-alloc recordings) surfaced Span's element-evidence machinery on the kernel's hot paths:
+`Span.empty` allocates on every call for any non-primitive element type. Allocation
+profiling of http benchmark workloads surfaced it as a measurable allocation source
+(`ManifestFactory$ObjectManifest.newArray` stacks under `Span$.empty`), and the cause is
+fully visible in the implementation: the empty-array cache covers only the eight
+primitive ClassTags, so every reference element type falls through to `Array.empty` and
+allocates a fresh zero-length array. Code that builds empty spans on hot paths pays an
+allocation per call for a value that is a constant.
 
-- `Span.empty` allocates for every non-primitive element type. Its empty-array cache
-  covers only the eight primitive ClassTags, so reference element types fall through to
-  `Array.empty`, allocating a fresh zero-length array per call. In the http client
-  recording this shows as `ManifestFactory$ObjectManifest.newArray` stacks under
-  `Span$.empty`, about 2% of sampled allocation.
-- `scala.Tuple2` was 2% of sampled allocation in the http server contention bench, and
-  81% of that weight was empty `(Span.empty, Span.empty)` pairs built once per fork
-  crossing in the kernel (`Stack.bindings` and the `Contextual` isolate's capture). Those
-  two sites are now spot-fixed with cached vals, but the kernel has six more per-crossing
-  `Span.empty` sites (the `Contextual` anons' `def updates`, the empty cases of `carried`
-  and `cross`, the `Park` constructor) that only a Span-level fix makes allocation-free.
+The same audit showed that Span's element evidence is broader than it needs to be: about
+45 public operations demand `using ClassTag[A]`, but most of them only copy out of an
+existing array whose runtime class already carries the component type, so the evidence
+is pure call-site noise.
 
 ## Current state
 
@@ -30,11 +28,11 @@ def empty[A: ClassTag as ct]: Span[A] =
 ```
 
 `cachedEmpty` is an eight-entry `Map[ClassTag[?], Array[?]]` holding only the primitive
-tags, and the hit path pays two hash lookups (`contains` then `apply`). Any reference
-element type misses and allocates via `ct.newArray(0)`.
+tags, and even the hit path pays two hash lookups (`contains` then `apply`). Any
+reference element type misses and allocates via `ct.newArray(0)`.
 
-Beyond `empty`, about 45 public operations take `using ClassTag[A]` (or `ClassTag[B]`
-for the mapping ones) and allocate internally with `new Array[A](n)`.
+Beyond `empty`, the public operations take `using ClassTag[A]` (or `ClassTag[B]` for
+the mapping ones) and allocate internally with `new Array[A](n)`.
 
 ## Proposal
 
@@ -46,8 +44,8 @@ Replace the eight-entry map with a per-component-class empty-array cache:
   and friends), no map lookup
 - reference types: a cache keyed on the component `Class[?]` with allocation-free hits.
   `ClassValue` is JVM-only, so the shared implementation is likely a `ConcurrentHashMap`
-  with a shared compute function (`Ffi.load` in kyo-ffi sets the precedent); JS can use
-  a plain map, Native needs the concurrent variant.
+  with a shared compute function; JS can use a plain map, Native needs the concurrent
+  variant.
 
 Correctness constraint: the cached empty for component class `C` must have runtime class
 `Array[C]`, never a shared `Array[AnyRef]`. The array class is observable through
@@ -57,15 +55,15 @@ Correctness constraint: the cached empty for component class `C` must have runti
 ### 2. Migrate element evidence from ClassTag to ConcreteTag
 
 Why: the summon is a compile-time constant (no scala-reflect Manifest machinery on any
-call path), it is the evidence type the rest of kyo is converging on (kyo-ffi's `Buffer`
-and `Ffi.load` already moved), the array APIs already exist (`newArray`, `copyOf`,
-`fromClass`, `fromArray`), and it handles unions, intersections, `AnyVal`, and `Nothing`
-properly instead of collapsing to `Object`.
+call path), it keeps kyo on a single evidence type instead of mixing ClassTag in, the
+array APIs already exist on ConcreteTag (`newArray`, `copyOf`, `fromClass`,
+`fromArray`), and it handles unions, intersections, `AnyVal`, and `Nothing` properly
+instead of collapsing to `Object`.
 
 Prerequisite, and the real work in this item: `ConcreteTagMacro` hard-errors on applied
 types (`tpe.typeArgs.nonEmpty` aborts with "has type parameters"). Span is routinely
-instantiated at applied element types (`Span[Maybe[Any]]`, `Span[Binding[?, ?, ?, ?]]`,
-tuples), so the migration needs an erasure arm: for an applied type, derive
+instantiated at applied element types (`Span[Maybe[Any]]`, tuple elements, spans of
+generic containers), so the migration needs an erasure arm: for an applied type, derive
 `fromClass(<erased class>)`. That makes `accepts` erasure-based for applied types, which
 is exactly `ClassTag`/`isInstanceOf` semantics; the current refusal exists to keep type
 checks honest, so lifting it is an explicit design decision (either accept erasure
@@ -100,11 +98,10 @@ of length 0) hit the per-class empty cache with no evidence in scope.
   allocation test on the JVM, behavior tests elsewhere)
 - runtime array class preserved: `Span.empty[String].toArray.getClass` is
   `Array[String]`, and growth from a cached empty produces correctly typed arrays
-- kyo-data and kyo-kernel suites green on all platforms
-- http bench `gc.alloc.rate.norm` does not regress on any of the four kyo rows, and the
-  kernel's remaining `Span.empty` sites become cache hits with no further callsite
-  caching
-- KernelBench parity (the evidence change touches inline expansion sites)
+- kyo-data suite green on all platforms
+- benchmark allocation rates (`gc.alloc.rate.norm`) do not regress on Span-heavy rows,
+  and the inline expansion sites are checked since the evidence change lands inside
+  `inline def` bodies
 
 ## Non-goals
 
