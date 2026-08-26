@@ -8,6 +8,12 @@ package kyo.net.internal.posix
   * the compilation target, which is the ABI the binary is built for and therefore the one these constants must match. The constants themselves
   * are stable kernel ABI values, so the literal table is the source of truth (kyo-ffi has no header-constant extraction surface, and adding one
   * for a fixed handful of stable values is not warranted).
+  *
+  * Most entries below are a two-way macOS/BSD versus Linux split whose `else` branch carries the Linux value, which is sound only because
+  * Windows never reads them: the bare POSIX socket symbols are absent from the Windows CRT, so `SocketBindings` fails to load and every
+  * socket, fcntl, and poller constant is unreachable there. [[ENOSYS]] is the exception, and any future constant read off a `kyo_*` shim
+  * will be too, because those shims ARE compiled and loaded on Windows. Such an entry needs an explicit [[isWindows]] branch; folding it
+  * into the `else` silently hands back a Linux number that names a different error in the Windows CRT.
   */
 private[net] object PosixConstants:
 
@@ -16,6 +22,12 @@ private[net] object PosixConstants:
 
     /** True on Linux, where epoll, `MSG_NOSIGNAL`, and `AF_INET6 == 10` apply. */
     val isLinux: Boolean = kyo.internal.Platform.isLinux
+
+    /** True on Windows, whose CRT numbers its errno values independently of both Unix families. The socket constants below are unreachable
+      * there (the bare POSIX socket symbols are absent from the Windows CRT, so `SocketBindings` never loads), but the `kyo_epoll.c` shim IS
+      * compiled and loaded on Windows, so the errno it reports is read and has to match.
+      */
+    val isWindows: Boolean = kyo.internal.Platform.isWindows
 
     // --- address families (sa_family_t, host byte order) ---
     val AF_INET: Int  = 2
@@ -76,6 +88,13 @@ private[net] object PosixConstants:
     val ECONNABORTED: Int = if isMacOrBsd then 53 else 103
     // EBUSY is 16 on both Linux and macOS/BSD; the io_uring reap loop treats it as a transient retry condition.
     val EBUSY: Int = 16
+    // ENOSYS is what kyo_epoll.c's off-Linux stubs report: the epoll and eventfd syscalls do not exist on this platform. It names the
+    // one outcome that distinguishes "the shim is present and says no" from "the symbol was never linked", which is the difference a
+    // published Native artifact has to preserve across build hosts. Unlike every other errno here, this one is read on Windows too,
+    // because the shim is compiled and loaded there. The Windows CRT numbers it 40 and numbers 38 ENAMETOOLONG (checked against the
+    // mingw-w64 errno.h the Windows CI leg builds the shim with), so folding Windows into the Linux branch reads the stub's answer as
+    // an unrelated error.
+    val ENOSYS: Int = if isWindows then 40 else if isMacOrBsd then 78 else 38
     // io_uring's bounded wait returns -ETIME on a timeout with no completion; the reap loop treats it as a normal empty turn.
     // io_uring is Linux-only, so the Linux value (62) is the one the driver ever sees; the macOS/BSD value (60) is kept for completeness.
     val ETIME: Int = if isMacOrBsd then 60 else 62

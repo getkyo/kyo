@@ -120,14 +120,14 @@ final private[kyo] class JsTransport private (
         Frame
     ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
         kyo.net.Transport.checkConnectTimeout(connectTimeout)
-        val socket = js.Dynamic.global.require("net").connect(port, host)
+        val socket = NodeNet.asInstanceOf[js.Dynamic].connect(port, host)
         connectSocket(socket, host, port, tcpNoDelay = true, connectEvent = "connect", connectTimeout, config)
     end connect
 
     def listen(host: String, port: Int, backlog: Int, config: kyo.net.NetConfig)(
         handler: NetConnection => Unit
     )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
-        val server = js.Dynamic.global.require("net").createServer()
+        val server = NodeNet.asInstanceOf[js.Dynamic].createServer()
         listenServer(server, host, port, backlog, tcpNoDelay = true, connectionEvent = "connection", handler, config)
     end listen
 
@@ -170,18 +170,18 @@ final private[kyo] class JsTransport private (
             // Custom CA: Node's tls.connect loads this as the only trust anchor when present.
             tls.caCertPath match
                 case Present(path) =>
-                    opts.ca = js.Dynamic.global.require("fs").readFileSync(path, "utf8")
+                    opts.ca = NodeFs.asInstanceOf[js.Dynamic].readFileSync(path, "utf8")
                 case Absent => ()
             end match
             // Client certificate for mutual TLS: present it when the server requests one. A no-op for the common (no client cert) client.
             (tls.certChainPath, tls.privateKeyPath) match
                 case (Present(certPath), Present(keyPath)) =>
-                    val fs = js.Dynamic.global.require("fs")
+                    val fs = NodeFs.asInstanceOf[js.Dynamic]
                     opts.cert = fs.readFileSync(certPath, "utf8")
                     opts.key = fs.readFileSync(keyPath, "utf8")
                 case _ => ()
             end match
-            val socket = js.Dynamic.global.require("tls").connect(opts)
+            val socket = NodeTls.asInstanceOf[js.Dynamic].connect(opts)
             // TLS sockets emit "secureConnect" after handshake (not "connect" which fires on raw TCP)
             connectSocket(
                 socket,
@@ -207,13 +207,13 @@ final private[kyo] class JsTransport private (
         // Constrain the negotiated TLS version on the server side too: a server pinned to TLS1.3 must reject a TLS1.2 client (CWE-326).
         applyVersionBounds(serverOpts, tls)
         tls.certChainPath match
-            case Present(p) => serverOpts.cert = js.Dynamic.global.require("fs").readFileSync(p, "utf8")
+            case Present(p) => serverOpts.cert = NodeFs.asInstanceOf[js.Dynamic].readFileSync(p, "utf8")
             case Absent     => ()
         tls.privateKeyPath match
-            case Present(p) => serverOpts.key = js.Dynamic.global.require("fs").readFileSync(p, "utf8")
+            case Present(p) => serverOpts.key = NodeFs.asInstanceOf[js.Dynamic].readFileSync(p, "utf8")
             case Absent     => ()
         applyServerClientAuth(serverOpts, tls)
-        val server = js.Dynamic.global.require("tls").createServer(serverOpts)
+        val server = NodeTls.asInstanceOf[js.Dynamic].createServer(serverOpts)
         // One deadline per accepted connection: a client that completed the TCP accept but stalls the TLS handshake (sends nothing / a partial
         // ClientHello and never finishes) never fires "secureConnection", so the accepted Node socket would linger indefinitely, pinning the fd
         // and its buffers (a slowloris handshake-stall DoS, CWE-400). When the TLS config's handshakeTimeout is finite, arm a Clock-driven timer as each raw
@@ -265,7 +265,7 @@ final private[kyo] class JsTransport private (
             case NetTlsConfig.ClientAuth.None => ()
         end match
         tls.trustStorePath.orElse(tls.caCertPath).foreach { p =>
-            opts.ca = js.Dynamic.global.require("fs").readFileSync(p, "utf8")
+            opts.ca = NodeFs.asInstanceOf[js.Dynamic].readFileSync(p, "utf8")
         }
     end applyServerClientAuth
 
@@ -518,7 +518,7 @@ final private[kyo] class JsTransport private (
             val cert = tlsSocket.getPeerCertificate(true)
             if js.isUndefined(cert) || cert == null || js.isUndefined(cert.raw) then Absent
             else
-                val cryptoModule = js.Dynamic.global.require("crypto")
+                val cryptoModule = NodeCrypto.asInstanceOf[js.Dynamic]
                 val digestBuffer = cryptoModule.createHash("sha256").update(cert.raw).digest()
                 // Node's Hash.digest() returns a Buffer, and Buffer extends Uint8Array in the Node runtime; js.Dynamic erases that to an
                 // untyped JS value with no static Scala.js type, so recovering the typed Uint8Array view needs this narrowing cast. Safe per
@@ -640,7 +640,7 @@ final private[kyo] class JsTransport private (
             case Absent => ()
         end match
 
-        val net    = js.Dynamic.global.require("net")
+        val net    = NodeNet.asInstanceOf[js.Dynamic]
         val socket = net.createConnection(js.Dynamic.literal(path = path))
 
         // A Unix connect carries a deadline for the same reason a TCP one does: Node's connect is asynchronous by contract, so the promise
@@ -776,7 +776,7 @@ final private[kyo] class JsTransport private (
             case Absent => ()
         end match
 
-        val net    = js.Dynamic.global.require("net")
+        val net    = NodeNet.asInstanceOf[js.Dynamic]
         val server = net.createServer()
 
         val listener = new JsListener(server, NetAddress.Unix(path), frame)
@@ -984,8 +984,8 @@ final private[kyo] class JsTransport private (
         // internal flow; we will pause the TLSSocket's application-data stream after handshake.
         discard(socket.resume())
 
-        val tlsModule = js.Dynamic.global.require("tls")
-        val fsModule  = js.Dynamic.global.require("fs")
+        val tlsModule = NodeTls.asInstanceOf[js.Dynamic]
+        val fsModule  = NodeFs.asInstanceOf[js.Dynamic]
 
         // The TLS role follows the connection's TCP origin: an accepted connection (isServerOrigin) upgrades as the TLS server, a connected one
         // as the client (STARTTLS initiate). The origin is authoritative: a config heuristic ("has a cert+key therefore server") would

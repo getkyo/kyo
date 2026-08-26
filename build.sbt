@@ -268,6 +268,22 @@ Global / onLoad := {
         )
     }
 
+    // Guards publishability of the sbt plugins, which ship only by virtue of being aggregated here.
+    // A scripted suite cannot cover this: scriptedDependencies publishLocals the plugin project
+    // directly and passes whether or not any aggregate contains it.
+    locally {
+        // The expected type picks ProjectDefinition.aggregate over Project.aggregate(refs*).
+        val refs: Seq[ProjectReference] = kyoJVM.aggregate
+        val aggregated                  = refs.collect { case LocalProject(id) => id }.toSet
+        val missing                     = Set("kyo-test-sbt", "kyo-test-sbt-publish").diff(aggregated)
+        if (missing.nonEmpty) {
+            throw new IllegalStateException(
+                s"kyoJVM must aggregate ${missing.toList.sorted.mkString(", ")}; " +
+                    "projects outside the aggregate are never published by ci-release."
+            )
+        }
+    }
+
     val project =
         System.getProperty("platform", "JVM").toUpperCase match {
             case "JVM"    => kyoJVM
@@ -411,6 +427,9 @@ lazy val kyoJVM: Project = project
         `kyo-compat-plugin`,
         `kyo-doctest`.jvm,
         `kyo-doctest-plugin`,
+        // ci-release publishes from this root; an unaggregated project builds and tests but never ships.
+        `kyo-test-sbt`,
+        `kyo-test-sbt-publish`,
         `kyo-test-api`.jvm,
         `kyo-test-runner`.jvm,
         `kyo-test-prop`.jvm,
@@ -1872,18 +1891,25 @@ lazy val `kyo-net` =
                             cSources = (sharedBase / "src" / "main" / "c-boringssl-stub" ** "*.c").get
                         )
                 // System OpenSSL (kyonet_openssl): the kyo_net_openssl.c shim, registered only in the Native TLS registry
-                // (SystemOpenSslProvider). It is a REAL binding only on Native when the openssl headers are present; on the
-                // JVM (where BoringSslProvider over the JDK SSLEngine floor covers TLS and no code path loads it), and on
-                // Native without headers, it is declared as a STUB with no C sources, so no static OpenSSL blob is bundled.
-                // The stub still declares the library id, so the FFI codegen's library-id validation passes for the
-                // always-present OpenSslBindings trait; the JVM jar simply no longer carries the ~6.5MB dead-weight archive.
+                // (SystemOpenSslProvider). On Native its C sources are declared UNCONDITIONALLY, because whether the system
+                // OpenSSL headers exist is a question about the machine that LINKS the binary, not the one that publishes the
+                // artifact, and the shim now answers it itself: it header-gates on `__has_include(<openssl/ssl.h>)` and
+                // compiles to stubs where they are absent. Deciding it here froze the publisher's answer into the shipped C,
+                // so a release built on a Linux runner left a macOS consumer's Scala Native link short 64 raw SSL_*, BIO_*,
+                // EVP_* and ERR_* symbols, whether or not their program used TLS. `includeDirs` still tracks THIS host: it
+                // only steers the local compile toward a non-default OpenSSL prefix, and is dropped when it holds no headers
+                // so the shim gates to stubs rather than compiling against a prefix that has none.
+                // On the JVM (where BoringSslProvider over the JDK SSLEngine floor covers TLS and no code path loads it) it
+                // is still declared as a STUB with no C sources, so no static OpenSSL blob is bundled. The stub still declares
+                // the library id, so the FFI codegen's library-id validation passes for the always-present OpenSslBindings
+                // trait; the JVM jar simply no longer carries the ~6.5MB dead-weight archive.
                 val openSsl =
-                    if (isNative && systemOpensslIncludeDirs.exists(d => (d / "openssl" / "ssl.h").exists()))
+                    if (isNative)
                         FfiLibrary(
                             id = "kyonet_openssl",
                             cSources = (sharedBase / "src" / "main" / "c-openssl" ** "*.c").get,
                             cHeaders = (sharedBase / "src" / "main" / "c-openssl" ** "*.h").get,
-                            includeDirs = systemOpensslIncludeDirs
+                            includeDirs = systemOpensslIncludeDirs.filter(d => (d / "openssl" / "ssl.h").exists())
                         )
                     else
                         FfiLibrary(id = "kyonet_openssl", cSources = Nil)
@@ -3513,54 +3539,23 @@ lazy val `kyo-test-api` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-data`)
+        .dependsOn(`kyo-core`)
         .in(file("kyo-test/api"))
         .settings(
             `kyo-settings`,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test
         )
         .jvmSettings(
-            mimaCheck(false),
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeJVM") / Compile / fullClasspath).value,
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-coreJVM") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeJVM") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-coreJVM") / Compile / fullClasspath).value
+            mimaCheck(false)
         )
         .nativeSettings(
-            `native-settings`,
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeNative") / Compile / fullClasspath).value,
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-coreNative") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeNative") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-coreNative") / Compile / fullClasspath).value
+            `native-settings`
         )
         .jsSettings(
-            `js-settings`,
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeJS") / Compile / fullClasspath).value,
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-coreJS") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeJS") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-coreJS") / Compile / fullClasspath).value
+            `js-settings`
         )
         .wasmSettings(
-            `wasm-settings`,
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeWasm") / Compile / fullClasspath).value,
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-coreWasm") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeWasm") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-coreWasm") / Compile / fullClasspath).value
+            `wasm-settings`
         )
 
 lazy val `kyo-test-runner` =
@@ -3577,51 +3572,19 @@ lazy val `kyo-test-runner` =
         .jvmSettings(
             mimaCheck(false),
             Compile / mainClass                   := Some("kyo.test.runner.Cli"),
-            libraryDependencies += "org.scala-sbt" % "test-interface" % "1.0" % Provided,
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeJVM") / Compile / fullClasspath).value,
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-coreJVM") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeJVM") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-coreJVM") / Compile / fullClasspath).value
+            libraryDependencies += "org.scala-sbt" % "test-interface" % "1.0" % Provided
         )
         .nativeSettings(
             `native-settings`,
-            libraryDependencies += "org.scala-sbt" % "test-interface" % "1.0" % Provided,
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeNative") / Compile / fullClasspath).value,
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-coreNative") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeNative") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-coreNative") / Compile / fullClasspath).value
+            libraryDependencies += "org.scala-sbt" % "test-interface" % "1.0" % Provided
         )
         .jsSettings(
             `js-settings`,
-            libraryDependencies += "org.scala-sbt" % "test-interface" % "1.0" % Provided,
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeJS") / Compile / fullClasspath).value,
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-coreJS") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeJS") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-coreJS") / Compile / fullClasspath).value
+            libraryDependencies += "org.scala-sbt" % "test-interface" % "1.0" % Provided
         )
         .wasmSettings(
             `wasm-settings`,
-            libraryDependencies += "org.scala-sbt" % "test-interface" % "1.0" % Provided,
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeWasm") / Compile / fullClasspath).value,
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-coreWasm") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeWasm") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-coreWasm") / Compile / fullClasspath).value
+            libraryDependencies += "org.scala-sbt" % "test-interface" % "1.0" % Provided
         )
 
 lazy val `kyo-test-prop` =
@@ -3636,48 +3599,16 @@ lazy val `kyo-test-prop` =
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test
         )
         .jvmSettings(
-            mimaCheck(false),
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeJVM") / Compile / fullClasspath).value,
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-coreJVM") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeJVM") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-coreJVM") / Compile / fullClasspath).value
+            mimaCheck(false)
         )
         .nativeSettings(
-            `native-settings`,
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeNative") / Compile / fullClasspath).value,
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-coreNative") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeNative") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-coreNative") / Compile / fullClasspath).value
+            `native-settings`
         )
         .jsSettings(
-            `js-settings`,
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeJS") / Compile / fullClasspath).value,
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-coreJS") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeJS") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-coreJS") / Compile / fullClasspath).value
+            `js-settings`
         )
         .wasmSettings(
-            `wasm-settings`,
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeWasm") / Compile / fullClasspath).value,
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-coreWasm") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeWasm") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-coreWasm") / Compile / fullClasspath).value
+            `wasm-settings`
         )
 
 lazy val `kyo-test-snapshot` =
@@ -3703,14 +3634,6 @@ lazy val `kyo-test-snapshot` =
         )
         .jvmSettings(
             mimaCheck(false),
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeJVM") / Compile / fullClasspath).value,
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-coreJVM") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeJVM") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-coreJVM") / Compile / fullClasspath).value,
             Compile / unmanagedSourceDirectories +=
                 baseDirectory.value.getParentFile / "jvm-native" / "src" / "main" / "scala",
             Test / unmanagedSourceDirectories +=
@@ -3718,14 +3641,6 @@ lazy val `kyo-test-snapshot` =
         )
         .nativeSettings(
             `native-settings`,
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeNative") / Compile / fullClasspath).value,
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-coreNative") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeNative") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-coreNative") / Compile / fullClasspath).value,
             Compile / unmanagedSourceDirectories +=
                 baseDirectory.value.getParentFile / "jvm-native" / "src" / "main" / "scala",
             Test / unmanagedSourceDirectories +=
@@ -3733,28 +3648,12 @@ lazy val `kyo-test-snapshot` =
         )
         .jsSettings(
             `js-settings`,
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeJS") / Compile / fullClasspath).value,
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-coreJS") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeJS") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-coreJS") / Compile / fullClasspath).value,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
         // WASM keeps WasmPlatform's ESModule linker kind (no CommonJSModule override): the
         // @JSImport("node:fs") snapshot facade resolves as an ESM import under Node.
         .wasmSettings(
-            `wasm-settings`,
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeWasm") / Compile / fullClasspath).value,
-            Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-coreWasm") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-preludeWasm") / Compile / fullClasspath).value,
-            Test / unmanagedClasspath ++=
-                (LocalProject("kyo-coreWasm") / Compile / fullClasspath).value
+            `wasm-settings`
         )
 
 lazy val `kyo-test-sbt` =
@@ -3769,8 +3668,13 @@ lazy val `kyo-test-sbt` =
             sbtPlugin          := true,
             scalaVersion       := "2.12.20",
             crossScalaVersions := Seq("2.12.20"),
-            addSbtPlugin("org.scala-js"     % "sbt-scalajs"      % "1.21.0"),
-            addSbtPlugin("org.scala-native" % "sbt-scala-native" % "0.5.10")
+            // Must never lag project/plugins.sbt: a consumer who takes ScalaJSPlugin through this
+            // plugin links kyo's published artifacts with these versions, and Scala.js IR is
+            // forward-incompatible. Scala Native NIR has the same directional constraint.
+            addSbtPlugin("org.scala-js"     % "sbt-scalajs"      % "1.22.0"),
+            addSbtPlugin("org.scala-native" % "sbt-scala-native" % "0.5.12"),
+            // Supplies platformDepsCrossVersion, which SbtKyoTestPlugin re-crosses through.
+            addSbtPlugin("org.portable-scala" % "sbt-platform-deps" % "1.0.2")
         )
 
 lazy val `kyo-test-sbt-publish` =
@@ -3787,5 +3691,39 @@ lazy val `kyo-test-sbt-publish` =
             buildInfoKeys                          := Seq[BuildInfoKey](BuildInfoKey.map(version) { case (_, v) => ("kyoVersion", v) }),
             buildInfoPackage                       := "kyo.test.sbt",
             buildInfoObject                        := "BuildInfo",
-            libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.19" % Test
+            libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.19" % Test,
+            scriptedLaunchOpts := Seq(
+                // The native sub-build links a real binary in this JVM; 1G (enough for the other
+                // three) OOMs inside nativeLink.
+                "-Xmx4G",
+                "-Dplugin.version=" + version.value,
+                "-Dkyo.scalaVersion=" + scala3Version
+            ),
+            scriptedBufferLog := false,
+            // The sub-builds resolve kyo-test-runner from ivy-local, and publishLocal is not
+            // transitive, so the whole classpath closure has to be published first. Derived from the
+            // build graph rather than listed: the closure reaches kyo-config through
+            // kyo-scheduler -> kyo-stats-registry, which a hand-maintained list silently misses.
+            scriptedDependencies := Def.taskDyn {
+                val build = thisProjectRef.value.build
+                val deps  = buildDependencies.value.classpathTransitive
+                val roots = Seq("kyo-test-runnerJVM", "kyo-test-runnerJS", "kyo-test-runnerNative")
+                    .map(id => ProjectRef(build, id))
+                val closure = roots.flatMap(r => r +: deps.getOrElse(r, Nil)).distinct
+                Def.task {
+                    publishLocal.all(ScopeFilter(inProjects(closure *))).value
+                    (`kyo-test-sbt` / publishLocal).value
+                    publishLocal.value
+                    ()
+                }
+            }.value,
+            // Gate the suite through the normal test task so CI picks it up with no bespoke step.
+            // Skipped on Windows: scripted's nested sbt flakily fails to create its named-pipe boot
+            // server there (sbt/sbt#6777), failing the batch reload before any test runs.
+            Test / test := (Test / test).dependsOn(Def.taskDyn {
+                if (sys.props.getOrElse("os.name", "").toLowerCase.contains("win"))
+                    Def.task(streams.value.log.info("scripted skipped on Windows (sbt#6777)"))
+                else
+                    Def.task((scripted.toTask("")).value)
+            }).value
         )

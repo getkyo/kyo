@@ -32,7 +32,7 @@ object KyoTestPlugin extends AutoPlugin {
     override def trigger  = noTrigger
     override def requires = sbt.plugins.JvmPlugin
 
-    override def projectSettings: Seq[Setting[_]] = Seq(
+    override def projectSettings: Seq[Setting[?]] = Seq(
         testFrameworks += new TestFramework("kyo.test.runner.SbtFramework")
     )
 }
