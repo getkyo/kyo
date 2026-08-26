@@ -36,7 +36,25 @@ end HostFileSystemWriteConformanceTest
 
 /** Minimal user-defined backend fixture that deliberately exposes only the read tier. */
 final class UserReadOnlyFileSystemFixture(delegate: FileSystem.Read[Sync]) extends FileSystem.Read[Sync]:
-    export delegate.*
+    // Delegated by name, not `export delegate.*`. A wildcard emits one forwarder per member in an
+    // order the compiler does not fix, so this class's TASTy differs between clean builds; that
+    // reaches the doctest classpath fingerprint and costs the module its cached results. Omitting a
+    // member here fails to compile, since the class must implement all of FileSystem.Read.
+    export delegate.defaultCaseSensitivity
+    export delegate.exists
+    export delegate.isDirectory
+    export delegate.isRegularFile
+    export delegate.isSymbolicLink
+    export delegate.list
+    export delegate.openRead
+    export delegate.openReadLines
+    export delegate.openWalk
+    export delegate.read
+    export delegate.readBytes
+    export delegate.readLines
+    export delegate.realPath
+    export delegate.size
+    export delegate.stat
 end UserReadOnlyFileSystemFixture
 
 class UserReadOnlyFileSystemConformanceTest extends FileSystemReadTestSuite:
