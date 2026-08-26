@@ -182,7 +182,13 @@ container_provision() {
     # preinstalled on GitHub runners but absent from a bare image, and its lack fails ffiCompile before any linking (cannot run "cc").
     # Always installed so any kyo-net command builds in the container.
     local apt_pkgs="curl ca-certificates patch build-essential liburing-dev libssl-dev"
-    local node_pkgs="" native_pkgs="" bssl_pkgs="" aeron_pkgs=""
+    local node_pkgs="" native_pkgs="" bssl_pkgs="" aeron_pkgs="" pod_pkgs=""
+    # kyo-pod's shell backend execs the podman CLI (the CI setup action installs it on the runner
+    # for exactly these suites); with the socket passthrough active the CLI talks to the same
+    # socket the HTTP backend uses, via the CONTAINER_HOST the passthrough exports. The docker
+    # shell cells stay visible cancels: CI's docker comes preinstalled on the runner, not from
+    # kyo's own setup, and the podman socket serves both API backends already.
+    [ -n "${KYO_POD_SOCKET:-}" ] && pod_pkgs="podman"
     # "all" provisions the union (raw sbt mode may run any platform's command in the container).
     case "$platform" in
         JS|Wasm|all) node_pkgs="nodejs npm" ;;
@@ -227,7 +233,7 @@ fi'
 export DEBIAN_FRONTEND=noninteractive
 if command -v apt-get >/dev/null 2>&1; then
     apt-get update -qq >/dev/null
-    apt-get install -y -qq -o Acquire::Retries=3 $apt_pkgs $node_pkgs $native_pkgs $bssl_pkgs $aeron_pkgs >/dev/null
+    apt-get install -y -qq -o Acquire::Retries=3 $apt_pkgs $node_pkgs $native_pkgs $bssl_pkgs $aeron_pkgs $pod_pkgs >/dev/null
 fi
 export COURSIER_CACHE=/root/.cache/coursier
 if ! command -v cs >/dev/null 2>&1; then
