@@ -18,7 +18,13 @@ import kyo.net.NetDnsResolutionException
   */
 private[net] object SystemResolver:
 
-    private def bindings(using AllowUnsafe): ResolveBindings = Ffi.load[ResolveBindings]
+    // bound once for the reason KqueuePollerBackend.kq is: the shared stateless binding was
+    // reloaded per resolve call.
+    // Unsafe: first use is always under a caller that holds AllowUnsafe, and each binding method
+    // still requires AllowUnsafe per call.
+    private lazy val bindings: ResolveBindings =
+        import AllowUnsafe.embrace.danger
+        Ffi.load[ResolveBindings]
 
     /** Resolve `host` for `familyHint` to `(family, rawAddrBytes)` or fail `NetDnsResolutionException`. Spawns the `@Ffi.blocking
       * kyo_net_resolve` shim on a dedicated carrier via `Fiber.Unsafe.init`; on Native the shim completes inline (BlockingBridge runs the
