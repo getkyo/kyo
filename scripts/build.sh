@@ -84,6 +84,18 @@ if [ "$ENV_KIND" = podman-ci ]; then
     # env therefore defaults the socket passthrough on, pointing at the podman VM's own
     # socket; KYO_POD_SOCKET= (explicitly empty) opts out, and plain podman keeps it opt-in.
     KYO_POD_SOCKET="${KYO_POD_SOCKET-/run/podman/podman.sock}"
+    # An enforcing SELinux in the podman VM confines the sibling containers the suites launch
+    # (the build container itself runs label=disable) and denies their bind-mount writes into
+    # the shared /tmp, which GitHub runners never do: kyo-pod's host-marker tests then fail on
+    # EACCES inside the sibling. Verified directly: the identical stop-signal flow delivers with
+    # enforcement off and is denied with it on. Self-repair to permissive when a machine VM is
+    # present; a Linux host without a machine VM has no such layer to adjust.
+    if [ -n "${KYO_POD_SOCKET:-}" ] && podman machine ssh true >/dev/null 2>&1; then
+        if [ "$(podman machine ssh getenforce 2>/dev/null)" = "Enforcing" ]; then
+            echo "build.sh: podman VM SELinux is Enforcing; setting permissive so sibling containers can write shared bind mounts (as on CI)" >&2
+            podman machine ssh 'sudo setenforce 0 && sudo sed -i "s/^SELINUX=enforcing/SELINUX=permissive/" /etc/selinux/config' || true
+        fi
+    fi
 fi
 
 ACTION="${1:-test}"
@@ -182,13 +194,24 @@ container_provision() {
     # preinstalled on GitHub runners but absent from a bare image, and its lack fails ffiCompile before any linking (cannot run "cc").
     # Always installed so any kyo-net command builds in the container.
     local apt_pkgs="curl ca-certificates patch build-essential liburing-dev libssl-dev"
-    local node_pkgs="" native_pkgs="" bssl_pkgs="" aeron_pkgs="" pod_pkgs=""
+    local node_pkgs="" native_pkgs="" bssl_pkgs="" aeron_pkgs=""
     # kyo-pod's shell backend execs the podman CLI (the CI setup action installs it on the runner
     # for exactly these suites); with the socket passthrough active the CLI talks to the same
-    # socket the HTTP backend uses, via the CONTAINER_HOST the passthrough exports. The docker
-    # shell cells stay visible cancels: CI's docker comes preinstalled on the runner, not from
-    # kyo's own setup, and the podman socket serves both API backends already.
-    [ -n "${KYO_POD_SOCKET:-}" ] && pod_pkgs="podman"
+    # socket the HTTP backend uses, via the CONTAINER_HOST the passthrough exports. The client
+    # must match the server's major: apt's podman (4.9 on noble) fails unmarshalling a 5.x
+    # server's inspect payloads over the libpod remote API, so the pinned static remote client
+    # is installed instead of the distro package. The docker shell cells stay visible cancels:
+    # CI's docker comes preinstalled on the runner, not from kyo's own setup, and the podman
+    # socket serves both API backends already.
+    local pod_setup=""
+    if [ -n "${KYO_POD_SOCKET:-}" ]; then
+        pod_setup='
+case $(uname -m) in aarch64) podman_arch=linux_arm64 ;; *) podman_arch=linux_amd64 ;; esac
+curl -fsSL "https://github.com/containers/podman/releases/download/v'"${PODMAN_CLIENT_VERSION:-5.0.1}"'/podman-remote-static-${podman_arch}.tar.gz" \
+    | tar xz -C /usr/local/bin --strip-components=1
+mv "/usr/local/bin/podman-remote-static-${podman_arch}" /usr/local/bin/podman
+chmod +x /usr/local/bin/podman'
+    fi
     # "all" provisions the union (raw sbt mode may run any platform's command in the container).
     case "$platform" in
         JS|Wasm|all) node_pkgs="nodejs npm" ;;
@@ -231,10 +254,16 @@ fi'
     fi
     cat <<PROVISION
 export DEBIAN_FRONTEND=noninteractive
+# GitHub runners export a UTF-8 locale; a bare image has none, which leaves the JVM's
+# sun.jnu.encoding at ASCII and makes unicode file names unmappable (kyo-pod's unicode
+# copy roundtrip fails with InvalidPathException). file.encoding alone does not cover
+# path encoding, so the locale itself is set.
+export LANG=C.UTF-8 LC_ALL=C.UTF-8
 if command -v apt-get >/dev/null 2>&1; then
     apt-get update -qq >/dev/null
-    apt-get install -y -qq -o Acquire::Retries=3 $apt_pkgs $node_pkgs $native_pkgs $bssl_pkgs $aeron_pkgs $pod_pkgs >/dev/null
+    apt-get install -y -qq -o Acquire::Retries=3 $apt_pkgs $node_pkgs $native_pkgs $bssl_pkgs $aeron_pkgs >/dev/null
 fi
+$pod_setup
 export COURSIER_CACHE=/root/.cache/coursier
 if ! command -v cs >/dev/null 2>&1; then
     # Linux aarch64 launchers are published by VirtusLab's coursier-m1 releases, not
@@ -283,7 +312,11 @@ run_in_container() {
     # share the host network so kyo-pod inside the container can start sibling DB containers and reach their published ports on localhost. Opt-in,
     # so a normal run is unaffected.
     if [ -n "${KYO_POD_SOCKET:-}" ]; then
-        args+=(--network host -v "${KYO_POD_SOCKET}:${KYO_POD_SOCKET}")
+        # /tmp is shared with the daemon's host alongside the socket: a sibling container's bind
+        # mounts resolve on the daemon host, and the suites mint host paths under /tmp (markers a
+        # container trap writes for the test to read). On CI the test process runs directly on the
+        # daemon host so the trees coincide; sharing /tmp restores that arrangement here.
+        args+=(--network host -v "${KYO_POD_SOCKET}:${KYO_POD_SOCKET}" -v /tmp:/tmp)
         envs+=(-e "CONTAINER_HOST=unix://${KYO_POD_SOCKET}")
     fi
     # Forward the BoringSSL-staging flag; when set the container builds the vendored BoringSSL before the command so kyo-net's TLS tests run
