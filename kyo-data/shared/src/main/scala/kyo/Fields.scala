@@ -204,7 +204,10 @@ object Fields:
         opaque type Pin[+N <: String] = Unit
         given [N <: String]: Pin[N] = ()
     end Pin
-    export Pin.*
+    // Named rather than `export Pin.*`, for the same reproducibility reason as the other export
+    // sites: a wildcard emits forwarders whose order the compiler does not fix.
+    export Pin.Pin
+    export Pin.given
 
     /** Decomposes a function's return type into a type constructor and its field types, preserving field information that Scala would
       * otherwise widen.

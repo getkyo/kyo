@@ -129,11 +129,20 @@ object HttpStatus:
     /** Status code not covered by the standard enums. */
     final case class Custom(override val code: Int) extends HttpStatus(code)
 
-    export ClientError.*
-    export Informational.*
-    export Redirect.*
-    export ServerError.*
-    export Success.*
+    // Named rather than `export X.*`. A wildcard export emits one forwarder per member and the
+    // compiler orders them differently between runs once the member count passes the point where
+    // the collection behind it stops preserving insertion order, so two clean builds of identical
+    // sources emit different class files. Naming the cases keeps the emission source-ordered.
+    export ClientError.{BadRequest, Unauthorized, PaymentRequired, Forbidden, NotFound, MethodNotAllowed, NotAcceptable,
+        ProxyAuthRequired, RequestTimeout, Conflict, Gone, LengthRequired, PreconditionFailed, PayloadTooLarge, URITooLong,
+        UnsupportedMediaType, RangeNotSatisfiable, ExpectationFailed, ImATeapot, MisdirectedRequest, UnprocessableEntity, Locked,
+        FailedDependency, TooEarly, UpgradeRequired, PreconditionRequired, TooManyRequests, RequestHeaderFieldsTooLarge,
+        UnavailableForLegalReasons}
+    export Informational.{Continue, SwitchingProtocols, Processing, EarlyHints}
+    export Redirect.{MultipleChoices, MovedPermanently, Found, SeeOther, NotModified, UseProxy, TemporaryRedirect, PermanentRedirect}
+    export ServerError.{InternalServerError, NotImplemented, BadGateway, ServiceUnavailable, GatewayTimeout, HTTPVersionNotSupported,
+        VariantAlsoNegotiates, InsufficientStorage, LoopDetected, NotExtended, NetworkAuthRequired}
+    export Success.{OK, Created, Accepted, NonAuthoritativeInfo, NoContent, ResetContent, PartialContent}
 
     enum Informational(code: Int) extends HttpStatus(code):
         case Continue           extends Informational(100)
