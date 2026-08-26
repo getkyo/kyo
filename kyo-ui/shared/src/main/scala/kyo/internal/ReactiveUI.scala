@@ -1102,10 +1102,9 @@ private[kyo] object ReactiveUI:
         }
 
     // Each reactive region starts an observer fiber as one scoped resource. Its finalizer interrupts the observer and
-    // awaits the fiber's terminal result. Signal.observe runs each value in a fresh Scope on that same IOTask, so the
-    // task's cleanup barriers close and await the active value plus every nested Scope before getResult completes.
-    // Each value renders, re-walks, and starts its children in that Scope, so the next value or an interrupt closes them
-    // transitively. A const node has no signal: it subscribes its children in the enclosing scope.
+    // awaits the fiber's terminal result. Signal.observe runs each value in a fresh Scope; each value renders, re-walks,
+    // and starts its children in that Scope, so the next value or an interrupt closes them transitively. A const node
+    // has no signal: it subscribes its children in the enclosing scope.
     private def subscribeScoped(rui: ReactiveUI, exchange: UIExchange, signalChangeTime: AtomicRef[Instant])(using
         Frame
     ): Unit < (Async & Scope) =
