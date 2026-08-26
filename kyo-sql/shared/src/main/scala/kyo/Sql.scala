@@ -2333,12 +2333,12 @@ object Sql:
         object Returning:
             extension [T, F, A](inline ret: Returning[T, F, A])
                 /** Try the static-emission path; fall back to the runtime renderer if the AST is not reducible at compile time. */
-                inline def run(using SqlSchema[A], Frame): Chunk[A] < (Abort[SqlException] & DB) =
-                    ${ kyo.internal.SqlRunMacro.runInsertReturningImpl[T, F, A]('ret) }
+                inline def run(using ev: SqlSchema[A], frame: Frame): Chunk[A] < (Abort[SqlException] & DB) =
+                    ${ kyo.internal.SqlRunMacro.runInsertReturningImpl[T, F, A]('ret, 'ev, 'frame) }
 
                 /** Requires compile-time AST reduction; produces a compile error if the AST is not reducible. */
-                inline def runStatic(using SqlSchema[A], Frame): Chunk[A] < (Abort[SqlException] & DB) =
-                    ${ kyo.internal.SqlRunMacro.runInsertReturningStaticImpl[T, F, A]('ret) }
+                inline def runStatic(using ev: SqlSchema[A], frame: Frame): Chunk[A] < (Abort[SqlException] & DB) =
+                    ${ kyo.internal.SqlRunMacro.runInsertReturningStaticImpl[T, F, A]('ret, 'ev, 'frame) }
             end extension
 
             extension [T, F, A](ret: Returning[T, F, A])
@@ -2444,12 +2444,12 @@ object Sql:
         object Returning:
             extension [T, F, A](inline ret: Returning[T, F, A])
                 /** Try the static-emission path; fall back to the runtime renderer if the AST is not reducible at compile time. */
-                inline def run(using SqlSchema[A], Frame): Chunk[A] < (Abort[SqlException] & DB) =
-                    ${ kyo.internal.SqlRunMacro.runReturningImpl[T, F, A]('ret) }
+                inline def run(using ev: SqlSchema[A], frame: Frame): Chunk[A] < (Abort[SqlException] & DB) =
+                    ${ kyo.internal.SqlRunMacro.runReturningImpl[T, F, A]('ret, 'ev, 'frame) }
 
                 /** Requires compile-time AST reduction; produces a compile error if the AST is not reducible. */
-                inline def runStatic(using SqlSchema[A], Frame): Chunk[A] < (Abort[SqlException] & DB) =
-                    ${ kyo.internal.SqlRunMacro.runReturningStaticImpl[T, F, A]('ret) }
+                inline def runStatic(using ev: SqlSchema[A], frame: Frame): Chunk[A] < (Abort[SqlException] & DB) =
+                    ${ kyo.internal.SqlRunMacro.runReturningStaticImpl[T, F, A]('ret, 'ev, 'frame) }
             end extension
 
             extension [T, F, A](ret: Returning[T, F, A])
@@ -2534,11 +2534,11 @@ object Sql:
 
         object Returning:
             extension [T, F, A](inline ret: Returning[T, F, A])
-                inline def run(using SqlSchema[A], Frame): Chunk[A] < (Abort[SqlException] & DB) =
-                    ${ kyo.internal.SqlRunMacro.runDeleteReturningImpl[T, F, A]('ret) }
+                inline def run(using ev: SqlSchema[A], frame: Frame): Chunk[A] < (Abort[SqlException] & DB) =
+                    ${ kyo.internal.SqlRunMacro.runDeleteReturningImpl[T, F, A]('ret, 'ev, 'frame) }
 
-                inline def runStatic(using SqlSchema[A], Frame): Chunk[A] < (Abort[SqlException] & DB) =
-                    ${ kyo.internal.SqlRunMacro.runDeleteReturningStaticImpl[T, F, A]('ret) }
+                inline def runStatic(using ev: SqlSchema[A], frame: Frame): Chunk[A] < (Abort[SqlException] & DB) =
+                    ${ kyo.internal.SqlRunMacro.runDeleteReturningStaticImpl[T, F, A]('ret, 'ev, 'frame) }
             end extension
 
             extension [T, F, A](ret: Returning[T, F, A])

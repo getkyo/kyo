@@ -74,33 +74,39 @@ object SqlRunMacro:
     // statement it renders is the ordinary write it wraps, whose RETURNING clause the renderers already emit;
     // what the wrapper adds is the type those rows decode at.
 
-    def runReturningImpl[T: Type, F: Type, A: Type](ret: Expr[Update.Returning[T, F, A]])(using
+    def runReturningImpl[T: Type, F: Type, A: Type](ret: Expr[Update.Returning[T, F, A]], ev: Expr[SqlSchema[A]], frame: Expr[Frame])(using
         Quotes
     ): Expr[Chunk[A] < (Abort[SqlException] & DB)] =
-        val ev = summonEvidence[A](ret)
         SqlStaticMacro.tryImpl(widenStatement('{ $ret.statement })) match
-            case Present(rendered) => emitQuery[A](rendered, ev)
-            case Absent            => '{ $ret.runDynamic(using summon[Frame], $ev) }
+            case Present(rendered) => emitQuery[A](rendered, ev, frame)
+            case Absent            => '{ $ret.runDynamic(using $frame, $ev) }
     end runReturningImpl
 
-    def runReturningStaticImpl[T: Type, F: Type, A: Type](ret: Expr[Update.Returning[T, F, A]])(using
+    def runReturningStaticImpl[T: Type, F: Type, A: Type](
+        ret: Expr[Update.Returning[T, F, A]],
+        ev: Expr[SqlSchema[A]],
+        frame: Expr[Frame]
+    )(using
         Quotes
     ): Expr[Chunk[A] < (Abort[SqlException] & DB)] =
-        emitQuery[A](SqlStaticMacro.impl(widenStatement('{ $ret.statement })), summonEvidence[A](ret))
+        emitQuery[A](SqlStaticMacro.impl(widenStatement('{ $ret.statement })), ev, frame)
 
-    def runDeleteReturningImpl[T: Type, F: Type, A: Type](ret: Expr[Delete.Returning[T, F, A]])(using
-        Quotes
+    def runDeleteReturningImpl[T: Type, F: Type, A: Type](ret: Expr[Delete.Returning[T, F, A]], ev: Expr[SqlSchema[A]], frame: Expr[Frame])(
+        using Quotes
     ): Expr[Chunk[A] < (Abort[SqlException] & DB)] =
-        val ev = summonEvidence[A](ret)
         SqlStaticMacro.tryImpl(widenStatement('{ $ret.statement })) match
-            case Present(rendered) => emitQuery[A](rendered, ev)
-            case Absent            => '{ $ret.runDynamic(using summon[Frame], $ev) }
+            case Present(rendered) => emitQuery[A](rendered, ev, frame)
+            case Absent            => '{ $ret.runDynamic(using $frame, $ev) }
     end runDeleteReturningImpl
 
-    def runDeleteReturningStaticImpl[T: Type, F: Type, A: Type](ret: Expr[Delete.Returning[T, F, A]])(using
+    def runDeleteReturningStaticImpl[T: Type, F: Type, A: Type](
+        ret: Expr[Delete.Returning[T, F, A]],
+        ev: Expr[SqlSchema[A]],
+        frame: Expr[Frame]
+    )(using
         Quotes
     ): Expr[Chunk[A] < (Abort[SqlException] & DB)] =
-        emitQuery[A](SqlStaticMacro.impl(widenStatement('{ $ret.statement })), summonEvidence[A](ret))
+        emitQuery[A](SqlStaticMacro.impl(widenStatement('{ $ret.statement })), ev, frame)
 
     // --- Insert.Returning[T, F, A] ---
     //
@@ -108,19 +114,22 @@ object SqlRunMacro:
     // insert-outcome one. The renderer already prefers an explicit RETURNING over the auto-key clause it appends, so
     // there is one clause either way and the rows this decodes are the ones the caller asked for.
 
-    def runInsertReturningImpl[T: Type, F: Type, A: Type](ret: Expr[Insert.Returning[T, F, A]])(using
-        Quotes
+    def runInsertReturningImpl[T: Type, F: Type, A: Type](ret: Expr[Insert.Returning[T, F, A]], ev: Expr[SqlSchema[A]], frame: Expr[Frame])(
+        using Quotes
     ): Expr[Chunk[A] < (Abort[SqlException] & DB)] =
-        val ev = summonEvidence[A](ret)
         SqlStaticMacro.tryImpl(widenStatement('{ $ret.statement })) match
-            case Present(rendered) => emitQuery[A](rendered, ev)
-            case Absent            => '{ $ret.runDynamic(using summon[Frame], $ev) }
+            case Present(rendered) => emitQuery[A](rendered, ev, frame)
+            case Absent            => '{ $ret.runDynamic(using $frame, $ev) }
     end runInsertReturningImpl
 
-    def runInsertReturningStaticImpl[T: Type, F: Type, A: Type](ret: Expr[Insert.Returning[T, F, A]])(using
+    def runInsertReturningStaticImpl[T: Type, F: Type, A: Type](
+        ret: Expr[Insert.Returning[T, F, A]],
+        ev: Expr[SqlSchema[A]],
+        frame: Expr[Frame]
+    )(using
         Quotes
     ): Expr[Chunk[A] < (Abort[SqlException] & DB)] =
-        emitQuery[A](SqlStaticMacro.impl(widenStatement('{ $ret.statement })), summonEvidence[A](ret))
+        emitQuery[A](SqlStaticMacro.impl(widenStatement('{ $ret.statement })), ev, frame)
 
     // --- Delete[T, F] ---
 
