@@ -1360,7 +1360,7 @@ NOTE: This section is a reference for the uncommon task of implementing a new ef
 
 1. **Type definition** — sealed trait extending one of two base classes:
    - **`ArrowEffect[I, O]`** — for function-like effects that transform inputs to outputs. Operations are encoded as an ADT and dispatched in a handler loop. Used by `Abort`, `Var`, `Emit`, `Choice`, `Poll`.
-   - **`ContextEffect[A]`** — for value-providing effects (dependency injection). No ADT or handler loop needed — just `ContextEffect.handle(tag, value)(computation)`. Values are inherited across async boundaries by default; mark with `ContextEffect.Noninheritable` to prevent this. Used by `Env`, `Local`.
+   - **`ContextEffect[A]`** — for value-providing effects (dependency injection). No ADT or handler loop needed — just `ContextEffect.handle(tag, value)(computation)`. Values are inherited across async boundaries by default; a binding that must not cross a fork says so through `handle`'s fork strategy, `fork = _ => Absent` (the spelling behind `Local.initNoninheritable`). Used by `Env`, `Local`.
 
    ```scala
    sealed trait Var[V] extends ArrowEffect[Const[Op[V]], Const[V]]   // ArrowEffect

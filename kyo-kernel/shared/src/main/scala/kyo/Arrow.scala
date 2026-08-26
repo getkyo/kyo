@@ -7,6 +7,20 @@ import scala.annotation.nowarn
 import scala.annotation.static
 import scala.annotation.tailrec
 
+/** A transformation from `A` to `B < S`, reified as a value.
+  *
+  * Arrows are what the kernel composes: a map body, a handler's captured continuation, and a loop's re-entry step are all arrows. Build
+  * one with [[Arrow.apply]], compose two with [[chain]], apply one to a plain value with the single-argument `apply`; [[Arrow.id]] is the
+  * neutral element of composition and [[Arrow.recursive]] lets a step re-enter itself without building a new arrow per iteration. An arrow
+  * is a complete value: holding one, applying it later, or applying it more than once are all valid, which is what makes multi-shot
+  * handlers possible.
+  *
+  * The remaining members are the evaluator's calling convention rather than user API. The two-argument `apply` is application fused with
+  * composition: `arrow(v, cont)` evaluates to exactly what `cont(arrow(v))` evaluates to, deferring instead of running strictly when the
+  * input is suspended or the safepoint budget is drained. `head` and `tail` split a normalized run of steps for delivery. They are public
+  * because inline expansions must reach them from call sites outside package kyo; user code has no reason to call them, and calling them
+  * is safe (ArrowTest pins the laws).
+  */
 // deliberately not a Function1. Function1 is @specialized on both parameters, so every class that
 // mixes it in emits the whole apply$mcXY$sp forwarder grid: 26 methods, measured at 19776 definitions
 // across this module and not one genuine call site. Handlers take an Arrow directly instead, which
@@ -14,16 +28,23 @@ import scala.annotation.tailrec
 sealed trait Arrow[-A, +B, -S]:
     self =>
 
+    /** The source position this arrow was built at, [[Frame.internal]] for arrows the kernel mints itself. */
     def frame: Frame
 
+    /** Applies this arrow to a plain value. */
     def apply(v: A): B < S
 
+    /** The evaluator's calling convention: applies this arrow to a possibly pending value and continues with `cont`, deferring when the
+      * input is suspended or the budget is drained. Evaluates to exactly what `cont(this(v))` evaluates to.
+      */
     def apply[C, S2](v: A < S2, cont: Arrow[B, C, S2]): C < (S & S2)
 
+    /** Composes this arrow with `f`, producing an arrow that applies this one and feeds its result to `f`. */
     final def chain[C, S2](f: Arrow[B, C, S2]): Arrow[A, C, S & S2] =
         if f eq Arrow.Id then this.asInstanceOf[Arrow[A, C, S]]
         else new Arrow.Chain(this, f)
 
+    /** The evaluator's decomposition of a normalized run: `head` is the first link, `tail` the rest, `X` the type between them. */
     type X
     def head: Arrow[A, X, S]
     def tail: Arrow[X, B, S]
@@ -32,8 +53,12 @@ end Arrow
 
 object Arrow:
 
+    /** The identity arrow, the neutral element of [[Arrow#chain]]: one shared instance across element types. */
     def id[A]: Arrow.Id[A] = Id.asInstanceOf[Id[A]]
 
+    /** Builds an arrow from a function. The function runs once per application, strictly when the input is settled and the budget allows,
+      * as a reified node otherwise.
+      */
     @nowarn
     inline def apply[A, B, S](inline f: A => B < S)(using _frame: Frame): Arrow[A, B, S] =
         new TransformBase[A, B, S]:
@@ -53,6 +78,10 @@ object Arrow:
                             out
                         end if
 
+    /** Builds a self-referential arrow: `f` receives the arrow being defined alongside the value, so a looping step can re-enter itself
+      * without building a new arrow per iteration. Direct self-application recurses on the call stack; route each step through `map` when
+      * the recursion needs the budget rescue.
+      */
     @nowarn
     inline def recursive[A, B, S](inline f: (Arrow[A, B, S], A) => B < S)(using _frame: Frame): Arrow[A, B, S] =
         new TransformBase[A, B, S]:

@@ -1,5 +1,14 @@
 package kyo.kernel
 
+// What an inline body names must resolve where it expands, and the kernel's inline bodies expand at
+// call sites outside package kyo. That forces two spellings throughout the module, here and in every
+// file that points at this note. Imports of names an inline body selects are unqualified, so the
+// expansion does not select them through an owner that is not accessible there (`map` and `Eval`
+// both stopped compiling outside `kyo` when selected qualified). And what an inline body names must
+// be public at both the object and the member level: a `private[kyo]` top-level object makes dotty
+// emit an inline accessor whose receiver is the package itself, which the backend loads as a class
+// that does not exist. The platform Safepoint carries the accessor details; outsidekyo/KernelTest
+// is the guard that expands and runs every public inline entry point from outside the package.
 import kyo.Arrow
 import kyo.Arrow.Transform
 import kyo.Arrow.TransformBase

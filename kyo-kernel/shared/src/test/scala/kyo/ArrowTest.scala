@@ -81,15 +81,24 @@ class ArrowTest extends Test:
     }
 
     "recursive builds an arrow that can call itself" - {
-        // TODO let's add benchmarks comparing recursing with an arrow vs a Loop vs a recursive method. Maybe Loop should be based on Arrow.recursive
+        // benchmarked in KernelBench (the IterationVia rows): recursion through an arrow matches a
+        // recursive method on both pure and effectful iteration, and Loop's dedicated machinery is
+        // several times faster on pure iteration, so Loop is not based on Arrow.recursive
         "over a settled input" in {
             val countdown = Arrow.recursive[Int, Int, Any]((self, i) => if i == 0 then 0 else self(i - 1))
             assert(countdown(10).eval == 0)
         }
 
-        "in bounded stack" in {
+        "direct self-application recurses on the call stack" in {
+            // no budget check on the one-argument apply: each step is a JVM frame, so the depth a
+            // direct spelling survives is the thread's stack size, not the kernel's rescue
             val countdown = Arrow.recursive[Int, Int, Any]((self, i) => if i == 0 then 0 else self(i - 1))
-            assert(countdown(100000).eval == 0)
+            assert(countdown(10000).eval == 0)
+        }
+
+        "each step through map is budget-rescued at any depth" in {
+            val countdown = Arrow.recursive[Int, Int, Any]((self, i) => if i == 0 then 0 else ((i - 1): Int < Any).map(v => self(v)))
+            assert(countdown(1000000).eval == 0)
         }
 
         "with an effectful body" in {
