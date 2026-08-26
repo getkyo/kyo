@@ -133,16 +133,65 @@ object HttpStatus:
     // compiler orders them differently between runs once the member count passes the point where
     // the collection behind it stops preserving insertion order, so two clean builds of identical
     // sources emit different class files. Naming the cases keeps the emission source-ordered.
-    export ClientError.{BadRequest, Unauthorized, PaymentRequired, Forbidden, NotFound, MethodNotAllowed, NotAcceptable,
-        ProxyAuthRequired, RequestTimeout, Conflict, Gone, LengthRequired, PreconditionFailed, PayloadTooLarge, URITooLong,
-        UnsupportedMediaType, RangeNotSatisfiable, ExpectationFailed, ImATeapot, MisdirectedRequest, UnprocessableEntity, Locked,
-        FailedDependency, TooEarly, UpgradeRequired, PreconditionRequired, TooManyRequests, RequestHeaderFieldsTooLarge,
-        UnavailableForLegalReasons}
-    export Informational.{Continue, SwitchingProtocols, Processing, EarlyHints}
-    export Redirect.{MultipleChoices, MovedPermanently, Found, SeeOther, NotModified, UseProxy, TemporaryRedirect, PermanentRedirect}
-    export ServerError.{InternalServerError, NotImplemented, BadGateway, ServiceUnavailable, GatewayTimeout, HTTPVersionNotSupported,
-        VariantAlsoNegotiates, InsufficientStorage, LoopDetected, NotExtended, NetworkAuthRequired}
-    export Success.{OK, Created, Accepted, NonAuthoritativeInfo, NoContent, ResetContent, PartialContent}
+    export ClientError.BadRequest
+    export ClientError.Conflict
+    export ClientError.ExpectationFailed
+    export ClientError.FailedDependency
+    export ClientError.Forbidden
+    export ClientError.Gone
+    export ClientError.ImATeapot
+    export ClientError.LengthRequired
+    export ClientError.Locked
+    export ClientError.MethodNotAllowed
+    export ClientError.MisdirectedRequest
+    export ClientError.NotAcceptable
+    export ClientError.NotFound
+    export ClientError.PayloadTooLarge
+    export ClientError.PaymentRequired
+    export ClientError.PreconditionFailed
+    export ClientError.PreconditionRequired
+    export ClientError.ProxyAuthRequired
+    export ClientError.RangeNotSatisfiable
+    export ClientError.RequestHeaderFieldsTooLarge
+    export ClientError.RequestTimeout
+    export ClientError.TooEarly
+    export ClientError.TooManyRequests
+    export ClientError.Unauthorized
+    export ClientError.UnavailableForLegalReasons
+    export ClientError.UnprocessableEntity
+    export ClientError.UnsupportedMediaType
+    export ClientError.UpgradeRequired
+    export ClientError.URITooLong
+    export Informational.Continue
+    export Informational.EarlyHints
+    export Informational.Processing
+    export Informational.SwitchingProtocols
+    export Redirect.Found
+    export Redirect.MovedPermanently
+    export Redirect.MultipleChoices
+    export Redirect.NotModified
+    export Redirect.PermanentRedirect
+    export Redirect.SeeOther
+    export Redirect.TemporaryRedirect
+    export Redirect.UseProxy
+    export ServerError.BadGateway
+    export ServerError.GatewayTimeout
+    export ServerError.HTTPVersionNotSupported
+    export ServerError.InsufficientStorage
+    export ServerError.InternalServerError
+    export ServerError.LoopDetected
+    export ServerError.NetworkAuthRequired
+    export ServerError.NotExtended
+    export ServerError.NotImplemented
+    export ServerError.ServiceUnavailable
+    export ServerError.VariantAlsoNegotiates
+    export Success.Accepted
+    export Success.Created
+    export Success.NoContent
+    export Success.NonAuthoritativeInfo
+    export Success.OK
+    export Success.PartialContent
+    export Success.ResetContent
 
     enum Informational(code: Int) extends HttpStatus(code):
         case Continue           extends Informational(100)

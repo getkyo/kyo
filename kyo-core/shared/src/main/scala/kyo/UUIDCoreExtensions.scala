@@ -28,7 +28,7 @@ object UUIDCoreExtensions:
     end extension
 end UUIDCoreExtensions
 
+export UUIDCoreExtensions.let
 export UUIDCoreExtensions.v4
 export UUIDCoreExtensions.v4String
 export UUIDCoreExtensions.v7
-export UUIDCoreExtensions.let

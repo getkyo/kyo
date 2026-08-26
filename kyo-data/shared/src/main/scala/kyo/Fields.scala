@@ -206,8 +206,13 @@ object Fields:
     end Pin
     // Named rather than `export Pin.*`, for the same reproducibility reason as the other export
     // sites: a wildcard emits forwarders whose order the compiler does not fix.
+    //
+    // The type only. A wildcard selector does not match given instances, so `export Pin.*` never
+    // carried the given either, and adding `export Pin.given` here is not equivalent to it: the
+    // alias it creates in Fields competes with the original in Pin, and every use site fails with
+    // ambiguous given instances. The given needs no export to stay reachable, since `object Pin`
+    // is the implicit scope of the opaque type declared inside it.
     export Pin.Pin
-    export Pin.given
 
     /** Decomposes a function's return type into a type constructor and its field types, preserving field information that Scala would
       * otherwise widen.
