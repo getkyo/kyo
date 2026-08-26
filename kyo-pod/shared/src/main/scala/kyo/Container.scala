@@ -2345,18 +2345,6 @@ object Container:
                         Abort.runWith[ContainerException](hc.check(container)) {
                             case Result.Success(_) =>
                                 container.healthState.set(ContainerHealthState(Present(hc)))
-                            // The container vanished under the check. Same condition as the two
-                            // liveness escapes, so it produces the same verdict rather than a second
-                            // exception type for one meaning: the CI run that first exercised this
-                            // reported ContainerMissingException on one transport and
-                            // ContainerHealthCheckException on another for the very same dead container.
-                            case Result.Failure(_: ContainerMissingException) =>
-                                onDeadContainer(
-                                    container,
-                                    "container disappeared while its health check was running",
-                                    attempts = attempts,
-                                    lastError = formatRecentHealthCheckErrors(recentErrors)
-                                )
                             case failure =>
                                 val errorMsg = failure match
                                     // Prefer the structured `lastError` for HealthCheckException — `getMessage` on
@@ -2367,16 +2355,15 @@ object Container:
                                     case _                 => "unknown error"
                                 val updatedErrors = appendRecentHealthCheckError(recentErrors, errorMsg)
                                 val nextAttempts  = attempts + 1
-                                // Check if container is still running before retrying
-                                isContainerAlive(container).map { stillAlive =>
-                                    if !stillAlive then
-                                        onDeadContainer(
-                                            container,
-                                            "container exited while its health check was still failing",
-                                            attempts = nextAttempts,
-                                            lastError = formatRecentHealthCheckErrors(updatedErrors)
-                                        )
-                                    else
+                                // Every failed attempt, including a ContainerMissingException from the
+                                // check itself, resolves against the container record before retrying.
+                                // The check's own error cannot be trusted for the verdict: docker's http
+                                // transport reports a missing exec target for a container that merely
+                                // exited and whose record still exists, so wording the verdict from that
+                                // error called an exited container "disappeared". One failure path, one
+                                // verdict, with the reason read from the record's actual state.
+                                Abort.runWith[ContainerException](container.backend.state(container.id)) {
+                                    case Result.Success(st) if isAliveState(st) =>
                                         Clock.now.map { now =>
                                             retrySchedule.next(now) match
                                                 case Present((delay, nextSchedule)) =>
@@ -2393,6 +2380,22 @@ object Container:
                                                         lastError = formatRecentHealthCheckErrors(updatedErrors)
                                                     ))
                                         }
+                                    case Result.Success(_) =>
+                                        onDeadContainer(
+                                            container,
+                                            "container exited while its health check was still failing",
+                                            attempts = nextAttempts,
+                                            lastError = formatRecentHealthCheckErrors(updatedErrors)
+                                        )
+                                    case Result.Failure(_: ContainerMissingException) =>
+                                        onDeadContainer(
+                                            container,
+                                            "container disappeared while its health check was running",
+                                            attempts = nextAttempts,
+                                            lastError = formatRecentHealthCheckErrors(updatedErrors)
+                                        )
+                                    case Result.Failure(e) => Abort.fail(e)
+                                    case Result.Panic(ex)  => Abort.panic(ex)
                                 }
                         }
                     loop(hc.schedule, 0, Seq.empty)

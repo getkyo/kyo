@@ -730,29 +730,26 @@ class ContainerItTest extends BasePodTest:
         }
 
         "a published port with a live listener starts normally" - runBackends {
-            // Two things this command has to get right, and an earlier version of it got both wrong.
-            //
-            // The listener must HOLD an accepted connection: `echo ok | nc` hangs up as soon as it has
-            // written, which is the accept-and-drop shape the probe now correctly calls not-ready.
-            // `sleep 60 |` keeps nc's stdin open so it holds the connection the way a real service does,
-            // and the loop restarts it because busybox nc serves one connection and exits (the
-            // in-container health check consumes one, the host-side probe another).
-            //
-            // The listener must also not BE the container: run it in the background behind
-            // `sleep infinity & wait`, the shape every other listener case here uses, so a hiccup in
-            // the listener cannot exit the container and get reported as "the fixture died".
-            val config = Container.Config("alpine")
-                .command(
-                    "sh",
-                    "-c",
-                    "trap 'exit 0' TERM; while true; do sleep 60 | nc -l -p 8080; done & sleep infinity & wait"
-                )
-                .port(8080, 0)
+            // nginx, not a hand-rolled nc fixture. This case needs a listener that HOLDS an
+            // accepted connection (the probe correctly rejects accept-then-drop) and serves
+            // every connection with no gap. Three nc/httpd shapes each failed one of those:
+            // `echo ok | nc` drops on write, `busybox httpd` is not an applet in stock alpine
+            // (the container died), and `while true; do sleep 60 | nc; done` leaves the port
+            // unserved for the rest of the 60s after a connection is consumed, because the
+            // shell waits for the whole pipeline before restarting nc. The health check eats
+            // nc's single connection, the probe then finds nobody listening, and init times
+            // out. nginx waits for the request line on every accepted connection, which is
+            // exactly the held-open shape a real service presents.
+            val img = ContainerImage("nginx:alpine")
+            val config = Container.Config(img)
+                .port(80, 0)
                 .requireService(true)
                 .portMappingTimeout(60.seconds)
-                .healthCheck(Container.HealthCheck.port(8080, Schedule.fixed(200.millis).take(30)))
-            Container.init(config).map { c =>
-                c.mappedPort(8080).map(hp => assert(hp > 0, s"expected a bound host port, got $hp"))
+                .healthCheck(Container.HealthCheck.port(80, Schedule.fixed(200.millis).take(30)))
+            ContainerImage.ensure(img).andThen {
+                Container.init(config).map { c =>
+                    c.mappedPort(80).map(hp => assert(hp > 0, s"expected a bound host port, got $hp"))
+                }
             }
         }
 
