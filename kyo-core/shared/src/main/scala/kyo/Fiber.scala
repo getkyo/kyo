@@ -787,10 +787,14 @@ object Fiber:
                                 result.foldError(_ => (), e => this.interruptDiscard(e))
                         end State
                         val state = new State
-                        // the crossing lands here, at the one place that spawns: one captured state for all
-                        // the workers. The parent is read once and passed to each child, before any of them is
-                        // scheduled, so an interrupt landing while they are still launching cannot orphan one
-                        // that started but was not yet registered
+                        // one captured state for all the workers, crossed once per item inside
+                        // workerLoop. The worker task itself spawns crossing nothing: its value is the
+                        // Unit nobody joins, so a task-level crossing would install the state a second
+                        // time around every item's own crossing and produce a transform the completion
+                        // callback discards; each item's isolated value self-installs what it needs. The
+                        // parent is read once and passed to each child, before any of them is scheduled,
+                        // so an interrupt landing while they are still launching cannot orphan one that
+                        // started but was not yet registered
                         isolate.capture { captured =>
                             val parent = IOTask.currentTask()
                             @tailrec def loop(i: Int): Unit =
@@ -805,7 +809,7 @@ object Fiber:
                                             }
                                         end if
                                     end workerLoop
-                                    val fiber = IOTask(isolate)(captured, workerLoop(), parent)
+                                    val fiber = IOTask.unscoped(workerLoop(), parent)
                                     state.interrupts(fiber)
                                     fiber.onComplete(state)
                                     loop(i + 1)
