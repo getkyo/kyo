@@ -3139,6 +3139,17 @@ lazy val `kyo-bench` =
             `kyo-settings`,
             publish / skip                          := true,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
+            // The Jmh fork runs on the background-job service's re-materialized classpath, where an
+            // internal dependency travels as its packageBin jar, and kyo-net's main jar carries no
+            // natives (P2b: they ship in per-platform classifier jars). Without them the transport
+            // silently floors to NIO and the benches measure the floor instead of the primary posix
+            // backend. The all-natives classifier jar restores every platform's shim on the bench
+            // classpath, which is the documented production setup: main jar plus classifier.
+            Jmh / unmanagedJars += {
+                val artifacts = (`kyo-net`.jvm / kyoNetClassifierArtifacts).value
+                val jar       = artifacts.collectFirst { case (a, f) if a.classifier.contains("all-natives") => f }
+                Attributed.blank(jar.getOrElse(sys.error("[kyo-bench] kyo-net all-natives classifier jar was not produced")))
+            },
             Test / testForkedParallel               := true,
             // Forks each test suite individually
             Test / testGrouping := {
