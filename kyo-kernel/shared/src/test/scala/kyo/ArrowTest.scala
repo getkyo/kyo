@@ -136,6 +136,56 @@ class ArrowTest extends Test:
         }
     }
 
+    // the two-argument apply is the evaluator's calling convention, public because inline expansions
+    // reach it from user call sites. These pins are what makes that publicness safe: called directly,
+    // it is application fused with composition, its results are complete values, and its budget use
+    // is balanced, so nothing user code can do with it corrupts the thread's state
+    "the two-argument apply" - {
+        "is application fused with composition" in {
+            val f = Arrow[Int, Int, Any](_ + 1)
+            assert(f(41, Arrow.id[Int]).eval == 42)
+            assert(f(20, double).eval == 42)
+            assert(f(20, double).eval == f.chain(double)(20).eval)
+        }
+
+        "defers on a suspended input and evaluates as the composition" in {
+            val f = Arrow[Int, Int, Any](_ + 1)
+            assert(answerAsk(20)(f(ask, double)).eval == 42)
+        }
+
+        "defers when the budget is drained and still completes" in {
+            val f     = Arrow[Int, Int, Any](_ + 1)
+            val slot  = Safepoint.get()
+            val saved = Safepoint.save(slot)
+            while Safepoint.enter(slot) do ()
+            try
+                val v = f(41, Arrow.id[Int])
+                assert(v.evalNow.isEmpty)
+                assert(v.eval == 42)
+            finally Safepoint.restore(slot, saved)
+            end try
+        }
+
+        "stays budget-balanced across repeated direct calls" in {
+            val f = Arrow[Int, Int, Any](_ + 1)
+            var i = Safepoint.period() * 3
+            while i > 0 do
+                discard(f(1, Arrow.id[Int]))
+                i -= 1
+            // a fresh application still runs strictly: every prior call re-armed what it took
+            assert(f(41, Arrow.id[Int]).evalNow == Maybe(42))
+        }
+
+        "a throwing body leaves the thread evaluating normally afterwards" in {
+            val boom = Arrow[Int, Int, Any](_ => throw new Exception("boom"))
+            discard(intercept[Exception](boom(1, Arrow.id[Int])))
+            // the strict arm skips its budget exit on a throw; every eval entry installs a fresh
+            // budget, so evaluation on this thread is unaffected
+            assert(answerAsk(41)(inc(ask, Arrow.id[Int])).eval == 42)
+            assert(Arrow[Int, Int, Any](_ + 1)(41, Arrow.id[Int]).eval == 42)
+        }
+    }
+
     "frame" - {
         "a transform reports the frame it was built with" in {
             val f = Arrow[Int, Int, Any](i => i + 1)
