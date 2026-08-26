@@ -2,9 +2,7 @@ package kyo.kernel.internal
 
 import kyo.kernel.*
 
-class SafepointTest extends kyo.test.Test[Any]:
-    // asserts on this thread's stop channel; time slicing writes into it
-    override def config = super.config.globallySequential(true).timeSliced(false)
+class SafepointTest extends kyo.Test:
 
     private val Period = 512
 

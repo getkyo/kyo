@@ -10,9 +10,7 @@ import kyo.kernel.*
 /** The captured-continuation-as-value pin that resumes on real threads; the same-thread shots stay
   * in the shared EvalTest.
   */
-class EvalThreadingTest extends kyo.test.Test[Any]:
-    // the partial-evaluation tests observe this thread's stop channel; time slicing writes into it
-    override def config = super.config.timeSliced(false)
+class EvalThreadingTest extends kyo.Test:
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())

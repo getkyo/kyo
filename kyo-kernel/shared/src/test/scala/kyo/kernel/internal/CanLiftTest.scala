@@ -5,11 +5,11 @@ import kyo.discard
 import kyo.kernel.*
 import scala.compiletime.testing.typeCheckErrors
 
-class CanLiftTest extends kyo.test.Test[Any]:
+class CanLiftTest extends kyo.Test:
 
     sealed trait TestEffect extends ArrowEffect[Const[Int], Const[Int]]
 
-    private inline def rejects(inline code: String)(using kyo.test.AssertScope, kyo.Frame): Unit =
+    private inline def rejects(inline code: String): Unit =
         val errors = typeCheckErrors(code)
         discard(assert(
             errors.exists(_.message.contains("may contain a nested effect computation")),

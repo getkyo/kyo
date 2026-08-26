@@ -768,10 +768,14 @@ lazy val `kyo-kernel` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-data`)
-        .withKyoTest
         .in(file("kyo-kernel"))
         .settings(
-            `kyo-settings`
+            `kyo-settings`,
+            // The kernel tests on ScalaTest, not kyo-test: kyo-test runs its leaves as fibers on
+            // the scheduler the kernel powers, and the scheduler's preemption writes into the
+            // stop channel and safepoint state the kernel suites assert on. See kyo.Test in this
+            // module's test sources.
+            libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test
         )
         .jvmSettings(
             mimaCheck(false),

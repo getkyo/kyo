@@ -8,7 +8,7 @@ import scala.reflect.ClassTag
   *
   * A size that moves here is a result to look at, never a baseline to quietly rewrite.
   */
-class ArrowEffectBytecodeTest extends kyo.test.Test[Any]:
+class ArrowEffectBytecodeTest extends kyo.Test:
 
     object TestEffect extends ArrowEffect[Id, Id]
 

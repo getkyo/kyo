@@ -7,9 +7,7 @@ import kyo.kernel.*
   * exist: JS and Wasm are single-threaded by construction, so this case moves here from
   * the shared `SafepointTest`, JVM and Native only.
   */
-class SafepointUnstartedThreadTest extends kyo.test.Test[Any]:
-    // asserts on this thread's stop channel; time slicing writes into it
-    override def config = super.config.globallySequential(true).timeSliced(false)
+class SafepointUnstartedThreadTest extends kyo.Test:
 
     "stop misses a thread that never evaluated" in {
         assert(!Safepoint.stop(new Thread()))

@@ -9,7 +9,7 @@ import kyo.Tag
 import kyo.discard
 import kyo.kernel.*
 
-class StackTest extends kyo.test.Test[Any]:
+class StackTest extends kyo.Test:
 
     given Frame = Frame.internal
 

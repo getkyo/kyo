@@ -9,7 +9,7 @@ import kyo.kernel.*
   * boxed. Getting this wrong in either direction is what makes the evaluator mistake a payload for a suspension, or hand a caller a box
   * where it expected a value.
   */
-class NestedTest extends kyo.test.Test[Any]:
+class NestedTest extends kyo.Test:
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())

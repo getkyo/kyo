@@ -9,7 +9,7 @@ import kyo.kernel.*
   * Kept out of the shared corpus because those assertions are not portable: Scala.js mangles method names and shapes `getStackTrace` around
   * source maps, so a platform-independent expectation would have to be weakened to the point of proving nothing.
   */
-class EffectTracePhysicalTest extends kyo.test.Test[Any]:
+class EffectTracePhysicalTest extends kyo.Test:
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())

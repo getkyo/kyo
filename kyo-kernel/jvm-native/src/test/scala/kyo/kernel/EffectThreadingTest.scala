@@ -8,7 +8,7 @@ import kyo.kernel.internal.Safepoint
 /** The bracket tests that need real threads: cross-thread stops and racing resumers. The
   * cross-platform bracket coverage stays in the shared EffectTest.
   */
-class EffectThreadingTest extends kyo.test.Test[Any]:
+class EffectThreadingTest extends kyo.Test:
 
     "a cross-thread stop parks inside a bracket and abandonment releases" in {
         @volatile var started       = false

@@ -9,10 +9,7 @@ import kyo.kernel.*
 import scala.annotation.tailrec
 import scala.collection.mutable.ListBuffer
 
-class EvalTest extends kyo.test.Test[Any]:
-    // the partial-evaluation and safepoint-state tests observe this thread's stop channel; time
-    // slicing writes into it
-    override def config = super.config.timeSliced(false)
+class EvalTest extends kyo.Test:
 
     private val Period = Safepoint.period()
 

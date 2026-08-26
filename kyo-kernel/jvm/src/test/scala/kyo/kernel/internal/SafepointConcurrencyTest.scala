@@ -6,9 +6,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kyo.discard
 import kyo.kernel.*
 
-class SafepointConcurrencyTest extends kyo.test.Test[Any]:
-    // asserts on this thread's stop channel; time slicing writes into it
-    override def config = super.config.globallySequential(true).timeSliced(false)
+class SafepointConcurrencyTest extends kyo.Test:
 
     private val Period = 512
     private val Slots  = 65536

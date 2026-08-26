@@ -8,7 +8,7 @@ import kyo.kernel.*
 /** The trace-attach race needs real threads; the cross-platform trace coverage stays in the shared
   * EffectTraceTest.
   */
-class EffectTraceThreadingTest extends kyo.test.Test[Any]:
+class EffectTraceThreadingTest extends kyo.Test:
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())

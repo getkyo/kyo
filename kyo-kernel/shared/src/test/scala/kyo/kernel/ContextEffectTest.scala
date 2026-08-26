@@ -8,7 +8,7 @@ import kyo.discard
 import kyo.kernel.internal.Eval
 import kyo.kernel.internal.Safepoint
 
-class ContextEffectTest extends kyo.test.Test[Any]:
+class ContextEffectTest extends kyo.Test:
 
     sealed trait Count extends ContextEffect[Int]
     sealed trait Name  extends ContextEffect[String]
@@ -103,7 +103,7 @@ class ContextEffectTest extends kyo.test.Test[Any]:
         }
 
         "a required read with nothing bound is a bug" in {
-            interceptThrown[Throwable] {
+            intercept[Throwable] {
                 val _ = Eval(count.asInstanceOf[Int < Any])
             }
         }

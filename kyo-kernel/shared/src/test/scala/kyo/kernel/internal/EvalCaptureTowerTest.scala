@@ -9,7 +9,7 @@ import scala.annotation.tailrec
   * whatever the capture and the resume cost per entry is paid once per level. Kept apart from the corpus so it can be run and debugged
   * alone.
   */
-class EvalCaptureTowerTest extends kyo.test.Test[Any]:
+class EvalCaptureTowerTest extends kyo.Test:
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())

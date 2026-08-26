@@ -9,7 +9,7 @@ import kyo.kernel.internal.Eval
   * value, replayable on a thread that never ran the eval it escaped. The same-thread replays stay
   * in the shared ArrowEffectTest.
   */
-class ArrowEffectThreadingTest extends kyo.test.Test[Any]:
+class ArrowEffectThreadingTest extends kyo.Test:
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())

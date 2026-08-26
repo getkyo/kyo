@@ -9,7 +9,7 @@ import scala.reflect.ClassTag
   * and the emission of the pure-value lift at each static shape. A size change here is a
   * change to what every user call site compiles to and must be deliberate.
   */
-class PendingBytecodeTest extends kyo.test.Test[Any]:
+class PendingBytecodeTest extends kyo.Test:
 
     object TestEffect extends ArrowEffect[Id, Id]
 

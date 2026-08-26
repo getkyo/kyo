@@ -10,7 +10,7 @@ import kyo.kernel.*
 /** A handler is an arrow: the region's result flows into it, and what it produces is the region's answer. These are the handler's arrow
   * behaviors in isolation; how a region evaluates is covered by ArrowEffectTest and EvalTest.
   */
-class HandlerTest extends kyo.test.Test[Any]:
+class HandlerTest extends kyo.Test:
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())

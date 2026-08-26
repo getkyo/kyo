@@ -9,7 +9,7 @@ import kyo.render
 
 final class ImplicitsTestWrapper(val value: Int) extends AnyVal
 
-class ImplicitsTest extends kyo.test.Test[Any]:
+class ImplicitsTest extends kyo.Test:
 
     sealed trait TestEffect1 extends ArrowEffect[Const[Int], Const[Int]]
     sealed trait TestEffect2 extends ArrowEffect[Const[Int], Const[Int]]

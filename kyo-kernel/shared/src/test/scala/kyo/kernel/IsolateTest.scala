@@ -8,7 +8,7 @@ import kyo.Maybe.*
 import kyo.Tag
 import kyo.kernel.internal.Eval
 
-class IsolateTest extends kyo.test.Test[Any]:
+class IsolateTest extends kyo.Test:
 
     sealed trait TestEffect1         extends ContextEffect[Int]
     sealed trait TestEffect2         extends ContextEffect[String]

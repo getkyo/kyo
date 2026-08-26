@@ -8,7 +8,7 @@ import kyo.kernel.internal.Safepoint
 /** The binding tests that park through a cross-thread stop and resume on real threads; the
   * cross-platform binding coverage stays in the shared ContextEffectTest.
   */
-class ContextEffectThreadingTest extends kyo.test.Test[Any]:
+class ContextEffectThreadingTest extends kyo.Test:
 
     sealed trait Count extends ContextEffect[Int]
 

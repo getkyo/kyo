@@ -4,7 +4,7 @@ import kyo.kernel.*
 import kyo.kernel.internal.*
 import scala.annotation.tailrec
 
-class ArrowTest extends kyo.test.Test[Any]:
+class ArrowTest extends Test:
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())

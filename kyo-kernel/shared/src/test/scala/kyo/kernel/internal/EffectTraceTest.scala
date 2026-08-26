@@ -8,7 +8,7 @@ import kyo.kernel.*
 import scala.annotation.tailrec
 import scala.util.control.NoStackTrace
 
-class EffectTraceTest extends kyo.test.Test[Any]:
+class EffectTraceTest extends kyo.Test:
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())

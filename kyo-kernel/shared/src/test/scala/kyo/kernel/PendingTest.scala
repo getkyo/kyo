@@ -13,7 +13,7 @@ import kyo.render
 import scala.annotation.tailrec
 import scala.compiletime.testing.typeCheckErrors
 
-class PendingTest extends kyo.test.Test[Any]:
+class PendingTest extends kyo.Test:
 
     private val Period = Safepoint.period()
 

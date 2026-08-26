@@ -7,10 +7,7 @@ import kyo.discard
 import kyo.kernel.*
 import scala.collection.mutable.ListBuffer
 
-class DebuggerTest extends kyo.test.Test[Any]:
-    // the session is process-global (sequential) and the park test observes this thread's stop
-    // channel (not time sliced)
-    override def config = super.config.globallySequential(true).timeSliced(false)
+class DebuggerTest extends kyo.Test:
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())

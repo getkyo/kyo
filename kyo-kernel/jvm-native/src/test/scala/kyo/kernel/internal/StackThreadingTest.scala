@@ -3,7 +3,7 @@ package kyo.kernel.internal
 /** The borrow-pool ownership test that needs a second real thread; the cross-platform Stack
   * coverage stays in the shared StackTest.
   */
-class StackThreadingTest extends kyo.test.Test[Any]:
+class StackThreadingTest extends kyo.Test:
 
     "borrow is thread local" in {
         // the Out cell and the ring ownership story assume a stack never migrates threads: a

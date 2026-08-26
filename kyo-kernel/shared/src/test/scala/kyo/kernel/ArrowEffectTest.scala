@@ -9,9 +9,7 @@ import kyo.kernel.internal.Eval
 import scala.annotation.tailrec
 import scala.collection.mutable.ListBuffer
 
-class ArrowEffectTest extends kyo.test.Test[Any]:
-    // the park and safety-audit tests observe this thread's stop channel; time slicing writes into it
-    override def config = super.config.timeSliced(false)
+class ArrowEffectTest extends kyo.Test:
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
@@ -1358,7 +1356,7 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
             val r = ArrowEffect
                 .handleCatching(Tag[Ask], ask.map(_ + 1))([X] => (_, cont) => cont(41))(_ => -1)
                 .map(_ => (throw new RuntimeException("boom")): Int)
-            interceptThrown[RuntimeException] {
+            intercept[RuntimeException] {
                 val _ = Eval(r)
             }
         }
@@ -1377,7 +1375,7 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
         "a fatal error in the computation is not recovered" in {
             val v = ask.map(_ => (throw new InterruptedException("fatal")): Int)
             val r = ArrowEffect.handleCatching(Tag[Ask], v)([X] => (_, cont) => cont(0))(_ => -1)
-            interceptThrown[InterruptedException] {
+            intercept[InterruptedException] {
                 val _ = Eval(r)
             }
         }
@@ -1386,7 +1384,7 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
             val r = ArrowEffect.handleCatching(Tag[Ask], ask.map(_ + 1))(
                 [X] => (_, _) => (throw new InterruptedException("fatal")): Int < Ask
             )(_ => -1)
-            interceptThrown[InterruptedException] {
+            intercept[InterruptedException] {
                 val _ = Eval(r)
             }
         }
@@ -1412,7 +1410,7 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
                 [X] => (_, cont) => cont(41),
                 _ => (throw new RuntimeException("boom")): Int
             )(_ => -1)
-            interceptThrown[RuntimeException] {
+            intercept[RuntimeException] {
                 val _ = Eval(r)
             }
         }
@@ -1497,13 +1495,13 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
                 [C] => (_, _) => (throw new RuntimeException("boom")): Int < Ask,
                 a => a
             )
-            interceptThrown[RuntimeException] {
+            intercept[RuntimeException] {
                 val _ = Eval(r)
             }
         }
 
         "a throw in a map surfaces at construction on the settled path" in {
-            interceptThrown[RuntimeException] {
+            intercept[RuntimeException] {
                 val _ = (1: Int < Any).map(_ => (throw new RuntimeException("boom")): Int)
             }
         }
@@ -1604,7 +1602,7 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
         }
 
         "evaluation recovers after a thrown handler" in {
-            interceptThrown[RuntimeException] {
+            intercept[RuntimeException] {
                 val failing: Int < Any = ArrowEffect.handleCont(Tag[Ask], ask.map(_ + 1))(
                     [C] => (_, _) => (throw new RuntimeException("boom")): Int < Ask,
                     a => a

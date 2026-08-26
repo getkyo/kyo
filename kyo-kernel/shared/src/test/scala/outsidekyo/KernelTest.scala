@@ -24,7 +24,7 @@ import kyo.kernel.internal.Eval
   * discarded result is bound to `val _`. And a `Loop` clause under a region ascribes its resumed value (`1: Int < Any`), because the
   * clause answers at the region's row rather than the successor's.
   */
-class KernelTest extends kyo.test.Test[Any]:
+class KernelTest extends kyo.Test:
 
     sealed trait Ask   extends ArrowEffect[Const[Unit], Const[Int]]
     sealed trait Say   extends ArrowEffect[Const[String], Const[Unit]]

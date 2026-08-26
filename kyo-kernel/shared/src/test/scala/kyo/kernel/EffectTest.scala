@@ -14,9 +14,7 @@ import kyo.kernel.internal.Kyo
 import kyo.kernel.internal.SafepointStop
 import scala.annotation.tailrec
 
-class EffectTest extends kyo.test.Test[Any]:
-    // the park and bracket tests observe this thread's stop channel; time slicing writes into it
-    override def config = super.config.timeSliced(false)
+class EffectTest extends kyo.Test:
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
@@ -156,7 +154,7 @@ class EffectTest extends kyo.test.Test[Any]:
         }
 
         "no match" in {
-            interceptThrown[Exception] {
+            intercept[Exception] {
                 Effect.catching {
                     throw new Exception("Test exception")
                 } {
@@ -278,7 +276,7 @@ class EffectTest extends kyo.test.Test[Any]:
             }
             val inner   = boxed.eval
             val handled = ArrowEffect.handleCont(Tag[TestEffect1], inner)([C] => (input, cont) => cont(input.toString))
-            interceptThrown[RuntimeException](handled.eval)
+            intercept[RuntimeException](handled.eval)
         }
 
         // the original parked here by suspending an effect no handler answered, which a slice used to be

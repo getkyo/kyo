@@ -3,7 +3,7 @@ package kyo.kernel
 import kyo.Frame
 import kyo.kernel.internal.*
 
-class LoopTest extends kyo.test.Test[Any]:
+class LoopTest extends kyo.Test:
 
     given Frame = Frame.internal
 

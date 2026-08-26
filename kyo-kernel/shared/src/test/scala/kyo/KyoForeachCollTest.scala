@@ -1,7 +1,7 @@
 package kyo
 
 @TestVariant("Coll", "List", "Chunk")
-class KyoForeachCollTest extends kyo.test.Test[Any]:
+class KyoForeachCollTest extends Test:
 
     import KyoForeachTest.*
 

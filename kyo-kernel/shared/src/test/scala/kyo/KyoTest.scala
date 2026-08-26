@@ -6,7 +6,7 @@ import scala.annotation.tailrec
 import scala.collection.Iterable
 import scala.collection.IterableOps
 
-class KyoTest extends kyo.test.Test[Any]:
+class KyoTest extends Test:
 
     sealed trait TestEffect1 extends ArrowEffect[Const[Int], Const[Int]]
     object TestEffect1:
