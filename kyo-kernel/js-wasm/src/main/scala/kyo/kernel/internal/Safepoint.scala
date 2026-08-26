@@ -120,6 +120,17 @@ object Safepoint:
     /** No live thread can be stopped from outside on a single-threaded runtime. */
     private[kyo] def stop(thread: Thread): Boolean = false
 
+    /** No live thread can be stopped from outside on a single-threaded runtime. */
+    private[kyo] def stop(thread: Thread, slice: AnyRef): Boolean = false
+
+    /** Preemption here is the slice deadline, which no boundary race can misdeliver on one
+      * thread, so the slice identity has nothing to validate: nothing recorded, nothing restored.
+      */
+    private[kyo] def beginSlice(slot: Slot, slice: AnyRef): AnyRef = null
+
+    /** The counterpart of `beginSlice`: nothing was recorded, nothing is restored. */
+    private[kyo] def endSlice(slot: Slot, prev: AnyRef): Unit = ()
+
     private def expired(): Boolean =
         armedDeadline != Long.MaxValue && java.lang.System.currentTimeMillis() >= armedDeadline
 

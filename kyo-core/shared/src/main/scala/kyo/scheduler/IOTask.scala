@@ -203,7 +203,7 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                                     // re-enters a scope whose release is spent. So `run` arms it, once the
                                     // remainder is stored.
                                     parkOn(promise, joinInput.frame)
-                                    discard(Safepoint.stop(Thread.currentThread()))
+                                    discard(Safepoint.stop(Thread.currentThread(), this))
                                     // under the frame the join was written at, which the input carries
                                     // for this. A clause is never handed the frame of what it answers, so
                                     // without it the raise would take the scheduler's own and the fiber
@@ -239,7 +239,10 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
 
     private def stopSlice(): Unit =
         status match
-            case thread: Thread => discard(Safepoint.stop(thread))
+            // addressed to this task: the read of `status` and the sentinel landing are two steps,
+            // and the slice can end between them with the thread already running another task. The
+            // addressee is what lets the slot refuse such a late delivery; see `Safepoint.stop`
+            case thread: Thread => discard(Safepoint.stop(thread, this))
             case _              => ()
     end stopSlice
 
@@ -363,6 +366,11 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         else
             val previous = IOTask.current.get()
             IOTask.current.set(this)
+            // the slice this claim runs, recorded for the stop channel: a stall check or interrupt
+            // addresses its stop to this task, and the slot honors it only while this record
+            // stands, so a delivery that races the slice boundary cannot stop whatever runs next
+            val slot          = Safepoint.get()
+            val previousSlice = Safepoint.beginSlice(slot, this)
             // the scheduler's slice deadline: on js-wasm it is the preemption source, checked at
             // the budget drains until the slice boundary consumes it; on jvm-native stops carry
             // preemption and the call inlines to nothing. Arming stays the eval's own entry step,
@@ -371,7 +379,9 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
             val next =
                 try
                     try Eval.partial(curr)
-                    finally IOTask.current.set(previous)
+                    finally
+                        IOTask.current.set(previous)
+                        Safepoint.endSlice(slot, previousSlice)
                 catch
                     case ex =>
                         // The promise is completed here rather than by the boundary, which the failure

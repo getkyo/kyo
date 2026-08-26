@@ -32,7 +32,10 @@ object Safepoint:
     private inline def DepthGuard = 1 << 15
     private inline def Armed      = 1 << 30
 
-    final private class Stop(val thread: Thread)
+    /** The pending-stop sentinel: `thread` is who the slot belongs to, `slice` is the slice the
+      * stop is addressed to, `null` for a wildcard. See `stop` for how the two are honored.
+      */
+    final private class Stop(val thread: Thread, val slice: AnyRef)
 
     @static private val Slots      = slotCount()
     @static private val Overflowed = Slots
@@ -44,6 +47,11 @@ object Safepoint:
     end depths
     @static private val slots = new AtomicReferenceArray[Thread | Stop](Slots + 1)
     @static private val local = new ThreadLocal[Integer]
+
+    // the slice each claimed slot is currently running, written and read only by the slot's own
+    // thread (`beginSlice`, `endSlice`, and the honor checks), so the lane is plain. A stopper
+    // never reads it: an addressed stop carries its slice, and the owner compares on observation
+    @static private val slices = new Array[AnyRef](Slots + 1)
 
     private[kyo] object period extends StaticFlag[Int](512, n => Right(Math.min(Math.max(1, n), 0x7fff)))
 
@@ -91,8 +99,12 @@ object Safepoint:
                 // a stop pending on the home slot, handled where it is observed: drain so an armed
                 // slice defers at once and its poll parks it. Observation only: consumption stays
                 // with the partial eval's poll, so a nested plain eval cannot eat an enclosing
-                // slice's preemption, and an unarmed thread keeps the stop for its next slice
-                if depths(h).isArmed then depths(h) = depths(h).drained
+                // slice's preemption, and an unarmed thread keeps the stop for its next slice. One
+                // addressed to a slice this thread no longer runs raced the slice boundary; it is
+                // dropped here instead, so it cannot touch the slice that is running
+                if honored(h, s) then
+                    if depths(h).isArmed then depths(h) = depths(h).drained
+                else slots.set(h, s.thread)
                 h
             case _ =>
                 @tailrec def claim(i: Int, probes: Int): Int =
@@ -117,7 +129,7 @@ object Safepoint:
                 val cached = local.get()
                 if cached ne null then
                     val slot = cached.intValue()
-                    if depths(slot).isArmed && slots.get(slot).isInstanceOf[Stop] then
+                    if depths(slot).isArmed && stopped(slot) then
                         depths(slot) = depths(slot).drained
                     slot
                 else
@@ -201,7 +213,28 @@ object Safepoint:
       */
     inline def deadline(inline d: Long): Unit = ()
 
-    @static private[kyo] def stop(thread: Thread): Boolean =
+    /** Requests a preemption stop for the evaluation running on `thread`, addressed to nobody.
+      *
+      * A wildcard is honored by whatever slice observes it, so it is only race-free when the
+      * requester knows which slice that is: a computation stopping its own thread, or a test
+      * driving a thread it controls. The scheduler addresses its stops instead.
+      */
+    @static private[kyo] def stop(thread: Thread): Boolean = stop(thread, null)
+
+    /** Requests a preemption stop for the evaluation running on `thread`, addressed to `slice`.
+      *
+      * Delivery is thread-addressed and can race the slice boundary: between the requester reading
+      * who runs where and the sentinel landing, the slice can end and the thread move on to
+      * another task. The addressee closes that race on the observation side: the slot's own thread
+      * honors an addressed stop only while `slice` is what `beginSlice` recorded, and drops one
+      * that arrives late, so a stale delivery cannot short-circuit the slice that is running.
+      *
+      * A request finding another sentinel already pending reports delivered without validating the
+      * addressee; if the pending one turns out stale and is dropped, this request is lost with it.
+      * A lost request is the requester's to re-issue, which the scheduler's stall checks do by
+      * re-firing on every probe.
+      */
+    @static private[kyo] def stop(thread: Thread, slice: AnyRef): Boolean =
         @tailrec def loop(i: Int, probes: Int): Boolean =
             if probes == Slots then false
             else
@@ -215,7 +248,7 @@ object Safepoint:
                 else
                     entry match
                         case owner: Thread if owner eq thread =>
-                            slots.compareAndSet(idx, owner, new Stop(thread)) || loop(i, probes)
+                            slots.compareAndSet(idx, owner, new Stop(thread, slice)) || loop(i, probes)
                         case pending: Stop if pending.thread eq thread =>
                             true
                         case _ =>
@@ -225,18 +258,50 @@ object Safepoint:
         thread.isAlive() && loop(home(thread), 0)
     end stop
 
-    /** Whether a stop is pending on the slot, without taking it: the poll's read. The sentinel
-      * stays in the slot, so every decision point that asks sees the same answer until the slice
-      * boundary consumes it.
+    // whether a pending stop is for the slice this slot is running: a wildcard is honored
+    // anywhere, an addressed stop only while its slice holds the slot. Owner-side only, so the
+    // `slices` read is the reader's own write
+    @static private def honored(slot: Slot, s: Stop): Boolean =
+        (s.slice eq null) || (s.slice eq slices(slot))
+
+    /** Records `slice` as what this slot is running, handing back what it replaces for
+      * `endSlice`. Only the slot's own thread calls it, at the scheduler's slice entry; the value
+      * is what an addressed stop must name to be honored while the slice runs. Slices nest, a
+      * task can run inside another task's slice, which is what the returned value carries.
+      */
+    @static private[kyo] def beginSlice(slot: Slot, slice: AnyRef): AnyRef =
+        val prev = slices(slot)
+        slices(slot) = slice
+        prev
+    end beginSlice
+
+    /** The counterpart of `beginSlice` at the slice's end: restores `prev` and drops a pending
+      * stop addressed to the departing slice, which the boundary it just crossed has satisfied.
+      */
+    @static private[kyo] def endSlice(slot: Slot, prev: AnyRef): Unit =
+        slots.get(slot) match
+            case s: Stop if s.slice eq slices(slot) => slots.set(slot, s.thread)
+            case _                                  => ()
+        slices(slot) = prev
+    end endSlice
+
+    /** Whether a stop for the running slice is pending on the slot, without taking it: the poll's
+      * read. The sentinel stays in the slot, so every decision point that asks sees the same
+      * answer until the slice boundary consumes it. A stop addressed to a slice that no longer
+      * holds the slot answers false: it raced the boundary, and the next consume drops it.
       */
     @static private[kyo] def stopped(slot: Slot): Boolean =
-        slots.get(slot).isInstanceOf[Stop]
+        slots.get(slot) match
+            case s: Stop => honored(slot, s)
+            case _       => false
 
     @static private[kyo] def consumeStopped(slot: Slot): Boolean =
         slots.get(slot) match
             case pending: Stop =>
+                // taken either way: an honored stop is consumed, a stale addressed one is dropped,
+                // and both leave the thread back in its slot for the next request
                 slots.set(slot, pending.thread)
-                true
+                honored(slot, pending)
             case _ =>
                 false
 
