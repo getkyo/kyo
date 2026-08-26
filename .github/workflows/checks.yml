@@ -1,0 +1,113 @@
+name: checks
+# Static checks plus README doctests, collapsed into one job.
+#
+# These were three separate workflows (scalafmt, actionlint, readme). Each paid its own
+# runner slot, and on the contended x64 pool a slot acquisition costs far more than the
+# work: scalafmt does ~3 minutes of work behind a p90 wait of ~86 minutes. Collapsed,
+# they share one slot, one checkout, one JDK + sbt install, and one coursier cache.
+#
+# Steps are ordered cheapest first. A failing step fails the job immediately, so a
+# formatting or workflow-lint error still surfaces in ~3 minutes rather than after the
+# ~42 minute doctest run; the expensive step is only reached once the cheap ones pass.
+#
+# The tradeoff is that ~3 minutes which used to run in parallel is now serial. That is
+# worth it only because the queue wait dominates the work. On an uncontended pool this
+# would be the wrong shape.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+# None of the three source workflows had a concurrency group, so a superseded run kept
+# its slot to the end: three `main` readme runs 2.5 minutes apart each ran a full ~44
+# minutes, two of them validating commits that were already stale.
+concurrency:
+  group: checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    # arm64: nothing here is architecture-specific. scalafmt and actionlint are pure
+    # source analysis, and `sbt doctest` validates that README blocks compile and run,
+    # with the staged natives below built for whichever host runs the job. The x64 pool
+    # carries most of the repo's jobs and has roughly twice the p90 queue wait.
+    runs-on: ubuntu-24.04-arm
+    env:
+      # -Xmx14G (up from 12G): `sbt doctest` compiles every module's test sources in one driver session
+      # and OOM'd at 12G. Dropped the -Xms8G floor and pinned G1 so the heap grows on demand and is
+      # released between phases, leaving the box room (the runner has 16G).
+      JAVA_OPTS: -Xmx14G -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
+      JVM_OPTS: -Xmx14G -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      # --- cheapest first: workflow lint (~30s) ---
+      # Previously its own workflow gated on `paths: .github/workflows/**`, which saved a
+      # whole job when no workflow changed. As a step the same gate saves ~30 seconds, so
+      # it is kept, just expressed against the changed-file set instead of the trigger.
+      - name: Detect workflow changes
+        id: workflow-changes
+        shell: bash
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$base" ]; then
+            # push to main: compare against the previous commit
+            base="${{ github.event.before }}"
+          fi
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            # No usable base (first push, force push, shallow). Lint rather than skip:
+            # a false negative here means a broken workflow lands unchecked.
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only "$base" HEAD -- .github/workflows | grep -q .; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Lint workflows
+        if: steps.workflow-changes.outputs.changed == 'true'
+        uses: rhysd/actionlint@v1.7.12
+
+      # --- then formatting (~3m) ---
+      - uses: coursier/cache-action@v8.1.1
+      - uses: coursier/setup-action@v3.0.2
+        with:
+          jvm: corretto:25
+          apps: sbt
+
+      - name: Check formatting
+        run: |
+          sbt scalafmtAll scalafmtSbt
+          if ! git diff --quiet; then
+            echo "::error::Files are not formatted. Run 'sbt scalafmtAll scalafmtSbt' locally."
+            git diff
+            exit 1
+          fi
+
+      # --- then the expensive one (~42m) ---
+      # liburing (build-time only): `sbt doctest` compiles kyo-net's io_uring FFI shim (kyo_uring.c), which
+      # statically links -luring. This workflow does not use .github/actions/setup, so install it here too.
+      - name: Install liburing (Linux)
+        run: bash scripts/apt-install.sh liburing-dev
+
+      # libaeron (build-time only): `sbt doctest` compiles kyo-aeron's C shim (kyo_aeron.c), which
+      # statically links -laeron_driver_static from the gitignored staged tree. Same reason as liburing
+      # above: this workflow does not use .github/actions/setup, so the staging step is repeated here.
+      # The runner is pinned to ubuntu-24.04-arm, so the os-arch is always linux-aarch64.
+      - name: Prepare libaeron
+        shell: bash
+        run: |
+          # The Aeron driver links -luuid on Linux, and the package providing the libuuid.so link
+          # target is not preinstalled.
+          bash scripts/apt-install.sh --if-missing cmake uuid-dev
+          bash kyo-aeron/scripts/build-aeron.sh linux-aarch64
+
+      - name: README doctests
+        run: sbt doctest
