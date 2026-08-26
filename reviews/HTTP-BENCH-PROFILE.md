@@ -151,3 +151,21 @@ schedule/cancel re-signals the delay queue and wakes a clock-executor thread. To
 per-request `Panic(Interrupted)` allocation this makes the client timeout path the clearest
 optimization target: it pays an exception allocation and a timer-thread wake cycle per request on
 the happy path.
+
+## Fixes landed (verified by the after recordings)
+
+1. Allocation-free `Ffi.load` and bindings bound once (kyo-ffi ConcreteTag load + shared
+   instantiation function; lazy val bindings in the kqueue/epoll/shim/resolver/TLS accessors).
+   After recording: zero `KqueuePollerBackend` lambda samples (was the largest kyo-owned share)
+   and zero `WeakReference` samples.
+2. Byte-offset wide access and bulk copies for byte buffers (Buffer.getLongAt et al.,
+   copyFromArray/copyToArray, UnsafeBuffer.copyFromArray on all platforms; struct codecs write
+   full-width fields; send/staging/TLS/receive paths are single bulk copies; companion
+   copyToArray on ConcreteTag with a byte bulk path). Removes the BoxesRunTime towers from the
+   write, registration, and receive paths.
+
+HttpServerContentionBench allocation samples in a comparable window: 5,554 before, 4,498 after
+(~19% fewer). Remaining top allocators are payload byte arrays, eval and fiber machinery, and
+the per-request timeout watchdog (`ScheduledFutureTask`), which is the open hashed-wheel-timer
+issue. Recordings: `HttpServerContentionBench-alloc.jfr` (before) and `-alloc-final.jfr` (after)
+in `~/http-bench-jfr/`.
