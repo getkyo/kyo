@@ -59,6 +59,14 @@ object Tag:
       *
       * Within the `kyo` package, this method fails instead of falling back to a dynamic tag for performance reasons.
       *
+      * Inside the template that declares an opaque type, and inside its companion object, the compiler substitutes the underlying type for
+      * the opaque one wherever it has to infer, and it does so before this macro runs. A tag derived there would describe the underlying
+      * type while every derivation outside the scope describes the opaque type, so the two would disagree and a value handed across that
+      * boundary would be looked up under a different key than it was stored under. Such a derivation is therefore refused. Declaring
+      * `given Tag[X] = Tag.derive[X]` alongside the opaque type states that the underlying type means `X` throughout that scope, which
+      * settles it: the tag derived there then matches the one derived anywhere else. The declaration is scope-wide, so a scope that needs
+      * to name both the opaque type and its underlying type on a tag surface has to keep the opaque type in an object of its own.
+      *
       * @tparam A
       *   The type for which to derive a Tag
       * @return

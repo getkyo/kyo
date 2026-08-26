@@ -695,4 +695,35 @@ class EmitTest extends kyo.test.Test[Any]:
         }
 
     }
+
+    // Emitting from inside an opaque type's own scope once tagged the effect by the underlying
+    // type, while the handler installed outside was keyed on the opaque one, so the values never
+    // reached it (issue #1367).
+    "across an opaque type's scope boundary" - {
+        import EmitTestOpaques.*
+
+        "values emitted inside are seen by a handler installed outside" in {
+            val (values, _) = Emit.run(Meters.emitInside(Meters(5L), Meters(7L))).eval
+            assert(values.map(Meters.unwrap) == Chunk(5L, 7L))
+        }
+
+        "and a handler installed inside sees values emitted outside" in {
+            val (values, _) = Meters.runInside(Emit.value(Meters(9L))).eval
+            assert(values.map(Meters.unwrap) == Chunk(9L))
+        }
+    }
 end EmitTest
+
+object EmitTestOpaques:
+    opaque type Meters = Long
+    object Meters:
+        def apply(value: Long): Meters  = value
+        def unwrap(value: Meters): Long = value
+        given tag: Tag[Meters]          = Tag.derive[Meters]
+
+        def emitInside(a: Meters, b: Meters): Unit < Emit[Meters] =
+            Emit.valueWith(a)(Emit.value(b).unit)
+
+        def runInside[A, S](v: A < (Emit[Meters] & S)): (Chunk[Meters], A) < S = Emit.run(v)
+    end Meters
+end EmitTestOpaques

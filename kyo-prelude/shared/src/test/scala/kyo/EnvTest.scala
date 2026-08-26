@@ -439,4 +439,35 @@ class EnvTest extends kyo.test.Test[Any]:
         }
     }
 
+    // Inside an opaque type's own scope the compiler replaces it with its underlying type before
+    // any macro runs, so a tag derived there once described the underlying type while the handler
+    // installed outside was keyed on the opaque one, and the lookup missed (issue #1367).
+    "across an opaque type's scope boundary" - {
+        import EnvTestOpaques.*
+
+        "a get inside the scope reads a value provided outside" in {
+            assert(Meters.unwrap(Env.run(Meters(5L))(Meters.getInside).eval) == 5L)
+        }
+
+        "a get outside the scope reads a value provided inside" in {
+            assert(Meters.unwrap(Meters.runInside(Env.get[Meters]).eval) == 7L)
+        }
+
+        "the effect is not confused with one keyed on the underlying type" in {
+            val provided = Env.run(Meters(5L))(Env.run(9L)(Meters.getInside)).eval
+            assert(Meters.unwrap(provided) == 5L)
+        }
+    }
+
 end EnvTest
+
+object EnvTestOpaques:
+    opaque type Meters = Long
+    object Meters:
+        def apply(value: Long): Meters                       = value
+        def unwrap(value: Meters): Long                      = value
+        given tag: Tag[Meters]                               = Tag.derive[Meters]
+        def getInside: Meters < Env[Meters]                  = Env.get[Meters]
+        def runInside[A, S](v: A < (Env[Meters] & S)): A < S = Env.run(Meters(7L))(v)
+    end Meters
+end EnvTestOpaques

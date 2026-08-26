@@ -180,6 +180,11 @@ object Memory:
     object Arena:
         opaque type State = JArena
 
+        // State and JArena are the same type inside this scope, so a tag derived here cannot say
+        // which one it means. The effect is State to everyone outside, so that is what it means
+        // here, and saying so keeps a tag derived here equal to one derived there.
+        private given stateTag: Tag[State] = Tag.derive[State]
+
         /** Runs an operation that requires an Arena, ensuring proper cleanup.
           *
           * @param f

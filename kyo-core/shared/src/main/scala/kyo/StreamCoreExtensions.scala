@@ -39,7 +39,8 @@ object StreamCoreExtensions:
     )(
         using
         Tag[Emit[Chunk[A]]],
-        Tag[Emit[Chunk[Chunk[A]]]]
+        Tag[Emit[Chunk[Chunk[A]]]],
+        Tag[Emit[Chunk[Result.Partial[E, Maybe[Chunk[A]]]]]]
     ) extends StreamHub[A, E]:
         private def emit(listener: Hub.Listener[Result.Partial[E, Maybe[Chunk[A]]]])(using Frame) =
             listener
@@ -102,6 +103,7 @@ object StreamCoreExtensions:
             Tag[A],
             Tag[Emit[Chunk[A]]],
             Tag[Emit[Chunk[Chunk[A]]]],
+            Tag[Emit[Chunk[Result.Partial[E, Maybe[Chunk[A]]]]]],
             Frame
         ): StreamHubImpl[A, E] < (Async & Scope) =
             Sync.Unsafe.defer:
@@ -843,6 +845,7 @@ object StreamCoreExtensions:
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
+            t5: Tag[Emit[Chunk[Result.Partial[E, Maybe[Chunk[V]]]]]],
             t4: ConcreteTag[E],
             fr: Frame
         ): (Stream[V, Abort[E] & Async], Stream[V, Abort[E] & Scope & Async]) < (Scope & Async & S) =
@@ -851,7 +854,7 @@ object StreamCoreExtensions:
                     s1 <- streamHub.subscribe
                     s2 <- streamHub.subscribe
                 yield (s1, s2)
-            }(using i, t1, t2, t3, t4, fr)
+            }(using i, t1, t2, t3, t5, t4, fr)
 
         /** Broadcast to three streams that can be evaluated in parallel.
           */
@@ -861,6 +864,7 @@ object StreamCoreExtensions:
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
+            t5: Tag[Emit[Chunk[Result.Partial[E, Maybe[Chunk[V]]]]]],
             t4: ConcreteTag[E],
             fr: Frame
         ): (
@@ -874,7 +878,7 @@ object StreamCoreExtensions:
                     s2 <- streamHub.subscribe
                     s3 <- streamHub.subscribe
                 yield (s1, s2, s3)
-            }(using i, t1, t2, t3, t4, fr)
+            }(using i, t1, t2, t3, t5, t4, fr)
 
         /** Broadcast to four streams that can be evaluated in parallel.
           */
@@ -884,6 +888,7 @@ object StreamCoreExtensions:
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
+            t5: Tag[Emit[Chunk[Result.Partial[E, Maybe[Chunk[V]]]]]],
             t4: ConcreteTag[E],
             fr: Frame
         ): (
@@ -899,7 +904,7 @@ object StreamCoreExtensions:
                     s3 <- streamHub.subscribe
                     s4 <- streamHub.subscribe
                 yield (s1, s2, s3, s4)
-            }(using i, t1, t2, t3, t4, fr)
+            }(using i, t1, t2, t3, t5, t4, fr)
 
         /** Broadcast to five streams that can be evaluated in parallel.
           */
@@ -909,6 +914,7 @@ object StreamCoreExtensions:
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
+            t5: Tag[Emit[Chunk[Result.Partial[E, Maybe[Chunk[V]]]]]],
             t4: ConcreteTag[E],
             fr: Frame
         ): (
@@ -926,7 +932,7 @@ object StreamCoreExtensions:
                     s4 <- streamHub.subscribe
                     s5 <- streamHub.subscribe
                 yield (s1, s2, s3, s4, s5)
-            }(using i, t1, t2, t3, t4, fr)
+            }(using i, t1, t2, t3, t5, t4, fr)
 
         /** Broadcast to a specified number of streams that can be evaluated in parallel.
           *
@@ -943,6 +949,7 @@ object StreamCoreExtensions:
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
+            t5: Tag[Emit[Chunk[Result.Partial[E, Maybe[Chunk[V]]]]]],
             t4: ConcreteTag[E],
             fr: Frame
         ): Chunk[Stream[V, Abort[E] & Scope & Async]] < (Scope & Async & S) =
@@ -954,7 +961,7 @@ object StreamCoreExtensions:
                     else
                         streamHub.subscribe.map: stream =>
                             Sync.defer(builder.addOne(stream)).andThen(Loop.continue(remaining - 1))
-            }(using i, t1, t2, t3, t4, fr)
+            }(using i, t1, t2, t3, t5, t4, fr)
 
         /** Convert to a reusable stream that can be run multiple times in parallel to consume the same original elements. Original stream
           * begins to run as soon as the broadcasted stream is run for the first time.
@@ -975,6 +982,7 @@ object StreamCoreExtensions:
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
+            t5: Tag[Emit[Chunk[Result.Partial[E, Maybe[Chunk[V]]]]]],
             t4: ConcreteTag[E],
             fr: Frame
         ): Stream[V, Abort[E] & Async & Scope] < (Scope & Async & S) =
@@ -1001,6 +1009,7 @@ object StreamCoreExtensions:
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
+            t5: Tag[Emit[Chunk[Result.Partial[E, Maybe[Chunk[V]]]]]],
             t4: ConcreteTag[E],
             fr: Frame
         ): StreamHub[V, E] < (Scope & Async & S) =
@@ -1027,6 +1036,7 @@ object StreamCoreExtensions:
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
+            t5: Tag[Emit[Chunk[Result.Partial[E, Maybe[Chunk[V]]]]]],
             t4: ConcreteTag[E],
             fr: Frame
         ): A < (Scope & Async & S & S1) =
@@ -1051,6 +1061,7 @@ object StreamCoreExtensions:
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
+            t5: Tag[Emit[Chunk[Result.Partial[E, Maybe[Chunk[V]]]]]],
             t4: ConcreteTag[E],
             fr: Frame
         ): A < (Scope & Async & S & S1) =

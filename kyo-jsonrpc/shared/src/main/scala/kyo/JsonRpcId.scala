@@ -25,6 +25,12 @@ opaque type JsonRpcId = String | Long
 
 object JsonRpcId:
 
+    // JsonRpcId and String | Long are the same type inside this scope, so a tag derived here
+    // cannot say which one it means. Ids are JsonRpcId to everyone outside, so that is what it
+    // means here, and saying so keeps the schema discriminator below naming JsonRpcId rather
+    // than its underlying union.
+    private given tag: Tag[JsonRpcId] = Tag.derive[JsonRpcId]
+
     def apply(n: Long): JsonRpcId   = n
     def apply(s: String): JsonRpcId = s
 

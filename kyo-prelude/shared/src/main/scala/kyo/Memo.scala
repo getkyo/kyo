@@ -29,6 +29,11 @@ object Memo:
 
     private val empty = Cache(Map.empty)
 
+    // Memo and Var[Cache] are the same type inside this scope, so a tag derived here cannot say
+    // which one it means. Callers outside see the effect as Memo, so that is what it means here,
+    // and saying so keeps a tag derived here equal to one derived there.
+    private given memoTag: Tag[Memo] = Tag.derive[Memo]
+
     /** Memoizes a function, caching its results for future use.
       *
       * @param f

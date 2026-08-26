@@ -346,7 +346,42 @@ val p = e.prune[Exception]
             )
         }
     }
+
+    "across an opaque type's scope boundary" - {
+        import TypeMapTestScoped.*
+
+        "a map built inside is read outside" in {
+            val map = Meters.buildInside(Meters(5L))
+            assert(Meters.unwrap(map.get[Meters]) == 5L)
+        }
+
+        "a map built outside is read inside" in {
+            assert(Meters.unwrap(Meters.readInside(TypeMap(Meters(7L)))) == 7L)
+        }
+
+        "the key a scope derives is not the underlying type's key" in {
+            val map: TypeMap[Long & Meters] = TypeMap(9L).add(Meters.buildInside(Meters(5L)).get[Meters])
+            assert(map.get[Long] == 9L)
+            assert(Meters.unwrap(map.get[Meters]) == 5L)
+            assert(map.size == 2)
+        }
+    }
 end TypeMapTest
+
+object TypeMapTestScoped:
+    // A TypeMap built inside an opaque type's own scope is keyed on the tag derived there, and read
+    // outside with the tag derived there. The compiler substitutes the underlying type inside the
+    // scope before any macro runs, so the two tags once disagreed and the lookup missed (#1367).
+    opaque type Meters = Long
+    object Meters:
+        def apply(value: Long): Meters  = value
+        def unwrap(value: Meters): Long = value
+        given tag: Tag[Meters]          = Tag.derive[Meters]
+
+        def buildInside(value: Meters): TypeMap[Meters] = TypeMap(value)
+        def readInside(map: TypeMap[Meters]): Meters    = map.get[Meters]
+    end Meters
+end TypeMapTestScoped
 
 object TypeMapTestOpaques:
     trait Readable
