@@ -1,7 +1,6 @@
 package kyo.net.internal.posix
 
 import kyo.AllowUnsafe
-import kyo.Chunk
 import kyo.Fiber
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
@@ -19,8 +18,12 @@ import kyo.ffi.Ffi
   * [[EpollEvent$]] companion computes the offsets and size per host arch and encodes/decodes the event; the bindings marshal the buffer as
   * the raw `struct epoll_event*` pointer.
   *
-  * Header-gated on `sys/epoll.h`: on a non-Linux build host the generator emits stubs, so the file compiles everywhere and the
-  * backend probe simply reports unavailable off Linux.
+  * Every method resolves to a `kyo_epoll_*` symbol in kyo-net's own `kyo_epoll.c` shim rather than to the libc name it wraps. The shim is
+  * compiled on the machine that LINKS the binary, so its `#if defined(__linux__)` guard decides against the target platform; binding the
+  * libc names directly would instead freeze the decision at the moment kyo was compiled, and an artifact published from Linux would leave
+  * `epoll_create1` and friends undefined at a macOS Scala Native link. Off Linux the shim's stubs report `ENOSYS`, so epoll's absence is a
+  * runtime answer the backend probe reads rather than a missing symbol. [[kyo.net.internal.backend.EpollBackend]] gates on the OS before
+  * calling any of these, so the stubs are never reached in practice.
   */
 private[net] trait EpollBindings extends Ffi:
 
@@ -64,6 +67,21 @@ private[net] trait EpollBindings extends Ffi:
 end EpollBindings
 
 private[net] object EpollBindings extends Ffi.Config(
-        library = "c",
-        headers = Chunk("sys/epoll.h", "sys/eventfd.h")
+        library = "kyonet_posix_uring",
+        // Each method carries the libc name it wraps for readability; the C symbol it binds is the kyo-owned shim wrapper, which
+        // `kyo_epoll.c` defines on every platform. No `headers` entry: the codegen's header probe runs on the BUILD host and would emit
+        // throw-stubs off Linux, baking this host's platform into the published artifact, which is the defect this shim removes.
+        symbols = Map(
+            "epoll_create1" -> "kyo_epoll_create1",
+            "epoll_ctl"     -> "kyo_epoll_ctl",
+            "epoll_wait"    -> "kyo_epoll_wait",
+            "eventfd"       -> "kyo_epoll_eventfd",
+            "eventfd_write" -> "kyo_epoll_eventfd_write",
+            "eventfd_read"  -> "kyo_epoll_eventfd_read",
+            "close"         -> "kyo_epoll_close"
+        ),
+        // The shim is compiled INTO the Scala Native binary (KyoFfiPlugin copies `kyo_epoll.c` under `resources/scala-native`), so the
+        // generated Native binding must not emit `@link("kyonet_posix_uring")`: there is no shared library for a `-l` to find. JVM and JS
+        // still load the plugin-compiled shared library at runtime.
+        nativeBundled = true
     )

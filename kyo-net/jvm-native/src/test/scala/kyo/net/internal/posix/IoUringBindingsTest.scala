@@ -31,6 +31,26 @@ class IoUringBindingsTest extends Test:
     end loadOrSkip
 
     "IoUringBindings" - {
+        // Reproduces the RC6 macOS/arm64 Native link failure. The binding is generated when kyo is COMPILED but linked on the
+        // consumer's host, so an artifact published from Linux carried `@extern` declarations for all 30 `kyo_uring_*` / `io_uring_*`
+        // symbols while `kyo_uring.c` compiled to nothing off Linux, and a macOS `nativeLink` died with "symbol(s) not found for
+        // architecture arm64". Building kyo on macOS produced the mirror-image artifact: a throwing Scala stub. Both are the build host
+        // deciding a target-platform question. With the shim defining every symbol on every platform, the probe resolves and answers
+        // with a value. Off Linux this case FAILED before the fix (UnsupportedOperationException from the generated stub on Native, a
+        // symbol lookup failure on the JVM), and the whole Native test binary failed to link when the bindings were emitted for real.
+        "is callable on every platform: io_uring's absence is a false probe, not a missing symbol" in {
+            val b = Ffi.load[IoUringBindings]
+            if PosixConstants.isLinux then
+                // On Linux availability depends on the kernel and the sandbox, so pin what is platform-independent instead: the ring
+                // size the driver allocates against is a real, positive figure rather than the stub's 0.
+                assert(b.kyo_uring_sizeof() > 0L)
+            else
+                assert(!b.kyo_uring_probe_available(256))
+                assert(b.kyo_uring_sizeof() == 0L)
+            end if
+            succeed
+        }
+
         "bound kyo_uring_* symbols resolve and a probe + ring init round-trips" in {
             val b        = loadOrSkip()
             val ringSize = b.kyo_uring_sizeof()

@@ -1,7 +1,6 @@
 package kyo.net.internal.posix
 
 import kyo.AllowUnsafe
-import kyo.Chunk
 import kyo.Fiber
 import kyo.Maybe
 import kyo.ffi.Buffer
@@ -23,10 +22,13 @@ private[net] class IoUringSqe
   * Most of liburing's hot path (`io_uring_get_sqe`, every `io_uring_prep_*`, the `set_data64` / `cqe_get_data64` / `cqe_seen` accessors, and
   * `io_uring_wait_cqe` itself) is `static inline` in `<liburing.h>` with no exported symbol, so it is unreachable by Panama's
   * `SymbolLookup.libraryLookup` on JVM or Scala Native's `@link`. Those calls route through one-line `kyo_uring_*` C wrappers the shim
-  * exports. The four real liburing exports are bound directly.
+  * exports. The three real liburing exports are wrapped too, so that every symbol this trait names is one `kyo_uring.c` defines.
   *
-  * The shim and its statically-linked liburing are built by the kyo-net build; this trait binds the contract the C must satisfy. Header-gated on
-  * `liburing.h`: on a host without liburing the generator emits stubs and the io_uring backend probe reports unavailable.
+  * The shim and its statically-linked liburing are built by the kyo-net build; this trait binds the contract the C must satisfy. The shim is
+  * compiled on the machine that LINKS the binary, so its `#if defined(__linux__) && __has_include(<liburing.h>)` guard decides against the
+  * target platform: on a host without liburing every entry point is a stub, `kyo_uring_probe_available` returns 0, and the io_uring backend
+  * probe reports unavailable. Gating on the trait's declared headers instead would freeze the decision at the moment kyo was compiled and
+  * leave the symbols undefined at a macOS Scala Native link of an artifact published from Linux.
   *
   * Every method is part of the unsafe FFI tier and takes a trailing `(using AllowUnsafe)` clause. The one `@Ffi.blocking` method
   * (`kyo_uring_wait_cqe_timeout`) returns a `Fiber.Unsafe[<value>, Any]`: on JVM/Native the bounded wait runs synchronously on the calling
@@ -35,7 +37,7 @@ private[net] class IoUringSqe
   */
 private[net] trait IoUringBindings extends Ffi:
 
-    // --- real liburing exports, bound directly (no shim) ---
+    // --- real liburing exports, wrapped one-for-one by the shim so the symbol is kyo-owned on every platform ---
 
     /** `int io_uring_queue_init(unsigned entries, struct io_uring* ring, unsigned flags)`. Sets up the ring in the caller's `Buffer[Byte]`.
       * Returns 0 on success, `-errno` on failure. Raw signed rc, not clamped to -1.
@@ -192,7 +194,16 @@ end IoUringBindings
 
 private[net] object IoUringBindings extends Ffi.Config(
         library = "kyonet_posix_uring",
-        headers = Chunk("liburing.h"),
+        // `io_uring_queue_init` / `queue_exit` / `submit` are real exported liburing symbols, so binding them by name would work on
+        // Linux; they are routed through kyo-owned wrappers so that EVERY symbol this trait names is defined by `kyo_uring.c` on every
+        // platform. The binding is emitted when kyo is COMPILED but linked on the consumer's host, so a direct `io_uring_*` extern
+        // becomes an undefined symbol at a macOS Scala Native link. No `headers` entry either, for the same reason: the codegen's header
+        // probe runs on the BUILD host and would emit throw-stubs off Linux, baking that host's platform into the published artifact.
+        symbols = Map(
+            "io_uring_queue_init" -> "kyo_uring_queue_init",
+            "io_uring_queue_exit" -> "kyo_uring_queue_exit",
+            "io_uring_submit"     -> "kyo_uring_submit"
+        ),
         // The io_uring shim (kyo_uring.c) is compiled INTO the Scala Native binary (copied under
         // `resources/scala-native` by KyoFfiPlugin), so the generated Native binding must NOT emit
         // `@link("kyonet_posix_uring")` (there is no such shared library to find a `-l` for). The
