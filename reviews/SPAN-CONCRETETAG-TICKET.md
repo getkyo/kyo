@@ -29,7 +29,7 @@ Beyond `empty`, the public operations take `using ClassTag[A]` (or `ClassTag[B]`
 Replace the eight-entry map with a per-component-class empty-array cache:
 
 - primitives: a direct switch returning the canonical empties (`Array.emptyIntArray` and friends), no map lookup
-- reference types: a cache keyed on the component `Class[?]` with allocation-free hits. `ClassValue` is JVM-only, so the shared implementation is likely a `ConcurrentHashMap` with a shared compute function; JS can use a plain map, Native needs the concurrent variant.
+- reference types: a cache keyed on the component `Class[?]` with allocation-free hits. On the JVM the cache must not pin classes: entries keyed strongly on `Class` keep their classloaders alive forever, so entries must be able to expire with the class (weak keying, or per-class storage tied to the class lifetime such as `ClassValue`). JS and Native have no class unloading, so a permanent map is fine there; Native needs the concurrent variant.
 
 Correctness constraint: the cached empty for component class `C` must have runtime class `Array[C]`, never a shared `Array[AnyRef]`. The array class is observable through `toArrayUnsafe` and through growth (`Arrays.copyOf` of an `Array[Object]` yields `Array[Object]`, silently dropping store-check semantics for the typed result).
 
@@ -51,7 +51,7 @@ This shrinks the public surface, removes a whole class of summons from user code
 
 ## Acceptance
 
-- `Span.empty[A]` is allocation-free for every `A` on JVM, JS, and Native (pinned by an allocation test on the JVM, behavior tests elsewhere)
+- `Span.empty[A]` allocates nothing on cache hits on JVM, JS, and Native, and a reference element type allocates at most once per class per cache lifetime (the JVM cache may expire entries so classes can unload); pinned by an allocation test on the JVM hit path, behavior tests elsewhere
 - runtime array class preserved: `Span.empty[String].toArray.getClass` is `Array[String]`, and growth from a cached empty produces correctly typed arrays
 - kyo-data suite green on all platforms
 - benchmark allocation rates (`gc.alloc.rate.norm`) do not regress on Span-heavy rows, and the inline expansion sites are checked since the evidence change lands inside `inline def` bodies
