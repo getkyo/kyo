@@ -546,11 +546,15 @@ object Isolate:
             /** What the fork ended with: the bindings it held at the end, and its value. */
             type Transform[A] = (Span[Binding[?, ?, ?, ?]], Span[Maybe[Any]], A)
 
+            // the no-bindings State, built once: every fork with nothing bound captures exactly this,
+            // and the pair and its empty spans are context-free and immutable
+            private val emptyState: State = (Span.empty, Span.empty)
+
             def capture[A, S](f: State => A < S)(using Frame): A < S =
                 new Bindings[A, S]:
                     def updates = Span.empty
                     def resume(bindings: Span[Binding[?, ?, ?, ?]], held: Span[Maybe[Any]]): A < S =
-                        if bindings.isEmpty then f((Span.empty, Span.empty))
+                        if bindings.isEmpty then f(emptyState)
                         else cross(bindings, held, 0, new Array(bindings.size), new Array(bindings.size), 0, f)
 
             def isolate[A, S](state: State, v: A < S)(using Frame): Transform[A] < S =

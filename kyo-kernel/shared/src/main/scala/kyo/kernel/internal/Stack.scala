@@ -366,7 +366,7 @@ final private[kyo] class Stack:
                 case _                                             => ()
             i += 1
         end while
-        if count == 0 then (Span.empty, Span.empty)
+        if count == 0 then Stack.emptyBindings
         else
             val bs = new Array[Kyo.Binding[?, ?, ?, ?]](count)
             val hs = new Array[Maybe[Any]](count)
@@ -632,6 +632,10 @@ final private[kyo] class Stack:
 end Stack
 
 private[kyo] object Stack:
+    // the no-bindings result of `bindings()`, built once: the empty branch runs on every fork crossing
+    // that has nothing bound, and the pair and its empty spans are context-free and immutable
+    private[internal] val emptyBindings: (Span[Kyo.Binding[?, ?, ?, ?]], Span[Maybe[Any]]) = (Span.empty, Span.empty)
+
     final private[internal] class Pool:
         private var free = new Array[Stack](4)
         private var size = 0
