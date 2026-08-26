@@ -33,6 +33,7 @@ class DragScenarioItTest extends UITest:
             path: Seq[String],
             context: ReactiveRegion.RegionIdentity,
             parentContext: ReactiveRegion.ParentContext,
+            previous: Maybe[UI],
             ui: UI
         )(using
             Frame

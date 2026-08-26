@@ -31,6 +31,7 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
                 path: Seq[String],
                 context: ReactiveRegion.RegionIdentity,
                 parentContext: ReactiveRegion.ParentContext,
+                previous: Maybe[UI],
                 ui: UI
             )(using
                 Frame
@@ -46,6 +47,7 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
                     path: Seq[String],
                     context: ReactiveRegion.RegionIdentity,
                     parentContext: ReactiveRegion.ParentContext,
+                    previous: Maybe[UI],
                     ui: UI
                 )(using Frame): Unit < Async = renders.incrementAndGet.unit
             fiber <- Fiber.initUnscoped(Scope.run {
@@ -110,6 +112,7 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
                     path: Seq[String],
                     context: ReactiveRegion.RegionIdentity,
                     parentContext: ReactiveRegion.ParentContext,
+                    previous: Maybe[UI],
                     ui: UI
                 )(using Frame): Unit < Async =
                     Scope.run {
@@ -167,6 +170,7 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
                     path: Seq[String],
                     context: ReactiveRegion.RegionIdentity,
                     parentContext: ReactiveRegion.ParentContext,
+                    previous: Maybe[UI],
                     ui: UI
                 )(using Frame): Unit < Async = entered.completeUnitDiscard.andThen(release.get)
             fiber <- Fiber.initUnscoped(Scope.run {
@@ -206,6 +210,7 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
                         path: Seq[String],
                         context: ReactiveRegion.RegionIdentity,
                         parentContext: ReactiveRegion.ParentContext,
+                        previous: Maybe[UI],
                         ui: UI
                     )(using Frame): Unit < Async =
                         HtmlRenderer.render(ui, path).map(html => rendered.updateAndGet(_.append(html)).unit)

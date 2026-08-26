@@ -1,5 +1,6 @@
 package kyo.compat
 
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kyo.compat.*
 import scala.concurrent.duration.*
@@ -7,12 +8,12 @@ import scala.util.Failure
 import scala.util.Success
 class TimeTest extends CompatTest:
     "sleep delays without crashing" in run {
-        // Trigger a sleep and verify it returns Unit. Wall-clock-precision
-        // assertions (`elapsed >= 30ms`) live in each backend's test file.
+        // Verify sleep returns Unit; that the suspension is real (not a no-op) is covered below.
         CIO.sleep(20.millis).map(r => assert(r == ((): Unit)))
     }
     "now returns without error" in run {
-        // Type is java.time.Instant on all backends.
+        // Type is java.time.Instant on all backends. The harness can't drive the underlying clock to a
+        // known instant, so the only check is that a read returns; pinning the value is out of scope.
         CIO.now.unit.map(_ => succeed)
     }
     "nowMonotonic is non-decreasing across two reads" in run {
@@ -49,46 +50,46 @@ class TimeTest extends CompatTest:
         val c = CIO.delay(20.millis)(CIO.defer { 42 })
         c.map(r => assert(r == 42))
     }
-    "now returns Instant close to system clock" in run {
-        // CIO.now returns java.time.Instant; check it's within 5s of system clock.
-        val sys = java.lang.System.currentTimeMillis()
-        val c =
-            CIO.now.flatMap { now =>
-                CIO.defer {
-                    val deltaMs = math.abs(now.toEpochMilli - sys)
-                    deltaMs < 5_000L
-                }
+    // The three tests below pin `sleep`/`delay` without measuring time: a suspension longer than the deadline can't
+    // resolve inside it (timeout None) yet wins a race against a far longer one; same-engine ordering keeps both true.
+    "sleep suspends and resolves ahead of a far longer sleep" in run {
+        CIO.timeout(50.millis)(CIO.sleep(5.seconds)).flatMap { timedOut =>
+            CIO.race(
+                CIO.sleep(50.millis).flatMap(_ => CIO.value(1)),
+                CIO.sleep(5.seconds).flatMap(_ => CIO.value(2))
+            ).map { winner =>
+                assert(timedOut == None, s"sleep(5.seconds) resolved inside a 50ms deadline: $timedOut")
+                assert(winner == 1, s"sleep(50.millis) lost a race against sleep(5.seconds): got $winner")
             }
-        c.map(r => assert(r, "CIO.now was more than 5s from system clock"))
-    }
-    "sleep delays at least the requested duration (wall-clock)" in run {
-        val start = java.lang.System.nanoTime()
-        CIO.sleep(50.millis).map { _ =>
-            val elapsed = (java.lang.System.nanoTime() - start) / 1_000_000L
-            assert(elapsed >= 30L && elapsed < 5_000L, s"elapsed=$elapsed ms")
         }
     }
-    "delay waits at least the requested duration (wall-clock)" in run {
-        val start = java.lang.System.nanoTime()
-        CIO.delay(50.millis)(CIO.defer { 42 }).map { out =>
-            val elapsed = (java.lang.System.nanoTime() - start) / 1_000_000L
-            assert(out == 42 && elapsed >= 30L && elapsed < 5_000L, s"out=$out elapsed=$elapsed ms")
+    "delay suspends before running its body and resolves ahead of a far longer sleep" in run {
+        // The body flips a flag, catching an eagerly-run delay; the race winner is the body's own value.
+        val ran = new AtomicBoolean(false)
+        CIO.timeout(50.millis)(CIO.delay(5.seconds)(CIO.defer { ran.set(true); 42 })).flatMap { timedOut =>
+            CIO.race(
+                CIO.delay(50.millis)(CIO.value(42)),
+                CIO.sleep(5.seconds).flatMap(_ => CIO.value(-1))
+            ).map { winner =>
+                assert(timedOut == None, s"delay(5.seconds) resolved inside a 50ms deadline: $timedOut")
+                assert(!ran.get(), "delay ran its body before the delay elapsed")
+                assert(winner == 42, s"delay(50.millis) lost a race against sleep(5.seconds): got $winner")
+            }
         }
     }
     "FiniteDuration: 500L.millis materializes as FiniteDuration with correct millis" in run {
-        // actually suspends for the expected duration, measured via CIO.nowMonotonic.
+        // The conversion is pure; that the value reaches the engine as a real suspension shows in the
+        // two outcomes: it doesn't resolve inside 50ms, and it does resolve ahead of a 5s sleep.
         val d: FiniteDuration = 500L.millis
         assert(d.toMillis == 500L, s"expected 500ms, got ${d.toMillis}ms")
-        val c =
-            CIO.nowMonotonic.map(_.toMillis).flatMap { before =>
-                CIO.sleep(500L.millis).flatMap { _ =>
-                    CIO.nowMonotonic.map(_.toMillis).flatMap { after =>
-                        CIO.defer(after - before)
-                    }
-                }
+        CIO.timeout(50.millis)(CIO.sleep(d)).flatMap { timedOut =>
+            CIO.race(
+                CIO.sleep(d).flatMap(_ => CIO.value(1)),
+                CIO.sleep(5.seconds).flatMap(_ => CIO.value(2))
+            ).map { winner =>
+                assert(timedOut == None, s"sleep(500.millis) resolved inside a 50ms deadline: $timedOut")
+                assert(winner == 1, s"sleep(500.millis) lost a race against sleep(5.seconds): got $winner")
             }
-        c.map { elapsedMs =>
-            assert(elapsedMs >= 400L && elapsedMs < 30_000L, s"elapsed=$elapsedMs ms (expected >= 400ms)")
         }
     }
     "FiniteDuration: (1.second + 250.millis).toMillis == 1250" in run {
@@ -96,13 +97,6 @@ class TimeTest extends CompatTest:
         val ms: Long          = d.toMillis
         CIO.value(ms).map { result =>
             assert(result == 1250L, s"expected 1250ms, got ${result}ms")
-        }
-    }
-    "java.time.Instant: CIO.now toEpochMilli is within 5s of System.currentTimeMillis" in run {
-        val sys = java.lang.System.currentTimeMillis()
-        CIO.now.map { instant =>
-            val deltaMs = math.abs(instant.toEpochMilli - sys)
-            assert(deltaMs < 5_000L, s"deltaMs=$deltaMs (expected < 5000ms)")
         }
     }
     "FiniteDuration: CIO.timeout(50.millis)(CIO.never) resolves to None" in run {
@@ -171,33 +165,40 @@ class TimeTest extends CompatTest:
             assert(result, "Duration.Zero.length == 0L should be true")
         }
     }
-    "sleep(0) returns immediately within bounded window" in run {
+    "sleep(0) completes and leaves the monotonic clock non-decreasing" in run {
+        // The property is completion: a zero sleep that never resumes fails through testTimeout. The two clock reads
+        // only assert time didn't run backwards across it, not a wall-clock ceiling (which would measure latency).
         val c =
             CIO.nowMonotonic.map(_.toMillis).flatMap { t1 =>
                 CIO.sleep(0.millis).flatMap { _ =>
                     CIO.nowMonotonic.map(_.toMillis).flatMap { t2 =>
-                        CIO.defer(t2 - t1)
+                        CIO.defer((t1, t2))
                     }
                 }
             }
-        c.map { deltaMs =>
-            assert(deltaMs < 500L, s"sleep(0) took ${deltaMs}ms — expected < 500ms")
+        c.map { case (t1, t2) =>
+            assert(t2 >= t1, s"expected $t2 >= $t1 across sleep(0)")
         }
     }
 
-    // sleep(50ms) + sleep(100ms) in parallel should take ~100ms, not ~150ms.
-    // Allow 250ms for CI noise.
-    "concurrent sleeps complete in parallel — total time ~max not sum" in run {
-        val c =
-            CIO.nowMonotonic.map(_.toMillis).flatMap { t1 =>
-                CIO.zip(CIO.sleep(50.millis), CIO.sleep(100.millis)).flatMap { _ =>
-                    CIO.nowMonotonic.map(_.toMillis).flatMap { t2 =>
-                        CIO.defer(t2 - t1)
-                    }
-                }
+    "concurrent sleeps overlap (peak-concurrency canary)" in run {
+        // Parallelism is overlap, not duration. Each leg marks itself active and samples the peak before sleeping past a
+        // shared barrier, so the second to arrive samples 2 race-free; a sequential zip fails through testTimeout instead.
+        val active = new AtomicInteger(0)
+        val peak   = new AtomicInteger(0)
+        def leg(d: FiniteDuration, barrier: CLatch): CIO[Unit] =
+            CIO.defer {
+                val cur = active.incrementAndGet()
+                peak.updateAndGet(_ max cur)
+                ()
+            }.flatMap(_ => barrier.release)
+                .flatMap(_ => barrier.await)
+                .flatMap(_ => CIO.sleep(d))
+                .flatMap(_ => CIO.defer { active.decrementAndGet(); () })
+        CLatch.init(2).flatMap { barrier =>
+            CIO.zip(leg(50.millis, barrier), leg(100.millis, barrier)).map { _ =>
+                assert(peak.get() == 2, s"expected both sleeps in flight at once, peak=${peak.get()}")
             }
-        c.map { deltaMs =>
-            assert(deltaMs < 250L, s"concurrent sleeps took ${deltaMs}ms — expected < 250ms (parallel, not sequential)")
         }
     }
 

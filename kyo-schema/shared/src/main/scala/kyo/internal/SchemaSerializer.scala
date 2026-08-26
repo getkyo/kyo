@@ -38,8 +38,9 @@ private[kyo] object SchemaSerializer:
       * are ever field ids come from `CodecMacro.fieldId(name).toString` or a Protobuf numeric tag, both
       * always ASCII decimal. Any other token, including a unicode name or a name made of unicode digits
       * (Arabic-Indic, fullwidth, ...), is a field NAME and must return -1 so it stays classified as a
-      * name. Accepting unicode digits here would misclassify such a name as an id. This is the same
-      * numeric-tag classification `matchField` does via `parsed.toInt`, without the throw on a non-id.
+      * name. Accepting unicode digits here would misclassify such a name as an id.
+      * `DiscriminatorReader.matchField` uses this for its numeric-tag fallback for the same reason:
+      * a plain field name must classify as a name without constructing a `NumberFormatException`.
       */
     private def wireFieldId(token: String): Int =
         if token.isEmpty then -1
@@ -408,9 +409,9 @@ private[kyo] object SchemaSerializer:
         end if
     end readWithDiscriminatorField
 
-    /** Transforms a wrapper-format sealed trait value into flat discriminator format.
+    /** Transforms a materialized sealed trait value into flat discriminator format.
       *
-      * Wrapper format: `Record([("MTCircle", Record([("radius", 5.0)]))])` Flat format:
+      * Materialized form: `VariantCase("MTCircle", Record([("radius", 5.0)]))` Flat format:
       * `Record([("type", Str("MTCircle")), ("radius", 5.0)])`
       *
       * For case objects (variant value is an empty Record), produces: `Record([("type", Str("Active"))])`
@@ -421,10 +422,8 @@ private[kyo] object SchemaSerializer:
         resolveWire: String => String
     ): Structure.Value =
         value match
-            // Wrapper format: single-field Record where field name is variant name
-            case Structure.Value.Record(fields) if fields.size == 1 =>
-                val (variantName, innerValue) = fields.head
-                val wireName                  = resolveWire(variantName)
+            case Structure.Value.VariantCase(variantName, innerValue) =>
+                val wireName = resolveWire(variantName)
                 innerValue match
                     case Structure.Value.Record(innerFields) =>
                         // Flatten: discriminator field + variant's fields at same level
@@ -436,7 +435,7 @@ private[kyo] object SchemaSerializer:
                         Structure.Value.Record(Chunk(discEntry))
                 end match
             case other =>
-                // Not a wrapper format, pass through unchanged
+                // Not a variant, pass through unchanged
                 other
     end flattenWithDiscriminator
 
@@ -449,7 +448,7 @@ private[kyo] object SchemaSerializer:
             throw RepresentationUnsupportedException(writer.codecName, representation)
     end requireTopLevelCapable
 
-    /** Adjacent: rewrite the single-field wrapper into a two-field object
+    /** Adjacent: rewrite the materialized VariantCase into a two-field object
       * `{tagKey: wireName, contentKey: payload}`. The payload passes through unchanged, so a
       * non-object payload (scalar/array/null) survives as the content value; an empty-payload variant
       * yields `{contentKey: {}}` (the precedent-consistent empty object).
@@ -461,9 +460,8 @@ private[kyo] object SchemaSerializer:
         resolveWire: String => String
     ): Structure.Value =
         value match
-            case Structure.Value.Record(fields) if fields.size == 1 =>
-                val (variantName, payload) = fields.head
-                val wireName               = resolveWire(variantName)
+            case Structure.Value.VariantCase(variantName, payload) =>
+                val wireName = resolveWire(variantName)
                 Structure.Value.Record(Chunk(
                     (tagKey, Structure.Value.Str(wireName)),
                     (contentKey, payload)
@@ -471,7 +469,7 @@ private[kyo] object SchemaSerializer:
             case other => other
     end adjacentEncode
 
-    /** Tuple: rewrite the single-field wrapper into the two-element positional array
+    /** Tuple: rewrite the materialized VariantCase into the two-element positional array
       * `[wireName, payload]`. A non-object payload rides through as the second element.
       */
     private def tupleEncode(
@@ -479,14 +477,13 @@ private[kyo] object SchemaSerializer:
         resolveWire: String => String
     ): Structure.Value =
         value match
-            case Structure.Value.Record(fields) if fields.size == 1 =>
-                val (variantName, payload) = fields.head
-                val wireName               = resolveWire(variantName)
+            case Structure.Value.VariantCase(variantName, payload) =>
+                val wireName = resolveWire(variantName)
                 Structure.Value.Sequence(Chunk(Structure.Value.Str(wireName), payload))
             case other => other
     end tupleEncode
 
-    /** TupleFlat: rewrite the single-field wrapper into the positional-flattened array
+    /** TupleFlat: rewrite the materialized VariantCase into the positional-flattened array
       * `[wireName, field0Value, field1Value, ...]`. The payload Record's field Chunk is in
       * declaration order, so each field value becomes its own element in that order; field names are
       * dropped. A field that is itself a record passes through as one nested element (not
@@ -497,9 +494,8 @@ private[kyo] object SchemaSerializer:
         resolveWire: String => String
     ): Structure.Value =
         value match
-            case Structure.Value.Record(fields) if fields.size == 1 =>
-                val (variantName, payload) = fields.head
-                val wireName               = resolveWire(variantName)
+            case Structure.Value.VariantCase(variantName, payload) =>
+                val wireName = resolveWire(variantName)
                 val fieldValues = payload match
                     case Structure.Value.Record(payloadFields) => payloadFields.map(_._2)
                     case _                                     => Chunk.empty
@@ -507,14 +503,13 @@ private[kyo] object SchemaSerializer:
             case other => other
     end tupleFlatEncode
 
-    /** Untagged: drop the wrapper entirely and emit the bare payload. The tag resolver is not
+    /** Untagged: drop the variant tag entirely and emit the bare payload. The tag resolver is not
       * consulted (there is no tag).
       */
     private def untaggedEncode(value: Structure.Value): Structure.Value =
         value match
-            case Structure.Value.Record(fields) if fields.size == 1 =>
-                fields.head._2
-            case other => other
+            case Structure.Value.VariantCase(_, payload) => payload
+            case other                                   => other
     end untaggedEncode
 
     /** Builds the variant forward resolver: explicit pair wins, then the renameAll
@@ -861,18 +856,17 @@ private[kyo] object SchemaSerializer:
     /** Writes a Structure.Value tree to a Writer. Reverse of StructureValueWriter.
       *
       * `shape` is an optional type hint carried down from the originating Schema's structure. It
-      * exists to break a genuine ambiguity in `Structure.Value`: `StructureValueWriter` materializes
-      * both a product and a string-keyed map as `Record` (`mapStart`/`mapEnd` build the same
-      * `ObjectFrame` as `objectStart`/`objectEnd`), so replaying a `Record` with no further
-      * information cannot tell the two apart. That is harmless for a self-describing codec, where an
-      * object and a map write identically, but Protobuf's wire encoding of the two is NOT
-      * interchangeable: an object is one nested sub-message under the field's own number, while a map
-      * is a REPEATED MapEntry sub-message per entry (key at field 1, value at field 2) under that
-      * same number. Replaying a map with object framing corrupts the wire (each entry key becomes a
-      * bogus hash-derived field number instead of a MapEntry key). When `shape` resolves to
-      * `Mapping`, the `Record` writes as a map; otherwise (no hint, or a genuine `Product`) it writes
-      * as an object, matching the shape-free behavior every caller other than `writeWithTransforms`
-      * still relies on.
+      * exists to break an ambiguity for `Record` trees that spell a map: a wire-decoded or hand-built
+      * tree carries a string-keyed map as `Record` (only `Structure.encode` produces `MapEntries`),
+      * so replaying such a `Record` with no further information cannot tell it from a product. That
+      * is harmless for a self-describing codec, where an object and a map write identically, but
+      * Protobuf's wire encoding of the two is NOT interchangeable: an object is one nested
+      * sub-message under the field's own number, while a map is a REPEATED MapEntry sub-message per
+      * entry (key at field 1, value at field 2) under that same number. Replaying a map with object
+      * framing corrupts the wire (each entry key becomes a bogus hash-derived field number instead of
+      * a MapEntry key). When `shape` resolves to `Mapping`, the `Record` writes as a map; otherwise
+      * (no hint, or a genuine `Product`) it writes as an object, matching the shape-free behavior
+      * every caller other than `writeWithTransforms` still relies on.
       */
     def writeStructureValue(writer: Writer, value: Structure.Value, shape: Maybe[Structure.Type] = Maybe.empty): Unit =
         value match
@@ -911,9 +905,11 @@ private[kyo] object SchemaSerializer:
                 elements.foreach(e => writeStructureValue(writer, e, elemShape))
                 writer.arrayEnd()
             case Structure.Value.MapEntries(entries) =>
-                // Shape-aware MapEntries:
-                //   * all-String keys -> JSON object with each key as a field; round-trips through the universal Record shape.
-                //   * mixed/non-String keys -> array-of-pairs; non-String keys are inexpressible as JSON field names.
+                // Shape-aware MapEntries, matching the typed map schemas' wire spelling exactly so the
+                // transform-replay path is byte-identical with the raw write path:
+                //   * all-String keys -> map framing with each key as a field (a JSON object).
+                //   * mixed/non-String keys -> the mapEntriesStart envelope (array of {key, value}
+                //     records on wire codecs); non-String keys are inexpressible as JSON field names.
                 val (keyShape, valueShape) = shape.map(unwrapOptionalShape) match
                     case Maybe.Present(Structure.Type.Mapping(_, _, k, v)) =>
                         (Maybe(unwrapOptionalShape(k)), Maybe(unwrapOptionalShape(v)))
@@ -935,24 +931,24 @@ private[kyo] object SchemaSerializer:
                     }
                     writer.mapEnd()
                 else
-                    writer.arrayStart(entries.size)
+                    writer.mapEntriesStart(entries.size)
                     entries.foreach { (k, v) =>
-                        writer.arrayStart(2)
+                        writer.mapEntryStart()
                         writeStructureValue(writer, k, keyShape)
+                        writer.mapEntryValue()
                         writeStructureValue(writer, v, valueShape)
-                        writer.arrayEnd()
+                        writer.mapEntryEnd()
                     }
-                    writer.arrayEnd()
+                    writer.mapEntriesEnd()
                 end if
             case Structure.Value.VariantCase(name, v) =>
-                // Shape-aware VariantCase: single-field object whose key is the variant name. Symmetric with reading a
-                // single-field object as a Record(name, value); the universal Structure.Value tree treats VariantCase
-                // and Record(<single field>) as the same wire shape; round-trips through the shape-aware identity
-                // Schema therefore canonicalize to Record on read.
-                writer.objectStart(name, 1)
-                writer.fieldBytes(name.getBytes(java.nio.charset.StandardCharsets.UTF_8), 0)
+                // Shape-aware VariantCase: on wire codecs the variantStart default writes the single-field object
+                // whose key is the variant name, symmetric with reading a single-field object as a Record(name, value).
+                // Wire round-trips through the shape-aware identity Schema therefore canonicalize to Record on read;
+                // a StructureValueWriter target keeps the VariantCase identity.
+                writer.variantStart(name, name, name.getBytes(java.nio.charset.StandardCharsets.UTF_8), 0)
                 writeStructureValue(writer, v)
-                writer.objectEnd()
+                writer.variantEnd()
             case Structure.Value.Str(s) => writer.string(s)
             case Structure.Value.Integer(l) =>
                 if l >= Int.MinValue && l <= Int.MaxValue then writer.int(l.toInt)
@@ -1608,9 +1604,9 @@ private[kyo] object SchemaSerializer:
                     // Wire-format-agnostic fallback: when the underlying inner reader is wire-format-tagged
                     // (e.g. Protobuf, which reports fields by their numeric tag id), the buffered "name" is a
                     // numeric string. Match it against CodecMacro.fieldId(expected) to align with the way
-                    // the macro-generated case-class read body matches fields downstream.
-                    try parsed.toInt == CodecMacro.fieldId(expected)
-                    catch case _: NumberFormatException => false
+                    // the macro-generated case-class read body matches fields downstream. wireFieldId returns
+                    // -1 for a non-id token and fieldId is always positive, so a plain name never matches.
+                    wireFieldId(parsed) == CodecMacro.fieldId(expected)
                 end if
         end matchField
 

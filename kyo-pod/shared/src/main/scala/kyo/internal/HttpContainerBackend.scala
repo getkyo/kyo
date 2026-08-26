@@ -7,6 +7,7 @@ import kyo.internal.ContainerBackend.parseInstant
 import kyo.internal.ContainerBackend.parseInstantOrEpoch
 import kyo.internal.ContainerBackend.parseState
 import kyo.internal.ResourceContext
+import kyo.schema.omit
 
 /** HTTP-based container backend that talks to Docker/Podman API via Unix domain socket.
   *
@@ -83,21 +84,23 @@ final private[kyo] class HttpContainerBackend(
                 extractPortConflict(e.body) match
                     case Some(port) => Abort.fail(ContainerPortConflictException(port, e.body.getOrElse("")))
                     case None =>
-                        canonicalStatus(e) match
-                            case 304 =>
-                                ctx match
-                                    case ResourceContext.Container(id) => Abort.fail(ContainerAlreadyStoppedException(id))
-                                    case _ => Abort.fail(ContainerBackendException(s"Unexpected HTTP 304 for ${ctx.describe}", e))
-                            case 404 =>
-                                Abort.fail(missingExceptionFor(ctx, e))
-                            case 409 =>
-                                Abort.fail(conflictExceptionFor(ctx))
-                            case _ =>
-                                warnIfMissingBody(e, ctx).andThen(Abort.fail(ContainerOperationException(
-                                    s"Daemon returned HTTP ${e.status.code}${e.body.map(b => s": $b").getOrElse("")} for ${ctx.describe}",
-                                    e
-                                )))
-                        end match
+                        notRunningExceptionFor(e.body, ctx) match
+                            case Some(ex) => Abort.fail(ex)
+                            case None =>
+                                canonicalStatus(e) match
+                                    case 304 =>
+                                        ctx match
+                                            case ResourceContext.Container(id) => Abort.fail(ContainerAlreadyStoppedException(id))
+                                            case _ => Abort.fail(ContainerBackendException(s"Unexpected HTTP 304 for ${ctx.describe}", e))
+                                    case 404 =>
+                                        Abort.fail(missingExceptionFor(ctx, e))
+                                    case 409 =>
+                                        Abort.fail(conflictExceptionFor(ctx))
+                                    case _ =>
+                                        warnIfMissingBody(e, ctx).andThen(Abort.fail(ContainerOperationException(
+                                            s"Daemon returned HTTP ${e.status.code}${e.body.map(b => s": $b").getOrElse("")} for ${ctx.describe}",
+                                            e
+                                        )))
                 end match
             case other =>
                 Abort.fail(ContainerBackendException(s"HTTP transport failed for ${ctx.describe}", other))
@@ -132,6 +135,20 @@ final private[kyo] class HttpContainerBackend(
 
     private def conflictExceptionFor(ctx: ResourceContext)(using Frame): ContainerException =
         ErrorClassification.conflictFor(ctx)
+
+    /** Podman/docker refuse a state-dependent op (exec-create, top) on a non-running container with a wrong-state body, not a distinct status
+      * (podman reports HTTP 500). Type it as [[ContainerAlreadyStoppedException]] for a container context so callers recover via a fresh state read.
+      */
+    private def notRunningExceptionFor(body: Maybe[String], ctx: ResourceContext)(using Frame): Option[ContainerException] =
+        ctx match
+            case ResourceContext.Container(id) if bodyContainsNotRunning(body) => Some(ContainerAlreadyStoppedException(id))
+            case _                                                             => None
+
+    private def bodyContainsNotRunning(body: Maybe[String]): Boolean =
+        body.toOption.exists { b =>
+            val lower = b.toLowerCase
+            DaemonErrorPhrases.NotRunning.exists(lower.contains)
+        }
 
     /** Warn when a non-2xx error has no body and no canonical mapping. The combination prevents the classifier from doing better than
       * `ContainerOperationException`, which obscures the real condition.
@@ -340,7 +357,7 @@ final private[kyo] class HttpContainerBackend(
     end create
 
     /** Build the HostConfig portion of a create request from configuration values resolved by the caller. */
-    private def buildHostConfig(
+    private[internal] def buildHostConfig(
         config: Config,
         binds: Chunk[String],
         portBindings: Map[String, Seq[PortBindingEntry]],
@@ -358,7 +375,7 @@ final private[kyo] class HttpContainerBackend(
             MemorySwap = config.memorySwap.getOrElse(0L),
             NanoCPUs = config.cpuLimit.map(c => (c * 1e9).toLong).getOrElse(0L),
             CpusetCpus = config.cpuAffinity.getOrElse(""),
-            PidsLimit = config.maxProcesses.getOrElse(0L),
+            PidsLimit = config.maxProcesses.filter(_ > 0),
             Privileged = config.privileged,
             CapAdd = config.addCapabilities.toSeq.map(_.cliName),
             CapDrop = config.dropCapabilities.toSeq.map(_.cliName),
@@ -366,7 +383,8 @@ final private[kyo] class HttpContainerBackend(
             AutoRemove = config.autoRemove,
             RestartPolicy = restartPol,
             Mounts = Seq.empty,
-            Tmpfs = tmpfs
+            Tmpfs = tmpfs,
+            Init = config.initProcess
         )
     end buildHostConfig
 
@@ -398,10 +416,8 @@ final private[kyo] class HttpContainerBackend(
     private def ctxContainer(id: Container.Id): ResourceContext = ResourceContext.Container(id)
 
     def start(id: Container.Id)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        // Container start can stall under daemon load (e.g. parallel test forks). The default
-        // HttpClient timeout (5s) is too tight for the cold-start path; raise it to at least
-        // 30s so the daemon has time to ack /start. `c.timeout.max(...)` preserves any caller
-        // override that already requests a longer ceiling.
+        // Container start can stall under daemon load; the default 5s timeout is too tight for cold start. Raise to at
+        // least 30s so the daemon can ack /start; `c.timeout.max(...)` preserves any longer caller override.
         HttpClient.withConfig(c => c.timeout(c.timeout.max(30.seconds))) {
             postUnitAccept304(s"/containers/${id.value}/start", ctxContainer(id))
         }
@@ -468,8 +484,58 @@ final private[kyo] class HttpContainerBackend(
                     url(s"/containers/${id.value}", "force" -> force.toString, "v" -> removeVolumes.toString)
                 ).unit
             }
-        if force then HttpClient.withConfig(_.timeout(30.seconds))(call) else call
+        val deleted = if force then HttpClient.withConfig(_.timeout(30.seconds))(call) else call
+        deleted.andThen(awaitRemoved(id))
     end remove
+
+    /** DELETE acks while teardown is still in flight on rootless podman, so block on `/wait?condition=removed` until the container is gone
+      * (`Missing` means it already is). This gives `remove` a "fully retired on return" post-condition, so creation cannot exhaust the kernel keyring.
+      */
+    private def awaitRemoved(id: Container.Id)(using Frame): Unit < (Async & Abort[ContainerException]) =
+        def waitForRemoved: Unit < (Async & Abort[ContainerException]) =
+            Abort.run[ContainerException] {
+                withErrorMapping(ctxContainer(id)) {
+                    HttpClient.withConfig(c => c.timeout(c.timeout.max(30.seconds))) {
+                        HttpClient.postText(url(s"/containers/${id.value}/wait", "condition" -> "removed"), "").unit
+                    }
+                }
+            }.map {
+                case Result.Success(_)                            => ()
+                case Result.Failure(_: ContainerMissingException) => ()
+                case Result.Failure(other)                        => Abort.fail(other)
+                case Result.Panic(ex) => Abort.fail(ContainerBackendException(s"awaitRemoved panicked for ${id.value}", ex))
+            }
+        def stillPresent: Boolean < (Async & Abort[ContainerException]) =
+            Abort.run[ContainerException](state(id)).map {
+                case Result.Success(_)                            => true
+                case Result.Failure(_: ContainerMissingException) => false
+                case Result.Failure(other)                        => Abort.fail(other)
+                case Result.Panic(ex) => Abort.fail(ContainerBackendException(s"awaitRemoved state panicked for ${id.value}", ex))
+            }
+        def forceRemove: Unit < (Async & Abort[ContainerException]) =
+            Abort.run[ContainerException] {
+                withErrorMapping(ctxContainer(id)) {
+                    HttpClient.withConfig(_.timeout(30.seconds)) {
+                        HttpClient.deleteText(url(s"/containers/${id.value}", "force" -> "true", "v" -> "true")).unit
+                    }
+                }
+            }.map {
+                case Result.Failure(_: ContainerMissingException) => ()
+                case Result.Failure(other)                        => Abort.fail(other)
+                case _                                            => ()
+            }
+        // On loaded rootless podman the DELETE can ack while the record lingers, so confirm it is gone before returning; if
+        // it survives, force-remove once more and re-wait. A single guarded re-attempt, not a poll loop.
+        waitForRemoved.andThen {
+            stillPresent.map {
+                case false => ()
+                case true =>
+                    Log.warn(s"Container ${id.value} survived DELETE + wait?condition=removed; forcing removal again")
+                        .andThen(forceRemove)
+                        .andThen(waitForRemoved)
+            }
+        }
+    end awaitRemoved
 
     def rename(id: Container.Id, newName: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
         postUnit(s"/containers/${id.value}/rename?name=${java.net.URLEncoder.encode(newName, "UTF-8")}", ctxContainer(id))
@@ -968,16 +1034,16 @@ final private[kyo] class HttpContainerBackend(
         val containerDir  = containerPath.parent.map(_.toString).getOrElse("/")
         val containerFile = containerPath.name.getOrElse(containerPath.toString)
 
-        Abort.run[FileFsException](Path.tempDir(s"kyo-copyto-$uniqueSuffix-")).map {
-            case Result.Failure(e) =>
-                Abort.fail(ContainerOperationException(s"copyTo: failed to create temp dir for ${id.value}", e))
-            case Result.Panic(t) =>
-                Abort.fail(ContainerBackendException(s"copyTo: panic creating temp dir for ${id.value}", t))
-            case Result.Success(tempDir) =>
-                val target = tempDir / containerFile
-                Sync.ensure(tempDir.removeAll.unit) {
-                    Abort.run[FileFsException](
-                        source.copy(target, replaceExisting = true)
+        Scope.run {
+            Abort.run[FileStructureException](Path.tempDir(s"kyo-copyto-$uniqueSuffix-")).map {
+                case Result.Failure(e) =>
+                    Abort.fail(ContainerOperationException(s"copyTo: failed to create temp dir for ${id.value}", e))
+                case Result.Panic(t) =>
+                    Abort.fail(ContainerBackendException(s"copyTo: panic creating temp dir for ${id.value}", t))
+                case Result.Success(tempDir) =>
+                    val target = tempDir / containerFile
+                    Abort.run[FileStructureException](
+                        source.copy(target, Path.CopyOptions(replace = Path.Replace.Existing))
                     ).map {
                         case Result.Failure(e) =>
                             Abort.fail(ContainerOperationException(
@@ -1026,7 +1092,7 @@ final private[kyo] class HttpContainerBackend(
                                 }
                             }
                     }
-                }
+            }
         }
     end copyToWithSuffix
 
@@ -1200,7 +1266,7 @@ final private[kyo] class HttpContainerBackend(
             MemorySwap = memorySwap.getOrElse(0L),
             NanoCPUs = cpuLimit.map(c => (c * 1e9).toLong).getOrElse(0L),
             CpusetCpus = cpuAffinity.getOrElse(""),
-            PidsLimit = maxProcesses.getOrElse(0L),
+            PidsLimit = maxProcesses.filter(_ > 0),
             RestartPolicy = restartPol.getOrElse(RestartPolicyEntry("", 0))
         )
         val jsonBody = Json.encode(body)
@@ -2231,7 +2297,7 @@ final private[kyo] class HttpContainerBackend(
         Aliases: Seq[String] = Seq.empty
     ) derives Schema
 
-    final private case class HostConfig(
+    final private[internal] case class HostConfig(
         Binds: Seq[String] = Seq.empty,
         PortBindings: Map[String, Seq[PortBindingEntry]] = Map.empty,
         NetworkMode: String = "",
@@ -2241,7 +2307,9 @@ final private[kyo] class HttpContainerBackend(
         MemorySwap: Long = 0,
         NanoCPUs: Long = 0,
         CpusetCpus: String = "",
-        PidsLimit: Long = 0,
+        // Podman's docker-compat create maps an explicit PidsLimit:0 to cgroup pids.max=1 (docker treats 0 as unlimited),
+        // so PID 1 cannot fork. Omit the field when unset so podman applies its unlimited default, matching the CLI.
+        @omit PidsLimit: Maybe[Long] = Absent,
         Privileged: Boolean = false,
         CapAdd: Seq[String] = Seq.empty,
         CapDrop: Seq[String] = Seq.empty,
@@ -2249,20 +2317,21 @@ final private[kyo] class HttpContainerBackend(
         AutoRemove: Boolean = false,
         RestartPolicy: RestartPolicyEntry = RestartPolicyEntry(),
         Mounts: Seq[MountEntry] = Seq.empty,
-        Tmpfs: Map[String, String] = Map.empty
+        Tmpfs: Map[String, String] = Map.empty,
+        Init: Boolean = false
     ) derives Schema
 
-    final private case class PortBindingEntry(
+    final private[internal] case class PortBindingEntry(
         HostIp: String = "",
         HostPort: String = ""
     ) derives Schema
 
-    final private case class RestartPolicyEntry(
+    final private[internal] case class RestartPolicyEntry(
         Name: String = "",
         MaximumRetryCount: Int = 0
     ) derives Schema
 
-    final private case class MountEntry(
+    final private[internal] case class MountEntry(
         Type: String = "",
         Source: String = "",
         Target: String = ""
@@ -2277,12 +2346,13 @@ final private[kyo] class HttpContainerBackend(
         StatusCode: Int = 0
     ) derives Schema
 
-    final private case class UpdateRequest(
+    final private[internal] case class UpdateRequest(
         Memory: Long = 0,
         MemorySwap: Long = 0,
         NanoCPUs: Long = 0,
         CpusetCpus: String = "",
-        PidsLimit: Long = 0,
+        // See HostConfig.PidsLimit: podman's docker-compat update mistranslates an explicit 0 to pids.max=1. Omit when unset.
+        @omit PidsLimit: Maybe[Long] = Absent,
         RestartPolicy: RestartPolicyEntry = RestartPolicyEntry()
     ) derives Schema
 
@@ -2968,9 +3038,12 @@ private[kyo] object HttpContainerBackend:
                         else
                             xp.toList ++ Seq(defaultSocket) ++ hd.toList
                     // Filter to paths that exist on disk
-                    Kyo.filter(candidates)(path => Path(path).exists).map { staticPaths =>
-                        if staticPaths.nonEmpty then staticPaths
-                        else discoverSocketsViaCli()
+                    Kyo.filter(candidates)(path =>
+                        Abort.recover[FileReadException](_ => false)(Path(path).exists)
+                    ).map {
+                        staticPaths =>
+                            if staticPaths.nonEmpty then staticPaths
+                            else discoverSocketsViaCli()
                     }
                 }
             }

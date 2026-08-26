@@ -71,6 +71,61 @@ object JsonRpcTransport:
             fromWire(wire, framer, codec)
         }
 
+    /** [[stdio]] with the process's own streams protected for the duration of `f`.
+      *
+      * On this transport stdin and stdout ARE the protocol channel, so an application write to either
+      * corrupts it. `Console.printLine` is the idiomatic way to print in kyo and does exactly that: one
+      * line of application output lands between two envelopes and the peer sees a parse error or drops
+      * the connection, which is the worst place to debug it from, since the server side looks fine.
+      *
+      * Inside `f`, `Console` is rebound so `print` and `printLine` go to stderr along with `printErr`,
+      * and `readLine` fails rather than consuming bytes the protocol is waiting for. Handlers therefore
+      * print safely by construction and no author has to know the rule. Nothing else changes: the
+      * transport is the one [[stdio]] returns, and the binding is dynamically scoped, so the dispatch
+      * loop and every handler forked inside `f` inherit it.
+      *
+      * {{{
+      * JsonRpcTransport.stdioWith() { transport =>
+      *     McpServer.init(transport, handlers*).andThen(Async.never)
+      * }
+      * }}}
+      *
+      * Prefer this over [[stdio]] for any server that runs on the process's own streams.
+      *
+      * @param framer byte-stream framing strategy; defaults to [[JsonRpcFramer.lineDelimited]]
+      * @param codec  envelope serialisation; defaults to the strict `Schema[JsonRpcEnvelope]`
+      * @param f      the body, run with the transport and with `Console` diverted away from the channel
+      */
+    def stdioWith[A, S](
+        framer: JsonRpcFramer = JsonRpcFramer.lineDelimited,
+        codec: Schema[JsonRpcEnvelope] = summon[Schema[JsonRpcEnvelope]]
+    )(f: JsonRpcTransport => A < S)(using Frame): A < (S & Async & Scope) =
+        stdio(framer, codec).map { transport =>
+            Console.use(ambient => Console.let(divertedConsole(ambient))(f(transport)))
+        }
+
+    /** The ambient console with its stdout side diverted to stderr and its input closed.
+      *
+      * Derived from the ambient console rather than from `Console.live`, so an enclosing binding (a test
+      * capturing output, a custom sink) still sees the writes, on the side they were diverted to.
+      */
+    private def divertedConsole(ambient: Console): Console =
+        val under = ambient.unsafe
+        Console(
+            new Console.Unsafe:
+                def readLine()(using AllowUnsafe): Result[java.io.IOException, String] =
+                    Result.fail(new java.io.IOException(
+                        "stdin is the JSON-RPC protocol channel on this transport; reading it would consume protocol bytes"
+                    ))
+                def print(s: String)(using AllowUnsafe): Unit        = under.printErr(s)
+                def printErr(s: String)(using AllowUnsafe): Unit     = under.printErr(s)
+                def printLine(s: String)(using AllowUnsafe): Unit    = under.printLineErr(s)
+                def printLineErr(s: String)(using AllowUnsafe): Unit = under.printLineErr(s)
+                def checkErrors(using AllowUnsafe): Boolean          = under.checkErrors
+                def flush()(using AllowUnsafe): Unit                 = under.flush()
+        )
+    end divertedConsole
+
     /** Unix domain socket transport, served over the platform kyo-net transport.
       *
       * Binds a Unix-domain listener on `sockPath` and serves a single client: the first accepted connection becomes the

@@ -42,8 +42,8 @@ class SlackSocketEngineLiveTest extends kyo.test.Test[Any]:
                                 case _                             => Kyo.unit
                             }
                         }
-            HttpServer.init(0, "localhost")(HttpHandler.webSocket("ws/slack")(wsHandler)).map { server =>
-                val wsUrl = s"ws://localhost:${server.port}/ws/slack"
+            HttpServer.init(0, "127.0.0.1")(HttpHandler.webSocket("ws/slack")(wsHandler)).map { server =>
+                val wsUrl = s"ws://127.0.0.1:${server.port}/ws/slack"
                 SlackSocketEngine.initUnscoped(SlackTransport.live, wsUrl, cfg).map { engine =>
                     Channel.init[SlackEnvelope](8).map { delivered =>
                         val handler: SlackEnvelope => SlackAck < (Async & Abort[SlackException]) =
@@ -81,13 +81,13 @@ class SlackSocketEngineLiveTest extends kyo.test.Test[Any]:
                                 case _                             => Kyo.unit
                             }
                         }
-            HttpServer.init(0, "localhost")(HttpHandler.webSocket("ws/slack")(wsHandler)).map { wsServer =>
-                val wssUrl = s"ws://localhost:${wsServer.port}/ws/slack"
+            HttpServer.init(0, "127.0.0.1")(HttpHandler.webSocket("ws/slack")(wsHandler)).map { wsServer =>
+                val wssUrl = s"ws://127.0.0.1:${wsServer.port}/ws/slack"
                 val openRoute = HttpRoute.postRaw("apps.connections.open").response(_.bodyText).handler { _ =>
                     HttpResponse(HttpStatus.OK).addField("body", s"""{"ok":true,"url":"$wssUrl"}""")
                 }
-                HttpServer.init(0, "localhost")(openRoute).map { apiServer =>
-                    SlackWebApi.baseUrl.let(s"http://localhost:${apiServer.port}") {
+                HttpServer.init(0, "127.0.0.1")(openRoute).map { apiServer =>
+                    SlackWebApi.baseUrl.let(s"http://127.0.0.1:${apiServer.port}") {
                         Slack.init(cfg).map { conn =>
                             Channel.init[SlackEnvelope](8).map { delivered =>
                                 val handler: SlackEnvelope => SlackAck < (Async & Abort[SlackException]) =
@@ -122,13 +122,13 @@ class SlackSocketEngineLiveTest extends kyo.test.Test[Any]:
                             .andThen(ws.put(HttpWebSocket.Payload.Text(eventFrame)))
                             .andThen(ws.stream.foreach(_ => Kyo.unit))
                             .andThen(serverSawClose.release)
-                HttpServer.init(0, "localhost")(HttpHandler.webSocket("ws/slack")(wsHandler)).map { wsServer =>
-                    val wssUrl = s"ws://localhost:${wsServer.port}/ws/slack"
+                HttpServer.init(0, "127.0.0.1")(HttpHandler.webSocket("ws/slack")(wsHandler)).map { wsServer =>
+                    val wssUrl = s"ws://127.0.0.1:${wsServer.port}/ws/slack"
                     val openRoute = HttpRoute.postRaw("apps.connections.open").response(_.bodyText).handler { _ =>
                         HttpResponse(HttpStatus.OK).addField("body", s"""{"ok":true,"url":"$wssUrl"}""")
                     }
-                    HttpServer.init(0, "localhost")(openRoute).map { apiServer =>
-                        SlackWebApi.baseUrl.let(s"http://localhost:${apiServer.port}") {
+                    HttpServer.init(0, "127.0.0.1")(openRoute).map { apiServer =>
+                        SlackWebApi.baseUrl.let(s"http://127.0.0.1:${apiServer.port}") {
                             val handler: SlackEnvelope => SlackAck < (Async & Abort[SlackException]) =
                                 env => Abort.run[Closed](delivered.put(env)).andThen(SlackAck.Ack: SlackAck)
                             // Run connect in a fiber; once the event is delivered, interrupt it so the
@@ -156,15 +156,15 @@ class SlackSocketEngineLiveTest extends kyo.test.Test[Any]:
         // then connects the live transport and reaches readiness on the hello.
         val wsHandler: (HttpRequest[Any], HttpWebSocket) => Unit < (Async & Abort[Closed]) =
             (_, ws) => ws.put(HttpWebSocket.Payload.Text(helloFrame)).andThen(ws.stream.foreach(_ => Kyo.unit))
-        HttpServer.init(0, "localhost")(
+        HttpServer.init(0, "127.0.0.1")(
             HttpHandler.webSocket("ws/slack")(wsHandler)
         ).map { wsServer =>
-            val wssUrl = s"ws://localhost:${wsServer.port}/ws/slack"
+            val wssUrl = s"ws://127.0.0.1:${wsServer.port}/ws/slack"
             val openRoute = HttpRoute.postRaw("apps.connections.open").response(_.bodyText).handler { _ =>
                 HttpResponse(HttpStatus.OK).addField("body", s"""{"ok":true,"url":"$wssUrl"}""")
             }
-            HttpServer.init(0, "localhost")(openRoute).map { apiServer =>
-                SlackWebApi.baseUrl.let(s"http://localhost:${apiServer.port}") {
+            HttpServer.init(0, "127.0.0.1")(openRoute).map { apiServer =>
+                SlackWebApi.baseUrl.let(s"http://127.0.0.1:${apiServer.port}") {
                     Slack.init(cfg).map { conn =>
                         val engine = Slack.handle(conn).engine
                         engine.closeNow.andThen(assert(true))

@@ -46,9 +46,9 @@ assert(malformed.failure.exists(_.offset == 0))
 `GlobParseException` extends `KyoException` and retains the zero-based offset and reason for invalid syntax.
 The `glob"..."` literal embeds its compiled automaton and does not parse the pattern again when the program starts.
 
-Kyo's file-system module will accept this compiled value directly for directory listing and tree
-walking, so a pattern compiles once and travels through backend-independent path code. Filesystem
-implementations must not substitute host glob syntax or host case rules.
+`kyo-system` consumes this same value in `Path.list(glob)` and `Path.walk(glob)`. Compile a
+pattern once and pass it through backend-independent path code; filesystem implementations must not
+substitute host glob syntax or host case rules.
 
 ## Optional and fallible values
 

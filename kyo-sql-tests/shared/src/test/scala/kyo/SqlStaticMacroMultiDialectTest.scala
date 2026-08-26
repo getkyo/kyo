@@ -74,6 +74,20 @@ class SqlStaticMacroMultiDialectTest extends Test:
         val total = SqlStaticProbe.render(Sql.from[Person]("p").sum(_.p.age))
         assert(total.sqlFor(Idiom.Id("postgres")).get == """SELECT SUM("p"."age") FROM "person" "p"""")
         assert(total.sqlFor(Idiom.Id("mysql")).get == "SELECT SUM(`p`.`age`) FROM `person` `p`")
+        // MIN and AVG state their result type the same way SUM does, through an `AsMaybe` given, so the
+        // inliner adapts each construction to a path-dependent `n.Out` and the lift has to see through that
+        // adaptation. COUNT does not: it is the one node whose result type is fixed, so it would still fold
+        // if the others stopped. Asserting all three keeps the whole family covered rather than the one
+        // member that happens to be shaped most simply.
+        val smallest = SqlStaticProbe.render(Sql.from[Person]("p").min(_.p.age))
+        assert(smallest.sqlFor(Idiom.Id("postgres")).get == """SELECT MIN("p"."age") FROM "person" "p"""")
+        assert(smallest.sqlFor(Idiom.Id("mysql")).get == "SELECT MIN(`p`.`age`) FROM `person` `p`")
+        val mean = SqlStaticProbe.render(Sql.from[Person]("p").avg(_.p.age))
+        assert(mean.sqlFor(Idiom.Id("postgres")).get == """SELECT AVG("p"."age") FROM "person" "p"""")
+        assert(mean.sqlFor(Idiom.Id("mysql")).get == "SELECT AVG(`p`.`age`) FROM `person` `p`")
+        val tally = SqlStaticProbe.render(Sql.from[Person]("p").count(_.p.age))
+        assert(tally.sqlFor(Idiom.Id("postgres")).get == """SELECT COUNT("p"."age") FROM "person" "p"""")
+        assert(tally.sqlFor(Idiom.Id("mysql")).get == "SELECT COUNT(`p`.`age`) FROM `person` `p`")
         val rolledUp = SqlStaticProbe.render(
             Sql.from[Person]("p").groupByRollup(c => c.p.deptId).select(v => (v.deptId, v.age.sum))
         )

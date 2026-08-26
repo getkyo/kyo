@@ -56,12 +56,18 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                     else Emit.valueWith(Chunk(100))(Loop.continue(()))
                 )
             )
+            val done = new java.util.concurrent.CountDownLatch(1)
             for
+                // The bug livelocks the scheduler, so the per-leaf timeout (on that scheduler) cannot fire: only a raw
+                // watchdog thread can break it. It force-stops producers only if the merges have not completed within a
+                // catastrophic 60s, so a correct run releases `done` first; `spinning > 0` means a genuine livelock.
                 watchdog <- Sync.defer {
                     val t = new Thread(() =>
-                        try Thread.sleep(2000)
-                        catch case _: InterruptedException => ()
-                        forceStop.set(true)
+                        try
+                            if !done.await(60, java.util.concurrent.TimeUnit.SECONDS) then forceStop.set(true)
+                        catch
+                            // Interrupted at teardown once the merge completed and released `done`: nothing to do.
+                            case _: InterruptedException => ()
                     )
                     t.setDaemon(true)
                     t.start()
@@ -70,8 +76,8 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                 _ <- Async.foreach(1 to merges, merges)(_ =>
                     Stream.collectAllHalting(Seq(Stream.init(0 to 50), infinite)).run
                 )
-                _ <- Async.sleep(3.seconds)
             yield
+                done.countDown()
                 watchdog.interrupt()
                 assert(
                     spinning.get() == 0,
@@ -95,6 +101,56 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             Env.run(5):
                 Stream.collectAll(Seq(s1, s2)).run.map: res =>
                     assert(res.toSet == Set.from(1 to 5) ++ Set.from(101 to 105))
+        }
+
+        "fromInputStream" - {
+            "reads all bytes" in {
+                val data = "hello world".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+                val is   = new java.io.ByteArrayInputStream(data)
+                for bytes <- Scope.run(Stream.fromInputStream(is).run)
+                yield assert(new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8) == "hello world")
+            }
+
+            "closes the stream when the scope ends" in {
+                var closed = false
+                val is = new java.io.ByteArrayInputStream("x".getBytes(java.nio.charset.StandardCharsets.UTF_8)):
+                    override def close(): Unit =
+                        closed = true
+                        super.close()
+                for _ <- Scope.run(Stream.fromInputStream(is).run)
+                yield assert(closed)
+            }
+
+            "reads bytes across multiple buffer-sized chunks" in {
+                // Every byte differs from its neighbours, so the assertion reads position and not just
+                // length: a chunk emitted out of order, emitted twice, or dropped and replaced by a repeat
+                // of the one before it all change the sequence, and none of them would change the count.
+                val data = Array.tabulate(20)(i => (i + 1).toByte)
+                val is   = new java.io.ByteArrayInputStream(data)
+                for bytes <- Scope.run(Stream.fromInputStream(is, bufferSize = 8.bytes).run)
+                yield assert(bytes.toArray.toSeq == data.toSeq)
+            }
+
+            // A zero-size buffer would read nothing on every pass, so the read loop would spin without ever
+            // reaching the end of the stream. One byte at a time is slow but finite, and it still delivers
+            // every byte in order, which is what this pins.
+            "reads one byte at a time when the buffer size is zero" in {
+                val data = Array.tabulate(5)(i => (i + 1).toByte)
+                val is   = new java.io.ByteArrayInputStream(data)
+                for bytes <- Scope.run(Stream.fromInputStream(is, bufferSize = ByteSize.Zero).run)
+                yield assert(bytes.toArray.toSeq == data.toSeq)
+            }
+
+            // The clamp is pinned on the function rather than through a read, because the upper end names
+            // a two-gigabyte allocation that a test cannot make.
+            "clamps a buffer size to the range an array can address" in {
+                assert(StreamCoreExtensions.readBufferCapacity(ByteSize.Zero) == 1)
+                assert(StreamCoreExtensions.readBufferCapacity(1.bytes) == 1)
+                assert(StreamCoreExtensions.readBufferCapacity(8.kib) == 8192)
+                assert(StreamCoreExtensions.readBufferCapacity(Int.MaxValue.bytes) == Int.MaxValue)
+                assert(StreamCoreExtensions.readBufferCapacity((Int.MaxValue.toLong + 1L).bytes) == Int.MaxValue)
+                assert(StreamCoreExtensions.readBufferCapacity(4.gib) == Int.MaxValue)
+            }
         }
     }
 
@@ -642,10 +698,10 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                     Kyo.zip(streamHub.subscribe, streamHub.subscribe)
                 }.map:
                     case (s1, s2) =>
-                        // Ensure boundary works
-                        Async.sleep(30.millis).andThen:
-                            Kyo.zip(s1.run, s2.run).map:
-                                case (c1, c2) => assert(c1 == c2 && c1 == (0 to 10))
+                        // The source is latch-gated: it emits only after both subscriptions register and
+                        // the first stream runs, so both receive the full sequence without a settle delay.
+                        Kyo.zip(s1.run, s2.run).map:
+                            case (c1, c2) => assert(c1 == c2 && c1 == (0 to 10))
             }
 
             "broadcast2" in {

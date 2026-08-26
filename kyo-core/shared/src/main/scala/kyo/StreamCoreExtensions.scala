@@ -227,6 +227,22 @@ object StreamCoreExtensions:
             Stream.unwrap(stream)
         end fromIteratorCatching
 
+        /** Streams a `java.io.InputStream`'s bytes.
+          *
+          * The stream is registered with the enclosing `Scope` and closed when that scope ends, so a caller never has to pair the
+          * read with a manual close. Reads happen in `bufferSize` chunks.
+          *
+          * @param is
+          *   the input stream to consume
+          * @param bufferSize
+          *   read buffer size, clamped to the range an array can address: `ByteSize.Zero` reads one byte at a time rather than spinning
+          *   on a buffer that holds nothing, and anything above `Int.MaxValue` bytes reads through the largest buffer there is
+          */
+        def fromInputStream(is: java.io.InputStream, bufferSize: ByteSize = 8.kib)(using
+            Frame
+        ): Stream[Byte, Sync & Scope] =
+            streamFromJavaInputStream(is, readBufferCapacity(bufferSize))
+
         /** Merges multiple streams asynchronously. Stream stops as soon as any of the source streams complete.
           *
           * @note
@@ -1124,74 +1140,28 @@ object StreamCoreExtensions:
 
     end extension
 
-    /** Shared write logic: opens a write handle via Scope, runs the body, and removes the partial file on failure. */
-    private def writeWith[S](path: Path)(
-        body: Path.WriteHandle => Unit < (Sync & Abort[FileWriteException] & S)
-    )(using Frame): Unit < (Scope & Sync & Abort[FileException] & S) =
-        Scope
-            .acquireRelease(
-                Sync.Unsafe.defer(Abort.get(path.unsafe.openWrite(append = false, createFolders = true)))
-            )(handle => Sync.Unsafe.defer(handle.close()))
-            .map { handle =>
-                Abort.run[FileWriteException](body(handle)).map {
-                    case Result.Failure(e) =>
-                        path.remove.andThen(Abort.fail(e))
-                    case ok => Abort.get(ok)
-                }
-            }
-
-    extension [S](stream: Stream[Byte, S])
-        /** Writes each byte of the stream to `path`, creating parent directories as needed.
-          *
-          * The write channel is acquired in a `Scope` and released when the stream completes or fails. If the stream fails, the
-          * partially-written file is deleted before re-raising the error.
-          */
-        def writeTo(path: Path)(using Frame): Unit < (Scope & Sync & Abort[FileException] & S) =
-            writeWith(path) { handle =>
-                stream.foreachChunk { chunk =>
-                    Sync.Unsafe.defer(Abort.get(handle.writeBytes(chunk)))
-                }
-            }
-    end extension
-
-    extension [S](stream: Stream[String, S])
-        /** Writes each string chunk of the stream to `path` using the given charset (default UTF-8).
-          *
-          * The write channel is acquired in a `Scope` and released when the stream completes or fails.
-          */
-        def writeTo(
-            path: Path,
-            charset: java.nio.charset.Charset = java.nio.charset.StandardCharsets.UTF_8
-        )(using Frame): Unit < (Scope & Sync & Abort[FileException] & S) =
-            writeWith(path) { handle =>
-                stream.foreach { s =>
-                    Sync.Unsafe.defer(Abort.get(handle.writeString(s, charset)))
-                }
-            }
-
-        /** Writes each string element as a separate line to `path` using the given charset.
-          *
-          * The write channel is acquired in a `Scope` and released when the stream completes or fails. If the stream fails, the
-          * partially-written file is deleted before re-raising the error.
-          */
-        def writeLinesTo(
-            path: Path,
-            charset: java.nio.charset.Charset = java.nio.charset.StandardCharsets.UTF_8
-        )(using Frame): Unit < (Scope & Sync & Abort[FileException] & S) =
-            System.lineSeparator.map { sep =>
-                writeWith(path) { handle =>
-                    stream.foreach { s =>
-                        Sync.Unsafe.defer(Abort.get(handle.writeString(s + sep, charset)))
-                    }
-                }
-            }
-    end extension
-
     /** Wraps a Java `InputStream` in a `Stream[Byte, Sync & Scope]`.
       *
       * The stream reads the input in chunks of `bufferSize` bytes. The `InputStream` is registered with the enclosing `Scope` and closed
       * when the scope ends (whether by normal completion, `Abort`, or cancellation).
       */
+    /** Narrows a read buffer size to the array capacity the read loop allocates.
+      *
+      * Two ends need a rule. `ByteSize.Zero` would allocate a buffer that reads nothing, which turns the read loop into a spin, so it
+      * becomes one byte. A size above `Int.MaxValue` names more bytes than an array can address, so it becomes `Int.MaxValue`: the caller
+      * asked for the largest buffer it could name and gets the largest one there is, which is what the `Int`-typed parameter this replaced
+      * already did at its own ceiling.
+      *
+      * Clamping rather than failing keeps the read total, so the effect row of the stream stays what the read itself needs and does not
+      * grow an argument-validation failure that no realistic buffer size can reach.
+      */
+    private[kyo] def readBufferCapacity(bufferSize: ByteSize): Int =
+        val bytes = bufferSize.toBytes
+        if bytes <= 0L then 1
+        else if bytes > Int.MaxValue.toLong then Int.MaxValue
+        else bytes.toInt
+    end readBufferCapacity
+
     private[kyo] def streamFromJavaInputStream(is: java.io.InputStream, bufferSize: Int = 8192)(using Frame): Stream[Byte, Sync & Scope] =
         Stream {
             Scope.acquireRelease(is)(_.close()).map { stream =>
@@ -1213,4 +1183,31 @@ object StreamCoreExtensions:
 
 end StreamCoreExtensions
 
-export StreamCoreExtensions.*
+// Exported by name. A wildcard emits one forwarder per member in an order the compiler does not fix, so two clean builds of identical
+// sources produce different artifacts.
+export StreamCoreExtensions.StreamHub
+export StreamCoreExtensions.broadcast2
+export StreamCoreExtensions.broadcast3
+export StreamCoreExtensions.broadcast4
+export StreamCoreExtensions.broadcast5
+export StreamCoreExtensions.broadcastDynamic
+export StreamCoreExtensions.broadcastDynamicWith
+export StreamCoreExtensions.broadcasted
+export StreamCoreExtensions.broadcastN
+export StreamCoreExtensions.collectAll
+export StreamCoreExtensions.collectAllHalting
+export StreamCoreExtensions.defaultAsyncStreamBufferSize
+export StreamCoreExtensions.fromInputStream
+export StreamCoreExtensions.fromIterator
+export StreamCoreExtensions.fromIteratorCatching
+export StreamCoreExtensions.groupedWithin
+export StreamCoreExtensions.mapChunkPar
+export StreamCoreExtensions.mapChunkParUnordered
+export StreamCoreExtensions.mapPar
+export StreamCoreExtensions.mapParUnordered
+export StreamCoreExtensions.merge
+export StreamCoreExtensions.mergeHalting
+export StreamCoreExtensions.mergeHaltingLeft
+export StreamCoreExtensions.mergeHaltingRight
+export StreamCoreExtensions.readBufferCapacity
+export StreamCoreExtensions.streamFromJavaInputStream

@@ -234,16 +234,11 @@ class CdpBackendLifecycleJvmTest extends kyo.BaseBrowserTest:
                             // Brief settle: allow the slow in-flight send to register before close starts.
                             _ <- Async.delay(100.millis)(Kyo.unit)
                             // close(500ms): grace expires while send is in-flight, falls back to closeNow.
-                            timedClose <- timed(backend.close(500.millis))
-                            (elapsedDur, _) = timedClose
-                            elapsedMs       = elapsedDur.toMillis
+                            _          <- backend.close(500.millis)
                             slowResult <- slowFiber.getResult
                         yield
-                            // Behavioural upper bound: must return well before the 10s server delay.
-                            assert(
-                                elapsedMs < 2000,
-                                s"close(500ms) should fall back to closeNow within ~grace, took ${elapsedMs}ms"
-                            )
+                            // The in-flight getTargets seeing ConnectionLost proves close force-closed via the closeNow
+                            // fallback: had it waited out the 10s server delay the send would have completed (Success).
                             slowResult match
                                 case Result.Success(Result.Failure(_: BrowserConnectionLostException)) => succeed
                                 case other =>

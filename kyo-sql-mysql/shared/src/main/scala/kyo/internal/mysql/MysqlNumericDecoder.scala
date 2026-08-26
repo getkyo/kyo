@@ -81,16 +81,23 @@ private[kyo] object MysqlNumericDecoder:
 
     /** Which representation a numeric column value carries under the binary protocol. */
     private enum Wire derives CanEqual:
-        case Integer, Float4, Float8, Decimal
+        case Integer, Float4, Float8, Decimal, Rendering
 
     /** Resolves a binary-protocol column's representation from its type byte.
       *
-      * `whenUnknown` covers an [[MysqlColumnToken.Unspecified]] token and any type byte outside the numeric set, both of which leave only the
-      * value's byte width to go on. It is deliberately not a rejection: a `BIT` column, and any string-shaped column a numeric schema field is
-      * pointed at, read correctly by width today and would start failing for no gain against the mismatch class this resolution closes.
+      * A string-family column resolves to [[Wire.Rendering]]: a number stored in one is its own text rendering under both protocols, so a
+      * numeric field over one parses the digits. Without that case the digits are read as a little-endian integer of whatever width the value
+      * happens to have, which for `'hello'` is a five-byte value no integer width recognises. It is also what makes the failure one a caller
+      * can act on: parsing reports [[kyo.SqlDecodeNumericException]] naming the offending value, which is what the same read reports on
+      * PostgreSQL.
+      *
+      * `whenUnknown` covers an [[MysqlColumnToken.Unspecified]] token and any type byte in neither set, both of which leave only the value's
+      * byte width to go on. It is deliberately not a rejection: a `BIT` column reads correctly by width today and would start failing for no
+      * gain against the mismatch class this resolution closes.
       */
     private def wireOf(token: Int, whenUnknown: Wire): Wire =
         if !MysqlColumnToken.isSpecified(token) then whenUnknown
+        else if MysqlColumnToken.isTextColumn(token) then Wire.Rendering
         else
             MysqlColumnToken.columnType(token) match
                 case MysqlEncoder.TYPE_TINY | MysqlEncoder.TYPE_SHORT | MysqlEncoder.TYPE_INT24 | MysqlEncoder.TYPE_LONG |
@@ -110,10 +117,11 @@ private[kyo] object MysqlNumericDecoder:
         case Format.Text => wholeOf(parseDecimalText(bytes), scalaType, "text column")
         case Format.Binary =>
             wireOf(token, Wire.Integer) match
-                case Wire.Integer => readIntegerBinary(bytes, token, scalaType)
-                case Wire.Float4  => wholeOf(BigDecimal(readFloat4LE(bytes).toDouble), scalaType, "FLOAT column")
-                case Wire.Float8  => wholeOf(BigDecimal(readFloat8LE(bytes)), scalaType, "DOUBLE column")
-                case Wire.Decimal => wholeOf(parseDecimalText(bytes), scalaType, "DECIMAL column")
+                case Wire.Integer   => readIntegerBinary(bytes, token, scalaType)
+                case Wire.Float4    => wholeOf(BigDecimal(readFloat4LE(bytes).toDouble), scalaType, "FLOAT column")
+                case Wire.Float8    => wholeOf(BigDecimal(readFloat8LE(bytes)), scalaType, "DOUBLE column")
+                case Wire.Decimal   => wholeOf(parseDecimalText(bytes), scalaType, "DECIMAL column")
+                case Wire.Rendering => wholeOf(parseDecimalText(bytes), scalaType, "text column")
 
     /** The approximate value a numeric column carries, for the `Float` and `Double` targets. */
     private def approximateValueOf(bytes: Span[Byte], format: Format, token: Int, whenUnknown: Wire, scalaType: String)(using
@@ -128,10 +136,11 @@ private[kyo] object MysqlNumericDecoder:
         case Format.Text => parseDoubleText(bytes)
         case Format.Binary =>
             wireOf(token, whenUnknown) match
-                case Wire.Integer => unsignedDecimalOf(bytes, token, scalaType).toDouble
-                case Wire.Float4  => readFloat4LE(bytes).toDouble
-                case Wire.Float8  => readFloat8LE(bytes)
-                case Wire.Decimal => parseDecimalText(bytes).toDouble
+                case Wire.Integer   => unsignedDecimalOf(bytes, token, scalaType).toDouble
+                case Wire.Float4    => readFloat4LE(bytes).toDouble
+                case Wire.Float8    => readFloat8LE(bytes)
+                case Wire.Decimal   => parseDecimalText(bytes).toDouble
+                case Wire.Rendering => parseDoubleText(bytes)
 
     /** The exact decimal value a numeric column carries, for the `BigDecimal`, `BigInt` and `Boolean` targets.
       *
@@ -152,10 +161,11 @@ private[kyo] object MysqlNumericDecoder:
             case Format.Text => parseDecimalText(bytes)
             case Format.Binary =>
                 wireOf(token, whenUnknown) match
-                    case Wire.Integer => unsignedDecimalOf(bytes, token, scalaType)
-                    case Wire.Float4  => BigDecimal(readFloat4LE(bytes).toDouble)
-                    case Wire.Float8  => BigDecimal(readFloat8LE(bytes))
-                    case Wire.Decimal => parseDecimalText(bytes)
+                    case Wire.Integer   => unsignedDecimalOf(bytes, token, scalaType)
+                    case Wire.Float4    => BigDecimal(readFloat4LE(bytes).toDouble)
+                    case Wire.Float8    => BigDecimal(readFloat8LE(bytes))
+                    case Wire.Decimal   => parseDecimalText(bytes)
+                    case Wire.Rendering => parseDecimalText(bytes)
 
     // --- BIT, the one column type that is neither an ASCII rendering nor a little-endian integer ---
 

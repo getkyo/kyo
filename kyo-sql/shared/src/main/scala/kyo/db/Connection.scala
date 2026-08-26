@@ -10,6 +10,7 @@ import kyo.Cache
 import kyo.Chunk
 import kyo.Duration
 import kyo.Frame
+import kyo.Local
 import kyo.Maybe
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
@@ -211,6 +212,31 @@ end Connection
   */
 object Connection:
 
+    /** One lease's connection custody, so a connection is owned by a finalizer from the instant it exists.
+      *
+      * The producer [[claim]]s when the connection is built and the acquire [[take]]s as it registers the lease's exit finalizer; the pool's
+      * orphan finalizer closes one [[claim]]ed but never [[take]]n. [[take]] and [[orphan]] share one flag, so exactly one close fires.
+      */
+    final private[kyo] class Custody(using AllowUnsafe):
+        private val ref   = AtomicRef.Unsafe.init(Maybe.empty[() => Unit < (Async & Abort[Throwable])])
+        private val taken = AtomicBoolean.Unsafe.init(false)
+
+        /** Records the close for a connection just delivered into this custody. Idempotent, so it composes with the lease's own close. */
+        def claim(close: () => Unit < (Async & Abort[Throwable]))(using AllowUnsafe): Unit = ref.set(Maybe(close))
+
+        /** Marks the lease's own exit finalizer as registered, so [[orphan]] stands down. */
+        def take()(using AllowUnsafe): Unit = taken.set(true)
+
+        /** The close for a connection claimed but never taken (the handover dropped it), else [[Absent]]. */
+        def orphan()(using AllowUnsafe): Maybe[() => Unit < (Async & Abort[Throwable])] =
+            if taken.get() then Absent else ref.get()
+    end Custody
+
+    /** The current lease's [[Custody]], bound by the acquire so the [[Factory]] claims into it. Inheritable, so it reaches a factory the
+      * connect budget runs in a `timeoutWithError` child fiber.
+      */
+    private[kyo] val custodyLocal: Local[Maybe[Custody]] = Local.init(Maybe.empty)
+
     /** How the pool opens one session, and the only thing it is given that knows which engine is behind it.
       *
       * An implementation owns everything that reaching a specific server involves: the TLS negotiation the engine's handshake defines, the
@@ -347,19 +373,45 @@ object Connection:
       * and names the factory, MySQL wraps the throwable directly), so it is the one parameter. Without the bracket the handshake sockets
       * accumulate until GC and the end-of-run FD leak check trips.
       */
-    private[kyo] def openSocket[A](host: String, port: Int, onPanic: Throwable => SqlConnectionException < Sync)(
+    private[kyo] def openSocket[A](
+        host: String,
+        port: Int,
+        onPanic: Throwable => SqlConnectionException < Sync,
+        ownerClose: A => Unit < (Async & Abort[Throwable])
+    )(
         body: kyo.net.Connection => A < (Async & Abort[SqlException])
     )(using Frame): A < (Async & Abort[SqlException]) =
-        Abort.run[kyo.net.NetException](Sync.Unsafe.defer(kyo.net.NetPlatform.transport.connect(
-            host,
-            port
-        ).safe).flatMap(_.use(identity))).flatMap {
-            case Result.Failure(_) =>
-                Abort.fail(SqlConnectionConnectFailedException(host, port, new Exception("connect refused")))
-            case Result.Panic(t) =>
-                onPanic(t).flatMap(Abort.fail(_))
-            case Result.Success(rawConn) =>
-                closingOnFailure(rawConn)(body(rawConn))
+        // A finalizer on the connect fiber closes a connection an interrupt drops before `body` runs; after `body`, engine `a` is claimed
+        // into `custodyLocal` (orphan finalizer closes it if the handover drops). Claim `a`, not the raw socket, whose close a TLS upgrade no-ops.
+        Scope.run {
+            Sync.Unsafe.defer(kyo.net.NetPlatform.transport.connect(host, port).safe).map { connFiber =>
+                Scope.ensure { error =>
+                    if error.isDefined then
+                        connFiber.interrupt.andThen(connFiber.getResult).map {
+                            case Result.Success(rawConn) => Sync.Unsafe.defer(if rawConn.isOpen then rawConn.close() else ())
+                            case _                       => ()
+                        }
+                    else ()
+                }.andThen {
+                    Abort.run[kyo.net.NetException](connFiber.get).map {
+                        case Result.Failure(cause) =>
+                            // Carry the NetException through as the cause rather than substituting a placeholder. The placeholder this
+                            // replaces, `new Exception("connect refused")`, read as the socket's own answer while discarding it: a DNS
+                            // failure, a refused connect, an unavailable I/O backend and a connect timeout all arrived as the same four
+                            // words with no cause attached, and a report built on that message named the wrong layer.
+                            Abort.fail(SqlConnectionConnectFailedException(host, port, cause))
+                        case Result.Panic(t) =>
+                            onPanic(t).map(Abort.fail(_))
+                        case Result.Success(rawConn) =>
+                            closingOnFailure(rawConn)(body(rawConn).map { a =>
+                                custodyLocal.use {
+                                    case Present(custody) => Sync.Unsafe.defer(custody.claim(() => ownerClose(a)))
+                                    case Absent           => ()
+                                }.andThen(a)
+                            })
+                    }
+                }
+            }
         }
 
     /** Builds a per-connection prepared-statement cache whose eviction enqueues the released server-side handle into `closesRef`.

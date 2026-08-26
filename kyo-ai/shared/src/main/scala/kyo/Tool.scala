@@ -42,6 +42,107 @@ object Tool:
         new Tool[S]:
             def infos = Chunk(Info(name, description, prompt, run, summon[Schema[In]], summon[Schema[Out]], frame))
 
+    /** Builds a tool from a schema known only at runtime.
+      *
+      * `init` needs a `Schema[In]` at compile time, so a tool whose shape is discovered rather than
+      * declared cannot be expressed through it: an MCP server publishes its tools' input schemas over
+      * the wire, and a host has no Scala type to name for any of them. This factory takes that schema as
+      * a value and hands the run the decoded arguments as an open `Structure.Value`.
+      *
+      * The declared schema binds. It is advertised to the model verbatim, and arguments are checked
+      * against it before the body runs, so a call missing a required field is refused with a message the
+      * model can repair from rather than reaching a body that never agreed to receive it. The check runs
+      * inside the tool loop, on the tool-error channel, the same way the result tool enforces its own
+      * open-shape result; that is why the returned row carries `Abort[AIDecodeException]`.
+      *
+      * The check is structural: what `Structure.Type` can carry (shape, required fields, nesting) is
+      * enforced, while JSON Schema's value constraints (`pattern`, numeric bounds) are advisory, since
+      * they reach the model but have no structural carrier. See `Json.JsonSchema.toStructure`.
+      *
+      * @param name
+      *   the tool name the model calls
+      * @param inputSchema
+      *   the JSON Schema for the tool's arguments, as published by whoever owns the tool
+      * @param description
+      *   what the tool does, shown to the model
+      * @param prompt
+      *   a tool-specific prompt, surfaced when the tool is enabled
+      */
+    def initDynamic[S](
+        name: String,
+        inputSchema: Json.JsonSchema,
+        description: String = "",
+        prompt: Prompt[S] = Prompt.empty
+    )(
+        run: Structure.Value => Structure.Value < S
+    )(using frame: Frame): Tool[S & Abort[AIDecodeException]] =
+        val declared  = Json.JsonSchema.toStructure(inputSchema)
+        val openCodec = summon[Schema[Structure.Value]]
+        // The passthrough codec accepts any record, so the declared shape is enforced here rather than
+        // by the decode, exactly as the result tool does for an open-shape result.
+        val checked: Structure.Value => Structure.Value < (S & Abort[AIDecodeException]) =
+            arguments =>
+                Structure.conform(arguments, declared) match
+                    case Present(violation) =>
+                        Abort.fail(AIDecodeException(
+                            s"arguments do not conform to the declared input schema of '$name': $violation"
+                        ))
+                    case Absent => run(arguments)
+        new Tool[S & Abort[AIDecodeException]]:
+            def infos = Chunk(Info(
+                name,
+                description,
+                prompt,
+                checked,
+                openCodec.withStructure(declared),
+                openCodec,
+                frame,
+                Present(inputSchema)
+            ))
+        end new
+    end initDynamic
+
+    /** Bridges every tool an MCP server publishes into tools this agent can call.
+      *
+      * This is the whole point of shipping both an MCP module and an LLM module: a tool set that exists
+      * on the other side of a connection drops into an agent host without anyone writing a wrapper per
+      * tool. Nothing here names an input or output type, so it works against a server whose Scala types
+      * are not on the classpath, which is the case a hand-written wrapper cannot serve at all.
+      *
+      * Each published tool becomes one [[initDynamic]] tool carrying the server's own name, description
+      * and input schema. A call is forwarded with the model's arguments; the tool's structured result is
+      * returned when the server sends one, and its text content otherwise. A result the server marks as
+      * an error becomes a tool failure the model sees and may retry, which is the same contract
+      * `McpHandler.ToolOutcome.error` documents on the server side.
+      *
+      * Pair it with `Tool.aggregate` to combine a server's tools with locally defined ones.
+      */
+    def fromMcp(client: McpClient)(using
+        Frame
+    ): Tool[Async & Abort[McpException] & Abort[AIDecodeException]] < (Async & Abort[McpListFailure]) =
+        client.streamTools.run.map(metas => aggregate(metas.map(fromMcpTool(client, _))*))
+
+    private def fromMcpTool(client: McpClient, meta: McpHandler.ToolMeta)(using
+        Frame
+    ): Tool[Async & Abort[McpException] & Abort[AIDecodeException]] =
+        initDynamic[Async & Abort[McpException]](
+            meta.name,
+            meta.inputSchema,
+            meta.description.getOrElse("")
+        ) { arguments =>
+            client.callToolRaw(meta.name, arguments).map { outcome =>
+                val text = outcome.content.collect { case t: McpContent.Text => t.text }.mkString("\n")
+                if outcome.isError then
+                    Abort.fail(McpToolExecutionException(meta.name, if text.isEmpty then "no detail reported" else text))
+                else
+                    // A server that publishes an output schema sends `structuredContent`; one that does
+                    // not still answers in text, and the model reads either.
+                    outcome.structuredContent.getOrElse(Structure.Value.Str(text))
+                end if
+            }
+        }
+    end fromMcpTool
+
     /** Combines tools into one. */
     def aggregate[S](tools: Tool[S]*): Tool[S] =
         new Tool[S]:
@@ -59,8 +160,20 @@ object Tool:
             run: In => Out < (LLM & S),
             inputSchema: Schema[In],
             outputSchema: Schema[Out],
-            createdAt: Frame
-        )
+            createdAt: Frame,
+            declaredInputSchema: Maybe[Json.JsonSchema] = Absent
+        ):
+            /** The JSON Schema advertised to the model for this tool's input.
+              *
+              * Derived from `inputSchema` for a typed tool. A schema-at-runtime tool carries the schema it
+              * was built from and advertises that instead, so a third-party server's own constraints and
+              * descriptions reach the model as published: re-deriving them through the structural
+              * vocabulary would drop `pattern`, numeric bounds, and any description outside property
+              * position, which is a silent downgrade of someone else's tool contract.
+              */
+            def wireInputSchema: Json.JsonSchema =
+                declaredInputSchema.getOrElse(Json.jsonSchema(using inputSchema))
+        end Info
 
         def infos(using Frame): Chunk[Info[?, ?, LLM]] < LLM =
             // cast: State.tools holds Tool[Any]; re-widen to the LLM-erased Info the eval loop consumes.

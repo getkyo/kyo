@@ -9,6 +9,7 @@ import kyo.Maybe
 import kyo.Span
 import kyo.SqlCodec.Format
 import kyo.SqlDecodeColumnAbsentException
+import kyo.SqlDecodeColumnTypeMismatchException
 import kyo.SqlDecodeException
 import kyo.SqlDecodeIntervalException
 import kyo.SqlDecodeMultiCharacterForCharException
@@ -691,13 +692,23 @@ class MysqlRowReaderTest extends Test:
     // and the UNSIGNED column flag is honored so an `INT UNSIGNED` near its top range does not read as negative. The
     // text protocol shares no representation with any of it.
 
-    /** Builds a single-column row carrying the server's type byte and flags, the way `MysqlRowCodec.row` does. */
-    private def typedRow(bytes: Span[Byte], columnType: Int, flags: Int, format: Format): SqlRow =
+    /** Builds a single-column row carrying the server's type byte, flags, and collation, the way `MysqlRowCodec.row` does.
+      *
+      * `charset` defaults to a non-binary collation, since every leaf here reads a value at its declared type rather than probing the
+      * BLOB-against-TEXT split; the leaves that do probe it pass 63 explicitly.
+      */
+    private def typedRow(bytes: Span[Byte], columnType: Int, flags: Int, format: Format, charset: Int = Utf8Collation): SqlRow =
         new SqlRow(
             Chunk(Maybe.Present(bytes)),
-            Chunk(SqlRow.Column("column", MysqlColumnToken(columnType, flags))),
+            Chunk(SqlRow.Column("column", MysqlColumnToken(columnType, flags, charset))),
             MysqlRowCodec(format)
         )
+
+    /** `utf8mb4_general_ci`, standing in for any collation that is not `binary`. */
+    private val Utf8Collation = 45
+
+    /** MySQL's `binary` collation id, which is what separates a BLOB from a TEXT. */
+    private val BinaryCollation = 63
 
     private def readerFor(row: SqlRow, format: Format): MysqlRowReader =
         new MysqlRowReader(row, format)
@@ -994,6 +1005,49 @@ class MysqlRowReaderTest extends Test:
         val ex  = intercept[SqlDecodeIntervalException](reader(row).nextCalendarInterval())
         assert(ex.field == "text", s"expected field 'text', got ${ex.field}")
         assert(ex.value == stored, s"expected the raw wire text, got ${ex.value}")
+    }
+
+    // ---- The BLOB against TEXT split, which only the collation carries --------------------------------
+    //
+    // MySQL gives a BLOB and a TEXT the same type byte, a VARBINARY and a VARCHAR the same type byte, and a
+    // BINARY and a CHAR the same type byte. Only the column's collation separates each pair, 63 meaning
+    // binary. Without it a `String` field over a BLOB read the raw bytes as UTF-8 and answered replacement
+    // characters, which is the same defect a text read of an int4 is on PostgreSQL, where `bytea` is refused.
+
+    "a String read of a binary-collated BLOB is refused, naming BLOB rather than TEXT" in {
+        val bytes = Span.from(Array[Byte](0x00, 0xff.toByte, 0x00, 0xff.toByte))
+        val row   = typedRow(bytes, MysqlEncoder.TYPE_BLOB, 0, Format.Binary, BinaryCollation)
+        val ex    = intercept[SqlDecodeColumnTypeMismatchException](reader(row).string())
+        assert(ex.columnType == "BLOB", s"expected the failure to name BLOB, got ${ex.columnType}")
+        assert(ex.scalaType == "String", s"expected the failure to name String, got ${ex.scalaType}")
+    }
+
+    "a String read of a binary-collated VARBINARY and BINARY is refused under each spelling" in {
+        val varbinary = typedRow(Span.from(Array[Byte](1, 2)), MysqlEncoder.TYPE_VAR_STRING, 0, Format.Binary, BinaryCollation)
+        val binary    = typedRow(Span.from(Array[Byte](1, 2)), MysqlEncoder.TYPE_STRING, 0, Format.Binary, BinaryCollation)
+        val varEx     = intercept[SqlDecodeColumnTypeMismatchException](reader(varbinary).string())
+        val binEx     = intercept[SqlDecodeColumnTypeMismatchException](reader(binary).string())
+        assert(varEx.columnType == "VARBINARY", s"expected VARBINARY, got ${varEx.columnType}")
+        assert(binEx.columnType == "BINARY", s"expected BINARY, got ${binEx.columnType}")
+    }
+
+    "a String read of the same type bytes under a text collation still decodes" in {
+        // The other half of the split: the type byte alone must not refuse, or every TEXT and VARCHAR breaks.
+        val text    = typedRow(asciiBytes("hello"), MysqlEncoder.TYPE_BLOB, 0, Format.Binary)
+        val varchar = typedRow(asciiBytes("hello"), MysqlEncoder.TYPE_VAR_STRING, 0, Format.Binary)
+        val char    = typedRow(asciiBytes("hello"), MysqlEncoder.TYPE_STRING, 0, Format.Binary)
+        assert(reader(text).string() == "hello", "a TEXT column must still read as String")
+        assert(reader(varchar).string() == "hello", "a VARCHAR column must still read as String")
+        assert(reader(char).string() == "hello", "a CHAR column must still read as String")
+    }
+
+    "a JSON column reads as String even though the server reports it binary-collated" in {
+        // The carve-out that makes the collation rule safe: MySQL reports JSON as collation 63, but a JSON
+        // column's bytes ARE the document text. JSON has its own type byte outside the string family, which
+        // is what keeps it out of the binary split rather than any special case on the collation.
+        val doc = "{\"a\":1}"
+        val row = typedRow(asciiBytes(doc), MysqlEncoder.TYPE_JSON, 0, Format.Binary, BinaryCollation)
+        assert(reader(row).string() == doc, "a JSON column must read as String despite collation 63")
     }
 
 end MysqlRowReaderTest

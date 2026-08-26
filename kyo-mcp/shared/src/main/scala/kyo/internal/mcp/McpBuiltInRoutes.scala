@@ -70,18 +70,16 @@ private[kyo] object McpBuiltInRoutes:
     // Wire shape for resources/subscribe and resources/unsubscribe.
     final private case class ResourceSubscribeParams(uri: String) derives Schema
 
-    // Reads the live server from the forward reference for binding into Mcp.local.
+    // Waits for the live server before binding it into Mcp.local. See McpHandlerLift.withCtx: reading a
+    // slot that the dispatch loop can outrun is what produced a -32603 "handler panicked" for a request
+    // that merely arrived early.
     private def withCtx[A, S](
         jrCtx: JsonRpcRoute.Context,
-        serverRef: AtomicRef[Maybe[McpServer.Unsafe]],
+        serverRef: Fiber.Promise[McpServer.Unsafe, Any],
         method: String
-    )(body: => A < S)(using Frame): A < S =
-        // Unsafe: synchronous read of forward server reference.
-        serverRef.unsafe.get()(using AllowUnsafe.embrace.danger) match
-            case Present(srv) =>
-                Mcp.local.let(Present(Mcp.RequestContext(jrCtx, srv.safe)))(body)
-            case Absent =>
-                throw new IllegalStateException(s"McpServer not initialised for '$method'")
+    )(body: => A < S)(using Frame): A < (S & Async) =
+        val _ = method
+        serverRef.get.map(srv => Mcp.local.let(Present(Mcp.RequestContext(jrCtx, srv.safe)))(body))
     end withCtx
 
     def toolsList(catalog: McpCatalog)(using Frame): JsonRpcRoute[?, ?, ?] =
@@ -91,7 +89,7 @@ private[kyo] object McpBuiltInRoutes:
             ToolsListResult(page, next)
         }
 
-    def toolsCall(catalog: McpCatalog, serverRef: AtomicRef[Maybe[McpServer.Unsafe]])(using Frame): JsonRpcRoute[?, ?, ?] =
+    def toolsCall(catalog: McpCatalog, serverRef: Fiber.Promise[McpServer.Unsafe, Any])(using Frame): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.request[ToolCallParams, McpHandler.ToolOutcome]("tools/call") { (params, jrCtx) =>
             val matchedTool = catalog.toolHandlers.collectFirst {
                 case c: McpHandler.ToolHandler[?, ?, ?] if c.name == params.name =>
@@ -152,7 +150,7 @@ private[kyo] object McpBuiltInRoutes:
             ResourcesListResult(page, next)
         }
 
-    def resourcesRead(catalog: McpCatalog, serverRef: AtomicRef[Maybe[McpServer.Unsafe]])(using Frame): JsonRpcRoute[?, ?, ?] =
+    def resourcesRead(catalog: McpCatalog, serverRef: Fiber.Promise[McpServer.Unsafe, Any])(using Frame): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.request[ResourceReadParams, ResourceReadResponse]("resources/read") { (params, jrCtx) =>
             val parsedUri = McpResourceUri.parse(params.uri)
             parsedUri match
@@ -222,7 +220,7 @@ private[kyo] object McpBuiltInRoutes:
             PromptsListResult(page, next)
         }
 
-    def promptsGet(catalog: McpCatalog, serverRef: AtomicRef[Maybe[McpServer.Unsafe]])(using Frame): JsonRpcRoute[?, ?, ?] =
+    def promptsGet(catalog: McpCatalog, serverRef: Fiber.Promise[McpServer.Unsafe, Any])(using Frame): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.request[PromptGetParams, McpHandler.PromptOutcome]("prompts/get") { (params, jrCtx) =>
             val matchedRaw = catalog.promptHandlers.collectFirst {
                 case c: McpHandler.PromptHandler[?] if c.name == params.name => c
@@ -283,7 +281,7 @@ private[kyo] object McpBuiltInRoutes:
                     subs.getAndUpdate(_ - uri).andThen(SetLogLevelResult())
         }
 
-    def completionComplete(catalog: McpCatalog, serverRef: AtomicRef[Maybe[McpServer.Unsafe]])(using Frame): JsonRpcRoute[?, ?, ?] =
+    def completionComplete(catalog: McpCatalog, serverRef: Fiber.Promise[McpServer.Unsafe, Any])(using Frame): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.request[CompleteParams, CompleteResult]("completion/complete") { (params, jrCtx) =>
             // Look up a registered completion handler matching params.ref; fall back to empty (non-fatal per spec).
             val matched = catalog.completionHandlers.collectFirst {

@@ -296,11 +296,12 @@ Every module ships its own README. Open the linked README for the full surface, 
 
 ### Core
 
-What every Kyo program uses. `kyo-core` and `kyo-prelude` carry the effects you touch most, `kyo-data` the value types they return. `kyo-kernel` defines `A < S` itself and is where effect authors look. `kyo-scheduler` is the engine fibers run on, also usable as a standalone jar (see [the drop-in scheduler](#drop-in-scheduler-for-zio-pekko-finagle)). `kyo-data` also works standalone: `Maybe`, `Result`, and `Chunk` without the effect system.
+What every Kyo program uses. `kyo-core` and `kyo-prelude` carry the effects you touch most, `kyo-data` the value types they return. `kyo-system` layers file system, OS process, and environment access on top of `kyo-core`. `kyo-kernel` defines `A < S` itself and is where effect authors look. `kyo-scheduler` is the engine fibers run on, also usable as a standalone jar (see [the drop-in scheduler](#drop-in-scheduler-for-zio-pekko-finagle)). `kyo-data` also works standalone: `Maybe`, `Result`, and `Chunk` without the effect system.
 
 | Module                                       | JVM | JS  | Native | WASM | Identity                                                                                                   |
 | -------------------------------------------- | --- | --- | ------ | ---- | ---------------------------------------------------------------------------------------------------------- |
-| [kyo-core](kyo-core/README.md)†              | ✅  | ✅  | ✅     | ✅   | I/O and concurrency: `Sync`, `Async`, `Scope`, `Fiber`, `Channel`, `Hub`, `Queue`, `Clock`, `Log`, `Path`  |
+| [kyo-core](kyo-core/README.md)†              | ✅  | ✅  | ✅     | ✅   | I/O and concurrency: `Sync`, `Async`, `Scope`, `Fiber`, `Channel`, `Hub`, `Queue`, `Clock`, `Log`          |
+| [kyo-system](kyo-system/README.md)           | ✅  | ✅  | ✅     | ✅   | File system, OS processes, and environment: `Path`, `Command`, `Process`, `System`, `FileSystemException`  |
 | [kyo-prelude](kyo-prelude/README.md)         | ✅  | ✅  | ✅     | ✅   | Strictly-pure effect layer: `Abort`, `Env`, `Var`, `Memo`, `Choice`, `Emit`, `Poll`, `Stream`, `Layer`     |
 | [kyo-data](kyo-data/README.md)               | ✅  | ✅  | ✅     | ✅   | Low-allocation data types: `Maybe`, `Result`, `Chunk`, `Span`, `Duration`, `Instant`, `Schedule`, `TypeMap`|
 | [kyo-kernel](kyo-kernel/README.md)           | ✅  | ✅  | ✅     | ✅   | Algebraic-effects substrate; defines `A < S`, `ArrowEffect`, `ContextEffect`, multi-shot continuations     |
@@ -317,7 +318,7 @@ The vertical an application developer assembles: HTTP services and clients, SQL 
 | [kyo-sql-postgres](kyo-sql-postgres/README.md) | ✅  | ✅  | ✅     | ✅   | PostgreSQL driver speaking the wire protocol on kyo-net, plus `COPY` and `LISTEN`/`NOTIFY`                 |
 | [kyo-sql-mysql](kyo-sql-mysql/README.md)     | ✅  | ✅  | ✅     | ✅   | MySQL driver speaking the wire protocol on kyo-net, plus `LOAD DATA LOCAL INFILE`                          |
 | [kyo-schema](kyo-schema/README.md)           | ✅  | ✅  | ✅     | ✅   | One `derives Schema` powers validation, lenses, diffs, builders, and structural conversion; codecs plug in |
-| [kyo-schema-json](kyo-schema-json/README.md) | ✅  | ✅  | ✅     | ✅   | JSON codec for kyo-schema: `Json.encode`/`decode` text and bytes, safety limits, JSON Schema generation    |
+| [kyo-schema-json](kyo-schema-json/README.md) | ✅  | ✅  | ✅     | ✅   | JSON codec, JSON Schema generation, pure `Json.Lines` framing, and effectful `Jsonl` streams and files    |
 | [kyo-schema-protobuf](kyo-schema-protobuf/README.md) | ✅  | ✅  | ✅     | ✅   | Protocol Buffers codec for kyo-schema: `Protobuf.encode`/`decode` binary plus `.proto` schema export       |
 | [kyo-schema-msgpack](kyo-schema-msgpack/README.md) | ✅  | ✅  | ✅     | ✅   | MessagePack codec for kyo-schema: `MsgPack.encode`/`decode` compact binary                                 |
 | [kyo-schema-bson](kyo-schema-bson/README.md) | ✅  | ✅  | ✅     | ✅   | BSON codec for kyo-schema: `Bson.encode`/`decode` document bytes                                           |

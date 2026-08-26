@@ -201,11 +201,35 @@ final case class SqlConnectionAcquireTimeoutException(acquireTimeout: Duration)(
         s"Acquiring a connection from the pool timed out after ${acquireTimeout.show}"
     ) with SqlRetryable
 
-/** Establishing a new physical connection exceeded the configured connect timeout. */
-final case class SqlConnectionEstablishTimeoutException(timeout: Duration, host: String, port: Int)(using Frame)
+/** Opening a new physical connection exceeded its budget.
+  *
+  * The budget covers the whole opening, the TCP connect and the authentication handshake alike, so a timeout here does not mean the server
+  * was unreachable: an authentication that did not finish in time reports exactly the same way, and SCRAM is deliberately iterated key
+  * stretching whose cost is the server's own iteration count. The message says so rather than pointing only at the network, and names the
+  * knob that supplied the budget, since the two come from different places.
+  *
+  * @param timeout
+  *   the budget that expired
+  * @param host
+  *   the server the connection was being opened to
+  * @param port
+  *   its port
+  * @param budgetSource
+  *   where the budget came from: the URL's `connectTimeout`, or the config's `acquireTimeout` standing in for it
+  */
+final case class SqlConnectionEstablishTimeoutException(timeout: Duration, host: String, port: Int, budgetSource: String)(using Frame)
     extends SqlConnectionException(
-        s"Establishing a connection to $host:$port timed out after ${timeout.show}"
+        s"Opening a connection to $host:$port timed out after ${timeout.show}. The budget covers the TCP connect and the " +
+            s"authentication handshake together, so this does not by itself mean the server was unreachable. Raise it with $budgetSource."
     ) with SqlRetryable
+
+object SqlConnectionEstablishTimeoutException:
+    /** The budget came from the config's `acquireTimeout`, which stands in when the URL declares no `connectTimeout`. */
+    val fromAcquireTimeout: String = "`acquireTimeout` on SqlConfig (or `connectTimeout` in the URL, which takes precedence)"
+
+    /** The budget came from the URL's own `connectTimeout`. */
+    val fromConnectTimeout: String = "`connectTimeout` in the URL"
+end SqlConnectionEstablishTimeoutException
 
 /** A query exceeded the configured per-query timeout. */
 final case class SqlConnectionQueryTimeoutException(queryTimeout: Duration)(using Frame)
@@ -736,11 +760,49 @@ final case class SqlDecodeColumnOutOfBoundsException(columnIndex: Int, columnCou
 final case class SqlDecodeInvalidTextException(typeName: String, text: String)(using Frame)
     extends SqlDecodeException(s"invalid $typeName text '$text'")
 
-/** A column looked up by name is not present in the row. */
-final case class SqlDecodeColumnNotFoundException(columnName: String)(using Frame)
+/** A column looked up by name is not present in the row.
+  *
+  * `availableColumns` is what the row actually carries, because the reason this is raised is almost never that the column is missing from
+  * the database: it is that the name being looked for is not the name the server reported. A [[kyo.SqlNaming]] casing is resolved at the
+  * call site of the run, so one declared where the run is not (another object, another method) leaves the lookup asking for the verbatim
+  * Scala field name against snake_case columns. Listing the row's own columns is what makes that visible at the point of failure, and the
+  * message says so outright when a row column matches the requested name up to casing and underscores.
+  *
+  * @param columnName
+  *   the name that was looked up
+  * @param availableColumns
+  *   the columns the row carries, empty where the caller had none to report
+  */
+final case class SqlDecodeColumnNotFoundException(columnName: String, availableColumns: Chunk[String])(using Frame)
     extends SqlDecodeException(
-        s"Column '$columnName' not found in row"
+        SqlDecodeColumnNotFoundException.format(columnName, availableColumns)
     )
+
+object SqlDecodeColumnNotFoundException:
+
+    /** The lookup with no row to report, for a caller that has only the name. */
+    def apply(columnName: String)(using Frame): SqlDecodeColumnNotFoundException =
+        new SqlDecodeColumnNotFoundException(columnName, Chunk.empty)
+
+    private def format(columnName: String, availableColumns: Chunk[String]): String =
+        if availableColumns.isEmpty then s"Column '$columnName' not found in row"
+        else
+            val hint = Maybe.fromOption(availableColumns.find(c => normalize(c) == normalize(columnName))).fold("") { actual =>
+                s". The row has '$actual', which differs from '$columnName' only in casing: a SqlNaming given is resolved at the " +
+                    "call site of the run, so one declared elsewhere (another object, another method) does not reach this query"
+            }
+            s"Column '$columnName' not found in row; the row has ${availableColumns.mkString(", ")}$hint"
+
+    /** Two names are the same up to the casing a [[kyo.SqlNaming]] applies.
+      *
+      * Lowercased per character rather than through `String.toLowerCase`, which uses the default locale: on a tr or az locale JVM that
+      * maps `I` to a dotless `ı`, so `executionId` and `execution_id` would stop matching and the hint below would go missing on exactly
+      * the failure it was written for. `SqlMacros.tableNameImpl` avoids the same trap for the same reason.
+      */
+    private def normalize(name: String): String =
+        name.filter(_ != '_').map(_.toLower)
+
+end SqlDecodeColumnNotFoundException
 
 /** No codec on the active backend covers the column's wire type token. */
 final case class SqlDecodeUnknownTypeException(dialect: Idiom.Id, typeToken: String)(using Frame)
@@ -758,6 +820,59 @@ final case class SqlDecodeCodecMismatchException(
     extends SqlDecodeException(
         s"Codec on dialect '${dialect.value}' for type token '$typeToken' produced a $decodedClass, expected $expectedClass"
     )
+
+/** A column's wire type cannot become the Scala type the schema asked for.
+  *
+  * Raised where the target type's codec would otherwise reinterpret the column's bytes rather than convert its value. The `String` codec is
+  * the case this exists for: a column's binary wire form is the value's representation, not its rendering, so any wire type's bytes satisfy
+  * a UTF-8 read and what comes back is the protocol buffer as text, per engine byte order and all.
+  *
+  * The check is on the column's type token, not on the wire format, so the simple/text protocol refuses the same read the extended/binary
+  * protocol refuses: a schema declaring `String` for a `date` column is wrong about the column, and which protocol carried the row is not
+  * part of that.
+  *
+  * A conversion a codec can carry out is not this: a narrower integer over a wider column widens (or reports
+  * [[kyo.SqlDecodeValueRangeException]]), and a numeric column's text rendering parses (or reports
+  * [[kyo.SqlDecodeNumericException]]). A column type the backend does not recognise is not this either, since a token with no known
+  * meaning is not evidence of a mismatch.
+  *
+  * @param scalaType
+  *   the Scala type the schema asked for
+  * @param dialect
+  *   the backend that reported the column's type
+  * @param columnType
+  *   the column type the backend reported, named the way that backend spells it
+  * @param typeToken
+  *   the backend's own tag for that type: a PostgreSQL OID, a MySQL type byte
+  */
+final case class SqlDecodeColumnTypeMismatchException(
+    scalaType: String,
+    dialect: Idiom.Id,
+    columnType: String,
+    typeToken: String,
+    columnName: Maybe[String] = Maybe.empty
+)(using Frame)
+    extends SqlDecodeException(
+        SqlDecodeColumnTypeMismatchException.format(scalaType, dialect, columnType, typeToken, columnName)
+    )
+
+object SqlDecodeColumnTypeMismatchException:
+
+    private def format(
+        scalaType: String,
+        dialect: Idiom.Id,
+        columnType: String,
+        typeToken: String,
+        columnName: Maybe[String]
+    ): String =
+        // The column is named where the reader knew it. A row type declaring the wrong type for one field of several
+        // otherwise reports which types disagreed and leaves finding the field to the reader.
+        val which = columnName.fold("A")(name => s"Column '$name': a")
+        s"$which $columnType column cannot be read as $scalaType on dialect '${dialect.value}' (type token '$typeToken'). " +
+            "The column's bytes are the value's wire representation, not its text rendering: read the column at its own type, " +
+            "render it as text in SQL with a CAST, or reach for SqlRow.text, which renders a column at whatever it holds."
+    end format
+end SqlDecodeColumnTypeMismatchException
 
 /** A custom column decoder raised an exception while converting the wire value.
   *

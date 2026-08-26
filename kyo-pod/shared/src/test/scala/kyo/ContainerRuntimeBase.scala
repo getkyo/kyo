@@ -19,7 +19,10 @@ private[kyo] trait ContainerRuntimeBase:
 
     private[kyo] def socketExists(path: String)(using AllowUnsafe): Boolean =
         val p = kyo.Path(path)
-        p.unsafe.exists() || p.unsafe.exists(followLinks = false)
+        // Unsafe: synchronous runtime probing has no user call site from which to propagate a Frame.
+        p.unsafe.exists()(using summon[AllowUnsafe], Frame.internal).getOrElse(false) ||
+        p.unsafe.exists(followLinks = false)(using summon[AllowUnsafe], Frame.internal).getOrElse(false)
+    end socketExists
 
     private[kyo] def getEnv(name: String)(using AllowUnsafe): Maybe[String] =
         kyo.System.live.unsafe.env(name)
@@ -45,11 +48,16 @@ private[kyo] trait ContainerRuntimeBase:
 
     lazy val available: Seq[String] =
         import AllowUnsafe.embrace.danger
-        val all = Seq("podman" -> hasPodman, "docker" -> hasDocker).collect { case (name, true) => name }
-        getEnv("KYO_POD_RUNTIME") match
-            case Present(rt) => if all.contains(rt) then Seq(rt) else Seq.empty
-            case Absent      => all
-        end match
+        // The windows-latest CI runner's Docker daemon runs in Windows-container mode and cannot pull or run Linux images,
+        // so `docker` reports available while every operation fails at `docker pull`. These are Linux-container tests; skip on Windows.
+        if kyo.internal.Platform.isWindows then Seq.empty
+        else
+            val all = Seq("podman" -> hasPodman, "docker" -> hasDocker).collect { case (name, true) => name }
+            getEnv("KYO_POD_RUNTIME") match
+                case Present(rt) => if all.contains(rt) then Seq(rt) else Seq.empty
+                case Absent      => all
+            end match
+        end if
     end available
 
     /** macOS Podman Machine sockets, lazily computed once. */

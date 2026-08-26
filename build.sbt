@@ -70,6 +70,7 @@ ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
 
 Global / commands += Repeat.command
 Global / commands += TestKyo.command
+Global / commands += TestKyo.doneCommand
 
 // Cap concurrent scaladoc runs. Each one is a forked JVM holding a whole module's TASTy graph
 // (see `Compile / doc` in kyo-settings), so a handful in parallel is enough to exhaust a 16GB
@@ -95,10 +96,10 @@ Global / concurrentRestrictions := {
     val cores       = java.lang.Runtime.getRuntime.availableProcessors()
     val isCI        = sys.env.contains("CI")
     val testLimit   = 1 max (if (isCI) cores / 2 else math.ceil(cores * 0.8).toInt)
-    // Forked-test cap: how many forked test JVMs run concurrently. On CI we hard-cap at 2 so kyo-pod
-    // (which splits each suite into a podman fork and a docker fork via KYO_POD_RUNTIME pinning) ends
-    // up with at most one fork per daemon — strictly bounding container-daemon contention. Locally
-    // we allow up to half the cores for fast iteration; some same-daemon overlap is tolerable.
+    // Forked-test cap: how many forked test JVMs run concurrently. kyo-pod splits each suite into a
+    // podman fork and a docker fork (KYO_POD_RUNTIME pinning), so this bounds container-daemon
+    // contention. It is a numeric, daemon-blind cap (it does NOT guarantee one fork per daemon); real
+    // CI additionally serializes via SBT_TASK_LIMIT=1 (limitAll below). CI caps at 2; locally cores/2.
     val forkLimit = if (isCI) 2 else 1 max cores / 2
     Seq(
         Tags.limitAll(if (taskLimit != "0") taskLimit.toInt else cores),
@@ -132,6 +133,12 @@ lazy val `kyo-settings` = Seq(
     scalaVersion       := scala3Version,
     crossScalaVersions := List(scala3Version),
     scalacOptions ++= scalacOptionTokens(compilerOptions).value,
+    // Re-check every macro expansion against the compiler's tree invariants. The macros kyo does ship sit
+    // where most programs land (Tag, Frame, Schema derivation, Sql `.run`, `assert`) and read trees that
+    // inline, which is pervasive, fills with the compiler's own bindings and proxies. A malformed
+    // expansion reaches users as a broken build in their code, not ours. The Scala 2.13 cross-builds (the
+    // kyo-scheduler family) do not have the flag.
+    scalacOptions ++= (if (scalaVersion.value.startsWith("3")) Seq("-Xcheck-macros") else Nil),
     Test / scalacOptions --= scalacOptionTokens(Set(ScalacOptions.warnNonUnitStatement)).value,
     // Not in CI: parallel cross-version compilations of one module format the same shared
     // sources concurrently, and the loser logs "scalafmt: failed for 1 sources" on every
@@ -201,13 +208,22 @@ lazy val `kyo-settings` = Seq(
     Test / testOptions += Tests.Argument(TestFrameworks.ScalaTest, "-oDG"),
     ThisBuild / versionScheme := Some("early-semver"),
     Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    // The process-lifetime default HttpClient is never closed, so its pool relies on the idle-expiry reaper to release
+    // sockets. Its 60s production idle timeout outlasts the leak check's 30s fd-drain window, so a connection pooled just
+    // before a fork ends would still be open at the check. Shorten it in the test fork only (production keeps 60s) so a
+    // reaped default-client connection drains well within the window. See kyo.http.client.defaultIdleTimeout.
+    Test / javaOptions += "-Dkyo.http.client.defaultIdleTimeout=2seconds",
     // Exclude generated FFI binding impls (src_managed *BindingsImpl from the kyo-ffi codegen): measuring
     // them tracks the generator, not hand-written code.
     coverageExcludedFiles := ".*src_managed.*",
-    // Compact object headers (JEP 519, a product flag in JDK 25 which the build requires) shrink the
-    // per-object header from 12-16 to 8 bytes. The test forks allocate heavily (kyo-tasty decodes 80k
-    // symbols), so this cuts heap pressure where the forks run closest to their cap.
-    Test / javaOptions += "-XX:+UseCompactObjectHeaders",
+    // Compact object headers (JEP 519) are buggy on JDK 25 under the forked test workload: heavy fiber
+    // concurrency + pervasive arraycopy (Chunk/Span) + G1GC hit JDK-8380060 and a G1 concurrent-mark
+    // metadata corruption, surfacing as a rare ClassNotFoundError for a class present on disk (the
+    // io_uring test flake). Force COH OFF in the forks explicitly so it stays off regardless of the
+    // driver's opts. The DRIVER JVM keeps COH ON (.jvmopts / CI JAVA_OPTS): it runs no forked-test
+    // workload, only compile and the Scala.js/Wasm linker, whose large graph needs COH's header
+    // savings to fit the 12 GB driver heap (without it the kyo-ui Wasm linker GC-thrashes to a hang).
+    Test / javaOptions += "-XX:-UseCompactObjectHeaders",
     // Forked test JVMs otherwise inherit no -Xmx and fall back to 25% of RAM (4GB on the 16GB CI
     // runners), too little for the heavy classpath-loading suites (kyo-tasty loads 80k-symbol
     // classpaths under globalK-way leaf concurrency). Pin an explicit fork heap on CI; with the
@@ -333,6 +349,7 @@ lazy val kyoJVM: Project = project
         `kyo-prelude`.jvm,
         `kyo-parse`.jvm,
         `kyo-core`.jvm,
+        `kyo-system`.jvm,
         `kyo-offheap`.jvm,
         `kyo-ffi`.jvm,
         `kyo-ffi-codegen`,
@@ -417,6 +434,7 @@ lazy val kyoJS = project
         `kyo-prelude`.js,
         `kyo-parse`.js,
         `kyo-core`.js,
+        `kyo-system`.js,
         `kyo-ffi`.js,
         `kyo-ffi-it`.js,
         `kyo-net`.js,
@@ -488,6 +506,7 @@ lazy val kyoNative = project
         `kyo-config`.native,
         `kyo-scheduler`.native,
         `kyo-core`.native,
+        `kyo-system`.native,
         `kyo-offheap`.native,
         `kyo-ffi`.native,
         `kyo-ffi-it`.native,
@@ -570,6 +589,7 @@ lazy val kyoWasm = project
         `kyo-sql-tests`.wasm,
         `kyo-scheduler`.wasm,
         `kyo-core`.wasm,
+        `kyo-system`.wasm,
         `kyo-ffi`.wasm,
         `kyo-direct`.wasm,
         `kyo-stm`.wasm,
@@ -713,8 +733,7 @@ lazy val `kyo-data` =
         .withKyoTest
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.lihaoyi" %%% "pprint"        % "0.9.6",
-            libraryDependencies += "dev.zio"     %%% "izumi-reflect" % "3.0.9" % Test
+            libraryDependencies += "com.lihaoyi" %%% "pprint" % "0.9.6"
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
@@ -788,7 +807,7 @@ lazy val `kyo-schema-json` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-schema` % "test->test;compile->compile")
-        .dependsOn(`kyo-core` % "test->compile")
+        .dependsOn(`kyo-system`)
         .in(file("kyo-schema-json"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -871,6 +890,7 @@ lazy val `kyo-schema-ion` =
         .crossType(CrossType.Full)
         .dependsOn(`kyo-schema` % "test->test;compile->compile")
         .dependsOn(`kyo-core` % "test->compile")
+        .dependsOn(`kyo-system` % "test->compile")
         .in(file("kyo-schema-ion"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -904,6 +924,7 @@ lazy val `kyo-sql` =
         .dependsOn(`kyo-schema-json`)
         .dependsOn(`kyo-net`)
         .dependsOn(`kyo-pod` % "test->compile")
+        .dependsOn(`kyo-system` % "test->compile")
         .in(file("kyo-sql"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -929,6 +950,7 @@ lazy val `kyo-sql-postgres` =
         .crossType(CrossType.Full)
         .dependsOn(`kyo-sql` % "test->test;compile->compile")
         .dependsOn(`kyo-pod` % "test->compile")
+        .dependsOn(`kyo-system` % "test->compile")
         .in(file("kyo-sql-postgres"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -948,6 +970,7 @@ lazy val `kyo-sql-mysql` =
         .crossType(CrossType.Full)
         .dependsOn(`kyo-sql` % "test->test;compile->compile")
         .dependsOn(`kyo-pod` % "test->compile")
+        .dependsOn(`kyo-system` % "test->compile")
         .in(file("kyo-sql-mysql"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -1017,6 +1040,18 @@ lazy val `kyo-core` =
             libraryDependencies += ("org.scala-js" %%% "scalajs-java-logging" % "1.0.0").cross(CrossVersion.for3Use2_13)
         )
 
+lazy val `kyo-system` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-system"))
+        .dependsOn(`kyo-core`)
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`, scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) })
+        .wasmSettings(`wasm-settings`)
+
 lazy val `kyo-offheap` =
     crossProject(JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
@@ -1038,6 +1073,7 @@ lazy val `kyo-ffi` =
         .crossType(CrossType.Full)
         .in(file("kyo-ffi"))
         .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-system` % Test)
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(
@@ -1078,6 +1114,7 @@ lazy val `kyo-ffi-it` =
         .in(file("kyo-ffi/it"))
         .enablePlugins(KyoFfiPlugin)
         .dependsOn(`kyo-ffi`)
+        .dependsOn(`kyo-system` % Test)
         .withKyoTest
         .settings(
             `kyo-settings`,
@@ -1314,6 +1351,7 @@ lazy val `kyo-actor` =
         .crossType(CrossType.Full)
         .in(file("kyo-actor"))
         .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-system`)
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
@@ -1326,6 +1364,7 @@ lazy val `kyo-tasty` =
         .crossType(CrossType.Full)
         .in(file("kyo-tasty"))
         .dependsOn(`kyo-core`, `kyo-schema`)
+        .dependsOn(`kyo-system`)
         .dependsOn(`kyo-schema-json` % "test->compile")
         .withKyoTest
         .settings(
@@ -1461,6 +1500,7 @@ lazy val `kyo-stats-machine` =
         .in(file("kyo-stats-machine"))
         .enablePlugins(KyoFfiPlugin)
         .dependsOn(`kyo-ffi`)
+        .dependsOn(`kyo-system`)
         .withKyoTest
         .settings(
             `kyo-settings`,
@@ -1789,6 +1829,7 @@ lazy val `kyo-net` =
         .crossType(CrossType.Full)
         .enablePlugins(KyoFfiPlugin)
         .dependsOn(`kyo-core`, `kyo-config`)
+        .dependsOn(`kyo-system`)
         .dependsOn(`kyo-ffi`)
         .in(file("kyo-net"))
         .withKyoTest
@@ -2020,6 +2061,7 @@ lazy val `kyo-aeron` =
         .enablePlugins(KyoFfiPlugin)
         .in(file("kyo-aeron"))
         .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-system`)
         .dependsOn(`kyo-ffi`)
         .dependsOn(`kyo-schema`)
         // Schema types the public publish/stream surface; MsgPack encodes the Envelope on the wire and
@@ -2234,6 +2276,7 @@ lazy val `kyo-compiler` =
         .crossType(CrossType.Full)
         .in(file("kyo-compiler"))
         .dependsOn(`kyo-core`, `kyo-aeron`, `kyo-ai` % Test)
+        .dependsOn(`kyo-system`)
         .withKyoTest
         .settings(
             `kyo-settings`,
@@ -2252,6 +2295,7 @@ lazy val `kyo-http` =
         .crossType(CrossType.Full)
         .in(file("kyo-http"))
         .dependsOn(`kyo-core`, `kyo-config`, `kyo-schema-json`)
+        .dependsOn(`kyo-system` % Test)
         .dependsOn(`kyo-net` % "compile->compile;test->test")
         .withKyoTest
         .settings(
@@ -2292,6 +2336,7 @@ lazy val `kyo-ai` =
         .crossType(CrossType.Full)
         .in(file("kyo-ai"))
         .dependsOn(`kyo-core`, `kyo-schema-json`, `kyo-http`, `kyo-actor`, `kyo-jsonrpc`, `kyo-jsonrpc-http`, `kyo-mcp`)
+        .dependsOn(`kyo-system`)
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
@@ -2328,6 +2373,7 @@ lazy val `kyo-jsonrpc` =
         .dependsOn(`kyo-core`)
         .dependsOn(`kyo-schema-json`)
         .dependsOn(`kyo-net`)
+        .dependsOn(`kyo-system`)
         .in(file("kyo-jsonrpc"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -2362,6 +2408,7 @@ lazy val `kyo-mcp` =
         .in(file("kyo-mcp"))
         .withKyoTest
         .dependsOn(`kyo-jsonrpc`)
+        .dependsOn(`kyo-system` % Test)
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
         // Test-only dep so the JVM demo MCP servers (jvm/src/test/scala/demo) can drive
@@ -2662,6 +2709,7 @@ lazy val `kyo-pod` =
         .crossType(CrossType.Full)
         .in(file("kyo-pod"))
         .dependsOn(`kyo-core`, `kyo-http`)
+        .dependsOn(`kyo-system`)
         .withKyoTest
         .settings(
             `kyo-settings`
@@ -2700,9 +2748,13 @@ lazy val `kyo-pod` =
                     // (single-fork, no marker) are deliberately not matched (the trailing `s` distinguishes them).
                     val simpleName = test.name.split('.').last
                     val srcOpt     = testSrcDirs.flatMap(d => (d ** s"$simpleName.scala").get).headOption
+                    // Match actual CALLS to the marker-registering helpers (helper name immediately followed by `{` or `(`),
+                    // not mere textual mentions. A suite's scaladoc can reference `runBackends` (ContainerOrchestrationItTest
+                    // points readers at ContainerItTest) while the suite itself only uses the single-fork `runBackend`; a plain
+                    // `contains` check then forks that http-only suite per runtime and runs it twice against one daemon.
+                    val runtimeHelperCall = """\b(runBackendsLong|runBackends|runRuntimes)\s*[{(]""".r
                     val usesRuntimeMarkers = srcOpt.exists { f =>
-                        val src = IO.read(f)
-                        src.contains("runBackends") || src.contains("runRuntimes")
+                        runtimeHelperCall.findFirstIn(IO.read(f)).isDefined
                     }
                     val targetRuntimes = if (usesRuntimeMarkers) Seq("podman", "docker") else Seq.empty
                     if (targetRuntimes.isEmpty)
@@ -2764,6 +2816,7 @@ lazy val `kyo-browser` =
         .crossType(CrossType.Full)
         .in(file("kyo-browser"))
         .dependsOn(`kyo-http`, `kyo-jsonrpc`, `kyo-jsonrpc-http`)
+        .dependsOn(`kyo-system`)
         .withKyoTest
         .settings(
             `kyo-settings`
@@ -2832,6 +2885,7 @@ lazy val `kyo-slack` =
         .crossType(CrossType.Full)
         .in(file("kyo-slack"))
         .dependsOn(`kyo-http`, `kyo-schema-json`)
+        .dependsOn(`kyo-system` % Test)
         .withKyoTest
         .settings(
             `kyo-settings`
@@ -2872,6 +2926,7 @@ lazy val `kyo-i18n` =
         .crossType(CrossType.Full)
         .in(file("kyo-i18n"))
         .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-system`)
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
@@ -2885,6 +2940,7 @@ lazy val `kyo-ui` =
         .in(file("kyo-ui"))
         .dependsOn(`kyo-core`, `kyo-http`)
         .dependsOn(`kyo-browser` % Test)
+        .dependsOn(`kyo-system` % Test)
         .withKyoTest
         .settings(
             `kyo-settings`
@@ -2945,6 +3001,7 @@ lazy val `kyo-website` =
         .in(file("kyo-website"))
         .dependsOn(`kyo-ui`)
         .dependsOn(`kyo-parse`)
+        .dependsOn(`kyo-system`)
         .withKyoTest
         .settings(`kyo-settings`)
         .settings(publish / skip := true)
@@ -2990,6 +3047,7 @@ lazy val `kyo-examples` =
         .crossType(CrossType.Full)
         .in(file("kyo-examples"))
         .dependsOn(`kyo-http`)
+        .dependsOn(`kyo-system`)
         .dependsOn(`kyo-schema-json`)
         .dependsOn(`kyo-direct`)
         .dependsOn(`kyo-core`)
@@ -3086,6 +3144,7 @@ lazy val `kyo-doctest` =
         .crossType(CrossType.Full)
         .in(file("kyo-doctest"))
         .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-system`)
         .dependsOn(`kyo-schema-json`)
         .dependsOn(`kyo-parse`)
         .dependsOn(`kyo-direct` % Test)
@@ -3160,15 +3219,19 @@ lazy val `openssl-native-settings` = Seq(
     }
 )
 
-// Reads the FFI native-flag manifests KyoFfiPlugin writes per FFI dependency (one *.flags file per module
-// under `relDir`), one flag per line, deduped first-seen so a BoringSSL `-I` precedes a later system include.
-// A downstream Native module folds a dependency's flags in so the dep's bundled C compiles and links the way
-// it does in the owning module (see `native-settings`).
-def readFfiNativeManifest(cp: Seq[Attributed[File]], relDir: Seq[String]): Seq[String] =
-    cp.flatMap { entry =>
-        val dir = relDir.foldLeft(entry.data)(_ / _)
-        if (dir.isDirectory) (dir * "*.flags").get.flatMap(IO.readLines(_)) else Seq.empty[String]
-    }.map(_.trim).filter(_.nonEmpty).distinct
+// Reads the FFI native-flag manifests KyoFfiPlugin writes per FFI dependency (one `<module>-<os>.flags` file
+// per module under `relDir`), one flag per line, deduped first-seen so a BoringSSL `-I` precedes a later system
+// include. A downstream Native module folds a dependency's flags in so the dep's bundled C compiles and links
+// the way it does in the owning module (see `native-settings`).
+//
+// Only THIS target's OS is read. The manifests ride a classpath that also carries published artifacts, and a
+// flag set produced for another OS does not merely fail to help: `-luring` and the GNU-ld options ld64 rejects
+// break a Darwin link outright.
+// Delegates to KyoFfiPlugin, which owns the manifest layout and the in-build / packaged precedence. This build
+// reads them here because `native-settings` applies to every Native module, including the many that do not enable
+// KyoFfiPlugin and so have no `ffiNativeDependencyLinkingOptions` of their own.
+def readFfiNativeManifest(cp: Seq[Attributed[File]], relDir: Seq[String], inBuildRelDir: Seq[String]): Seq[String] =
+    KyoFfiPlugin.readNativeFlagManifests(cp.map(_.data), relDir, inBuildRelDir, KyoFfiPlugin.ffiManifestTargetOs)
 
 // Everything a Native row needs that does not assume the project is itself a Scala Native module, so
 // the kyoNative aggregate (which has no native sources, hence no Test / nativeLink to transform) can
@@ -3190,8 +3253,8 @@ lazy val `native-settings-base` = Seq(
     nativeConfig := {
         val base         = nativeConfig.value
         val cp           = (Compile / dependencyClasspath).value
-        val linkExtra    = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeLinkFlagsDir)
-        val compileExtra = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeCompileFlagsDir)
+        val linkExtra    = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeLinkFlagsDir, KyoFfiPlugin.ffiNativeInBuildLinkFlagsDir)
+        val compileExtra = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeCompileFlagsDir, KyoFfiPlugin.ffiNativeInBuildCompileFlagsDir)
         val withLink     = if (linkExtra.isEmpty) base else base.withLinkingOptions(base.linkingOptions ++ linkExtra)
         if (compileExtra.isEmpty) withLink else withLink.withCompileOptions(withLink.compileOptions ++ compileExtra)
     }

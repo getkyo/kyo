@@ -19,22 +19,24 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
             val decode = new MachineSampler.Decode:
                 def apply(bytes: Span[Byte], len: Int)(using AllowUnsafe): Unit =
                     discard(identities += java.lang.System.identityHashCode(this))
-            for
-                handles <- MachineHandles.init
-                dir     <- Path.tempDir("kyo-stats-machine-sampler-identity")
-                file = dir / "small.txt"
-                _ <- file.write("hello")
-                sampler = new MachineSampler(handles)
-                slot    = sampler.openSlot(file)
-                first   = sampler.readInto(slot, decode)
-                second  = sampler.readInto(slot, decode)
-                _ <- dir.removeAll
-            yield
-                assert(first)
-                assert(second)
-                assert(identities.size == 2)
-                assert(identities(0) == identities(1))
-            end for
+            Scope.run {
+                for
+                    handles <- MachineHandles.init
+                    dir     <- Path.tempDir("kyo-stats-machine-sampler-identity")
+                    file = dir / "small.txt"
+                    _ <- file.write("hello")
+                    sampler = new MachineSampler(handles)
+                    slot    = sampler.openSlot(file)
+                    first   = sampler.readInto(slot, decode)
+                    second  = sampler.readInto(slot, decode)
+                    _ <- dir.removeAll
+                yield
+                    assert(first)
+                    assert(second)
+                    assert(identities.size == 2)
+                    assert(identities(0) == identities(1))
+                end for
+            }
         }
 
         "binds fill length before taking the span so a file larger than the initial 8192 buffer decodes in full" in {
@@ -45,20 +47,22 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
                     decodedLen = len
                     decodedText = new String(bytes.toArrayUnsafe, 0, len, java.nio.charset.StandardCharsets.US_ASCII)
             val content = "0123456789" * 2000 // 20000 bytes, larger than the sampler's 8192-byte initial slot
-            for
-                handles <- MachineHandles.init
-                dir     <- Path.tempDir("kyo-stats-machine-sampler-large")
-                file = dir / "large.txt"
-                _ <- file.write(content)
-                sampler = new MachineSampler(handles)
-                slot    = sampler.openSlot(file)
-                ok      = sampler.readInto(slot, decode)
-                _ <- dir.removeAll
-            yield
-                assert(ok)
-                assert(decodedLen == 20000)
-                assert(decodedText == content)
-            end for
+            Scope.run {
+                for
+                    handles <- MachineHandles.init
+                    dir     <- Path.tempDir("kyo-stats-machine-sampler-large")
+                    file = dir / "large.txt"
+                    _ <- file.write(content)
+                    sampler = new MachineSampler(handles)
+                    slot    = sampler.openSlot(file)
+                    ok      = sampler.readInto(slot, decode)
+                    _ <- dir.removeAll
+                yield
+                    assert(ok)
+                    assert(decodedLen == 20000)
+                    assert(decodedText == content)
+                end for
+            }
         }
     }
 
@@ -85,27 +89,27 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
 
         "teardown interrupts BOTH the fast and disk fibers before the close-buffers finalizer runs, and no read observes a closed handle" in {
             val markers = AtomicRef.Unsafe.init(Chunk.empty[String])
+            val closed  = Latch.Unsafe.init(1) // close() releases it; the test fences on it, no settle
             val machine = new Machine:
                 def read()(using AllowUnsafe): Unit      = discard(markers.updateAndGet(_.append("read")))
                 def readDisks()(using AllowUnsafe): Unit = discard(markers.updateAndGet(_.append("readDisks")))
-                def close()(using AllowUnsafe): Unit     = discard(markers.updateAndGet(_.append("close")))
+                def close()(using AllowUnsafe): Unit =
+                    discard(markers.updateAndGet(_.append("close")))
+                    closed.release()
             Clock.withTimeControl { tc =>
                 for
                     handles <- MachineHandles.init
                     clock   <- Clock.get
                     fiber   <- Fiber.initUnscoped(Clock.let(clock)(Scope.run(MachineSampler.runWith(handles, _ => machine))))
-                    // A zero-duration advance with a real wall-clock pause lets the freshly-spawned fiber
-                    // actually reach both Clock.repeatAtInterval registrations before virtual time moves, so
-                    // neither schedule's anchor point races the fiber's own async startup.
-                    _           <- tc.advance(Duration.Zero, 100.millis)
+                    // Wait for both schedules (fast + disk) to arm before advancing.
+                    _           <- tc.awaitPendingSleepers(2)
                     _           <- tc.advance(1.seconds)
                     interrupted <- fiber.interrupt
-                    // fiber.get suspends until the fiber's promise genuinely resolves (including every
-                    // registered Scope finalizer, which Scope.run awaits before its own computation
-                    // completes), a stronger synchronization point than a bare done-flag poll.
-                    _    <- Abort.run(fiber.get)
+                    _           <- Abort.run(fiber.get)
+                    // fiber.get resolves on the interrupted result BEFORE the close-buffers finalizer runs,
+                    // so fence on the latch close() releases rather than on a wall-clock settle.
+                    _    <- closed.safe.await
                     done <- fiber.done
-                    _    <- tc.advance(Duration.Zero, 500.millis)
                     snapshot = markers.get()
                 yield
                     assert(interrupted)
@@ -122,6 +126,7 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
             val innerSampler = AtomicRef.Unsafe.init(Maybe.empty[MachineSampler])
             val released     = AtomicBoolean.Unsafe.init(false)
             val parkedThread = AtomicRef.Unsafe.init(Maybe.empty[Thread])
+            val parkedLatch  = Latch.Unsafe.init(1) // readDisks releases it as it parks; the test awaits it, no settle
             Clock.withTimeControl { tc =>
                 for
                     handles <- MachineHandles.init
@@ -141,6 +146,7 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
                             // therefore this leaf, is JVM/Native-only (JS has no thread to off-load to): `.notJs`.
                             discard(readCount.getAndSet(readCount.get() + 1L))
                             parkedThread.set(Present(Thread.currentThread()))
+                            parkedLatch.release()
                             @scala.annotation.tailrec
                             def parkUntilReleased(): Unit =
                                 if released.get() then ()
@@ -155,15 +161,11 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
                         innerSampler.set(Present(s))
                         machine
                     fiber <- Fiber.initUnscoped(Clock.let(clock)(Scope.run(MachineSampler.runWith(handles, buildMachine))))
-                    _     <- tc.advance(Duration.Zero, 100.millis) // let the fiber reach both schedule registrations first
-                    _     <- tc.advance(1.seconds)
-                    _     <- tc.advance(1.seconds)
-                    _     <- tc.advance(1.seconds)
-                    _     <- tc.advance(1.seconds)
-                    _     <- tc.advance(1.seconds)
-                    // Let the disk read reach the dedicated disk thread and park before the guards are read; the
-                    // fast fiber advances on scheduler workers throughout, unaffected by the parked disk thread.
-                    _ <- tc.advance(Duration.Zero, 500.millis)
+                    // Wait for both schedules to arm, then for the disk read to reach its thread and park.
+                    _ <- tc.awaitPendingSleepers(2)
+                    _ <- parkedLatch.safe.await
+                    // Five fast ticks; the disk stays in-flight and every disk cycle skips.
+                    _ <- Loop.repeat(5)(tc.advance(1.seconds).andThen(tc.awaitPendingSleepers(2)))
                     inFlightAfterFive = innerSampler.get() match
                         case Present(s) => s.diskReadInFlight()
                         case Absent     => false
@@ -200,13 +202,10 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
                         def readDisks()(using AllowUnsafe): Unit = ()
                         def close()(using AllowUnsafe): Unit     = ()
                     fiber <- Fiber.initUnscoped(Clock.let(clock)(Scope.run(MachineSampler.runWith(handles, _ => machine))))
-                    _     <- tc.advance(Duration.Zero, 100.millis) // let the fiber reach the fast-fiber schedule registration first
-                    _     <- tc.advance(1.seconds)
-                    _     <- tc.advance(1.seconds)
-                    _     <- tc.advance(1.seconds)
-                    _     <- tc.advance(1.seconds)
-                    _     <- tc.advance(1.seconds)
-                    _     <- fiber.interrupt
+                    // One interval per tick, fencing on the fibers re-arming so the anchored fire instants stay exact.
+                    _ <- tc.awaitPendingSleepers(2)
+                    _ <- Loop.repeat(5)(tc.advance(1.seconds).andThen(tc.awaitPendingSleepers(2)))
+                    _ <- fiber.interrupt
                     snapshot = recorded.get()
                 yield assert(snapshot == Chunk(1.seconds, 2.seconds, 3.seconds, 4.seconds, 5.seconds))
                 end for

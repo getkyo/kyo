@@ -1,5 +1,6 @@
 package kyo
 
+import java.util.concurrent.atomic.AtomicInteger
 import kyo.*
 import scala.language.implicitConversions
 
@@ -17,10 +18,10 @@ class HttpClientTest extends BaseHttpTest:
     )(using Frame, kyo.test.AssertScope): Unit < (Async & Abort[Any] & Scope) =
         initTrustAllClient().map { httpClient =>
             HttpServer.init(
-                HttpServerConfig.default.port(0).host("localhost").tls(internal.HttpTestPlatformBackend.serverTlsConfig)
+                HttpServerConfig.default.port(0).host("127.0.0.1").tls(internal.HttpTestPlatformBackend.serverTlsConfig)
             )(handlers*).map(s =>
                 HttpClient.let(httpClient) {
-                    test(HttpUrl.parse(s"https://localhost:${s.port}").getOrThrow)
+                    test(HttpUrl.parse(s"https://127.0.0.1:${s.port}").getOrThrow)
                 }
             )
         }
@@ -30,9 +31,9 @@ class HttpClientTest extends BaseHttpTest:
     )(using Frame): Unit =
         "plain" in {
             initTrustAllClient().map { httpClient =>
-                HttpServer.init(0, "localhost")(handlers*).map(s =>
+                HttpServer.init(0, "127.0.0.1")(handlers*).map(s =>
                     HttpClient.let(httpClient) {
-                        test(HttpUrl.parse(s"http://localhost:${s.port}").getOrThrow)
+                        test(HttpUrl.parse(s"http://127.0.0.1:${s.port}").getOrThrow)
                     }
                 )
             }
@@ -47,9 +48,9 @@ class HttpClientTest extends BaseHttpTest:
     )(using Frame): Unit =
         "plain" in {
             initTrustAllClient().map { httpClient =>
-                HttpServer.init(0, "localhost")(handlers*).map(s =>
+                HttpServer.init(0, "127.0.0.1")(handlers*).map(s =>
                     HttpClient.let(httpClient) {
-                        test(HttpUrl.parse(s"http://localhost:${s.port}").getOrThrow)
+                        test(HttpUrl.parse(s"http://127.0.0.1:${s.port}").getOrThrow)
                     }
                 )
             }
@@ -63,9 +64,9 @@ class HttpClientTest extends BaseHttpTest:
         test: kyo.test.AssertScope ?=> HttpUrl => Unit < (Async & Abort[Any] & Scope)
     )(using Frame, kyo.test.AssertScope): Unit < (Scope & Async & Abort[Any]) =
         initTrustAllClient().map { httpClient =>
-            HttpServer.init(0, "localhost")(handlers*).map(s =>
+            HttpServer.init(0, "127.0.0.1")(handlers*).map(s =>
                 HttpClient.let(httpClient) {
-                    test(HttpUrl.parse(s"http://localhost:${s.port}").getOrThrow)
+                    test(HttpUrl.parse(s"http://127.0.0.1:${s.port}").getOrThrow)
                 }
             )
         }
@@ -75,13 +76,24 @@ class HttpClientTest extends BaseHttpTest:
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In]
     )(using Frame): HttpResponse[Out] < (Async & Abort[HttpException]) =
-        client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
-            Scope.run {
-                Scope.ensure(client.closeNow(conn)).andThen {
-                    client.sendWith(conn, route, request)(identity)
+        def once: HttpResponse[Out] < (Async & Abort[HttpException]) =
+            client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                Scope.run {
+                    Scope.ensure(client.closeNow(conn)).andThen {
+                        client.sendWith(conn, route, request)(identity)
+                    }
                 }
             }
-        }
+        // Retry a transient connect failure: on Windows/Node a connect to the test's own localhost server can fail intermittently
+        // (loopback IPv4/IPv6 race) while it is up. Only the connect is retried (HttpConnectException = request never went out); a request-level failure is re-raised unchanged.
+        def retrying(remaining: Int): HttpResponse[Out] < (Async & Abort[HttpException]) =
+            Abort.run[HttpException](once).map {
+                case Result.Success(resp)                                     => resp
+                case Result.Failure(_: HttpConnectException) if remaining > 0 => Async.sleep(50.millis).andThen(retrying(remaining - 1))
+                case other                                                    => Abort.get(other)
+            }
+        retrying(remaining = 8)
+    end send
 
     def withClient[A, S](f: HttpClient => A < (S & Async & Abort[HttpException]))(using
         Frame,
@@ -201,8 +213,8 @@ class HttpClientTest extends BaseHttpTest:
             val ep                          = route.handler(_ => HttpResponse.ok("pong"))
             var captured: Maybe[HttpClient] = Absent
             Scope.run {
-                HttpServer.init(0, "localhost")(ep).map { s =>
-                    val url = HttpUrl.parse(s"http://localhost:${s.port}/ping").getOrThrow
+                HttpServer.init(0, "127.0.0.1")(ep).map { s =>
+                    val url = HttpUrl.parse(s"http://127.0.0.1:${s.port}/ping").getOrThrow
                     HttpClient.init(defaultTlsConfig = HttpTlsConfig(trustAll = true)).map { hc =>
                         captured = Present(hc)
                         HttpClient.let(hc)(HttpClient.getText(url).unit)
@@ -1109,18 +1121,18 @@ class HttpClientTest extends BaseHttpTest:
             // (RFC 6454 section 4 makes origin the scheme/host/port triple, so a port change alone crosses it).
             "plain" in {
                 initTrustAllClient().map { httpClient =>
-                    HttpServer.init(0, "localhost")(collectEp).map { collector =>
+                    HttpServer.init(0, "127.0.0.1")(collectEp).map { collector =>
                         val redirectEp = startRoute.handler { _ =>
                             HttpResponse.halt(
                                 HttpResponse(HttpStatus.Found)
-                                    .setHeader("Location", s"http://localhost:${collector.port}/collect")
+                                    .setHeader("Location", s"http://127.0.0.1:${collector.port}/collect")
                             )
                         }
-                        HttpServer.init(0, "localhost")(redirectEp).map { origin =>
+                        HttpServer.init(0, "127.0.0.1")(redirectEp).map { origin =>
                             HttpClient.let(httpClient) {
                                 HttpClient.withConfig(noTimeout) {
                                     val request = HttpRequest
-                                        .getRaw(HttpUrl.parse(s"http://localhost:${origin.port}/start").getOrThrow)
+                                        .getRaw(HttpUrl.parse(s"http://127.0.0.1:${origin.port}/start").getOrThrow)
                                         .setHeader("Authorization", "Bearer super-secret")
                                         .setHeader("Cookie", "session=super-secret")
                                     HttpClient.use(_.sendWith(collectRoute, request) { resp =>
@@ -1150,21 +1162,21 @@ class HttpClientTest extends BaseHttpTest:
             }
             initTrustAllClient().map { httpClient =>
                 // Hop 2 is plaintext; hop 1 below is TLS, so following the Location downgrades the scheme.
-                HttpServer.init(0, "localhost")(collectEp).map { collector =>
+                HttpServer.init(0, "127.0.0.1")(collectEp).map { collector =>
                     val redirectEp = startRoute.handler { _ =>
                         HttpResponse.halt(
                             HttpResponse(HttpStatus.Found)
-                                .setHeader("Location", s"http://localhost:${collector.port}/collect")
+                                .setHeader("Location", s"http://127.0.0.1:${collector.port}/collect")
                         )
                     }
                     HttpServer.init(
-                        HttpServerConfig.default.port(0).host("localhost")
+                        HttpServerConfig.default.port(0).host("127.0.0.1")
                             .tls(internal.HttpTestPlatformBackend.serverTlsConfig)
                     )(redirectEp).map { origin =>
                         HttpClient.let(httpClient) {
                             HttpClient.withConfig(noTimeout) {
                                 val request = HttpRequest
-                                    .getRaw(HttpUrl.parse(s"https://localhost:${origin.port}/start").getOrThrow)
+                                    .getRaw(HttpUrl.parse(s"https://127.0.0.1:${origin.port}/start").getOrThrow)
                                     .setHeader("Authorization", "Bearer super-secret")
                                     .setHeader("Cookie", "session=super-secret")
                                 HttpClient.use(_.sendWith(collectRoute, request) { resp =>
@@ -1281,36 +1293,61 @@ class HttpClientTest extends BaseHttpTest:
         }
 
         "exponential backoff" in {
-            var attempts   = 0
-            var timestamps = List.empty[Long]
-            val route      = HttpRoute.getRaw("slow").response(_.bodyText)
+            val base     = 500.millis
+            val attempts = new AtomicInteger(0)
+            val route    = HttpRoute.getRaw("slow").response(_.bodyText)
             val ep = route.handler { _ =>
-                attempts += 1
-                timestamps = timestamps :+ java.lang.System.currentTimeMillis()
-                if attempts < 3 then HttpResponse.serverError.addField("body", "wait")
+                if attempts.incrementAndGet() < 3 then HttpResponse.serverError.addField("body", "wait")
                 else HttpResponse.ok("done")
             }
             withServer(ep) { url =>
-                var called = false
-                // The base must dominate per-retry overhead noise. The delays are measured as wall-clock gaps
-                // between server hits, which include request overhead: the first retry pays connection setup and
-                // JIT warmup while later retries reuse a warm path, so that overhead is non-uniform across retries.
-                // A small base (tens of ms) is smaller than that noise and can invert the comparison; a 500ms base
-                // makes the exponential increment the dominant term so the gap growth reflects the backoff, not jitter.
-                HttpClient.withConfig(noTimeout.copy(retrySchedule = Present(Schedule.exponential(500.millis, 2.0).take(5)))) {
-                    withClient { client =>
-                        val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/slow", Absent))
-                        client.sendWith(route, request) { resp =>
-                            called = true
-                            assert(resp.status == HttpStatus.OK)
-                            assert(attempts == 3)
-                            assert(timestamps.size >= 3)
-                            val delay1 = timestamps(1) - timestamps(0)
-                            val delay2 = timestamps(2) - timestamps(1)
-                            assert(delay2 >= delay1, s"Expected increasing delays: $delay1, $delay2")
+                // Backoff is read off the client's own clock, not wall-clock gaps between server hits: with time frozen a retry
+                // reaches the server only because the test advanced past the schedule's delay, so setup/JIT/load cannot stand in and each delay is pinned to its own value.
+                Clock.withTimeControl { tc =>
+                    HttpClient.withConfig(noTimeout.copy(retrySchedule = Present(Schedule.exponential(base, 2.0).take(5)))) {
+                        withClient { client =>
+                            val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/slow", Absent))
+                            // Advances a full delay at a time until the next attempt lands. The check precedes each advance,
+                            // so once an attempt is seen no further time is added and the next delay is measured from here.
+                            def releaseInto(n: Int) =
+                                Loop.indexed { i =>
+                                    if attempts.get() >= n then Loop.done(true)
+                                    else if i >= 50 then Loop.done(false)
+                                    else tc.advance(base).map(_ => Loop.continue)
+                                }
+                            Fiber.initUnscoped(client.sendWith(route, request)(_.status)).map { call =>
+                                pollUntil(attempts.get() >= 1).map { started =>
+                                    assert(started, "the client must make the first attempt")
+                                    tc.advance(base - 1.milli).andThen {
+                                        assert(
+                                            attempts.get() == 1,
+                                            s"a retry fired before the first ${base.show} delay elapsed: ${attempts.get()}"
+                                        )
+                                        releaseInto(2).map { retried =>
+                                            assert(retried, "the first retry must fire once its delay elapses")
+                                            tc.advance(base * 2.0 - 1.milli).andThen {
+                                                assert(
+                                                    attempts.get() == 2,
+                                                    s"the second retry fired before its ${(base * 2.0).show} delay elapsed: ${attempts.get()}"
+                                                )
+                                                releaseInto(3).map { retriedAgain =>
+                                                    assert(retriedAgain, "the second retry must fire once its longer delay elapses")
+                                                    call.get.map { status =>
+                                                        assert(status == HttpStatus.OK)
+                                                        assert(
+                                                            attempts.get() == 3,
+                                                            s"Expected exactly three attempts, got: ${attempts.get()}"
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
-                }.andThen(assert(called))
+                }
             }
         }
 
@@ -1898,7 +1935,7 @@ class HttpClientTest extends BaseHttpTest:
             test: kyo.test.AssertScope ?=> HttpUrl => A < (S & Async & Abort[HttpException])
         )(using Frame, kyo.test.AssertScope): A < (S & Async & Scope & Abort[HttpException]) =
             HttpServer.init(config)(handlers*).map(s =>
-                test(HttpUrl.parse(s"http://localhost:${s.port}").getOrThrow)
+                test(HttpUrl.parse(s"http://127.0.0.1:${s.port}").getOrThrow)
             )
 
         "accepts body within limit" in {
@@ -1906,7 +1943,7 @@ class HttpClientTest extends BaseHttpTest:
                 .request(_.bodyBinary)
                 .response(_.bodyText)
             val ep     = route.handler(_ => HttpResponse.ok("ok"))
-            val config = HttpServerConfig.default.port(0).host("localhost").maxContentLength(1024)
+            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(1024)
             withServerConfig(config)(ep) { url =>
                 val body = Span.fill(512)(0.toByte) // 512 bytes, within 1024 limit
                 send(url, route, HttpRequest.postRaw(HttpUrl.fromUri("/data")).addField("body", body)).map { resp =>
@@ -1920,7 +1957,7 @@ class HttpClientTest extends BaseHttpTest:
                 .request(_.bodyBinary)
                 .response(_.bodyText)
             val ep     = route.handler(_ => HttpResponse.ok("ok"))
-            val config = HttpServerConfig.default.port(0).host("localhost").maxContentLength(64)
+            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(64)
             withServerConfig(config)(ep) { url =>
                 val body = Span.fill(128)(0.toByte) // 128 bytes, exceeds 64 limit
                 send(url, route, HttpRequest.postRaw(HttpUrl.fromUri("/data")).addField("body", body)).map { resp =>
@@ -1934,7 +1971,7 @@ class HttpClientTest extends BaseHttpTest:
                 .request(_.bodyBinary)
                 .response(_.bodyText)
             val ep     = route.handler(_ => HttpResponse.ok("ok"))
-            val config = HttpServerConfig.default.port(0).host("localhost").maxContentLength(100)
+            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(100)
             withServerConfig(config)(ep) { url =>
                 val body = Span.fill(100)(0.toByte) // exactly 100 bytes
                 send(url, route, HttpRequest.postRaw(HttpUrl.fromUri("/data")).addField("body", body)).map { resp =>
@@ -1948,7 +1985,7 @@ class HttpClientTest extends BaseHttpTest:
                 .request(_.bodyBinary)
                 .response(_.bodyText)
             val ep     = route.handler(_ => HttpResponse.ok("ok"))
-            val config = HttpServerConfig.default.port(0).host("localhost").maxContentLength(100)
+            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(100)
             withServerConfig(config)(ep) { url =>
                 val body = Span.fill(101)(0.toByte) // 101 bytes, over 100 limit
                 send(url, route, HttpRequest.postRaw(HttpUrl.fromUri("/data")).addField("body", body)).map { resp =>
@@ -1960,7 +1997,7 @@ class HttpClientTest extends BaseHttpTest:
         "empty body always succeeds" in {
             val route  = HttpRoute.getRaw("data").response(_.bodyText)
             val ep     = route.handler(_ => HttpResponse.ok("ok"))
-            val config = HttpServerConfig.default.port(0).host("localhost").maxContentLength(1)
+            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(1)
             withServerConfig(config)(ep) { url =>
                 send(url, route, HttpRequest.getRaw(HttpUrl.fromUri("/data"))).map { resp =>
                     assert(resp.status == HttpStatus.OK)
@@ -1973,7 +2010,7 @@ class HttpClientTest extends BaseHttpTest:
                 .request(_.bodyText)
                 .response(_.bodyText)
             val ep     = route.handler(req => HttpResponse.ok(req.fields.body))
-            val config = HttpServerConfig.default.port(0).host("localhost").maxContentLength(64)
+            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(64)
             withServerConfig(config)(ep) { url =>
                 // First request: too large, should get 413
                 val bigBody = "x" * 128

@@ -37,6 +37,7 @@ Thank you for considering contributing to this project! We welcome all contribut
   - [Zero-Cost Type Design](#zero-cost-type-design)
   - [Inline Guidelines](#inline-guidelines)
 - [Testing](#testing)
+  - [Deterministic Tests](#deterministic-tests)
   - [Framework](#framework)
   - [Base Trait Hierarchy](#base-trait-hierarchy)
   - [Test Patterns by Level](#test-patterns-by-level)
@@ -118,6 +119,61 @@ You can also add these lines to your `.bashrc` or `.zshrc` file for persistent s
 
 ### How to Build Locally
 
+#### Windows toolchains
+
+Builds that reach a kyo-ffi module need a C compiler. The FFI plugin reads the
+`CC` environment variable and otherwise invokes `cc`. If GCC is installed on
+Windows as `gcc.exe` but no `cc.exe` alias exists, set `CC` before starting sbt:
+
+```powershell
+$env:CC = "gcc"
+```
+
+Some modules also use MSVC. Install the Visual Studio Build Tools C++ workload,
+then run the build from a shell initialized by `VsDevCmd.bat` so `cl.exe`,
+`link.exe`, `INCLUDE`, and `LIB` are available. For an x86_64 build:
+
+```powershell
+cmd.exe /k '"C:\Program Files\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=amd64'
+```
+
+This opens an initialized Command Prompt. Run `powershell` inside it if the
+commands below are being entered in PowerShell.
+
+Confirm the initialized shell sees both tools with `where.exe cl` and
+`where.exe link`. See [kyo-aeron's contributor guide](kyo-aeron/CONTRIBUTING.md#staging-libaeron)
+for that module's required Windows staging step.
+
+On Windows ARM64, install the native ARM64 Podman package explicitly. Scoop can
+otherwise select a package for a different architecture:
+
+```powershell
+scoop install -a arm64 podman
+podman machine init
+podman machine start
+podman info
+```
+
+Run `podman machine init` only when creating the machine. Start an existing
+machine with `podman machine start`.
+
+#### Local build runner
+
+On native Windows, invoke POSIX build scripts through Git Bash. Use the direct
+environment for diff-selected verification:
+
+```powershell
+& $env:SHELL -lc 'scripts/build.sh --env direct testDiff JVM JS'
+```
+
+Do not use `--env podman testDiff`. The container receives a clean source
+archive without `.git`, so the diff selector cannot discover the changed
+modules. Use `--env podman test` when a full Linux container run is needed:
+
+```powershell
+& $env:SHELL -lc 'scripts/build.sh --env podman test JVM JS Native'
+```
+
 Run the following commands to build and test the project locally:
 ```sh
 sbt '+kyoJVM/test' # Runs JVM tests
@@ -162,6 +218,7 @@ If you want to contribute a new method or type, feel free to:
 | `kyo-data`        | Data structures (`Chunk`, `Maybe`, `Result`, etc.)        |
 | `kyo-prelude`     | Effect types without `Sync` (`Abort`, `Env`, `Var`, etc.) |
 | `kyo-core`        | Methods requiring `Sync`                                  |
+| `kyo-system`      | File system, OS process, and environment methods          |
 | `kyo-combinators` | Extensions or composition helpers                         |
 
 Add corresponding tests in the same subproject.
@@ -302,7 +359,6 @@ This is guidance for new and changed code. Existing APIs that thread byte counts
 | `Log`         | Logging                | `trace`, `debug`, `info`, `warn`, `error` with level control           |
 | `Console`     | Console I/O            | `readLine`, `print`, `printLine`, `printErr`                           |
 | `Random`      | Random generation      | Seeded or context-bound; use for testability                           |
-| `System`      | Environment/properties | Type-safe access with custom `Parser`s                                 |
 | `Retry`       | Retry with policy      | Takes a `Schedule` from kyo-data                                       |
 
 **kyo-core** — concurrency primitives:
@@ -328,6 +384,17 @@ This is guidance for new and changed code. Existing APIs that thread byte counts
 | `Timeout`     | Operation timed out | Used by `Async.timeout` and related APIs                         |
 | `Interrupted` | Fiber interrupted   | Used for cancellation; extends `Panic` semantics                 |
 | `Rejected`    | Admission rejected  | Load shedding signal from `Admission`                            |
+
+**kyo-system** (file system, OS processes, and environment):
+
+| Kyo primitive         | Purpose                | Notes                                                                                   |
+| --------------------- | ---------------------- | --------------------------------------------------------------------------------------- |
+| `Path`                | File system operations | Immutable, cross-platform; construct with `/`, effect-tracked read/write                  |
+| `FileSystem`          | Pluggable backend      | Filesystem service, with a host implementation over the platform backends                 |
+| `Command`             | OS process launch      | Builds and runs external processes; `spawn`, `text`, `waitFor`                            |
+| `Process`             | Running process handle | `stdout`, `stderr`, `waitFor`, `destroy`                                                  |
+| `System`              | Environment/properties | Type-safe access with custom `Parser`s                                                    |
+| `FileSystemException` | File I/O errors        | Sealed hierarchy: `FileReadException`, `FileWriteException`, `FileStructureException`     |
 
 Accept generic collections in public APIs, use `Chunk` internally:
 ```scala
@@ -821,6 +888,50 @@ Similarly for data types like `Maybe`:
 ---
 
 ## Testing
+
+### Deterministic Tests
+
+A test must pass or fail on the code's behavior, never on how fast the machine ran. A timing-dependent assertion is a broken test: it flakes on a loaded CI runner, a fast laptop, or a slow emulator.
+
+**No test may depend on the real clock.** No assertion on measured elapsed time (`currentTimeMillis`/`nanoTime`, `Clock.now`/`nowMonotonic` deltas) against a threshold; no `Thread.sleep` to "give something time" then asserting it happened; no real-time delay or timeout as the pass condition. Coordinate with barriers, and control durations with virtual time.
+
+**A threshold is a defect whatever it measures** (elapsed time, clock skew, latency, memory, an iteration count under load): a number that passes on your machine fails on a slow, emulated, or contended one, and widening it only lowers the flip rate. Do not tune thresholds. Replace the magnitude with a property a fast or slow runner cannot flip:
+
+- **Bracketing**: to check a reading matches a reference, sample the reference on both sides: `before = ref(); v = read(); after = ref(); assert(before <= v && v <= after)`. A slower host only widens the interval; a wrong value falls outside, and no tolerance appears. This is how to check a clock or epoch binding.
+- **Ordering / monotonicity**: `assert(b >= a)` across successive reads, or that entries arrived in order.
+- **State / count**: `assert(consumed + remaining == total)`, `assert(peerClosedFlag)`.
+
+**Virtual time** (`Clock.withTimeControl`): the clock advances only when the test tells it to, so sleeps, delays, timeouts, schedules, and stopwatches become exact. Drive a sleeping effect by forking it alongside an advancer and joining; assert exact durations (`elapsed == 5.seconds`, never `>= 5.seconds`). `TimeControl` gives `set`, `advance`, and `awaitPendingSleepers(n)` (advance only after `n` sleepers register, so the tick count is exact rather than a function of interleaving).
+
+```scala
+Clock.withTimeControl { control =>
+    for
+        fiber    <- Fiber.initUnscoped(theEffectThatSleeps)
+        advancer <- Fiber.initUnscoped(Loop.forever(control.advance(1.milli)))
+        result   <- fiber.get          // completes only once virtual time reaches its deadlines
+        _        <- advancer.interrupt
+    yield assert(deterministicProperty)
+}
+```
+
+**Barriers, not sleeps**, to make one fiber wait for another: `Latch` (one-shot), `Barrier` (phased), `Channel`/`Fiber.get` (rendezvous), or an `AtomicInt` plus a latch for "wait until N arrived". A negative property ("X must NOT have happened yet") is proven by a barrier the other fiber would have had to pass, never by sleeping and checking.
+
+Common conversions:
+
+| Flaky shape | Deterministic replacement |
+|---|---|
+| `assert((currentTimeMillis - start) >= d)` | run under `withTimeControl`; assert on `calls`/state and/or `stopwatch.elapsed == d` |
+| `Thread.sleep(n); assert(done)` | release a `Latch`/`Channel` from the other fiber and `await` it |
+| `assert(elapsed < budget)` (op returns fast) | assert the terminal event/state that proves it returned, not the elapsed |
+| retry/schedule/backoff timing | `withTimeControl` plus an advancer; assert attempt count and exact virtual elapsed |
+| "settle" sleep before reading | wait on the settle's own completion signal |
+| real-thread concurrent soak | bound each worker by a fixed op count and self-terminate; a producer/consumer uses a producers-done latch plus drain-until-done, asserting conservation, never the window |
+
+**Legitimately not the real clock** (fine to keep): sleeps, delays, and timeouts under `withTimeControl`; `Duration` arithmetic; a generous ceiling used only as a deadlock or hang canary, where the assertion reads a state and the ceiling exists so a hang trips the suite timeout rather than being asserted on.
+
+**Deviations.** Some tests exercise a seam virtual time cannot cover: the platform clock itself, a real OS socket or kernel poller, a spawned subprocess, raw threads below the effect system. The absence of a virtual-time seam is not a license to keep a timing assertion: the pass/fail must still assert a state, event, structure, or monotonicity, never measured elapsed. A timeout is legitimate only as a hang-canary ceiling, never the pass condition. Before any magnitude bound, prove no ordering, bracketing, or state proxy exists; only then does a catastrophic-only bound survive (so wide that only a genuine defect trips it), written at the site as `// deviation: <reason>` and reported to the maintainer. A test that deliberately wedges the scheduler (a livelock repro) cannot rely on the per-leaf timeout, which runs on that same scheduler; a raw watchdog thread is then legitimate only if its firing is gated on a completion latch the test releases when it finishes, so a slow-but-correct run releases the latch first and is never disturbed.
+
+Checklist before adding a timing-touching test: does the assertion depend on real elapsed time (if so, move it under `withTimeControl`); is a `Thread.sleep` or bare `Async.sleep` used to coordinate (replace with a barrier); is a duration or timeout the pass condition (assert the state or event it produces instead); if the real clock is unavoidable, is the deviation commented and reported.
 
 ### Framework
 

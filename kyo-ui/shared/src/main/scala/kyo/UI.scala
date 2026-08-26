@@ -277,11 +277,14 @@ object UI:
                 Channel.use[Unit](256) { channel =>
                     val exchange =
                         new UIExchange:
+                            // The stream re-renders the whole page per change, so which nodes moved is not
+                            // information it can use: `previous` is ignored here on purpose.
                             def onChange(
                                 region: ReactiveRegion,
                                 path: Seq[String],
                                 contentContext: ReactiveRegion.RegionIdentity,
                                 parentContext: ReactiveRegion.ParentContext,
+                                previous: Maybe[UI],
                                 changedUI: UI
                             )(using Frame): Unit < Async =
                                 // runPartial drops only a Closed (the consumer stopped draining); a Panic propagates.

@@ -36,13 +36,13 @@ jobs:
         with:
           fetch-depth: 0
       - uses: coursier/cache-action@v8.1.1
-      - uses: coursier/setup-action@v3.0.0
+      - uses: coursier/setup-action@v3.0.2
         with:
           jvm: corretto:25
           apps: sbt
       # The site reaches kyo-net through kyo-http, so rendering it compiles kyo-net's C shims. This
       # workflow does not use .github/actions/setup, so the native build deps are installed here, as
-      # readme.yml does for the same reason.
+      # checks.yml does for the same reason.
       #
       # liburing (build-time only): the io_uring shim (kyo_uring.c) statically links -luring.
       - name: Install liburing (Linux)
@@ -54,8 +54,7 @@ jobs:
       - name: Prepare BoringSSL
         shell: bash
         run: |
-          command -v cmake >/dev/null 2>&1 || bash scripts/apt-install.sh cmake
-          command -v go >/dev/null 2>&1 || bash scripts/apt-install.sh golang-go
+          bash scripts/apt-install.sh --if-missing cmake go:golang-go
           bash kyo-net/build/boringssl/build-boringssl.sh linux-x86_64
       - name: Link the browser bundle (fullLinkJS)
         run: sbt 'kyo-website-bundleJS/Compile/fullLinkJS'

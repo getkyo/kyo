@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Targeted cross-platform run of the kyo-net suites touched by the detach-window and staging fixes: the specific test classes only, never
-# a module-wide or diff-cascaded build. Intended for the ci.yml custom dispatch (a bare JVM-provisioned runner) and equally runnable
+# a module-wide or diff-cascaded build. Intended for the ci-dispatch.yml custom mode (a bare JVM-provisioned runner) and equally runnable
 # locally; provisions the Native/JS toolchains when apt is available and they are missing.
 set -euo pipefail
 cd "$(dirname "$0")/.."

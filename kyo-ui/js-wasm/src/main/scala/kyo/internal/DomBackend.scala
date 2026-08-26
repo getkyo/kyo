@@ -177,11 +177,15 @@ private[kyo] object DomBackend:
 
         private[kyo] def close(using Frame): Unit < Sync = Sync.defer { open = false }
 
+        // In-process: the update is a DOM write, not bytes on a wire, so this replaces the region whole
+        // (morphing where it can) rather than diffing it. `previous` is what the server-side exchange
+        // uses to send only what moved.
         def onChange(
             region: ReactiveRegion,
             path: Seq[String],
             contentContext: ReactiveRegion.RegionIdentity,
             parentContext: ReactiveRegion.ParentContext,
+            previous: Maybe[UI],
             ui: UI
         )(using Frame): Unit < Async =
             Sync.defer(open).flatMap { isOpen =>

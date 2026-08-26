@@ -1,8 +1,8 @@
 package kyo
 
-import izumi.reflect.Tag as ITag
 import kyo.*
 import kyo.internal.RegisterFunction
+import kyo.internal.TagHash
 import kyo.internal.TagTestMacro.test
 import scala.annotation.nowarn
 
@@ -217,26 +217,26 @@ class TagTest extends kyo.test.Test[Any]:
 
         "opaque types with explicit bounds" - {
             test[BoundedInt, AnyVal]
-            test[Int, BoundedInt](skipIzumiWarning = true)
+            test[Int, BoundedInt]
             test[BoundedString, AnyRef]
-            test[String, BoundedString](skipIzumiWarning = true)
+            test[String, BoundedString]
         }
 
         "opaque types with bounds different from underlying" - {
             test[BoundedCat, Animal]
-            test[Cat, BoundedCat](skipIzumiWarning = true)
+            test[Cat, BoundedCat]
             test[BoundedCat, Mammal]
         }
 
         "bounded opaque types with union underlying type" - {
             test[UnionWithBounds, Any]
-            test[Int, UnionWithBounds](skipIzumiWarning = true)
+            test[Int, UnionWithBounds]
             test[String, UnionWithBounds]
         }
 
         "bounded opaque types with intersection underlying type" - {
             test[IntersectionWithBounds, Readable]
-            test[FileImpl, IntersectionWithBounds](skipIzumiWarning = true)
+            test[FileImpl, IntersectionWithBounds]
             test[IntersectionWithBounds, Writable]
         }
 
@@ -717,7 +717,7 @@ class TagTest extends kyo.test.Test[Any]:
         }
         "Any" - {
             test[Any, Any]
-            test[Any, AnyRef](skipIzumiWarning = true) // known izumi limitation
+            test[Any, AnyRef]
             test[Any, AnyVal]
             test[List[Any], List[Int]]
         }
@@ -769,7 +769,7 @@ class TagTest extends kyo.test.Test[Any]:
             test[Box[Big.Small], Box[Big.Small]]
 
             class Box2[A]
-            def test2[A: Tag: izumi.reflect.Tag] = test[Box2[A], Box2[A]]
+            def test2[A: Tag] = test[Box2[A], Box2[A]]
             test2[Big.Sub]
         }
     }
@@ -1084,12 +1084,12 @@ class TagTest extends kyo.test.Test[Any]:
 
         "different types with similar string representation" - {
             test[1, 1.0]
-            test[1, 1L](skipIzumiWarning = true)
+            test[1, 1L]
             test['a', "a"]
             test[true, "true"]
-            test[1.0f, 1.0](skipIzumiWarning = true)
+            test[1.0f, 1.0]
             test[0, 0.0]
-            test[0, 0L](skipIzumiWarning = true)
+            test[0, 0L]
             class Box[A]
             test[Box[1], Box[1.0]]
         }
@@ -1257,6 +1257,35 @@ class TagTest extends kyo.test.Test[Any]:
         "is pinned to its content-derived constant (process-independent determinism)" in {
             assert(Tag[Int].hash == -1492440803, s"Tag[Int].hash = ${Tag[Int].hash}")
             assert(Tag[String].hash == -59591402, s"Tag[String].hash = ${Tag[String].hash}")
+        }
+    }
+
+    // `TagHash` is the dispatch hash, not the content-stable `Tag.hash` above: it memoizes on the
+    // platforms whose `String.hashCode` does not. What has to hold is that memoizing changes nothing,
+    // so each case reads a tag twice, once filling the memo and once through it.
+    "dispatch hash memoization" - {
+
+        "agrees with hashCode, before and after the memo is filled" in {
+            trait MA
+            val tag    = Tag[MA]
+            val direct = tag.hashCode
+            assert(TagHash.of(tag) == direct)
+            assert(TagHash.of(tag) == direct)
+        }
+
+        "distinct types keep distinct dispatch hashes" in {
+            assert(TagHash.of(Tag[Int]) != TagHash.of(Tag[String]))
+        }
+
+        "repeated comparisons hold their verdict once the memo is warm" in {
+            trait MB
+            trait MC extends MB
+            val sub    = (1 to 10).map(_ => Tag[MC] <:< Tag[MB])
+            val notSub = (1 to 10).map(_ => Tag[MB] <:< Tag[MC])
+            val notEq  = (1 to 10).map(_ => Tag[MB] =:= Tag[MC])
+            assert(sub.distinct.size == 1 && sub.head)
+            assert(notSub.distinct.size == 1 && !notSub.head)
+            assert(notEq.distinct.size == 1 && !notEq.head)
         }
     }
 

@@ -375,13 +375,30 @@ class ClaudeCodeWireTest extends kyo.test.Test[Any]:
         end for
     }
 
+    "authenticationFailed reads only the structured authentication error" in {
+        val authFailure =
+            """{"type":"assistant","error":"authentication_failed","message":{"role":"assistant","content":[]}}"""
+        val proseOnly =
+            """{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"authentication_failed"}]}}"""
+
+        for
+            auth  <- Abort.run[AIGenException](ClaudeCodeWire.authenticationFailed(authFailure))
+            prose <- Abort.run[AIGenException](ClaudeCodeWire.authenticationFailed(proseOnly))
+            empty <- Abort.run[AIGenException](ClaudeCodeWire.authenticationFailed(""))
+        yield
+            assert(auth == Result.Success(true), s"the structured auth error must be recognized: $auth")
+            assert(prose == Result.Success(false), s"prose must never be classified as an auth error: $prose")
+            assert(empty == Result.Success(false), s"empty output has no auth error: $empty")
+        end for
+    }
+
     "turnUsage prefers the terminal result event's aggregate" in {
         // The result event sums the invocation's internal iterations (verified live), so it wins over
         // the per-message assistant events, whose output counts are message-start snapshots.
         val output =
             """{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[],"usage":{"input_tokens":10,"output_tokens":4,"cache_read_input_tokens":0,"cache_creation_input_tokens":29065}}}
               |{"type":"result","subtype":"success","is_error":false,"usage":{"input_tokens":10,"output_tokens":38,"cache_read_input_tokens":5,"cache_creation_input_tokens":29065}}""".stripMargin
-        Abort.run[AIGenException](ClaudeCodeWire.turnUsage(output)).map { result =>
+        Abort.run[AIGenException](ClaudeCodeWire.turnUsage(output, 0)).map { result =>
             assert(
                 result == Result.succeed(AIStats(29080L, Present(5L), 38L, Absent, 1)),
                 s"the aggregate must win: input 10+5+29065, cached 5, output 38, one turn; got $result"
@@ -396,7 +413,7 @@ class ClaudeCodeWireTest extends kyo.test.Test[Any]:
             """{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[],"usage":{"input_tokens":10,"output_tokens":4,"cache_read_input_tokens":2,"cache_creation_input_tokens":100}}}
               |{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[],"usage":{"input_tokens":10,"output_tokens":4,"cache_read_input_tokens":2,"cache_creation_input_tokens":100}}}
               |{"type":"assistant","message":{"id":"msg_2","role":"assistant","content":[],"usage":{"input_tokens":50,"output_tokens":7,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}""".stripMargin
-        Abort.run[AIGenException](ClaudeCodeWire.turnUsage(output)).map { result =>
+        Abort.run[AIGenException](ClaudeCodeWire.turnUsage(output, 0)).map { result =>
             assert(
                 result == Result.succeed(AIStats(162L, Present(2L), 11L, Absent, 1)),
                 s"msg_1 counts once (112 in, 4 out) plus msg_2 (50 in, 7 out), one turn; got $result"
@@ -406,7 +423,7 @@ class ClaudeCodeWireTest extends kyo.test.Test[Any]:
 
     "turnUsage on output with no usage anywhere reports one turn of zeros" in {
         val output = """{"type":"system","subtype":"init","session_id":"s"}"""
-        Abort.run[AIGenException](ClaudeCodeWire.turnUsage(output)).map { result =>
+        Abort.run[AIGenException](ClaudeCodeWire.turnUsage(output, 0)).map { result =>
             assert(result == Result.succeed(AIStats(0L, Absent, 0L, Absent, 1)), s"got $result")
         }
     }

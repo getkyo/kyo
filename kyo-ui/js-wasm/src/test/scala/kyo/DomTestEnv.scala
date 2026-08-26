@@ -1,33 +1,47 @@
 package kyo
 
 import scala.scalajs.js
-import scala.scalajs.js.annotation.JSImport
 
 /** Installs a real DOM into the Node.js test process via jsdom.
   *
-  * The JS and Wasm test environments are plain Node.js processes with no DOM globals. This helper imports jsdom and
-  * copies the window's DOM constructors and globals onto `globalThis`, so production code compiled against
-  * `org.scalajs.dom` (global `document`, `window`, and `instanceof Element` checks) runs unmodified. Installation is
-  * lazy and idempotent: suites that never touch the DOM do not initialize jsdom, and repeated calls reuse the first
-  * window.
+  * The JS and Wasm test environments are plain Node.js processes with no DOM globals. This helper loads jsdom lazily
+  * and copies the window's DOM constructors and globals onto `globalThis`, so production code compiled against
+  * `org.scalajs.dom` (global `document`, `window`, and `instanceof Element` checks) runs unmodified. The load is lazy
+  * and idempotent: suites that never touch the DOM never load jsdom, and repeated calls reuse the first window.
   *
-  * jsdom must be resolvable from the repo root: `npm install --no-save jsdom@^30` (CI does this in the setup action;
-  * the repo ignores *.json, so there is no package.json to install from).
+  * The load goes through a runtime `require` rather than an `@JSImport`: an import fails at bundle load with Node's
+  * own resolution error, before any test code can restate it. The JS test bundle is a CommonJS module and has
+  * `require` in scope; the Wasm test bundle is an ES module and builds one with
+  * `process.getBuiltinModule("module").createRequire`.
+  *
+  * jsdom must be resolvable from the repo root: `npm install --no-save --no-fund --no-audit jsdom@^30`, the same
+  * command CI runs in its setup action. The repo ignores *.json, so there is no package.json to install from, and a
+  * fresh checkout has no node_modules; the load below restates Node's resolution failure with that command in it.
   */
 private[kyo] object DomTestEnv:
 
-    @js.native
-    @JSImport("jsdom", "JSDOM")
-    private class JSDOM(html: String, options: js.Object) extends js.Object:
-        val window: js.Dynamic = js.native
-    end JSDOM
-
     lazy val install: Unit =
         if js.typeOf(js.Dynamic.global.document) == "undefined" then
+            val g = js.Dynamic.global
+            val require =
+                if js.typeOf(g.require) == "function" then g.require
+                else g.process.getBuiltinModule("module").createRequire(g.process.cwd().asInstanceOf[String] + "/")
+            val jsdom =
+                try require("jsdom")
+                catch
+                    case ex: js.JavaScriptException =>
+                        // Node's own message is "Cannot find module 'jsdom'", which names neither the suite that
+                        // needs it nor the command that supplies it. Restate it so a local run is self-explaining;
+                        // CI installs jsdom in its setup action, so this path is the local-checkout one.
+                        throw new IllegalStateException(
+                            "the DOM-backed kyo-ui tests need jsdom, which is not resolvable from the repository root. " +
+                                "Install it with: npm install --no-save --no-fund --no-audit jsdom@^30",
+                            ex
+                        )
             // pretendToBeVisual enables requestAnimationFrame, which DomBackend uses to start SMIL animations.
             // jsdom still performs no layout: getBoundingClientRect stays zeroed, so measurement behavior belongs
             // in the real-Chrome suites, not here.
-            val dom = new JSDOM(
+            val dom = js.Dynamic.newInstance(jsdom.JSDOM)(
                 "<!doctype html><html><head></head><body></body></html>",
                 js.Dynamic.literal(pretendToBeVisual = true)
             )

@@ -223,6 +223,20 @@ defaults do not fit. `Sql.from[Invoice]("i")` sets the alias, which re-keys the 
 how a self-join tells its two sides apart, and `Sql.from[Invoice]("i", "invoice_ledger")` names the table
 outright beside it.
 
+The override is per call site, which is a repetition where a schema's table names differ from its type names
+throughout, plural tables being the common case. Name the source once instead:
+
+```scala
+transparent inline def invoices = Sql.from[Invoice]("i", "invoice_ledger")
+
+val pending    = invoices.where(r => r.i.status == InvoiceStatus.Pending)
+val topByTotal = invoices.orderBy(r => r.i.total.desc).limit(10)
+```
+
+Every query then starts from `invoices` and the table name is written once. `transparent` is what makes it
+work: without it the record type widens and the lambdas cannot name a column, and with it the source still
+folds at compile time (see [Static queries](#static-queries)).
+
 In a self-join both sides need their own key, so the predicate can name one against the other, pairing distinct
 invoices billed to the same customer:
 
@@ -305,11 +319,15 @@ falling back silently:
 ```text
 9 |    page.runStatic
   |         ^
-  |    .runStatic: query cannot be folded at compile time. Ensure the query and its DSL fragments are
-  |    constructed at the call site (a query stored in a `val` reaches this macro as a variable
-  |    reference, without the construction behind it). Use .run for opportunistic static folding with
-  |    runtime fallback, or .runDynamic to skip static folding entirely.
+  |    .runStatic: this statement cannot be folded at compile time. The statement reaches this macro
+  |    as a variable reference rather than as its construction, which is what a query stored in a
+  |    `val` looks like here. Construct it at the call site, or name it with a `transparent inline
+  |    def`. Use .run for opportunistic static folding with runtime fallback, or .runDynamic to skip
+  |    static folding entirely.
 ```
+
+The refusal names the construct it found rather than guessing, so a statement carrying a raw `sql"..."`
+fragment or a `having` clause says so instead of blaming a `val`.
 
 ### Static queries
 
@@ -360,12 +378,54 @@ outside the rendered set fails with `SqlStaticRenderMissingDialectException`, na
 and the dialects that were rendered. Putting the driver on the compile classpath is what extends `.run` and
 `.runStatic` to it.
 
-Keeping a statement on the static path takes two habits beyond constructing at the terminal: keep
-`SqlNaming` givens at a top level or in a companion, because a casing given local to a method cannot be
-resolved statically and sends the render to run time, and write `.runStatic` where the build should fail
-if a refactor breaks the compile-time render, because `.run` falls back silently and reports nothing. The text is also inspectable without
-executing anything: `ast.render(dialect)` is pure and needs no client, and `client.render(ast)` targets a
-live client's flavor and server version.
+Keeping a statement on the static path takes two habits beyond constructing at the terminal: declare
+`SqlNaming` givens at the top level of the file that runs the queries, because a casing given local to a
+method cannot be resolved statically and sends the render to run time, and write `.runStatic` where the
+build should fail if a refactor breaks the compile-time render, because `.run` falls back silently and
+reports nothing.
+
+A `SqlNaming` given is found by ordinary implicit search **where the statement is constructed**, so where it
+is declared decides which queries it reaches. Top level of the file, or an object the queries are written
+inside of, both work. A companion object does not reach the class beside it: a given in `object Store` is
+not in scope inside `class Store`, so a query written there runs uncased and asks for the verbatim Scala
+field names.
+
+What that failure looks like depends on the tier. The typed DSL names its columns in the projection, so the
+statement goes out as `SELECT "signedUpAt" …` and the server rejects it before a row exists, arriving as a
+`SqlServerException` carrying SQLSTATE 42703. A raw `sql"…"` decoded by name gets as far as the decode and
+fails with `SqlDecodeColumnNotFoundException`, which lists the columns the row does have and says a casing
+given is resolved elsewhere. Import it (`import Store.given`) or declare it where the queries are.
+
+Note the construction site is not always the run site. A statement built at the terminal, and one named by a
+`transparent inline def`, are constructed where they run; a shared trunk held in a `val` fixed its casing
+where the `val` is defined, so moving a given next to the `.run` will not reach it.
+
+### What the static path cannot fold
+
+Two constructs are rendered at run time, so a statement carrying either one folds no further: an embedded
+raw `sql"..."` fragment, and a `having` clause. Spelling the predicate with the typed operators is what keeps
+it static.
+
+Two more shapes refuse for a different reason, both about what the macro can read rather than what it can
+render. A statement reaching the macro as a variable reference cannot be folded, which is what a query held
+in a `val` looks like from there. And a statement embedding a value known only at run time, a `limit` count
+read from configuration being the usual one, has nothing to fold that value to.
+
+On `.runStatic` each of the four is a compile error naming which one it found; on `.run` the statement falls
+back to the runtime renderer, which is the same SQL either way.
+
+Reuse and the static path meet at the source. A source named by a `transparent inline def` folds, and
+`transparent` is required, so the table-name override has a home rather than being repeated at every call
+site (see [Names derive from the type](#names-derive-from-the-type)).
+
+A source is as far as that goes: a `transparent inline def` naming a source **with a filter already on it**
+does not compile, at the definition rather than at the use site. The record the predicate lambda reads is
+typed through the `Fields` evidence summoned for the row type, and inside an inline def that evidence is not
+resolved yet, so the lambda cannot name a column. Reuse a filtered trunk as a `val` and run it with `.run`,
+which renders it at run time.
+
+Whichever path a statement takes, its text is inspectable without executing anything: `ast.render(dialect)`
+is pure and needs no client, and `client.render(ast)` targets a live client's flavor and server version.
 
 ### What the types are doing
 
@@ -613,6 +673,12 @@ work:
   program opening several engines by computed URL also calls each driver's `register()`, because Native
   embeds a single services file. Literal URLs resolve at compile time and need none of this. The driver
   READMEs carry the snippets.
+- **The FFI plugin, on Scala Native.** Every connection goes through kyo-net, whose C shims are linked into
+  the binary rather than loaded, so a Native build also needs `addSbtPlugin("io.getkyo" % "kyo-ffi-plugin" %
+  kyoVersion)`, `.nativeConfigure(_.enablePlugins(kyo.ffi.sbt.KyoFfiPlugin))`, and the two
+  `ffiNativeDependency*Options` tasks folded into `nativeConfig`. Without them the link fails on undefined
+  symbols before any of the above matters. See kyo-net's
+  [Scala Native builds](../kyo-net/README.md#scala-native-builds) for the exact block.
 - **A third engine is one artifact.** `db.Backend` (a scheme, a dialect, an `open`), a dialect written by
   overriding only what diverges from standard SQL (four members are abstract), and the registration above.
   Nothing in kyo-sql names an engine, so an out-of-tree driver is an ordinary dependency.

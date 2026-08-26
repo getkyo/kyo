@@ -168,6 +168,10 @@ private[completion] object OpenAICompletion extends Completion:
     /** Streams the result-envelope fragments by posting the native SSE request and projecting each line's
       * tool-call argument delta through [[parseDeltaArguments]].
       */
+    // Streams over SSE: one fragment per delta the endpoint sends, so the stream advances while
+    // the model is still producing.
+    def streamsIncrementally: Boolean = true
+
     def streamFragments(
         config: Config,
         context: Context,
@@ -382,8 +386,8 @@ private[completion] object OpenAICompletion extends Completion:
                                 // compelled by tool_choice:"required"), so a required optional field is schema
                                 // pressure, not grammar enforcement.
                                 if p.name == Completion.resultToolName then
-                                    StrictSchema.requireAll(resultSchema.getOrElse(Json.jsonSchema(using p.inputSchema)))
-                                else Json.jsonSchema(using p.inputSchema)
+                                    StrictSchema.requireAll(resultSchema.getOrElse(p.wireInputSchema))
+                                else p.wireInputSchema
                             ToolDef(FunctionDef(p.description, p.name, false, params))
                         }.toList)
                 // A configured temperature reaches the wire only when the entry declares the model accepts it.

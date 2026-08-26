@@ -811,7 +811,10 @@ object WebsiteGenerator:
         writeString("robots.txt", outDir / "robots.txt", buildRobotsTxt())
 
     private def copyFile(route: String, src: Path, dst: Path)(using Frame): Unit < (Sync & Abort[WebsiteException]) =
-        Abort.run[FileFsException](src.copy(dst, replaceExisting = true)).map {
+        Abort.run[FileStructureException](src.copy(
+            dst,
+            Path.CopyOptions(replace = Path.Replace.Existing)
+        )).map {
             case Result.Success(_) => ()
             case Result.Failure(e) => Abort.fail(WebsiteEmitException(route, e))
             case p: Result.Panic   => Abort.error(p)

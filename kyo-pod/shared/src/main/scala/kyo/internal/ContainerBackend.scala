@@ -418,7 +418,7 @@ private[kyo] object ContainerBackend:
                         if paths.isEmpty then Absent
                         else
                             val head = paths.head
-                            Path(head).exists.map { exists =>
+                            Abort.recover[FileReadException](_ => false)(Path(head).exists).map { exists =>
                                 if exists then Present(head)
                                 else findExisting(paths.tail)
                             }

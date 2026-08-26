@@ -810,8 +810,7 @@ class ActorTest extends kyo.test.Test[Any]:
                 v3     <- actor.ask(TestMessage(2, _))
                 _      <- actor.ask(TestMessage(42, _))
                 _      <- actor.ask(TestMessage(42, _))
-                _      <- Async.sleep(100.millis)
-                _      <- actor.fiber.getResult // wait for actor to terminate (retries exhausted)
+                _      <- actor.fiber.getResult // wait for actor to terminate (retries exhausted); getResult is the real wait
                 result <- Abort.run(actor.ask(TestMessage(3, _)))
                 count  <- attempts.get
             yield assert(

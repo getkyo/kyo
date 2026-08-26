@@ -1039,7 +1039,11 @@ All APIs are shared across platforms. The same code compiles for JVM, JavaScript
 
 - **JVM**: No additional setup required.
 - **JavaScript**: The server backend requires a Node.js runtime.
-- **Native**: Requires OpenSSL on the system when TLS is used. Plain HTTP needs no additional setup.
+- **Native**: The build needs the kyo FFI plugin, `addSbtPlugin("io.getkyo" % "kyo-ffi-plugin" % kyoVersion)` plus
+  `.nativeConfigure(_.enablePlugins(kyo.ffi.sbt.KyoFfiPlugin))` and the two `ffiNativeDependency*Options` tasks folded into
+  `nativeConfig`, because kyo-net's C shims are linked into the binary and those tasks carry their link flags; without them the link
+  fails on undefined symbols. See kyo-net's [Scala Native builds](../kyo-net/README.md#scala-native-builds) for the exact block. TLS
+  additionally requires OpenSSL on the system.
 
 Backends are expected to behave uniformly across platforms. If you encounter a behavioral difference between backends, please [report it](https://github.com/getkyo/kyo/issues).
 

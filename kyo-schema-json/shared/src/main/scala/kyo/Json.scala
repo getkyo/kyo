@@ -26,28 +26,48 @@ object Json:
 
     given Json = Json()
 
+    /** Line-delimited JSON (JSONL, also called NDJSON) support: one JSON value per line.
+      *
+      * Alias for [[kyo.JsonLines]], whose body lives in its own file. Reach it as `Json.Lines.Framer`,
+      * `Json.Lines.Line`, `Json.Lines.Pending`, `Json.Lines.Framed`, and `Json.Lines.DefaultMaxLineSize`.
+      */
+    export kyo.JsonLines as Lines
+
     /** Encodes a value of type A to a JSON string.
+      *
+      * Takes `Json` as an explicit parameter, like [[decode]] does, rather than summoning it inside the body: a plain `summon[Json]`
+      * written inside an `inline def`'s body is resolved once, when this method is type-checked, not fresh at each call site after
+      * inlining. An explicit `using` parameter is resolved per call, so a caller-scoped `Json` given is honored the same way `decode`
+      * already honors one.
+      *
+      * `json` is the last parameter, after `schema` and `frame`, rather than the first: call sites across the codebase already supply
+      * `schema` explicitly as `Json.encode(v)(using someSchema)`, relying on Scala's using-clause rule that unsupplied parameters must
+      * be a trailing suffix. Putting the new parameter first would have shifted that existing explicit argument onto it and broken
+      * every such call site with a type mismatch; putting it last keeps every existing call site's argument list a valid prefix, with
+      * `frame` and `json` both still resolved implicitly when left unsupplied.
       *
       * @param value
       *   the value to encode
       * @return
       *   the JSON string representation
       */
-    inline def encode[A](value: A)(using schema: Schema[A], frame: Frame): String =
-        val w = summon[Json].newWriter()
+    inline def encode[A](value: A)(using schema: Schema[A], frame: Frame, json: Json): String =
+        val w = json.newWriter()
         schema.writeTo(value, w)
         new String(w.result().toArray, java.nio.charset.StandardCharsets.UTF_8)
     end encode
 
     /** Encodes a value of type A to raw UTF-8 JSON bytes.
       *
+      * Takes `Json` as an explicit trailing parameter for the same reason [[encode]] does.
+      *
       * @param value
       *   the value to encode
       * @return
       *   the JSON bytes
       */
-    inline def encodeBytes[A](value: A)(using schema: Schema[A], frame: Frame): Span[Byte] =
-        val w = summon[Json].newWriter()
+    inline def encodeBytes[A](value: A)(using schema: Schema[A], frame: Frame, json: Json): Span[Byte] =
+        val w = json.newWriter()
         schema.writeTo(value, w)
         w.result()
     end encodeBytes
@@ -681,6 +701,107 @@ object Json:
                     // tree's variant, not via the wire bytes.
                     Obj(List.empty, List.empty)
         end fromStructure
+
+        /** Recovers a `Structure.Type` from a JsonSchema: the runtime inverse of [[fromStructure]].
+          *
+          * A schema that only exists at runtime carries no Scala type, so nothing can validate a value
+          * against it: an MCP server's tool `inputSchema` and a hand-built descriptor both arrive as this
+          * AST and no further. The recovered type is the one `Structure.conform` reads, which is what lets
+          * a shape-dynamic `Schema[Structure.Value]` carry a schema it was never derived from.
+          *
+          * The recovery is structural, not total, and the losses are the parts no `Structure.Type` node
+          * can hold: JSON Schema's value constraints (`pattern`, `minLength`, numeric bounds) are dropped,
+          * a description survives only in property position (where `Structure.Field.doc` carries it), an
+          * object declaring both properties and `additionalProperties` recovers as its properties alone,
+          * and `type: null` recovers as `Unit`, which re-derives as `{}`. What a model acts on does
+          * survive a `toStructure` / `fromStructure` round trip: property names, types, nesting, the
+          * required set, and per-property descriptions.
+          *
+          * Product and sum nodes are named by their path from the root, because [[fromStructure]] guards
+          * recursion by name: two sibling objects sharing one name would re-derive the second as an empty
+          * `{}`, silently erasing its properties.
+          */
+        private[kyo] def toStructure(schema: JsonSchema): Structure.Type =
+            toStructure(schema, "Root")
+
+        private def toStructure(schema: JsonSchema, path: String): Structure.Type =
+            schema match
+                case _: Str     => stringStructure
+                case _: Integer => longStructure
+                case _: Num     => doubleStructure
+                case _: Bool    => booleanStructure
+                // `Unit` is the only kind `Structure.conform` accepts any value for, which is the closest
+                // reading of a JSON `null` type that the structural vocabulary offers.
+                case _: Null => unitStructure
+
+                case Nullable(inner) =>
+                    Structure.Type.Optional("Option", anyTag, toStructure(inner, path))
+
+                case arr: Arr =>
+                    Structure.Type.Collection("Chunk", anyTag, toStructure(arr.items, s"$path[]"))
+
+                case OneOf(variants) =>
+                    Structure.Type.Sum(
+                        path,
+                        anyTag,
+                        Chunk.empty,
+                        Chunk.from(variants.map((name, sub) => Structure.Variant(name, toStructure(sub, s"$path.$name")))),
+                        Chunk.empty
+                    )
+
+                case Obj(properties, required, additionalProperties, _, _, _) =>
+                    if properties.nonEmpty then
+                        val requiredNames = required.toSet
+                        Structure.Type.Product(
+                            path,
+                            anyTag,
+                            Chunk.empty,
+                            Chunk.from(properties.map { (name, sub) =>
+                                Structure.Field(
+                                    name,
+                                    toStructure(sub, s"$path.$name"),
+                                    doc = descriptionOf(sub),
+                                    optional = !requiredNames.contains(name)
+                                )
+                            })
+                        )
+                    else
+                        additionalProperties match
+                            // An object with no declared properties but a typed `additionalProperties` is
+                            // the JSON Schema spelling of a string-keyed map.
+                            case Present(valueSchema) =>
+                                Structure.Type.Mapping("Map", anyTag, stringStructure, toStructure(valueSchema, s"$path{}"))
+                            // `{}` declares no constraints, which is exactly what the open type means.
+                            case Absent => Structure.Type.Open(anyTag)
+                    end if
+            end match
+        end toStructure
+
+        /** The description a node carries, if its variant has one. */
+        private def descriptionOf(schema: JsonSchema): Maybe[String] =
+            schema match
+                case o: Obj     => o.description
+                case a: Arr     => a.description
+                case s: Str     => s.description
+                case n: Num     => n.description
+                case i: Integer => i.description
+                case b: Bool    => b.description
+                case n: Null    => n.description
+                case _          => Absent
+
+        // Reuse the derived structures so a recovered primitive is indistinguishable from the one a
+        // `Schema[String]` (and friends) produces, tag included.
+        private lazy val stringStructure: Structure.Type  = summon[Schema[String]].structure
+        private lazy val longStructure: Structure.Type    = summon[Schema[Long]].structure
+        private lazy val doubleStructure: Structure.Type  = summon[Schema[Double]].structure
+        private lazy val booleanStructure: Structure.Type = summon[Schema[Boolean]].structure
+        private lazy val unitStructure: Structure.Type    = summon[Schema[Unit]].structure
+
+        // A recovered node has no Scala type behind it, so every non-primitive carries the `Any` tag.
+        // Nothing downstream reads it: `conform` dispatches on the node kind and `fromStructure` on the
+        // node's shape.
+        private lazy val anyTag: Tag[Any] = Tag[Any]
+
     end JsonSchema
 
 end Json

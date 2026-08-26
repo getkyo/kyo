@@ -1,0 +1,161 @@
+name: ci-dispatch
+# Manually dispatched builds, where the os poles, targets and run shape vary per invocation.
+# The push and pull_request path lives in ci.yml over a constant matrix.
+#
+# Two shapes:
+#   full / diff  prep derives the pole set from the inputs, then build fans out one build.yml
+#                call per pole
+#   custom       one command on one runner, the eval escape hatch
+on:
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: 'Space-separated platform subset to dispatch (subset of JVM JS Native Wasm).'
+        type: string
+        required: false
+        default: 'JVM JS Native Wasm'
+      mode:
+        description: 'Run-shape: full (test), diff (testDiff), or custom (the command escape hatch).'
+        type: choice
+        options:
+          - full
+          - diff
+          - custom
+        default: full
+      oses:
+        description: 'Space-separated os poles to run (subset of linux-x64 linux-arm64 windows-x64).'
+        type: string
+        required: false
+        default: 'linux-x64 linux-arm64 windows-x64'
+      command:
+        description: 'Used only when mode=custom: the recommended form is ./scripts/ci-test.sh <platform> <action>.'
+        type: string
+        required: false
+        default: './scripts/ci-test.sh JVM test'
+      custom-runner:
+        description: 'Used only when mode=custom: the GitHub-hosted runner label the command runs on.'
+        type: choice
+        options:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+          - windows-latest
+        default: ubuntu-latest
+      ref:
+        description: 'Git ref (branch or sha) to check out and test. Defaults to the ref the workflow is dispatched on.'
+        type: string
+        required: false
+        default: ''
+
+concurrency:
+  # Custom-mode groups key on the run id (no dedup): the free-form command must never reach
+  # the group name, where a multi-line value invalidates the workflow.
+  group: ci-dispatch-${{ github.ref }}-${{ inputs.mode }}-${{ inputs.targets }}-${{ inputs.oses }}-${{ inputs.mode == 'custom' && github.run_id || 0 }}-${{ inputs.custom-runner }}
+  cancel-in-progress: true
+
+jobs:
+  # Skipped on mode=custom: its outputs feed `build` alone, which does not run for custom.
+  prep:
+    if: ${{ inputs.mode != 'custom' }}
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.derive.outputs.mode }}
+      poles: ${{ steps.derive.outputs.poles }}
+    steps:
+      - id: derive
+        env:
+          INPUT_MODE: ${{ inputs.mode }}
+          INPUT_OSES: ${{ inputs.oses }}
+          INPUT_TARGETS: ${{ inputs.targets }}
+        run: |
+          mode="$INPUT_MODE"
+          oses="$INPUT_OSES"
+          targets="$INPUT_TARGETS"
+
+          for os in $oses; do
+            case "$os" in
+              linux-x64|linux-arm64|windows-x64) ;;
+              *) echo "unknown os pole '$os' (expected a subset of: linux-x64 linux-arm64 windows-x64)" >&2; exit 1 ;;
+            esac
+          done
+
+          # One pole per requested os, carrying the intersection of the pole's supported
+          # targets with the requested targets (windows-x64 has no Native or Wasm). A
+          # pole whose intersection is empty is dropped so the matrix never spawns a
+          # no-op build.yml call.
+          poles=$(jq -cn --arg oses "$oses" --arg targets "$targets" '
+            ($targets | split(" ") | map(select(length > 0))) as $req
+            | $oses
+            | split(" ")
+            | map(select(length > 0))
+            | map(
+                if . == "linux-x64" then {os: ., image: "ubuntu-latest", supported: ["JVM","JS","Native","Wasm"]}
+                elif . == "linux-arm64" then {os: ., image: "ubuntu-24.04-arm", supported: ["JVM","JS","Native","Wasm"]}
+                else {os: ., image: "windows-latest", supported: ["JVM","JS"]}
+                end
+              )
+            | map({os, image, targets: (.supported | map(. as $t | select($req | index($t))))})
+            | map(select(.targets | length > 0))
+            | map({os, image, targets: (.targets | tojson)})')
+
+          {
+            echo "mode=$mode"
+            echo "poles=$poles"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build (${{ matrix.pole.os }})
+    needs: prep
+    # `poles != '[]'` guards the all-empty intersection, reachable via a dispatch like
+    # oses=windows-x64 with targets=Native, where prep drops every pole. An empty matrix vector
+    # does not spawn zero jobs; it fails with "Matrix vector 'pole' does not contain any values",
+    # turning a well-formed no-op request into a red run. Skipping is the honest outcome.
+    if: ${{ inputs.mode != 'custom' && needs.prep.outputs.poles != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        pole: ${{ fromJSON(needs.prep.outputs.poles) }}
+    uses: ./.github/workflows/build.yml
+    with:
+      os: ${{ matrix.pole.os }}
+      runner-image: ${{ matrix.pole.image }}
+      targets: ${{ matrix.pole.targets }}
+      mode: ${{ needs.prep.outputs.mode }}
+      ref: ${{ inputs.ref }}
+
+  custom:
+    # No `needs: prep`: this job reads none of prep's outputs, running one command on the runner
+    # named by `custom-runner`. Depending on prep would add a queue wait and couple the job to the
+    # `oses` allowlist, letting a typo in an input this job ignores skip it entirely.
+    if: ${{ inputs.mode == 'custom' }}
+    timeout-minutes: 180
+    runs-on: ${{ inputs.custom-runner }}
+    env:
+      SBT_TASK_LIMIT: 1
+      JAVA_OPTS: '-Xmx12G -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
+      JVM_OPTS:  '-Xmx12G -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+      - id: os
+        shell: bash
+        env:
+          RUNNER_LABEL: ${{ inputs.custom-runner }}
+        run: |
+          case "$RUNNER_LABEL" in
+            windows-*) echo "os=windows-x64" >> "$GITHUB_OUTPUT" ;;
+            *-arm)     echo "os=linux-arm64" >> "$GITHUB_OUTPUT" ;;
+            *)         echo "os=linux-x64" >> "$GITHUB_OUTPUT" ;;
+          esac
+      - uses: ./.github/actions/setup
+        with:
+          os: ${{ steps.os.outputs.os }}
+          target: JVM
+      - name: Run command
+        shell: bash
+        env:
+          RUN_COMMAND: ${{ inputs.command }}
+        run: |
+          echo "+ $RUN_COMMAND"
+          eval "$RUN_COMMAND"

@@ -36,6 +36,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
             path: Seq[String],
             context: ReactiveRegion.RegionIdentity,
             parentContext: ReactiveRegion.ParentContext,
+            previous: Maybe[UI],
             ui: UI
         )(using
             Frame

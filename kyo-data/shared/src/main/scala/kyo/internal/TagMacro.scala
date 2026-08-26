@@ -41,12 +41,25 @@ private[kyo] object TagMacro:
         // class symbol's definition makes the key structurally unique: two types
         // that are genuinely the same share every symbol, so their keys match;
         // two types that share source names but differ in their definitions carry
-        // different definition positions, so their keys diverge. sym.pos returns
-        // Option[Position]; when absent (synthetic symbols, cross-JAR types)
-        // nothing is appended and the show string alone disambiguates.
+        // different definition positions, so their keys diverge. Only locally defined
+        // symbols need the position: everything else is already disambiguated by the
+        // fully qualified path `show` prints. A symbol read from a class file carries no
+        // source position, and asking one for its position makes the compiler answer with
+        // a defaulted offset 0 and report a spurious "Missing symbol position ... This is
+        // a compiler bug" warning under -Xcheck-macros, so the position is consulted only
+        // for term-owned symbols, the locally defined ones, which are always compiled from
+        // source in the current run.
+        @tailrec def isLocallyDefined(sym: Symbol): Boolean =
+            val owner = sym.maybeOwner
+            if owner.isNoSymbol then false
+            else if owner.isClassDef || owner.isPackageDef then isLocallyDefined(owner)
+            else true
+        end isLocallyDefined
         def symPositions(t: TypeRepr): String =
-            val sym     = t.typeSymbol
-            val symPart = if sym.isNoSymbol then "" else sym.pos.map(p => "@" + p.start).getOrElse("")
+            val sym = t.typeSymbol
+            val symPart =
+                if sym.isNoSymbol || !isLocallyDefined(sym) then ""
+                else sym.pos.map(p => "@" + p.start).getOrElse("")
             val children = t match
                 case AndType(a, b) => List(a, b)
                 case OrType(a, b)  => List(a, b)

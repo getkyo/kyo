@@ -59,24 +59,20 @@ class BrowserLauncherTest extends BaseBrowserTest:
 
     "very short timeout fails fast" in {
         for
-            timedRes <- timed(Abort.run[BrowserSetupException] {
+            result <- Abort.run[BrowserSetupException] {
                 Scope.run {
                     BrowserLauncher.launch(
                         Browser.LaunchConfig.chromium("/nonexistent/browser").launchTimeout(500.millis)
                     )
                 }
-            })
-            (elapsedDur, result) = timedRes
-            elapsed              = elapsedDur.toMillis
+            }
         yield
-            // Behavior contract: the launch MUST fail with BrowserSetupFailedException; that is the deterministic shape
-            // ("fails for the right reason"). The timing bound is a soft envelope: cold-start on CI can exceed 5s, but if
-            // we exceed 30s (60× the configured 500ms timeout) something is genuinely wrong.
+            // A nonexistent executable fails at spawn immediately (not a launch-timeout path), so the typed
+            // BrowserSetupFailedException IS the property. A genuine hang is caught by the per-leaf timeout; no wall-clock envelope.
             result match
-                case Result.Success(_) => fail("Expected failure for invalid executable")
-                case Result.Failure(_: BrowserSetupFailedException) =>
-                    assert(elapsed < 30000, s"Took too long: ${elapsed}ms (>30s soft envelope, 60× the configured 500ms timeout)")
-                case Result.Panic(ex) => fail(s"Expected Failure, got Panic: ${ex.getMessage}")
+                case Result.Success(_)                              => fail("Expected failure for invalid executable")
+                case Result.Failure(_: BrowserSetupFailedException) => succeed
+                case Result.Panic(ex)                               => fail(s"Expected Failure, got Panic: ${ex.getMessage}")
             end match
     }
 
@@ -181,7 +177,6 @@ class BrowserLauncherTest extends BaseBrowserTest:
         Scope.run {
             for
                 tmp <- Path.tempDir("kyo-browser-pollDevTools-test-")
-                _   <- Scope.ensure(Abort.run[FileFsException](tmp.removeAll).unit)
                 outcome <- Abort.run[BrowserSetupException] {
                     BrowserLauncher.pollDevToolsActivePort(tmp, timeout, 50.millis)
                 }
@@ -203,7 +198,6 @@ class BrowserLauncherTest extends BaseBrowserTest:
         Scope.run {
             for
                 tmp <- Path.tempDir("kyo-browser-pollDevTools-happy-")
-                _   <- Scope.ensure(Abort.run[FileFsException](tmp.removeAll).unit)
                 _   <- (tmp / BrowserLauncher.devToolsActivePortFile).write("9222\n/devtools/browser/test-uuid\n")
                 url <- BrowserLauncher.pollDevToolsActivePort(tmp, 5.seconds, 50.millis)
             yield assert(url == "ws://127.0.0.1:9222/devtools/browser/test-uuid")

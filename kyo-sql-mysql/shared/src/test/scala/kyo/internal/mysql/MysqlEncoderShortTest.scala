@@ -34,7 +34,7 @@ class MysqlEncoderShortTest extends Test:
     private def decode(body: Array[Byte]): Short =
         val row = new SqlRow(
             Chunk(Maybe.Present(Span.from(body))),
-            Chunk(SqlRow.Column("n", MysqlColumnToken(MysqlEncoder.TYPE_SHORT, 0))),
+            Chunk(SqlRow.Column("n", MysqlColumnToken(MysqlEncoder.TYPE_SHORT, 0, charset = 45))),
             MysqlRowCodec(Format.Binary)
         )
         new MysqlRowReader(row, Format.Binary)(using kyo.Frame.derive).short()
@@ -201,7 +201,7 @@ class MysqlEncoderShortTest extends Test:
         case class Row(n: Short) derives CanEqual
 
         val schema = summon[SqlSchema[Row]]
-        val rows   = List(Row(Short.MaxValue), Row(Short.MinValue), Row(-1.toShort), Row(0.toShort), Row(12345.toShort))
+        val rows   = List(Row(Short.MaxValue), Row(Short.MinValue), Row((-1).toShort), Row(0.toShort), Row(12345.toShort))
 
         kyo.Kyo.foreach(rows) { row =>
             val params = rowParams(schema, row)

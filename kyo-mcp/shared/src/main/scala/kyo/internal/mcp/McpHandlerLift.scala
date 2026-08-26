@@ -16,7 +16,7 @@ private[kyo] object McpHandlerLift:
 
     def lift(
         handler: McpHandler[?, ?, ?],
-        serverRef: AtomicRef[Maybe[McpServer.Unsafe]]
+        serverRef: Fiber.Promise[McpServer.Unsafe, Any]
     )(using Frame): JsonRpcRoute[?, ?, ?] =
         val base: JsonRpcRoute[?, ?, ?] = handler match
             case h: McpHandler.ToolHandler[?, ?, ?]       => liftTool(h, serverRef)
@@ -43,35 +43,28 @@ private[kyo] object McpHandlerLift:
         base.asInstanceOf[JsonRpcRoute[Any, Any, Nothing]].error[E](m.code, m.message)
     end applyOne
 
-    // Reads the live server from the forward reference. Returns Absent before init completes (impossible
-    // during a real dispatch because the engine writes the ref before any handler runs).
-    private def readServer(serverRef: AtomicRef[Maybe[McpServer.Unsafe]]): Maybe[McpServer.Unsafe] =
-        // Unsafe: synchronous read of forward server reference.
-        serverRef.unsafe.get()(using AllowUnsafe.embrace.danger)
-
     // Exposed for the client-side McpClientHandlerLift to reuse the same context binding.
     private[kyo] def bindClientCtx[A, S](
         jrCtx: JsonRpcRoute.Context,
-        serverRef: AtomicRef[Maybe[McpServer.Unsafe]]
-    )(body: => A < S)(using Frame): A < S =
+        serverRef: Fiber.Promise[McpServer.Unsafe, Any]
+    )(body: => A < S)(using Frame): A < (S & Async) =
         withCtx(jrCtx, serverRef)(body)
 
+    // Waits for the live server rather than reading a slot that may not be filled yet. The engine
+    // completes the forward reference immediately after construction, but the dispatch loop is already
+    // running by then, so a request that arrives in that window used to find the slot empty and was
+    // answered with a -32603 "handler panicked" naming a handler that had not been called. Waiting makes
+    // the window unobservable: the wait is over as soon as the server exists, which is at once.
     private def withCtx[A, S](
         jrCtx: JsonRpcRoute.Context,
-        serverRef: AtomicRef[Maybe[McpServer.Unsafe]]
-    )(body: => A < S)(using Frame): A < S =
-        readServer(serverRef) match
-            case Present(srv) =>
-                Mcp.local.let(Present(Mcp.RequestContext(jrCtx, srv.safe)))(body)
-            case Absent =>
-                // The engine populates serverRef synchronously after construction; this can only fire
-                // if a dispatch races initialisation. Surface as a panic so it shows up loudly.
-                throw new IllegalStateException(s"McpServer not initialised for route '${jrCtx.requestId}'")
+        serverRef: Fiber.Promise[McpServer.Unsafe, Any]
+    )(body: => A < S)(using Frame): A < (S & Async) =
+        serverRef.get.map(srv => Mcp.local.let(Present(Mcp.RequestContext(jrCtx, srv.safe)))(body))
     end withCtx
 
     private def liftTool[In, Out, E](
         h: McpHandler.ToolHandler[In, Out, E],
-        serverRef: AtomicRef[Maybe[McpServer.Unsafe]]
+        serverRef: Fiber.Promise[McpServer.Unsafe, Any]
     )(using Frame): JsonRpcRoute[?, ?, ?] =
         given Schema[Out] = h.outSchema
         JsonRpcRoute.request[In, McpHandler.ToolOutcome](h.name) { (in, jrCtx) =>
@@ -89,7 +82,7 @@ private[kyo] object McpHandlerLift:
 
     private def liftToolMulti[In, E](
         h: McpHandler.ToolMultiHandler[In, E],
-        serverRef: AtomicRef[Maybe[McpServer.Unsafe]]
+        serverRef: Fiber.Promise[McpServer.Unsafe, Any]
     )(using Frame): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.request[In, McpHandler.ToolOutcome](h.name) { (in, jrCtx) =>
             withCtx(jrCtx, serverRef)(h.toolHandler(in))
@@ -97,7 +90,7 @@ private[kyo] object McpHandlerLift:
 
     private def liftResource[E](
         h: McpHandler.ResourceHandler[E],
-        serverRef: AtomicRef[Maybe[McpServer.Unsafe]]
+        serverRef: Fiber.Promise[McpServer.Unsafe, Any]
     )(using Frame): JsonRpcRoute[?, ?, ?] =
         val registeredUri  = h.resourceMeta.uri
         val registeredMime = h.resourceMeta.mimeType
@@ -110,7 +103,7 @@ private[kyo] object McpHandlerLift:
 
     private def liftResourceTemplate[E](
         h: McpHandler.ResourceTemplateHandler[E],
-        serverRef: AtomicRef[Maybe[McpServer.Unsafe]]
+        serverRef: Fiber.Promise[McpServer.Unsafe, Any]
     )(using Frame): JsonRpcRoute[?, ?, ?] =
         val template = h.resourceTemplateMeta.uriTemplate
         val regMime  = h.resourceTemplateMeta.mimeType
@@ -137,7 +130,7 @@ private[kyo] object McpHandlerLift:
 
     private def liftTypedPrompt[In, E](
         h: McpHandler.TypedPromptHandler[In, E],
-        serverRef: AtomicRef[Maybe[McpServer.Unsafe]]
+        serverRef: Fiber.Promise[McpServer.Unsafe, Any]
     )(using Frame): JsonRpcRoute[?, ?, ?] =
         given Schema[In] = h.inSchema
         JsonRpcRoute.request[Map[String, String], McpHandler.PromptOutcome](h.name) { (args, jrCtx) =>
@@ -152,7 +145,7 @@ private[kyo] object McpHandlerLift:
 
     private def liftPrompt[E](
         h: McpHandler.PromptHandler[E],
-        serverRef: AtomicRef[Maybe[McpServer.Unsafe]]
+        serverRef: Fiber.Promise[McpServer.Unsafe, Any]
     )(using Frame): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.request[Map[String, String], McpHandler.PromptOutcome](h.name) { (args, jrCtx) =>
             withCtx(jrCtx, serverRef)(h.promptHandler(args))
@@ -160,7 +153,7 @@ private[kyo] object McpHandlerLift:
 
     private def liftCompletion[E](
         h: McpHandler.CompletionHandler[E],
-        serverRef: AtomicRef[Maybe[McpServer.Unsafe]]
+        serverRef: Fiber.Promise[McpServer.Unsafe, Any]
     )(using Frame): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.request[(McpHandler.CompletionRef, McpHandler.CompletionArg), McpHandler.CompletionOutcome](h.name) {
             (pair, jrCtx) => withCtx(jrCtx, serverRef)(h.completionHandler(pair._2, Absent))
@@ -168,7 +161,7 @@ private[kyo] object McpHandlerLift:
 
     private def liftCustom[In, Out, E](
         h: McpHandler.CustomHandler[In, Out, E],
-        serverRef: AtomicRef[Maybe[McpServer.Unsafe]]
+        serverRef: Fiber.Promise[McpServer.Unsafe, Any]
     )(using Frame): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.request[In, Out](h.method) { (in, jrCtx) =>
             withCtx(jrCtx, serverRef)(h.customHandler(in))

@@ -167,4 +167,56 @@ class KyoFfiPluginTest extends AnyFunSuite with Matchers {
         val staged    = Seq(prebuilt("libkyonet_boringssl-linux-x86_64.so"))
         KyoFfiPlugin.prebuiltOverriddenCompiled(Seq(uring, boringssl), staged) shouldBe Seq(boringssl)
     }
+
+    // The native-flag manifests are packaged, so they reach machines that have never seen the build host's
+    // filesystem. A release shipped `-L/home/runner/work/kyo/kyo/.../boringssl/staged/linux-x86_64/lib` inside
+    // its jar, naming a tree no consumer has and archives the artifact does not carry; the only flags that can
+    // travel are the ones that name no file.
+    test("partitionPortableFlags: keeps flags that name no file") {
+        val (portable, dropped) =
+            KyoFfiPlugin.partitionPortableFlags(Seq("-luring", "-lc++", "-Wl,--whole-archive", "-Wl,--no-whole-archive"))
+        portable shouldBe Seq("-luring", "-lc++", "-Wl,--whole-archive", "-Wl,--no-whole-archive")
+        dropped shouldBe empty
+    }
+
+    test("partitionPortableFlags: drops a path wherever it sits in the flag") {
+        val flags = Seq(
+            "-L/home/runner/work/kyo/kyo/kyo-net/native/../build/boringssl/staged/linux-x86_64/lib",
+            "-I/home/runner/work/kyo/kyo/kyo-net/native/../build/boringssl/staged/linux-x86_64/include",
+            "-Wl,-force_load,/Users/dev/kyo/kyo-net/build/boringssl/staged/darwin-aarch64/lib/libssl.a",
+            "-I../relative/include",
+            "-lssl"
+        )
+        val (portable, dropped) = KyoFfiPlugin.partitionPortableFlags(flags)
+        portable shouldBe Seq("-lssl")
+        dropped should have size 4
+    }
+
+    test("partitionPortableFlags: an empty flag set stays empty on both sides") {
+        KyoFfiPlugin.partitionPortableFlags(Nil) shouldBe ((Nil, Nil))
+    }
+
+    // A vendored library's -l names carry no path, so the path test keeps them, and on their own they are worse than useless: without the
+    // -L that finds the vendored tree, `-lssl -lcrypto` resolve against the consumer's SYSTEM OpenSSL under the vendored library's name.
+    // That links, runs, and reports the wrong provider. They leave with the tree.
+    test("partitionPortableFlags: a vendored library's link libs leave with its tree") {
+        val flags = Seq(
+            "-L/build/boringssl/staged/linux-x86_64/lib",
+            "-Wl,--whole-archive",
+            "-lssl",
+            "-lcrypto",
+            "-Wl,--no-whole-archive",
+            "-lstdc++",
+            "-Wl,-Bstatic",
+            "-luring",
+            "-Wl,-Bdynamic"
+        )
+        val (portable, dropped) = KyoFfiPlugin.partitionPortableFlags(flags, Set("ssl", "crypto"))
+        portable shouldBe Seq("-Wl,--whole-archive", "-Wl,--no-whole-archive", "-lstdc++", "-Wl,-Bstatic", "-luring", "-Wl,-Bdynamic")
+        dropped shouldBe Seq("-L/build/boringssl/staged/linux-x86_64/lib", "-lssl", "-lcrypto")
+    }
+
+    test("partitionPortableFlags: a system link lib with the same spelling as no vendored lib is kept") {
+        KyoFfiPlugin.partitionPortableFlags(Seq("-lssl"), Set("crypto"))._1 shouldBe Seq("-lssl")
+    }
 }
