@@ -18,7 +18,7 @@ A contributor arriving with a concrete task rather than reading start to finish 
 
 | Layer | What lives there | Anchor |
 |-------|------------------|--------|
-| Build | Depends on exactly one module, kyo-data, and cross-builds JS, JVM, Native and Wasm with `CrossType.Full`, which is what wires the `shared/`, `jvm-native/` and `js-wasm/` roots | `project/WasmPlatform.scala:18` |
+| Build | Depends on exactly one module, kyo-data, and cross-builds JS, JVM, Native and Wasm with `CrossType.Full`, which is what wires the `shared/`, `jvm-native/` and `js-wasm/` roots | `build.sbt:767-771`, `project/WasmPlatform.scala:18` |
 | Public surface (`kyo`, `kyo.kernel`) | The opaque union `<`, `Arrow`, the sealed `Effect` root with its two kinds, `Isolate`, `Loop`, `Mask`, and the `Kyo.scala` combinator layer | `kyo-kernel/shared/src/main/scala/kyo/kernel/Pending.scala:45`, `kyo-kernel/shared/src/main/scala/kyo/kernel/Effect.scala:27-31` |
 | Re-exports | `kyo/kernel.scala` aliases `<`, `Loop` and `Isolate` into package `kyo`, plus the `Id`/`Const` type constructors every effect definition uses | `kyo-kernel/shared/src/main/scala/kyo/kernel.scala:3-7,17,27` |
 | Node representation (`kyo.kernel.internal`) | The sealed `Kyo` ADT with exactly seven shapes: `Defer`, `Suspend`, `Park`, `Catching`, `Binding`, `Bindings`, `Handle` | `kyo-kernel/shared/src/main/scala/kyo/kernel/internal/KyoInternal.scala:18` |
@@ -111,7 +111,7 @@ v match
 | Knob | Default | Constraint | What it governs | Anchor |
 |------|---------|-----------|-----------------|--------|
 | `Safepoint.period` | 512 | clamped to `[1, 0x7fff]`, `StaticFlag[Int]`, identical on both platform variants | strict applications fused per slot before the eval takes over | `kyo-kernel/jvm-native/src/main/scala/kyo/kernel/internal/Safepoint.scala:56`, `kyo-kernel/js-wasm/src/main/scala/kyo/kernel/internal/Safepoint.scala:38` |
-| `Safepoint.slotCount` | 65536 | must be a power of two; jvm-native only, since JS and Wasm run every evaluation on one thread | sizes the slot table; a thread that cannot claim a slot degrades to the shared overflow slot | `kyo-kernel/js-wasm/src/main/scala/kyo/kernel/internal/Safepoint.scala:10-11`, `kyo-kernel/jvm-native/src/main/scala/kyo/kernel/internal/Safepoint.scala:41,111` |
+| `Safepoint.slotCount` | 65536 | must be a power of two; jvm-native only, since JS and Wasm run every evaluation on one thread | sizes the slot table; a thread that cannot claim a slot degrades to the shared overflow slot | `kyo-kernel/jvm-native/src/main/scala/kyo/kernel/internal/Safepoint.scala:58-63`, `kyo-kernel/js-wasm/src/main/scala/kyo/kernel/internal/Safepoint.scala:10-11`, `kyo-kernel/jvm-native/src/main/scala/kyo/kernel/internal/Safepoint.scala:41,111` |
 | `Stack.reach` | `Safepoint.period() / 2` | derived | caps how many entries an unbounded `dump()` folds in one go | `kyo-kernel/shared/src/main/scala/kyo/kernel/internal/Stack.scala:21`, `kyo-kernel/shared/src/main/scala/kyo/kernel/internal/Stack.scala:288` |
 | Answer-loop bound | 128 | literal in each template | consecutive same-tag answers before deferring back into the eval | `kyo-kernel/shared/src/main/scala/kyo/kernel/internal/Handler.scala:144`, `kyo-kernel/shared/src/main/scala/kyo/kernel/internal/Handler.scala:250`, `kyo-kernel/shared/src/main/scala/kyo/kernel/internal/Handler.scala:352` |
 
