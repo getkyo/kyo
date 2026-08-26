@@ -1,6 +1,7 @@
 package kyo.kernel.bench
 
 import java.util.concurrent.TimeUnit
+import kyo.Arrow
 import kyo.Frame
 import kyo.Tag
 import kyo.kernel.*
@@ -423,6 +424,55 @@ class KernelBench:
             i += 1
         fa.eval
     end dynamicChainOfBindsStaysLinear
+
+    // The three spellings of the same iteration, pure and effectful, for the open question of
+    // whether Loop could be based on Arrow.recursive. The method rows are the baselines the
+    // corpus already carries (deepRecursionPaysRescuesOnly is the pure shape, suspensionBaseline
+    // the effectful one); the rows here keep the arithmetic identical so the deltas attribute.
+    // The arrow rows route each step through map: Arrow.recursive's one-argument apply is
+    // f(this, v), direct recursion with no budget check, so the direct spelling is not stack
+    // safe and is not a candidate implementation.
+
+    /** Loop's spelling of deepRecursionPaysRescuesOnly's shape: one outcome per step. */
+    @Benchmark
+    def pureIterationViaLoop: Int =
+        Loop(seed - 1)(i => if i > Depth then Loop.done(i) else Loop.continue(i + 1)).eval
+
+    /** The recursive-method spelling, arithmetic identical to the Loop row. */
+    @Benchmark
+    def pureIterationViaMethod: Int =
+        def loop(i: Int): Int < Any =
+            if i > Depth then i
+            else ((i + 1): Int < Any).map(loop)
+        loop(seed - 1).eval
+    end pureIterationViaMethod
+
+    /** The Arrow.recursive spelling, each step through map so the budget rescue applies. */
+    @Benchmark
+    def pureIterationViaArrow: Int =
+        val step = Arrow.recursive[Int, Int, Any]((self, i) =>
+            if i > Depth then i
+            else ((i + 1): Int < Any).map(v => self(v))
+        )
+        step(seed - 1).eval
+    end pureIterationViaArrow
+
+    /** Loop's spelling of suspensionBaseline's shape: one suspension answered per step. */
+    @Benchmark
+    def effectfulIterationViaLoop: Int =
+        val v = Loop(seed - 1)(i => if i > Depth then Loop.done(i) else ask.map(a => Loop.continue(i + a)))
+        ArrowEffect.handleCont(Tag[Ask], v)([X] => (_, cont) => cont(1), a => a).eval
+    end effectfulIterationViaLoop
+
+    /** The Arrow.recursive spelling of suspensionBaseline's shape. */
+    @Benchmark
+    def effectfulIterationViaArrow: Int =
+        val step = Arrow.recursive[Int, Int, Ask]((self, i) =>
+            if i > Depth then i
+            else ask.map(a => self(i + a))
+        )
+        ArrowEffect.handleCont(Tag[Ask], step(seed - 1))([X] => (_, cont) => cont(1), a => a).eval
+    end effectfulIterationViaArrow
 
 end KernelBench
 
