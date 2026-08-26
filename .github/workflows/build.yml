@@ -54,8 +54,12 @@ jobs:
       fail-fast: false
       max-parallel: 4
       matrix:
-        # inputs.targets is a JSON array. An empty array spawns zero jobs rather than one
-        # invalid job, which is what drops a pole whose target intersection is empty.
+        # inputs.targets is a JSON array, read straight into the matrix. It is never empty: the
+        # only caller is ci.yml, whose push/pull_request matrix hardcodes a non-empty list and
+        # whose dispatch path drops a pole before calling here if its target intersection came
+        # out empty. That matters because an empty vector does not spawn zero jobs; it fails the
+        # job with "Matrix vector 'target' does not contain any values". The emptiness is handled
+        # at the caller, where a pole can actually be dropped, rather than here.
         target: ${{ fromJSON(inputs.targets) }}
     runs-on: ${{ inputs.runner-image }}
     env:

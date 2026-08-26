@@ -132,6 +132,13 @@ jobs:
   # Native toolchain has no Windows port, and Scala.js's Wasm backend does not instantiate
   # there), which is why its target list is shorter.
   build:
+    # An explicit name, because the default one is built from the matrix values and the targets
+    # value is now a JSON array. Unnamed, this job's check context would read
+    # `build (linux-x64, ubuntu-latest, ["JVM","JS","Native","Wasm"])`. Branch protection matches
+    # required checks by exact context string, so a name that carries a serialization detail is a
+    # name that silently breaks the next time the serialization changes. Naming it after the pole
+    # alone pins the context to something stable and readable.
+    name: build (${{ matrix.pole.os }})
     if: ${{ github.event_name != 'workflow_dispatch' }}
     strategy:
       fail-fast: false
@@ -151,8 +158,15 @@ jobs:
 
   # workflow_dispatch: poles and targets come from the inputs, so the matrix is computed.
   build-dispatch:
+    name: build (${{ matrix.pole.os }})
     needs: prep
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode != 'custom' }}
+    # `poles != '[]'` guards the all-empty intersection: a dispatch like oses=windows-x64 with
+    # targets=Native leaves every pole with nothing to build, and prep correctly drops them all.
+    # A matrix whose vector is an empty array does not spawn zero jobs, it fails the job with
+    # "Matrix vector 'pole' does not contain any values", turning a well-formed no-op request into
+    # a red run. Skipping is the honest outcome. Unverified against a live dispatch; the reachable
+    # case is workflow_dispatch only, and it behaved this way before this branch too.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode != 'custom' && needs.prep.outputs.poles != '[]' }}
     strategy:
       fail-fast: false
       matrix:
