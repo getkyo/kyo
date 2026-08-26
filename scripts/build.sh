@@ -164,8 +164,10 @@ ci_cmd() { "$SCRIPT_DIR/ci-test.sh" "$1" "$ACTION"; }
 container_provision() {
     local platform="$1"
     # liburing-dev + libssl-dev: the kyo-net JVM FFI shims link the io_uring (-luring) and OpenSSL TLS data planes; without them
-    # kyo-netJVM's ffiCompile fails (cannot find -luring). Small and always installed so any kyo-net command builds in the container.
-    local apt_pkgs="curl ca-certificates patch liburing-dev libssl-dev"
+    # kyo-netJVM's ffiCompile fails (cannot find -luring). build-essential supplies the cc that ffiCompile runs to build the shims,
+    # preinstalled on GitHub runners but absent from a bare image, and its lack fails ffiCompile before any linking (cannot run "cc").
+    # Always installed so any kyo-net command builds in the container.
+    local apt_pkgs="curl ca-certificates patch build-essential liburing-dev libssl-dev"
     local node_pkgs="" native_pkgs="" bssl_pkgs="" aeron_pkgs=""
     # "all" provisions the union (raw sbt mode may run any platform's command in the container).
     case "$platform" in
