@@ -113,7 +113,7 @@ class DomBackendDelegationTest extends kyo.test.Test[Any]:
         def drainJoined(): Unit       = events += "drain-joined"
     end LifecycleChronology
 
-    private def mountAndStop(tracker: ListenerTracker, expectedAdded: Int = 19)(using
+    private def mountAndStop(tracker: ListenerTracker, expectedAdded: Int = 28)(using
         Frame,
         kyo.test.AssertScope
     ): Unit < Async =
@@ -191,13 +191,22 @@ class DomBackendDelegationTest extends kyo.test.Test[Any]:
                     "dragleave",
                     "drop",
                     "dragend",
+                    "pointerdown",
+                    "pointermove",
+                    "pointerup",
+                    "pointercancel",
+                    "touchstart",
+                    "touchmove",
+                    "touchend",
+                    "touchcancel",
+                    "keydown",
                     "wheel",
                     "beforeinput",
                     "compositionend"
                 )
                 assert(tracker.added.map(_.eventType).sorted == expected.sorted)
                 val nonWheel = tracker.added.filterNot(_.eventType == "wheel")
-                assert(nonWheel.size == 18)
+                assert(nonWheel.size == 27)
                 assert(nonWheel.forall(captureTrue))
                 val wheel = tracker.added.filter(_.eventType == "wheel")
                 assert(wheel.size == 1)
@@ -253,7 +262,7 @@ class DomBackendDelegationTest extends kyo.test.Test[Any]:
             tracker =>
                 for
                     fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(UI.div("mounted"), new LifecycleChronology(chronology))))
-                    _     <- assertEventually(Sync.defer(tracker.added.size == 19))
+                    _     <- assertEventually(Sync.defer(tracker.added.size == 28))
                     _     <- fiber.interrupt
                     _     <- fiber.getResult
                     _     <- assertEventually(Sync.defer(chronology.contains("drain-joined")))
@@ -261,7 +270,7 @@ class DomBackendDelegationTest extends kyo.test.Test[Any]:
                     val channelClose = chronology.indexOf("channel-close")
                     val interrupt    = chronology.indexOf("drain-interrupt")
                     val joined       = chronology.indexOf("drain-joined")
-                    assert(chronology.take(channelClose).size == 21)
+                    assert(chronology.take(channelClose).size == 30)
                     assert(chronology.take(channelClose).head == "clear-interval")
                     assert(chronology.take(channelClose)(1) == "remove-document:kyo:resolve-drag")
                     assert(chronology.take(channelClose).drop(2).forall(_.startsWith("remove:")))
@@ -284,7 +293,7 @@ class DomBackendDelegationTest extends kyo.test.Test[Any]:
                     UI.button("active").id("active-handler").onClick(handler),
                     new LifecycleChronology(chronology)
                 )))
-                _ <- assertEventually(Sync.defer(tracker.added.size == 19))
+                _ <- assertEventually(Sync.defer(tracker.added.size == 28))
                 _ <- Sync.defer {
                     val button = dom.document.getElementById("active-handler")
                     val event = scalajs.Dynamic.newInstance(dom.window.asInstanceOf[scalajs.Dynamic].MouseEvent)(
@@ -301,8 +310,8 @@ class DomBackendDelegationTest extends kyo.test.Test[Any]:
                 val channelClose = chronology.indexOf("channel-close")
                 val interrupt    = chronology.indexOf("drain-interrupt")
                 val joined       = chronology.indexOf("drain-joined")
-                assert(tracker.removed.size == 19)
-                assert(chronology.take(channelClose).size == 21)
+                assert(tracker.removed.size == 28)
+                assert(chronology.take(channelClose).size == 30)
                 assert(chronology.take(channelClose).head == "clear-interval")
                 assert(chronology.take(channelClose)(1) == "remove-document:kyo:resolve-drag")
                 assert(chronology.take(channelClose).drop(2).forall(_.startsWith("remove:")))
@@ -314,12 +323,12 @@ class DomBackendDelegationTest extends kyo.test.Test[Any]:
     "returns delegated body listeners to baseline after every mount cycle" in {
         Scope.acquireRelease(Sync.defer(new ListenerTracker().install()))(tracker => Sync.defer(tracker.restore())).map { tracker =>
             Kyo.foreachDiscard(1 to 3) { cycle =>
-                mountAndStop(tracker, cycle * 19).map { _ =>
-                    assert(tracker.added.size == cycle * 19)
-                    assert(tracker.removed.size == cycle * 19)
-                    val offset       = (cycle - 1) * 19
-                    val cycleAdded   = tracker.added.slice(offset, cycle * 19)
-                    val cycleRemoved = tracker.removed.slice(offset, cycle * 19)
+                mountAndStop(tracker, cycle * 28).map { _ =>
+                    assert(tracker.added.size == cycle * 28)
+                    assert(tracker.removed.size == cycle * 28)
+                    val offset       = (cycle - 1) * 28
+                    val cycleAdded   = tracker.added.slice(offset, cycle * 28)
+                    val cycleRemoved = tracker.removed.slice(offset, cycle * 28)
                     assert(cycleRemoved.zip(cycleAdded.reverse).forall((removal, addition) => sameCall(removal, addition)))
                     cycleAdded.foreach { addition =>
                         assert(cycleRemoved.count(removal => sameCall(addition, removal)) == 1)
@@ -362,14 +371,14 @@ class DomBackendDelegationTest extends kyo.test.Test[Any]:
                 _ <- assertEventually(Sync.defer(chronology.contains("drain-joined")))
             yield
                 assert(result.isPanic)
-                assert(tracker.added.size == 19)
+                assert(tracker.added.size == 28)
                 assert(tracker.removed.size == tracker.added.size)
                 assert(tracker.removed.zip(tracker.added.reverse).forall((removal, addition) => sameCall(removal, addition)))
                 assert(tracker.documentAdded.isEmpty)
                 assert(tracker.documentRemoved.isEmpty)
                 assert(tracker.activeTimers == 0)
                 val channelClose = chronology.indexOf("channel-close")
-                assert(chronology.take(channelClose).size == 19)
+                assert(chronology.take(channelClose).size == 28)
                 assert(chronology.take(channelClose).forall(_.startsWith("remove:")))
         }
     }
