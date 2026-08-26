@@ -167,5 +167,6 @@ the happy path.
 HttpServerContentionBench allocation samples in a comparable window: 5,554 before, 4,498 after
 (~19% fewer). Remaining top allocators are payload byte arrays, eval and fiber machinery, and
 the per-request timeout watchdog (`ScheduledFutureTask`), which is the open hashed-wheel-timer
-issue. Recordings: `HttpServerContentionBench-alloc.jfr` (before) and `-alloc-final.jfr` (after)
-in `~/http-bench-jfr/`.
+issue. Recordings: `HttpServerContentionBench-alloc-before.jfr` and `-alloc-after.jfr` in
+`~/http-bench-jfr/` (the other benches' `-alloc-before.jfr` recordings predate the fixes; cpu
+recordings are `-cpu.jfr`).
