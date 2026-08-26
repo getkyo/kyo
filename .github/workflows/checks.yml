@@ -36,11 +36,15 @@ jobs:
     # carries most of the repo's jobs and has roughly twice the p90 queue wait.
     runs-on: ubuntu-24.04-arm
     env:
-      # -Xmx14G (up from 12G): `sbt doctest` compiles every module's test sources in one driver session
-      # and OOM'd at 12G. Dropped the -Xms8G floor and pinned G1 so the heap grows on demand and is
-      # released between phases, leaving the box room (the runner has 16G).
-      JAVA_OPTS: -Xmx14G -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
-      JVM_OPTS: -Xmx14G -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
+      # The sbt driver heap is governed by the checked-in .jvmopts (12G), not by anything set here:
+      # the sbt launcher appends .jvmopts after JAVA_OPTS on the java command line, so the last -Xmx
+      # wins and an -Xmx in the env never takes effect. build.yml documents the same rule. The
+      # deleted readme.yml carried an -Xmx14G here with a comment claiming `sbt doctest` OOM'd at
+      # 12G; it was inert for that same reason, so every green readme run on main in fact validated
+      # the READMEs at 12G. It is dropped rather than reinstated through .jvmopts: the setting the
+      # comment asked for has never once been the setting the job ran under.
+      JAVA_OPTS: -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
+      JVM_OPTS: -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
     steps:
       - uses: actions/checkout@v7.0.1
         with:
