@@ -46,12 +46,19 @@ final private[kyo] class NativeUnsafeBuffer(
                     i += 1
     end copyTo
 
-    def copyToArray(arr: Array[Byte], srcOffset: Long, len: Int)(using AllowUnsafe): Unit =
+    def copyToArray(arr: Array[Byte], srcOffset: Long, destPos: Int, len: Int)(using AllowUnsafe): Unit =
         var i = 0
         while i < len do
-            arr(i) = !(ptr + srcOffset + i)
+            arr(destPos + i) = !(ptr + srcOffset + i)
             i += 1
     end copyToArray
+
+    def copyFromArray(arr: Array[Byte], srcPos: Int, destOffset: Long, len: Int)(using AllowUnsafe): Unit =
+        var i = 0
+        while i < len do
+            !(ptr + destOffset + i) = arr(srcPos + i)
+            i += 1
+    end copyFromArray
 
     def view(offset: Long, byteSize: Long)(using AllowUnsafe): UnsafeBuffer =
         new NativeUnsafeBuffer(ptr + offset, byteSize, () => ())

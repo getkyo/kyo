@@ -119,11 +119,43 @@ class UnsafeBufferTest extends kyo.test.Test[Any]:
                 buf.setByte(2, 30)
                 buf.setByte(3, 40)
                 val arr = new Array[Byte](4)
-                buf.copyToArray(arr, 0, 4)
+                buf.copyToArray(arr, 0, 0, 4)
                 assert(arr(0) == 10.toByte)
                 assert(arr(1) == 20.toByte)
                 assert(arr(2) == 30.toByte)
                 assert(arr(3) == 40.toByte)
+                succeed
+            finally buf.close()
+            end try
+        }
+
+        "copy to byte array at a destination position" in {
+            val buf = UnsafeBuffer.alloc(2)
+            try
+                buf.setByte(0, 7)
+                buf.setByte(1, 8)
+                val arr = Array.fill[Byte](4)(-1)
+                buf.copyToArray(arr, 0, 1, 2)
+                assert(arr.toSeq == Seq[Byte](-1, 7, 8, -1))
+                succeed
+            finally buf.close()
+            end try
+        }
+    }
+
+    "copyFromArray" - {
+        "copy from byte array at offsets" in {
+            val buf = UnsafeBuffer.alloc(4)
+            try
+                buf.setByte(0, 0)
+                buf.setByte(1, 0)
+                buf.setByte(2, 0)
+                buf.setByte(3, 0)
+                buf.copyFromArray(Array[Byte](1, 2, 3), 1, 1L, 2)
+                assert(buf.getByte(0) == 0.toByte)
+                assert(buf.getByte(1) == 2.toByte)
+                assert(buf.getByte(2) == 3.toByte)
+                assert(buf.getByte(3) == 0.toByte)
                 succeed
             finally buf.close()
             end try
