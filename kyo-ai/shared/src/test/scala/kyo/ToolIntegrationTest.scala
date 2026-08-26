@@ -325,4 +325,43 @@ class ToolIntegrationTest extends BaseAITest:
         yield ()
     }
 
+    "count at least one model turn per tool call plus the answer" - runBackends { backend =>
+        // `turns` is the spend proxy a reader reconciles against the tool calls they can see, so it has
+        // to agree with them. A generation that called a tool once saw the model at least twice: once to
+        // produce the call, once to answer with its result. Reporting 1 says the turn was cheap when it
+        // was not, and on a harness backend that runs its own tool loop it said 1 no matter how much ran.
+        //
+        // The assertion is the lower bound, not an exact count: how many turns a model takes for a given
+        // ask is the model's choice, and pinning it would test the sampler.
+        for
+            result <- Abort.run[AIException] {
+                for
+                    calls <- AtomicInt.init(0)
+                    lookup = Tool.init[OrderQuery](
+                        "lookup_order",
+                        "Look up an order by id. Use this tool whenever an order status or ETA is requested."
+                    ) { query =>
+                        calls.incrementAndGet.map(_ => OrderInfo(s"ready_${query.orderId}", 17))
+                    }
+                    statsAndAnswer <- Observe.withStats {
+                        AI.enable(lookup) {
+                            AI.gen[String](
+                                "Call lookup_order with orderId 733, then reply with only the status it returns."
+                            )
+                        }
+                    }
+                    count <- calls.get
+                yield (statsAndAnswer._1, count)
+            }
+            statsAndCalls <- unwrap(backend, result)
+            (stats, calls) = statsAndCalls
+            _              = assert(calls >= 1, s"${backend.label} never called the tool, so this leaf proves nothing")
+            _ = assert(
+                stats.turns >= calls + 1,
+                s"${backend.label} reported ${stats.turns} turns for $calls tool call(s); a call and its " +
+                    s"answer are at least ${calls + 1} model turns: $stats"
+            )
+        yield ()
+    }
+
 end ToolIntegrationTest

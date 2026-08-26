@@ -299,6 +299,18 @@ class ClockTest extends kyo.test.Test[Any]:
             }
         }
 
+        // An infinite sleep is a park, and on Node it silently was not one. Duration.Infinity is 9223372036854 ms, past the 32-bit signed
+        // millisecond argument the host's timers take, so the delay overflowed and Node clamped it to 1 ms. The sleep returned at once, the
+        // run block completed, the application's Scope closed, and every Scope-managed resource shut down, while unscoped fibers kept the
+        // process alive and logging: an HTTP server with no listener behind a process whose every liveness signal said it was healthy.
+        "sleep with an infinite duration parks instead of returning" in {
+            for
+                fiber   <- Clock.sleep(Duration.Infinity)
+                settled <- Async.timeout(200.millis)(fiber.get).handle(Abort.run[Timeout])
+            // A failure here is the timeout firing, which is the sleep still parked. A success is the sleep having returned.
+            yield assert(settled.isFailure, s"an infinite sleep completed: $settled")
+        }
+
         "concurrency" in {
             Clock.withTimeControl { control =>
                 for

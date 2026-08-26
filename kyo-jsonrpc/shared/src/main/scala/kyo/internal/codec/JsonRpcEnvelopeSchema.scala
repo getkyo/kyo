@@ -111,9 +111,27 @@ private[kyo] object JsonRpcEnvelopeSchema:
                                     )(using Frame.internal)
                                 case None =>
                                     Structure.Value.Record(base ++ extraFields)
+                        case Present(Structure.Value.MapEntries(entries)) if entries.forall {
+                                case (Structure.Value.Str(_), _) => true
+                                case _                           => false
+                            } =>
+                            // A string-keyed map merges losslessly into the envelope object, same as a Record.
+                            val extraFields = entries.map {
+                                case (Structure.Value.Str(k), v) => (k, v)
+                                case _                           => bug("unreachable: guard requires Str keys")
+                            }
+                            extraFields.iterator.map(_._1).find(reservedKeys.contains) match
+                                case Some(key) =>
+                                    throw JsonRpcInvalidRequestError(
+                                        Structure.Value.Str(s"extras key '$key' is reserved"),
+                                        Chunk.empty
+                                    )(using Frame.internal)
+                                case None =>
+                                    Structure.Value.Record(base ++ extraFields)
+                            end match
                         case Present(Structure.Value.VariantCase(_, _)) | Present(Structure.Value.MapEntries(_)) =>
                             throw JsonRpcInvalidRequestError(
-                                Structure.Value.Str("extras must be a Record or Null, not VariantCase/MapEntries"),
+                                Structure.Value.Str("extras must be a Record, string-keyed map, or Null"),
                                 Chunk.empty
                             )(using Frame.internal)
                         case Present(other) =>

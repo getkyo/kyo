@@ -21,6 +21,16 @@ import scala.annotation.tailrec
   * updates or other scenarios where processing only the latest value is acceptable, but not for cases where capturing every single change
   * is critical.
   *
+  * A change means a DIFFERENT value. Writing the value a signal already holds notifies nobody: `next` stays parked, `streamChanges` emits
+  * nothing, and `observe` does not re-run. That is why `A` must have a `CanEqual[A, A]`, and it is why there is no `distinct` operator to
+  * reach for: deduplication is the semantics rather than a combinator. A parked observation re-reads `current` on its repair timer, but a
+  * timer that finds the value unchanged simply waits again, so it never turns into a spurious notification either.
+  *
+  * There is likewise no `filter`, and it is not an omission. A signal must always have a current value, and a filtered signal has none
+  * before the first value that passes, so the type cannot be honoured. Filtering belongs to the change sequence rather than to the value:
+  * `signal.streamChanges.filter(...)` is a `Stream`, which has no such obligation. `map`, `zip`, `combineLatest`, `combineLatestAll` and
+  * `switchMap` are the value-level combinators.
+  *
   * The companion object provides these creation methods:
   *
   *   - `Signal.initRef[A]`: creates a mutable `Signal.Ref[A]` initialized with a starting value

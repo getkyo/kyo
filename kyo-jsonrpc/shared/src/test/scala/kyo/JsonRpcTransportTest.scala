@@ -166,4 +166,67 @@ class JsonRpcTransportTest extends JsonRpcTest:
         }
     }
 
+    "stdioWith keeps application output off the protocol channel" - {
+
+        "Console.printLine from inside the body goes to stderr, not stdout" in {
+            // stdout IS the protocol channel here, so one application line between two envelopes makes
+            // the peer see a parse error. `Console.printLine` is the idiomatic way to print in kyo, so
+            // the transport that owns the channel is what has to make it safe.
+            Console.withOut {
+                Scope.run {
+                    JsonRpcTransport.stdioWith() { _ =>
+                        Console.printLine("this line must not reach the protocol channel")
+                    }
+                }
+            }.map { (out, _) =>
+                assert(out.stdOut.isEmpty, s"nothing may reach stdout; got: ${out.stdOut}")
+                assert(
+                    out.stdErr.contains("this line must not reach the protocol channel"),
+                    s"the line must still be printed, on stderr; got: ${out.stdErr}"
+                )
+            }
+        }
+
+        "Console.print from inside the body goes to stderr too" in {
+            Console.withOut {
+                Scope.run {
+                    JsonRpcTransport.stdioWith()(_ => Console.print("partial"))
+                }
+            }.map { (out, _) =>
+                assert(out.stdOut.isEmpty, s"nothing may reach stdout; got: ${out.stdOut}")
+                assert(out.stdErr.contains("partial"), s"got: ${out.stdErr}")
+            }
+        }
+
+        "Console.printErr still reaches stderr" in {
+            Console.withOut {
+                Scope.run {
+                    JsonRpcTransport.stdioWith()(_ => Console.printLineErr("diagnostic"))
+                }
+            }.map { (out, _) =>
+                assert(out.stdErr.contains("diagnostic"), s"got: ${out.stdErr}")
+            }
+        }
+
+        "reading stdin fails rather than consuming protocol bytes" in {
+            // The other half of the same channel. A handler that reads a line would steal bytes the
+            // dispatch loop is waiting for, which corrupts the stream in the harder-to-see direction.
+            Scope.run {
+                Abort.run[java.io.IOException] {
+                    JsonRpcTransport.stdioWith()(_ => Console.readLine)
+                }
+            }.map { result =>
+                assert(result.isFailure, s"reading stdin must fail on this transport; got: $result")
+            }
+        }
+
+        "the binding is scoped to the body and does not leak out" in {
+            Scope.run(JsonRpcTransport.stdioWith()(_ => ())).andThen {
+                Console.withOut(Console.printLine("after")).map { (out, _) =>
+                    assert(out.stdOut.contains("after"), s"stdout must work again outside the body; got: $out")
+                }
+            }
+        }
+    }
+
 end JsonRpcTransportTest

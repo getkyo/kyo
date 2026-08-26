@@ -13,7 +13,7 @@ private[kyo] object McpClientHandlerLift:
 
     def liftRequest[In, Out, E](
         c: McpClientHandler.RequestCarrier[In, Out, E],
-        serverRef: AtomicRef[Maybe[McpServer.Unsafe]]
+        serverRef: Fiber.Promise[McpServer.Unsafe, Any]
     )(using Frame): JsonRpcRoute[?, ?, ?] =
         if c.method == "roots/list" then
             // onRoots returns Chunk[Root]; wrap in the wire envelope the route decodes.
@@ -33,7 +33,7 @@ private[kyo] object McpClientHandlerLift:
 
     def liftNotification[In, E](
         c: McpClientHandler.NotificationCarrier[In, E],
-        serverRef: AtomicRef[Maybe[McpServer.Unsafe]]
+        serverRef: Fiber.Promise[McpServer.Unsafe, Any]
     )(using Frame): JsonRpcRoute[?, ?, ?] =
         given Schema[In] = c.inSchema
         JsonRpcRoute.notification[In](c.method) { (in, jrCtx) =>

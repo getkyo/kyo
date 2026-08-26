@@ -50,6 +50,17 @@ object Duration:
     /** Represents infinite duration. */
     val Infinity: Duration = Long.MaxValue
 
+    /** How many digits an exact rendering may carry in [[Duration.show]] before scaling reads better than exactness. Four keeps every
+      * duration a person writes down (`90.seconds`, `26.hours`, `999.millis`) exact, and catches the figures nobody reads.
+      */
+    private inline val ShowExactDigits = 4
+
+    /** [[ShowExactDigits]] as the value it bounds. */
+    private inline val ShowExactCeiling = 10000L
+
+    /** Rounding scale for a scaled [[Duration.show]]: two decimal places. */
+    private inline val ShowScale = 100.0
+
     /** Creates a Duration from nanoseconds.
       *
       * @param value
@@ -207,6 +218,12 @@ object Duration:
 
         /** Converts the Duration to a human-readable string at the most coarse possible resolution without losing information.
           *
+          * The exact rendering is preferred while its number stays legible: the coarsest unit that divides the duration evenly, so a whole
+          * number of seconds reads as seconds and 90 seconds reads as `90.seconds` rather than `1.5.minutes`, which is the more useful
+          * reading of a timeout. Past [[ShowExactDigits]] digits that preference inverts, since the figure stops being one anybody reads: 14
+          * seconds and 31 microseconds divides evenly only at microseconds and used to render as `14031085.micros`. Then the duration is
+          * scaled to the coarsest unit holding at least one whole part and rounded, giving `14.03.seconds`.
+          *
           * @return
           *   A string representation of the Duration
           */
@@ -215,14 +232,20 @@ object Duration:
             else if self == Infinity then "Duration.Infinity"
             else
                 val nanos = self.toNanos
-                Units.all.reverse.find(unit => nanos % unit.factor.toLong == 0) match
-                    case Some(unit) =>
-                        val value = (nanos / unit.factor).toLong
-                        val name  = unit.toString.toLowerCase
-                        s"$value.$name"
-                    case None =>
-                        s"$nanos.nanos"
-                end match
+                val exact =
+                    Units.all.reverse.collectFirst {
+                        case unit if nanos % unit.factor.toLong == 0 && nanos / unit.factor.toLong < ShowExactCeiling =>
+                            s"${nanos / unit.factor.toLong}.${unit.toString.toLowerCase}"
+                    }
+                exact.getOrElse {
+                    // No exact unit reads well, so scale instead. `find` walks coarse to fine and stops at the first unit the duration
+                    // fills at least once; the finest unit always qualifies, since a Duration is a whole number of nanoseconds.
+                    val unit    = Units.all.reverse.find(unit => nanos >= unit.factor).getOrElse(Units.Nanos)
+                    val scaled  = nanos / unit.factor
+                    val rounded = Math.round(scaled * ShowScale) / ShowScale
+                    val value   = if rounded == Math.floor(rounded) then rounded.toLong.toString else rounded.toString
+                    s"$value.${unit.toString.toLowerCase}"
+                }
 
         /** Checks if the Duration is finite.
           *

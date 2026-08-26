@@ -100,4 +100,46 @@ class CodexCompletionTest extends kyo.test.Test[Any]:
         assert(params.approvalPolicy == "never", s"the session must never prompt for approvals: ${params.approvalPolicy}")
     }
 
+    "a thread/tokenUsage/updated notification reaches the event channel" in {
+        // The turn's token counts ride this one notification, and the consumer that reads them
+        // (`collectTurn`) sits behind the event channel. An unrouted method never reaches the channel,
+        // because the handler's default unknown-notification policy is Drop, so the consumer is dead
+        // code and every Codex turn reports zero tokens while looking like it simply had none.
+        val counts =
+            CodexWire.TokenCounts(
+                inputTokens = Present(1200L),
+                cachedInputTokens = Present(400L),
+                outputTokens = Present(85L),
+                reasoningOutputTokens = Present(64L)
+            )
+        val notification =
+            CodexWire.TokenUsageNotification("thread-1", "turn-1", CodexWire.ThreadTokenUsage(total = Present(counts)))
+        Scope.run {
+            for
+                transports <- JsonRpcTransport.inMemory
+                (ours, peers) = transports
+                events <- Channel.init[CodexWire.RpcEvent](8)
+                _      <- JsonRpcHandler.init(ours, CodexCompletion.eventRoutes(events)*)
+                peer   <- JsonRpcHandler.init(peers)
+                _      <- peer.notify("thread/tokenUsage/updated", Structure.encode(notification))
+                // Bounded, so a dropped notification reports as a timeout instead of hanging the suite.
+                event <- Abort.run[Timeout](Async.timeout(5.seconds)(events.take))
+            yield
+                assert(event.isSuccess, s"the notification must reach the event channel, got: $event")
+                val received = event.getOrThrow
+                assert(received.method == "thread/tokenUsage/updated", s"method mismatch: ${received.method}")
+                val decoded = Structure.decode[CodexWire.TokenUsageNotification](received.params).getOrThrow
+                val total   = decoded.tokenUsage.total.getOrElse(CodexWire.TokenCounts())
+                assert(total.inputTokens.getOrElse(0L) == 1200L, s"input tokens must survive the hop: $total")
+                assert(total.cachedInputTokens.getOrElse(0L) == 400L, s"cached input tokens must survive the hop: $total")
+                assert(total.outputTokens.getOrElse(0L) == 85L, s"output tokens must survive the hop: $total")
+                assert(total.reasoningOutputTokens.getOrElse(0L) == 64L, s"reasoning tokens must survive the hop: $total")
+                // The mapping the turn then applies, so the route and the arithmetic are pinned together.
+                val stats = CodexWire.usageStats(counts)
+                assert(stats.inputTokens == 1200L && stats.outputTokens == 85L, s"usage mapping: $stats")
+                assert(stats.totalTokens == 1285L, s"totalTokens: ${stats.totalTokens}")
+            end for
+        }
+    }
+
 end CodexCompletionTest

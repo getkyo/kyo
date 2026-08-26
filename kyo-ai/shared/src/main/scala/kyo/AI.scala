@@ -102,6 +102,43 @@ object AI:
     def stream[A: Schema](using Frame, Tag[Emit[Chunk[A]]]): Stream[A, LLM & Async & Scope & Abort[AIStreamException]] < LLM =
         init.map(ai => ai.stream[A])
 
+    /** [[stream]] seeded with an input, the streaming counterpart of `gen(input)`. The input is appended
+      * as a user message before the stream is projected, so `AI.stream[String]("...")` reads the way
+      * `AI.gen[Answer]("...")` does rather than requiring the caller to seed the context by hand.
+      */
+    def stream[A: Schema](using
+        Frame,
+        Tag[Emit[Chunk[A]]]
+    )[B: Schema](input: B): Stream[A, LLM & Async & Scope & Abort[AIStreamException]] < LLM =
+        init.map(ai => ai.stream[A](input))
+
+    def stream[A: Schema](using
+        Frame,
+        Tag[Emit[Chunk[A]]]
+    )[B: Schema, C: Schema](input1: B, input2: C): Stream[A, LLM & Async & Scope & Abort[AIStreamException]] < LLM =
+        stream[A]((input1, input2))
+
+    def stream[A: Schema](using
+        Frame,
+        Tag[Emit[Chunk[A]]]
+    )[B: Schema, C: Schema, D: Schema](
+        input1: B,
+        input2: C,
+        input3: D
+    ): Stream[A, LLM & Async & Scope & Abort[AIStreamException]] < LLM =
+        stream[A]((input1, input2, input3))
+
+    def stream[A: Schema](using
+        Frame,
+        Tag[Emit[Chunk[A]]]
+    )[B: Schema, C: Schema, D: Schema, E: Schema](
+        input1: B,
+        input2: C,
+        input3: D,
+        input4: E
+    ): Stream[A, LLM & Async & Scope & Abort[AIStreamException]] < LLM =
+        stream[A]((input1, input2, input3, input4))
+
     /** Reads the current scope `AIEnv`: the active config plus the scope's enablements (prompt, tools, thoughts, modes, observers). */
     def env(using Frame): AIEnv < LLM = LLM.env
 
@@ -194,6 +231,39 @@ object AI:
 
         def stream[A: Schema](using Frame, Tag[Emit[Chunk[A]]]): Stream[A, LLM & Async & Scope & Abort[AIStreamException]] < LLM =
             LLM.stream(ai, summon[Schema[A]])
+
+        def stream[A: Schema](using
+            Frame,
+            Tag[Emit[Chunk[A]]]
+        )[B: Schema](input: B): Stream[A, LLM & Async & Scope & Abort[AIStreamException]] < LLM =
+            ai.userMessage(Json.encode(input)).andThen(ai.stream[A])
+
+        def stream[A: Schema](using
+            Frame,
+            Tag[Emit[Chunk[A]]]
+        )[B: Schema, C: Schema](input1: B, input2: C): Stream[A, LLM & Async & Scope & Abort[AIStreamException]] < LLM =
+            ai.stream[A]((input1, input2))
+
+        def stream[A: Schema](using
+            Frame,
+            Tag[Emit[Chunk[A]]]
+        )[B: Schema, C: Schema, D: Schema](
+            input1: B,
+            input2: C,
+            input3: D
+        ): Stream[A, LLM & Async & Scope & Abort[AIStreamException]] < LLM =
+            ai.stream[A]((input1, input2, input3))
+
+        def stream[A: Schema](using
+            Frame,
+            Tag[Emit[Chunk[A]]]
+        )[B: Schema, C: Schema, D: Schema, E: Schema](
+            input1: B,
+            input2: C,
+            input3: D,
+            input4: E
+        ): Stream[A, LLM & Async & Scope & Abort[AIStreamException]] < LLM =
+            ai.stream[A]((input1, input2, input3, input4))
 
         def systemMessage(content: String)(using Frame): Unit < LLM =
             LLM.append(ai, SystemMessage(content))

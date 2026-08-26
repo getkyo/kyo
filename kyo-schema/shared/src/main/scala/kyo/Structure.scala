@@ -842,13 +842,22 @@ object Structure:
         /** Named fields of a product/case class, ordered by declaration. */
         case Record(fields: Chunk[(String, Value)])
 
-        /** Active variant of a sum type, carrying the variant name and its payload. */
+        /** Active variant of a sum type, carrying the variant name and its payload.
+          *
+          * Produced by `Structure.encode` for sealed traits, enums, and unions. Wire codecs write it as a single-field wrapper object
+          * (`{name: payload}`), so a Value round-tripped through a wire format reads back as the equivalent single-field Record.
+          */
         case VariantCase(name: String, value: Value)
 
         /** Elements of a collection in original order. */
         case Sequence(elements: Chunk[Value])
 
-        /** Key-value pairs of a map in original iteration order. */
+        /** Key-value pairs of a map in original iteration order.
+          *
+          * Produced by `Structure.encode` for Map, Dict, and OrderedDict values with any key type. Wire codecs write a string-keyed map as
+          * an object and any other map as an array of `{key, value}` records, so a Value round-tripped through a wire format reads back as
+          * the equivalent Record or Sequence.
+          */
         case MapEntries(entries: Chunk[(Value, Value)])
 
         /** A string scalar. */
@@ -1093,6 +1102,8 @@ object Structure:
                     v match
                         case Value.Record(fields) =>
                             fields.collect { case (n, fv) if n == name => fv }
+                        case Value.MapEntries(entries) =>
+                            entries.collect { case (Value.Str(k), ev) if k == name => ev }
                         case _ => Chunk.empty
                 case PathSegment.Variant(name) =>
                     v match
@@ -1106,8 +1117,9 @@ object Structure:
                         case _ => Chunk.empty
                 case PathSegment.Each =>
                     v match
-                        case Value.Sequence(elements) => elements
-                        case _                        => Chunk.empty
+                        case Value.Sequence(elements)  => elements
+                        case Value.MapEntries(entries) => entries.map(_._2)
+                        case _                         => Chunk.empty
         end stepGet
 
         private def setAt(v: Value, remaining: List[PathSegment], newValue: Value)(using Frame): Result[NavigationException, Value] =
@@ -1127,6 +1139,18 @@ object Structure:
                                             else (acc :+ (n, fv), found)
                                     }
                                     if found then Result.succeed(Value.Record(updated))
+                                    else Result.panic(PathNotFoundException(Seq.empty, name))
+                                case Value.MapEntries(entries) =>
+                                    val (updated, found) = entries.foldLeft((Chunk.empty[(Value, Value)], false)) {
+                                        case ((acc, found), (k, ev)) =>
+                                            k match
+                                                case Value.Str(s) if s == name =>
+                                                    setAt(ev, rest, newValue) match
+                                                        case Result.Success(nv) => (acc :+ (k, nv), true)
+                                                        case _                  => (acc :+ (k, ev), true)
+                                                case _ => (acc :+ (k, ev), found)
+                                    }
+                                    if found then Result.succeed(Value.MapEntries(updated))
                                     else Result.panic(PathNotFoundException(Seq.empty, name))
                                 case _ =>
                                     Result.panic(TypeMismatchException(Seq.empty, "Record", v.toString))
@@ -1158,6 +1182,13 @@ object Structure:
                                             case _                  => el
                                     )
                                     Result.succeed(Value.Sequence(updated))
+                                case Value.MapEntries(entries) =>
+                                    val updated = entries.map { (k, ev) =>
+                                        setAt(ev, rest, newValue) match
+                                            case Result.Success(nv) => (k, nv)
+                                            case _                  => (k, ev)
+                                    }
+                                    Result.succeed(Value.MapEntries(updated))
                                 case _ =>
                                     Result.panic(TypeMismatchException(Seq.empty, "Sequence", v.toString))
             end match

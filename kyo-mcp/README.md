@@ -11,7 +11,11 @@ case class Confirm(approved: Boolean) derives Schema, CanEqual
 def lookupForecast(city: String): Forecast < Sync = Forecast(city, "clear", 21)
 def renderChartPng(f: Forecast): String           = "iVBORw0KGgo="
 def externalTempReading(city: String): String     = "21"
-val png: McpMimeType                              = McpMimeType("image/png")
+
+case class WeatherApi(endpoint: String)
+def lookupForecastVia(city: String): Forecast < (Env[WeatherApi] & Sync) =
+    Env.use[WeatherApi](_ => lookupForecast(city))
+val png: McpMimeType = McpMimeType("image/png")
 
 val weather = McpHandler.tool[WeatherIn]("weather", "Current conditions for a city") { in =>
     lookupForecast(in.city)
@@ -78,12 +82,14 @@ object WeatherServer extends KyoApp:
             McpHandler.tool[WeatherIn]("weather", "Current conditions for a city") { in =>
                 Forecast(in.city, "clear", 21)
             }
-        JsonRpcTransport.stdio().map { transport =>
+        JsonRpcTransport.stdioWith() { transport =>
             McpServer.initWith(transport, weather)(_ => Async.never)
         }
     }
 end WeatherServer
 ```
+
+`stdioWith` rather than `stdio`: on this transport stdin and stdout ARE the protocol channel, so an application write to either corrupts it, and `Console.printLine` is the natural way to write one. Inside the body `Console`'s stdout side is diverted to stderr and `readLine` fails, so a handler prints safely without its author having to know the rule. Use plain `stdio()` only when you own the process's streams yourself.
 
 `Async.never` parks the main fiber forever: the inbound stdio dispatch fiber drives all the work, so the main fiber only has to hold the scope open until the host stops the process. For a server that should shut itself down, replace `Async.never` with a `Fiber.Promise[Unit, Sync]` that a handler completes when it is time to exit.
 
@@ -94,6 +100,30 @@ end WeatherServer
 Every server endpoint is an `McpHandler` value built by a role-tagged factory on the `McpHandler` companion, where the role names what the MCP host can do with it: a tool is a function the model may call, a resource is read-only data the host can fetch, a prompt is a parameterised message template, a completion is IDE-style argument autocomplete, and a custom method is a vendor extension. The factories share one shape: you annotate `[In]` at the call site and the compiler infers `[Out]` from your handler's return type through clause interleaving, so the only type you ever write is the request type.
 
 The per-request context (who is calling, the cancellation signal, the progress channel, the live peer for reverse calls) is not a handler parameter. It is reached through the `Mcp.*` accessors covered in [Inside a handler](#inside-a-handler-the-per-request-context). That keeps every handler signature down to `In => Out`.
+
+### The handler row is closed
+
+A handler body's effect row is fixed at `Async & Abort[JsonRpcResponse.Halt | E]`, where `E` is what you declare with [`.error[E]`](#typed-domain-errors). Nothing else crosses it. That is deliberate, since the engine calls handlers itself and has nothing to supply an ambient effect with, but it means a body cannot run in `Env`, `DB`, or any other effect the rest of your program is written in.
+
+Discharge those where the handler is *built*, so each handler closes over what its body needs:
+
+```scala
+def weatherHandlers(api: WeatherApi): Seq[McpHandler[?, ?, ?]] =
+    Seq(
+        McpHandler.tool[WeatherIn]("weather", "Current conditions for a city") { in =>
+            Env.run(api)(lookupForecastVia(in.city))
+        }
+    )
+```
+
+Handlers become a function of their dependencies, and `McpServer.init(transport, weatherHandlers(api)*)` supplies them once at startup. Wrapping the whole server in `Env.run(api) { ... }` instead does not work and is worth naming, because it is the shape most kyo modules teach: the body's row is what the factory checks, not the row the surrounding program happens to be in.
+
+An undischarged effect is a compile error at the handler body whose first line names the offending effect exactly:
+
+```
+Found:    Forecast < (kyo.Env[WeatherApi] & kyo.Sync)
+Required: Any < (kyo.Async & kyo.Abort[kyo.JsonRpcResponse.Halt | Any])
+```
 
 ### Tools
 
@@ -574,9 +604,9 @@ val drainThenClose: Unit < (Async & Abort[McpException]) =
 
 ## Transports and cross-platform behaviour
 
-kyo-mcp ships no transports of its own; it uses the `JsonRpcTransport` factories from `kyo-jsonrpc`. `stdio()` is the line-delimited stdin/stdout transport for a CLI server a host launches as a subprocess. `inMemory` returns a cross-wired pair, ideal for wiring a client and a server in one process (every example in this README that uses `inMemory` does exactly that). `fromWire(...)` lifts a byte-stream transport plus framer plus codec into the envelope seam for a custom wire.
+kyo-mcp ships no transports of its own; it uses the `JsonRpcTransport` factories from `kyo-jsonrpc`. `stdio()` is the line-delimited stdin/stdout transport for a CLI server a host launches as a subprocess, and `stdioWith(...) { transport => ... }` is the form to reach for: because that transport owns stdin and stdout, application output written to them corrupts the protocol, so the body it runs has `Console`'s stdout side diverted to stderr and `readLine` failing. A single `Console.printLine` in a handler is otherwise enough to make the host report a parse error, which is the worst place to debug it from, since the server side looks healthy. `inMemory` returns a cross-wired pair, ideal for wiring a client and a server in one process (every example in this README that uses `inMemory` does exactly that). `fromWire(...)` lifts a byte-stream transport plus framer plus codec into the envelope seam for a custom wire.
 
-The full surface compiles and runs on JVM, JavaScript, and Scala Native, with no platform restriction: `JsonRpcTransport.unixDomain(path)` works everywhere, running over the platform kyo-net transport (JVM posix/NIO, Native posix, JS/Wasm Node's `net` module). On JS/Wasm it needs a Node.js runtime, since a browser has no sockets.
+The full surface compiles and runs on JVM, JavaScript, and Scala Native, with no platform restriction: `JsonRpcTransport.unixDomain(path)` works everywhere, running over the platform kyo-net transport (JVM posix/NIO, Native posix, JS/Wasm Node's `net` module). On JS/Wasm it needs a Node.js runtime, since a browser has no sockets. On Scala Native the build also needs the kyo FFI plugin, which supplies the link flags for kyo-net's C shims; see kyo-net's [Scala Native builds](../kyo-net/README.md#scala-native-builds).
 
 ## Putting it together
 

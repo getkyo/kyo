@@ -101,4 +101,37 @@ class LLMStreamIntegrationTest extends BaseAITest:
         end for
     }
 
+    "deliver stream[String] as the declared capability says" - runBackends { backend =>
+        // The defect this guards was silent: `stream[String]` on a harness backend returned the whole
+        // answer as one chunk, with nothing in the API saying so, so a chat UI written against the
+        // documented streaming API showed a blank screen for the whole generation. The fix is that the
+        // capability is declared; this leaf is what keeps the declaration honest, per backend, against a
+        // prompt long enough that one chunk cannot be a coincidence.
+        val ask =
+            "Write a 250-word explanation of B-trees. Reply with the explanation only."
+        for
+            result <- Abort.run[AIException] {
+                Scope.run(AI.stream[String](ask).map(_.run))
+            }
+            chunks <- unwrap(backend, result)
+            _ = assert(chunks.nonEmpty, s"${backend.label} produced no chunks at all")
+            _ = assert(
+                chunks.mkString.length > 400,
+                s"${backend.label} answered too briefly for this leaf to mean anything: ${chunks.mkString.length} chars"
+            )
+            incremental = backend.provider.completion.streamsIncrementally
+            _ = if incremental then
+                assert(
+                    chunks.size > 1,
+                    s"${backend.label} declares incremental streaming but delivered ${chunks.size} chunk(s)"
+                )
+            else
+                assert(
+                    chunks.size >= 1,
+                    s"${backend.label} declares non-incremental streaming; got ${chunks.size} chunk(s)"
+                )
+        yield ()
+        end for
+    }
+
 end LLMStreamIntegrationTest

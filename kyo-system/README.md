@@ -568,6 +568,11 @@ val withCode: (String, ExitCode) < (Async & Abort[CommandException]) =
 
 ## System environment
 
+`import kyo.*` brings `kyo.System` into scope, and it shadows `java.lang.System`. A call that used to compile stops:
+`System.nanoTime()` reports `value nanoTime is not a member of object kyo.System`. The error names the object it resolved to, so
+the fix reads off it: qualify the JDK one as `java.lang.System.nanoTime()`. `kyo.SecureRandom` shadows
+`java.security.SecureRandom` the same way. Both are intentional, since the kyo type is the one a kyo program wants by default.
+
 `System.env[A](name)` and `System.property[A](name)` retrieve an environment variable or system property and parse it to type `A` using a `Parser[E, A]` typeclass instance. A missing variable returns `Absent`; a present but unparseable value fails with `Abort[E]`:
 
 ```scala

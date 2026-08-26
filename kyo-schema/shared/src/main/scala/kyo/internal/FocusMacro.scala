@@ -1452,10 +1452,9 @@ import scala.quoted.*
                 val mName    = Expr(memberNames(idx))
                 val mFieldId = Expr(kyo.internal.CodecMacro.fieldId(memberNames(idx)))
                 val arm = '{
-                    $w.objectStart($mName, 1)
-                    $w.fieldBytes(${ Ref(nameByteSyms(idx)).asExprOf[Array[Byte]] }, $mFieldId)
+                    $w.variantStart($mName, $mName, ${ Ref(nameByteSyms(idx)).asExprOf[Array[Byte]] }, $mFieldId)
                     ${ Ref(variantSyms(idx)).asExprOf[Schema[Any]] }.serializeWrite($v, $w)
-                    $w.objectEnd()
+                    $w.variantEnd()
                 }.asTerm
                 If(cond, arm, elseTerm)
             }
@@ -2214,10 +2213,14 @@ import scala.quoted.*
             ) { (idx, elseTerm) =>
                 val cond = variantCheck(idx, v).asTerm
                 val arm = '{
-                    $w.objectStart(${ Expr(typeName) }, 1)
-                    $w.fieldBytes(${ Ref(nameByteSyms(idx)).asExprOf[Array[Byte]] }, ${ Expr(CodecMacro.fieldId(childNames(idx))) })
+                    $w.variantStart(
+                        ${ Expr(typeName) },
+                        ${ Expr(childNames(idx)) },
+                        ${ Ref(nameByteSyms(idx)).asExprOf[Array[Byte]] },
+                        ${ Expr(CodecMacro.fieldId(childNames(idx))) }
+                    )
                     ${ Ref(variantSyms(idx)).asExprOf[Schema[Any]] }.serializeWrite($v, $w)
-                    $w.objectEnd()
+                    $w.variantEnd()
                 }.asTerm
                 If(cond, arm, elseTerm)
             }

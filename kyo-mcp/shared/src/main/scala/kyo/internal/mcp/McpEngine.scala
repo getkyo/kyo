@@ -35,9 +35,13 @@ private[kyo] object McpEngine:
         val logLevelRef = AtomicRef.Unsafe.init[McpServer.LogLevel](McpServer.LogLevel.Info)(using AllowUnsafe.embrace.danger).safe
         // Unsafe: AtomicRef for resource subscription set; initialized to empty per §3.4.
         val subscriptionsRef = AtomicRef.Unsafe.init[Set[McpResourceUri]](Set.empty)(using AllowUnsafe.embrace.danger).safe
-        // Unsafe: forward reference holding the live McpServer.Unsafe so each dispatch can
-        // bind it into Mcp.local. Populated synchronously after JsonRpcHandler.initUnscoped completes.
-        val serverRef = AtomicRef.Unsafe.init[Maybe[McpServer.Unsafe]](Absent)(using AllowUnsafe.embrace.danger).safe
+        // Forward reference holding the live McpServer.Unsafe so each dispatch can bind it into
+        // Mcp.local. A promise rather than a slot: it is completed right after JsonRpcHandler.initUnscoped
+        // returns, but that call has already started the dispatch loop, so a request arriving in between
+        // must WAIT for the server rather than find it missing. Unsafe: constructed outside an effect,
+        // like the sibling refs above.
+        val serverRef =
+            Fiber.Promise.Unsafe.init[McpServer.Unsafe, Any]()(using AllowUnsafe.embrace.danger).safe
 
         val catalog = McpCatalog(userHandlers)
 
@@ -52,6 +56,32 @@ private[kyo] object McpEngine:
                         s"handler '${h.name}'.error",
                         s"error code ${m.code} falls in the framework-reserved range [-32003, -32000]; use codes outside that range"
                     )
+            }
+        }
+
+        // A handler whose body aborts a type no `.error[E2]` covers cannot answer that failure: the
+        // engine reaches its unmapped-error path and the peer gets a -32603 carrying the exception's
+        // `toString`, which leaks whatever the exception carries (a query, a connection id) inside a code
+        // the model cannot discriminate. The information to refuse it is available here, so the handler
+        // is rejected before the transport opens, the same class of programmer error as the reserved-code
+        // check above and reported the same way.
+        userHandlers.foreach { h =>
+            h.declaredErrorTag.foreach { declared =>
+                errorLeaves(declared).foreach { leaf =>
+                    // A leaf that is already a JsonRpcError carries its own code and message, and the
+                    // dispatch boundary forwards it as-is rather than taking the unmapped path. Requiring
+                    // a mapping for it would refuse the handlers that abort `McpToolExecutionException`
+                    // and friends, which are exactly the ones that already answer correctly. This mirrors
+                    // the runtime branch in `JsonRpcRoute.applyMappingsAtBoundary`.
+                    val wireShaped = leaf <:< jsonRpcErrorTag
+                    if !wireShaped && !h.errorMappings.exists(m => leaf <:< m.tag.asInstanceOf[ConcreteTag[Any]]) then
+                        throw McpConfigurationError(
+                            s"handler '${h.name}'",
+                            s"the handler body can abort ${leaf.showType}, which no `.error[...]` maps to a wire code; " +
+                                s"register a mapping for it, or handle it inside the body"
+                        )
+                    end if
+                }
             }
         }
 
@@ -324,11 +354,25 @@ private[kyo] object McpEngine:
 
             end unsafe
 
-            // Publish the live server into the forward reference so each dispatch can bind it into
-            // Mcp.local. Unsafe: synchronous write of forward reference immediately after construction.
-            serverRef.unsafe.set(Present(unsafe))(using AllowUnsafe.embrace.danger)
+            // Publish the live server, releasing any dispatch already waiting on it. Unsafe: synchronous
+            // completion of the forward reference immediately after construction.
+            serverRef.unsafe.completeDiscard(Result.succeed(unsafe))(using AllowUnsafe.embrace.danger)
             unsafe
         }
     end initServer
+
+    /** The individual abort types inside a declared error tag.
+      *
+      * `ConcreteTag` models a union structurally, so `A | B` decomposes into its members and anything
+      * else is a single leaf. Nested unions are flattened, since a body row can be built up in stages.
+      */
+    private val jsonRpcErrorTag: ConcreteTag[Any] =
+        summon[ConcreteTag[JsonRpcError]].asInstanceOf[ConcreteTag[Any]]
+
+    private def errorLeaves(tag: ConcreteTag[Any]): Chunk[ConcreteTag[Any]] =
+        tag match
+            case ConcreteTag.Union(elements) => Chunk.from(elements).flatMap(errorLeaves)
+            case ConcreteTag.NothingTag      => Chunk.empty
+            case other                       => Chunk(other)
 
 end McpEngine

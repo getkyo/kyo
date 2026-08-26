@@ -51,6 +51,13 @@ given transformMapDropSchema: Schema[TransformMapDrop] = Schema[TransformMapDrop
 case class TransformMapDeny(fullName: String, tags: Map[String, Int]) derives CanEqual
 given transformMapDenySchema: Schema[TransformMapDeny] = Schema[TransformMapDeny].denyUnknownFields
 
+// renameAllFields where every field is already camelCase: the rename is a semantic no-op, yet its
+// presence still installs the transform-aware read path. Exact trigger shape of issue #1741, which
+// collapsed the Map to a single entry keyed by the enclosing field name.
+case class TransformMapRenameAll(fullName: String, tags: Map[String, Int]) derives CanEqual
+given transformMapRenameAllSchema: Schema[TransformMapRenameAll] =
+    Schema[TransformMapRenameAll].renameAllFields(Schema.NameCase.CamelCase)(using Frame.internal)
+
 // --- The same field-transform-plus-Map regression, on a richer MIXED product (a scalar, an
 // optional scalar, and a list, alongside the Map field) so the transform-aware guard alignment
 // is proven on a shape closer to a real-world record, not only the minimal two-field case. ---

@@ -2,6 +2,7 @@ package kyo
 
 import java.io.EOFException
 import java.io.IOException
+import kyo.internal.ConsolePlatformSpecific
 
 /** Represents a console for input and output operations.
   *
@@ -74,9 +75,9 @@ object Console:
       */
     val live: Console = Console(
         new Unsafe:
-            def readLine()(using AllowUnsafe) =
-                Result.catching[IOException](Maybe(scala.Console.in.readLine()))
-                    .flatMap(_.toResult(Result.fail(new EOFException("Consoles.readLine failed."))))
+            // Standard input is the one stream whose shape differs per platform: JVM and Native read `scala.Console.in`, while Node has no
+            // synchronous stdin at all and reads descriptor 0 directly. The output side is uniform, so only the read is delegated.
+            def readLine()(using AllowUnsafe)              = ConsolePlatformSpecific.readLine()
             def print(s: String)(using AllowUnsafe)        = scala.Console.out.print(s)
             def printErr(s: String)(using AllowUnsafe)     = scala.Console.err.print(s)
             def printLine(s: String)(using AllowUnsafe)    = scala.Console.out.println(s)
@@ -140,7 +141,7 @@ object Console:
             val proxy =
                 new Proxy(console.unsafe):
                     override def readLine()(using AllowUnsafe) =
-                        if !it.hasNext then Result.fail(new EOFException("Consoles.readLine failed."))
+                        if !it.hasNext then Result.fail(new EOFException("Console.readLine reached the end of standard input."))
                         else Result.succeed(it.next())
             let(Console(proxy))(v)
         }

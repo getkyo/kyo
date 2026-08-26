@@ -85,9 +85,13 @@ private[kyo] object McpClientEngine:
         val serverCapabilitiesRef = AtomicRef.Unsafe.init[Maybe[McpCapabilities.Server]](Absent)(using AllowUnsafe.embrace.danger).safe
         val serverInfoRef         = AtomicRef.Unsafe.init[Maybe[McpInfo]](Absent)(using AllowUnsafe.embrace.danger).safe
         val negotiatedVersionRef  = AtomicRef.Unsafe.init[Maybe[McpConfig.ProtocolVersion]](Absent)(using AllowUnsafe.embrace.danger).safe
-        // Unsafe: forward reference holding the sentinel "server" used to bind into Mcp.local
-        // during client-side reverse-direction dispatch.
-        val serverRef = AtomicRef.Unsafe.init[Maybe[McpServer.Unsafe]](Absent)(using AllowUnsafe.embrace.danger).safe
+        // Forward reference holding the sentinel "server" used to bind into Mcp.local during
+        // client-side reverse-direction dispatch. A promise for the same reason as the server engine's:
+        // it is completed after the handler is built, by which time dispatch is already running, so an
+        // early reverse request must wait rather than find it missing. Unsafe: constructed outside an
+        // effect, like the sibling ref above.
+        val serverRef =
+            Fiber.Promise.Unsafe.init[McpServer.Unsafe, Any]()(using AllowUnsafe.embrace.danger).safe
 
         val reverseRoutes = McpReverseDispatch.buildRoutes(handlers, capabilities, serverRef)
 
@@ -125,7 +129,7 @@ private[kyo] object McpClientEngine:
                 // reverse-direction handlers can still bind a context into Mcp.local without panic.
                 // Unsafe: synchronous write of forward reference immediately after construction.
                 val sentinelServer = buildClientSentinelServer(handler)
-                serverRef.unsafe.set(Present(sentinelServer))(using AllowUnsafe.embrace.danger)
+                serverRef.unsafe.completeDiscard(Result.succeed(sentinelServer))(using AllowUnsafe.embrace.danger)
                 unsafe
         )
     end initClient
@@ -137,7 +141,7 @@ private[kyo] object McpClientEngine:
       * peer in client mode), so we provide a sentinel that aborts with a clear error if a handler
       * accidentally reaches into `Mcp.server` for a reverse-direction call.
       * The handler itself must not call `ctx.server`; this sentinel exists solely to satisfy the
-      * carrier's serverRef requirement and avoid IllegalStateException during dispatch.
+      * carrier's serverRef requirement so reverse dispatch has something to bind.
       */
     private def buildClientSentinelServer(handler: JsonRpcHandler): McpServer.Unsafe =
         new McpServer.Unsafe:

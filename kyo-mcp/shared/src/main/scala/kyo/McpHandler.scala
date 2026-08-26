@@ -37,6 +37,17 @@ sealed trait McpHandler[In, Out, +E]:
     /** Per-handler error mappings registered via `.error[E2]`. */
     private[kyo] def errorMappings: Chunk[McpHandler.ErrorMapping[?]]
 
+    /** The abort type this handler's body declared, as a runtime tag, when a factory captured one.
+      *
+      * `.error[E2]` records a mapping but cannot say which leaves of the body's `E` were meant to be
+      * mapped, so a leaf with no mapping stayed invisible until it aborted at dispatch and reached the
+      * peer as an opaque internal error carrying the exception's `toString`. The engine reads this at
+      * startup and refuses such a handler, the way it already refuses a reserved-range error code.
+      *
+      * `Absent` for a handler constructed directly rather than through a factory.
+      */
+    private[kyo] def declaredErrorTag: Maybe[ConcreteTag[Any]]
+
     /** Adds a typed-error mapping. When the handler aborts with a value of type `E2`, the engine
       * emits a JSON-RPC error with the supplied `code` and `message`. Mirrors `JsonRpcRoute.error[E2]`.
       */
@@ -430,6 +441,45 @@ object McpHandler:
     private inline def resourceAnnotationsMaybe(a: ResourceAnnotations): Maybe[ResourceAnnotations] =
         if a == ResourceAnnotations.empty then Absent else Present(a)
 
+    /** Evidence that a handler's output type was actually inferred.
+      *
+      * A handler body whose effect row does not fit does not stop the factory from typechecking: `Out`
+      * degrades to `Any`, and the search for `Schema[Any]` then matches several primitive instances at
+      * once, so the author is shown an ambiguity between two instances their code never mentions
+      * (`durationSchema` and `intSchema`, say) instead of the effect their body actually carries. For
+      * some bodies that phantom is the only error reported and the real one is suppressed entirely.
+      *
+      * Requiring this evidence BEFORE the schema turns that into a named failure. It also rejects a
+      * handler that genuinely returns `Any`, which is correct: `Any` has no schema to advertise.
+      *
+      * This is evidence, never written by hand.
+      */
+    @scala.annotation.implicitNotFound(
+        "This handler's output type could not be inferred (it came out as Any).\n" +
+            "If another error names an effect the handler body carries, that is the cause: a handler " +
+            "body's row is closed at Async & Abort[JsonRpcResponse.Halt | E], and a body that does not " +
+            "fit leaves the output type uninferred here. Fix that error first.\n" +
+            "If the handler really does return Any, give it a concrete return type instead: Any has no " +
+            "schema to advertise."
+    )
+    final class OutInferred[Out]
+
+    object OutInferred:
+        private val instance                                                          = new OutInferred[Any]
+        given inferred[Out](using scala.util.NotGiven[Out =:= Any]): OutInferred[Out] = instance.asInstanceOf[OutInferred[Out]]
+
+    /** Wraps a factory-captured abort tag for the carrier, dropping the `Nothing` case.
+      *
+      * A body that aborts nothing has `E = Nothing`, which carries no leaf to map and must not be
+      * mistaken for one that was left unmapped.
+      */
+    private def declaredError[E](tag: ConcreteTag[E]): Maybe[ConcreteTag[Any]] =
+        val widened = tag.asInstanceOf[ConcreteTag[Any]]
+        widened match
+            case ConcreteTag.NothingTag => Absent
+            case _                      => Present(widened)
+    end declaredError
+
     // --- Factories ------------------------------------------------------------
 
     inline def tool[In](
@@ -440,12 +490,17 @@ object McpHandler:
         inSchema: Schema[In]
     )[Out, E](
         handler: In => Out < (Async & Abort[JsonRpcResponse.Halt | E])
-    )(using outSchema: Schema[Out], frame: Frame): McpHandler[In, Out, E] =
+    )(using errorTag: ConcreteTag[E], outInferred: OutInferred[Out], outSchema: Schema[Out], frame: Frame): McpHandler[In, Out, E] =
         // `inline` so `Json.jsonSchema[In]`/`Json.jsonSchema[Out]` expand at the call site where
         // `In`/`Out` are concrete; against an abstract type parameter they yield an empty Product.
         // The advertised `outputSchema` is derived from `Out`; the lift encodes the one returned
         // value into `structuredContent` and a text mirror, so the three coupled fields agree by
         // construction.
+        //
+        // `OutInferred` is required BEFORE the output schema so a body that left `Out` uninferred is
+        // reported as that, rather than as an ambiguity between two primitive schemas the author never
+        // mentioned. See its docs.
+        val _ = outInferred
         val meta = ToolMeta(
             name = name,
             description = if description.isEmpty then Absent else Present(description),
@@ -453,7 +508,7 @@ object McpHandler:
             outputSchema = Present(Json.jsonSchema[Out]),
             annotations = toolAnnotationsMaybe(annotations)
         )
-        new ToolHandler[In, Out, E](meta, inSchema, outSchema, handler, Chunk.empty)
+        new ToolHandler[In, Out, E](meta, inSchema, outSchema, handler, Chunk.empty, declaredError(errorTag))
     end tool
 
     /** Constructs a tool handler returning a full [[ToolOutcome]] for total control
@@ -466,7 +521,7 @@ object McpHandler:
         annotations: ToolAnnotations = ToolAnnotations.empty
     )[E](
         handler: In => ToolOutcome < (Async & Abort[JsonRpcResponse.Halt | E])
-    )(using inSchema: Schema[In], frame: Frame): McpHandler[In, ToolOutcome, E] =
+    )(using errorTag: ConcreteTag[E], inSchema: Schema[In], frame: Frame): McpHandler[In, ToolOutcome, E] =
         // `inline` so `Json.jsonSchema[In]` resolves against the concrete `In` at the call site.
         val meta = ToolMeta(
             name = name,
@@ -475,7 +530,7 @@ object McpHandler:
             outputSchema = Absent,
             annotations = toolAnnotationsMaybe(annotations)
         )
-        new ToolMultiHandler[In, E](meta, inSchema, handler, Chunk.empty)
+        new ToolMultiHandler[In, E](meta, inSchema, handler, Chunk.empty, declaredError(errorTag))
     end toolRaw
 
     /** Constructs a fixed-URI resource handler.
@@ -499,7 +554,7 @@ object McpHandler:
         subscribe: Boolean = false
     )[E](
         handler: => Chunk[ResourceBody] < (Async & Abort[JsonRpcResponse.Halt | E])
-    )(using frame: Frame): McpHandler[Unit, Chunk[ResourceBody], E] =
+    )(using errorTag: ConcreteTag[E], frame: Frame): McpHandler[Unit, Chunk[ResourceBody], E] =
         val meta = ResourceMeta(
             uri = uri,
             name = name,
@@ -507,7 +562,7 @@ object McpHandler:
             mimeType = mimeType,
             annotations = resourceAnnotationsMaybe(annotations)
         )
-        new ResourceHandler[E](meta, subscribe, () => handler, Chunk.empty)
+        new ResourceHandler[E](meta, subscribe, () => handler, Chunk.empty, declaredError(errorTag))
     end resource
 
     /** Constructs a URI-template resource handler. The closure receives a [[ResourceMatch]]
@@ -521,7 +576,7 @@ object McpHandler:
         annotations: ResourceAnnotations = ResourceAnnotations.empty
     )[E](
         handler: ResourceMatch => Chunk[ResourceBody] < (Async & Abort[JsonRpcResponse.Halt | E])
-    )(using frame: Frame): McpHandler[ResourceMatch, Chunk[ResourceBody], E] =
+    )(using errorTag: ConcreteTag[E], frame: Frame): McpHandler[ResourceMatch, Chunk[ResourceBody], E] =
         val meta = ResourceTemplateMeta(
             uriTemplate = uriTemplate,
             name = name,
@@ -529,7 +584,7 @@ object McpHandler:
             mimeType = mimeType,
             annotations = resourceAnnotationsMaybe(annotations)
         )
-        new ResourceTemplateHandler[E](meta, handler, Chunk.empty)
+        new ResourceTemplateHandler[E](meta, handler, Chunk.empty, declaredError(errorTag))
     end resourceTemplate
 
     /** Constructs a typed prompt handler.
@@ -546,13 +601,13 @@ object McpHandler:
         inSchema: Schema[In]
     )[E](
         handler: In => PromptOutcome < (Async & Abort[JsonRpcResponse.Halt | E])
-    )(using frame: Frame): McpHandler[In, PromptOutcome, E] =
+    )(using errorTag: ConcreteTag[E], frame: Frame): McpHandler[In, PromptOutcome, E] =
         val meta = PromptMeta(
             name = name,
             description = if description.isEmpty then Absent else Present(description),
             arguments = internal.mcp.McpPromptArguments.fromSchema[In]
         )
-        new TypedPromptHandler[In, E](meta, inSchema, handler, Chunk.empty)
+        new TypedPromptHandler[In, E](meta, inSchema, handler, Chunk.empty, declaredError(errorTag))
     end prompt
 
     /** Constructs a prompt handler over the raw inbound `Map[String, String]` (the escape
@@ -564,13 +619,13 @@ object McpHandler:
         arguments: Chunk[PromptArgument]
     )[E](
         handler: Map[String, String] => PromptOutcome < (Async & Abort[JsonRpcResponse.Halt | E])
-    )(using frame: Frame): McpHandler[Map[String, String], PromptOutcome, E] =
+    )(using errorTag: ConcreteTag[E], frame: Frame): McpHandler[Map[String, String], PromptOutcome, E] =
         val meta = PromptMeta(
             name = name,
             description = if description.isEmpty then Absent else Present(description),
             arguments = arguments
         )
-        new PromptHandler[E](meta, handler, Chunk.empty)
+        new PromptHandler[E](meta, handler, Chunk.empty, declaredError(errorTag))
     end prompt
 
     /** Constructs a 1-arg completion handler (just the [[CompletionArg]]). The previously-filled
@@ -580,15 +635,15 @@ object McpHandler:
       */
     def completion(ref: CompletionRef)[E](
         handler: CompletionArg => CompletionOutcome < (Async & Abort[JsonRpcResponse.Halt | E])
-    )(using frame: Frame): McpHandler[CompletionArg, CompletionOutcome, E] =
-        new CompletionHandler[E](ref, (arg, _) => handler(arg), Chunk.empty)
+    )(using errorTag: ConcreteTag[E], frame: Frame): McpHandler[CompletionArg, CompletionOutcome, E] =
+        new CompletionHandler[E](ref, (arg, _) => handler(arg), Chunk.empty, declaredError(errorTag))
 
     /** Constructs a completion handler whose ref is read off a registered prompt handler value,
       * removing the third restatement of a prompt name.
       */
     def completion[In](promptHandler: McpHandler[In, PromptOutcome, ?])[E](
         handler: CompletionArg => CompletionOutcome < (Async & Abort[JsonRpcResponse.Halt | E])
-    )(using frame: Frame): McpHandler[CompletionArg, CompletionOutcome, E] =
+    )(using errorTag: ConcreteTag[E], frame: Frame): McpHandler[CompletionArg, CompletionOutcome, E] =
         completion(CompletionRef.Prompt(promptHandler.name))[E](handler)
 
     /** Constructs a 2-arg completion handler receiving `(arg, contextOpt)`. The `ref` argument
@@ -601,8 +656,8 @@ object McpHandler:
             CompletionArg,
             Maybe[CompletionArg.Context]
         ) => CompletionOutcome < (Async & Abort[JsonRpcResponse.Halt | E])
-    )(using frame: Frame): McpHandler[CompletionArg, CompletionOutcome, E] =
-        new CompletionHandler[E](ref, handler, Chunk.empty)
+    )(using errorTag: ConcreteTag[E], frame: Frame): McpHandler[CompletionArg, CompletionOutcome, E] =
+        new CompletionHandler[E](ref, handler, Chunk.empty, declaredError(errorTag))
 
     /** Constructs an arbitrary JSON-RPC method handler.
       *
@@ -613,8 +668,10 @@ object McpHandler:
         inSchema: Schema[In]
     )[Out, E](
         handler: In => Out < (Async & Abort[JsonRpcResponse.Halt | E])
-    )(using outSchema: Schema[Out], frame: Frame): McpHandler[In, Out, E] =
-        new CustomHandler[In, Out, E](method, inSchema, outSchema, handler, Chunk.empty)
+    )(using errorTag: ConcreteTag[E], outInferred: OutInferred[Out], outSchema: Schema[Out], frame: Frame): McpHandler[In, Out, E] =
+        val _ = outInferred
+        new CustomHandler[In, Out, E](method, inSchema, outSchema, handler, Chunk.empty, declaredError(errorTag))
+    end custom
 
     // --- Concrete handler carriers (internal) ---------------------------------
 
@@ -623,7 +680,8 @@ object McpHandler:
         val inSchema: Schema[In],
         val outSchema: Schema[Out],
         val toolHandler: In => Out < (Async & Abort[JsonRpcResponse.Halt | E]),
-        val errorMappings: Chunk[ErrorMapping[?]]
+        val errorMappings: Chunk[ErrorMapping[?]],
+        val declaredErrorTag: Maybe[ConcreteTag[Any]] = Absent
     ) extends McpHandler[In, Out, E]:
         def name: String = toolMeta.name
         def kind: Kind   = Kind.Tool
@@ -634,7 +692,8 @@ object McpHandler:
                 inSchema,
                 outSchema,
                 toolHandler,
-                errorMappings.append(new ErrorMapping[E2](code, message))
+                errorMappings.append(new ErrorMapping[E2](code, message)),
+                declaredErrorTag
             )
 
         def error[E2](using ec: McpErrorCode[E2], schema: Schema[E2], tag: ConcreteTag[E2]): McpHandler[In, Out, E | E2] =
@@ -645,7 +704,8 @@ object McpHandler:
         val toolMeta: ToolMeta,
         val inSchema: Schema[In],
         val toolHandler: In => ToolOutcome < (Async & Abort[JsonRpcResponse.Halt | E]),
-        val errorMappings: Chunk[ErrorMapping[?]]
+        val errorMappings: Chunk[ErrorMapping[?]],
+        val declaredErrorTag: Maybe[ConcreteTag[Any]] = Absent
     ) extends McpHandler[In, ToolOutcome, E]:
         def name: String = toolMeta.name
         def kind: Kind   = Kind.Tool
@@ -654,7 +714,13 @@ object McpHandler:
             schema: Schema[E2],
             tag: ConcreteTag[E2]
         )(code: Int, message: String): McpHandler[In, ToolOutcome, E | E2] =
-            new ToolMultiHandler[In, E | E2](toolMeta, inSchema, toolHandler, errorMappings.append(new ErrorMapping[E2](code, message)))
+            new ToolMultiHandler[In, E | E2](
+                toolMeta,
+                inSchema,
+                toolHandler,
+                errorMappings.append(new ErrorMapping[E2](code, message)),
+                declaredErrorTag
+            )
 
         def error[E2](using ec: McpErrorCode[E2], schema: Schema[E2], tag: ConcreteTag[E2]): McpHandler[In, ToolOutcome, E | E2] =
             error[E2](using schema, tag)(ec.code, ec.message)
@@ -664,7 +730,8 @@ object McpHandler:
         val resourceMeta: ResourceMeta,
         val subscribable: Boolean,
         val resourceHandler: () => Chunk[ResourceBody] < (Async & Abort[JsonRpcResponse.Halt | E]),
-        val errorMappings: Chunk[ErrorMapping[?]]
+        val errorMappings: Chunk[ErrorMapping[?]],
+        val declaredErrorTag: Maybe[ConcreteTag[Any]] = Absent
     ) extends McpHandler[Unit, Chunk[ResourceBody], E]:
         def name: String = resourceMeta.name
         def kind: Kind   = Kind.Resource
@@ -677,7 +744,8 @@ object McpHandler:
                 resourceMeta,
                 subscribable,
                 resourceHandler,
-                errorMappings.append(new ErrorMapping[E2](code, message))
+                errorMappings.append(new ErrorMapping[E2](code, message)),
+                declaredErrorTag
             )
 
         def error[E2](using ec: McpErrorCode[E2], schema: Schema[E2], tag: ConcreteTag[E2]): McpHandler[Unit, Chunk[ResourceBody], E | E2] =
@@ -689,7 +757,8 @@ object McpHandler:
         val resourceTemplateHandler: ResourceMatch => Chunk[
             ResourceBody
         ] < (Async & Abort[JsonRpcResponse.Halt | E]),
-        val errorMappings: Chunk[ErrorMapping[?]]
+        val errorMappings: Chunk[ErrorMapping[?]],
+        val declaredErrorTag: Maybe[ConcreteTag[Any]] = Absent
     ) extends McpHandler[ResourceMatch, Chunk[ResourceBody], E]:
         def name: String = resourceTemplateMeta.name
         def kind: Kind   = Kind.ResourceTemplate
@@ -701,7 +770,8 @@ object McpHandler:
             new ResourceTemplateHandler[E | E2](
                 resourceTemplateMeta,
                 resourceTemplateHandler,
-                errorMappings.append(new ErrorMapping[E2](code, message))
+                errorMappings.append(new ErrorMapping[E2](code, message)),
+                declaredErrorTag
             )
 
         def error[E2](using
@@ -715,7 +785,8 @@ object McpHandler:
     final private[kyo] class PromptHandler[+E] private[kyo] (
         val promptMeta: PromptMeta,
         val promptHandler: Map[String, String] => PromptOutcome < (Async & Abort[JsonRpcResponse.Halt | E]),
-        val errorMappings: Chunk[ErrorMapping[?]]
+        val errorMappings: Chunk[ErrorMapping[?]],
+        val declaredErrorTag: Maybe[ConcreteTag[Any]] = Absent
     ) extends McpHandler[Map[String, String], PromptOutcome, E]:
         def name: String = promptMeta.name
         def kind: Kind   = Kind.Prompt
@@ -724,7 +795,12 @@ object McpHandler:
             schema: Schema[E2],
             tag: ConcreteTag[E2]
         )(code: Int, message: String): McpHandler[Map[String, String], PromptOutcome, E | E2] =
-            new PromptHandler[E | E2](promptMeta, promptHandler, errorMappings.append(new ErrorMapping[E2](code, message)))
+            new PromptHandler[E | E2](
+                promptMeta,
+                promptHandler,
+                errorMappings.append(new ErrorMapping[E2](code, message)),
+                declaredErrorTag
+            )
 
         def error[E2](using
             ec: McpErrorCode[E2],
@@ -738,7 +814,8 @@ object McpHandler:
         val promptMeta: PromptMeta,
         val inSchema: Schema[In],
         val typedPromptHandler: In => PromptOutcome < (Async & Abort[JsonRpcResponse.Halt | E]),
-        val errorMappings: Chunk[ErrorMapping[?]]
+        val errorMappings: Chunk[ErrorMapping[?]],
+        val declaredErrorTag: Maybe[ConcreteTag[Any]] = Absent
     ) extends McpHandler[In, PromptOutcome, E]:
         def name: String = promptMeta.name
         def kind: Kind   = Kind.Prompt
@@ -751,7 +828,8 @@ object McpHandler:
                 promptMeta,
                 inSchema,
                 typedPromptHandler,
-                errorMappings.append(new ErrorMapping[E2](code, message))
+                errorMappings.append(new ErrorMapping[E2](code, message)),
+                declaredErrorTag
             )
 
         def error[E2](using ec: McpErrorCode[E2], schema: Schema[E2], tag: ConcreteTag[E2]): McpHandler[In, PromptOutcome, E | E2] =
@@ -764,7 +842,8 @@ object McpHandler:
             CompletionArg,
             Maybe[CompletionArg.Context]
         ) => CompletionOutcome < (Async & Abort[JsonRpcResponse.Halt | E]),
-        val errorMappings: Chunk[ErrorMapping[?]]
+        val errorMappings: Chunk[ErrorMapping[?]],
+        val declaredErrorTag: Maybe[ConcreteTag[Any]] = Absent
     ) extends McpHandler[CompletionArg, CompletionOutcome, E]:
         def name: String = ref match
             case CompletionRef.Prompt(n)   => s"completion/prompt/$n"
@@ -775,7 +854,12 @@ object McpHandler:
             schema: Schema[E2],
             tag: ConcreteTag[E2]
         )(code: Int, message: String): McpHandler[CompletionArg, CompletionOutcome, E | E2] =
-            new CompletionHandler[E | E2](ref, completionHandler, errorMappings.append(new ErrorMapping[E2](code, message)))
+            new CompletionHandler[E | E2](
+                ref,
+                completionHandler,
+                errorMappings.append(new ErrorMapping[E2](code, message)),
+                declaredErrorTag
+            )
 
         def error[E2](using
             ec: McpErrorCode[E2],
@@ -790,7 +874,8 @@ object McpHandler:
         val inSchema: Schema[In],
         val outSchema: Schema[Out],
         val customHandler: In => Out < (Async & Abort[JsonRpcResponse.Halt | E]),
-        val errorMappings: Chunk[ErrorMapping[?]]
+        val errorMappings: Chunk[ErrorMapping[?]],
+        val declaredErrorTag: Maybe[ConcreteTag[Any]] = Absent
     ) extends McpHandler[In, Out, E]:
         def name: String = method
         def kind: Kind   = Kind.Custom
@@ -801,7 +886,8 @@ object McpHandler:
                 inSchema,
                 outSchema,
                 customHandler,
-                errorMappings.append(new ErrorMapping[E2](code, message))
+                errorMappings.append(new ErrorMapping[E2](code, message)),
+                declaredErrorTag
             )
 
         def error[E2](using ec: McpErrorCode[E2], schema: Schema[E2], tag: ConcreteTag[E2]): McpHandler[In, Out, E | E2] =

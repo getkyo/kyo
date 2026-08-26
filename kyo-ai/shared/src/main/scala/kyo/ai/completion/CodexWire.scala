@@ -182,7 +182,7 @@ private[completion] object CodexWire:
         tools.map { tool =>
             val schema =
                 if tool.name == Completion.resultToolName then StrictSchema.requireAll(resultSchema)
-                else Json.jsonSchema(using tool.inputSchema.asInstanceOf[Schema[Any]])
+                else tool.wireInputSchema
             DynamicTool("function", tool.name, tool.description, Structure.encode(schema))
         }
     end dynamicToolSpecs

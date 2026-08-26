@@ -231,6 +231,30 @@ class DurationTest extends kyo.test.Test[Any]:
             assert((1000.micros).show == "1.millis")
             assert((1000.nanos).show == "1.micros")
         }
+
+        // show exists to be read, and an exact unit stops being readable once its number runs to eight digits. 14 seconds and change
+        // divides evenly only at microseconds, so it used to render as "14031085.micros": correct, and not the number anyone wanted.
+        "scales when no exact unit reads well" in {
+            assert(14031085.micros.show == "14.03.seconds")
+            assert(1234567.nanos.show == "1.23.millis")
+            assert(123456789.nanos.show == "123.46.millis")
+            // Exactness still wins where it reads: 54 is a fine way to say two and a quarter days.
+            assert((2.days + 6.hours).show == "54.hours")
+        }
+
+        // Scaling rounds, and a value that rounds to a whole number is written as one: "2.seconds", never "2.0.seconds".
+        "drops a zero fraction after rounding" in {
+            assert((2.seconds + 1.nano).show == "2.seconds")
+            assert((5.hours + 1.micro).show == "5.hours")
+        }
+
+        // The boundary between the two renderings, from either side.
+        "renders exactly up to four digits and scales past them" in {
+            assert(9999.millis.show == "9999.millis")
+            assert(10000.millis.show == "10.seconds")
+            assert(9999.micros.show == "9999.micros")
+            assert(10001.micros.show == "10.millis")
+        }
     }
 
     "Duration subtraction" - {

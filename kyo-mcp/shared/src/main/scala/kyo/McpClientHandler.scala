@@ -22,7 +22,7 @@ package kyo
 sealed trait McpClientHandler[In, Out, +E]:
     def method: String
     def direction: McpHandler.Direction
-    private[kyo] def toRoute(serverRef: AtomicRef[Maybe[McpServer.Unsafe]])(using Frame): JsonRpcRoute[?, ?, ?]
+    private[kyo] def toRoute(serverRef: Fiber.Promise[McpServer.Unsafe, Any])(using Frame): JsonRpcRoute[?, ?, ?]
     private[kyo] def requiredCapability: Maybe[McpCapabilities.Name]
 end McpClientHandler
 
@@ -36,7 +36,7 @@ object McpClientHandler:
         val handler: In => Out < (Async & Abort[JsonRpcResponse.Halt | E])
     ) extends McpClientHandler[In, Out, E]:
         def direction: McpHandler.Direction = McpHandler.Direction.ClientHandled
-        private[kyo] def toRoute(serverRef: AtomicRef[Maybe[McpServer.Unsafe]])(using Frame): JsonRpcRoute[?, ?, ?] =
+        private[kyo] def toRoute(serverRef: Fiber.Promise[McpServer.Unsafe, Any])(using Frame): JsonRpcRoute[?, ?, ?] =
             internal.mcp.McpClientHandlerLift.liftRequest(this, serverRef)
     end RequestCarrier
 
@@ -47,7 +47,7 @@ object McpClientHandler:
     ) extends McpClientHandler[In, Unit, E]:
         def direction: McpHandler.Direction                 = McpHandler.Direction.ClientHandled
         def requiredCapability: Maybe[McpCapabilities.Name] = Absent
-        private[kyo] def toRoute(serverRef: AtomicRef[Maybe[McpServer.Unsafe]])(using Frame): JsonRpcRoute[?, ?, ?] =
+        private[kyo] def toRoute(serverRef: Fiber.Promise[McpServer.Unsafe, Any])(using Frame): JsonRpcRoute[?, ?, ?] =
             internal.mcp.McpClientHandlerLift.liftNotification(this, serverRef)
     end NotificationCarrier
 

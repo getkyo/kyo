@@ -141,6 +141,47 @@ class ConsoleTest extends kyo.test.Test[Any]:
         }
     }
 
+    // A read that throws must arrive as a Result, never escape the handler. On Node it used to escape: `scala.Console.in` is null there,
+    // and the Scala.js linker reports the dereference as UndefinedBehaviorError, an Error rather than an Exception, so the handler let it
+    // past and no caller could turn it into a clean shutdown. The Node read no longer throws, and this pins the contract that carried the
+    // failure: whatever readLine throws, `Abort.run` answers with it.
+    "a throwing readLine arrives as a Panic rather than escaping the handler" in {
+        val boom = new RuntimeException("stdin exploded")
+        val throwing = new Console.Unsafe:
+            def readLine()(using AllowUnsafe)              = throw boom
+            def print(s: String)(using AllowUnsafe)        = ()
+            def printErr(s: String)(using AllowUnsafe)     = ()
+            def printLine(s: String)(using AllowUnsafe)    = ()
+            def printLineErr(s: String)(using AllowUnsafe) = ()
+            def checkErrors(using AllowUnsafe): Boolean    = false
+            def flush()(using AllowUnsafe)                 = ()
+        Console.let(Console(throwing)) {
+            Abort.run[Any](Console.readLine).map {
+                case Result.Panic(cause) => assert(cause eq boom)
+                case other               => fail(s"expected a Panic carrying the thrown error, got $other")
+            }
+        }
+    }
+
+    // The other half of the same contract: a read that FAILS rather than throws stays inside the declared Abort[IOException].
+    "a failing readLine arrives as a typed Failure" in {
+        val eof = new java.io.EOFException("no more input")
+        val failing = new Console.Unsafe:
+            def readLine()(using AllowUnsafe)              = Result.fail(eof)
+            def print(s: String)(using AllowUnsafe)        = ()
+            def printErr(s: String)(using AllowUnsafe)     = ()
+            def printLine(s: String)(using AllowUnsafe)    = ()
+            def printLineErr(s: String)(using AllowUnsafe) = ()
+            def checkErrors(using AllowUnsafe): Boolean    = false
+            def flush()(using AllowUnsafe)                 = ()
+        Console.let(Console(failing)) {
+            Abort.run[IOException](Console.readLine).map {
+                case Result.Failure(cause) => assert(cause eq eof)
+                case other                 => fail(s"expected the EOF failure, got $other")
+            }
+        }
+    }
+
     class TestUnsafeConsole(input: String = "", error: Boolean = false) extends Console.Unsafe:
         var readlnInput = input
         var prints      = List.empty[String]

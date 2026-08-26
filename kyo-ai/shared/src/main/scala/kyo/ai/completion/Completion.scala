@@ -37,6 +37,23 @@ trait Completion:
         resultTool: Chunk[Tool.internal.Info[?, ?, LLM]]
     )(using Frame): Stream[Completion.StreamElement, Async & Scope & Abort[AIStreamException]] < (LLM & Async & Abort[AIGenException])
 
+    /** Whether this backend delivers a stream in pieces as the model produces it.
+      *
+      * `true` where the wire carries incremental deltas, which is every HTTP family (they stream over
+      * SSE). `false` where the backend can only hand back a finished result, which `LLM.stream` then
+      * emits in one go: the elements and their order are exactly the same, and nothing fails, but
+      * time-to-first-token equals time-to-last-token.
+      *
+      * That difference is invisible from the stream itself, and it is the number a chat UI lives on, so
+      * it is declared rather than discovered. Read it to decide whether to render progressively or show a
+      * pending state:
+      *
+      * {{{
+      * val incremental = config.provider.completion.streamsIncrementally
+      * }}}
+      */
+    def streamsIncrementally: Boolean
+
 end Completion
 
 object Completion:

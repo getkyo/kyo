@@ -131,6 +131,36 @@ class KyoAppTest extends kyo.test.Test[Any]:
             case _                                                  => fail("Unexpected Success...")
     }
 
+    // An application's stdout is its output contract, so a failure the run block did not catch belongs on stderr. It used to be rendered
+    // to stdout, which put a non-JSON line on the channel a stdio server's host was parsing, and made the host's first read of the
+    // connection garbage. No discipline in the run block avoided it: this is the framework's own terminal reporting.
+    // notJs / notWasm: on those platforms KyoApp.main cannot block, so it returns before the run block writes anything and the redirect
+    // scope has already closed. The reporting itself is shared, platform-independent code in KyoAppRunner.onResult; only observing it from
+    // inside the same process needs main to have finished.
+    "an uncaught failure renders to stderr, leaving stdout untouched".notJs.notWasm in {
+        assume(!Platform.isNative, "KyoApp.main too slow on Native")
+        val out = new java.io.ByteArrayOutputStream
+        val err = new java.io.ByteArrayOutputStream
+        val app = new KyoApp:
+            run { Abort.fail("no url") }
+        // main rethrows the failure as a FailureException after reporting it; the rethrow is the process's non-zero exit and is not what
+        // this case is about.
+        discard(Try(scala.Console.withOut(out)(scala.Console.withErr(err)(app.main(Array.empty)))))
+        assert(out.toString == "")
+        assert(err.toString.contains("no url"))
+    }
+
+    "a run block's value still renders to stdout".notJs.notWasm in {
+        assume(!Platform.isNative, "KyoApp.main too slow on Native")
+        val out = new java.io.ByteArrayOutputStream
+        val err = new java.io.ByteArrayOutputStream
+        val app = new KyoApp:
+            run { "the value" }
+        scala.Console.withOut(out)(scala.Console.withErr(err)(app.main(Array.empty)))
+        assert(out.toString.contains("the value"))
+        assert(err.toString == "")
+    }
+
     "effect mismatch" in {
         typeCheckFailure("""
             new KyoApp:

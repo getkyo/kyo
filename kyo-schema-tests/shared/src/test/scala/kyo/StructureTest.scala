@@ -594,21 +594,20 @@ class StructureTest extends kyo.test.Test[Any]:
             }
 
             "sealed trait toStructure" in {
+                // Sums encode as VariantCase, not as the wire wrapper record (#1860).
                 val schema: Schema[MTShape] = summon[Schema[MTShape]]
                 val circle: MTShape         = MTCircle(5.0)
                 val dv                      = toStructure(schema, circle)
                 dv match
-                    case Structure.Value.Record(fields) =>
-                        assert(fields.size == 1)
-                        val (variantName, variantValue) = fields.head
+                    case Structure.Value.VariantCase(variantName, variantValue) =>
                         assert(variantName == "MTCircle")
                         variantValue match
                             case Structure.Value.Record(innerFields) =>
                                 val fm = innerFields.toMap
                                 assert(fm("radius") == Structure.Value.primitive(5.0))
-                            case other => fail(s"Expected Record for variant, got $other")
+                            case other => fail(s"Expected Record for variant payload, got $other")
                         end match
-                    case other => fail(s"Expected Record wrapper, got $other")
+                    case other => fail(s"Expected VariantCase, got $other")
                 end match
             }
 
@@ -995,6 +994,134 @@ class StructureTest extends kyo.test.Test[Any]:
 
             val pathWithVariant = Structure.Path.root / Structure.PathSegment.Variant("Circle")
             assert(pathWithVariant.toString == "<Circle>")
+        }
+
+        // Structure.encode must emit Value.VariantCase for sums, matching the Value ADT's documented
+        // intent, so PathSegment.Variant can navigate the encoder's own output (issue #1860).
+        "Structure.encode sum encoding" - {
+
+            "sealed trait case class variant encodes as VariantCase" in {
+                val encoded = Structure.encode[MTShape](MTCircle(5.0))
+                encoded match
+                    case Structure.Value.VariantCase(name, Structure.Value.Record(fields)) =>
+                        assert(name == "MTCircle")
+                        assert(fields.toMap.apply("radius") == Structure.Value.primitive(5.0))
+                    case other => fail(s"Expected VariantCase, got $other")
+                end match
+            }
+
+            "enum case class variant encodes as VariantCase" in {
+                val encoded = Structure.encode[MixedArityEnum](MixedArityEnum.Alpha(7))
+                encoded match
+                    case Structure.Value.VariantCase(name, Structure.Value.Record(fields)) =>
+                        assert(name == "Alpha")
+                        assert(fields.toMap.apply("x") == Structure.Value.primitive(7))
+                    case other => fail(s"Expected VariantCase, got $other")
+                end match
+            }
+
+            "no-arg enum variant encodes as VariantCase with empty Record" in {
+                val encoded = Structure.encode[AllNoArgEnumA](AllNoArgEnumA.Second)
+                assert(encoded == Structure.Value.VariantCase("Second", Structure.Value.Record(Chunk.empty)))
+            }
+
+            "PathSegment.Variant navigates Structure.encode output" in {
+                val encoded = Structure.encode[MTShape](MTCircle(5.0))
+                val result  = Structure.Path.variant("MTCircle").get(encoded)
+                result match
+                    case Result.Success(values) =>
+                        assert(values.size == 1)
+                        values.head match
+                            case Structure.Value.Record(fields) =>
+                                assert(fields.toMap.apply("radius") == Structure.Value.primitive(5.0))
+                            case other => fail(s"Expected Record payload, got $other")
+                        end match
+                    case other => fail(s"Expected Success, got $other")
+                end match
+            }
+
+            "Structure.decode round-trips the VariantCase encoding" in {
+                val circle: MTShape = MTCircle(5.0)
+                val rect: MTShape   = MTRectangle(3.0, 4.0)
+                assert(Structure.decode[MTShape](Structure.encode[MTShape](circle)) == Result.succeed(circle))
+                assert(Structure.decode[MTShape](Structure.encode[MTShape](rect)) == Result.succeed(rect))
+            }
+        }
+
+        // Structure.encode must emit Value.MapEntries for maps, matching the Value ADT's documented
+        // intent, so map entries stay distinguishable from product fields and pair lists.
+        "Structure.encode map encoding" - {
+
+            "Map[String, V] encodes as MapEntries with Str keys" in {
+                val encoded = Structure.encode(Map("a" -> 1, "b" -> 2))
+                assert(encoded == Structure.Value.MapEntries(Chunk(
+                    (Structure.Value.Str("a"), Structure.Value.Integer(1L)),
+                    (Structure.Value.Str("b"), Structure.Value.Integer(2L))
+                )))
+            }
+
+            "Map[Int, V] encodes as MapEntries with Integer keys" in {
+                val encoded = Structure.encode(Map(1 -> "x", 2 -> "y"))
+                assert(encoded == Structure.Value.MapEntries(Chunk(
+                    (Structure.Value.Integer(1L), Structure.Value.Str("x")),
+                    (Structure.Value.Integer(2L), Structure.Value.Str("y"))
+                )))
+            }
+
+            "Dict[String, V] encodes as MapEntries with Str keys" in {
+                val encoded = Structure.encode(Dict("a" -> 1, "b" -> 2))
+                assert(encoded == Structure.Value.MapEntries(Chunk(
+                    (Structure.Value.Str("a"), Structure.Value.Integer(1L)),
+                    (Structure.Value.Str("b"), Structure.Value.Integer(2L))
+                )))
+            }
+
+            "PathSegment.Field navigates a Str-keyed MapEntries entry" in {
+                val encoded = Structure.encode(Map("a" -> 1, "b" -> 2))
+                assert(Structure.Path.field("b").get(encoded) == Result.succeed(Chunk(Structure.Value.Integer(2L))))
+            }
+
+            "PathSegment.Field sets a Str-keyed MapEntries entry preserving order" in {
+                val encoded = Structure.encode(Map("a" -> 1, "b" -> 2))
+                val updated = Structure.Path.field("a").set(encoded, Structure.Value.Integer(10L))
+                assert(updated == Result.succeed(Structure.Value.MapEntries(Chunk(
+                    (Structure.Value.Str("a"), Structure.Value.Integer(10L)),
+                    (Structure.Value.Str("b"), Structure.Value.Integer(2L))
+                ))))
+            }
+
+            "PathSegment.Each walks MapEntries values" in {
+                val encoded = Structure.encode(Map("a" -> 1, "b" -> 2))
+                val path    = Structure.Path.root / Structure.PathSegment.Each
+                assert(path.get(encoded) == Result.succeed(Chunk(Structure.Value.Integer(1L), Structure.Value.Integer(2L))))
+            }
+
+            "Structure.decode round-trips a string-keyed map" in {
+                val m = Map("a" -> 1, "b" -> 2, "c" -> 3)
+                assert(Structure.decode[Map[String, Int]](Structure.encode(m)) == Result.succeed(m))
+            }
+
+            "Structure.decode round-trips an int-keyed map" in {
+                val m = Map(1 -> "x", 2 -> "y")
+                assert(Structure.decode[Map[Int, String]](Structure.encode(m)) == Result.succeed(m))
+            }
+
+            "Structure.decode round-trips maps nested in a product with a renamed sibling schema" in {
+                // The #1741 shape: a Map field under a schema carrying a field transform.
+                val m                  = Map("tierA" -> 1, "tierB" -> 2)
+                given Schema[MTPerson] = Schema[MTPerson].rename("name", "full_name")
+                val encoded            = Structure.encode(m)
+                assert(Structure.decode[Map[String, Int]](encoded) == Result.succeed(m))
+            }
+
+            "Structure.decode accepts the legacy Record spelling for a string-keyed map" in {
+                // Trees built before MapEntries production (or hand-built) still decode.
+                val legacy = Structure.Value.Record(Chunk(
+                    ("a", Structure.Value.Integer(1L)),
+                    ("b", Structure.Value.Integer(2L))
+                ))
+                assert(Structure.decode[Map[String, Int]](legacy) == Result.succeed(Map("a" -> 1, "b" -> 2)))
+            }
         }
 
         "Structure.Path variant" - {

@@ -107,6 +107,10 @@ private[completion] object AnthropicCompletion extends Completion:
                         )
                 }
 
+    // Streams over SSE: one fragment per delta the endpoint sends, so the stream advances while
+    // the model is still producing.
+    def streamsIncrementally: Boolean = true
+
     def streamFragments(
         config: Config,
         context: Context,
@@ -341,7 +345,7 @@ private[completion] object AnthropicCompletion extends Completion:
                         Present(tools.map { t =>
                             val desc = Maybe.when(t.description.nonEmpty)(t.description)
                             if t.name == Completion.resultToolName then
-                                val raw = resultSchema.getOrElse(Json.jsonSchema(using t.inputSchema))
+                                val raw = resultSchema.getOrElse(t.wireInputSchema)
                                 if config.reasoningEnabled then
                                     // Extended thinking is incompatible with strict grammar-constrained decoding:
                                     // the combination slows a call from ~3s to ~30s+ (the constrained decoder
@@ -357,7 +361,7 @@ private[completion] object AnthropicCompletion extends Completion:
                                         case _                           => ToolDefinition(t.name, desc, Structure.encode(raw))
                                 end if
                             else
-                                ToolDefinition(t.name, desc, Structure.encode(Json.jsonSchema(using t.inputSchema)))
+                                ToolDefinition(t.name, desc, Structure.encode(t.wireInputSchema))
                             end if
                         }.toList)
                 // Reasoning happens before the answer, the native-API analog of the Claude Code full
