@@ -2624,3 +2624,39 @@ import scala.quoted.*
     end defaultsImpl
 
 end FocusMacro
+
+/** Schema derivation entry point, spliced by `Schema.derived` and `Schema.derivedVia`.
+  *
+  * Two constraints fix the shape of this object, and it satisfies each with a different property.
+  *
+  * It is a SEPARATE OBJECT, so it compiles to its own class file. `Schema.scala`, `Changeset.scala`
+  * and `Structure.scala` each carry a `derives Schema`, so the compiler suspends them and expands
+  * their macros in a later run, which means their own class files do not exist yet at expansion
+  * time. [[FocusMacro]] names those types in its method signatures, so loading `FocusMacro$` at that
+  * point fails. This object names none of them outside `Expr`, which erases, so it loads and can
+  * make the call.
+  *
+  * It lives in THIS FILE rather than its own, so zinc cannot invalidate [[FocusMacro]] without
+  * invalidating it too. The compiler decides whether to suspend by looking at the spliced symbol
+  * alone and asking whether it is being compiled in the current run; it cannot see through the
+  * delegation. In a file of its own this object uses so few names that an upstream change recompiles
+  * [[FocusMacro]] and leaves it untouched, and the compiler then declines to suspend and expands
+  * against a `FocusMacro$.class` zinc has already deleted.
+  *
+  * Splitting this object back out into its own file reintroduces that failure, and inlining it into
+  * [[FocusMacro]] reintroduces the class-loading one.
+  */
+object SchemaDerivedMacro:
+
+    def derivedImpl[A: Type](using Quotes): Expr[Schema[A]] =
+        FocusMacro.derivedImpl[A]
+
+    def derivedViaImpl[A: Type, R: Type](using
+        Quotes
+    )(
+        construct: Expr[Any],
+        constructed: Expr[Schema.Constructed[R, A]]
+    ): Expr[Schema[A]] =
+        FocusMacro.derivedViaImpl[A, R](construct, constructed)
+
+end SchemaDerivedMacro
