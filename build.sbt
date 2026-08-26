@@ -1891,18 +1891,25 @@ lazy val `kyo-net` =
                             cSources = (sharedBase / "src" / "main" / "c-boringssl-stub" ** "*.c").get
                         )
                 // System OpenSSL (kyonet_openssl): the kyo_net_openssl.c shim, registered only in the Native TLS registry
-                // (SystemOpenSslProvider). It is a REAL binding only on Native when the openssl headers are present; on the
-                // JVM (where BoringSslProvider over the JDK SSLEngine floor covers TLS and no code path loads it), and on
-                // Native without headers, it is declared as a STUB with no C sources, so no static OpenSSL blob is bundled.
-                // The stub still declares the library id, so the FFI codegen's library-id validation passes for the
-                // always-present OpenSslBindings trait; the JVM jar simply no longer carries the ~6.5MB dead-weight archive.
+                // (SystemOpenSslProvider). On Native its C sources are declared UNCONDITIONALLY, because whether the system
+                // OpenSSL headers exist is a question about the machine that LINKS the binary, not the one that publishes the
+                // artifact, and the shim now answers it itself: it header-gates on `__has_include(<openssl/ssl.h>)` and
+                // compiles to stubs where they are absent. Deciding it here froze the publisher's answer into the shipped C,
+                // so a release built on a Linux runner left a macOS consumer's Scala Native link short 64 raw SSL_*, BIO_*,
+                // EVP_* and ERR_* symbols, whether or not their program used TLS. `includeDirs` still tracks THIS host: it
+                // only steers the local compile toward a non-default OpenSSL prefix, and is dropped when it holds no headers
+                // so the shim gates to stubs rather than compiling against a prefix that has none.
+                // On the JVM (where BoringSslProvider over the JDK SSLEngine floor covers TLS and no code path loads it) it
+                // is still declared as a STUB with no C sources, so no static OpenSSL blob is bundled. The stub still declares
+                // the library id, so the FFI codegen's library-id validation passes for the always-present OpenSslBindings
+                // trait; the JVM jar simply no longer carries the ~6.5MB dead-weight archive.
                 val openSsl =
-                    if (isNative && systemOpensslIncludeDirs.exists(d => (d / "openssl" / "ssl.h").exists()))
+                    if (isNative)
                         FfiLibrary(
                             id = "kyonet_openssl",
                             cSources = (sharedBase / "src" / "main" / "c-openssl" ** "*.c").get,
                             cHeaders = (sharedBase / "src" / "main" / "c-openssl" ** "*.h").get,
-                            includeDirs = systemOpensslIncludeDirs
+                            includeDirs = systemOpensslIncludeDirs.filter(d => (d / "openssl" / "ssl.h").exists())
                         )
                     else
                         FfiLibrary(id = "kyonet_openssl", cSources = Nil)

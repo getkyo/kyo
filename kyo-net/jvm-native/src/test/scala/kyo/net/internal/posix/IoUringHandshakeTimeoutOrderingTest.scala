@@ -42,7 +42,7 @@ class IoUringHandshakeTimeoutOrderingTest extends Test:
     // the transport will build. handshakeTimeout = 1s is finite (so the deadline arms and reaps the stalled handshake) yet long enough that the
     // test reliably detects the in-flight recv and registers its reap latch BEFORE the deadline fires.
     private def assumeTls(): Unit =
-        if !TlsProviderPlatform.registered.exists(_.probe.isAvailable) then cancel("no TLS provider available on this backend")
+        if !TlsProviderPlatform.hasAvailableEngine then cancel("no TLS engine provider is available on this host")
 
     /** Build a REAL io_uring ring at depth 256, wrap it in a [[RecordingIoUringBindings]] spy (every op runs for real; the spy only observes the
       * recv buffers and fires a latch on each CQE reap), build an [[IoUringDriver]] over it, start its reap loop, and build a [[PosixTransport]]
