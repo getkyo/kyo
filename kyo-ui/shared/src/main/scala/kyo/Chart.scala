@@ -463,7 +463,8 @@ object Chart:
         tickRotation: Double = 0.0,
         tickAnchor: TextAnchor = TextAnchor.Middle,
         reversed: Boolean = false,
-        padding: Double = 0.0
+        padding: Double = 0.0,
+        tickFormatTime: Maybe[Instant => String] = Absent
     ):
         def label(s: String): AxisConfig             = copy(axisLabel = Present(s))
         def grid: AxisConfig                         = copy(showGrid = true)
@@ -473,6 +474,16 @@ object Chart:
         def pad(fraction: Double): AxisConfig        = copy(padding = fraction)
         def rotateTicks(degrees: Double): AxisConfig = copy(tickRotation = degrees)
         def anchor(a: TextAnchor): AxisConfig        = copy(tickAnchor = a)
+
+        /** Formats the tick labels of a TIME axis from the instant each tick sits at.
+          *
+          * `format` hands the callback a `Double`, which on a time axis is a count of epoch milliseconds:
+          * the type the encoding was written with, and which chose the scale, is gone by the time it reaches
+          * the caller, who then has to turn a number back into a date. This overload keeps it. It applies
+          * only where an instant is meaningful, so it is ignored on a linear or band axis, where `format`
+          * remains the formatter.
+          */
+        def formatTime(f: Instant => String): AxisConfig = copy(tickFormatTime = Present(f))
 
     end AxisConfig
 
@@ -609,7 +620,14 @@ object Chart:
         gridColor: Maybe[Style.Color] = Absent,
         fontFamily: Maybe[String] = Absent,
         fontSize: Maybe[Double] = Absent,
-        titleFontSize: Maybe[Double] = Absent
+        titleFontSize: Maybe[Double] = Absent,
+        /** The named [[Palette]] `palette` came from, when it came from one.
+          *
+          * A named palette is kyo's own choice of colors, published against a light panel, so it is
+          * reconciled against a panel that is not one (see [[Chart.Palette]]). An explicit color list is the
+          * caller's, and is used exactly as given wherever it is drawn.
+          */
+        paletteName: Maybe[Palette] = Absent
     ) derives CanEqual:
         def light: Theme = copy(isDark = false)
         def dark: Theme  = copy(isDark = true)
@@ -638,10 +656,13 @@ object Chart:
         def titleFontSize(px: Double): Theme = copy(titleFontSize = Present(px))
 
         /** Sets the categorical palette from a named [[Palette]]. */
-        def palette(p: Palette): Theme = copy(palette = Present(Palette.colors(p)))
+        def palette(p: Palette): Theme = copy(palette = Present(Palette.colors(p)), paletteName = Present(p))
 
-        /** Sets the categorical palette from an explicit color list. */
-        def palette(colors: Seq[Style.Color]): Theme = copy(palette = Present(Chunk.from(colors)))
+        /** Sets the categorical palette from an explicit color list. Used exactly as given: these are the
+          * caller's colors, not kyo's, so they are never reconciled against the panel.
+          */
+        def palette(colors: Seq[Style.Color]): Theme =
+            copy(palette = Present(Chunk.from(colors)), paletteName = Absent)
 
     end Theme
 
@@ -785,6 +806,15 @@ object Chart:
       * is the Okabe-Ito 8-color set, the recommended accessible choice for categorical data.
       * `Viridis` is an 8-category perceptually-derived set. `Tableau10` is the Tableau 10
       * categorical palette. Resolve a palette to its colors with `Palette.colors(p)`.
+      *
+      * Every one of these is published against a LIGHT panel, and two of them start with a color that is
+      * nearly invisible on a dark one: Okabe-Ito's first entry is pure black by definition and Viridis's is
+      * near-black purple. Paired with `.dark` (the pairing an accessibility-minded caller reaches for) the
+      * first series, the one most charts give their headline metric, came out at 1.4:1 and 1.0:1 against the
+      * `#1f2937` panel where WCAG 2.1 SC 1.4.11 asks for 3:1. So on a panel these palettes were not specified
+      * against (a dark theme, or an explicitly chosen background) kyo lightens or darkens only the entries
+      * that fall below that bar and leaves every readable one exactly as published. On the default light
+      * panel the colors are the published ones, unchanged.
       */
     enum Palette derives CanEqual:
         case Default
