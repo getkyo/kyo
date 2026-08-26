@@ -251,17 +251,9 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         resetRuntime()
     end onComplete
 
-    /** Whether the scheduler's time slicing stops this task's running slice.
-      *
-      * Interrupts still stop the slice through `onInterrupted`, and the task still yields where a
-      * slice ends; only the mid-slice stop a stall check issues is withheld. Off for test leaves
-      * that observe the thread's stop channel, which time slicing writes into.
-      */
-    protected def timeSliced: Boolean = true
-
     final override def doPreempt(): Unit =
         super.doPreempt()
-        if timeSliced then stopSlice()
+        stopSlice()
 
     final override def onInterrupted(): Unit =
         stopSlice()
@@ -373,9 +365,8 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
             val previousSlice = Safepoint.beginSlice(slot, this)
             // the scheduler's slice deadline: on js-wasm it is the preemption source, checked at
             // the budget drains until the slice boundary consumes it; on jvm-native stops carry
-            // preemption and the call inlines to nothing. Arming stays the eval's own entry step,
-            // and a task exempt from time slicing arms no deadline
-            Safepoint.deadline(if timeSliced then deadline else Long.MaxValue)
+            // preemption and the call inlines to nothing. Arming stays the eval's own entry step
+            Safepoint.deadline(deadline)
             val next =
                 try
                     try Eval.partial(curr)
@@ -536,20 +527,16 @@ object IOTask:
         state: isolate.State,
         body: A < (Abort[E] & Async & S),
         parent: Maybe[IOPromise[?, ?]] = Absent,
-        runtime: Int = 0,
-        timeSliced: Boolean = true
+        runtime: Int = 0
     ): IOTask[E, A, S2] =
-        val sliced = timeSliced
         start(
             new IOTask[E, A, S2]:
-                override protected def timeSliced = sliced
                 protected def prepared =
                     boundary(isolate.isolate(state, body))(t => completeDiscard(Result.succeed(isolate.restore(t))))
             ,
             parent,
             runtime
         )
-    end apply
 
     /** Spawns a fiber that crosses nothing.
       *
@@ -570,6 +557,7 @@ object IOTask:
         )
 
     private def start[E, A, S2](task: IOTask[E, A, S2], parent: Maybe[IOPromise[?, ?]], runtime: Int): IOTask[E, A, S2] =
+        // diagnostic probe, env-gated, removed once the flake campaign closes
         // after the subclass is constructed, so `prepare` reads fields that are assigned
         task.install()
         task.addRuntime(runtime)

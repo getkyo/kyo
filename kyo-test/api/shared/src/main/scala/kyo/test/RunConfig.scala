@@ -39,12 +39,6 @@ import kyo.minutes
   *   when `true` (the default), a leaf that completes Passed having evaluated zero assertions is flipped to Failed. A test that makes no
   *   assertions proves nothing. To opt out per-leaf, write `succeed` (or `succeed("note")`) in the leaf body (counts as one evaluation,
   *   always passes). To disable suite-wide, override `def config = super.config.failOnNoAssertion(false)`.
-  * @param timeSliced
-  *   when `true` (the default), leaf fibers are subject to the scheduler's time slicing, which delivers preemption stops to the running
-  *   worker's Safepoint channel. A suite whose leaves observe that channel directly (the kernel's own park, partial-evaluation, and
-  *   safepoint-state tests) sets this to `false` so a stall check cannot write into what a leaf is asserting on; interrupts and timeouts
-  *   still stop its slices. Override per suite with `def config = super.config.timeSliced(false)`. A test-runner concern only: no
-  *   production API exposes time slicing.
   * @param heartbeatInterval
   *   how long a single leaf may run before the runner reports it as still running via `TestReporter.onLeafHeartbeat`, repeating every
   *   interval thereafter. This makes a slow or hung leaf visible while it runs (the console reporter is silent between a leaf's start and
@@ -94,7 +88,6 @@ final case class RunConfig(
     countOnly: Boolean = false,
     listOnly: Boolean = false,
     failOnNoAssertion: Boolean = true,
-    timeSliced: Boolean = true,
     heartbeatInterval: Duration = 1.minutes,
     leakCheck: Boolean = true,
     leakCheckSockets: Boolean = true,
@@ -166,9 +159,6 @@ final case class RunConfig(
       * assertion evaluations is left as Passed instead of flipped to Failed.
       */
     def failOnNoAssertion(failOnNoAssertion: Boolean): RunConfig = copy(failOnNoAssertion = failOnNoAssertion)
-
-    /** Returns a copy with time slicing of leaf fibers enabled or disabled; see the class doc for when a suite opts out. */
-    def timeSliced(timeSliced: Boolean): RunConfig = copy(timeSliced = timeSliced)
 
     /** Returns a copy with the given heartbeat interval. A leaf still running after this interval is reported via
       * `TestReporter.onLeafHeartbeat`, and again every interval thereafter; `Duration.Infinity` disables heartbeats.

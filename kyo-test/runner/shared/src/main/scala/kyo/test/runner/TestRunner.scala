@@ -161,15 +161,7 @@ object TestRunner:
                             LeakDebug.beginLeaf(path)
                         }.map { probeFinish =>
                             withHeartbeat(leafInfo, effectiveConfig.heartbeatInterval, reporter)(
-                                runLeaf(
-                                    suite,
-                                    cursor,
-                                    path,
-                                    builder,
-                                    hasFocus,
-                                    effectiveConfig.failOnNoAssertion,
-                                    effectiveConfig.timeSliced
-                                )
+                                runLeaf(suite, cursor, path, builder, hasFocus, effectiveConfig.failOnNoAssertion)
                             ).map { entries =>
                                 // Run after the leaf body (which includes the leaf's Scope.run, so the leaf's own finalizers have already run):
                                 // any descriptor still open here that the leaf opened is the leaf's leak, recorded against this leaf path.
@@ -357,8 +349,7 @@ object TestRunner:
         path: Chunk[String],
         builder: TestBuilder,
         hasFocus: Boolean,
-        failOnNoAssertion: Boolean,
-        timeSliced: Boolean
+        failOnNoAssertion: Boolean
     )(using Frame): Chunk[(Chunk[String], TestResult)] < Async =
         if hasFocus && !builder.focus then
             Chunk((path, TestResult.Skipped("not focused")))
@@ -380,7 +371,7 @@ object TestRunner:
                     case Maybe.Present((_, terminalResult)) =>
                         Chunk((path, terminalResult))
                     case Maybe.Absent =>
-                        runRegisteredBody(instance, ctx, builder, path, startNs, failOnNoAssertion, timeSliced)
+                        runRegisteredBody(instance, ctx, builder, path, startNs, failOnNoAssertion)
                 end match
             }
         end if
@@ -396,8 +387,7 @@ object TestRunner:
         builder: TestBuilder,
         path: Chunk[String],
         startNs: Long,
-        failOnNoAssertion: Boolean,
-        timeSliced: Boolean
+        failOnNoAssertion: Boolean
     )(using Frame): Chunk[(Chunk[String], TestResult)] < Async =
         // Mint the per-leaf evidence value. The body, and any fiber it spawns (including a detached `Fiber.initUnscoped`
         // one), captures this SAME instance lexically when `takeRegisteredBody(as)` is applied, so an assert failing in an
@@ -407,12 +397,6 @@ object TestRunner:
         // Retrieve the buffered body INSIDE a `Sync.defer` so a body that throws synchronously (e.g. a bare
         // `assert(1 == 2)` whose entire body is the throwing expression) is captured by the conversion below rather than
         // escaping eagerly during retrieval. The suite's `aroundLeaf` hook wraps every leaf body (default identity).
-        // A scheduler stop can land on a worker just after a slice's boundary consume (the preemptor
-        // races completion), and the straggler would otherwise park the next leaf's first armed
-        // evaluation on that thread. Each leaf clears its thread's stop channel at both edges: the
-        // leading consume is what protects this leaf, the trailing one hands the thread back clean.
-        def consumeStragglerStop(): Unit =
-            kyo.discard(kyo.kernel.internal.Safepoint.consumeStopped(kyo.kernel.internal.Safepoint.get()))
         val rawBody: Unit < (Async & Abort[Any] & Scope) =
             // Start each evaluation of the body from an empty sink. Retry/repeat re-run this computation, and an early
             // attempt that THREW a failure (which the assert macro recorded into the sink before throwing) then RECOVERED
@@ -420,12 +404,10 @@ object TestRunner:
             // clear runs BEFORE the body spawns any detached fiber, so a detached fiber's later record (the plain
             // detached-capture path) is preserved and still flips the leaf; only the FINAL attempt's records survive.
             Sync.defer {
-                consumeStragglerStop()
                 val _ = as.drain()
                 ()
             }
                 .andThen(instance.aroundLeaf(Sync.defer(ctx.takeRegisteredBody(as))))
-                .andThen(Sync.defer(consumeStragglerStop()))
         // The leaf baseline is `Abort[Any]` (a leaf may abort with ANY value, not only a Throwable). Convert it to the
         // runner's `Abort[Throwable]` pipeline here, at the single production point, so Retry/timeout/repeat and the
         // `Abort.run[Throwable]` boundary below stay Throwable-shaped (mirrors `KyoApp.abortAnyToThrowable`):
@@ -470,9 +452,7 @@ object TestRunner:
         // Discharge Scope per-leaf (Scope is fiber-shared; per-leaf Scope.run bounds resource release to leaf end), spawn the
         // body as its own fiber so the per-leaf Local context is inherited, then catch the Abort/Panic boundary.
         leafLocal.let(Maybe(LeafContext(ctx, path))) {
-            Abort.run[Throwable](
-                Scope.run(repeated).handle(Fiber.internal.initUnscoped(timeSliced = timeSliced)).flatMap(_.get)
-            ).map { result =>
+            Abort.run[Throwable](Scope.run(repeated).handle(Fiber.initUnscoped).flatMap(_.get)).map { result =>
                 val elapsed = Duration.fromNanos(java.lang.System.nanoTime() - startNs)
                 // The body fiber has joined and the leaf is about to be scored. Close the scope (later records, from a
                 // fiber that outlived its test, are logged rather than queued) and drain the per-leaf sink. A detached
