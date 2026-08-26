@@ -39,8 +39,11 @@ jobs:
     # 2026-08-25; scalafmt and actionlint add ~4. Without a cap a hung run holds a slot for
     # GitHub's 360-minute default, which is the resource this whole workflow exists to conserve,
     # so a hang would cost more than the three separate jobs did. 120 leaves headroom over the
-    # ~51-minute expectation for an arm64 runner nobody has timed yet, and still bounds a hang to
-    # a third of the default. Retighten once a real arm64 run reports its duration.
+    # ~51-minute expectation, and still bounds a hang to a third of the default. A local arm64
+    # container run under CI caps put `sbt doctest` alone at 19 minutes (1507 blocks, 0 failures),
+    # so the real job should land well inside this; that run is not like-for-like, though, since a
+    # job also pays checkout, JDK and sbt install, apt, and aeron staging. Retighten once a real
+    # arm64 run on a GitHub runner reports its own duration.
     timeout-minutes: 120
     env:
       # The sbt driver heap is governed by the checked-in .jvmopts (12G), not by anything set here:
