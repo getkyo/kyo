@@ -18,13 +18,21 @@ class DebuggerTest extends kyo.test.Test[Any]:
 
     // records every event; routing follows the documented protocol: a refusal allows the delivery
     // retry through a per-thread toggle, so a routed step surfaces once at onDefer and then runs.
-    // The gate is frameless; frames arrive with the routed step
+    // The gate is frameless; frames arrive with the routed step.
+    //
+    // The session is process-global, so evals from concurrently running leaves stream through it
+    // too: the framed hooks record only this file's frames, and the append is synchronized so a
+    // foreign thread's enter cannot corrupt the buffer under the test's own writes
     class Recording(route: Boolean = false) extends Debugger:
         val events = ListBuffer.empty[(String, String)]
+        protected def record(kind: String, position: String): Unit =
+            this.synchronized(discard(events += ((kind, position))))
+        protected def mine(frame: Frame): Boolean =
+            frame.position.fileName.contains("DebuggerTest")
         private val allowNext = new ThreadLocal[Boolean]:
             override def initialValue = false
         override def enter(): Boolean =
-            events += (("enter", ""))
+            record("enter", "")
             if allowNext.get() then
                 allowNext.set(false)
                 true
@@ -35,12 +43,12 @@ class DebuggerTest extends kyo.test.Test[Any]:
             end if
         end enter
         override def onDefer[A, S](stack: Stack, frame: Frame, value: A < S): A < S =
-            events += (("defer", frame.position.show))
+            if mine(frame) then record("defer", frame.position.show)
             value
         override def onSuspend[A](stack: Stack, frame: Frame, input: A): Unit =
-            events += (("suspend", frame.position.show))
+            if mine(frame) then record("suspend", frame.position.show)
         override def onDeliver[A](stack: Stack, frame: Frame, value: A): A =
-            events += (("deliver", frame.position.show))
+            if mine(frame) then record("deliver", frame.position.show)
             value
     end Recording
 
@@ -92,7 +100,7 @@ class DebuggerTest extends kyo.test.Test[Any]:
         val d = new Recording(route = true):
             // the swap asserts conformance on its own side, which is the typed contract's point
             override def onDefer[A, S](stack: Stack, frame: Frame, value: A < S): A < S =
-                if value.equals(1) then 10.asInstanceOf[A < S] else value
+                if mine(frame) && value.equals(1) then 10.asInstanceOf[A < S] else value
         session(d)(assert(Eval(Effect.defer(1).map(_ + 1)) == 11))
     }
 
@@ -104,7 +112,7 @@ class DebuggerTest extends kyo.test.Test[Any]:
         val d = new Recording(route = false):
             override def fastPathsAllowed = false
             override def onDeliver[A](stack: Stack, frame: Frame, value: A): A =
-                if value.equals(2) then 20.asInstanceOf[A] else value
+                if mine(frame) && value.equals(2) then 20.asInstanceOf[A] else value
         // the answer 1 runs through the body's + 1, and 2 flows back into the region's entry,
         // swapped to 20 before the done clause doubles it
         val region = ArrowEffect.handleCont(Tag[Ask], ask.map(_ + 1))([C] => (_, cont) => cont(1), a => a * 2)

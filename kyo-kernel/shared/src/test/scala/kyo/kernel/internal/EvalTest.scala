@@ -931,8 +931,12 @@ class EvalTest extends kyo.test.Test[Any]:
         }
 
         "a stop already pending ends the slice before it starts" in {
+            // the claim comes first: a stop needs a slot to land on, and the input stays a pending
+            // computation (a defer settles nothing at construction) so "the input comes straight
+            // back" is observable
+            kyo.discard(Safepoint.get())
             SafepointStop.request()
-            val v      = (1: Int < Any).map(_ + 1)
+            val v      = Effect.defer(1).map(_ + 1)
             val parked = Eval.partial(v)
             assert(parked.evalNow.isEmpty)
             assert(Eval(parked) == 2)

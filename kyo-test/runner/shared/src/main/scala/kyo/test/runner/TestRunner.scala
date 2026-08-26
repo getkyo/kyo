@@ -397,14 +397,25 @@ object TestRunner:
         // Retrieve the buffered body INSIDE a `Sync.defer` so a body that throws synchronously (e.g. a bare
         // `assert(1 == 2)` whose entire body is the throwing expression) is captured by the conversion below rather than
         // escaping eagerly during retrieval. The suite's `aroundLeaf` hook wraps every leaf body (default identity).
+        // A scheduler stop can land on a worker just after a slice's boundary consume (the preemptor
+        // races completion), and the straggler would otherwise park the next leaf's first armed
+        // evaluation on that thread. Each leaf clears its thread's stop channel at both edges: the
+        // leading consume is what protects this leaf, the trailing one hands the thread back clean.
+        def consumeStragglerStop(): Unit =
+            kyo.discard(kyo.kernel.internal.Safepoint.consumeStopped(kyo.kernel.internal.Safepoint.get()))
         val rawBody: Unit < (Async & Abort[Any] & Scope) =
             // Start each evaluation of the body from an empty sink. Retry/repeat re-run this computation, and an early
             // attempt that THREW a failure (which the assert macro recorded into the sink before throwing) then RECOVERED
             // would otherwise leave a stale record that the drain-then-flip below wrongly turns into a Failed leaf. The
             // clear runs BEFORE the body spawns any detached fiber, so a detached fiber's later record (the plain
             // detached-capture path) is preserved and still flips the leaf; only the FINAL attempt's records survive.
-            Sync.defer { val _ = as.drain(); () }
+            Sync.defer {
+                consumeStragglerStop()
+                val _ = as.drain()
+                ()
+            }
                 .andThen(instance.aroundLeaf(Sync.defer(ctx.takeRegisteredBody(as))))
+                .andThen(Sync.defer(consumeStragglerStop()))
         // The leaf baseline is `Abort[Any]` (a leaf may abort with ANY value, not only a Throwable). Convert it to the
         // runner's `Abort[Throwable]` pipeline here, at the single production point, so Retry/timeout/repeat and the
         // `Abort.run[Throwable]` boundary below stay Throwable-shaped (mirrors `KyoApp.abortAnyToThrowable`):
