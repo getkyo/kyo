@@ -748,6 +748,19 @@ object Fiber:
                 IOTask(isolate)(state, v).asInstanceOf[Fiber[A, Abort[E] & S2]]
             }
 
+        /** The spawn above with time slicing selectable: a leaf that observes the thread's stop
+          * channel spawns with `timeSliced = false`, so the stall checks do not write into what it
+          * is asserting on. Interrupts still stop its slices.
+          */
+        def initUnscoped[E, A, S, S2](timeSliced: Boolean)(using
+            isolate: Isolate[S, Abort[E] & Async, S2]
+        )(
+            v: => A < (Abort[E] & Async & S)
+        )(using Frame): Fiber[A, Abort[E] & S2] < (Sync & S) =
+            isolate.capture { state =>
+                IOTask(isolate)(state, v, timeSliced = timeSliced).asInstanceOf[Fiber[A, Abort[E] & S2]]
+            }
+
         def foreachIndexed[E, A, B, S, S2](using
             isolate: Isolate[S, Abort[E] & Async, S2]
         )(

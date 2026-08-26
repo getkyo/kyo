@@ -10,6 +10,8 @@ import scala.annotation.tailrec
 import scala.collection.mutable.ListBuffer
 
 class ArrowEffectTest extends kyo.test.Test[Any]:
+    // the park and safety-audit tests observe this thread's stop channel; time slicing writes into it
+    override def config = super.config.timeSliced(false)
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())

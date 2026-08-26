@@ -161,7 +161,15 @@ object TestRunner:
                             LeakDebug.beginLeaf(path)
                         }.map { probeFinish =>
                             withHeartbeat(leafInfo, effectiveConfig.heartbeatInterval, reporter)(
-                                runLeaf(suite, cursor, path, builder, hasFocus, effectiveConfig.failOnNoAssertion)
+                                runLeaf(
+                                    suite,
+                                    cursor,
+                                    path,
+                                    builder,
+                                    hasFocus,
+                                    effectiveConfig.failOnNoAssertion,
+                                    effectiveConfig.timeSliced
+                                )
                             ).map { entries =>
                                 // Run after the leaf body (which includes the leaf's Scope.run, so the leaf's own finalizers have already run):
                                 // any descriptor still open here that the leaf opened is the leaf's leak, recorded against this leaf path.
@@ -349,7 +357,8 @@ object TestRunner:
         path: Chunk[String],
         builder: TestBuilder,
         hasFocus: Boolean,
-        failOnNoAssertion: Boolean
+        failOnNoAssertion: Boolean,
+        timeSliced: Boolean
     )(using Frame): Chunk[(Chunk[String], TestResult)] < Async =
         if hasFocus && !builder.focus then
             Chunk((path, TestResult.Skipped("not focused")))
@@ -371,7 +380,7 @@ object TestRunner:
                     case Maybe.Present((_, terminalResult)) =>
                         Chunk((path, terminalResult))
                     case Maybe.Absent =>
-                        runRegisteredBody(instance, ctx, builder, path, startNs, failOnNoAssertion)
+                        runRegisteredBody(instance, ctx, builder, path, startNs, failOnNoAssertion, timeSliced)
                 end match
             }
         end if
@@ -387,7 +396,8 @@ object TestRunner:
         builder: TestBuilder,
         path: Chunk[String],
         startNs: Long,
-        failOnNoAssertion: Boolean
+        failOnNoAssertion: Boolean,
+        timeSliced: Boolean
     )(using Frame): Chunk[(Chunk[String], TestResult)] < Async =
         // Mint the per-leaf evidence value. The body, and any fiber it spawns (including a detached `Fiber.initUnscoped`
         // one), captures this SAME instance lexically when `takeRegisteredBody(as)` is applied, so an assert failing in an
@@ -460,7 +470,9 @@ object TestRunner:
         // Discharge Scope per-leaf (Scope is fiber-shared; per-leaf Scope.run bounds resource release to leaf end), spawn the
         // body as its own fiber so the per-leaf Local context is inherited, then catch the Abort/Panic boundary.
         leafLocal.let(Maybe(LeafContext(ctx, path))) {
-            Abort.run[Throwable](Scope.run(repeated).handle(Fiber.initUnscoped).flatMap(_.get)).map { result =>
+            Abort.run[Throwable](
+                Scope.run(repeated).handle(Fiber.internal.initUnscoped(timeSliced = timeSliced)).flatMap(_.get)
+            ).map { result =>
                 val elapsed = Duration.fromNanos(java.lang.System.nanoTime() - startNs)
                 // The body fiber has joined and the leaf is about to be scored. Close the scope (later records, from a
                 // fiber that outlived its test, are logged rather than queued) and drain the per-leaf sink. A detached

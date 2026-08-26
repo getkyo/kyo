@@ -11,6 +11,8 @@ import kyo.kernel.*
   * in the shared EvalTest.
   */
 class EvalThreadingTest extends kyo.test.Test[Any]:
+    // the partial-evaluation tests observe this thread's stop channel; time slicing writes into it
+    override def config = super.config.timeSliced(false)
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
