@@ -1031,17 +1031,23 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
         // the next test.
         "a self-contained stream's resource does not survive a fiber hand-out" in {
             AtomicInt.init(0).map { released =>
-                val stream = Stream:
-                    Scope.run:
-                        Scope.ensure(released.incrementAndGet.unit).andThen:
-                            Emit.valueWith(Chunk(1))(Emit.value(Chunk(2)))
-                Fiber.initUnscoped(Emit.runFirst(stream.emit)).map(_.get).map { (first, cont) =>
-                    released.get.map { drained =>
-                        Fiber.initUnscoped(Emit.run(cont(()))).map(_.getResult).map { res =>
-                            assert(first == Maybe(Chunk(1)))
-                            assert(drained == 1)
-                            assert(res.isPanic)
-                        }
+                Latch.init(1).map { drainedGate =>
+                    val stream = Stream:
+                        Scope.run:
+                            Scope.ensure(released.incrementAndGet.unit.andThen(drainedGate.release)).andThen:
+                                Emit.valueWith(Chunk(1))(Emit.value(Chunk(2)))
+                    Fiber.initUnscoped(Emit.runFirst(stream.emit)).map(_.get).map { (first, cont) =>
+                        // the backstop drain runs in the peeling fiber's teardown, after its result
+                        // is already visible to a joiner, so the join alone is not a happens-after
+                        // edge for the release; the latch the finalizer opens is
+                        drainedGate.await.andThen:
+                            released.get.map { drained =>
+                                Fiber.initUnscoped(Emit.run(cont(()))).map(_.getResult).map { res =>
+                                    assert(first == Maybe(Chunk(1)))
+                                    assert(drained == 1)
+                                    assert(res.isPanic)
+                                }
+                            }
                     }
                 }
             }
