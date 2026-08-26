@@ -350,23 +350,18 @@ assert(same.chain(doubleIt)(4).eval == 8)
 This is the same type a handler clause is handed. The `cont` in a `handleCont` clause is an `Arrow` from the operation's answer to the region's result, so everything above applies to it: nothing ties it to the frame the operation suspended from, and nothing requires it to be applied where it was received, or only once.
 
 ```scala
-var stashed = Maybe.empty[Arrow[Int, Int, Ask]]
-
-val captured: Int < Any =
+val reused: Int < Any =
     ArrowEffect.handleCont(Tag[Ask], ask.map(_ + 1))(
         [C] =>
             (_, cont) =>
-                stashed = Maybe(cont)
-                cont(0)
-        ,
+                cont.chain(doubleIt)(0).map(a => cont.chain(doubleIt)(20).map(b => a + b)),
         a => a
     )
 
-assert(captured.eval == 1)
-assert(stashed.map(k => answering(0)(k(41)).eval) == Maybe(42))
+assert(reused.eval == 44)
 ```
 
-The region completed with the answer `0`, and the continuation it handed the clause was still a perfectly good arrow afterwards, applied from outside the handler, with a different answer, long after the region it came from was done.
+The clause never treated `cont` as anything special. It composed it with an arrow written further up and applied that composition twice, with different answers, which is ordinary handling for a value of this type. That same value-ness is what lets a continuation outlive the region it came from: a scheduler parking a fiber, or a handler holding a remainder until an answer arrives from elsewhere, is keeping exactly this and applying it when it is ready rather than where it was received.
 
 `Arrow.recursive` builds one that can re-enter itself. Its body receives the arrow being defined alongside the value, so a step that loops names `self` rather than constructing a fresh arrow per iteration:
 
