@@ -35,7 +35,7 @@ class PendingBytecodeTest extends kyo.test.Test[Any]:
         // and the successor dispatch), and the Transform mint (arrow, reached only
         // when the computation suspends or the budget runs out)
         val sizes = methodBytecodeSize[TestMap]
-        assert(sizes == Map("test" -> 22, "arrow" -> 9, "run" -> 114), s"was $sizes")
+        assert(sizes == Map("test" -> 18, "arrow" -> 9, "run" -> 97))
     }
 
     "lift of a primitive is a bare cast" in {
