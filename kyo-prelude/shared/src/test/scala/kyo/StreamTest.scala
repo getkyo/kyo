@@ -1372,6 +1372,47 @@ class StreamTest extends kyo.test.Test[Any]:
             val _: Stream[String, Any] = transformed
             assert(transformed.run.eval == Chunk("1", "2", "3"))
         }
+
+        "keeps the unhandled portion of an abort intersection" in {
+            val stream: Stream[Int, Abort[Int] & Abort[Float]] = Stream:
+                for
+                    _ <- Emit.value(Chunk(1, 2, 3))
+                    _ <- Abort.fail(42)
+                    _ <- Emit.value(Chunk(4, 5))
+                yield ()
+
+            val handled = stream.handle(Abort.recover[Int]((_: Int) => ()))
+            // The inferred type must keep Abort[Float] alone, not widen it to Abort[Any]
+            val _: Stream[Int, Abort[Float]] = handled
+            assert(Abort.run[Float](handled.run).eval == Result.succeed(Chunk(1, 2, 3)))
+        }
+
+        "keeps the unhandled portion of an abort union" in {
+            val stream: Stream[Int, Abort[Int | Float]] = Stream:
+                for
+                    _ <- Emit.value(Chunk(1))
+                    _ <- Abort.fail(1.5f)
+                    _ <- Emit.value(Chunk(2))
+                yield ()
+
+            val handled                      = stream.handle(Abort.recover[Int]((_: Int) => ()))
+            val _: Stream[Int, Abort[Float]] = handled
+            assert(Abort.run[Float](handled.run).eval == Result.fail(1.5f))
+        }
+
+        "infers the emit type for a partially applied handler" in {
+            val stream: Stream[Int, Var[Int] & Env[Int]] = Stream:
+                for
+                    i1 <- Var.get[Int]
+                    _  <- Emit.value(Chunk(i1))
+                    i2 <- Env.get[Int]
+                    _  <- Emit.value(Chunk(i2))
+                yield ()
+
+            val handled                  = stream.handle(Var.run(4))
+            val _: Stream[Int, Env[Int]] = handled
+            assert(Env.run(5)(handled.run).eval == Chunk(4, 5))
+        }
     }
 
     "chunking" - {
