@@ -62,7 +62,7 @@ object FileSystem:
         def realPath(path: Path)(using
             Frame
         ): Path < (S & Abort[
-            FileInvalidPathException | FileNotFoundException | FileAccessDeniedException | FileIOException
+            FileOutsideRootException | FileInvalidPathException | FileNotFoundException | FileAccessDeniedException | FileIOException
         ])
 
         /** Resolves the longest existing prefix of `path` and re-appends the segments below it.
@@ -81,7 +81,7 @@ object FileSystem:
         def realPathPrefix(path: Path)(using
             Frame
         ): Path < (S & Abort[
-            FileInvalidPathException | FileAccessDeniedException | FileIOException
+            FileOutsideRootException | FileInvalidPathException | FileAccessDeniedException | FileIOException
         ]) =
             Abort.run[FileNotFoundException](realPath(path)).map {
                 case Result.Success(resolved) => resolved
@@ -432,5 +432,15 @@ object FileSystem:
       * `Path` behavior exactly.
       */
     def host: FileSystem.Write[Sync] & FileSystem.Watch[Sync] = HostFileSystem()
+
+    /** Root-confined host backend: resolves `root.realPath` at construction and rejects any
+      * op whose canonical path (following every symlink) escapes it; writes to missing
+      * entries validate the nearest existing parent. Prefix-only checking without realpath is
+      * a security defect.
+      */
+    def host(root: Path)(using
+        Frame
+    ): (FileSystem.Write[Sync] & FileSystem.Watch[Sync]) < (Sync & Abort[FileSystemException]) =
+        HostFileSystem.rootConfined(root)
 
 end FileSystem

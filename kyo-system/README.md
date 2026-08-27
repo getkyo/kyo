@@ -33,11 +33,24 @@ Filesystem I/O is capability-tracked, not method-tracked. A program that only re
 
 `Path.run` and `Path.runReadOnly` use the backend selected by `FileSystem.let`. The default is the
 local host backend. Selection is dynamically scoped, inherited by child fibers, and restored when
-the block exits.
+the block exits. Selecting `FileSystem.host(root)` validates every default-runner operation inside
+the block against that root, rejecting anything that resolves outside it rather than relocating it:
+
+```scala
+import kyo.*
+
+def sandboxed(root: Path)(using Frame) =
+    FileSystem.host(root).map { confined =>
+        FileSystem.let(confined) {
+            Path.run((root / "state" / "value.txt").write("42"))
+        }
+    }
+```
 
 Backends advertise the authority they actually provide. `FileSystem.Read[S]` can be passed only to
-`Path.runReadOnlyWith`; `FileSystem.Write[S]` supports both runners. This distinction prevents a
-caller from accidentally gaining mutation authority through a read-only service.
+`Path.runReadOnlyWith`; `FileSystem.Write[S]` supports both runners. `FileSystem.host(root)` provides
+a writable host backend confined to an existing root. This distinction prevents a caller from
+accidentally gaining mutation authority through a read-only service.
 
 Portable matching uses a compiled `Glob`, never a platform-specific string matcher:
 
@@ -79,7 +92,7 @@ val durable = Path.run {
 }
 ```
 
-### Locks and watchers
+### Locks, watchers, and confinement
 
 Advisory locks are scope-managed. Choose shared or exclusive compatibility and an explicit waiting
 policy. Watchers have their own `PathWatch` capability and are registered before acquisition
@@ -100,6 +113,20 @@ val changes = Scope.run {
     }
 }
 ```
+
+For user-supplied paths, use a root-confined host backend to constrain every operation. Use
+`confinedTo` when a program also needs the canonical checked path as a value:
+
+```scala
+import kyo.*
+
+def confined(root: Path, input: Path)(using Frame) =
+    FileSystem.host(root).map { backend =>
+        Path.runReadOnlyWith(backend)((root / input).confinedTo(root))
+    }
+```
+
+`Path.tempDir(prefix)` creates a directory through the active service, returns the `Path`, and registers recursive removal via the creating service when the enclosing `Scope` closes.
 
 ## File paths
 
@@ -176,7 +203,21 @@ val checks: (Boolean, Boolean) < (Sync & Abort[FileSystemException]) =
 
 `exists(followLinks: Boolean)` controls symlink traversal. All four methods return `false` on any permission or access failure.
 
-`realPath` resolves every symbolic link in the chain and returns the canonical absolute path. It fails with `FileNotFoundException` if any element of the path does not exist, or `FileAccessDeniedException` if the filesystem denies access:
+`confinedTo(root)` resolves all symlinks in both `self` and `root`, then fails with `FileAccessDeniedException` if the real path of `self` falls outside the real path of `root`. A syntactic prefix check is not sufficient because a symlink inside `root` can point outside it. Use this for any tool that accepts user-supplied paths under a configured root:
+
+```scala
+import kyo.*
+
+val root: Path = Path / "var" / "uploads"
+
+// Adversarial traversal is rejected after symlink resolution
+val safe: Path < (Sync & Abort[FileSystemException]) =
+    Path.runReadOnly {
+        (root / "../../etc/passwd").confinedTo(root)
+    }
+```
+
+`realPath` resolves every symbolic link in the chain and returns the canonical absolute path, without any containment check. It fails with `FileNotFoundException` if any element of the path does not exist, or `FileAccessDeniedException` if the filesystem denies access:
 
 ```scala
 import kyo.*
