@@ -372,14 +372,16 @@ object TypeMapTestScoped:
     // A TypeMap built inside an opaque type's own scope is keyed on the tag derived there, and read
     // outside with the tag derived there. The compiler substitutes the underlying type inside the
     // scope before any macro runs, so the two tags once disagreed and the lookup missed (#1367).
+    // A summoned tag is refused there; the one derived by name is passed explicitly.
     opaque type Meters = Long
     object Meters:
         def apply(value: Long): Meters  = value
         def unwrap(value: Meters): Long = value
-        given tag: Tag[Meters]          = Tag.derive[Meters]
+        val tag: Tag[Meters]            = Tag.derive[Meters]
 
-        def buildInside(value: Meters): TypeMap[Meters] = TypeMap(value)
-        def readInside(map: TypeMap[Meters]): Meters    = map.get[Meters]
+        def buildInside(value: Meters): TypeMap[Meters] = TypeMap[Meters](value)(using tag)
+        def readInside(map: TypeMap[Meters]): Meters =
+            map.get[Meters](using tag, summon[kyo.internal.NotIntersection[Meters]])
     end Meters
 end TypeMapTestScoped
 

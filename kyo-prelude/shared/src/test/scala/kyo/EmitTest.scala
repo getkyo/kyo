@@ -719,11 +719,13 @@ object EmitTestOpaques:
     object Meters:
         def apply(value: Long): Meters  = value
         def unwrap(value: Meters): Long = value
-        given tag: Tag[Meters]          = Tag.derive[Meters]
+        // A summoned tag is refused inside the scope; the one derived by name is passed explicitly.
+        val tag: Tag[Emit[Meters]] = Tag.derive[Emit[Meters]]
 
         def emitInside(a: Meters, b: Meters): Unit < Emit[Meters] =
-            Emit.valueWith(a)(Emit.value(b).unit)
+            Emit.valueWith(a)(Emit.value(b)(using tag, summon[Frame]).unit)(using tag, summon[Frame])
 
-        def runInside[A, S](v: A < (Emit[Meters] & S)): (Chunk[Meters], A) < S = Emit.run(v)
+        def runInside[A, S](v: A < (Emit[Meters] & S)): (Chunk[Meters], A) < S =
+            Emit.run[Meters](using tag, summon[Frame])(v)
     end Meters
 end EmitTestOpaques

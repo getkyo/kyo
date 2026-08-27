@@ -383,7 +383,9 @@ class TagTest extends kyo.test.Test[Any]:
             def infer[F[_]](x: Higher[F])(using t: Tag[Higher[F]]): Tag[Higher[F]] = t
 
             def explicitInside: Tag[Higher[Boxed]] = Tag.derive[Higher[Boxed]]
-            def inferredInside                     = infer(value)
+            // The constructor inferred for F collapses to the underlying type lambda.
+            def inferred(using kyo.test.AssertScope, Frame): Unit =
+                typeCheckFailure("infer(value)")("[Tag.opaque.collapsed]")
             def underlying(using kyo.test.AssertScope, Frame): Unit =
                 typeCheckFailure("Tag.derive[Higher[List]]")("[Tag.opaque.collapsed]")
         end Boxed
@@ -472,13 +474,10 @@ class TagTest extends kyo.test.Test[Any]:
             "explicitly written inside the scope" in {
                 assert(Boxed.explicitInside =:= Tag[Higher[Boxed]])
             }
-            "inferred inside the scope" in {
-                assert(Boxed.inferredInside =:= Tag[Higher[Boxed]])
-            }
-            "and neither is the underlying type constructor's tag" in {
+            "and is not the underlying type constructor's tag" in {
                 assert(Boxed.explicitInside =!= Tag[Higher[List]])
-                assert(Boxed.inferredInside =!= Tag[Higher[List]])
             }
+            "inferred inside the scope it is refused" in Boxed.inferred
             "the underlying constructor is refused" in Boxed.underlying
         }
 

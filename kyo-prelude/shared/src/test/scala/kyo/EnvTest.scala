@@ -464,10 +464,13 @@ end EnvTest
 object EnvTestOpaques:
     opaque type Meters = Long
     object Meters:
-        def apply(value: Long): Meters                       = value
-        def unwrap(value: Meters): Long                      = value
-        given tag: Tag[Meters]                               = Tag.derive[Meters]
-        def getInside: Meters < Env[Meters]                  = Env.get[Meters]
-        def runInside[A, S](v: A < (Env[Meters] & S)): A < S = Env.run(Meters(7L))(v)
+        def apply(value: Long): Meters  = value
+        def unwrap(value: Meters): Long = value
+        // A summoned tag is refused inside the scope; the one derived by name is passed explicitly.
+        val tag: Tag[Meters] = Tag.derive[Meters]
+        def getInside: Meters < Env[Meters] =
+            Env.get[Meters](using tag, summon[kyo.internal.NotIntersection[Meters]])
+        def runInside[A, S](v: A < (Env[Meters] & S)): A < S =
+            Env.runAll(TypeMap[Meters](Meters(7L))(using tag))(v)
     end Meters
 end EnvTestOpaques
