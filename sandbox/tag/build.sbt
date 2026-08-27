@@ -26,4 +26,6 @@ lazy val core   = project.settings(commonSettings)
 lazy val lib    = project.dependsOn(core).settings(commonSettings)
 lazy val probes = project.dependsOn(core, lib).settings(commonSettings)
 lazy val tests  = project.dependsOn(core, lib).settings(commonSettings)
-lazy val root   = (project in file(".")).aggregate(core, lib, probes, tests).settings(commonSettings)
+// Must NOT compile: rows whose only observable is a real definition being refused.
+lazy val negative = project.dependsOn(core).settings(commonSettings)
+lazy val root     = (project in file(".")).aggregate(core, lib, probes, tests).settings(commonSettings)

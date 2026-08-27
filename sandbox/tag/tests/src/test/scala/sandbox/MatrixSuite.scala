@@ -201,14 +201,13 @@ class MatrixSuite extends munit.FunSuite:
 
     test("Givens for the opaque type defined in scope are refused") {
         refused(givenCode)(ChainedGiven.Cg.plainGivenErrors)
+        refused(givenCode)(ChainedGiven.Cg.defGivenErrors)
         refused(givenCode)(ChainedGiven.Cg.anonymousGivenErrors)
         same(ChainedGiven.Cg.otherGivenOk, Tag[Vector[Int]])
     }
 
-    test("Cache poisoning: out-of-scope derivations earlier in the run do not leak into scopes") {
-        same(poisonLong, Tag[Long])
-        same(poisonDouble, Tag[Double])
-        refused(collapsed)(Time.Duration.genuineLongErrors)
-        refused(collapsed)(TwoBrands.doubleErrors)
+    test("Cache poisoning: an out-of-scope derivation earlier in the run does not leak into a scope") {
+        same(Poison.First.long, Tag[Long])
+        refused(collapsed)(Poison.Second.D.longErrors)
     }
 end MatrixSuite

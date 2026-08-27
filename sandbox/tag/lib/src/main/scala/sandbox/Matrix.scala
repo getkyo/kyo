@@ -253,6 +253,7 @@ object Shapes:
             val givenErrors: List[String] =
                 errors(typeCheckErrors("inline given cgTag[A](using Tag[A]): Tag[Cg[A]] = Tag.derive[Cg[A]]"))
             val plainGivenErrors: List[String] = errors(typeCheckErrors("given cgIntTag: Tag[Cg[Int]] = Tag.derive[Cg[Int]]"))
+            val defGivenErrors: List[String]   = errors(typeCheckErrors("given cgDefTag[A](using Tag[A]): Tag[Cg[A]] = Tag.derive[Cg[A]]"))
             val anonymousGivenErrors: List[String] = errors(typeCheckErrors("given Tag[Cg[Int]] = Tag.derive[Cg[Int]]"))
             val otherGivenOk: Tag[Vector[Int]] = { given v: Tag[Vector[Int]] = Tag.derive[Vector[Int]]; v }
         end Cg

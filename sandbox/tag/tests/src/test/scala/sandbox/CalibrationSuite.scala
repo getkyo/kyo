@@ -27,6 +27,7 @@ class CalibrationSuite extends munit.FunSuite:
         assertEquals(encoding(TwoBrands.feetDerived), encoding(Tag[TwoBrands.Feet]))
         assertEquals(encoding(TwoBrands.metresDerived), encoding(Tag[TwoBrands.Metres]))
         assert(encoding(TwoBrands.feetDerived) != encoding(TwoBrands.metresDerived))
+        assertEquals(encoding(TwoBrands.moduleTypeOk), encoding(Tag[TwoBrands.type]))
     }
 
     test("S6: parameterized opaque types keep their arguments") {

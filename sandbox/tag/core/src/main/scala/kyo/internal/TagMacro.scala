@@ -122,16 +122,16 @@ private[kyo] object TagMacro:
         // members is not merely wasted work: the splice owner is often a definition whose own type
         // is still being inferred, and listing its members forces it and fails the compilation with
         // a cyclic reference.
-        val declaring = chain.filter(owner => owner.isClassDef || owner.isPackageDef)
-        // A module class is named after its object with a trailing `$`, and the companion of a
-        // package-level opaque type is exactly such a module class.
-        val enclosingNames = chain.map(_.name.stripSuffix("$")).toSet
-        declaring.flatMap { owner =>
-            // A module class whose object declares an opaque type carries the flag too; only a type
-            // definition is an opaque type.
-            val opaques = owner.declaredTypes.filter(sym => sym.flags.is(Flags.Opaque) && !sym.isClassDef)
-            val visible = if owner.isPackageDef then opaques.filter(sym => enclosingNames.contains(sym.name)) else opaques
-            visible.map(sym => sym -> sym.typeRef.dealias)
+        // A top-level opaque type is declared in the file's wrapper class, which the compiler
+        // places on the owner chain of the type's companion, so the wrapper is a template like any
+        // other and a package never declares an opaque type itself.
+        chain.filter(_.isClassDef).flatMap { owner =>
+            // The module class of an object that declares an opaque type carries the Opaque flag
+            // as well. It is not an opaque type and can never match a node, but counting it would
+            // make every derivation under its enclosing template look scoped and skip the memo.
+            owner.declaredTypes
+                .filter(sym => sym.flags.is(Flags.Opaque) && !sym.isClassDef)
+                .map(sym => sym -> sym.typeRef.dealias)
         }.distinctBy(_._1)
     end transparentOpaques
 
@@ -281,17 +281,21 @@ private[kyo] object TagMacro:
             Iterator.iterate(Symbol.spliceOwner)(_.owner).takeWhile(sym => !sym.isNoSymbol)
                 .find(sym => sym.flags.is(Flags.Given) && !sym.isClassDef)
                 .foreach { definition =>
-                    definition.tree match
-                        case ValDef(_, tpt, _) if tpt.tpe.typeSymbol.equals(TypeRepr.of[Tag[Any]].typeSymbol) =>
-                            tpt.tpe.typeArgs.headOption.map(_.dealiasKeepOpaques.typeSymbol).filter(transparent.contains).foreach { x =>
-                                val underlying = scope.find(_._1.equals(x)).map(_._2.show).getOrElse("?")
-                                report.errorAndAbort(
-                                    s"[Tag.opaque.given] A given Tag[${x.name}] must not be defined where ${x.fullName} is " +
-                                        s"transparent: there it is also a Tag[$underlying] and would answer every derivation " +
-                                        s"of that type in this scope with ${x.name}'s tag. Define it outside ${x.name}'s scope."
-                                )
-                            }
-                        case _ => ()
+                    val declared =
+                        definition.tree match
+                            case ValDef(_, tpt, _)       => Some(tpt.tpe)
+                            case DefDef(_, _, tpt, _)    => Some(tpt.tpe)
+                            case _                       => None
+                    declared.filter(_.typeSymbol.equals(TypeRepr.of[Tag[Any]].typeSymbol)).foreach { tagType =>
+                        tagType.typeArgs.headOption.map(_.dealiasKeepOpaques.typeSymbol).filter(transparent.contains).foreach { x =>
+                            val underlying = scope.find(_._1.equals(x)).map(_._2.show).getOrElse("?")
+                            report.errorAndAbort(
+                                s"[Tag.opaque.given] A given Tag[${x.name}] must not be defined where ${x.fullName} is " +
+                                    s"transparent: there it is also a Tag[$underlying] and would answer every derivation " +
+                                    s"of that type in this scope with ${x.name}'s tag. Define it outside ${x.name}'s scope."
+                            )
+                        }
+                    }
                 }
 
             def candidates(node: TypeRepr): List[Symbol] =

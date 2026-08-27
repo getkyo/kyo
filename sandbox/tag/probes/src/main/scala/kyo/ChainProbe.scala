@@ -11,6 +11,12 @@ package sandbox.probes
 //   T.inTrait       seen=Int                        transparent in the trait template
 //   K.inClass       seen=K.this.Tv(opaque)          not transparent in a class mixing the trait in
 //   D.inLambda/Anon owner chain still reaches Dv$   lambdas and anonymous classes do not hide the scope
+//   PkgId owners    PkgId$ <- PkgId$package$ <- pkg  a top-level opaque type is declared in the file's
+//                                                   wrapper class, and its companion is owned by it
+//   PkgId seen      seen=PkgId(opaque), =:= Long     in that companion an argument-driven query keeps PkgId
+//                                                   while comparison sees through; an expected type
+//                                                   Tag[PkgId] on the definition collapses it to Long
+//   Pick underlying [A] =>> PickImpl[A]              an alias applied to a lambda parameter never dealiases
 
 import sandbox.internal.ProbeMacro
 
