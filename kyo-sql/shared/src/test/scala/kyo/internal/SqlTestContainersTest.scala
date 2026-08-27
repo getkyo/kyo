@@ -193,7 +193,7 @@ class SqlTestContainersTest extends kyo.Test:
             TestTempRoot.get.map {
                 case Present(tmp) =>
                     val root = Path(tmp, s"kyo-sql-owner-test-${(token & Long.MaxValue).toHexString}")
-                    Sync.ensure(Abort.run[FileStructureException](root.removeAll).unit)(f(root))
+                    Sync.ensure(Abort.run[FileSystemException](Path.run(root.removeAll)).unit)(f(root))
                 case Absent => fail("no temp root on this platform; the registry cannot be exercised")
             }
         }
@@ -228,7 +228,7 @@ class SqlTestContainersTest extends kyo.Test:
                 // under it, so the claim cannot land.
                 val blocker = Path(root, someId.value.take(12))
                 for
-                    _       <- blocker.mkFile
+                    _       <- Path.run(blocker.mkFile)
                     claimed <- SqlTestContainers.claimOwnership(root, someId)
                 yield assert(!claimed, "an unwritable registry must not report a recorded claim")
                 end for
@@ -241,7 +241,7 @@ class SqlTestContainersTest extends kyo.Test:
                 // anything: claim false AND hasLiveCoOwner false is exactly the combination adoption
                 // must refuse to walk into.
                 for
-                    _       <- root.mkFile
+                    _       <- Path.run(root.mkFile)
                     claimed <- SqlTestContainers.claimOwnership(root, someId)
                     live    <- SqlTestContainers.hasLiveCoOwner(root, someId)
                 yield
@@ -276,7 +276,7 @@ class SqlTestContainersTest extends kyo.Test:
                 // liveness probe answers "no such process" rather than "cannot tell".
                 val dead = Path(root, someId.value.take(12), "999999999")
                 for
-                    _    <- dead.mkFile
+                    _    <- Path.run(dead.mkFile)
                     live <- SqlTestContainers.hasLiveCoOwner(root, someId)
                 yield assert(!live, "a dead co-owner must not keep the container alive")
                 end for
@@ -286,7 +286,7 @@ class SqlTestContainersTest extends kyo.Test:
         "a live claim outweighs a dead one" in {
             withRegistry { root =>
                 for
-                    _    <- Path(root, someId.value.take(12), "999999999").mkFile
+                    _    <- Path.run(Path(root, someId.value.take(12), "999999999").mkFile)
                     _    <- SqlTestContainers.claimOwnership(root, someId)
                     live <- SqlTestContainers.hasLiveCoOwner(root, someId)
                 yield assert(live)

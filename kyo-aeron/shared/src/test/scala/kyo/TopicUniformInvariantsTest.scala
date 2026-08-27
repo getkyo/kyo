@@ -64,8 +64,8 @@ class TopicUniformInvariantsTest extends Test:
         val settleAttempts = 100
         // Inability to list the temp dir is a platform limitation, not a leak.
         def embeddedDirs(using Frame): Set[Path] < Async =
-            Abort.recover[FileStructureException](_ => Chunk.empty[Path]) {
-                Path.basePaths.tmp.list(glob"kyo-aeron-embedded*")
+            Abort.recover[FileSystemException](_ => Chunk.empty[Path]) {
+                Path.runReadOnly(Path.basePaths.tmp.list(glob"kyo-aeron-embedded*"))
             }.map(_.toSet)
         for
             before <- embeddedDirs
@@ -132,7 +132,7 @@ class TopicUniformInvariantsTest extends Test:
     "Topic.run(aeronDir) present-driver round-trip: received == Chunk(a,b)" in {
         // Type-level invariant: run(aeronDir) carries Abort[TopicException].
         val _: Int < (Async & Abort[TopicException]) = Topic.run(Path("/nonexistent-type-probe"))(42)
-        Path.tempDir("kyo-aeron-external-present").map { dir =>
+        Path.run(Path.tempDir("kyo-aeron-external-present")).map { dir =>
             withExternalDriver(dir) {
                 Topic.run(dir) {
                     for
@@ -166,7 +166,7 @@ class TopicUniformInvariantsTest extends Test:
                     received <- fiber.get
                 yield received
             }
-        Path.tempDir("kyo-aeron-external-reuse").map { dir =>
+        Path.run(Path.tempDir("kyo-aeron-external-reuse")).map { dir =>
             withExternalDriver(dir) {
                 for
                     first  <- roundTrip(dir, Seq("a", "b"), 1)
@@ -185,7 +185,7 @@ class TopicUniformInvariantsTest extends Test:
     // differently per backend: JVM throws DriverTimeoutException, FFI's clientConnect returns NULL and
     // yields FfiNullPointer. The shared external primitive maps both to the one typed failure.
     "absent-driver Topic.run(aeronDir) aborts a uniform TopicTransportFailedException (JVM/JS/Native)" in {
-        Path.tempDir("kyo-aeron-absent-driver").map { absentDir =>
+        Path.run(Path.tempDir("kyo-aeron-absent-driver")).map { absentDir =>
             Abort.run[TopicException] {
                 Topic.run(absentDir)(Topic.stream[String]("aeron:ipc").take(1).run)
             }.map { result =>
@@ -201,7 +201,7 @@ class TopicUniformInvariantsTest extends Test:
     // carrier under the scheduler's blocking monitor, so the ticker keeps advancing during the ~10 s
     // connect; a plain binding would freeze the Node loop and strand a Native carrier at ticks == 0.
     "a concurrent ticker keeps ticking (>= 50) during a slow absent-driver connect (JVM/JS/Native)" in {
-        Path.tempDir("kyo-aeron-absent-ticker").map { absentDir =>
+        Path.run(Path.tempDir("kyo-aeron-absent-ticker")).map { absentDir =>
             AtomicInt.init.map { ticker =>
                 for
                     tickerFiber <- Fiber.initUnscoped {
@@ -239,7 +239,7 @@ class TopicUniformInvariantsTest extends Test:
                 Topic.run(c)(42)
         })
         val _: Int < (Async & Abort[TopicTransportFailedException]) = Topic.run(Path("/nonexistent-inv001-probe"))(42)
-        Path.tempDir("kyo-aeron-inv001").map { dir =>
+        Path.run(Path.tempDir("kyo-aeron-inv001")).map { dir =>
             Scope.run {
                 withExternalDriver(dir) {
                     for
@@ -304,7 +304,7 @@ class TopicUniformInvariantsTest extends Test:
     // The message comes from the upstream AeronPlatform.external catch, single-sourced in
     // TopicException.scala; AeronClient.scala adds no message string of its own.
     "connect failure is TopicTransportFailedException (TopicException leaf); message single-sourced" in {
-        Path.tempDir("kyo-aeron-inv010-absent").map { absentDir =>
+        Path.run(Path.tempDir("kyo-aeron-inv010-absent")).map { absentDir =>
             Scope.run {
                 Abort.run[TopicException] {
                     AeronClient.connect(absentDir).map { client =>
@@ -355,7 +355,7 @@ class TopicUniformInvariantsTest extends Test:
     "offer after the caller's own closePublication returns the safe Closed sentinel, no UAF (JVM/JS/Native)" in {
         val payload = Array[Byte](1, 2, 3, 4)
         for
-            dir <- Path.tempDir("kyo-aeron-offer-after-close")
+            dir <- Path.run(Path.tempDir("kyo-aeron-offer-after-close"))
             rt  <- AeronPlatform.embedded(dir.unsafe.show)
             transport = rt.transport
             offerResult <- Abort.run[TopicTransportException] {
@@ -372,7 +372,7 @@ class TopicUniformInvariantsTest extends Test:
                 }
             }
             _ <- Sync.Unsafe.defer(rt.close())
-            _ <- dir.removeAll
+            _ <- Path.run(dir.removeAll)
         yield offerResult match
             case Result.Success((offered, connected, maxMsgLen)) =>
                 assert(
@@ -397,7 +397,7 @@ class TopicUniformInvariantsTest extends Test:
     // closes, since the runtime owns the transport's client handle.
     "client-close after a caller-closed publication is clean: no double-free, fatalError Absent (JVM/JS/Native)" in {
         for
-            dir <- Path.tempDir("kyo-aeron-client-close")
+            dir <- Path.run(Path.tempDir("kyo-aeron-client-close"))
             rt  <- AeronPlatform.embedded(dir.unsafe.show)
             transport = rt.transport
             fatalAfterClose <- Abort.run[TopicTransportException] {
@@ -411,7 +411,7 @@ class TopicUniformInvariantsTest extends Test:
             // Close the client: the sweep frees the deferred bundle. A double-free would
             // crash here; reaching the assertion proves it did not.
             _ <- Sync.Unsafe.defer(rt.close())
-            _ <- dir.removeAll
+            _ <- Path.run(dir.removeAll)
         yield fatalAfterClose match
             case Result.Success(fatal) =>
                 assert(
@@ -441,7 +441,7 @@ class TopicUniformInvariantsTest extends Test:
     // reports itself closed so the poll never hands the shim the receive buffer closeSubscription released.
     "poll after the caller's own closeSubscription returns no fragment and a second close is a no-op, no UAF (JVM/JS/Native)" in {
         for
-            dir <- Path.tempDir("kyo-aeron-poll-after-close")
+            dir <- Path.run(Path.tempDir("kyo-aeron-poll-after-close"))
             rt  <- AeronPlatform.embedded(dir.unsafe.show)
             transport = rt.transport
             pollResult <- Abort.run[TopicTransportException] {
@@ -458,7 +458,7 @@ class TopicUniformInvariantsTest extends Test:
                 }
             }
             _ <- Sync.Unsafe.defer(rt.close())
-            _ <- dir.removeAll
+            _ <- Path.run(dir.removeAll)
         yield pollResult match
             case Result.Success(polled) =>
                 assert(
@@ -473,7 +473,7 @@ class TopicUniformInvariantsTest extends Test:
     // Mirror of the publication client-close leaf above, for the subscription sweep.
     "client-close after a caller-closed subscription is clean: no double-free, fatalError Absent (JVM/JS/Native)" in {
         for
-            dir <- Path.tempDir("kyo-aeron-sub-client-close")
+            dir <- Path.run(Path.tempDir("kyo-aeron-sub-client-close"))
             rt  <- AeronPlatform.embedded(dir.unsafe.show)
             transport = rt.transport
             fatalAfterClose <- Abort.run[TopicTransportException] {
@@ -487,7 +487,7 @@ class TopicUniformInvariantsTest extends Test:
             // Close the client: the subscription sweep frees the deferred bundle. A double-free
             // would crash here; reaching the assertion proves it did not.
             _ <- Sync.Unsafe.defer(rt.close())
-            _ <- dir.removeAll
+            _ <- Path.run(dir.removeAll)
         yield fatalAfterClose match
             case Result.Success(fatal) =>
                 assert(
@@ -544,7 +544,7 @@ class TopicUniformInvariantsTest extends Test:
     // the single connect-failure catch, so neither diverges into a panic, null, or backend-specific outcome;
     // Async.zip runs them concurrently since both wait the same ~10 s driver-timeout.
     "cross-entry-point: BOTH AeronClient.connect AND Topic.run(aeronDir) abort TopicTransportFailedException from the same absent dir (JVM/JS/Native)" in {
-        Path.tempDir("kyo-aeron-inv014-cross").map { absentDir =>
+        Path.run(Path.tempDir("kyo-aeron-inv014-cross")).map { absentDir =>
             val connectViaClient =
                 Scope.run {
                     Abort.run[TopicException] {
@@ -575,7 +575,7 @@ class TopicUniformInvariantsTest extends Test:
     // Scope.acquireRelease acquire aborts before producing a value, so nothing is acquired and no release
     // runs.
     "via AeronClient.connect: a concurrent ticker keeps ticking (>= 50) during a slow absent-driver connect (JVM/JS/Native)" in {
-        Path.tempDir("kyo-aeron-inv015-client").map { absentDir =>
+        Path.run(Path.tempDir("kyo-aeron-inv015-client")).map { absentDir =>
             AtomicInt.init.map { ticker =>
                 for
                     tickerFiber <- Fiber.initUnscoped {

@@ -9,7 +9,7 @@ class StreamSystemExtensionsTest extends kyo.test.Test[Any]:
     // =========================================================================
 
     "Stream[Byte].writeTo creates file with correct byte content" in {
-        Scope.run {
+        Scope.run(Path.run {
             val bytes = Array[Byte](10, 20, 30, 40, 50)
             for
                 dir <- Path.tempDir("kyo-stream-sink-test")
@@ -19,11 +19,11 @@ class StreamSystemExtensionsTest extends kyo.test.Test[Any]:
                 _      <- dir.removeAll
             yield assert(result.toArray.toList == bytes.toList)
             end for
-        }
+        })
     }
 
     "Stream[String].writeTo writes concatenated strings" in {
-        Scope.run {
+        Scope.run(Path.run {
             val parts = List("hello", ", ", "world")
             for
                 dir <- Path.tempDir("kyo-stream-sink-test")
@@ -33,11 +33,11 @@ class StreamSystemExtensionsTest extends kyo.test.Test[Any]:
                 _      <- dir.removeAll
             yield assert(result == "hello, world")
             end for
-        }
+        })
     }
 
     "Stream[String].writeLinesTo writes each element as a line" in {
-        Scope.run {
+        Scope.run(Path.run {
             val lines = Chunk("alpha", "beta", "gamma")
             for
                 dir <- Path.tempDir("kyo-stream-sink-test")
@@ -47,11 +47,11 @@ class StreamSystemExtensionsTest extends kyo.test.Test[Any]:
                 _      <- dir.removeAll
             yield assert(result == lines)
             end for
-        }
+        })
     }
 
     "Stream[String].writeTo with ISO-8859-1 charset encodes correctly" in {
-        Scope.run {
+        Scope.run(Path.run {
             val charset = StandardCharsets.ISO_8859_1
             val text    = "caf\u00e9"
             for
@@ -62,11 +62,11 @@ class StreamSystemExtensionsTest extends kyo.test.Test[Any]:
                 _      <- dir.removeAll
             yield assert(result == text)
             end for
-        }
+        })
     }
 
     "Stream[String].writeLinesTo with ISO-8859-1 charset encodes correctly" in {
-        Scope.run {
+        Scope.run(Path.run {
             val charset = StandardCharsets.ISO_8859_1
             val lines   = Chunk("pr\u00e9", "deux\u00e8me")
             for
@@ -77,7 +77,7 @@ class StreamSystemExtensionsTest extends kyo.test.Test[Any]:
                 _      <- dir.removeAll
             yield assert(result == lines)
             end for
-        }
+        })
     }
 
     // =========================================================================
@@ -85,7 +85,7 @@ class StreamSystemExtensionsTest extends kyo.test.Test[Any]:
     // =========================================================================
 
     "Stream[Byte].writeTo truncates existing content by default" in {
-        Scope.run {
+        Scope.run(Path.run {
             for
                 dir <- Path.tempDir("kyo-stream-append-test")
                 file = dir / "truncated.bin"
@@ -95,11 +95,11 @@ class StreamSystemExtensionsTest extends kyo.test.Test[Any]:
                 _      <- dir.removeAll
             yield assert(result.toArray.toList == List[Byte](9))
             end for
-        }
+        })
     }
 
     "Stream[Byte].writeTo with append adds to existing content" in {
-        Scope.run {
+        Scope.run(Path.run {
             for
                 dir <- Path.tempDir("kyo-stream-append-test")
                 file = dir / "appended.bin"
@@ -109,11 +109,11 @@ class StreamSystemExtensionsTest extends kyo.test.Test[Any]:
                 _      <- dir.removeAll
             yield assert(result.toArray.toList == List[Byte](1, 2, 3, 4, 5))
             end for
-        }
+        })
     }
 
     "Stream[String].writeTo with append adds to existing content" in {
-        Scope.run {
+        Scope.run(Path.run {
             for
                 dir <- Path.tempDir("kyo-stream-append-test")
                 file = dir / "appended.txt"
@@ -123,11 +123,11 @@ class StreamSystemExtensionsTest extends kyo.test.Test[Any]:
                 _      <- dir.removeAll
             yield assert(result == "firstsecond")
             end for
-        }
+        })
     }
 
     "Stream[String].writeLinesTo with append adds lines to existing content" in {
-        Scope.run {
+        Scope.run(Path.run {
             for
                 dir <- Path.tempDir("kyo-stream-append-test")
                 file = dir / "appended-lines.txt"
@@ -137,11 +137,11 @@ class StreamSystemExtensionsTest extends kyo.test.Test[Any]:
                 _      <- dir.removeAll
             yield assert(result == Chunk("first", "second", "third"))
             end for
-        }
+        })
     }
 
     "writeTo with append leaves existing content when the stream fails" in {
-        Scope.run {
+        Scope.run(Path.run {
             for
                 dir <- Path.tempDir("kyo-stream-append-test")
                 file = dir / "append-failure.txt"
@@ -163,7 +163,7 @@ class StreamSystemExtensionsTest extends kyo.test.Test[Any]:
                 assert(exists)
                 assert(content == "keep me")
             end for
-        }
+        })
     }
 
     // =========================================================================
@@ -171,7 +171,7 @@ class StreamSystemExtensionsTest extends kyo.test.Test[Any]:
     // =========================================================================
 
     "writeTo creates missing parent directories by default" in {
-        Scope.run {
+        Scope.run(Path.run {
             for
                 dir <- Path.tempDir("kyo-stream-folders-test")
                 file = dir / "missing" / "nested" / "created.txt"
@@ -180,16 +180,18 @@ class StreamSystemExtensionsTest extends kyo.test.Test[Any]:
                 _      <- dir.removeAll
             yield assert(result == "content")
             end for
-        }
+        })
     }
 
     "writeTo with createFolders = false fails when the parent directory is missing" in {
-        Scope.run {
+        Scope.run(Path.run {
             for
                 dir <- Path.tempDir("kyo-stream-folders-test")
                 file = dir / "missing" / "not-created.txt"
+                // The open failure comes from the backend, so the enclosing runner would raise it past this
+                // frame. Running a runner here is what puts the failure back where the assertion can see it.
                 result <- Abort.run[FileSystemException] {
-                    Scope.run(Stream.init(Chunk("content")).writeTo(file, options = Path.WriteOptions(createFolders = false)))
+                    Path.run(Scope.run(Stream.init(Chunk("content")).writeTo(file, options = Path.WriteOptions(createFolders = false))))
                 }
                 exists <- file.exists
                 _      <- dir.removeAll
@@ -197,16 +199,16 @@ class StreamSystemExtensionsTest extends kyo.test.Test[Any]:
                 assert(result.isFailure)
                 assert(!exists)
             end for
-        }
+        })
     }
 
     "writeLinesTo with createFolders = false fails when the parent directory is missing" in {
-        Scope.run {
+        Scope.run(Path.run {
             for
                 dir <- Path.tempDir("kyo-stream-folders-test")
                 file = dir / "missing" / "not-created-lines.txt"
                 result <- Abort.run[FileSystemException] {
-                    Scope.run(Stream.init(Chunk("a", "b")).writeLinesTo(file, options = Path.WriteOptions(createFolders = false)))
+                    Path.run(Scope.run(Stream.init(Chunk("a", "b")).writeLinesTo(file, options = Path.WriteOptions(createFolders = false))))
                 }
                 exists <- file.exists
                 _      <- dir.removeAll
@@ -214,7 +216,7 @@ class StreamSystemExtensionsTest extends kyo.test.Test[Any]:
                 assert(result.isFailure)
                 assert(!exists)
             end for
-        }
+        })
     }
 
     // =========================================================================
@@ -222,7 +224,7 @@ class StreamSystemExtensionsTest extends kyo.test.Test[Any]:
     // =========================================================================
 
     "writeTo with empty byte stream creates an empty file" in {
-        Scope.run {
+        Scope.run(Path.run {
             for
                 dir <- Path.tempDir("kyo-stream-sink-test")
                 file = dir / "empty-byte-stream.bin"
@@ -232,11 +234,11 @@ class StreamSystemExtensionsTest extends kyo.test.Test[Any]:
                 _      <- dir.removeAll
             yield assert(exists && bytes.isEmpty)
             end for
-        }
+        })
     }
 
     "writeLinesTo with empty stream creates an empty file" in {
-        Scope.run {
+        Scope.run(Path.run {
             for
                 dir <- Path.tempDir("kyo-stream-sink-test")
                 file = dir / "empty-lines-stream.txt"
@@ -246,7 +248,7 @@ class StreamSystemExtensionsTest extends kyo.test.Test[Any]:
                 _      <- dir.removeAll
             yield assert(exists && bytes.isEmpty)
             end for
-        }
+        })
     }
 
     // =========================================================================
@@ -255,7 +257,7 @@ class StreamSystemExtensionsTest extends kyo.test.Test[Any]:
 
     // writeTo should not leave a file containing partial data when the input stream fails mid-flight.
     "writeTo does not leave file with partial data when stream fails mid-flight" in {
-        Scope.run {
+        Scope.run(Path.run {
             for
                 dir <- Path.tempDir("kyo-stream-sink-test")
                 file = dir / "should-not-have-partial.txt"
@@ -272,7 +274,7 @@ class StreamSystemExtensionsTest extends kyo.test.Test[Any]:
                     }
                 }
                 exists <- file.exists
-                bytes  <- Abort.run[FileReadException](file.readBytes)
+                bytes  <- Abort.run[FileSystemException](Path.runReadOnly(file.readBytes))
                 _      <- dir.removeAll
             yield
                 assert(result.isFailure)
@@ -282,11 +284,11 @@ class StreamSystemExtensionsTest extends kyo.test.Test[Any]:
                     case Result.Success(b) => assert(b.isEmpty, s"Partial data left in file: ${b.size} bytes")
                     case Result.Failure(_) => () // file doesn't exist, also acceptable
             end for
-        }
+        })
     }
 
     "writeTo with failing stream does not leave corrupt partial file" in {
-        Scope.run {
+        Scope.run(Path.run {
             for
                 dir <- Path.tempDir("kyo-writeto-fail")
                 file = dir / "partial.bin"
@@ -305,7 +307,7 @@ class StreamSystemExtensionsTest extends kyo.test.Test[Any]:
                         failingStream.writeTo(file)
                     }
                 }
-                bytes <- Abort.run[FileReadException](file.readBytes)
+                bytes <- Abort.run[FileSystemException](Path.runReadOnly(file.readBytes))
                 _     <- dir.removeAll
             yield
                 assert(result.isFailure)
@@ -313,7 +315,7 @@ class StreamSystemExtensionsTest extends kyo.test.Test[Any]:
                     case Result.Success(b) => assert(b.isEmpty, s"Partial data found: ${b.size} bytes")
                     case Result.Failure(_) => ()
             end for
-        }
+        })
     }
 
 end StreamSystemExtensionsTest

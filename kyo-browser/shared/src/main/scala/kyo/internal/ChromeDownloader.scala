@@ -77,7 +77,7 @@ private[kyo] object ChromeDownloader:
             root     <- cacheRoot
             versionDir = root / s"${artifactName(build)}-$v-$platform"
             exec       = executablePath(versionDir, platform, build)
-            cached <- Abort.recover[FileReadException](_ => false)(exec.exists)
+            cached <- Abort.recover[FileSystemException](_ => false)(Path.runReadOnly(exec.exists))
             _ <-
                 if cached then Kyo.unit
                 else download(build, v, platform, versionDir)
@@ -182,12 +182,12 @@ private[kyo] object ChromeDownloader:
     end downloadAndExtract
 
     private def createTempDir(using Frame): Path < (Scope & Sync & Abort[BrowserSetupException]) =
-        Abort.recover[FileStructureException] { (ex: FileStructureException) =>
+        Abort.recover[FileSystemException] { (ex: FileSystemException) =>
             Abort.fail[BrowserSetupException](
                 BrowserSetupFailedException("failed to create Chrome download temp dir", ex)
             )
         } {
-            Path.tempDir("kyo-browser-dl-")
+            Path.run(Path.tempDir("kyo-browser-dl-"))
         }
 
     private[kyo] def downloadZip(url: String, dest: Path, downloadTimeout: Duration)(using
@@ -207,11 +207,11 @@ private[kyo] object ChromeDownloader:
                 // memory bounded by `HttpClientConfig.maxResponseLength` (100 MiB), which rejects the full-Chrome zip
                 // (~200 MiB). `getStreamBytes` has no such cap; `writeTo` sinks each network chunk through a scoped write
                 // handle and removes the partial file if the download fails midway.
-                Scope.run {
+                Path.run(Scope.run {
                     HttpClient.getStreamBytes(url)
                         .mapChunkPure(_.map(span => Chunk.from(span.toArray)).flattenChunk)
                         .writeTo(dest)
-                }
+                })
             }
         }
 
@@ -242,12 +242,12 @@ private[kyo] object ChromeDownloader:
         yield ()
 
     private def createDir(dir: Path)(using Frame): Unit < (Sync & Abort[BrowserSetupException]) =
-        Abort.recover[FileStructureException] { (ex: FileStructureException) =>
+        Abort.recover[FileSystemException] { (ex: FileSystemException) =>
             Abort.fail[BrowserSetupException](
                 BrowserSetupFailedException(s"failed to create dir $dir", ex)
             )
         } {
-            dir.mkDir
+            Path.run(dir.mkDir)
         }
 
     private def makeExecutable(exec: Path)(using Frame): Unit < (Async & Abort[BrowserSetupException]) =

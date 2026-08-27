@@ -486,21 +486,24 @@ class ContainerOrchestrationItTest extends BasePodTest:
             .stopSignal(Container.Signal.SIGUSR1)
             .stopTimeout(1.second)
             .autoRemove(false)
-        for
-            _         <- hostDir.mkDir
-            outcome   <- Abort.run[Timeout](Async.timeout(30.seconds)(Scope.run(Container.init(config).unit)))
-            delivered <- marker.exists
-            _         <- Abort.run[FileStructureException](hostDir.removeAll)
-        yield outcome match
-            case Result.Success(_) =>
-                assert(
-                    delivered,
-                    "scope cleanup completed but the stopSignal never reached the container; the trap left no marker on the host"
-                )
-            case Result.Failure(_: Timeout) =>
-                fail("scope cleanup did not complete; the kill path is hanging instead of force-removing after stopTimeout")
-            case Result.Panic(t) => fail(s"panic during scope cleanup: $t")
-        end for
+        Path.run {
+            for
+                _         <- hostDir.mkDir
+                outcome   <- Abort.run[Timeout](Async.timeout(30.seconds)(Scope.run(Container.init(config).unit)))
+                delivered <- marker.exists
+                // The cleanup runs its own runner so a removal failure is reported here rather than failing the test.
+                _ <- Abort.run[FileSystemException](Path.run(hostDir.removeAll))
+            yield outcome match
+                case Result.Success(_) =>
+                    assert(
+                        delivered,
+                        "scope cleanup completed but the stopSignal never reached the container; the trap left no marker on the host"
+                    )
+                case Result.Failure(_: Timeout) =>
+                    fail("scope cleanup did not complete; the kill path is hanging instead of force-removing after stopTimeout")
+                case Result.Panic(t) => fail(s"panic during scope cleanup: $t")
+            end for
+        }
     }
 
     "runOnce" - {

@@ -112,14 +112,14 @@ class TopicInvariantsTest extends Test:
     // (aeron_driver_static) and resolve at runtime with no system libaeron.
     "runtime: symbols resolve and driver starts without system libaeron".onlyNative in {
         for
-            dir     <- Path.tempDir("kyo-aeron-embedded-test")
+            dir     <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
             runtime <- AeronPlatform.embedded(dir.unsafe.show)
             result <- Sync.Unsafe.defer {
                 assert(runtime.transport != null, "runtime.transport is null after embedded()")
                 runtime.close()
                 succeed
             }
-            _ <- dir.removeAll
+            _ <- Path.run(dir.removeAll)
         yield result
         end for
     }
@@ -173,7 +173,7 @@ class TopicInvariantsTest extends Test:
     // must survive with its sign intact; JVM/Native never exercise that path (primitive long / C long).
     "JS koffi int64 sentinel marshalling: negative offer sentinel survives BigInt round-trip".onlyJs in {
         for
-            dir <- Path.tempDir("kyo-aeron-embedded-test")
+            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
             rt  <- AeronPlatform.embedded(dir.unsafe.show)
             transport = rt.transport
             pubMaybeR <- Abort.run[TopicTransportException] {
@@ -195,7 +195,7 @@ class TopicInvariantsTest extends Test:
                 transport.closePublication(pub)
                 rt.close()
             }
-            _ <- dir.removeAll
+            _ <- Path.run(dir.removeAll)
         yield
             assert(result < 0, s"Expected a negative sentinel from a not-connected JS FFI publication; got $result")
             assert(

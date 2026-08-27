@@ -298,11 +298,16 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
       * platform command-line length limits.
       */
     private[completion] def mcpConfigFile(config: String)(using Frame): Path < (Sync & Scope & Abort[AIGenException]) =
-        Abort.run[FileStructureException | FileWriteException] {
-            for
-                path <- Path.temp("kyo-ai-claude-mcp-", ".json")
-                _    <- path.write(config)
-            yield path
+        Abort.run[FileSystemException] {
+            // The temp file and the write are the only filesystem authority this needs, and both are
+            // discharged here so the config file stays an implementation detail rather than a capability
+            // the caller must grant.
+            Path.run {
+                for
+                    path <- Path.temp("kyo-ai-claude-mcp-", ".json")
+                    _    <- path.write(config)
+                yield path
+            }
         }.map {
             case Result.Success(path) => path
             case Result.Failure(ex) =>

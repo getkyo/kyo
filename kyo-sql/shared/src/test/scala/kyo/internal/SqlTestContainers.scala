@@ -188,7 +188,7 @@ private[kyo] object SqlTestContainers:
       */
     private[kyo] def claimOwnership(root: Path, id: Container.Id)(using Frame): Boolean < Async =
         // `mkFile` creates missing parents, so the per-container directory needs no separate step.
-        Abort.run[FileStructureException](Path(ownerDir(root, id), TestProcessId.pid.toString).mkFile).map(_.isSuccess)
+        Abort.run[FileSystemException](Path.run(Path(ownerDir(root, id), TestProcessId.pid.toString).mkFile)).map(_.isSuccess)
 
     /** Drop this process's co-ownership of `id`.
       *
@@ -197,20 +197,22 @@ private[kyo] object SqlTestContainers:
       * than raised: declining to reap costs one cycle, and the alternative would fail a leaf over registry hygiene.
       */
     private[kyo] def releaseOwnership(root: Path, id: Container.Id)(using Frame): Unit < Async =
-        Abort.run[FileStructureException](Path(ownerDir(root, id), TestProcessId.pid.toString).remove).unit
+        Abort.run[FileSystemException](Path.run(Path(ownerDir(root, id), TestProcessId.pid.toString).remove)).unit
 
     /** Whether any process that adopted `id` is still running. An unreadable registry reports true, which spares the container: the same
       * direction every other uncertainty in this object takes.
       */
     private[kyo] def hasLiveCoOwner(root: Path, id: Container.Id)(using Frame): Boolean < Async =
         val dir = ownerDir(root, id)
-        Abort.run[FileReadException](dir.exists).map {
+        Abort.run[FileSystemException](Path.runReadOnly(dir.exists)).map {
             case Result.Success(false) => false
             case Result.Success(true) =>
-                Abort.run[FileStructureException] {
-                    dir.list.map { entries =>
-                        Kyo.foreach(entries)(entry => TestProcessId.isAlive(entry.name.getOrElse("")))
-                            .map(_.exists(identity))
+                Abort.run[FileSystemException] {
+                    Path.runReadOnly {
+                        dir.list.map { entries =>
+                            Kyo.foreach(entries)(entry => TestProcessId.isAlive(entry.name.getOrElse("")))
+                                .map(_.exists(identity))
+                        }
                     }
                 }.map {
                     case Result.Success(live) => live
@@ -227,7 +229,7 @@ private[kyo] object SqlTestContainers:
       * directory and cannot change a reap decision.
       */
     private[kyo] def forgetOwners(root: Path, id: Container.Id)(using Frame): Unit < Async =
-        Abort.run[FileStructureException](ownerDir(root, id).removeAll).unit
+        Abort.run[FileSystemException](Path.run(ownerDir(root, id).removeAll)).unit
 
     /** Claim `id` for this process, reporting whether a reaper can now see the claim.
       *

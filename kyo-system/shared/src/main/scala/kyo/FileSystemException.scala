@@ -4,7 +4,7 @@ package kyo
 enum FileSystemOperation derives CanEqual:
     case Exists, Inspect, RealPath, Read, Write, List, Walk, Create, Move, Copy, Remove
 
-/** Base type for failures reported by filesystem operations. */
+/** Base type for failures reported by filesystem capabilities. */
 sealed abstract class FileSystemException(message: String, cause: Throwable | String = "")(using Frame)
     extends KyoException(message, cause)
 
