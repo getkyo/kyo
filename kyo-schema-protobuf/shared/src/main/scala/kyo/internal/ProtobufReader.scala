@@ -46,7 +46,23 @@ final class ProtobufReader(data: Array[Byte])(using _frame: Frame) extends Reade
     // consumed entry tag is wire type 2 (LengthDelimited) reads the length once, sets packedLimit,
     // flips packed=true, then reads bare values until packedLimit. A mixed producer (some packed,
     // some unpacked under the same field) is handled by resetting packed when the run is exhausted.
-    final private class RepeatedFrame(val fieldNumber: Int, var firstPending: Boolean, var packed: Boolean, var packedLimit: Int)
+    // bare/bareLimit describe a NESTED collection (a collection directly inside another
+    // collection), which the writer emits as one length-delimited record of bare elements:
+    // scalars as raw varint/fixed bytes, strings/bytes/messages/deeper collections as
+    // length-prefixed blobs with no tag. limitDepth records limits.size at frame creation; a
+    // second arrayStart at the same depth (no message boundary in between) is by construction a
+    // nested collection. fieldNumber is a var because a TOP-LEVEL collection's first tag is
+    // consumed by hasNextElement (nothing enclosing consumed it), which is when the real field
+    // number becomes known.
+    final private class RepeatedFrame(
+        var fieldNumber: Int,
+        var firstPending: Boolean,
+        var packed: Boolean,
+        var packedLimit: Int,
+        val bare: Boolean,
+        val bareLimit: Int,
+        val limitDepth: Int
+    )
     private var repeatedFrames: List[RepeatedFrame] = Nil
 
     // Per-map decode frame. A map is a repeated MapEntry message under the map field number
@@ -56,8 +72,15 @@ final class ProtobufReader(data: Array[Byte])(using _frame: Frame) extends Reade
     // value tag. field() is a map-key read only when an entry limit is pushed and we are at
     // the entry level (baseLimitDepth + 1); a field() nested inside an entry value is ordinary.
     // Frames stack for a map-valued map.
-    final private class MapFrame(val fieldNumber: Int, val baseLimitDepth: Int, var firstPending: Boolean, var entryLimitPushed: Boolean)
+    // fieldNumber is a var for the same reason RepeatedFrame's is: a TOP-LEVEL map's first entry
+    // tag is consumed by hasNextEntry, which is when the real field number becomes known.
+    final private class MapFrame(var fieldNumber: Int, val baseLimitDepth: Int, var firstPending: Boolean, var entryLimitPushed: Boolean)
     private var mapFrames: List[MapFrame] = Nil
+
+    // Set by the map-entry arm of field() when the entry ends after its key: proto3 encodes an
+    // empty or default entry value as a key-only entry. The next value read consumes the flag and
+    // presents the absent form (isNil for Maybe/Option, an empty frame for collections and maps).
+    private var absentEntryValue: Boolean = false
 
     /** Set field name mapping for the current message level. */
     def withFieldNames(names: Map[Int, String]): this.type =
@@ -110,13 +133,20 @@ final class ProtobufReader(data: Array[Byte])(using _frame: Frame) extends Reade
         mapFrames match
             case f :: _ if f.entryLimitPushed && limits.size == f.baseLimitDepth + 1 =>
                 // Map entry: read the key at field 1, then advance past the value's field-2 tag
-                // so the following value read sees the right wire type. Returns the decoded key.
+                // so the following value read sees the right wire type. A key-only entry (proto3's
+                // encoding of an empty or default value) sets absentEntryValue instead. Returns
+                // the decoded key.
                 val keyTag = readVarint().toInt
                 currentWireType = keyTag & 0x7
-                val key    = string()
-                val valTag = readVarint().toInt
-                currentFieldNumber = valTag >>> 3
-                currentWireType = valTag & 0x7
+                val key = string()
+                if pos < limits.head then
+                    val valTag = readVarint().toInt
+                    currentFieldNumber = valTag >>> 3
+                    currentWireType = valTag & 0x7
+                    absentEntryValue = false
+                else
+                    absentEntryValue = true
+                end if
                 pendingTag = false
                 key
             case _ =>
@@ -154,30 +184,53 @@ final class ProtobufReader(data: Array[Byte])(using _frame: Frame) extends Reade
     def hasNextElement(): Boolean =
         repeatedFrames match
             case frame :: _ =>
-                if frame.packed && pos >= frame.packedLimit then
-                    frame.packed = false // packed run exhausted; a mixed producer may continue
-                if frame.packed then
-                    true // still inside the current packed run, no tag to peek
-                else if frame.firstPending then
-                    frame.firstPending = false
-                    true
-                else if pos >= limits.head then false
-                else
-                    // Peek the next tag: another element only if it repeats this field's number.
-                    val start = pos
-                    val tag   = readVarint().toInt
-                    if (tag >>> 3) == frame.fieldNumber then
-                        currentFieldNumber = tag >>> 3
-                        currentWireType = tag & 0x7
+                if frame.bare then
+                    if pos < frame.bareLimit then
+                        // Bare elements: length-prefixed blobs (messages, strings, deeper
+                        // collections) consume their own length, which is what LengthDelimited
+                        // signals; bare scalars never consult the wire type.
+                        currentWireType = LengthDelimited
                         true
-                    else
-                        pos = start // un-read; the tag belongs to the enclosing message loop
-                        false
-                    end if
-                end if
+                    else false
+                else
+                    if frame.packed && pos >= frame.packedLimit then
+                        frame.packed = false // packed run exhausted; a mixed producer may continue
+                    hasNextElementUnpacked(frame)
             case Nil =>
                 hasNextField()
     end hasNextElement
+
+    private def hasNextElementUnpacked(frame: RepeatedFrame): Boolean =
+        if frame.packed then
+            true // still inside the current packed run, no tag to peek
+        else if frame.firstPending then
+            frame.firstPending = false
+            if frame.fieldNumber == 0 && limits.size == 1 then
+                // Top-level collection: no enclosing field consumed the first tag; read it
+                // now to learn the real field number (empty input is an empty collection).
+                if pos >= limits.head then false
+                else
+                    val tag = readVarint().toInt
+                    frame.fieldNumber = tag >>> 3
+                    currentFieldNumber = tag >>> 3
+                    currentWireType = tag & 0x7
+                    true
+            else true
+            end if
+        else if pos >= limits.head then false
+        else
+            // Peek the next tag: another element only if it repeats this field's number.
+            val start = pos
+            val tag   = readVarint().toInt
+            if (tag >>> 3) == frame.fieldNumber then
+                currentFieldNumber = tag >>> 3
+                currentWireType = tag & 0x7
+                true
+            else
+                pos = start // un-read; the tag belongs to the enclosing message loop
+                false
+            end if
+    end hasNextElementUnpacked
 
     // Establishes (or continues) a packed scalar run for the current repeated frame. Returns true
     // when the current element is a bare packed value. On first call of a packed run, consumes the
@@ -185,7 +238,11 @@ final class ProtobufReader(data: Array[Byte])(using _frame: Frame) extends Reade
     private def packedScalar(): Boolean =
         repeatedFrames match
             case frame :: _ =>
-                if frame.packed then true
+                if frame.bare then
+                    // Bare scalars inside a nested-collection record: raw values until the record
+                    // limit, no per-run length to consume.
+                    true
+                else if frame.packed then true
                 else if currentWireType == LengthDelimited then
                     val len = readVarint().toInt
                     if len < 0 || pos + len > data.length then
@@ -260,7 +317,13 @@ final class ProtobufReader(data: Array[Byte])(using _frame: Frame) extends Reade
         v.toChar
     end char
 
-    def isNil(): Boolean = false // protobuf has no null
+    def isNil(): Boolean =
+        // Protobuf has no null; the one absent form is a key-only map entry, which Maybe/Option
+        // value schemas probe through this method.
+        if absentEntryValue then
+            absentEntryValue = false
+            true
+        else false
 
     def skip(): Unit =
         currentWireType match
@@ -296,23 +359,49 @@ final class ProtobufReader(data: Array[Byte])(using _frame: Frame) extends Reade
 
     def arrayStart(): Int =
         checkDepth()
-        // The enclosing field() consumed the first element's tag; start the frame with it pending.
-        repeatedFrames = new RepeatedFrame(currentFieldNumber, true, false, 0) :: repeatedFrames
+        if absentEntryValue then
+            // The map entry carried no value bytes: present an empty collection.
+            absentEntryValue = false
+            repeatedFrames = new RepeatedFrame(currentFieldNumber, false, false, 0, false, 0, limits.size) :: repeatedFrames
+        else
+            val nested = repeatedFrames match
+                case head :: _ => head.limitDepth == limits.size
+                case Nil       => false
+            if nested then
+                // Nested collection: consume the record's length prefix; elements are bare and
+                // bounded by the record limit, no tags to peek.
+                val len = readVarint().toInt
+                if len < 0 || pos + len > data.length then
+                    throw TruncatedInputException(Protobuf(), s"nested collection record length $len exceeds remaining data")
+                repeatedFrames = new RepeatedFrame(currentFieldNumber, false, false, 0, true, pos + len, limits.size) :: repeatedFrames
+            else
+                // The enclosing field() consumed the first element's tag; start the frame with it
+                // pending.
+                repeatedFrames = new RepeatedFrame(currentFieldNumber, true, false, 0, false, 0, limits.size) :: repeatedFrames
+            end if
+        end if
         -1
     end arrayStart
 
     def arrayEnd(): Unit =
         decrementDepth()
         repeatedFrames match
-            case _ :: rest => repeatedFrames = rest
-            case Nil       => ()
+            case frame :: rest =>
+                if frame.bare then pos = frame.bareLimit // skip any unread bytes in the record
+                repeatedFrames = rest
+            case Nil => ()
+        end match
     end arrayEnd
 
     def mapStart(): Int =
         checkDepth()
         // The enclosing field() consumed the first entry's MapEntry tag (currentWireType == LD);
-        // entries are read by hasNextEntry() / field(). No wrapper message, so no limit is pushed here.
-        mapFrames = new MapFrame(currentFieldNumber, limits.size, true, false) :: mapFrames
+        // entries are read by hasNextEntry() / field(). No wrapper message, so no limit is pushed
+        // here. An absent map value (key-only entry) presents as an empty map: no first entry
+        // pending.
+        val first = !absentEntryValue
+        absentEntryValue = false
+        mapFrames = new MapFrame(currentFieldNumber, limits.size, first, false) :: mapFrames
         -1
     end mapStart
 
@@ -342,7 +431,17 @@ final class ProtobufReader(data: Array[Byte])(using _frame: Frame) extends Reade
                 val more =
                     if f.firstPending then
                         f.firstPending = false
-                        true
+                        if f.fieldNumber == 0 && limits.size == 1 then
+                            // Top-level map: no enclosing field consumed the first entry's tag;
+                            // read it now (empty input is an empty map).
+                            if pos >= limits.head then false
+                            else
+                                val tag = readVarint().toInt
+                                f.fieldNumber = tag >>> 3
+                                currentWireType = tag & 0x7
+                                true
+                        else true
+                        end if
                     else if pos >= limits.head then false
                     else
                         val start = pos

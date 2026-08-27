@@ -3006,6 +3006,9 @@ object Schema:
             readFn = reader =>
                 if reader.isNil() then Maybe.empty
                 else Maybe(inner.serializeRead(reader)),
+            // Absent on the wire decodes to Absent: proto3 encodes an absent optional map value as
+            // a key-only entry, and the map read loops fall back to this default.
+            absentDefaultValue = Maybe(Maybe.empty[A]),
             // Non-inline givens have no implicit Tag[A] in scope; fall back to Tag[Any].
             structure = Structure.Type.Optional(
                 "Maybe",
@@ -3028,6 +3031,9 @@ object Schema:
             readFn = reader =>
                 if reader.isNil() then None
                 else Some(inner.serializeRead(reader)),
+            // Absent on the wire decodes to None: proto3 encodes an absent optional map value as
+            // a key-only entry, and the map read loops fall back to this default.
+            absentDefaultValue = Maybe(None),
             // Non-inline givens have no implicit Tag[A] in scope; fall back to Tag[Any].
             structure = Structure.Type.Optional(
                 "Option",
@@ -3111,9 +3117,17 @@ object Schema:
                         discard(reader.hasNextField())
                         discard(reader.field()) // "key"
                         val k = kSchema.serializeRead(reader)
-                        discard(reader.hasNextField())
-                        discard(reader.field()) // "value"
-                        val v = vSchema.serializeRead(reader)
+                        // The value-side hasNextField both advances the separator and carries the
+                        // presence signal: proto3 encodes an empty or default value as a key-only
+                        // entry, which decodes to the value schema's absent default.
+                        val v =
+                            if reader.hasNextField() then
+                                discard(reader.field()) // "value"
+                                vSchema.serializeRead(reader)
+                            else
+                                vSchema.absentDefaultValue match
+                                    case Maybe.Present(dv) => dv
+                                    case _                 => throw MissingFieldException(Seq.empty, "value")(using reader.frame)
                         reader.objectEnd()
                         builder += (k -> v)
                         loop(count + 1)
@@ -3350,9 +3364,17 @@ object Schema:
                         discard(reader.hasNextField())
                         discard(reader.field()) // "key"
                         val k = kSchema.serializeRead(reader)
-                        discard(reader.hasNextField())
-                        discard(reader.field()) // "value"
-                        val v = vSchema.serializeRead(reader)
+                        // The value-side hasNextField both advances the separator and carries the
+                        // presence signal: proto3 encodes an empty or default value as a key-only
+                        // entry, which decodes to the value schema's absent default.
+                        val v =
+                            if reader.hasNextField() then
+                                discard(reader.field()) // "value"
+                                vSchema.serializeRead(reader)
+                            else
+                                vSchema.absentDefaultValue match
+                                    case Maybe.Present(dv) => dv
+                                    case _                 => throw MissingFieldException(Seq.empty, "value")(using reader.frame)
                         reader.objectEnd()
                         loop(dict.update(k, v), count + 1)
                     else dict
@@ -3460,9 +3482,17 @@ object Schema:
                         discard(reader.hasNextField())
                         discard(reader.field()) // "key"
                         val k = kSchema.serializeRead(reader)
-                        discard(reader.hasNextField())
-                        discard(reader.field()) // "value"
-                        val v = vSchema.serializeRead(reader)
+                        // The value-side hasNextField both advances the separator and carries the
+                        // presence signal: proto3 encodes an empty or default value as a key-only
+                        // entry, which decodes to the value schema's absent default.
+                        val v =
+                            if reader.hasNextField() then
+                                discard(reader.field()) // "value"
+                                vSchema.serializeRead(reader)
+                            else
+                                vSchema.absentDefaultValue match
+                                    case Maybe.Present(dv) => dv
+                                    case _                 => throw MissingFieldException(Seq.empty, "value")(using reader.frame)
                         reader.objectEnd()
                         loop(map.update(k, v), count + 1)
                     else map
