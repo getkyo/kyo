@@ -1,5 +1,28 @@
 package kyo
 
+class PathLockTest extends FileSystemLockTestSuite:
+    protected def withFileSystem(
+        use: (FileSystem.Read[Sync], Path) => Unit < (Async & Sync & Scope & Abort[FileSystemException])
+    )(using Frame): Unit < (Async & Sync & Scope & Abort[FileSystemException]) =
+        FileSystem.inMemory.map(fileSystem => use(fileSystem, Path("lock-target.bin")))
+
+    "Path lock operations dispatch through PathRead" in {
+        FileSystem.inMemory.map { fileSystem =>
+            val path = Path("path-lock-target.bin")
+            Scope.run {
+                Path.runReadOnlyWith(fileSystem) {
+                    path.lock(Path.LockMode.Shared, Path.LockWait.Immediate).map { lock =>
+                        path.tryLock(Path.LockMode.Exclusive).map { conflicting =>
+                            assert(lock.mode == Path.LockMode.Shared)
+                            assert(conflicting.isEmpty)
+                        }
+                    }
+                }
+            }
+        }
+    }
+end PathLockTest
+
 class HostPathLockTest extends FileSystemLockTestSuite:
     protected def withFileSystem(
         use: (FileSystem.Read[Sync], Path) => Unit < (Async & Sync & Scope & Abort[FileSystemException])
@@ -7,23 +30,6 @@ class HostPathLockTest extends FileSystemLockTestSuite:
         Scope.acquireRelease(FileSystem.host.tempDir("kyo-path-lock"))(handle => Sync.Unsafe.defer(handle.remove())).map { handle =>
             use(FileSystem.host, handle.path / "target.bin")
         }
-
-    "Path lock operations dispatch through PathRead" in {
-        Scope.acquireRelease(FileSystem.host.tempDir("kyo-path-lock-dispatch"))(handle => Sync.Unsafe.defer(handle.remove())).map {
-            handle =>
-                val path = handle.path / "path-lock-target.bin"
-                Scope.run {
-                    Path.runReadOnlyWith(FileSystem.host) {
-                        path.lock(Path.LockMode.Shared, Path.LockWait.Immediate).map { lock =>
-                            path.tryLock(Path.LockMode.Exclusive).map { conflicting =>
-                                assert(lock.mode == Path.LockMode.Shared)
-                                assert(conflicting.isEmpty)
-                            }
-                        }
-                    }
-                }
-        }
-    }
 
     "an interrupt delivered once the lock is held still releases it" in {
         // The acquisition interrupts its own fiber from inside the claim node, via the hook

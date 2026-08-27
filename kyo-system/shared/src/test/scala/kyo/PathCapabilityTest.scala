@@ -8,9 +8,6 @@ class PathCapabilityTest extends kyo.test.Test[Any]:
     val somePath  = Path("tmp", "cap-a.txt")
     val otherPath = Path("tmp", "cap-b.txt")
 
-    private def hostTempDir(prefix: String)(using Frame): Path < (Sync & Scope & Abort[FileSystemException]) =
-        Scope.acquireRelease(FileSystem.host.tempDir(prefix))(h => Sync.Unsafe.defer(h.remove())).map(_.path)
-
     // --- Compile-time capability laws: a green compile proves each row ascription below. ---
 
     val readOnly: String < PathRead                            = somePath.read
@@ -101,10 +98,9 @@ class PathCapabilityTest extends kyo.test.Test[Any]:
     }
 
     "concurrent child operations have isolated Path handlers" in {
-        hostTempDir("kyo-cap-concurrent").map { root =>
-            val service = FileSystem.host
-            val first   = root / "isolate-first.txt"
-            val second  = root / "isolate-second.txt"
+        FileSystem.inMemory.map { service =>
+            val first  = Path("isolate-first.txt")
+            val second = Path("isolate-second.txt")
             FileSystem.let(service) {
                 Path.run {
                     Async.zip(
@@ -117,10 +113,9 @@ class PathCapabilityTest extends kyo.test.Test[Any]:
     }
 
     "a child Path failure is restored through the parent handler" in {
-        hostTempDir("kyo-cap-child-failure").map { root =>
-            val service  = FileSystem.host
-            val existing = root / "isolate-existing.txt"
-            val missing  = root / "isolate-missing.txt"
+        FileSystem.inMemory.map { service =>
+            val existing = Path("isolate-existing.txt")
+            val missing  = Path("isolate-missing.txt")
             Path.runWith(service)(existing.write("value")).andThen {
                 Abort.run[FileSystemException] {
                     FileSystem.let(service) {
@@ -135,10 +130,9 @@ class PathCapabilityTest extends kyo.test.Test[Any]:
     }
 
     "a child PathRead panic is restored with the same throwable" in {
-        hostTempDir("kyo-cap-read-panic").map { root =>
-            val service  = FileSystem.host
+        FileSystem.inMemory.map { service =>
             val sentinel = new RuntimeException("path-read-child-panic")
-            val existing = root / "isolate-read-panic.txt"
+            val existing = Path("isolate-read-panic.txt")
             Path.runWith(service)(existing.write("value")).andThen {
                 Abort.run[FileSystemException] {
                     FileSystem.let(service) {
@@ -158,11 +152,10 @@ class PathCapabilityTest extends kyo.test.Test[Any]:
     }
 
     "a child PathWrite panic is restored with the same throwable" in {
-        hostTempDir("kyo-cap-write-panic").map { root =>
-            val service  = FileSystem.host
+        FileSystem.inMemory.map { service =>
             val sentinel = new RuntimeException("path-write-child-panic")
-            val first    = root / "isolate-write-panic-first.txt"
-            val second   = root / "isolate-write-panic-second.txt"
+            val first    = Path("isolate-write-panic-first.txt")
+            val second   = Path("isolate-write-panic-second.txt")
             Abort.run[FileSystemException] {
                 FileSystem.let(service) {
                     Path.run {
@@ -180,10 +173,9 @@ class PathCapabilityTest extends kyo.test.Test[Any]:
     }
 
     "a failing child PathWrite restores its concrete typed error" in {
-        hostTempDir("kyo-cap-typed-error").map { root =>
-            val service       = FileSystem.host
-            val missingParent = root / "isolate-missing-parent" / "child.txt"
-            val successful    = root / "isolate-write-success.txt"
+        FileSystem.inMemory.map { service =>
+            val missingParent = Path("isolate-missing-parent", "child.txt")
+            val successful    = Path("isolate-write-success.txt")
             Abort.run[FileSystemException] {
                 FileSystem.let(service) {
                     Path.run {

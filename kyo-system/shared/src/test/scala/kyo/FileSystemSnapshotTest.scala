@@ -5,9 +5,6 @@ class FileSystemSnapshotTest extends kyo.test.Test[Any]:
 
     private given Frame = Frame.internal
 
-    private def hostTempDir(prefix: String): Path < (Sync & Scope & Abort[FileSystemException]) =
-        Scope.acquireRelease(FileSystem.host.tempDir(prefix))(h => Sync.Unsafe.defer(h.remove())).map(_.path)
-
     private def glob(value: String): Glob =
         Glob.parse(value) match
             case Result.Success(value) => value
@@ -30,9 +27,8 @@ class FileSystemSnapshotTest extends kyo.test.Test[Any]:
     }
 
     "normalized tree snapshot represents backend contents" in {
-        hostTempDir("kyo-snapshot-tree").map { dir =>
-            val fileSystem = FileSystem.host
-            val root       = dir / "root"
+        FileSystem.inMemory.map { fileSystem =>
+            val root = Path("root")
             fileSystem.mkDir(root).andThen {
                 fileSystem.write(root / "a.txt", "a", Path.WriteOptions()).andThen {
                     fileSystem.write(root / "nested" / "b.txt", "b", Path.WriteOptions()).andThen {
@@ -54,10 +50,9 @@ class FileSystemSnapshotTest extends kyo.test.Test[Any]:
 
     "watch trace snapshot represents ordered changes" in {
         Clock.withTimeControl { clock =>
-            hostTempDir("kyo-snapshot-watch").map { dir =>
-                val fileSystem = FileSystem.host
-                val root       = dir / "root"
-                val file       = root / "a.txt"
+            FileSystem.inMemory.map { fileSystem =>
+                val root = Path("root")
+                val file = root / "a.txt"
                 fileSystem.mkDir(root).andThen {
                     fileSystem.openWatcher(root, WatchOptions()).map { watcher =>
                         fileSystem.write(file, "a", Path.WriteOptions()).andThen(take(clock, watcher)).map { created =>
@@ -65,8 +60,7 @@ class FileSystemSnapshotTest extends kyo.test.Test[Any]:
                                 fileSystem.removeExisting(file).andThen(take(clock, watcher)).map { removed =>
                                     val trace = created ++ modified ++ removed
                                     assert(trace == Chunk(PathChange.Created(file), PathChange.Modified(file), PathChange.Removed(file)))
-                                    val normalized = trace.map(_.toString.replace(s"${dir.toString}/", ""))
-                                    assert(normalized.mkString("\n") == FileSystemSnapshotValues.watchTrace)
+                                    assert(trace.mkString("\n") == FileSystemSnapshotValues.watchTrace)
                                 }
                             }
                         }

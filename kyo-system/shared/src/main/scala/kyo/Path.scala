@@ -287,7 +287,7 @@ object Path extends PathPlatformSpecific:
       * Residual: `Sync & Abort[FileSystemException] & S` (the caller's tail `S` rides through).
       *
       * @see
-      *   [[runWith]] to install a custom [[FileSystem]] (root-confined host)
+      *   [[runWith]] to install a custom [[FileSystem]] (in-memory, root-confined host)
       */
     def run[A, S](program: A < (PathWrite & S))(using Frame): A < (Sync & Abort[FileSystemException] & S) =
         FileSystem.useErased(service => runWith(service)(program))
@@ -309,8 +309,9 @@ object Path extends PathPlatformSpecific:
     /** Runs `program` against an explicit `fileSystem`, discharging write and read; the backend's own
       * effect `FS` rides the residual (the Journal `Backend[S]` mapping).
       *
-      * Install [[FileSystem.host]](root) for root-confined host I/O. The selected service
-      * determines when writes become durable relative to the enclosing run.
+      * Install [[FileSystem.inMemory]] for hermetic tests, or [[FileSystem.host]](root) for
+      * root-confined host I/O. The selected service determines when writes become durable
+      * relative to the enclosing run.
       */
     def runWith[A, S, FS](fileSystem: FileSystem.Write[FS])(program: A < (PathWrite & S))(using
         Frame
@@ -546,11 +547,12 @@ object Path extends PathPlatformSpecific:
             .map(_.path)
 
     /** Creates a temporary directory in the active service and registers its recursive removal with
-      * the enclosing `Scope`. The removal runs through the service that created the directory, so a
-      * temp dir made by one service is never deleted by another service's `removeAll`. There is no
-      * unscoped public temp-directory primitive. The location of the created directory is
-      * service-defined: unconfined host services use the OS temporary directory; root-confined host
-      * services create the directory inside their root.
+      * the enclosing `Scope`. The removal runs through the service that created the directory (host:
+      * real recursive delete; in-memory: map-subtree removal), so a temp dir made by one service is
+      * never deleted by another service's `removeAll`. There is no unscoped public temp-directory
+      * primitive. The location of the created directory is service-defined: unconfined host services
+      * use the OS temporary directory; root-confined host services create the directory inside their
+      * root.
       */
     def tempDir(prefix: String = "kyo")(using Frame): Path < (PathWrite & Sync & Scope) =
         Scope.acquireRelease(
@@ -804,9 +806,14 @@ object Path extends PathPlatformSpecific:
           * under the root, defending against symlink escapes. Run the check before using the path,
           * which is also the ordering under which every backend resolves links.
           *
-          * The check is only as strong as the active backend's `realPath`. Host backends resolve
-          * every link, and require both `self` and `root` to exist: either one missing fails with
-          * `FileNotFoundException`.
+          * The check is only as strong as the active backend's `realPath`:
+          *
+          *   - Host backends resolve every link, and require both `self` and `root` to exist: either
+          *     one missing fails with `FileNotFoundException`.
+          *   - Backends whose paths are pure keys with no link topology (in-memory) resolve a path
+          *     to itself, so the check reduces to a parts-prefix comparison and an absent path does
+          *     not fail. Those backends have no symlinks, so resolution has nothing to defend
+          *     against.
           */
         def confinedTo(root: Path)(using Frame): Path < (PathRead & Abort[FileSystemException]) =
             ArrowEffect.suspend(Tag[PathRead], Path.Op.RealPath(root)).map { rootReal =>

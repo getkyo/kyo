@@ -16,17 +16,17 @@ abstract class FileSystemReadTestSuite extends kyo.test.Test[Any]:
     /** Declares whether this backend resolves paths against a store that tracks existence.
       *
       * Backends over a real filesystem (host) fail with [[FileNotFoundException]] when asked to
-      * resolve an absent path. A backend whose paths are pure keys with no link topology could
-      * return the path unchanged instead. Each fixture states which it is, so `realPath` carries
-      * an asserted contract on every backend rather than an untested one.
+      * resolve an absent path. Backends whose paths are pure keys with no link topology
+      * (in-memory) return the path unchanged. Each fixture states which it is, so `realPath`
+      * carries an asserted contract on every backend rather than an untested one.
       */
     protected def realPathRequiresExistence: Boolean = false
 
     /** Declares whether this fixture can create a symbolic link, and creates one when it can.
       *
       * Symbolic links are the one filesystem behaviour this suite cannot exercise from shared code:
-      * there is no public link-creation operation, so each platform supplies its own. A backend
-      * whose paths are pure keys with no links at all leaves this declared false.
+      * there is no public link-creation operation, so each platform supplies its own. Backends whose
+      * paths are pure keys (in-memory) have no links at all and leave this declared false.
       *
       * Without this the suite asserts only that a regular file is not a link, which every backend
       * satisfies by answering false to everything, including a backend that has stopped resolving
