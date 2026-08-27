@@ -93,6 +93,12 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
                 }
 
                 "shell" in {
+                    // The http arm above needs a socket to talk to; this one needs a binary to exec. A
+                    // runtime reached through a mounted socket with no CLI installed (a build container, and
+                    // any CI runner wired the same way) is genuinely available for HTTP and cannot serve
+                    // Shell at all. Cancelled rather than unregistered so the skip is visible in the run's
+                    // own totals instead of the leaf silently not existing.
+                    assume(ContainerRuntime.hasCli(runtime), s"$runtime CLI is not on PATH; the Shell backend needs it")
                     Container.withBackendConfig(_.Shell(runtime))(checkingContainerLeak(v))
                 }
             }
@@ -116,6 +122,12 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
                 }
 
                 "shell" in {
+                    // The http arm above needs a socket to talk to; this one needs a binary to exec. A
+                    // runtime reached through a mounted socket with no CLI installed (a build container, and
+                    // any CI runner wired the same way) is genuinely available for HTTP and cannot serve
+                    // Shell at all. Cancelled rather than unregistered so the skip is visible in the run's
+                    // own totals instead of the leaf silently not existing.
+                    assume(ContainerRuntime.hasCli(runtime), s"$runtime CLI is not on PATH; the Shell backend needs it")
                     Container.withBackendConfig(_.Shell(runtime))(checkingContainerLeak(v))
                 }
             }

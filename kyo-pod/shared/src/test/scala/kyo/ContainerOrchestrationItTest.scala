@@ -6,9 +6,14 @@ package kyo
   * These tests exercise framework code paths (kyo Async/Scope, healthcheck retry logic, multi-container orchestration helpers) where the
   * choice of container backend (HTTP vs Shell) and runtime (Podman vs Docker) is plumbing rather than the subject under test. They use
   * [[Test.runBackend]] (single leaf, HTTP backend, auto-detected runtime), so the suite registers no `[runtime]` markers and the build's
-  * testGrouping does not fork it per runtime — every test runs once total. Tests that genuinely exercise backend-specific code paths (init
-  * JSON vs CLI args, exec stream framing, log demuxing, image parsing, error mapping, …) stay in [[ContainerItTest]] and use `runBackends`
-  * for full http × shell × podman × docker coverage.
+  * testGrouping does not fork it per runtime: every test runs once total. Tests that genuinely exercise backend-specific code paths (init
+  * JSON vs CLI args, exec stream framing, log demuxing, image parsing, error mapping, and so on) stay in [[ContainerItTest]], which uses
+  * the plural marker-registering helper for full http x shell x podman x docker coverage.
+  *
+  * That last sentence deliberately does not spell the plural helper's name. `build.sbt`'s testGrouping decides whether to fork a suite per
+  * runtime by grepping its SOURCE for that name, comments included, so naming it here forked this suite per runtime and made the sentence
+  * above false: on a host with one working runtime the second fork registered no leaves at all, and on a host with two it ran every leaf
+  * twice. The grep is the fragile part and belongs in the build; until it distinguishes a call from a mention, do not write the name here.
   */
 class ContainerOrchestrationItTest extends BasePodTest:
 
@@ -476,6 +481,13 @@ class ContainerOrchestrationItTest extends BasePodTest:
     }
 
     "scope cleanup delivers stopSignal before force-removing when stopSignal is Present" - runBackend {
+        // The witness is a file the container writes into a bind-mounted host directory, so this needs the
+        // daemon to see the path this process created. Under docker-out-of-docker it does not: the marker
+        // lands in the sibling daemon host's /tmp, not ours, and the leaf reads an empty directory.
+        assume(
+            ContainerRuntime.daemonSharesFilesystem,
+            "the daemon is a sibling container; the bind-mounted marker is not written where this process reads it"
+        )
         // The container traps its stopSignal to write a host marker before delaying past stopTimeout, so the marker is a clock-free witness
         // the signal arrived. Async.timeout is the completion valve: a kill path that hung on waitForExit instead of force-removing trips it.
         val hostDir = Path("/tmp/" + uniqueName("kyo-stopsig"))

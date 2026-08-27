@@ -2289,8 +2289,17 @@ object Container:
             case BackendConfig.AutoDetect(meter, apiVersion, streamBufferSize) =>
                 ContainerBackend.detect(meter, apiVersion, streamBufferSize)
             case BackendConfig.UnixSocket(path, meter, apiVersion) =>
+                // Explicit socket, same runtime question: ask the daemon rather than reading its family off the
+                // path, so the diagnostic and the libpod feature gating are right here too.
                 val backend = new HttpContainerBackend(path.toString, apiVersion, meter)
-                backend.detect().andThen(backend)
+                // Explicit socket, same runtime question: ask the daemon rather than reading its family off
+                // the path, so the diagnostic and the libpod feature gating are right here too. Recorded on
+                // this backend rather than returned in a new one, which leaks containers (see
+                // HttpContainerBackend.recordProbedRuntime).
+                backend.detect().andThen(HttpContainerBackend.probeRuntime(backend)).map { runtime =>
+                    backend.recordProbedRuntime(runtime)
+                    backend
+                }
             case BackendConfig.Shell(cmd, meter, streamBufferSize) =>
                 val backend = new ShellBackend(cmd, meter, streamBufferSize)
                 backend.detect().andThen(backend)

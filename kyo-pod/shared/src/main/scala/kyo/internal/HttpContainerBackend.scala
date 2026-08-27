@@ -29,14 +29,36 @@ import kyo.schema.omit
 final private[kyo] class HttpContainerBackend(
     socketPath: String,
     private[internal] val apiVersion: String = HttpContainerBackend.defaultApiVersion,
-    meter: Meter = Meter.Noop
+    meter: Meter = Meter.Noop,
+    probedRuntime: Maybe[String] = Absent
 ) extends ContainerBackend(meter):
 
     import Container.*
 
-    /** Runtime family derived from the socket path — "podman" if the path contains "podman", else "docker". Diagnostic only. */
-    private val runtimeName: String =
-        if socketPath.contains("podman") then "podman" else "docker"
+    // Set once, by `recordProbedRuntime` during detection, and read-only afterwards. It is a var because
+    // the alternative measured worse: returning a SECOND HttpContainerBackend carrying the answer (which is
+    // what this did first) leaks containers. A scope-managed container captures the backend that created it
+    // for its teardown, so handing the caller a different instance than the one detection validated breaks
+    // that pairing; the container-leak check added in the test base caught 37 leaves leaving containers
+    // Running, and the same run with the original instance returned leaks none. Single-owner: written once
+    // on the detection path before the backend is published to any caller, read everywhere after.
+    @volatile private var probedName: Maybe[String] = probedRuntime
+
+    /** Records what the daemon answered. Called once by detection, before this backend reaches a caller. */
+    private[kyo] def recordProbedRuntime(runtime: String): Unit =
+        probedName = Present(runtime)
+
+    /** The runtime family this backend is talking to.
+      *
+      * The daemon's own answer when it has been asked (`HttpContainerBackend.probeRuntime`, which detection
+      * runs once per backend), falling back to the socket path otherwise. The path is a poor witness and was
+      * the only one: podman serves the Docker Engine API, and `/var/run/docker.sock` is commonly a symlink to
+      * the podman machine's socket, so a podman-only host was reported as docker. This is not only a label.
+      * The libpod-native paths below are gated on it, so a podman daemon reached through a docker-named socket
+      * silently lost the update endpoints kyo-pod uses it for.
+      */
+    private[kyo] def runtimeName: String =
+        probedName.getOrElse(if socketPath.contains("podman") then "podman" else "docker")
 
     /** Builds an `http+unix://` URL for the Docker API.
       *
@@ -1968,7 +1990,8 @@ final private[kyo] class HttpContainerBackend(
     // --- Backend detection ---
 
     def describe: String =
-        s"HttpContainerBackend(socket=$socketPath, apiVersion=$apiVersion, runtime=$runtimeName)"
+        s"HttpContainerBackend(socket=$socketPath, apiVersion=$apiVersion, runtime=$runtimeName, " +
+            s"cli=${HttpContainerBackend.cliEquivalent(socketPath, runtimeName)})"
 
     /** Probe THIS backend's configured socket via `_ping`. Used by [[HttpContainerBackend.detect]] (companion) during candidate
       * enumeration.
@@ -2913,7 +2936,22 @@ private[kyo] object HttpContainerBackend:
                     val backend = new HttpContainerBackend(path, apiVersion, meter)
                     Abort.run[ContainerException](backend.detect()).map {
                         case Result.Success(_) =>
-                            Log.info(s"kyo-pod: using HTTP backend at $path (apiVersion=${backend.apiVersion})").andThen(backend)
+                            // Ask the daemon what it is, rather than reading it off the socket path. The answer
+                            // is carried by the backend that is returned, so `describe` and the libpod gating
+                            // both see it. The startup line prints the command that reaches this same daemon
+                            // from a shell, because the CLI's own default connection can be a different (or
+                            // broken) endpoint, and "podman ps shows nothing" is exactly when a user concludes
+                            // their code started nothing.
+                            probeRuntime(backend).map { runtime =>
+                                // Record on the SAME backend rather than building a resolved copy: a
+                                // scope-managed container captures its creating backend for teardown, so a
+                                // second instance breaks that pairing and leaks containers.
+                                backend.recordProbedRuntime(runtime)
+                                Log.info(
+                                    s"kyo-pod: using HTTP backend at $path (apiVersion=${backend.apiVersion}, " +
+                                        s"runtime=$runtime). Same daemon from a shell: ${cliEquivalent(path, runtime)}"
+                                ).andThen(backend)
+                            }
                         case Result.Failure(_) => tryNext(remaining.tail)
                         case Result.Panic(ex) =>
                             Log.warn(s"Unexpected error pinging socket $path", ex).andThen(
@@ -2924,6 +2962,33 @@ private[kyo] object HttpContainerBackend:
             end tryNext
             tryNext(candidates)
         }
+
+    /** Ask the daemon which runtime it is, through the docker-compat `/version` endpoint.
+      *
+      * Podman's `/version` names itself in its `Components` list ("Podman Engine"); Docker's names "Engine".
+      * The body is matched as text rather than decoded into a DTO because the shape differs between the two
+      * and across API versions, while the name itself does not. A daemon that does not answer, or answers
+      * something unrecognized, leaves the backend on its socket-path heuristic rather than failing detection:
+      * this is a diagnostic and a feature-gating hint, never a reason to reject a daemon that just pinged.
+      */
+    private[kyo] def probeRuntime(backend: HttpContainerBackend)(using Frame): String < Async =
+        Abort.run[Throwable](HttpClient.getText(backend.url("/version"))).map {
+            case Result.Success(body) if body.toLowerCase.contains("podman") => "podman"
+            case Result.Success(_)                                           => "docker"
+            case _                                                           => backend.runtimeName
+        }
+
+    /** The shell command that reaches the same daemon this backend is bound to.
+      *
+      * kyo-pod probes and picks a socket that works, which is not necessarily the one the user's CLI is
+      * configured for: on a host whose `podman system connection` default is broken, kyo-pod talks to the
+      * machine socket through `/var/run/docker.sock` while `podman ps` shows nothing at all. Printing the
+      * equivalent command turns that from "my code started nothing" into one line to paste. The env var
+      * differs by runtime: podman reads `CONTAINER_HOST` and ignores `DOCKER_HOST`.
+      */
+    private[kyo] def cliEquivalent(socketPath: String, runtime: String): String =
+        if runtime == "podman" then s"CONTAINER_HOST=unix://$socketPath podman ps"
+        else s"DOCKER_HOST=unix://$socketPath docker ps"
 
     /** Parse a `CONTAINER_HOST` / `DOCKER_HOST` env var value into a Unix socket path.
       *
