@@ -1531,14 +1531,7 @@ lazy val `kyo-stats-machine` =
             ffiLibraries := Seq(
                 FfiLibrary(
                     id = "machine_macos",
-                    cSources = Seq((baseDirectory.value / ".." / "shared" / "src" / "main" / "c" / "machine_macos.c").getAbsoluteFile),
-                    // Mach calls only: the shim is loaded on macOS and nowhere else. Its C is #ifdef-guarded
-                    // to same-signature stubs off __APPLE__, so it compiles on a Linux or Windows host too,
-                    // and without this the release built on Linux shipped a Linux artifact for a binding no
-                    // Linux process ever loads, while shipping no darwin artifact at all. Scala Native still
-                    // compiles the C into the binary on every OS (that is what keeps the stub symbols
-                    // resolvable there); this governs the JVM/JS shared library only.
-                    osTargets = Seq("darwin")
+                    cSources = Seq((baseDirectory.value / ".." / "shared" / "src" / "main" / "c" / "machine_macos.c").getAbsoluteFile)
                 )
             )
         )

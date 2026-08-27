@@ -35,8 +35,7 @@ final private[machine] class MachineWindows(h: MachineHandles, s: MachineSampler
                     readCpu(b)
                     readMemoryAndSwap(b)
                 catch
-                    case ex: Throwable if Machine.degradable(ex) =>
-                        discard(Machine.reportDegraded("the Windows host reader", ex))
+                    case ex: Throwable if scala.util.control.NonFatal(ex) || ex.isInstanceOf[LinkageError] => ()
             case Absent => ()
 
     def readDisks()(using AllowUnsafe): Unit =
@@ -44,8 +43,7 @@ final private[machine] class MachineWindows(h: MachineHandles, s: MachineSampler
             case Present(b) =>
                 try disk.read(b)
                 catch
-                    case ex: Throwable if Machine.degradable(ex) =>
-                        discard(Machine.reportDegraded("the Windows disk reader", ex))
+                    case ex: Throwable if scala.util.control.NonFatal(ex) || ex.isInstanceOf[LinkageError] => ()
             case Absent => ()
 
     def close()(using AllowUnsafe): Unit =
@@ -58,10 +56,7 @@ final private[machine] class MachineWindows(h: MachineHandles, s: MachineSampler
 
     private lazy val bindings: Maybe[WindowsBindings] =
         try Present(Ffi.load[WindowsBindings])
-        catch
-            case ex: Throwable if Machine.degradable(ex) =>
-                discard(Machine.reportDegraded("the Windows host reader's native bindings", ex))
-                Absent
+        catch case ex: Throwable if scala.util.control.NonFatal(ex) => Absent
 
     private[machine] def readCpu(b: WindowsBindings)(using AllowUnsafe): Unit =
         // GetSystemTimes takes three out-params, each a FILETIME: one little-endian 100ns int64.

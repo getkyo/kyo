@@ -44,16 +44,6 @@ abstract class Histogram extends Serializable:
       *   The value to observe
       */
     def observe(v: Double)(using Frame): Unit < Sync
-
-    /** Read the current distribution: bucket counts, observation count, min, max and running sum.
-      *
-      * The safe-tier read that mirrors `Counter.get` and `Gauge.collect`. Reading is non-destructive: buckets
-      * and sum describe the histogram's whole lifetime, so a dashboard can poll this without disturbing an
-      * exporter reading the same instrument.
-      * @return
-      *   A snapshot of the distribution, wrapped in Sync
-      */
-    def summary(using Frame): Summary < Sync
 end Histogram
 
 /** A gauge for measuring a specific value that can go up and down.
@@ -111,60 +101,6 @@ final class Stat(private val registryScope: StatsRegistry.Scope) extends Seriali
             def inc(using Frame)          = Sync.Unsafe.defer(unsafe.inc())
             def add(v: Long)(using Frame) = Sync.Unsafe.defer(unsafe.add(v))
 
-    /** The counter already registered at `name`, or `Absent`. Never registers.
-      *
-      * `initCounter` is first-writer-wins: a reader that calls it for someone else's metric registers its
-      * own instrument at that path and permanently shadows the producer's value, so a consumer reading a
-      * metric it does not own has to ask instead of mint. That is what this is for: reading a family a
-      * library registered (kyo-stats-machine's `machine.*`, an integration's own counters), and reading a
-      * name that was never registered answers `Absent` rather than quietly creating it.
-      *
-      * The handle is the same safe `Counter` `initCounter` returns, so the read is `< Sync` and needs no
-      * `AllowUnsafe` at the call site. `StatsRegistry`'s own `find*` remain the unsafe-tier equivalents an
-      * exporter uses on the hot path.
-      */
-    def findCounter(name: String)(using Frame): Maybe[Counter] < Sync =
-        Sync.Unsafe.defer {
-            Maybe.fromOption(registryScope.findCounter(name)).map { u =>
-                new Counter:
-                    val unsafe                    = u
-                    def get(using Frame)          = Sync.Unsafe.defer(unsafe.get())
-                    def inc(using Frame)          = Sync.Unsafe.defer(unsafe.inc())
-                    def add(v: Long)(using Frame) = Sync.Unsafe.defer(unsafe.add(v))
-            }
-        }
-
-    /** The histogram already registered at `name`, or `Absent`. Never registers.
-      *
-      * Same reasoning as `findCounter`: reading a distribution someone else produces, without minting a
-      * second instrument at that path. `summary` on the result is the non-destructive read, so polling it
-      * does not disturb an exporter reading the same histogram.
-      */
-    def findHistogram(name: String)(using Frame): Maybe[Histogram] < Sync =
-        Sync.Unsafe.defer {
-            Maybe.fromOption(registryScope.findHistogram(name)).map { u =>
-                new Histogram:
-                    val unsafe                          = u
-                    def observe(v: Long)(using Frame)   = Sync.Unsafe.defer(unsafe.observe(v))
-                    def observe(v: Double)(using Frame) = Sync.Unsafe.defer(unsafe.observe(v))
-                    def summary(using Frame)            = Sync.Unsafe.defer(unsafe.summary())
-            }
-        }
-
-    /** The gauge already registered at `name`, or `Absent`. Never registers.
-      *
-      * The shadowing hazard is worst here: `initGauge` takes the caller's own thunk, so a reader that mints
-      * instead of finding replaces what the producer publishes with whatever it happened to pass.
-      */
-    def findGauge(name: String)(using Frame): Maybe[Gauge] < Sync =
-        Sync.Unsafe.defer {
-            Maybe.fromOption(registryScope.findGauge(name)).map { u =>
-                new Gauge:
-                    val unsafe               = u
-                    def collect(using Frame) = Sync.Unsafe.defer(unsafe.collect())
-            }
-        }
-
     /** Initialize a new Histogram.
       * @param name
       *   The name of the histogram
@@ -182,7 +118,6 @@ final class Stat(private val registryScope: StatsRegistry.Scope) extends Seriali
             val unsafe                          = registryScope.histogram(name, description, boundaries)
             def observe(v: Double)(using Frame) = Sync.Unsafe.defer(unsafe.observe(v))
             def observe(v: Long)(using Frame)   = Sync.Unsafe.defer(unsafe.observe(v))
-            def summary(using Frame)            = Sync.Unsafe.defer(unsafe.summary())
 
     /** Initialize a new Gauge.
       * @param name
@@ -273,24 +208,6 @@ object Stat:
 
     private[kyo] val kyoScope = initScope("kyo")
 
-    /** How many times `activate` has been called, for tests that need to prove a call site is wired.
-      *
-      * Activation itself is idempotent (this object initializes once), so the flag a test would otherwise
-      * read says nothing about WHICH code path reached it. The count does, and it is order-independent: a
-      * test records it, exercises the path, and asserts it moved.
-      */
-    // Unsafe: a plain process-global counter incremented from `activate`, which runs before any effect
-    // handler exists to supply AllowUnsafe.
-    private val activations =
-        import AllowUnsafe.embrace.danger
-        AtomicInt.Unsafe.init(0)
-    end activations
-
-    private[kyo] def activationCount: Int =
-        import AllowUnsafe.embrace.danger
-        activations.get()
-    end activationCount
-
     /** Forces service-loader discovery of every classpath-present `ExporterFactory` at class
       * initialization, so a metrics-only app that never opens a trace still constructs each factory.
       * A factory whose construction starts a background collector (host-metrics sampling) activates
@@ -314,23 +231,5 @@ object Stat:
       */
     def initScope(first: String, rest: String*): Stat =
         new Stat(StatsRegistry.scope(first).scope(rest*))
-
-    /** Runs classpath-presence activation for the stats service providers, once per process.
-      *
-      * A provider on the classpath (kyo-stats-otlp's exporter, kyo-stats-machine's host sampler) activates
-      * when this object initializes, and this method is the way to make that happen at a chosen moment
-      * instead of waiting for the first metric to be touched. `kyo.KyoApp` calls it before running the
-      * application's own code, so an ordinary kyo application never calls it itself.
-      *
-      * Call it once at startup from a host that is not a `KyoApp`: a library embedded in an application that
-      * is not kyo's, or an entrypoint of your own. Nothing else in kyo-core activates. The only hook that
-      * would cover every process is the fiber-creation path, and a stats concern does not belong in the
-      * scheduler's hot path. Repeated calls do nothing.
-      */
-    def activate(): Unit =
-        import AllowUnsafe.embrace.danger
-        val _ = eagerExporterScan
-        discard(activations.incrementAndGet())
-    end activate
 
 end Stat

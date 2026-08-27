@@ -47,10 +47,7 @@ final private[machine] class MachineLinux(h: MachineHandles, s: MachineSampler)(
       */
     private lazy val bindings: Maybe[LinuxBindings] =
         try Present(Ffi.load[LinuxBindings])
-        catch
-            case ex: Throwable if Machine.degradable(ex) =>
-                discard(Machine.reportDegraded("the Linux host reader's native bindings", ex))
-                Absent
+        catch case ex: Throwable if scala.util.control.NonFatal(ex) => Absent
 
     /** The nanoseconds-per-jiffy scale from sysconf(_SC_CLK_TCK), resolved once. Falls back to the 100 Hz
       * Linux default when sysconf is unavailable or returns a non-positive value.
@@ -77,9 +74,6 @@ private[machine] object MachineLinux:
         try
             val hz = bindings.sysconf(LinuxBindings.ScClkTck)
             if hz > 0 then 1000000000L / hz else defaultJiffiesToNanos
-        catch
-            case ex: Throwable if Machine.degradable(ex) =>
-                discard(Machine.reportDegraded("the Linux jiffy scale (sysconf)", ex))
-                defaultJiffiesToNanos
+        catch case ex: Throwable if scala.util.control.NonFatal(ex) => defaultJiffiesToNanos
 
 end MachineLinux

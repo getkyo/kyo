@@ -22,15 +22,8 @@ trait KyoAppRunner:
     /** Wraps an effect for execution (interrupts, scope, etc.). */
     protected def handle[A](v: A < (Async & Scope & Abort[Any]))(using Frame): A < (Async & Abort[Throwable])
 
-    /** Runs all registered thunks in order.
-      *
-      * Activation of the stats service providers happens first, so a classpath-present collector
-      * (kyo-stats-machine's host sampler, kyo-stats-otlp's exporter) is running before the application's own
-      * code starts producing the metrics it would otherwise miss. This is the entrypoint every kyo
-      * application funnels through, which is what makes classpath presence alone enough to activate.
-      */
+    /** Runs all registered thunks in order. */
     final protected def runInitCode(): Unit =
-        Stat.activate()
         for proc <- initCode do proc()
     end runInitCode
 

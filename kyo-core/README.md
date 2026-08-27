@@ -585,13 +585,13 @@ A rejection raises `Abort[Rejected]`, which the caller can translate into an HTT
 
 ### `Signal`: reactive value with change streams
 
-When downstream code must react to value changes (UI state, config reload, feature flags), use `Signal`. It exposes a mutable cell (`SignalRef[A]`) whose changes propagate to subscribers.
+When downstream code must react to value changes (UI state, config reload, feature flags), use `Signal`. It exposes a mutable cell (`Signal.Ref[A]`) whose changes propagate to subscribers.
 
 ```scala
 import kyo.*
 
 val example: Unit < (Async & Sync) =
-    Signal.initRef(0).map { (count: SignalRef[Int]) =>
+    Signal.initRef(0).map { count =>
         Async.foreachDiscard(1 to 100) { _ =>
             count.updateAndGet(_ + 1).unit
         }.andThen {
@@ -922,18 +922,7 @@ def currentDepth: Int = ???
 def activeCount: Long = ???
 ```
 
-`Counter` exposes `inc`, `add(v)`, `get`. `Histogram` exposes `observe(v)` and `summary`, a non-destructive read of the whole distribution. `Gauge` and `CounterGauge` are read-only views: the registry calls the provided thunk on each scrape.
-
-The `init*` methods REGISTER, and registration is first-writer-wins. That makes them the wrong call for reading a metric somebody else publishes: `initGauge` supplies the thunk, so a consumer that calls it before the producer wins the path and the producer's real value becomes unreachable for the life of the process. To read without registering, ask:
-
-```scala
-val orders = Stat.initScope("kyo", "orders")
-
-val hostCpu: Maybe[Histogram] < Sync = Stat.initScope("machine", "cpu").findHistogram("total.rate")
-val missing: Maybe[Counter] < Sync   = orders.findCounter("processsed") // Absent; the typo registers nothing
-```
-
-`findCounter`, `findGauge` and `findHistogram` answer `Absent` when nothing is registered at that name and never create anything, so a misspelled path fails visibly instead of becoming a brand-new zeroed instrument that an exporter publishes and a dashboard renders as a permanent flat line.
+`Counter` exposes `inc`, `add(v)`, `get`. `Histogram` exposes `observe(v)`. `Gauge` and `CounterGauge` are read-only views: the registry calls the provided thunk on each scrape.
 
 `Stat.traceSpan(name, attributes)(v)` wraps a computation in a trace span exported via the registered `TraceExporter`. `Stat.traceListen(exporter)(v)` registers an exporter for the duration of the scope.
 
