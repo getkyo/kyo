@@ -109,11 +109,10 @@ private[kyo] object TagMacro:
     /** Opaque types whose alias the compiler substitutes at the expansion point.
       *
       * An opaque type is transparent in the template that declares it and in its companion object,
-      * and opaque everywhere else. Only the owner chain of the splice separates the two: comparing
-      * or dealiasing types in a macro sees through opacity wherever it is asked, so those report
-      * what the underlying type is, never whether this site is allowed to know. An enclosing
-      * template contributes all of its opaque members; a package contributes only the ones named
-      * after an enclosing object, which is the companion case.
+      * and opaque everywhere else. The owner chain of the splice is what separates the two: type
+      * comparison and dealiasing in a macro follow the same rule, so at a transparent site they
+      * see through the alias and report the underlying type, which is exactly the substitution
+      * this check has to recognize. Every template on the chain contributes its opaque members.
       */
     private def transparentOpaques(using Quotes): List[(quotes.reflect.Symbol, quotes.reflect.TypeRepr)] =
         import quotes.reflect.*

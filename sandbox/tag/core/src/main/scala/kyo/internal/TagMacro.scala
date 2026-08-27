@@ -109,11 +109,10 @@ private[kyo] object TagMacro:
     /** Opaque types whose alias the compiler substitutes at the expansion point.
       *
       * An opaque type is transparent in the template that declares it and in its companion object,
-      * and opaque everywhere else. Only the owner chain of the splice separates the two: comparing
-      * or dealiasing types in a macro sees through opacity wherever it is asked, so those report
-      * what the underlying type is, never whether this site is allowed to know. An enclosing
-      * template contributes all of its opaque members; a package contributes only the ones named
-      * after an enclosing object, which is the companion case.
+      * and opaque everywhere else. The owner chain of the splice is what separates the two: type
+      * comparison and dealiasing in a macro follow the same rule, so at a transparent site they
+      * see through the alias and report the underlying type, which is exactly the substitution
+      * this check has to recognize. Every template on the chain contributes its opaque members.
       */
     private def transparentOpaques(using Quotes): List[(quotes.reflect.Symbol, quotes.reflect.TypeRepr)] =
         import quotes.reflect.*
@@ -165,7 +164,7 @@ private[kyo] object TagMacro:
                 def holeIndex(tpe: TypeRepr): Option[Int] =
                     (underlying, tpe) match
                         case (lambda: TypeLambda, ref: ParamRef) if ref.binder.equals(lambda) => Some(ref.paramNum)
-                        case _                                                              => None
+                        case _                                                                => None
 
                 // At the root a union or intersection may carry members beyond the underlying's:
                 // `X | Int` collapses to `String | Long | Int` when `X = String | Long`, and the
@@ -251,8 +250,8 @@ private[kyo] object TagMacro:
                 else
                     tycon.typeSymbol.tree match
                         case TypeDef(_, LambdaTypeTree(_, body: TypeTree)) => Some(body.tpe)
-                        case TypeDef(_, rhs: TypeTree)           => Some(rhs.tpe)
-                        case _                                   => None
+                        case TypeDef(_, rhs: TypeTree)                     => Some(rhs.tpe)
+                        case _                                             => None
 
             def walkable(tpe: TypeRepr): Boolean =
                 tpe.dealias match
@@ -283,9 +282,9 @@ private[kyo] object TagMacro:
                 .foreach { definition =>
                     val declared =
                         definition.tree match
-                            case ValDef(_, tpt, _)       => Some(tpt.tpe)
-                            case DefDef(_, _, tpt, _)    => Some(tpt.tpe)
-                            case _                       => None
+                            case ValDef(_, tpt, _)    => Some(tpt.tpe)
+                            case DefDef(_, _, tpt, _) => Some(tpt.tpe)
+                            case _                    => None
                     declared.filter(_.typeSymbol.equals(TypeRepr.of[Tag[Any]].typeSymbol)).foreach { tagType =>
                         tagType.typeArgs.headOption.map(_.dealiasKeepOpaques.typeSymbol).filter(transparent.contains).foreach { x =>
                             val underlying = scope.find(_._1.equals(x)).map(_._2.show).getOrElse("?")
