@@ -29,6 +29,35 @@ private object FileSystemConformanceFixtures:
             fileSystem.write(file, "read-value", Path.WriteOptions()).map(_ => (fileSystem, file, "read-value"))
         }
 
+    def zip(using
+        Frame
+    ): (
+        FileSystem.Write[Sync],
+        FileSystem.StagedChanges[Sync & Abort[FileSystemException]],
+        Path
+    ) < (Sync & Scope & Abort[FileSystemException]) =
+        host("kyo-zip-conformance").map { (_, directory) =>
+            FileSystem.zip(directory / "conformance.zip").map { fileSystem =>
+                val root = Path("conformance")
+                fileSystem.mkDir(root).map(_ => (fileSystem, fileSystem, root))
+            }
+        }
+
+    def zipReadOnly(using Frame): (FileSystem.Read[Sync], Path, String) < (Sync & Scope & Abort[FileSystemException]) =
+        host("kyo-zip-read-conformance").map { (_, directory) =>
+            val archive = directory / "conformance.zip"
+            val file    = Path("conformance", "read.txt")
+            FileSystem.zip(archive).map { writable =>
+                writable.write(file, "read-value", Path.WriteOptions()).andThen {
+                    Abort.run[CommitConflict](writable.commit).map {
+                        case Result.Success(_) =>
+                            FileSystem.zipReadOnly(archive).map(readOnly => (readOnly, file, "read-value"))
+                        case Result.Failure(error) => Abort.fail(FileIOException(archive, FileSystemOperation.Write, error))
+                    }
+                }
+            }
+        }
+
 end FileSystemConformanceFixtures
 
 class InMemoryFileSystemReadConformanceTest extends FileSystemReadTestSuite:
@@ -87,6 +116,55 @@ class HostFileSystemDurabilityConformanceTest extends FileSystemDurabilityTestSu
     ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
         FileSystemConformanceFixtures.host("kyo-host-durability-suite")
 end HostFileSystemDurabilityConformanceTest
+
+class ZipReadOnlyFileSystemReadConformanceTest extends FileSystemReadTestSuite:
+    protected def createFileSystem(using
+        Frame
+    ): (FileSystem.Read[Sync], Path, String) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.zipReadOnly
+end ZipReadOnlyFileSystemReadConformanceTest
+
+class ZipRewriteFileSystemReadConformanceTest extends FileSystemReadTestSuite:
+    protected def createFileSystem(using
+        Frame
+    ): (FileSystem.Read[Sync], Path, String) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.zip.map { (fileSystem, _, root) =>
+            val file = root / "read.txt"
+            fileSystem.write(file, "read-value", Path.WriteOptions()).map(_ => (fileSystem, file, "read-value"))
+        }
+end ZipRewriteFileSystemReadConformanceTest
+
+class ZipRewriteFileSystemWriteConformanceTest extends FileSystemWriteTestSuite:
+    protected def createFileSystem(using
+        Frame
+    ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.zip.map((fileSystem, _, root) => (fileSystem, root))
+end ZipRewriteFileSystemWriteConformanceTest
+
+class ZipRewriteFileSystemChannelConformanceTest extends FileSystemChannelTestSuite:
+    protected def createFileSystem(using
+        Frame
+    ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.zip.map((fileSystem, _, root) => (fileSystem, root))
+end ZipRewriteFileSystemChannelConformanceTest
+
+class ZipRewriteFileSystemDurabilityConformanceTest extends FileSystemDurabilityTestSuite:
+    protected def createFileSystem(using
+        Frame
+    ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.zip.map((fileSystem, _, root) => (fileSystem, root))
+end ZipRewriteFileSystemDurabilityConformanceTest
+
+class ZipRewriteFileSystemStagedChangesConformanceTest extends FileSystemStagedChangesTestSuite:
+    protected def createFileSystem(using
+        Frame
+    ): (
+        FileSystem.Write[Sync],
+        FileSystem.StagedChanges[Sync & Abort[FileSystemException]],
+        Path
+    ) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.zip
+end ZipRewriteFileSystemStagedChangesConformanceTest
 
 /** Minimal user-defined backend fixture that deliberately exposes only the read tier. */
 final class UserReadOnlyFileSystemFixture(delegate: FileSystem.Read[Sync]) extends FileSystem.Read[Sync]:
