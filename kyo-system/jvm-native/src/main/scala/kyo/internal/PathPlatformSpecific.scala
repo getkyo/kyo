@@ -132,6 +132,12 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
             kyo.Path.PathStat(attrs.lastModifiedTime.toMillis, attrs.size)
         }
 
+    private[kyo] def stableIdentity()(using AllowUnsafe, Frame): Result[FileReadException, Maybe[String]] =
+        catchRead {
+            val key = Files.readAttributes(jpath, classOf[BasicFileAttributes]).fileKey
+            if key == null then Absent else Present(key.toString)
+        }
+
     // --- Write ---
 
     def write(value: String, options: Path.WriteOptions)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
