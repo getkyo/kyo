@@ -2546,11 +2546,17 @@ object Schema:
     end checkVariantWireExists
 
     // --- Primitive Schema givens ---
+    // Each primitive declares its proto3 default as absentDefaultValue: a canonical proto3
+    // serializer omits default-valued fields, so a reader that reports absence-as-default
+    // (ProtobufReader) decodes them back. Self-describing codecs ignore these for product
+    // fields (their absentDefaultedFieldsMask stays 0), so JSON and friends still require
+    // presence.
 
     /** Schema for String values. */
     given stringSchema: Schema[String] = Schema.init[String](
         writeFn = (v, w) => w.string(v),
         readFn = _.string(),
+        absentDefaultValue = Maybe(""),
         structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[String].asInstanceOf[Tag[Any]])
     )
 
@@ -2558,6 +2564,7 @@ object Schema:
     given booleanSchema: Schema[Boolean] = Schema.init[Boolean](
         writeFn = (v, w) => w.boolean(v),
         readFn = _.boolean(),
+        absentDefaultValue = Maybe(false),
         structure = Structure.Type.Primitive(Structure.PrimitiveKind.Boolean, Tag[Boolean].asInstanceOf[Tag[Any]])
     )
 
@@ -2565,6 +2572,7 @@ object Schema:
     given intSchema: Schema[Int] = Schema.init[Int](
         writeFn = (v, w) => w.int(v),
         readFn = _.int(),
+        absentDefaultValue = Maybe(0),
         structure = Structure.Type.Primitive(Structure.PrimitiveKind.Int, Tag[Int].asInstanceOf[Tag[Any]])
     )
 
@@ -2572,6 +2580,7 @@ object Schema:
     given longSchema: Schema[Long] = Schema.init[Long](
         writeFn = (v, w) => w.long(v),
         readFn = _.long(),
+        absentDefaultValue = Maybe(0L),
         structure = Structure.Type.Primitive(Structure.PrimitiveKind.Long, Tag[Long].asInstanceOf[Tag[Any]])
     )
 
@@ -2579,6 +2588,7 @@ object Schema:
     given floatSchema: Schema[Float] = Schema.init[Float](
         writeFn = (v, w) => w.float(v),
         readFn = _.float(),
+        absentDefaultValue = Maybe(0.0f),
         structure = Structure.Type.Primitive(Structure.PrimitiveKind.Float, Tag[Float].asInstanceOf[Tag[Any]])
     )
 
@@ -2586,6 +2596,7 @@ object Schema:
     given doubleSchema: Schema[Double] = Schema.init[Double](
         writeFn = (v, w) => w.double(v),
         readFn = _.double(),
+        absentDefaultValue = Maybe(0.0d),
         structure = Structure.Type.Primitive(Structure.PrimitiveKind.Double, Tag[Double].asInstanceOf[Tag[Any]])
     )
 
@@ -2593,6 +2604,7 @@ object Schema:
     given shortSchema: Schema[Short] = Schema.init[Short](
         writeFn = (v, w) => w.short(v),
         readFn = _.short(),
+        absentDefaultValue = Maybe(0.toShort),
         structure = Structure.Type.Primitive(Structure.PrimitiveKind.Short, Tag[Short].asInstanceOf[Tag[Any]])
     )
 
@@ -2600,6 +2612,7 @@ object Schema:
     given byteSchema: Schema[Byte] = Schema.init[Byte](
         writeFn = (v, w) => w.byte(v),
         readFn = _.byte(),
+        absentDefaultValue = Maybe(0.toByte),
         structure = Structure.Type.Primitive(Structure.PrimitiveKind.Byte, Tag[Byte].asInstanceOf[Tag[Any]])
     )
 
@@ -2607,6 +2620,7 @@ object Schema:
     given charSchema: Schema[Char] = Schema.init[Char](
         writeFn = (v, w) => w.char(v),
         readFn = _.char(),
+        absentDefaultValue = Maybe(0.toChar),
         structure = Structure.Type.Primitive(Structure.PrimitiveKind.Char, Tag[Char].asInstanceOf[Tag[Any]])
     )
 
@@ -2615,6 +2629,7 @@ object Schema:
         Schema.init[BigDecimal](
             writeFn = (v, w) => w.bigDecimal(v),
             readFn = _.bigDecimal(),
+            absentDefaultValue = Maybe(BigDecimal(0)),
             structure = Structure.Type.Primitive(Structure.PrimitiveKind.BigDecimal, Tag[BigDecimal].asInstanceOf[Tag[Any]])
         )
 
@@ -2622,6 +2637,7 @@ object Schema:
     given bigIntSchema: Schema[BigInt] = Schema.init[BigInt](
         writeFn = (v, w) => w.bigInt(v),
         readFn = _.bigInt(),
+        absentDefaultValue = Maybe(BigInt(0)),
         structure = Structure.Type.Primitive(Structure.PrimitiveKind.BigInt, Tag[BigInt].asInstanceOf[Tag[Any]])
     )
 
@@ -2630,6 +2646,7 @@ object Schema:
         Schema.init[java.time.Instant](
             writeFn = (v, w) => w.instant(v),
             readFn = _.instant(),
+            absentDefaultValue = Maybe(java.time.Instant.EPOCH),
             structure = Structure.Type.Primitive(Structure.PrimitiveKind.Instant, Tag[java.time.Instant].asInstanceOf[Tag[Any]])
         )
 
@@ -2638,6 +2655,7 @@ object Schema:
         Schema.init[java.time.Duration](
             writeFn = (v, w) => w.duration(v),
             readFn = _.duration(),
+            absentDefaultValue = Maybe(java.time.Duration.ZERO),
             structure = Structure.Type.Primitive(Structure.PrimitiveKind.Duration, Tag[java.time.Duration].asInstanceOf[Tag[Any]])
         )
 

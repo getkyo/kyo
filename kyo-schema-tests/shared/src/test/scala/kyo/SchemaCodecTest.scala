@@ -1531,9 +1531,10 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
             assert(decoded.name == user.name)
             assert(decoded.age == user.age)
             assert(decoded.email == user.email)
-            // ssn was dropped from serialization, so it gets the JVM default for its declared type
-            // (`null` for `String`, `0` for `Int`, `false` for `Boolean`, etc.).
-            assert(decoded.ssn == null)
+            // ssn was dropped from serialization, so it decodes to its schema's absent default:
+            // the typed empty value (`""` for `String`, `0` for `Int`, `false` for `Boolean`),
+            // never `null`.
+            assert(decoded.ssn == "")
         }
 
         "schema.encode[Json] produces bytes" in {
