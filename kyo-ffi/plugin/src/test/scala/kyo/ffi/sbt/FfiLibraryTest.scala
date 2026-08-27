@@ -19,29 +19,6 @@ class FfiLibraryTest extends AnyFunSuite with Matchers {
         l.resolvedLinkLibs("darwin") shouldBe Seq("c", "m")
     }
 
-    test("buildsOn is true on every OS when no osTargets are declared") {
-        val l = lib()
-        l.buildsOn("linux") shouldBe true
-        l.buildsOn("darwin") shouldBe true
-        l.buildsOn("windows") shouldBe true
-    }
-
-    test("buildsOn is true only for a declared osTarget") {
-        // machine_macos is the case this exists for: its C is #ifdef-guarded to same-signature stubs off
-        // macOS, so it compiles on a Linux release runner and the build shipped a Linux artifact for a
-        // binding that can only ever be called on macOS, while shipping no macOS artifact at all.
-        val l = FfiLibrary(id = "machine_macos", cSources = Nil, osTargets = Seq("darwin"))
-        l.buildsOn("darwin") shouldBe true
-        l.buildsOn("linux") shouldBe false
-        l.buildsOn("windows") shouldBe false
-    }
-
-    test("buildsOn resolves linux-musl through the linux key") {
-        val l = FfiLibrary(id = "demo", cSources = Nil, osTargets = Seq("linux"))
-        l.buildsOn("linux-musl") shouldBe true
-        l.buildsOn("darwin") shouldBe false
-    }
-
     test("OS-specific lib is appended only on the matching OS") {
         val l = lib(byOs = Map("linux" -> Seq("uring")))
         l.resolvedLinkLibs("linux") shouldBe Seq("uring")

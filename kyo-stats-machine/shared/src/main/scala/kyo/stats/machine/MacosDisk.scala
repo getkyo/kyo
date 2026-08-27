@@ -191,7 +191,7 @@ private[machine] object MacosDisk:
                 store.cell.total.set(store.out.getLong(0))
                 store.cell.free.observe(store.out.getLong(1))
             end if
-        catch case ex: Throwable if Machine.degradable(ex) => ()
+        catch case ex: Throwable if scala.util.control.NonFatal(ex) => ()
     end statfsInto
 
 end MacosDisk

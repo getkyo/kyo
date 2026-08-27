@@ -133,10 +133,7 @@ object System:
                     end if
                 end architecture
 
-                // Delegated to the platform shim for the same reason `osName` is: Scala.js's
-                // `Runtime.getRuntime.availableProcessors()` is a stub that answers 1 on every host, so the
-                // JS shim reads the count Node (or the browser) actually reports.
-                def availableProcessors()(using AllowUnsafe): Int = SystemPlatformSpecific.availableProcessors()
+                def availableProcessors()(using AllowUnsafe): Int = Runtime.getRuntime.availableProcessors()
         )
 
     /** Executes a computation with a custom System implementation.

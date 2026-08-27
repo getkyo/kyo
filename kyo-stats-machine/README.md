@@ -11,15 +11,11 @@ That makes this module a monitoring contract, not an API. Three things describe 
 // libraryDependencies += "org.getkyo" %% "kyo-stats-machine" % "<version>"
 ```
 
-That line is the entire integration for a `kyo.KyoApp`. There is no import to add and no method to call: the application entrypoint reaches `kyo.Stat` before running your code, the service loader discovers `MachineStatFactory`, and constructing that factory starts the sampler.
-
-A host that is not a `KyoApp` (a kyo library embedded in an application that is not kyo's, or an entrypoint of your own) has no such moment, and nothing starts. Call `Stat.activate()` once at startup there; it is idempotent and does nothing else. kyo-core deliberately activates nowhere else: the only hook broad enough to cover every process is the fiber-creation path, and a stats concern does not belong in the scheduler's hot path.
+That line is the entire integration. There is no import to add and no method to call: presence on the classpath is the activation event. The moment a `kyo.Stat` counter is first touched anywhere in the process (which kyo-core does eagerly at its own class-init), the service loader discovers `MachineStatFactory`, and constructing that factory starts the sampler.
 
 > **Note:** the sampler is a one-shot, process-lifetime singleton. Once it starts, it runs for the life of the process; there is no stop call, and adding the dependency a second time or touching `Stat` again does not start a second sampler.
 
-The sampler ticks on a drift-corrected schedule (`Clock.repeatAtInterval(Schedule.anchored(interval))`, anchored so a slow tick does not push the next one late) for as long as the process runs. The cadence is one second unless `KYO_MACHINE_INTERVAL_MS` overrides it (see below). It is unrelated to how often your metrics backend ships those readings off the process: an exporter like kyo-stats-otlp scrapes the `kyo.Stat` registry on its own schedule (`OTEL_METRIC_EXPORT_INTERVAL`, 60 seconds by default), so a 1-second sampling resolution can still be exported once a minute. If you want finer-grained visibility into the emitted histograms, lower the exporter's interval.
-
-One sampler serves every consumer in the process, which is why the cadence is the producer's to set and not a consumer's: polling the registry faster than the sampler ticks reads the same values again. A dashboard that needs sub-second host behaviour raises the producer's rate.
+The sampler ticks once a second on a drift-corrected schedule (`Clock.repeatAtInterval(Schedule.anchored(1.second))`, anchored so a slow tick does not push the next one late) for as long as the process runs. That is the module's own cadence and it is not configurable. It is also unrelated to how often your metrics backend ships those readings off the process: an exporter like kyo-stats-otlp scrapes the `kyo.Stat` registry on its own schedule (`OTEL_METRIC_EXPORT_INTERVAL`, 60 seconds by default), so a 1-second sampling resolution can still be exported once a minute. If you want finer-grained visibility into the emitted histograms, lower the exporter's interval; kyo-stats-machine's tick period is fixed.
 
 > **Note:** kyo-stats-machine is a producer only. Adding it with no exporter on the classpath records every metric into the in-process registry, but nothing ships anywhere observable. Pair it with an exporter module such as kyo-stats-otlp, or the effect of adding this dependency is invisible.
 
@@ -42,11 +38,9 @@ nativeConfig ~= {
 
 > **Caution:** without this line, kyo-stats-machine compiles and links cleanly on Native but never samples anything. There is no error, no warning, and no metric: the sampler simply never starts. This is the one platform where adding the library dependency is not enough by itself.
 
-## Turning it off, and changing the rate
+## Turning it off
 
-The sampler has two levers, both read once at startup.
-
-The first is the opt-out, read when the factory is constructed.
+The sampler has exactly one lever: an opt-out, read once when the factory is constructed.
 
 ```bash
 export KYO_MACHINE_DISABLED=true
@@ -62,53 +56,9 @@ Either suppresses the sampler start. Both are read exactly once, at registration
 
 > **Note:** an unset or unparseable value enables the sampler. This is a fail-open default, not a fail-safe one: if you meant to disable monitoring and misspelled the variable name or the value, the sampler starts anyway. Only the literal string `"true"` (case-insensitive) disables it.
 
-The second is the sample interval, in milliseconds, read when the sampler starts.
-
-```bash
-export KYO_MACHINE_INTERVAL_MS=100
-```
-
-or the equivalent system property:
-
-```scala
-// -Dkyo.machine.intervalMs=100
-```
-
-Unset, the cadence is one second, which is the right default: one shared sampler at 1 Hz costs the host far less than every consumer reading `/proc` for itself. A missing, unparseable or non-positive value falls back to that default rather than stopping the sampler, the same fail-open behaviour the opt-out has. As with the opt-out, the environment variable takes precedence over the system property: the variable is the per-host deployment setting, the property is the local development override.
-
 ## Reading the metrics
 
-You consume `machine.*` the same way you consume any other `kyo.Stat` metric your application records: through whatever stats backend or exporter you already have wired, using `machine` as the scope root. The scope root is a plain string, independent of the module's Scala package (`kyo.stats.machine`) and independent of an exporter's own operational scope. If you pair this module with kyo-stats-otlp, for example, that exporter records its own health counters under `kyo.stats.otel.*`; keep the two prefixes distinct when you query a backend, since one is host telemetry this module produces and the other is the exporter's own health telemetry.
-
-To read a metric back inside the process, use `MachineMetrics`, which names every key in the taxonomy:
-
-```scala
-// Unsafe: the registry's read tier is the unsafe one; summary() is a plain value read.
-import AllowUnsafe.embrace.danger
-import kyo.*
-import kyo.stats.machine.MachineMetrics
-
-val cpuNanosPerSecond: Maybe[Double] =
-    MachineMetrics.cpuTotalRate.findHistogram.map(_.summary().max)
-
-val totalMemory: Maybe[Double] =
-    MachineMetrics.memoryTotal.findGauge.map(_.collect())
-```
-
-Two things about that are deliberate. The accessors are lookups, never registrations: a metric this host does not produce reads back as `Absent` rather than becoming a permanently empty series that an exporter would then publish. And the key is a value rather than a string you assemble, because a registry key is a `List[String]` and the dotted rendering the tables below use does not say where the scope ends: `machine.cpu.total.rate` is scope `["machine","cpu"]` with the instrument named `"total.rate"`, dot included, while `machine.memory.available` is scope `["machine","memory"]` with the instrument named `"available"`. The two render identically and split differently.
-
-Two families are named at runtime rather than fixed, one entry per mounted filesystem and one per pressure resource-and-kind pair. Ask the registry what it actually has:
-
-```scala
-import kyo.stats.internal.StatsRegistry
-import kyo.stats.machine.MachineMetrics
-
-val mounts: Seq[String] = MachineMetrics.diskStores()
-
-val everything: Seq[StatsRegistry.Registration] = StatsRegistry.snapshot("machine")
-```
-
-`StatsRegistry.snapshot` is also how to answer "what does this host actually support?": a metric the running OS has no source for registers nothing at all, so absence from the snapshot is the answer.
+There is no Scala value to read. You consume `machine.*` the same way you consume any other `kyo.Stat` metric your application records: through whatever stats backend or exporter you already have wired, using `machine` as the scope root (`Stat.scope("machine")`). The scope root is a plain string, independent of the module's Scala package (`kyo.stats.machine`) and independent of an exporter's own operational scope. If you pair this module with kyo-stats-otlp, for example, that exporter records its own health counters under `kyo.stats.otel.*`; keep the two prefixes distinct when you query a backend, since one is host telemetry this module produces and the other is the exporter's own health telemetry.
 
 Every metric in the taxonomy is one of three `kyo.Stat` types:
 
@@ -256,6 +206,6 @@ The structural absences are deliberate, and each is the absence of a real host c
 
 ## Demos
 
-A runnable demo lives in [`shared/src/test/scala/demo`](shared/src/test/scala/demo). `MachineStatsDemoApp` is the auto-load story end to end: it names no metric and calls nothing, lets being a `KyoApp` start the sampler, waits a few ticks, then prints the `machine.*` families it read off this host and validates them.
+A runnable demo lives in [`shared/src/test/scala/demo`](shared/src/test/scala/demo). `MachineStatsDemoApp` is the auto-load story end to end: it touches only `kyo.Stat`, lets the classpath-present module start the sampler, waits a few ticks, then prints the `machine.*` families it read off this host and validates them.
 
-It is a standalone `main` meant to run on your own classpath with kyo-stats-machine present: run it from, or copy it into, an application that depends on the module. This repository's own test configuration sets the `KYO_MACHINE_DISABLED` opt-out so the suites never race a live sampler, and under that lever the sampler stays off and the demo has nothing to report, so `MachineStatFactoryJvmTest` runs it in a forked JVM without the opt-out (and once more with it, as the control) rather than in the test process. Run it where the module is a normal dependency and it prints the host's metrics; set `KYO_MACHINE_DISABLED=true` on that run to watch the opt-out suppress the sampler. The demo `main` runs on the JVM only: the helper it uses to read the metrics back dereferences a `WeakReference`, which does not link under Scala.js or Wasm (no `java.lang.ref.Reference`) and throws at the dereference under Scala Native. On those targets observe the module through your own stats backend instead; the test suites prove auto-load fires there.
+It is a standalone `main` meant to run on your own classpath with kyo-stats-machine present: run it from, or copy it into, an application that depends on the module. It is not wired into this repository's build, whose test configuration sets the `KYO_MACHINE_DISABLED` opt-out so the suites never race a live sampler; under that lever the sampler stays off and the demo has nothing to report. Run it where the module is a normal dependency and it prints the host's metrics; set `KYO_MACHINE_DISABLED=true` on that run to watch the opt-out suppress the sampler. The demo `main` runs on the JVM only: the helper it uses to read the metrics back dereferences a `WeakReference`, which does not link under Scala.js or Wasm (no `java.lang.ref.Reference`) and throws at the dereference under Scala Native. On those targets observe the module through your own stats backend instead; the test suites prove auto-load fires there.

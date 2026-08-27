@@ -333,48 +333,6 @@ class MachineMacosTest extends kyo.test.Test[Any]:
             finally machine.close()
             end try
         }
-
-        "a native-library CLASS-INIT failure degrades the same way, and does not escape into the sampler" in {
-            // The failure the RC6 macOS artifact actually produced: the bundled native was missing, so the
-            // generated impl's class initializer threw and the JVM wrapped it in ExceptionInInitializerError.
-            // That is a LinkageError, which NonFatal excludes, so it escaped the reader's guard, killed the
-            // sampler's fibers and printed a stack trace into an unrelated application's stderr. The module's
-            // stated contract is the opposite: a metric the host cannot produce is simply absent.
-            val failing = new MachineMacos.LoadProbe:
-                def apply(bindings: MacosBindings, scratch: Buffer[Long])(using AllowUnsafe): Unit =
-                    throw new ExceptionInInitializerError(
-                        new FfiLoadError.LibraryNotFound("machine_macos", Chunk("test: shim unresolvable"), null)
-                    )
-            val handles = MachineHandles.initForTest(Stat.initScope("mmactest-shim-clinit-fail"), 8L)
-            val sampler = new MachineSampler(handles)
-            val machine = new MachineMacos(handles, sampler, failing)
-            try
-                machine.read()
-                machine.readDisks()
-                machine.read()
-                assert(!histogramRegistered("mmactest-shim-clinit-fail", "cpu", "total.rate"))
-                assert(!gaugeRegistered("mmactest-shim-clinit-fail", "memory", "total"))
-                assert(!gaugeRegistered("mmactest-shim-clinit-fail", "load", "one"))
-                assert(!gaugeRegistered("mmactest-shim-clinit-fail", "disk", "root", "total"))
-            finally machine.close()
-            end try
-        }
-
-        "a binding that throws a LinkageError on a LATER call degrades that tick instead of killing the reader" in {
-            // A library can resolve and then fail its first real symbol lookup, or have its poisoned class
-            // re-touched, which raises NoClassDefFoundError from inside a read rather than from the load.
-            val stub = new StubBindings
-            stub.hostCpuLoadFn = _ => throw new NoClassDefFoundError("kyo.stats.machine.MacosBindingsImpl")
-            val handles = MachineHandles.initForTest(Stat.initScope("mmactest-late-linkage"), 8L)
-            val sampler = new MachineSampler(handles)
-            val machine = new MachineMacos(handles, sampler)
-            try
-                machine.readAll(stub)
-                machine.readAll(stub)
-                assert(!histogramRegistered("mmactest-late-linkage", "cpu", "total.rate"))
-            finally machine.close()
-            end try
-        }
     }
 
 end MachineMacosTest

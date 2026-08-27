@@ -13,18 +13,13 @@ import scala.scalajs.js as sjs
   * instead of surfacing as that raw exception on a CI leg. It cannot live in shared/src/test: the env-var
   * mechanism and node `fs` are JS/Wasm-only. It runs on both the JS and the Wasm backends.
   *
-  * The shim FILE exists only where it is built. `machine_macos` is a Mach-only binding declared for darwin
-  * (`osTargets` in build.sbt), so a Linux or Windows build compiles nothing for it: there the env var still
-  * points at the path the shim WOULD occupy and no file is there, which is the correct outcome, not a wiring
-  * break. The existence half of this guard therefore asserts only on macOS.
-  *
   * The `scala.scalajs.js` package is aliased to `sjs` so it does not collide with the `js` platform-selector
   * method the test base defines; `fs.existsSync` reaches Node through the `node:fs` `@JSImport` facade below
   * rather than `require`, which is absent under the ESModule the Wasm backend mandates.
   */
 class MacosBindingsShimTest extends kyo.test.Test[Any]:
 
-    "the KYO_FFI_MACHINE_MACOS_PATH env override is set, and on macOS its shim file exists" in {
+    "the KYO_FFI_MACHINE_MACOS_PATH env override is set and its shim file exists" in {
         val raw = sjs.Dynamic.global.process.env.selectDynamic("KYO_FFI_MACHINE_MACOS_PATH")
         assert(
             !sjs.isUndefined(raw) && raw != null,
@@ -32,18 +27,10 @@ class MacosBindingsShimTest extends kyo.test.Test[Any]:
         )
         val path = raw.asInstanceOf[String]
         assert(path.nonEmpty, "KYO_FFI_MACHINE_MACOS_PATH is empty")
-        val onMacOs = sjs.Dynamic.global.process.platform.asInstanceOf[String] == "darwin"
-        if onMacOs then
-            assert(
-                ShimNodeFs.existsSync(path),
-                s"machine_macos shim missing at KYO_FFI_MACHINE_MACOS_PATH=$path: ffiCompile must produce it under <axis>/target/ffi before the JS/Wasm test run"
-            )
-        else
-            assert(
-                !ShimNodeFs.existsSync(path),
-                s"machine_macos was built for a non-darwin host at $path: it is a Mach-only binding and no other platform can load it"
-            )
-        end if
+        assert(
+            ShimNodeFs.existsSync(path),
+            s"machine_macos shim missing at KYO_FFI_MACHINE_MACOS_PATH=$path: ffiCompile must produce it under <axis>/target/ffi before the JS/Wasm test run"
+        )
     }
 
 end MacosBindingsShimTest

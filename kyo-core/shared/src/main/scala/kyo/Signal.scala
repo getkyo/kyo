@@ -33,7 +33,7 @@ import scala.annotation.tailrec
   *
   * The companion object provides these creation methods:
   *
-  *   - `Signal.initRef[A]`: creates a mutable `SignalRef[A]` initialized with a starting value
+  *   - `Signal.initRef[A]`: creates a mutable `Signal.Ref[A]` initialized with a starting value
   *   - `Signal.initConst[A]`: creates an immutable `Signal[A]` that always returns the same value
   *   - `Signal.initRaw[A]`: (low-level API) creates a custom `Signal[A]` by directly implementing its fundamental operations, primarily
   *     intended for implementing signal combinators and custom signal types
@@ -335,13 +335,13 @@ object Signal:
 
     /** Creates a new mutable signal reference with an initial value.
       *
-      * This method initializes a new `SignalRef[A]` that can be modified over time. The reference starts with the provided initial value
+      * This method initializes a new `Signal.Ref[A]` that can be modified over time. The reference starts with the provided initial value
       * and can be updated using methods like `set`, `getAndSet`, etc.
       *
       * @param initial
       *   The starting value for the signal reference
       * @return
-      *   A new mutable `SignalRef[A]`
+      *   A new mutable `Signal.Ref[A]`
       * @tparam A
       *   The type of value contained in the signal. Must have an instance of `CanEqual[A, A]`
       */
@@ -355,7 +355,7 @@ object Signal:
 
     /** Creates a new mutable signal reference with an initial value and applies a transformation function.
       *
-      * This method initializes a new `SignalRef[A]` that can be modified over time, and immediately applies a transformation function to
+      * This method initializes a new `Signal.Ref[A]` that can be modified over time, and immediately applies a transformation function to
       * it. The reference starts with the provided initial value and the transformation is applied within the same atomic operation.
       *
       * @param initial
@@ -381,7 +381,7 @@ object Signal:
 
     /** Creates a new immutable signal with a constant value.
       *
-      * This method creates a signal that always returns the same value. Unlike `SignalRef`, this signal cannot be modified after creation.
+      * This method creates a signal that always returns the same value. Unlike `Signal.Ref`, this signal cannot be modified after creation.
       * This is useful for cases where you need a signal interface but the value never changes.
       *
       * Since the value never changes, `next`/`nextWith` never complete. Read a constant with `current`/`currentWith`, and expect it to sit
@@ -410,7 +410,7 @@ object Signal:
     /** Creates a new immutable signal with a constant value and applies a transformation function.
       *
       * This method creates a signal that always returns the same value and immediately applies a transformation function to it. Unlike
-      * `SignalRef`, this signal cannot be modified after creation.
+      * `Signal.Ref`, this signal cannot be modified after creation.
       *
       * @param value
       *   The constant value for the signal

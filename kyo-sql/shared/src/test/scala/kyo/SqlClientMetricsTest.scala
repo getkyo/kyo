@@ -133,23 +133,11 @@ class SqlClientMetricsTest extends Test:
                                 m.queriesExecuted.get.flatMap { qe =>
                                     m.queriesFailed.get.flatMap { qf =>
                                         m.connectionsAcquired.get.flatMap { ca =>
-                                            m.retriesAttempted.get.flatMap { ra =>
-                                                // The histogram's safe-tier read is a no-op too, and answers rather than throws:
-                                                // the two timedQuery calls above observed into the noop, so the distribution it
-                                                // reports is empty. Reads Histogram.summary directly, not the queryDurationSummary
-                                                // accessor, because only the former goes through the noop's own implementation.
-                                                m.queryDurationMs.summary.map { qd =>
-                                                    assert(qe == 0)
-                                                    assert(qf == 0)
-                                                    assert(ca == 0)
-                                                    assert(ra == 0)
-                                                    assert(qd.count == 0L)
-                                                    assert(qd.min == 0.0)
-                                                    assert(qd.max == 0.0)
-                                                    assert(qd.sum == 0.0)
-                                                    assert(qd.boundaries.isEmpty)
-                                                    assert(qd.bucketCounts.forall(_ == 0L))
-                                                }
+                                            m.retriesAttempted.get.map { ra =>
+                                                assert(qe == 0)
+                                                assert(qf == 0)
+                                                assert(ca == 0)
+                                                assert(ra == 0)
                                             }
                                         }
                                     }

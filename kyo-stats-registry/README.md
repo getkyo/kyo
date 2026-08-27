@@ -64,50 +64,6 @@ assert(a eq b)
 
 > **Note:** the description argument is stored only on first registration. Re-declaring the same counter under the same path with a different description silently keeps the original description; the second description is discarded.
 
-### Reading, without registering
-
-`counter`, `histogram`, `gauge` and `counterGauge` all REGISTER: they hand back the instrument at a path, creating it when the path is empty. That is what makes a producer and a consumer share one handle, and it is the wrong operation for a consumer. A misspelled or unsupported path does not fail; it becomes a brand-new zeroed instrument that an exporter then dutifully publishes, and a dashboard wired to it renders a flat line forever and looks healthy.
-
-Read with `find*` instead. It returns what is registered and never creates anything:
-
-```scala
-val scope = StatsRegistry.scope("kyo", "http", "client")
-
-val live: Option[UnsafeCounter] = scope.findCounter("requests")
-val typo: Option[UnsafeCounter] = scope.findCounter("requsts") // None; nothing was registered
-```
-
-> **Most callers want `kyo.Stat`, not this.** Everything in this module is the unsafe tier: it sits below
-> `kyo-data` and cross-builds to Scala 2.13, so it has no `Maybe`, no `Chunk` and no effect types, and its
-> accessors hand back `Unsafe*` handles whose reads happen immediately. kyo-core wraps it:
-> `Stat.findCounter`, `Stat.findGauge` and `Stat.findHistogram` answer `Maybe[Counter]` / `Maybe[Gauge]` /
-> `Maybe[Histogram]` in `< Sync`, with the same never-registers guarantee and no `AllowUnsafe` at the call
-> site. Reach for the unsafe handles when you are writing an exporter on a hot path, which is what they are
-> for.
-
-A gauge makes this a correctness question rather than a hygiene one. A gauge's value IS the thunk the first registration supplied, so a consumer that calls `gauge(name)(placeholder)` before the producer wins the path: the producer's later registration silently gets the consumer's placeholder back, and the real value is unreachable for the life of the process. A caller who writes the natural `gauge(name)(0.0)` then reads a plausible, permanent zero.
-
-### Enumerating what a process produces
-
-`snapshot` returns every live instrument with its key, kind, description and handle, sorted by key:
-
-```scala
-val all: Seq[StatsRegistry.Registration] = StatsRegistry.snapshot()
-
-val hostMetrics: Seq[StatsRegistry.Registration] = StatsRegistry.snapshot("machine")
-
-val kinds: Seq[String] = hostMetrics.map {
-    case StatsRegistry.Registration(path, StatsRegistry.Instrument.Counter(_, _))      => path.mkString(".") + " counter"
-    case StatsRegistry.Registration(path, StatsRegistry.Instrument.Histogram(_, _))    => path.mkString(".") + " histogram"
-    case StatsRegistry.Registration(path, StatsRegistry.Instrument.Gauge(_, _))        => path.mkString(".") + " gauge"
-    case StatsRegistry.Registration(path, StatsRegistry.Instrument.CounterGauge(_, _)) => path.mkString(".") + " counter-gauge"
-}
-```
-
-This is what makes a family whose names are discovered at runtime consumable at all: kyo-stats-machine's per-mount `machine.disk.<store>.*` and its `machine.pressure.<resource>.<kind>.*` pairs have no documented list to read from, because the mount set is the host's. It also answers "which metrics does this host actually support?", since a metric the running OS has no source for registers nothing.
-
-> **Note:** the snapshot is a point-in-time copy. It holds its instruments alive for as long as you hold it, and it does not see registrations made after it returns. Reading an instrument from it has whatever effect that instrument's accessor has: `UnsafeCounter.get` and `delta` still drain, exactly as they do for the producer.
-
 ## Instruments
 
 The registry mints four kinds of measurement. Each has a hot-path API the instrumented code calls (`inc`, `add`, `observe`) and a poll-time API an exporter calls (`get`, `summary`, `collect`). The expected pattern is "one party owns the increments, a different party owns the reads": an exporter polls on a fixed interval and the application code never reads.
@@ -189,18 +145,17 @@ payloadBytes.observe(4096L)
 
 #### Summary
 
-`Summary` is the value-class snapshot returned by `UnsafeHistogram.summary()`. It carries the boundaries, per-bucket counts, total count, min, max, and `sum`. `percentile(p)` linearly interpolates within the bucket containing the target rank.
+`Summary` is the value-class snapshot returned by `UnsafeHistogram.summary()`. It carries the boundaries, per-bucket counts, total count, min, and max. `percentile(p)` linearly interpolates within the bucket containing the target rank.
 
-> **Note:** the bucket counts are non-cumulative: each bucket holds only its own observations, matching the OTLP explicit-bucket data model. `sum` is the running total of every observed value and, like the buckets, is never drained, so count, buckets and sum all describe the same lifetime window. It is the field a rate consumer reads: kyo-stats-machine's `.rate` histograms carry their cumulative total in it rather than in a separate counter.
+> **Note:** the bucket counts are non-cumulative (each bucket holds only its own observations, matching the OTLP explicit-bucket data model), and there is no `sum` field. Sum is omitted by design: exact observed values are not retained, and the OTLP histogram model marks sum optional.
 
 ```scala
 import kyo.AllowUnsafe.embrace.danger
 
-val latency         = httpClientScope.histogram("latency_ms", "Outbound request latency in milliseconds")
-val s: Summary      = latency.summary()
-val p50: Double     = s.percentile(50.0)
-val p99: Double     = s.percentile(99.0)
-val totalMs: Double = s.sum
+val latency     = httpClientScope.histogram("latency_ms", "Outbound request latency in milliseconds")
+val s: Summary  = latency.summary()
+val p50: Double = s.percentile(50.0)
+val p99: Double = s.percentile(99.0)
 ```
 
 > **Note:** `percentile` is only as accurate as the bucket spacing. The interpolation is linear within the bucket, so a wide bucket gives a coarse answer. For an overflow-bucket result it returns the last boundary, not infinity.
