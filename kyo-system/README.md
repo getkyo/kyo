@@ -50,6 +50,23 @@ val scalaFiles =
     }
 ```
 
+### Typed channels
+
+Positioned channels are acquired directly from a backend and owned by `Scope`. Read, write, and
+read-write channels expose only their corresponding capabilities. `WriteOpen` makes file existence
+policy explicit:
+
+```scala
+import kyo.*
+
+val positioned =
+    Scope.run {
+        FileSystem.host.openReadWriteChannel(Path("index.bin"), FileSystem.WriteOpen.CreateNew).map { channel =>
+            channel.writeAt(0L, Span.from(Array[Byte](1, 2, 3))).andThen(channel.readAt(0L, 3))
+        }
+    }
+```
+
 ## File paths
 
 Before reading or writing, you need a path value that identifies the target without touching the disk. `Path` is an immutable value built with the `/` operator or the `apply` factory; pure accessors like `parts` and `parent` require no capability.
