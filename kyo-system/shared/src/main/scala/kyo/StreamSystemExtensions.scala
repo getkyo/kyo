@@ -126,4 +126,7 @@ object StreamSystemExtensions:
 
 end StreamSystemExtensions
 
-export StreamSystemExtensions.*
+// Exported by name. A wildcard emits one forwarder per member in an order the compiler does not fix, so two clean builds of identical
+// sources produce different artifacts.
+export StreamSystemExtensions.writeLinesTo
+export StreamSystemExtensions.writeTo

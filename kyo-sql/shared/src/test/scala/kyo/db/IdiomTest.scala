@@ -808,14 +808,16 @@ class IdiomTest extends Test:
         assert(withIt.substring(withIt.indexOf("RETURNING")).contains(q("id")))
         assert(!sqlText(stub, ins).contains("RETURNING"))
         // When the caller names columns, the clause carries those and not the auto-key.
-        val explicit = sqlText(returningIdiom, ins.returning(_.name))
+        val explicit = sqlText(returningIdiom, ins.returning(_.name).statement)
         val tail     = explicit.substring(explicit.indexOf("RETURNING"))
         assert(tail.contains(q("name")))
         assert(!tail.contains(q("id")))
     }
 
     "an explicit returning request fails typed where the flavor lacks the clause" in {
-        val upd = Sql.update[Person].set(_.name := "x").returning(_.id).build
+        // `.statement` because a returning write is typed by what it answers: the wrapper carries the row type and
+        // the statement it renders is the ordinary UPDATE inside it.
+        val upd = Sql.update[Person].set(_.name := "x").returning(_.id).build.statement
         val ex  = intercept[SqlUnsupportedDialectFeatureException](rendered(stub, upd))
         // Not version-gated: the flavor either has RETURNING or never had it, so no floor is named.
         assert(ex.requiredVersion.isEmpty)

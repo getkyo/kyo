@@ -10,4 +10,5 @@ private[kyo] object SystemPlatformSpecific:
     def property(name: String)(using AllowUnsafe): String = java.lang.System.getProperty(name)
     def osName()(using AllowUnsafe): String               = java.lang.System.getProperty("os.name", "")
     def osArch()(using AllowUnsafe): String               = java.lang.System.getProperty("os.arch", "")
+    def availableProcessors()(using AllowUnsafe): Int     = Runtime.getRuntime.availableProcessors()
 end SystemPlatformSpecific

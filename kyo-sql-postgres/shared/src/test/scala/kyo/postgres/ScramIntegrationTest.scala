@@ -35,7 +35,10 @@ class ScramIntegrationTest extends SqlContainerTest:
     "StartupExchange succeeds with SCRAM-SHA-256 server, connect completes without error".tagged("kyo.OwnContainer") in {
         Scope.run {
             // Default postgres:16 uses scram-sha-256; no authMethod override needed.
-            ContainerPredef.Postgres.initWith(ContainerPredef.Postgres.Config.default) { pg =>
+            // Through `SqlTestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
+            // container carries the `kyo-sql-singleton` and `kyo-sql-owner-pid` labels and a killed test
+            // process leaves something the reaper can find.
+            SqlTestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-scram").map { pg =>
                 initScramClient(pg).flatMap { client =>
                     client.isAlive.map(alive => assert(alive))
                 }
@@ -45,9 +48,13 @@ class ScramIntegrationTest extends SqlContainerTest:
 
     "StartupExchange SCRAM wrong password raises SqlConnectionAuthenticationFailedException".tagged("kyo.OwnContainer") in {
         Scope.run {
-            ContainerPredef.Postgres.initWith(
-                ContainerPredef.Postgres.Config.default.password("correctpassword")
-            ) { pg =>
+            // Through `SqlTestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
+            // container carries the `kyo-sql-singleton` and `kyo-sql-owner-pid` labels and a killed test
+            // process leaves something the reaper can find.
+            SqlTestContainers.initScopedPostgres(
+                ContainerPredef.Postgres.Config.default.password("correctpassword"),
+                "postgres-scram"
+            ).map { pg =>
                 pg.container.mappedPort(pg.config.port).flatMap { port =>
                     Abort.run[SqlException] {
                         Scope.run {
@@ -71,7 +78,10 @@ class ScramIntegrationTest extends SqlContainerTest:
 
     "StartupExchange SCRAM server signature verified, no error after successful SCRAM".tagged("kyo.OwnContainer") in {
         Scope.run {
-            ContainerPredef.Postgres.initWith(ContainerPredef.Postgres.Config.default) { pg =>
+            // Through `SqlTestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
+            // container carries the `kyo-sql-singleton` and `kyo-sql-owner-pid` labels and a killed test
+            // process leaves something the reaper can find.
+            SqlTestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-scram").map { pg =>
                 // If server signature verification fails, connect raises SqlConnectionException.
                 // Success here proves the server signature was accepted.
                 initScramClient(pg).flatMap { client =>
@@ -83,7 +93,10 @@ class ScramIntegrationTest extends SqlContainerTest:
 
     "StartupExchange SCRAM populates ParameterStatus, server_version present after SCRAM connect".tagged("kyo.OwnContainer") in {
         Scope.run {
-            ContainerPredef.Postgres.initWith(ContainerPredef.Postgres.Config.default) { pg =>
+            // Through `SqlTestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
+            // container carries the `kyo-sql-singleton` and `kyo-sql-owner-pid` labels and a killed test
+            // process leaves something the reaper can find.
+            SqlTestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-scram").map { pg =>
                 initScramClient(pg).flatMap { client =>
                     client.parameters.map { params =>
                         assert(
@@ -98,7 +111,10 @@ class ScramIntegrationTest extends SqlContainerTest:
 
     "StartupExchange SCRAM SELECT 1 returns correct result after authentication".tagged("kyo.OwnContainer") in {
         Scope.run {
-            ContainerPredef.Postgres.initWith(ContainerPredef.Postgres.Config.default) { pg =>
+            // Through `SqlTestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
+            // container carries the `kyo-sql-singleton` and `kyo-sql-owner-pid` labels and a killed test
+            // process leaves something the reaper can find.
+            SqlTestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-scram").map { pg =>
                 initScramClient(pg).flatMap { client =>
                     // Use text literal '1' so the server returns text OID bytes (UTF-8 compatible in binary format).
                     client.query("SELECT '1'").map { rows =>
@@ -135,7 +151,10 @@ class ScramIntegrationTest extends SqlContainerTest:
 
     "StartupExchange SCRAM stores BackendKeyData, processId > 0 after SCRAM connect".tagged("kyo.OwnContainer") in {
         Scope.run {
-            ContainerPredef.Postgres.initWith(ContainerPredef.Postgres.Config.default) { pg =>
+            // Through `SqlTestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
+            // container carries the `kyo-sql-singleton` and `kyo-sql-owner-pid` labels and a killed test
+            // process leaves something the reaper can find.
+            SqlTestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-scram").map { pg =>
                 initScramClient(pg).flatMap { client =>
                     client.query("SELECT pg_backend_pid()").flatMap { rows =>
                         assert(rows.nonEmpty, "pg_backend_pid() returned no rows")

@@ -7,11 +7,14 @@ import sbt.testing.SubclassFingerprint
 
 /** Scala.js test-interface Framework entry point for kyo-test.
   *
-  * Structurally identical to [[SbtFramework]] on JVM. Discovered by the Scala.js test runner via the `sbt.testing.Framework` SPI. The
-  * scalajs-test-interface re-uses the same `sbt.testing` package; fingerprint matching and runner creation are identical.
+  * Structurally identical to [[SbtFramework]] on JVM. The scalajs-test-interface re-uses the same `sbt.testing` package; fingerprint
+  * matching and runner creation are identical.
   *
-  * The `@EnableReflectiveInstantiation` annotation is required by sbt-scalajs's `TestAdapter`, which uses
-  * `scala.scalajs.reflect.Reflect.lookupInstantiatableClass` to load Framework instances at test-run time.
+  * sbt-scalajs's `TestAdapter` loads this class by name from `Test / testFrameworks`, using
+  * `scala.scalajs.reflect.Reflect.lookupInstantiatableClass`; that is what makes the `@EnableReflectiveInstantiation` annotation
+  * load-bearing. The META-INF/services/sbt.testing.Framework file in this jar serves SPI-based tools such as scala-cli's test runner, not
+  * sbt. A class the adapter cannot instantiate is dropped silently, so a wiring mistake surfaces as zero tests and a successful exit
+  * rather than as an error.
   *
   * JS-specific behaviour:
   *   - `parallelism > 1` is silently capped to 1 (JS is single-threaded). [[JsTask]] logs a warning to stderr at task execution time when

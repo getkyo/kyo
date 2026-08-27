@@ -15,8 +15,10 @@ inputs:
 runs:
   using: composite
   steps:
+    # JVM is in this list for the kyo-test-sbt-publish scripted suite: it runs in the 2.12 pass of
+    # the JVM target and its js-plugin sub-build links and runs a real Scala.js test binary.
     - uses: actions/setup-node@v6.4.0
-      if: ${{ inputs.target == 'JS' || inputs.target == 'Wasm' }}
+      if: ${{ inputs.target == 'JS' || inputs.target == 'Wasm' || inputs.target == 'JVM' }}
       with:
         node-version: '24'
 
@@ -140,6 +142,10 @@ runs:
         # rejects), which fails every kyo-pod container integration test; runc accepts the config
         # podman writes. The image podman on the 20260810.x images works with runc too (verified
         # by the #1881 probe on both architectures), so the pin is safe in both worlds.
+        # This is the STARTING choice, not the final one: container-check.sh below probes whether
+        # the pinned runtime can actually stop a container and flips to the alternative when it
+        # cannot. The #1881 probe only ever validated create/start/exec, which is how a stack that
+        # starts containers it can never kill got through this gate.
         mkdir -p "$HOME/.config/containers"
         printf '[engine]\nruntime = "runc"\n' > "$HOME/.config/containers/containers.conf"
         mkdir -p "$XDG_RUNTIME_DIR/podman"
@@ -168,9 +174,11 @@ runs:
         echo "podman version: $(podman --version 2>/dev/null); cgroupManager: $(podman info --format '{{.Host.CgroupManager}}' 2>/dev/null)"
         podman info | grep -iE 'cgroup|rootless' || true
         podman version
-        # Health gate: exercises the full podman cycle (create, start, exec) and the docker
-        # daemon, with per-component diagnostics, so a broken container stack fails here with a
-        # named cause instead of surfacing two hours later across the kyo-pod suites (#1881).
+        # Health gate: exercises the full podman cycle (create, start, exec, and stop of a
+        # SIGTERM-ignoring container) and the docker daemon, with per-component diagnostics, so a
+        # broken container stack fails here with a named cause instead of surfacing two hours
+        # later across the kyo-pod suites (#1881). It also selects the OCI runtime that can
+        # actually tear a container down, and pre-pulls the database fixture images.
         # Pass --warn-only to degrade the gate to a loud warning annotation.
         bash scripts/container-check.sh
 

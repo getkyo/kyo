@@ -39,12 +39,15 @@ set -uo pipefail
 # retry stays scoped to what did not pass. The strategy is derived from the platform;
 # no caller selects it.
 #
+# Between Native test batches the runner sweeps leftover containers and pins the
+# per-module test-worker count; both are hygiene, neither can change a verdict.
+#
 # Reads CI, SBT_TASK_LIMIT, JAVA_OPTS, JVM_OPTS, NATIVE_HEAVY, NATIVE_SKIP,
-# NATIVE_LINK_CPUS, NATIVE_LINK_BATCH, and NATIVE_TEST_BATCH from the environment;
-# mutates none of them (the nativeLink invocations append -XX:ActiveProcessorCount
-# when NATIVE_LINK_CPUS is set). The caller (a CI workflow, or build.sh --env
-# podman-ci) owns the environment, so this one runner is correct in every
-# environment.
+# NATIVE_LINK_CPUS, NATIVE_LINK_BATCH, NATIVE_TEST_BATCH, NATIVE_WORKER_MAX, and
+# CONTAINER_SWEEP from the environment; mutates none of them (the nativeLink
+# invocations append -XX:ActiveProcessorCount when NATIVE_LINK_CPUS is set). The
+# caller (a CI workflow, or build.sh --env podman-ci) owns the environment, so
+# this one runner is correct in every environment.
 
 PLATFORMS="JVM JS Native Wasm"
 ACTIONS="test testDiff compile link"
@@ -72,14 +75,18 @@ contains_word() {
 # sizes and per-batch retry; the completion marker separating a finished pass
 # from a truncated one; NATIVE_SKIP reaching the plan and the cross pass; the
 # platform-derived strategy; the exit-code mapping; the resolution-retry
-# wrapper; and the NATIVE_LINK_CPUS cap reaching every link invocation and no
-# other process.
+# wrapper; the NATIVE_LINK_CPUS cap reaching every link invocation and no other
+# process; the per-module test-worker ceiling; and the batch-boundary container
+# sweep with its host-side backstop, driven by a fake podman so the case runs on
+# a machine with no container runtime.
 if [ "${1:-}" = "--self-test" ]; then
     SELF="$0"
     PASS=0; FAIL=0; TOTAL=0
     SELFDIR=$(mktemp -d)
     CALLS="$SELFDIR/calls.log"
     HEAP="$SELFDIR/heap.log"
+    OUT="$SELFDIR/out.log"
+    PODCALLS="$SELFDIR/podman.log"
     trap 'rm -rf "$SELFDIR"' EXIT
 
     # The modules the fake sbt writes when the runner asks it to plan; cases
@@ -120,15 +127,38 @@ if [ "${1:-}" = "--self-test" ]; then
         chmod +x "$SELFDIR/sbt"
     }
 
+    # A fake podman for the container-sweep cases: every invocation is recorded,
+    # `ps -aq` answers from a file, and `rm -af --volumes` runs $1 — which empties
+    # that file for a runtime that can remove containers, and does nothing for the
+    # one whose stop/kill leave the process running.
+    make_fake_podman() {
+        {
+            printf '#!/usr/bin/env bash\n'
+            printf 'printf "%%s\\n" "$*" >> "%s"\n' "$PODCALLS"
+            printf 'case "$*" in\n'
+            printf '    "ps -aq") cat "%s" 2>/dev/null ;;\n' "$SELFDIR/podman-ps"
+            printf '    "rm -af --volumes") %s ;;\n' "$1"
+            printf '    inspect*) echo 12345 ;;\n'
+            printf 'esac\n'
+            printf 'exit 0\n'
+        } > "$SELFDIR/podman"
+        chmod +x "$SELFDIR/podman"
+    }
+
+    rm -f "$SELFDIR/podman" "$SELFDIR/podman-ps"
+
     # Run the real runner under the fake sbt. Sets CT_EXIT (the runner exit
-    # code) and leaves the recorded calls in CALLS for the assertion. Trailing
-    # VAR=value pairs enter the runner's environment.
+    # code) and leaves the recorded calls in CALLS and the runner's own output in
+    # OUT for the assertion. Trailing VAR=value pairs enter the runner's
+    # environment. CONTAINER_SWEEP=0 by default so a case that does not opt in
+    # can never touch a real runtime on a developer machine.
     run_runner_env() {
         local body="$1" platform="$2" action="$3"; shift 3
-        : > "$CALLS"; : > "$HEAP"
+        : > "$CALLS"; : > "$HEAP"; : > "$OUT"; : > "$PODCALLS"
         make_fake_sbt "$body"
-        env PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 RESOLVE_BACKOFF=0 "$@" \
-            "$SELF" "$platform" "$action" >/dev/null 2>&1
+        env PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 RESOLVE_BACKOFF=0 \
+            CONTAINER_SWEEP=0 "$@" \
+            "$SELF" "$platform" "$action" > "$OUT" 2>&1
         CT_EXIT=$?
     }
 
@@ -144,6 +174,11 @@ if [ "${1:-}" = "--self-test" ]; then
     calls_have()   { grep -qF -- "$1" "$CALLS"; }
     calls_lack()   { ! grep -qF -- "$1" "$CALLS"; }
     heap_nth_has() { sed -n "${1}p" "$HEAP" | grep -qF -- "$2"; }
+    out_has()      { grep -qF -- "$1" "$OUT"; }
+    out_lacks()    { ! grep -qF -- "$1" "$OUT"; }
+    pod_has()      { grep -qF -- "$1" "$PODCALLS"; }
+    pod_count()    { [ "$(grep -cF -- "$1" "$PODCALLS")" = "$2" ]; }
+    pod_empty()    { [ ! -s "$PODCALLS" ]; }
 
     # Register a case: name + an assertion expression already evaluated by
     # the caller into $? . PASS when the caller passed 'true'.
@@ -489,7 +524,58 @@ echo "Tests: succeeded 99, failed 0"; echo "[testKyo] completed"; exit 0'
     then record ok "a crashed test batch re-runs through testKyo --quick; attempt 1 is the full batch"
     else record no "a crashed test batch re-runs through testKyo --quick; attempt 1 is the full batch"; fi
 
-    # 47-48: argument validation exits 2 before any sbt.
+    # 47-48: the per-module test-worker ceiling.
+    # One scala-native runner process per SUITE is the topology that re-provisioned a module's
+    # container singletons 24 times in one CI job; one per MODULE is the fixed shape.
+    FAKE_PLAN="kyo-dataNative"
+    run_runner Native test 'if [[ "$*" == *"--phase link"* ]]; then exit 0; fi
+echo "Starting process '"'"'/t/kyo-data-test'"'"' on port '"'"'1'"'"'."
+echo "Starting process '"'"'/t/kyo-data-test'"'"' on port '"'"'2'"'"'."
+echo "Starting process '"'"'/t/kyo-data-test'"'"' on port '"'"'3'"'"'."
+echo "Tests: succeeded 100, failed 0"; echo "[testKyo] completed"; exit 0'
+    if out_has "3 native test-runner processes for 1 module(s)" \
+       && out_has "::warning title=native test workers::" && exit_is 0
+    then record ok "a per-suite worker count warns without failing the batch"
+    else record no "a per-suite worker count warns without failing the batch"; fi
+
+    run_runner Native test 'if [[ "$*" == *"--phase link"* ]]; then exit 0; fi
+echo "Starting process '"'"'/t/kyo-data-test'"'"' on port '"'"'1'"'"'."
+echo "Starting process '"'"'/t/kyo-data-test'"'"' on port '"'"'2'"'"'."
+echo "Tests: succeeded 100, failed 0"; echo "[testKyo] completed"; exit 0'
+    if out_lacks "::warning title=native test workers::" \
+       && out_has "native test-runner processes: 2 for 1 module(s)" && exit_is 0
+    then record ok "one controller plus one worker per module does not warn"
+    else record no "one controller plus one worker per module does not warn"; fi
+
+    # 49-51: the batch-boundary container sweep.
+    FAKE_PLAN="kyo-dataNative"
+    printf 'aaa\nbbb\n' > "$SELFDIR/podman-ps"
+    make_fake_podman ': > "'"$SELFDIR"'/podman-ps"'
+    run_runner_env "$PASS_BODY" Native test CONTAINER_SWEEP=1
+    if pod_has "rm -af --volumes" && pod_count "rm -af --volumes" 1 \
+       && ! pod_has "inspect" && exit_is 0
+    then record ok "the sweep removes a batch's containers and stops there when they go"
+    else record no "the sweep removes a batch's containers and stops there when they go"; fi
+
+    # A runtime that cannot reap a container's process leaves survivors behind `rm -af`;
+    # the host-side kill is what the next batch depends on.
+    printf 'aaa\nbbb\n' > "$SELFDIR/podman-ps"
+    make_fake_podman ':'
+    run_runner_env "$PASS_BODY" Native test CONTAINER_SWEEP=1
+    if pod_has "inspect --format {{.State.Pid}} aaa" \
+       && pod_count "rm -af --volumes" 2 && exit_is 0
+    then record ok "survivors of rm -af are killed host-side and swept again"
+    else record no "survivors of rm -af are killed host-side and swept again"; fi
+
+    printf 'aaa\n' > "$SELFDIR/podman-ps"
+    make_fake_podman ': > "'"$SELFDIR"'/podman-ps"'
+    run_runner_env "$PASS_BODY" Native test
+    if pod_empty && exit_is 0
+    then record ok "CONTAINER_SWEEP=0 touches no container runtime at all"
+    else record no "CONTAINER_SWEEP=0 touches no container runtime at all"; fi
+    rm -f "$SELFDIR/podman" "$SELFDIR/podman-ps"
+
+    # 52-53: argument validation exits 2 before any sbt.
     run_runner Frob test 'exit 0'
     if exit_is 2 && calls_count 0; then record ok "unknown platform exits 2 before any sbt"
     else record no "unknown platform exits 2 before any sbt"; fi
@@ -504,7 +590,7 @@ echo "Tests: succeeded 99, failed 0"; echo "[testKyo] completed"; exit 0'
 
     echo ""
     echo "Results: $PASS/$TOTAL passed, $FAIL failed"
-    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 48 ]
+    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 53 ]
     exit $?
 fi
 
@@ -833,6 +919,65 @@ run_watched() {
     return 1
 }
 
+# Remove every container the batch left behind, so one batch's corpses cannot tax the next.
+#
+# `rm -af` alone is not enough on a runtime whose stop/kill cannot reap a container's process
+# (HTTP 500 "given PID did not die within timeout"): the remove fails and the container keeps
+# running. The pkill backstop kills what the runtime would not, host-side, and a second sweep
+# then removes the now-dead containers. Everything is best-effort and never changes the batch
+# verdict: this is hygiene between batches, not a test result.
+#
+# CONTAINER_SWEEP=0 disables it (the self-test and any local run that wants its containers kept).
+sweep_containers() {
+    local when="$1"
+    [ "${CONTAINER_SWEEP:-1}" = "0" ] && return 0
+    command -v podman >/dev/null 2>&1 || return 0
+    local before
+    before=$(podman ps -aq 2>/dev/null | wc -l | tr -d ' ')
+    [ "${before:-0}" = "0" ] && return 0
+    log "container sweep $when: $before container(s)"
+    podman rm -af --volumes >/dev/null 2>&1
+    local left
+    left=$(podman ps -aq 2>/dev/null | wc -l | tr -d ' ')
+    if [ "${left:-0}" != "0" ]; then
+        log "container sweep: $left container(s) survived rm -af; killing their processes host-side"
+        local id pid
+        for id in $(podman ps -aq 2>/dev/null); do
+            pid=$(podman inspect --format '{{.State.Pid}}' "$id" 2>/dev/null)
+            [ -n "$pid" ] && [ "$pid" != "0" ] && kill -9 "$pid" 2>/dev/null
+        done
+        podman rm -af --volumes >/dev/null 2>&1
+        log "container sweep: $(podman ps -aq 2>/dev/null | wc -l | tr -d ' ') container(s) remain"
+    fi
+    return 0
+}
+
+# The scala-native TestAdapter spawns one test-runner process per sbt task thread, and sbt's
+# cached task pool reaps a thread after 60s idle. With one test task per suite, every suite
+# slower than a minute lands on a fresh thread and therefore a fresh runner process, each one
+# re-provisioning that module's per-process fixtures: one CI module reached 24 worker processes
+# and 7GB. `Test / parallelExecution := false` on Native (build.sbt, native-settings-base) makes
+# it one task per module and so one worker; this is the pin that says so. A batch's log should
+# carry at most one controller plus one worker per module.
+#
+# Warns rather than fails: the count is a build-topology invariant, not a test result, and a
+# module legitimately gains a second worker if sbt ever splits its task. NATIVE_WORKER_MAX
+# tunes the per-module ceiling.
+check_worker_count() {
+    local batch="$1" modules starts allowed
+    [ -n "$LOG" ] && [ -f "$LOG" ] || return 0
+    modules=$(printf '%s\n' "$batch" | tr ',' '\n' | grep -c .)
+    starts=$(grep -c "Starting process" "$LOG" 2>/dev/null || echo 0)
+    allowed=$(( modules * ${NATIVE_WORKER_MAX:-2} ))
+    if [ "$starts" -gt "$allowed" ]; then
+        log "WARNING: $starts native test-runner processes for $modules module(s) (expected at most $allowed)"
+        echo "::warning title=native test workers::$starts test-runner processes started for $modules module(s); expected at most $allowed. A per-suite worker means Test / parallelExecution is back on for Native."
+    else
+        log "native test-runner processes: $starts for $modules module(s) (ceiling $allowed)"
+    fi
+    return 0
+}
+
 run_native() {
     local arg; arg=$(run_arg)
 
@@ -884,6 +1029,8 @@ run_native() {
     # modules spawn; the plan and the links above run at the full .jvmopts heap.
     for batch in $(plan_batches "$NATIVE_TEST_BATCH"); do
         run_watched "test batch $batch" $(run_phase_heap) "testKyo --scala 3 --modules $batch Native" || return 1
+        check_worker_count "$batch"
+        sweep_containers "after test batch $batch"
     done
     # The cross-build modules select themselves per Scala 2.x version, so they are outside the plan
     # and outside both pools.

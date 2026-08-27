@@ -1,0 +1,10 @@
+# Compiles only if the POM carries kyo-core, which the leaf body type needs.
+> Test/compile
+
+# Discovery has to find and pass a green suite.
+> testOnly MySuite
+
+# And has to report a red one as red. This is the assertion that matters: with no framework
+# registered sbt runs nothing and exits 0, so only expecting a failure here separates a working
+# setup from a silently empty one.
+-> testOnly FailingSuite

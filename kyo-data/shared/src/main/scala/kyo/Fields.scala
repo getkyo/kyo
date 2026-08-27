@@ -204,7 +204,13 @@ object Fields:
         opaque type Pin[+N <: String] = Unit
         given [N <: String]: Pin[N] = ()
     end Pin
-    export Pin.*
+    // Exported by name. A wildcard emits one forwarder per member in an order the compiler does not
+    // fix, so two clean builds of identical sources produce different artifacts.
+    //
+    // The type alone. Adding `export Pin.given` would create an alias here that competes with the
+    // original in Pin, and every use site would fail as ambiguous. It is also unnecessary: `object
+    // Pin` is in the implicit scope of the opaque type declared inside it, so the given is found there.
+    export Pin.Pin
 
     /** Decomposes a function's return type into a type constructor and its field types, preserving field information that Scala would
       * otherwise widen.

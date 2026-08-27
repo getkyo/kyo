@@ -59,6 +59,32 @@ object MysqlEncoder:
     val TYPE_BLOB       = 0xfc
     val TYPE_VAR_STRING = 0xfd
 
+    // The remaining string-family type bytes. Nothing encodes as one of these (a `String` parameter goes out as
+    // VAR_STRING), but a result column arrives under whichever one the server chose for the stored column. A decode
+    // that resolves the wire representation from the column type needs all of them to recognise a column whose bytes
+    // are the value's text rendering.
+    //
+    // What a released server actually sends is narrower than the list: CHAR, ENUM and SET all arrive as STRING, with
+    // ENUM_FLAG or SET_FLAG in the flags word saying which; every TEXT and BLOB width arrives as BLOB, since
+    // `Field_blob::type()` answers one byte for all four; and VAR_STRING covers VARCHAR. The others are here because
+    // the protocol defines them and a proxy or a fork may send them, not because MySQL does.
+    val TYPE_VARCHAR     = 0x0f
+    val TYPE_ENUM        = 0xf7
+    val TYPE_SET         = 0xf8
+    val TYPE_TINY_BLOB   = 0xf9
+    val TYPE_MEDIUM_BLOB = 0xfa
+    val TYPE_LONG_BLOB   = 0xfb
+    val TYPE_STRING      = 0xfe
+
+    /** Spatial values, carried as WKB behind a four-byte SRID. Nothing encodes to it; a result column arrives under it. */
+    val TYPE_GEOMETRY = 0xff
+
+    /** Bit 0x100 of `ColumnDefinition41.flags`, `ENUM_FLAG` in MySQL's `mysql_com.h`: a STRING column that is an ENUM. */
+    val ENUM_FLAG = 0x100
+
+    /** Bit 0x800 of `ColumnDefinition41.flags`, `SET_FLAG` in MySQL's `mysql_com.h`: a STRING column that is a SET. */
+    val SET_FLAG = 0x800
+
     // --- Boolean → TINY (1 byte) ---
 
     val boolEncoder: MysqlEncoder[Boolean] = new MysqlEncoder[Boolean]:

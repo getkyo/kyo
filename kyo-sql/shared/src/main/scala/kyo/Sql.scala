@@ -2,6 +2,7 @@ package kyo
 
 import kyo.Record.~
 import kyo.db.Idiom
+import scala.annotation.implicitNotFound
 import scala.annotation.publicInBinary
 import scala.annotation.targetName
 import scala.compiletime.constValue
@@ -9,6 +10,7 @@ import scala.compiletime.erasedValue
 import scala.compiletime.summonFrom
 import scala.compiletime.summonInline
 import scala.deriving.Mirror
+import scala.util.NotGiven
 
 // --- Sql, root of the AST hierarchy ---
 
@@ -134,14 +136,14 @@ object Sql:
     /** UPDATE entry point, table name derived from `T`'s case-class label. */
     transparent inline def update[T](using f: Fields[T]) =
         val cols = kyo.internal.SqlAstInternal.buildRowColumns[T]
-        Update.Builder[T, Sql.RecordF[cols.type]](cols, kyo.internal.SqlMacros.tableName[T])
+        Update.Builder[T, Sql.RecordF[cols.type]](cols, kyo.internal.SqlMacros.tableName[T], Chunk.empty)
 
     /** UPDATE into an explicitly named table, overriding the `T`-derived default (a copy, not a delegation: transparent inline overloads
       * cannot delegate).
       */
     transparent inline def update[T](inline tableName: String)(using f: Fields[T]) =
         val cols = kyo.internal.SqlAstInternal.buildRowColumns[T]
-        Update.Builder[T, Sql.RecordF[cols.type]](cols, tableName)
+        Update.Builder[T, Sql.RecordF[cols.type]](cols, tableName, Chunk.empty)
 
     /** DELETE entry point, table name derived from `T`'s case-class label. */
     transparent inline def delete[T](using f: Fields[T]) =
@@ -216,7 +218,7 @@ object Sql:
       * @param c
       *   the single-column SQL evidence for `A`; its carried schema controls encode/decode; implicit-resolved
       */
-    inline def literal[A](inline value: A)(using c: SqlSchema.Column[A]): Term[A] = lit(value, c)
+    inline def literal[A](inline value: A)(using c: SqlSchema.Column[A]): Literal[A] = lit(value, c)
 
     /** A single-column SQL codec that stores `T` as a JSON document (`jsonb` on PostgreSQL, `JSON` on MySQL), with the document text
       * produced and consumed through the type's [[Schema]].
@@ -354,46 +356,127 @@ object Sql:
 
         // -- Comparison ------------------------------------------------------
 
-        final inline def ==(inline other: Term[A]): Term[Boolean] =
+        // Each comparison takes a right side whose type need only agree with the left one up to nullability, which is what
+        // [[Sql.SqlComparable]] states. SQL compares two columns the same way whether or not either permits NULL, so requiring the two Scala
+        // types to be equal would reject the ordinary join between a nullable foreign key and the non-null primary key it references, and
+        // there is no lift from `Term[A]` to `Term[Maybe[A]]` that does not change the SQL.
+        //
+        // Each operator has three forms: against another term, against a raw value of the column's own type, and against a raw value
+        // whose type differs from the column's by nullability. The third is what lets a column permitting NULL be compared to a plain
+        // literal, `country == "Germany"` rather than `country == Present("Germany")`. The second stays because it is the one that
+        // accepts a `Present(...)` written out: `Present[A]` is its own type rather than an `A`, so it reaches the column's type through
+        // the parameter's expected type and not through inference.
+        //
+        // The third form carries [[Sql.SqlComparableLiteral]] and not the evidence the first one does, because a raw value may cross
+        // nullability in one direction only: a value that may be absent, compared against a column that cannot be NULL, is a comparison
+        // no row satisfies. See that trait for why it is rejected rather than rendered.
+
+        final inline def ==[B](inline other: Term[B])(using SqlComparable[this.type, A, B]): Term[Boolean] =
+            Comparison(this, Comparison.Op.Eq, other)
+
+        /** Compares against a value lifted by [[Sql.literal]], which follows the raw-value rule rather than the column one.
+          * More specific than the `Term[B]` form above, so a lifted value picks this and a column picks that.
+          */
+        @targetName("eqLifted")
+        final inline def ==[B](inline other: Literal[B])(using SqlComparableLifted[this.type, A, B]): Term[Boolean] =
             Comparison(this, Comparison.Op.Eq, other)
 
         @targetName("eqRaw")
         final inline def ==(inline other: A)(using c: SqlSchema.Column[A]): Term[Boolean] =
             Comparison(this, Comparison.Op.Eq, lit(other, c))
 
-        final inline def !=(inline other: Term[A]): Term[Boolean] =
+        @targetName("eqRawOptional")
+        final inline def ==[B](inline other: B)(using ev: SqlComparableLiteral[this.type, A, B], c: SqlSchema.Column[B]): Term[Boolean] =
+            Comparison(this, Comparison.Op.Eq, lit(other, c))
+
+        final inline def !=[B](inline other: Term[B])(using SqlComparable[this.type, A, B]): Term[Boolean] =
+            Comparison(this, Comparison.Op.NotEq, other)
+
+        /** Compares against a value lifted by [[Sql.literal]], which follows the raw-value rule rather than the column one.
+          * More specific than the `Term[B]` form above, so a lifted value picks this and a column picks that.
+          */
+        @targetName("neLifted")
+        final inline def !=[B](inline other: Literal[B])(using SqlComparableLifted[this.type, A, B]): Term[Boolean] =
             Comparison(this, Comparison.Op.NotEq, other)
 
         @targetName("neqRaw")
         final inline def !=(inline other: A)(using c: SqlSchema.Column[A]): Term[Boolean] =
             Comparison(this, Comparison.Op.NotEq, lit(other, c))
 
-        final inline def <(inline other: Term[A]): Term[Boolean] =
+        @targetName("neqRawOptional")
+        final inline def !=[B](inline other: B)(using ev: SqlComparableLiteral[this.type, A, B], c: SqlSchema.Column[B]): Term[Boolean] =
+            Comparison(this, Comparison.Op.NotEq, lit(other, c))
+
+        final inline def <[B](inline other: Term[B])(using SqlComparable[this.type, A, B]): Term[Boolean] =
+            Comparison(this, Comparison.Op.Lt, other)
+
+        /** Compares against a value lifted by [[Sql.literal]], which follows the raw-value rule rather than the column one.
+          * More specific than the `Term[B]` form above, so a lifted value picks this and a column picks that.
+          */
+        @targetName("ltLifted")
+        final inline def <[B](inline other: Literal[B])(using SqlComparableLifted[this.type, A, B]): Term[Boolean] =
             Comparison(this, Comparison.Op.Lt, other)
 
         @targetName("ltRaw")
         final inline def <(inline other: A)(using c: SqlSchema.Column[A]): Term[Boolean] =
             Comparison(this, Comparison.Op.Lt, lit(other, c))
 
-        final inline def <=(inline other: Term[A]): Term[Boolean] =
+        @targetName("ltRawOptional")
+        final inline def <[B](inline other: B)(using ev: SqlComparableLiteral[this.type, A, B], c: SqlSchema.Column[B]): Term[Boolean] =
+            Comparison(this, Comparison.Op.Lt, lit(other, c))
+
+        final inline def <=[B](inline other: Term[B])(using SqlComparable[this.type, A, B]): Term[Boolean] =
+            Comparison(this, Comparison.Op.Lte, other)
+
+        /** Compares against a value lifted by [[Sql.literal]], which follows the raw-value rule rather than the column one.
+          * More specific than the `Term[B]` form above, so a lifted value picks this and a column picks that.
+          */
+        @targetName("lteLifted")
+        final inline def <=[B](inline other: Literal[B])(using SqlComparableLifted[this.type, A, B]): Term[Boolean] =
             Comparison(this, Comparison.Op.Lte, other)
 
         @targetName("lteRaw")
         final inline def <=(inline other: A)(using c: SqlSchema.Column[A]): Term[Boolean] =
             Comparison(this, Comparison.Op.Lte, lit(other, c))
 
-        final inline def >(inline other: Term[A]): Term[Boolean] =
+        @targetName("lteRawOptional")
+        final inline def <=[B](inline other: B)(using ev: SqlComparableLiteral[this.type, A, B], c: SqlSchema.Column[B]): Term[Boolean] =
+            Comparison(this, Comparison.Op.Lte, lit(other, c))
+
+        final inline def >[B](inline other: Term[B])(using SqlComparable[this.type, A, B]): Term[Boolean] =
+            Comparison(this, Comparison.Op.Gt, other)
+
+        /** Compares against a value lifted by [[Sql.literal]], which follows the raw-value rule rather than the column one.
+          * More specific than the `Term[B]` form above, so a lifted value picks this and a column picks that.
+          */
+        @targetName("gtLifted")
+        final inline def >[B](inline other: Literal[B])(using SqlComparableLifted[this.type, A, B]): Term[Boolean] =
             Comparison(this, Comparison.Op.Gt, other)
 
         @targetName("gtRaw")
         final inline def >(inline other: A)(using c: SqlSchema.Column[A]): Term[Boolean] =
             Comparison(this, Comparison.Op.Gt, lit(other, c))
 
-        final inline def >=(inline other: Term[A]): Term[Boolean] =
+        @targetName("gtRawOptional")
+        final inline def >[B](inline other: B)(using ev: SqlComparableLiteral[this.type, A, B], c: SqlSchema.Column[B]): Term[Boolean] =
+            Comparison(this, Comparison.Op.Gt, lit(other, c))
+
+        final inline def >=[B](inline other: Term[B])(using SqlComparable[this.type, A, B]): Term[Boolean] =
+            Comparison(this, Comparison.Op.Gte, other)
+
+        /** Compares against a value lifted by [[Sql.literal]], which follows the raw-value rule rather than the column one.
+          * More specific than the `Term[B]` form above, so a lifted value picks this and a column picks that.
+          */
+        @targetName("gteLifted")
+        final inline def >=[B](inline other: Literal[B])(using SqlComparableLifted[this.type, A, B]): Term[Boolean] =
             Comparison(this, Comparison.Op.Gte, other)
 
         @targetName("gteRaw")
         final inline def >=(inline other: A)(using c: SqlSchema.Column[A]): Term[Boolean] =
+            Comparison(this, Comparison.Op.Gte, lit(other, c))
+
+        @targetName("gteRawOptional")
+        final inline def >=[B](inline other: B)(using ev: SqlComparableLiteral[this.type, A, B], c: SqlSchema.Column[B]): Term[Boolean] =
             Comparison(this, Comparison.Op.Gte, lit(other, c))
 
         // -- Absence ---------------------------------------------------------
@@ -428,6 +511,20 @@ object Sql:
         final inline def in(inline values: A*)(using c: SqlSchema.Column[A]): Term[Boolean] =
             InValues(this, Chunk.from(values).map(v => lit(v, c)))
 
+        /** Membership over raw values that differ from the column by nullability, on the rule `==` follows.
+          *
+          * The lifted values are cast to the column's parameter because the node holds `Term[A]` and the evidence has already
+          * decided the two denote the same SQL type with one of them optional. The cast is erasure-only: a `Term` is a pure
+          * description that nothing reads the parameter of at run time, and what is rendered is one bind either way.
+          *
+          * A nullable column against plain values is the ordinary case: `status.in("open", "held")` on a column that
+          * permits NULL. The reverse is refused for the reason the equality form gives, since `IN` renders a chain of
+          * equalities and one against NULL is UNKNOWN in both polarities.
+          */
+        @targetName("inRawOptional")
+        final inline def in[B](inline values: B*)(using ev: SqlComparableLiteral[this.type, A, B], c: SqlSchema.Column[B]): Term[Boolean] =
+            InValues(this, Chunk.from(values).map(v => lit(v, c).asInstanceOf[Term[A]]))
+
         final inline def in(inline query: Query[A]): Term[Boolean] = InSubquery(this, query)
 
         final inline def notIn(inline values: Term[A]*): Term[Boolean] = NotInValues(this, Chunk.from(values))
@@ -435,6 +532,14 @@ object Sql:
         @targetName("notInRaw")
         final inline def notIn(inline values: A*)(using c: SqlSchema.Column[A]): Term[Boolean] =
             NotInValues(this, Chunk.from(values).map(v => lit(v, c)))
+
+        /** Non-membership over raw values that differ from the column by nullability. See [[in]]. */
+        @targetName("notInRawOptional")
+        final inline def notIn[B](inline values: B*)(using
+            ev: SqlComparableLiteral[this.type, A, B],
+            c: SqlSchema.Column[B]
+        ): Term[Boolean] =
+            NotInValues(this, Chunk.from(values).map(v => lit(v, c).asInstanceOf[Term[A]]))
 
         final inline def notIn(inline query: Query[A]): Term[Boolean] = NotInSubquery(this, query)
 
@@ -445,6 +550,14 @@ object Sql:
         @targetName("betweenRaw")
         final inline def between(inline low: A, inline high: A)(using c: SqlSchema.Column[A]): Term[Boolean] =
             Between(this, lit(low, c), lit(high, c))
+
+        /** Range over raw bounds that differ from the column by nullability, on the rule `==` follows. */
+        @targetName("betweenRawOptional")
+        final inline def between[B](inline low: B, inline high: B)(using
+            ev: SqlComparableLiteral[this.type, A, B],
+            c: SqlSchema.Column[B]
+        ): Term[Boolean] =
+            Between(this, lit(low, c).asInstanceOf[Term[A]], lit(high, c).asInstanceOf[Term[A]])
 
         // -- Coalesce / absentIf ----------------------------------------------
         final def coalesce(others: Term[A]*): Term[A] = Coalesce(this +: Chunk.from(others))
@@ -569,7 +682,17 @@ object Sql:
 
         // -- String-only ops (gated by A =:= String) ------------------------
         // asStr must remain inline so that callers used in staticSql expressions are macro-liftable.
-        private inline def asStr(using ev: A =:= String): Term[String]                    = ev.substituteCo[[T] =>> Term[T]](this)
+        private inline def asStr(using ev: A =:= String): Term[String] = ev.substituteCo[[T] =>> Term[T]](this)
+
+        /** The same term seen as text, for a column whose type is `String` or `Maybe[String]`.
+          *
+          * The pattern operators answer `Term[Boolean]` whatever the operand's nullability, because a NULL operand makes
+          * the predicate UNKNOWN and a WHERE drops the row, which is what a caller asking `LIKE` on a column that permits
+          * NULL means. The node carries `Term[String]` and the cast is erasure-only: `Term` is a pure description and
+          * nothing reads the parameter at run time. `asStr` above stays for the operators that RETURN text, where the
+          * operand's nullability belongs in the result type and this substitution would lose it.
+          */
+        private inline def asTextual: Term[String]                                        = this.asInstanceOf[Term[String]]
         final def upper(using A =:= String): Term[String]                                 = StringFn(asStr, StringFn.Op.Upper)
         final def lower(using A =:= String): Term[String]                                 = StringFn(asStr, StringFn.Op.Lower)
         final def length(using A =:= String): Term[Int]                                   = StringLength(asStr)
@@ -580,33 +703,33 @@ object Sql:
         final inline def ++(inline other: String)(using A =:= String): Term[String] =
             Concat(Chunk(asStr, lit(other, SqlSchema.string)))
 
-        final inline def like(inline pattern: Term[String])(using A =:= String): Term[Boolean] =
-            StringMatch(asStr, StringMatch.Op.Like, pattern)
+        final inline def like(inline pattern: Term[String])(using SqlTextual[this.type, A]): Term[Boolean] =
+            StringMatch(asTextual, StringMatch.Op.Like, pattern)
 
         @targetName("likeRaw")
-        final inline def like(inline pattern: String)(using A =:= String): Term[Boolean] =
-            StringMatch(asStr, StringMatch.Op.Like, lit(pattern, SqlSchema.string))
+        final inline def like(inline pattern: String)(using SqlTextual[this.type, A]): Term[Boolean] =
+            StringMatch(asTextual, StringMatch.Op.Like, lit(pattern, SqlSchema.string))
 
-        final inline def notLike(inline pattern: Term[String])(using A =:= String): Term[Boolean] =
-            StringMatch(asStr, StringMatch.Op.NotLike, pattern)
+        final inline def notLike(inline pattern: Term[String])(using SqlTextual[this.type, A]): Term[Boolean] =
+            StringMatch(asTextual, StringMatch.Op.NotLike, pattern)
 
         @targetName("notLikeRaw")
-        final inline def notLike(inline pattern: String)(using A =:= String): Term[Boolean] =
-            StringMatch(asStr, StringMatch.Op.NotLike, lit(pattern, SqlSchema.string))
+        final inline def notLike(inline pattern: String)(using SqlTextual[this.type, A]): Term[Boolean] =
+            StringMatch(asTextual, StringMatch.Op.NotLike, lit(pattern, SqlSchema.string))
 
-        final inline def ilike(inline pattern: Term[String])(using A =:= String): Term[Boolean] =
-            StringMatch(asStr, StringMatch.Op.ILike, pattern)
+        final inline def ilike(inline pattern: Term[String])(using SqlTextual[this.type, A]): Term[Boolean] =
+            StringMatch(asTextual, StringMatch.Op.ILike, pattern)
 
         @targetName("ilikeRaw")
-        final inline def ilike(inline pattern: String)(using A =:= String): Term[Boolean] =
-            StringMatch(asStr, StringMatch.Op.ILike, lit(pattern, SqlSchema.string))
+        final inline def ilike(inline pattern: String)(using SqlTextual[this.type, A]): Term[Boolean] =
+            StringMatch(asTextual, StringMatch.Op.ILike, lit(pattern, SqlSchema.string))
 
-        final inline def notIlike(inline pattern: Term[String])(using A =:= String): Term[Boolean] =
-            StringMatch(asStr, StringMatch.Op.NotILike, pattern)
+        final inline def notIlike(inline pattern: Term[String])(using SqlTextual[this.type, A]): Term[Boolean] =
+            StringMatch(asTextual, StringMatch.Op.NotILike, pattern)
 
         @targetName("notIlikeRaw")
-        final inline def notIlike(inline pattern: String)(using A =:= String): Term[Boolean] =
-            StringMatch(asStr, StringMatch.Op.NotILike, lit(pattern, SqlSchema.string))
+        final inline def notIlike(inline pattern: String)(using SqlTextual[this.type, A]): Term[Boolean] =
+            StringMatch(asTextual, StringMatch.Op.NotILike, lit(pattern, SqlSchema.string))
 
         final inline def substring(inline start: Term[Int])(using A =:= String): Term[String] = Substring(asStr, start, Maybe.empty)
 
@@ -713,7 +836,160 @@ object Sql:
       */
     final case class LabelledTerm[N <: String & Singleton, A](label: N, term: Term[A]) extends Term[A] derives CanEqual
 
-    final case class Comparison[A](left: Term[A], op: Comparison.Op, right: Term[A]) extends Term[Boolean] derives CanEqual
+    /** Evidence that a `Term[A]` and a `Term[B]` may be compared: the two denote the same SQL type, with either side optional.
+      *
+      * Nullability is a property of the Scala type, not of the comparison: SQL compares a column that permits NULL to one that does not
+      * exactly as it compares two of the same kind. Requiring both sides to be the same Scala type would reject the ordinary join between
+      * a nullable foreign key and the non-null primary key it references, which is the first join written against most schemas, and the
+      * DSL has no lift from `Term[A]` to `Term[Maybe[A]]` that leaves the SQL alone: `coalesce` stays inside `Maybe`, and `cast` emits a
+      * SQL CAST, which is a different query and can cost an index.
+      *
+      * The three instances are the three shapes: both total, the left optional, the right optional. Two optional sides are the first
+      * instance, since the types are then equal.
+      */
+    @implicitNotFound(
+        "Cannot compare a SQL expression of type ${A} with one of type ${B}.\n" +
+            "The two sides of a comparison must denote the same SQL type; one of them may be optional (kyo.Maybe), which is what a\n" +
+            "column permitting NULL is, so a nullable foreign key compares against the non-null key it references. Two different SQL\n" +
+            "types do not compare: spell the conversion with `.cast`."
+    )
+    sealed trait SqlComparable[S, A, B]
+
+    object SqlComparable:
+        private val evidence: SqlComparable[Any, Any, Any] = new SqlComparable[Any, Any, Any] {}
+
+        /** Both sides are the same Scala type, optional or not. */
+        given same[S, A](using NotGiven[S <:< Literal[?]]): SqlComparable[S, A, A] =
+            evidence.asInstanceOf[SqlComparable[S, A, A]]
+
+        /** The left side permits NULL and the right does not. Guarded off a lifted receiver: that side is then a value rather than a
+          * column, and the argument keeping this instance does not reach it.
+          */
+        given leftOptional[S, A](using NotGiven[S <:< Literal[?]]): SqlComparable[S, Maybe[A], A] =
+            evidence.asInstanceOf[SqlComparable[S, Maybe[A], A]]
+
+        /** The right side permits NULL and the left does not. */
+        given rightOptional[S, A](using NotGiven[S <:< Literal[?]]): SqlComparable[S, A, Maybe[A]] =
+            evidence.asInstanceOf[SqlComparable[S, A, Maybe[A]]]
+
+        /** A lifted receiver against a term of its own type. */
+        given liftedSame[S <: Literal[?], A]: SqlComparable[S, A, A] =
+            evidence.asInstanceOf[SqlComparable[S, A, A]]
+
+        /** A lifted receiver against a term that permits NULL where the lifted value does not, which is the one direction a value may
+          * cross. The reverse has no instance, which is what refuses `Sql.literal(absent) == notNullColumn`.
+          */
+        given liftedArgOptional[S <: Literal[?], A]: SqlComparable[S, A, Maybe[A]] =
+            evidence.asInstanceOf[SqlComparable[S, A, Maybe[A]]]
+    end SqlComparable
+
+    /** Evidence that a column of type `A` may be compared against a RAW value of type `B` that differs from it by nullability.
+      *
+      * One instance, in one direction: the column permits NULL and the value does not. That is the case the raw form exists for,
+      * `country == "Germany"` on a nullable column rather than `country == Present("Germany")`.
+      *
+      * The other direction is deliberately absent, and this is why [[SqlComparable]] cannot serve here. A column that cannot be NULL
+      * compared against a value that may be is a question no row can answer: `= NULL` is unknown for every row, so the comparison matches
+      * nothing, and so does its negation: `x = NULL` is UNKNOWN for every row, `NOT UNKNOWN` is UNKNOWN too, and a WHERE keeps neither.
+      * A predicate no row can satisfy in either polarity is one the author cannot have meant, and it fails silently and at runtime.
+      * Deciding between `= ?` and `IS NULL` by looking at the value
+      * is not available either, for the reason the absence operators below give: the static path lifts the bind as the call site's own
+      * expression, so there is no value to look at. Rejecting it is the only answer that reports anything.
+      *
+      * A `Term[A]` against a `Term[Maybe[A]]` stays allowed, on [[SqlComparable]]: comparing two columns says nothing about whether
+      * either is NULL, and the join between a non-null key and the nullable foreign key referencing it is written that way round as often
+      * as the other.
+      */
+    @implicitNotFound(
+        "Cannot compare a SQL column of type ${A} with a raw value of type ${B}.\n" +
+            "Either the two are different SQL types, in which case the value's type is the thing to fix; or they differ only by\n" +
+            "nullability, which a raw value may do in one direction only: the column permits NULL and the value does not, as in\n" +
+            "`country == \"Germany\"` on a nullable column. The other way round matches no row, and neither does its negation, because\n" +
+            "nothing compares equal to NULL. To ask whether the column is absent, compare against `Absent`."
+    )
+    sealed trait SqlComparableLiteral[S, A, B]
+
+    object SqlComparableLiteral:
+        private val evidence: SqlComparableLiteral[Any, Any, Any] = new SqlComparableLiteral[Any, Any, Any] {}
+
+        /** The column permits NULL and the raw value does not.
+          *
+          * No instance exists for a lifted receiver: a lifted value against a raw value is two values, and the one that may be absent
+          * makes the comparison the `= NULL` no row satisfies, exactly as it does against a column.
+          */
+        given optionalColumn[S, A](using NotGiven[S <:< Literal[?]]): SqlComparableLiteral[S, Maybe[A], A] =
+            evidence.asInstanceOf[SqlComparableLiteral[S, Maybe[A], A]]
+    end SqlComparableLiteral
+
+    /** Evidence that a column of type `A` may be compared against a value LIFTED into a term by [[Sql.literal]].
+      *
+      * The same rule [[SqlComparableLiteral]] states, and for the same reason: a lifted value is a value, not a column, so the argument
+      * that keeps [[SqlComparable.rightOptional]] does not reach it. Comparing two columns says nothing about whether either is NULL,
+      * which is why the join between a non-null key and the nullable foreign key referencing it is allowed; a lifted `Maybe` against a
+      * NOT NULL column is the `= NULL` no row satisfies in either polarity, spelled through a different door.
+      *
+      * Carries the same-type case as well, which [[SqlComparableLiteral]] does not need: a raw value of the column's own type is served by
+      * the overload taking `A` exactly, and a lifted one arrives as a `Literal[A]` that overload cannot match.
+      */
+    @implicitNotFound(
+        "Cannot compare a SQL column of type ${A} with a lifted value of type ${B}.\n" +
+            "A lifted value follows the rule a raw one does: it may differ from the column by nullability only in the direction\n" +
+            "where the column permits NULL and the value does not. The other way round matches no row, and neither does its\n" +
+            "negation, because nothing compares equal to NULL. To ask whether the column is absent, compare against `Absent`."
+    )
+    sealed trait SqlComparableLifted[S, A, B]
+
+    /** Evidence that a column of type `A` holds text, whether or not it permits NULL.
+      *
+      * The pattern operators (`like`, `ilike` and their negations) need this rather than `A =:= String`, which admits only a column that
+      * cannot be NULL. `name LIKE 'a%'` on a nullable column is ordinary SQL, and it answers UNKNOWN for the rows where the column is
+      * absent, which a WHERE drops. Before this the operators simply did not exist on a `Maybe[String]` column, in either form.
+      *
+      * Only the operators answering `Term[Boolean]` take it. The ones that RETURN text keep `A =:= String`, because there the operand's
+      * nullability belongs in the result type: `upper` on a column that may be absent may itself be absent.
+      */
+    sealed trait SqlTextual[S, A]
+
+    object SqlTextual:
+        private val evidence: SqlTextual[Any, Any] = new SqlTextual[Any, Any] {}
+
+        /** A text column that cannot be NULL. */
+        given text[S](using NotGiven[S <:< Literal[?]]): SqlTextual[S, String] =
+            evidence.asInstanceOf[SqlTextual[S, String]]
+
+        /** A text column that permits NULL. */
+        given optionalText[S](using NotGiven[S <:< Literal[?]]): SqlTextual[S, Maybe[String]] =
+            evidence.asInstanceOf[SqlTextual[S, Maybe[String]]]
+
+        /** A lifted text value, which is present by construction. A lifted value that may be absent has no instance: `? LIKE '%'` with a
+          * NULL bind is UNKNOWN for every row, the same never-matching predicate the comparisons refuse.
+          */
+        given liftedText[S <: Literal[?]]: SqlTextual[S, String] =
+            evidence.asInstanceOf[SqlTextual[S, String]]
+    end SqlTextual
+
+    object SqlComparableLifted:
+        private val evidence: SqlComparableLifted[Any, Any, Any] = new SqlComparableLifted[Any, Any, Any] {}
+
+        /** The lifted value has the column's own type. */
+        given same[S, A](using NotGiven[S <:< Literal[?]]): SqlComparableLifted[S, A, A] =
+            evidence.asInstanceOf[SqlComparableLifted[S, A, A]]
+
+        /** The column permits NULL and the lifted value does not. */
+        given optionalColumn[S, A](using NotGiven[S <:< Literal[?]]): SqlComparableLifted[S, Maybe[A], A] =
+            evidence.asInstanceOf[SqlComparableLifted[S, Maybe[A], A]]
+
+        /** Both sides lifted, which is two values rather than a value and a column: equal types only, so a lifted absent value is
+          * refused against a lifted present one in either order.
+          */
+        given liftedSame[S <: Literal[?], A]: SqlComparableLifted[S, A, A] =
+            evidence.asInstanceOf[SqlComparableLifted[S, A, A]]
+    end SqlComparableLifted
+
+    /** A binary comparison. The operands carry no shared type parameter: [[Sql.SqlComparable]] has already decided at the call site that
+      * the two sides denote the same SQL type, and what is rendered is the same either way.
+      */
+    final case class Comparison(left: Term[?], op: Comparison.Op, right: Term[?]) extends Term[Boolean] derives CanEqual
     object Comparison:
         enum Op derives CanEqual:
             case Eq, NotEq, Lt, Lte, Gt, Gte
@@ -1138,12 +1414,12 @@ object Sql:
               *     that the backend does not yet implement. Re-derive the schema without the unsupported structural type, or supply a
               *     custom decoder via [[SqlCodec.of]].
               */
-            inline def run(using SqlSchema[A], Frame): Chunk[A] < (Abort[SqlException] & DB) =
-                ${ kyo.internal.SqlRunMacro.runQueryImpl[A]('q) }
+            inline def run(using ev: SqlSchema[A], frame: Frame): Chunk[A] < (Abort[SqlException] & DB) =
+                ${ kyo.internal.SqlRunMacro.runQueryImpl[A]('q, 'ev, 'frame) }
 
             /** Requires compile-time AST reduction; produces a compile error if the AST is not reducible. */
-            inline def runStatic(using SqlSchema[A], Frame): Chunk[A] < (Abort[SqlException] & DB) =
-                ${ kyo.internal.SqlRunMacro.runQueryStaticImpl[A]('q) }
+            inline def runStatic(using ev: SqlSchema[A], frame: Frame): Chunk[A] < (Abort[SqlException] & DB) =
+                ${ kyo.internal.SqlRunMacro.runQueryStaticImpl[A]('q, 'ev, 'frame) }
         end extension
 
         extension [A](q: Query[A])
@@ -1221,11 +1497,17 @@ object Sql:
         inline def groupBy[N <: String & Singleton, V, FT <: Tuple](inline key: Record[F] => Column[N, V])(using
             Fields.Aux[T, FT]
         ): GroupBy[T, RewriteGrouped[FT, (N ~ Unit) *: EmptyTuple]] =
-            val ks = Chunk(key(columns))
+            // The key chunk is built at each use rather than bound to a val: a binding in an inline body is a
+            // definition, and the inline chain moves it without re-owning it, which fails the tree check when
+            // the static-SQL lift reads this query back. `key` is a column selection, so building it twice
+            // costs one extra chunk at query-construction time.
             new GroupBy[T, RewriteGrouped[FT, (N ~ Unit) *: EmptyTuple]](
                 this,
-                ks,
-                kyo.internal.SqlGroupedView.buildGroupedView[RewriteGrouped[FT, (N ~ Unit) *: EmptyTuple]](this, ks),
+                Chunk(key(columns)),
+                kyo.internal.SqlGroupedView.buildGroupedView[RewriteGrouped[FT, (N ~ Unit) *: EmptyTuple]](
+                    this,
+                    Chunk(key(columns))
+                ),
                 Maybe.empty,
                 GroupBy.Kind.Plain
             )
@@ -1535,11 +1817,17 @@ object Sql:
         inline def groupBy[N <: String & Singleton, V, FT <: Tuple](inline key: Record[F] => Column[N, V])(using
             Fields.Aux[T, FT]
         ): GroupBy[T, RewriteGrouped[FT, (N ~ Unit) *: EmptyTuple]] =
-            val ks = Chunk(key(columns))
+            // The key chunk is built at each use rather than bound to a val: a binding in an inline body is a
+            // definition, and the inline chain moves it without re-owning it, which fails the tree check when
+            // the static-SQL lift reads this query back. `key` is a column selection, so building it twice
+            // costs one extra chunk at query-construction time.
             new GroupBy[T, RewriteGrouped[FT, (N ~ Unit) *: EmptyTuple]](
                 this,
-                ks,
-                kyo.internal.SqlGroupedView.buildGroupedView[RewriteGrouped[FT, (N ~ Unit) *: EmptyTuple]](this, ks),
+                Chunk(key(columns)),
+                kyo.internal.SqlGroupedView.buildGroupedView[RewriteGrouped[FT, (N ~ Unit) *: EmptyTuple]](
+                    this,
+                    Chunk(key(columns))
+                ),
                 Maybe.empty,
                 GroupBy.Kind.Plain
             )
@@ -1766,7 +2054,19 @@ object Sql:
         inline def limit(inline n: Int): Limit[A]                     = limit(n, 0)
         inline def limit(inline n: Int, inline offset: Int): Limit[A] = Limit(this, n, offset)
 
-    final case class Limit[A](sql: Query[A], n: Int, offset: Int) extends Query[A] derives CanEqual
+        /** Coerces the row type to a case class, as [[Select.to]] does. Carried through here so the combinator order stops being
+          * load-bearing: `.select(...).orderBy(...).to[Row]` reads the way it is written, rather than compiling only when `.to` sits
+          * immediately after `.select`.
+          */
+        inline def to[B2](using m: Mirror.ProductOf[B2] { type MirroredElemTypes = A & Tuple }): OrderBy[B2] =
+            OrderBy[B2](sql.asInstanceOf[Query[B2]], specs)
+    end OrderBy
+
+    final case class Limit[A](sql: Query[A], n: Int, offset: Int) extends Query[A] derives CanEqual:
+        /** Coerces the row type to a case class, as [[Select.to]] does. See [[OrderBy.to]]. */
+        inline def to[B2](using m: Mirror.ProductOf[B2] { type MirroredElemTypes = A & Tuple }): Limit[B2] =
+            Limit[B2](sql.asInstanceOf[Query[B2]], n, offset)
+    end Limit
 
     final case class Lock[A](
         sql: Query[A],
@@ -1880,8 +2180,23 @@ object Sql:
             )
         inline def onConflictDoUpdate(inline targets: (Record[F] => Column[? <: String, ?])*): Insert.OnConflict.DoUpdateBuilder[T, F] =
             Insert.OnConflict.DoUpdateBuilder(this, Chunk.from(targets.map(_(columns))), Maybe.empty)
-        inline def returning(inline cols: (Record[F] => Column[? <: String, ?])*): Insert[T, F] =
-            copy(returning = Maybe(Chunk.from(cols.map(_(columns)))))
+
+        /** Ask for a column of the rows this INSERT wrote, typed as that column.
+          *
+          * The rows are what the statement then answers, in place of the affected-row count and generated key an INSERT reports
+          * otherwise. Asking for the key column is how a caller reads a server-assigned key as a value rather than through
+          * [[kyo.SqlClient.InsertOutcome]], and the renderer already prefers an explicit RETURNING over the one it appends for a detected
+          * auto-key, so the two do not both emit.
+          */
+        inline def returning[N <: String & Singleton, V](inline col: Record[F] => Column[N, V]): Insert.Returning[T, F, V] =
+            Insert.Returning[T, F, V](copy(returning = Maybe(Chunk(col(columns)))))
+
+        /** Ask for several columns of the rows this INSERT wrote, typed as the tuple they were asked for. */
+        @targetName("returningTuple")
+        inline def returning[Tup <: Tuple, Vs <: Tuple](inline cols: Record[F] => Tup)(using
+            ev: IsTupleOfReturned.Aux[Tup, Vs]
+        ): Insert.Returning[T, F, Vs] =
+            Insert.Returning[T, F, Vs](copy(returning = Maybe(ev.toChunk(cols(columns)))))
     end Insert
 
     object Insert:
@@ -1929,8 +2244,8 @@ object Sql:
         extension [T, F](inline ins: Insert[T, F])
 
             /** Try the static-emission path; fall back to the runtime renderer if the AST is not reducible at compile time. */
-            inline def run(using Frame): SqlClient.InsertOutcome < (Abort[SqlException] & DB) =
-                ${ kyo.internal.SqlRunMacro.runInsertImpl[T, F]('ins) }
+            inline def run(using frame: Frame): SqlClient.InsertOutcome < (Abort[SqlException] & DB) =
+                ${ kyo.internal.SqlRunMacro.runInsertImpl[T, F]('ins, 'frame) }
 
             /** Requires compile-time AST reduction; produces a compile error if the AST is not reducible. */
             inline def runStatic(using Frame): SqlClient.InsertOutcome < (Abort[SqlException] & DB) =
@@ -2005,6 +2320,39 @@ object Sql:
                     Maybe.empty
                 )
         end Builder
+
+        /** An INSERT that answers the rows it wrote rather than how many.
+          *
+          * The same wrapper [[Sql.Update.Returning]] is, for the same reason: the RETURNING clause lives on the statement and the
+          * renderers already emit it, so what this adds is the type of what comes back. It replaces the [[kyo.SqlClient.InsertOutcome]]
+          * an INSERT answers otherwise, because a caller who named the columns has said what they want back, and the count of a values
+          * list is one the caller already holds.
+          */
+        final case class Returning[T, F, A](statement: Insert[T, F]) derives CanEqual
+
+        object Returning:
+            extension [T, F, A](inline ret: Returning[T, F, A])
+                /** Try the static-emission path; fall back to the runtime renderer if the AST is not reducible at compile time. */
+                inline def run(using ev: SqlSchema[A], frame: Frame): Chunk[A] < (Abort[SqlException] & DB) =
+                    ${ kyo.internal.SqlRunMacro.runInsertReturningImpl[T, F, A]('ret, 'ev, 'frame) }
+
+                /** Requires compile-time AST reduction; produces a compile error if the AST is not reducible. */
+                inline def runStatic(using ev: SqlSchema[A], frame: Frame): Chunk[A] < (Abort[SqlException] & DB) =
+                    ${ kyo.internal.SqlRunMacro.runInsertReturningStaticImpl[T, F, A]('ret, 'ev, 'frame) }
+            end extension
+
+            extension [T, F, A](ret: Returning[T, F, A])
+                /** Skip the static path entirely and always use the runtime renderer. */
+                def runDynamic(using frame: Frame, evidence: SqlSchema[A]): Chunk[A] < (Abort[SqlException] & DB) =
+                    DB.state.map { state =>
+                        state.client.render(ret.statement).map(r =>
+                            r.sqlForOrFail(state.client.dialect.id).map(sql =>
+                                state.client.internalExecuteQuery[A](sql, r.params, state.config)
+                            )
+                        )
+                    }
+            end extension
+        end Returning
     end Insert
 
     final case class Update[T, F](
@@ -2021,8 +2369,8 @@ object Sql:
         extension [T, F](inline upd: Update[T, F])
 
             /** Try the static-emission path; fall back to the runtime renderer if the AST is not reducible at compile time. */
-            inline def run(using Frame): Long < (Abort[SqlException] & DB) =
-                ${ kyo.internal.SqlRunMacro.runUpdateImpl[T, F]('upd) }
+            inline def run(using frame: Frame): Long < (Abort[SqlException] & DB) =
+                ${ kyo.internal.SqlRunMacro.runUpdateImpl[T, F]('upd, 'frame) }
 
             /** Requires compile-time AST reduction; produces a compile error if the AST is not reducible. */
             inline def runStatic(using Frame): Long < (Abort[SqlException] & DB) =
@@ -2040,31 +2388,82 @@ object Sql:
                 }
         end extension
 
+        /** The accumulating half of an UPDATE: the table's columns, its name, and the assignments named so far.
+          *
+          * `sets` has no default value on purpose. A default reaches the compile-time render as a call to the synthetic accessor the
+          * compiler generates for it, whose body that render cannot see, and one unreadable field is enough to make the whole statement
+          * unfoldable. Written at the two construction sites instead.
+          */
         final case class Builder[T, F](
             columns: Record[F],
             tableName: String,
-            sets: Chunk[SetSpec[?, ?]] = Chunk.empty
+            sets: Chunk[SetSpec[?, ?]]
         ):
             inline def set(inline specs: (Record[F] => SetSpec[? <: String, ?])*): Builder[T, F] =
                 copy(sets = sets ++ Chunk.from(specs.map(_(columns))))
             inline def where(inline predicate: Record[F] => Term[Boolean]): Update[T, F] =
                 Update[T, F](columns, tableName, sets, Maybe(predicate(columns)), Maybe.empty)
             inline def build: Update[T, F] = Update[T, F](columns, tableName, sets, Maybe.empty, Maybe.empty)
-            inline def returning(inline cols: (Record[F] => Column[? <: String, ?])*): ReturningBuilder[T, F] =
-                ReturningBuilder(columns, tableName, sets, Chunk.from(cols.map(_(columns))))
+
+            /** Ask for the rows the statement changed, one column.
+              *
+              * The result is typed by what was asked for, so `.run` answers those rows rather than a count: a builder method whose result
+              * a caller cannot reach is worse than not having the method.
+              */
+            inline def returning[N <: String & Singleton, V](inline col: Record[F] => Column[N, V]): ReturningBuilder[T, F, V] =
+                ReturningBuilder(columns, tableName, sets, Chunk(col(columns)))
+
+            /** Ask for the rows the statement changed, several columns, typed as the tuple they were asked for. */
+            @targetName("returningTuple")
+            inline def returning[Tup <: Tuple, Vs <: Tuple](inline cols: Record[F] => Tup)(using
+                ev: IsTupleOfReturned.Aux[Tup, Vs]
+            ): ReturningBuilder[T, F, Vs] =
+                ReturningBuilder(columns, tableName, sets, ev.toChunk(cols(columns)))
         end Builder
 
-        final case class ReturningBuilder[T, F](
+        final case class ReturningBuilder[T, F, A](
             columns: Record[F],
             tableName: String,
             sets: Chunk[SetSpec[?, ?]],
             returningCols: Chunk[Column[?, ?]]
         ):
-            inline def where(inline predicate: Record[F] => Term[Boolean]): Update[T, F] =
-                Update[T, F](columns, tableName, sets, Maybe(predicate(columns)), Maybe(returningCols))
-            inline def build: Update[T, F] =
-                Update[T, F](columns, tableName, sets, Maybe.empty, Maybe(returningCols))
+            inline def where(inline predicate: Record[F] => Term[Boolean]): Returning[T, F, A] =
+                Returning[T, F, A](Update[T, F](columns, tableName, sets, Maybe(predicate(columns)), Maybe(returningCols)))
+            inline def build: Returning[T, F, A] =
+                Returning[T, F, A](Update[T, F](columns, tableName, sets, Maybe.empty, Maybe(returningCols)))
         end ReturningBuilder
+
+        /** An UPDATE that answers the rows it changed rather than how many.
+          *
+          * A thin wrapper over the statement, not a node of its own: the RETURNING clause lives on the statement and the renderers already
+          * emit it, so what this adds is the type of what comes back, which is what the terminals need in order to decode. A flavor with
+          * no RETURNING clause refuses the statement when it is rendered, rather than answering an empty result.
+          */
+        final case class Returning[T, F, A](statement: Update[T, F]) derives CanEqual
+
+        object Returning:
+            extension [T, F, A](inline ret: Returning[T, F, A])
+                /** Try the static-emission path; fall back to the runtime renderer if the AST is not reducible at compile time. */
+                inline def run(using ev: SqlSchema[A], frame: Frame): Chunk[A] < (Abort[SqlException] & DB) =
+                    ${ kyo.internal.SqlRunMacro.runReturningImpl[T, F, A]('ret, 'ev, 'frame) }
+
+                /** Requires compile-time AST reduction; produces a compile error if the AST is not reducible. */
+                inline def runStatic(using ev: SqlSchema[A], frame: Frame): Chunk[A] < (Abort[SqlException] & DB) =
+                    ${ kyo.internal.SqlRunMacro.runReturningStaticImpl[T, F, A]('ret, 'ev, 'frame) }
+            end extension
+
+            extension [T, F, A](ret: Returning[T, F, A])
+                /** Skip the static path entirely and always use the runtime renderer. */
+                def runDynamic(using frame: Frame, evidence: SqlSchema[A]): Chunk[A] < (Abort[SqlException] & DB) =
+                    DB.state.map { state =>
+                        state.client.render(ret.statement).map(r =>
+                            r.sqlForOrFail(state.client.dialect.id).map(sql =>
+                                state.client.internalExecuteQuery[A](sql, r.params, state.config)
+                            )
+                        )
+                    }
+            end extension
+        end Returning
     end Update
 
     final case class Delete[T, F](
@@ -2080,8 +2479,8 @@ object Sql:
         extension [T, F](inline del: Delete[T, F])
 
             /** Try the static-emission path; fall back to the runtime renderer if the AST is not reducible at compile time. */
-            inline def run(using Frame): Long < (Abort[SqlException] & DB) =
-                ${ kyo.internal.SqlRunMacro.runDeleteImpl[T, F]('del) }
+            inline def run(using frame: Frame): Long < (Abort[SqlException] & DB) =
+                ${ kyo.internal.SqlRunMacro.runDeleteImpl[T, F]('del, 'frame) }
 
             /** Requires compile-time AST reduction; produces a compile error if the AST is not reducible. */
             inline def runStatic(using Frame): Long < (Abort[SqlException] & DB) =
@@ -2106,20 +2505,53 @@ object Sql:
             inline def where(inline predicate: Record[F] => Term[Boolean]): Delete[T, F] =
                 Delete[T, F](columns, tableName, Maybe(predicate(columns)), Maybe.empty)
             inline def build: Delete[T, F] = Delete[T, F](columns, tableName, Maybe.empty, Maybe.empty)
-            inline def returning(inline cols: (Record[F] => Column[? <: String, ?])*): ReturningBuilder[T, F] =
-                ReturningBuilder(columns, tableName, Chunk.from(cols.map(_(columns))))
+
+            /** Ask for the rows the statement removed, one column. See [[Update.Builder.returning]]. */
+            inline def returning[N <: String & Singleton, V](inline col: Record[F] => Column[N, V]): ReturningBuilder[T, F, V] =
+                ReturningBuilder(columns, tableName, Chunk(col(columns)))
+
+            /** Ask for the rows the statement removed, several columns, typed as the tuple they were asked for. */
+            @targetName("returningTuple")
+            inline def returning[Tup <: Tuple, Vs <: Tuple](inline cols: Record[F] => Tup)(using
+                ev: IsTupleOfReturned.Aux[Tup, Vs]
+            ): ReturningBuilder[T, F, Vs] =
+                ReturningBuilder(columns, tableName, ev.toChunk(cols(columns)))
         end Builder
 
-        final case class ReturningBuilder[T, F](
+        final case class ReturningBuilder[T, F, A](
             columns: Record[F],
             tableName: String,
             returningCols: Chunk[Column[?, ?]]
         ):
-            inline def where(inline predicate: Record[F] => Term[Boolean]): Delete[T, F] =
-                Delete[T, F](columns, tableName, Maybe(predicate(columns)), Maybe(returningCols))
-            inline def build: Delete[T, F] =
-                Delete[T, F](columns, tableName, Maybe.empty, Maybe(returningCols))
+            inline def where(inline predicate: Record[F] => Term[Boolean]): Returning[T, F, A] =
+                Returning[T, F, A](Delete[T, F](columns, tableName, Maybe(predicate(columns)), Maybe(returningCols)))
+            inline def build: Returning[T, F, A] =
+                Returning[T, F, A](Delete[T, F](columns, tableName, Maybe.empty, Maybe(returningCols)))
         end ReturningBuilder
+
+        /** A DELETE that answers the rows it removed rather than how many. See [[Update.Returning]]. */
+        final case class Returning[T, F, A](statement: Delete[T, F]) derives CanEqual
+
+        object Returning:
+            extension [T, F, A](inline ret: Returning[T, F, A])
+                inline def run(using ev: SqlSchema[A], frame: Frame): Chunk[A] < (Abort[SqlException] & DB) =
+                    ${ kyo.internal.SqlRunMacro.runDeleteReturningImpl[T, F, A]('ret, 'ev, 'frame) }
+
+                inline def runStatic(using ev: SqlSchema[A], frame: Frame): Chunk[A] < (Abort[SqlException] & DB) =
+                    ${ kyo.internal.SqlRunMacro.runDeleteReturningStaticImpl[T, F, A]('ret, 'ev, 'frame) }
+            end extension
+
+            extension [T, F, A](ret: Returning[T, F, A])
+                def runDynamic(using frame: Frame, evidence: SqlSchema[A]): Chunk[A] < (Abort[SqlException] & DB) =
+                    DB.state.map { state =>
+                        state.client.render(ret.statement).map(r =>
+                            r.sqlForOrFail(state.client.dialect.id).map(sql =>
+                                state.client.internalExecuteQuery[A](sql, r.params, state.config)
+                            )
+                        )
+                    }
+            end extension
+        end Returning
     end Delete
 
     /** What a column can be assigned: an expression, or the column's own declared default.
@@ -2221,10 +2653,17 @@ object Sql:
                 type Avg = V
                 type Div = D
 
+        // Every type a single column can carry as a number, which is what makes an aggregate reachable from any of them. `Short` and
+        // `Byte` are stored as a two-byte integer and widen to `Long` under SUM exactly as `Int` does; `BigInt` is stored as an exact
+        // decimal and aggregates as one, like `BigDecimal`. Leaving them out is what made "total units per order" unreachable on a
+        // `smallint` column, since a grouped view has no `cast` to widen through either.
         given int: Aux[Int, Long, BigDecimal, BigDecimal]                     = instance
         given long: Aux[Long, BigDecimal, BigDecimal, BigDecimal]             = instance
+        given short: Aux[Short, Long, BigDecimal, BigDecimal]                 = instance
+        given byte: Aux[Byte, Long, BigDecimal, BigDecimal]                   = instance
         given float: Aux[Float, Double, Double, Double]                       = instance
         given double: Aux[Double, Double, Double, Double]                     = instance
+        given bigInt: Aux[BigInt, BigDecimal, BigDecimal, BigDecimal]         = instance
         given bigDecimal: Aux[BigDecimal, BigDecimal, BigDecimal, BigDecimal] = instance
 
         given maybe[A, S, V, D](using Aux[A, S, V, D]): Aux[Maybe[A], Maybe[S], Maybe[V], Maybe[D]] = instance
@@ -2236,13 +2675,15 @@ object Sql:
       * `int4 / int4` truncates there while `numeric / numeric` and `float8 / float8` do not, so only an integral `/` needs the cast that
       * reaches the fractional quotient the DSL types.
       *
-      * The instance list is the integral subset of [[SqlNumeric]]'s. There is deliberately no `Short` or `Byte` here, because there is none
-      * there either: no column the DSL can build carries one.
+      * The instance list is the integral subset of [[SqlNumeric]]'s: the four types stored as a SQL integer. `BigInt` is not one of them
+      * even though it is exact, because it is stored as a decimal, whose division does not truncate on either flavor.
       */
     sealed trait SqlIntegral[A]
     object SqlIntegral:
         given int: SqlIntegral[Int]                                 = new SqlIntegral[Int] {}
         given long: SqlIntegral[Long]                               = new SqlIntegral[Long] {}
+        given short: SqlIntegral[Short]                             = new SqlIntegral[Short] {}
+        given byte: SqlIntegral[Byte]                               = new SqlIntegral[Byte] {}
         given maybe[A](using SqlIntegral[A]): SqlIntegral[Maybe[A]] = new SqlIntegral[Maybe[A]] {}
     end SqlIntegral
 
@@ -2368,6 +2809,30 @@ object Sql:
             def toChunk(t: TermH *: Tail): Chunk[Term[?]] = t.head +: rest.toChunk(t.tail)
     end IsTupleOfTerms
 
+    /** Inductive proof that `Tup` is a tuple of [[Column]]s, exposing the tuple of their value types.
+      *
+      * What a `RETURNING` clause needs from a projection: the clause itself names columns, which every flavor that has one renders as bare
+      * identifiers, and the rows that come back decode at those columns' value types. [[Values]] is that decode type, so asking for two
+      * columns produces rows of the pair.
+      */
+    sealed trait IsTupleOfReturned[Tup <: Tuple]:
+        type Values <: Tuple
+        def toChunk(t: Tup): Chunk[Column[?, ?]]
+
+    object IsTupleOfReturned:
+        type Aux[Tup <: Tuple, Vs <: Tuple] = IsTupleOfReturned[Tup] { type Values = Vs }
+
+        given empty: Aux[EmptyTuple, EmptyTuple] = new IsTupleOfReturned[EmptyTuple]:
+            type Values = EmptyTuple
+            def toChunk(t: EmptyTuple): Chunk[Column[?, ?]] = Chunk.empty
+
+        given cons[N <: String & Singleton, V, Tail <: Tuple, VTail <: Tuple](
+            using rest: Aux[Tail, VTail]
+        ): Aux[Column[N, V] *: Tail, V *: VTail] = new IsTupleOfReturned[Column[N, V] *: Tail]:
+            type Values = V *: VTail
+            def toChunk(t: Column[N, V] *: Tail): Chunk[Column[?, ?]] = t.head +: rest.toChunk(t.tail)
+    end IsTupleOfReturned
+
     /** Inductive proof that `Tup` is a tuple of [[Column]]s, exposing as [[MaybeFields]] the `Name ~ Value` field tuple those columns
       * form with every value type lifted through [[AsMaybe]].
       *
@@ -2408,10 +2873,23 @@ object Sql:
     object OrderArg:
         given single: OrderArg[OrderSpec] with
             def toChunk(a: OrderSpec): Chunk[OrderSpec] = Chunk(a)
+
+        /** A bare term orders ascending, which is what SQL does with a bare column and what `.asc` spells explicitly.
+          *
+          * Without this the DSL was stricter than the language it mirrors: `orderBy(r => r.customers.id)` did not compile, and the error
+          * named `OrderArg` rather than the `.asc` it wanted. The explicit spellings stay, and the absent-placement ones
+          * (`ascAbsentFirst` and its siblings) are the reason to reach for them.
+          */
+        given term[A <: Term[?]]: OrderArg[A] with
+            def toChunk(a: A): Chunk[OrderSpec] =
+                Chunk(OrderSpec(a, OrderSpec.Direction.Asc, OrderSpec.AbsentPlacement.Default))
+
         given empty: OrderArg[EmptyTuple] with
             def toChunk(a: EmptyTuple): Chunk[OrderSpec] = Chunk.empty
-        given cons[T <: Tuple](using rest: OrderArg[T]): OrderArg[OrderSpec *: T] with
-            def toChunk(a: OrderSpec *: T): Chunk[OrderSpec] = a.head +: rest.toChunk(a.tail)
+
+        // The head is whatever the element itself is an OrderArg for, so a tuple mixes bare terms and explicit specs.
+        given cons[H, T <: Tuple](using head: OrderArg[H], rest: OrderArg[T]): OrderArg[H *: T] with
+            def toChunk(a: H *: T): Chunk[OrderSpec] = head.toChunk(a.head) ++ rest.toChunk(a.tail)
     end OrderArg
 
     // --- Internal type machinery and helpers ---

@@ -17,7 +17,7 @@ class TransportHandshakeTimeoutTest extends Test:
     import AllowUnsafe.embrace.danger
 
     private def assumeTls(): Unit =
-        if !TlsProviderPlatform.registered.exists(_.probe.isAvailable) then cancel("no TLS provider available on this backend")
+        if !TlsProviderPlatform.hasAvailableEngine then cancel("no TLS engine provider is available on this host")
 
     /** Read exactly `target` bytes from a connection's inbound channel, concatenated. */
     private def collect(conn: Connection, target: Int)(using Frame): Array[Byte] < (Async & Abort[Closed]) =

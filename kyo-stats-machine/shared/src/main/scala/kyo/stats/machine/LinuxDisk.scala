@@ -218,7 +218,7 @@ private[machine] object LinuxDisk:
                 store.cell.total.set(blocks * frsize)
                 store.cell.free.observe(bavail * frsize)
             end if
-        catch case ex: Throwable if scala.util.control.NonFatal(ex) => ()
+        catch case ex: Throwable if Machine.degradable(ex) => ()
     end statvfsInto
 
 end LinuxDisk

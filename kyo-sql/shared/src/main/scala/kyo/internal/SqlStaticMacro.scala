@@ -62,14 +62,66 @@ private[kyo] object SqlStaticMacro:
                 // expansion stops without a second diagnostic, which is the documented use of StopMacroExpansion.
                 if containsErrorTree(q.asTerm) then throw new scala.quoted.runtime.StopMacroExpansion
                 report.errorAndAbort(
-                    ".runStatic: query cannot be folded at compile time. " +
-                        "Ensure the query and its DSL fragments are constructed at the call site (a query stored in a `val` reaches " +
-                        "this macro as a variable reference, without the construction behind it). " +
+                    s".runStatic: this statement cannot be folded at compile time. ${blockingConstruct(q.asTerm)} " +
                         "Use .run for opportunistic static folding with runtime fallback, or .runDynamic to skip static folding entirely.",
                     q.asTerm.pos
                 )
         end match
     end impl
+
+    /** Names the construct that stopped the fold, for the message the caller reads.
+      *
+      * The lift answers yes or no and carries no reason with it, so the reason is recovered from the statement's own tree by looking for
+      * the constructs known to block a fold. This exists because the alternative, one fixed sentence for every refusal, was wrong more
+      * often than right: it blamed a `val` for statements written out at the terminal, which sent the reader looking for a variable that
+      * was not there while the raw fragment or the `having` in front of them went unmentioned.
+      *
+      * Reports what it can prove and nothing more: with no known construct present, it says the fold failed without inventing a cause.
+      */
+    private def blockingConstruct(using Quotes)(root: quotes.reflect.Term): String =
+        import quotes.reflect.*
+        given CanEqual[String, String] = CanEqual.derived
+        var sawFragment                = false
+        var sawHaving                  = false
+        // A statement WRITTEN OUT at the terminal arrives as a construction; one read from a `val` arrives as the
+        // reference, which is the case the old message assumed for every refusal.
+        def isReference(t: Term): Boolean =
+            t match
+                case Inlined(_, _, inner) => isReference(inner)
+                case Typed(inner, _)      => isReference(inner)
+                case Block(_, inner)      => isReference(inner)
+                case _: Ident             => true
+                case _                    => false
+        val walker = new TreeAccumulator[Unit]:
+            def foldTree(u: Unit, tree: Tree)(owner: Symbol): Unit =
+                tree match
+                    case t: Term =>
+                        val shown =
+                            try t.tpe.dealias.show
+                            catch case _: Throwable => ""
+                        if shown.contains("Sql.Fragment") then sawFragment = true
+                        t match
+                            case Apply(Select(_, "having"), _)               => sawHaving = true
+                            case Apply(TypeApply(Select(_, "having"), _), _) => sawHaving = true
+                            case _                                           => ()
+                        end match
+                    case _ => ()
+                end match
+                foldOverTree(u, tree)(owner)
+            end foldTree
+        walker.foldTree((), root)(Symbol.spliceOwner)
+        if sawFragment then
+            "A raw `sql\"...\"` fragment embedded in a typed statement is rendered at run time, so a statement carrying one cannot be " +
+                "folded. Spell the same predicate with the typed operators to keep it on the static path."
+        else if sawHaving then
+            "A `having` clause is rendered at run time, so a statement carrying one cannot be folded."
+        else if isReference(root) then
+            "The statement reaches this macro as a variable reference rather than as its construction, which is what a query stored in " +
+                "a `val` looks like here. Construct it at the call site, or name it with a `transparent inline def`."
+        else
+            "The construction could not be read at compile time. If it embeds a value that is only known at run time, that value is why."
+        end if
+    end blockingConstruct
 
     /** True when `root` contains a subtree the compiler has already marked erroneous, meaning an error for this
       * statement is already reported at a more precise position.
