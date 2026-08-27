@@ -266,10 +266,13 @@ private[kyo] object TagMacro:
 
             scope.find((_, underlying) => !walkable(underlying)).foreach { (sym, underlying) =>
                 report.errorAndAbort(
-                    s"[Tag.opaque.unwalkable] Cannot derive a Tag for ${root.show} here: opaque type ${sym.fullName} " +
-                        s"is transparent in this scope and its underlying type ${underlying.show} cannot be recognized " +
-                        s"once the compiler has substituted it, so no derivation in this scope can be trusted. Move " +
-                        s"the derivation out of ${sym.name}'s scope."
+                    s"[Tag.opaque.unwalkable] Cannot derive Tag[${root.show}] here.\n\n" +
+                        s"This code is inside the scope of opaque type ${sym.name}, its declaring template or companion " +
+                        s"object, where the compiler substitutes its underlying type for ${sym.name} before Tag can see " +
+                        s"it. That underlying type, ${underlying.show}, is a match type or a refinement, which reduces to " +
+                        s"a different type for every argument, so Tag cannot recognize where a substitution happened and " +
+                        s"no tag derived in this scope can be trusted, not even one for an unrelated type.\n\n" +
+                        s"Fix: move every Tag derivation out of ${sym.name}'s scope, into a sibling object or another file."
                 )
             }
 
@@ -289,9 +292,16 @@ private[kyo] object TagMacro:
                         tagType.typeArgs.headOption.map(_.dealiasKeepOpaques.typeSymbol).filter(transparent.contains).foreach { x =>
                             val underlying = scope.find(_._1.equals(x)).map(_._2.show).getOrElse("?")
                             report.errorAndAbort(
-                                s"[Tag.opaque.given] A given Tag[${x.name}] must not be defined where ${x.fullName} is " +
-                                    s"transparent: there it is also a Tag[$underlying] and would answer every derivation " +
-                                    s"of that type in this scope with ${x.name}'s tag. Define it outside ${x.name}'s scope."
+                                s"[Tag.opaque.given] A given Tag[${x.name}] cannot be declared here.\n\n" +
+                                    s"This code is inside the scope of opaque type ${x.name}, its declaring template or companion " +
+                                    s"object, where the compiler treats ${x.name} and $underlying as the same type. A given " +
+                                    s"Tag[${x.name}] declared here is therefore also a Tag[$underlying], and implicit search " +
+                                    s"would hand it to every derivation of a $underlying tag in this scope, silently, before " +
+                                    s"any check can run. A genuine $underlying would then carry ${x.name}'s tag.\n\n" +
+                                    s"Fixes:\n" +
+                                    s"  - Keep it as a plain val, `val ${x.name.head.toLower}${x.name.tail}Tag: Tag[${x.name}] = " +
+                                    s"Tag.derive[${x.name}]`, and pass it where needed with `(using ...)`.\n" +
+                                    s"  - Or declare the given outside ${x.name}'s scope, in a sibling object or another file."
                             )
                         }
                     }
@@ -308,13 +318,25 @@ private[kyo] object TagMacro:
                 candidates(node) match
                     case Nil => descend(node)
                     case syms =>
-                        val names = syms.map(_.name)
+                        val names   = syms.map(_.name)
+                        val opaques = if syms.size == 1 then s"opaque type ${names.head}" else s"opaque types ${names.mkString(" and ")}"
+                        val where   = if node =:= root then "" else s" Its part ${node.show} is the problem:"
+                        val eitherOf =
+                            if syms.size == 1 then s"${names.head} or ${node.show}" else s"${names.mkString(", ")} or ${node.show}"
                         report.errorAndAbort(
-                            s"[Tag.opaque.collapsed] Cannot derive a Tag for ${root.show}: inside the scope of " +
-                                s"${syms.map(_.fullName).mkString(" and ")} the compiler replaces ${names.mkString(" and ")} " +
-                                s"with ${node.show} before this macro runs, so nothing here says whether ${node.show} means " +
-                                s"${names.mkString(" or ")} or ${node.show}, and they need different tags. Move this " +
-                                s"derivation out of that scope, or write the opaque type explicitly with Tag.derive."
+                            s"[Tag.opaque.collapsed] Cannot derive Tag[${root.show}] here.$where\n\n" +
+                                s"This code is inside the scope of $opaques, its declaring template or companion object. There the " +
+                                s"compiler treats ${names.mkString(" and ")} and ${node.show} as the same type and substitutes " +
+                                s"${node.show} for ${names.mkString(" and ")} before Tag can see it. So what reaches Tag is " +
+                                s"${node.show}, and nothing says whether it was written as $eitherOf. The two need different " +
+                                s"tags: a tag derived as ${node.show} here would not match the one every use outside derives " +
+                                s"as ${names.mkString(" or ")}, and a value stored under one would not be found under the other.\n\n" +
+                                s"Fixes:\n" +
+                                s"  - Pass the tag explicitly, naming the opaque type: `(using Tag.derive[${names.head}])`. " +
+                                s"Tag.derive[${names.head}] survives the substitution and derives the same tag as outside.\n" +
+                                s"  - Or move this code out of the scope, into a sibling object or another file.\n" +
+                                s"Do not declare `given Tag[${names.head}]` inside the scope: there it is also a " +
+                                s"Tag[${node.show}] and would silently answer every such derivation with ${names.head}'s tag."
                         )
 
             def descend(node: TypeRepr): Unit =
