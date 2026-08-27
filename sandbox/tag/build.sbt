@@ -14,9 +14,10 @@ lazy val commonSettings = Seq(
         "-Wnonunit-statement",
         "-language:strictEquality",
         "-Xkind-projector:underscores",
-        "-Xcheck-macros",
-        "-Werror"
+        "-Xcheck-macros"
     ),
+    // Older macro versions used for calibration trip -Xcheck-macros warnings; -Dwerror=false lifts the gate for those runs only.
+    scalacOptions ++= (if (sys.props.get("werror").contains("false")) Nil else Seq("-Werror")),
     Test / scalacOptions --= Seq("-Wnonunit-statement"),
     libraryDependencies += "org.scalameta" %% "munit" % "1.1.1" % Test
 )
