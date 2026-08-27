@@ -4,6 +4,9 @@ import kyo.internal.Platform
 
 class SignalTest extends kyo.test.Test[Any]:
 
+    // How long to wait before concluding that a `next` which should not fire indeed did not.
+    private val noEmitTimeout = if Platform.isNative then 1.second else 300.millis
+
     "init" - {
         "initRef" - {
             "ok" in {
@@ -25,9 +28,16 @@ class SignalTest extends kyo.test.Test[Any]:
             "ok" in {
                 val sig = Signal.initConst(42)
                 for
-                    v1 <- sig.current
-                    v2 <- sig.next
-                yield assert(v1 == 42 && v2 == 42)
+                    v <- sig.current
+                yield assert(v == 42)
+            }
+            "next never completes" in {
+                val sig = Signal.initConst(42)
+                for
+                    f <- Fiber.initUnscoped(sig.next)
+                    r <- Abort.run[Timeout](Async.timeout(noEmitTimeout)(f.get))
+                    _ <- f.interrupt
+                yield assert(r.isFailure)
                 end for
             }
             "missing CanEqual" in {
@@ -88,13 +98,8 @@ class SignalTest extends kyo.test.Test[Any]:
         "initConstWith" - {
             "ok" in {
                 for
-                    v <- Signal.initConstWith(42) { sig =>
-                        for
-                            v1 <- sig.current
-                            v2 <- sig.next
-                        yield (v1, v2)
-                    }
-                yield assert(v == (42, 42))
+                    v <- Signal.initConstWith(42)(_.current)
+                yield assert(v == 42)
             }
             "missing CanEqual" in {
                 typeCheckFailure(
@@ -395,7 +400,6 @@ class SignalTest extends kyo.test.Test[Any]:
         }
 
         "self change alone does not emit" in {
-            val noEmitTimeout = if Platform.isNative then 1.second else 300.millis
             for
                 refA <- Signal.initRef(0)
                 refB <- Signal.initRef(0)
@@ -404,6 +408,21 @@ class SignalTest extends kyo.test.Test[Any]:
                 _ <- assertEventually(refA.waiters.map(_ == 1))
                 _ <- refA.set(1)
                 r <- Abort.run[Timeout](Async.timeout(noEmitTimeout)(f.get))
+            yield assert(r.isFailure)
+            end for
+        }
+
+        "a constant input never lets the pair emit" in {
+            // zip waits for ALL inputs to change, and a constant never does, so pairing one with a
+            // mutable signal yields a `next` that can never fire.
+            for
+                refA <- Signal.initRef(0)
+                z = refA.zip(Signal.initConst(99))
+                f <- Fiber.initUnscoped(z.next)
+                _ <- assertEventually(refA.waiters.map(_ == 1))
+                _ <- refA.set(1)
+                r <- Abort.run[Timeout](Async.timeout(noEmitTimeout)(f.get))
+                _ <- f.interrupt
             yield assert(r.isFailure)
             end for
         }
@@ -477,6 +496,20 @@ class SignalTest extends kyo.test.Test[Any]:
                 _ <- refB.set(2)
                 v <- f.get
             yield assert(v == (0, 2))
+        }
+
+        "a constant input never drives a change" in {
+            // Regression: a constant's `next` used to complete immediately, so it won every arm of the race,
+            // firing `combineLatest(ref, const).next` with nothing to report and busy-looping `observe` into an OOM.
+            for
+                refA <- Signal.initRef(0)
+                cl = refA.combineLatest(Signal.initConst(99))
+                f <- Fiber.initUnscoped(cl.next)
+                // With the bug the const wins the race and `cl.next` completes before arming refA (waiters stays 0).
+                _ <- assertEventually(refA.waiters.map(_ == 1))
+                _ <- refA.set(1)
+                v <- f.get
+            yield assert(v == (1, 99))
         }
 
         "successive other changes each emit" in {
@@ -601,8 +634,12 @@ class SignalTest extends kyo.test.Test[Any]:
             yield ()
         }
 
-        "empty seq completes immediately" in {
-            Signal.awaitAny(Seq.empty).andThen(succeed("empty seq returns immediately without blocking"))
+        "empty seq never completes" in {
+            for
+                f <- Fiber.initUnscoped(Signal.awaitAny(Seq.empty))
+                r <- Abort.run[Timeout](Async.timeout(noEmitTimeout)(f.get))
+                _ <- f.interrupt
+            yield assert(r.isFailure)
         }
     }
 
@@ -611,9 +648,11 @@ class SignalTest extends kyo.test.Test[Any]:
         "empty seq returns Chunk.empty const" in {
             val z = Signal.zipAll(Seq.empty[Signal[Int]])
             for
-                v1 <- z.current
-                v2 <- z.next
-            yield assert(v1 == Chunk.empty && v2 == Chunk.empty)
+                v <- z.current
+                f <- Fiber.initUnscoped(z.next)
+                r <- Abort.run[Timeout](Async.timeout(noEmitTimeout)(f.get))
+                _ <- f.interrupt
+            yield assert(v == Chunk.empty && r.isFailure)
             end for
         }
 
@@ -687,9 +726,11 @@ class SignalTest extends kyo.test.Test[Any]:
         "empty seq returns Chunk.empty const" in {
             val z = Signal.combineLatestAll(Seq.empty[Signal[Int]])
             for
-                v1 <- z.current
-                v2 <- z.next
-            yield assert(v1 == Chunk.empty && v2 == Chunk.empty)
+                v <- z.current
+                f <- Fiber.initUnscoped(z.next)
+                r <- Abort.run[Timeout](Async.timeout(noEmitTimeout)(f.get))
+                _ <- f.interrupt
+            yield assert(v == Chunk.empty && r.isFailure)
             end for
         }
 

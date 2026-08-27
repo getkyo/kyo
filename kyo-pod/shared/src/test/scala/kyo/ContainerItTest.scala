@@ -678,6 +678,89 @@ class ContainerItTest extends BasePodTest:
     }
 
     // =========================================================================
+    // requireService — init proves readiness instead of assuming it
+    //
+    // Without these two gates a container that died during startup, or one whose
+    // published port has nothing serving it, was handed to the caller as a healthy
+    // handle: `runHealthCheck` treated a dead container as "nothing to check" and the
+    // port wait trusted `inspect`. The caller then failed on every query against a
+    // port that answers nothing, which is how one stillborn database fixture turned
+    // into a whole failed suite.
+    //
+    // The port cases run against real forwarders here, which is what makes them worth
+    // the container: rootlessport and docker-proxy accept a connection before dialling
+    // the container, so "the connect succeeded" is not the readiness signal. Holding
+    // the connection is.
+    // =========================================================================
+
+    "requireService" - {
+        "a container that exits before its health check fails init" - runBackends {
+            val config = Container.Config("alpine")
+                .command("sh", "-c", "exit 3")
+                .requireService(true)
+                .healthCheck(Container.HealthCheck.exec(
+                    Command("echo", "ok"),
+                    Present("ok"),
+                    Schedule.fixed(100.millis).take(20)
+                ))
+            Abort.run[ContainerException](Scope.run(Container.init(config))).map {
+                case Result.Failure(e: ContainerHealthCheckException) =>
+                    assert(e.getMessage.contains("exited"), s"expected an exit-shaped reason, got ${e.getMessage}")
+                case other => fail(s"expected ContainerHealthCheckException for a stillborn fixture, got $other")
+            }
+        }
+
+        "the same container without requireService still starts (one-shot contract preserved)" - runBackends {
+            Container.init(Container.Config("alpine").command("sh", "-c", "exit 3")).map { c =>
+                c.waitForExit.map(code => assert(code == ExitCode.Failure(3)))
+            }
+        }
+
+        "a published port with nothing listening fails init" - runBackends {
+            // The container stays up and the runtime publishes the port, so nothing short of
+            // a host-side connection that is then dropped can tell that nobody serves it.
+            val config = alpine.port(8080, 0)
+                .requireService(true)
+                .portMappingTimeout(5.seconds)
+            Abort.run[ContainerException](Scope.run(Container.init(config))).map {
+                case Result.Failure(e: ContainerStartFailedException) =>
+                    assert(e.reason.contains("does not hold a connection"), s"expected a reachability reason, got ${e.reason}")
+                case other => fail(s"expected ContainerStartFailedException for an unserved port, got $other")
+            }
+        }
+
+        "a published port with a live listener starts normally" - runBackends {
+            // nginx, not a hand-rolled nc fixture. This case needs a listener that HOLDS an
+            // accepted connection (the probe correctly rejects accept-then-drop) and serves
+            // every connection with no gap. Three nc/httpd shapes each failed one of those:
+            // `echo ok | nc` drops on write, `busybox httpd` is not an applet in stock alpine
+            // (the container died), and `while true; do sleep 60 | nc; done` leaves the port
+            // unserved for the rest of the 60s after a connection is consumed, because the
+            // shell waits for the whole pipeline before restarting nc. The health check eats
+            // nc's single connection, the probe then finds nobody listening, and init times
+            // out. nginx waits for the request line on every accepted connection, which is
+            // exactly the held-open shape a real service presents.
+            val img = ContainerImage("nginx:alpine")
+            val config = Container.Config(img)
+                .port(80, 0)
+                .requireService(true)
+                .portMappingTimeout(60.seconds)
+                .healthCheck(Container.HealthCheck.port(80, Schedule.fixed(200.millis).take(30)))
+            ContainerImage.ensure(img).andThen {
+                Container.init(config).map { c =>
+                    c.mappedPort(80).map(hp => assert(hp > 0, s"expected a bound host port, got $hp"))
+                }
+            }
+        }
+
+        "the same unserved port is accepted without requireService" - runBackends {
+            Container.init(alpine.port(8080, 0)).map { c =>
+                c.mappedPort(8080).map(hp => assert(hp > 0, s"expected a bound host port, got $hp"))
+            }
+        }
+    }
+
+    // =========================================================================
     // Health Check
     // =========================================================================
 

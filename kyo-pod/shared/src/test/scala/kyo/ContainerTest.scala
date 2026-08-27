@@ -1248,6 +1248,289 @@ class ContainerTest extends BasePodTest:
         }
     }
 
+    // =========================================================================
+    // Host-side kill fallback — the escalation for a runtime that cannot reap
+    // its own container process ("given PID did not die within timeout").
+    // =========================================================================
+
+    "Container.isUnreapedProcessFailure" - {
+        "recognises podman's stop/kill/remove 'did not die' body" in {
+            val e = new RuntimeException(
+                """Daemon returned HTTP 500: {"cause":"given PID did not die within timeout","message":"..."}"""
+            )
+            assert(Container.isUnreapedProcessFailure(e))
+        }
+
+        "recognises the 'container state improper' sibling" in {
+            assert(Container.isUnreapedProcessFailure(new RuntimeException("HTTP 500: container state improper")))
+        }
+
+        "matches case-insensitively" in {
+            assert(Container.isUnreapedProcessMessage("GIVEN PID DID NOT DIE WITHIN TIMEOUT"))
+        }
+
+        "reads the cause chain, not only the top message" in {
+            val cause = new RuntimeException("given PID did not die within timeout")
+            assert(Container.isUnreapedProcessFailure(new RuntimeException("stop failed", cause)))
+        }
+
+        "does not fire on an unrelated daemon failure" in {
+            assert(!Container.isUnreapedProcessFailure(new RuntimeException("No such container: abc")))
+            assert(!Container.isUnreapedProcessMessage("port is already allocated"))
+        }
+
+        "tolerates a null message and a self-referential cause" in {
+            val loop = new RuntimeException(null: String):
+                override def getCause: Throwable = this
+            assert(!Container.isUnreapedProcessFailure(loop))
+        }
+    }
+
+    "Container.cgroupNamesContainer" - {
+        // The gate that keeps the host-side SIGKILL from signalling an unrelated host process:
+        // only a pid whose cgroup names this container is ever signalled.
+        "accepts a rootless podman libpod scope" in {
+            val id = Container.Id("3f9a1c2b4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8")
+            val cgroup =
+                "0::/user.slice/user-1001.slice/user@1001.service/user.slice/libpod-3f9a1c2b4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8.scope\n"
+            assert(Container.cgroupNamesContainer(cgroup, id))
+        }
+
+        "accepts a docker cgroup path" in {
+            val id = Container.Id("abcdef0123456789abcdef0123456789")
+            assert(Container.cgroupNamesContainer("0::/docker/abcdef0123456789abcdef0123456789\n", id))
+        }
+
+        "rejects a cgroup belonging to another container" in {
+            val id = Container.Id("abcdef0123456789abcdef0123456789")
+            assert(!Container.cgroupNamesContainer("0::/docker/999999999999999999999999\n", id))
+        }
+
+        "rejects an unrelated host process" in {
+            val id = Container.Id("abcdef0123456789abcdef0123456789")
+            assert(!Container.cgroupNamesContainer("0::/user.slice/user-501.slice/session-3.scope\n", id))
+        }
+
+        "rejects an empty id rather than matching everything" in {
+            assert(!Container.cgroupNamesContainer("0::/docker/abc\n", Container.Id("")))
+        }
+    }
+
+    "Container.hostKillCommand" - {
+        "is an unconditional SIGKILL of the given pid" in {
+            assert(Container.hostKillCommand(4242).args == Chunk("kill", "-9", "4242"))
+        }
+    }
+
+    "Container.withUnreapedProcessFallback" - {
+        // A daemon whose stop/kill/remove leaves the container's process running is the leak engine
+        // the SQL Native batch died of: without the escalation every scoped fixture became a corpse.
+        "passes a successful call straight through and never escalates" in {
+            for
+                calls     <- AtomicInt.init(0)
+                escalated <- AtomicInt.init(0)
+                _ <- Container.withUnreapedProcessFallback(escalated.incrementAndGet.andThen(true)) {
+                    calls.incrementAndGet.unit
+                }
+                callCount <- calls.get
+                killCount <- escalated.get
+            yield
+                assert(callCount == 1, s"expected one call, got $callCount")
+                assert(killCount == 0, s"a successful call must not escalate, got $killCount")
+        }
+
+        "escalates on 'did not die', then retries the call once" in {
+            for
+                calls     <- AtomicInt.init(0)
+                escalated <- AtomicInt.init(0)
+                result <- Abort.run[ContainerException] {
+                    Container.withUnreapedProcessFallback(escalated.incrementAndGet.andThen(true)) {
+                        calls.incrementAndGet.map { n =>
+                            if n == 1 then
+                                Abort.fail(ContainerOperationException("given PID did not die within timeout"))
+                            else ()
+                        }
+                    }
+                }
+                callCount <- calls.get
+                killCount <- escalated.get
+            yield
+                assert(result.isSuccess, s"the retry after the host kill should succeed, got $result")
+                assert(killCount == 1, s"expected exactly one escalation, got $killCount")
+                assert(callCount == 2, s"expected the call to run twice, got $callCount")
+        }
+
+        "re-raises the daemon failure when the escalation declines" in {
+            for
+                calls <- AtomicInt.init(0)
+                result <- Abort.run[ContainerException] {
+                    Container.withUnreapedProcessFallback(false) {
+                        calls.incrementAndGet.andThen(
+                            Abort.fail(ContainerOperationException("given PID did not die within timeout"))
+                        )
+                    }
+                }
+                callCount <- calls.get
+            yield
+                assert(result.isFailure, s"a declined escalation must surface the daemon failure, got $result")
+                assert(callCount == 1, s"a declined escalation must not retry, got $callCount")
+        }
+
+        "leaves an unrelated failure untouched" in {
+            for
+                escalated <- AtomicInt.init(0)
+                result <- Abort.run[ContainerException] {
+                    Container.withUnreapedProcessFallback(escalated.incrementAndGet.andThen(true)) {
+                        Abort.fail(ContainerMissingException(Container.Id("gone")))
+                    }
+                }
+                killCount <- escalated.get
+            yield
+                assert(killCount == 0, s"an unrelated failure must not escalate, got $killCount")
+                result match
+                    case Result.Failure(_: ContainerMissingException) => succeed("the original failure survives")
+                    case other                                        => fail(s"expected ContainerMissingException, got $other")
+        }
+
+        "surfaces a second failure from the retried call rather than looping" in {
+            for
+                calls <- AtomicInt.init(0)
+                result <- Abort.run[ContainerException] {
+                    Container.withUnreapedProcessFallback(true) {
+                        calls.incrementAndGet.andThen(
+                            Abort.fail(ContainerOperationException("given PID did not die within timeout"))
+                        )
+                    }
+                }
+                callCount <- calls.get
+            yield
+                assert(result.isFailure, s"a still-failing retry must fail, got $result")
+                assert(callCount == 2, s"the call must run exactly twice, got $callCount")
+        }
+    }
+
+    // =========================================================================
+    // Port readiness — the second half of requireService.
+    // =========================================================================
+
+    "Container.isAliveState" - {
+        // This predicate is why `requireService` cannot fail a container on its own startup. A
+        // container between `start` and `Running` reports Created, so the health check keeps polling
+        // its schedule; only a state it cannot come back from ends the wait. Podman's `configured`
+        // and `initialized` reach here as Created via ContainerBackend.parseState.
+        "a running container may become healthy" in {
+            assert(Container.isAliveState(Container.State.Running))
+        }
+
+        "a created container may become healthy — the not-yet-running window is not a verdict" in {
+            assert(Container.isAliveState(Container.State.Created))
+        }
+
+        "podman's pre-start states arrive as Created and count as alive" in {
+            assert(Container.isAliveState(kyo.internal.ContainerBackend.parseState("configured")))
+            assert(Container.isAliveState(kyo.internal.ContainerBackend.parseState("initialized")))
+        }
+
+        "a stopped or dead container cannot" in {
+            assert(!Container.isAliveState(Container.State.Stopped))
+            assert(!Container.isAliveState(Container.State.Dead))
+        }
+
+        "a container being removed cannot" in {
+            assert(!Container.isAliveState(Container.State.Removing))
+        }
+
+        "paused and restarting do not count as alive for a startup wait" in {
+            assert(!Container.isAliveState(Container.State.Paused))
+            assert(!Container.isAliveState(Container.State.Restarting))
+        }
+    }
+
+    "Container.portProbeDeadline" - {
+        // Both readiness waits share one portMappingTimeout budget. A mapping wait that exhausts it
+        // fails on its own terms; what this floor exists for is the adjacent case, where the binding
+        // lands a few milliseconds before the deadline and the probe would otherwise get one connect
+        // against a forwarder still coming up, then report "refuses connections" for a healthy port.
+        "leaves a roomy shared deadline untouched" in {
+            val now      = 1_000_000L
+            val deadline = now + 60_000L
+            assert(Container.portProbeDeadline(deadline, now) == deadline)
+        }
+
+        "floors the probe's budget when the mapping wait finished just under the deadline" in {
+            val now      = 1_000_000L
+            val deadline = now + 10L
+            val probe    = Container.portProbeDeadline(deadline, now)
+            assert(probe > deadline, s"the probe must not inherit a 10ms budget, got ${probe - now}ms")
+            assert(probe == now + 5_000L, s"expected the 5s floor, got ${probe - now}ms")
+        }
+
+        "floors the probe's budget when the shared deadline has already passed" in {
+            val now      = 1_000_000L
+            val deadline = now - 500L
+            assert(Container.portProbeDeadline(deadline, now) == now + 5_000L)
+        }
+    }
+
+    "Container.probeHostPort" - {
+        // Unsafe: kyo-net publishes listen/close on the unsafe tier only, and a real listener is the
+        // only way to assert the probe's three outcomes without a container runtime.
+        import AllowUnsafe.embrace.danger
+
+        def withListener[A](handler: kyo.net.Connection => Unit)(f: kyo.net.Listener => A < (Async & Abort[Any]))(using
+            Frame
+        ): A < (Async & Abort[Any]) =
+            Sync.defer(kyo.net.NetPlatform.transport.listen("127.0.0.1", 0, 16)(handler).safe).map(_.get).map { listener =>
+                Sync.ensure(Sync.defer(listener.close()))(f(listener))
+            }
+
+        "reports true for a listener that accepts and stays silent" in {
+            // The Postgres shape: the server waits for the client to speak first, so readiness shows
+            // up as a connection that is simply still open.
+            withListener(_ => ()) { listener =>
+                Container.probeHostPort("127.0.0.1", listener.port).map { reachable =>
+                    assert(reachable, s"a listener holding the connection on port ${listener.port} must read as ready")
+                }
+            }
+        }
+
+        "reports true for a listener that speaks first" in {
+            // The MySQL shape: the server sends a greeting and keeps the connection.
+            val greeting: kyo.net.Connection => Unit = conn =>
+                discard(conn.outbound.offer(Span("mysql-greeting".getBytes("UTF-8")*)))
+            withListener(greeting) { listener =>
+                Container.probeHostPort("127.0.0.1", listener.port).map { reachable =>
+                    assert(reachable, s"a listener that greets on port ${listener.port} must read as ready")
+                }
+            }
+        }
+
+        // Regression guard for the CI failure this probe was rewritten for. rootlessport and
+        // docker-proxy complete the TCP handshake before dialling the container, so a published port
+        // with nothing behind it accepts and then drops. A connect-only probe called that ready and
+        // handed the suite a fixture whose every query was refused.
+        "reports false for a listener that accepts and immediately drops the connection" in {
+            withListener(conn => conn.close()) { listener =>
+                Container.probeHostPort("127.0.0.1", listener.port).map { reachable =>
+                    assert(!reachable, s"port ${listener.port} accepts but holds nothing and must not read as ready")
+                }
+            }
+        }
+
+        "reports false for a port nothing is serving" in {
+            // Bind then close: the port was real and is now free, so the connect is refused outright,
+            // which is the shape of a container whose forwarder never came up at all.
+            withListener(_ => ()) { listener =>
+                val port = listener.port
+                Sync.defer(listener.close()).andThen {
+                    Container.probeHostPort("127.0.0.1", port).map { reachable =>
+                        assert(!reachable, s"port $port has no listener and must not read as ready")
+                    }
+                }
+            }
+        }
+    }
+
     "uniqueName" - {
         // Regression guard for the shared-/tmp collision: container suites are forked once per
         // runtime and those forks run concurrently on one machine. A bare `prefix-counter` resets

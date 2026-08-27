@@ -210,7 +210,10 @@ class TlsIntegrationTest extends SqlContainerTest:
     "TLS connection, connect with Present(tls) to non-TLS Postgres raises SqlConnectionException".tagged("kyo.OwnContainer") in {
         Scope.run {
             // Start a standard (non-TLS) Postgres and try to connect with TLS required.
-            ContainerPredef.Postgres.initWith(ContainerPredef.Postgres.Config.default) { pg =>
+            // Through `SqlTestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
+            // container carries the `kyo-sql-singleton` and `kyo-sql-owner-pid` labels and a killed test
+            // process leaves something the reaper can find.
+            SqlTestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-tls-leaf").map { pg =>
                 pg.container.mappedPort(pg.config.port).flatMap { port =>
                     Abort.run[SqlException] {
                         Scope.run {
