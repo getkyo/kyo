@@ -1,5 +1,7 @@
 package kyo
 
+import java.nio.charset.StandardCharsets
+
 /** Cross-platform behavioral assertions represented by the stable filesystem snapshots. */
 class FileSystemSnapshotTest extends kyo.test.Test[Any]:
 
@@ -16,6 +18,25 @@ class FileSystemSnapshotTest extends kyo.test.Test[Any]:
         Fiber.initUnscoped(Scope.run(watcher.events.take(1).run)).map { fiber =>
             clock.advance(10.millis).andThen(clock.advance(10.millis)).andThen(fiber.get)
         }
+
+    private def entryValue(entry: Maybe[Path.Entry]): String =
+        entry match
+            case Present(Path.Entry.File(bytes, _)) => new String(bytes.toArrayUnsafe, StandardCharsets.UTF_8)
+            case Present(Path.Entry.Directory(_))   => "directory"
+            case Absent                             => "absent"
+
+    // Renders the observation a conflict is measured against. Each case names what the overlay
+    // actually saw, so the snapshot moves if a read starts recording more or less than it read.
+    private def ancestorValue(ancestor: Conflict.Ancestor): String =
+        ancestor match
+            case Conflict.Ancestor.Unobserved                 => "unobserved"
+            case Conflict.Ancestor.Missing                    => "missing"
+            case Conflict.Ancestor.Presence(isDirectory)      => if isDirectory then "directory" else "file"
+            case Conflict.Ancestor.DirectoryListing(children) => children.toSeq.sorted.mkString("listing[", ",", "]")
+            case Conflict.Ancestor.Metadata(stat, _)          => s"metadata[${stat.sizeBytes}]"
+            case Conflict.Ancestor.Content(Path.Entry.File(bytes, _)) =>
+                new String(bytes.toArrayUnsafe, StandardCharsets.UTF_8)
+            case Conflict.Ancestor.Content(Path.Entry.Directory(_)) => "directory"
 
     "glob matrix snapshot represents matcher behavior" in {
         val rows = Chunk(
@@ -70,6 +91,51 @@ class FileSystemSnapshotTest extends kyo.test.Test[Any]:
         }
     }
 
+    "conflict snapshot represents all compared values" in {
+        FileSystem.inMemory.map { lower =>
+            val path = Path("root", "value.txt")
+            lower.write(path, "base", Path.WriteOptions()).andThen {
+                FileSystem.overlay(lower).map { overlay =>
+                    overlay.read(path).andThen(overlay.write(path, "ours", Path.WriteOptions())).andThen {
+                        lower.write(path, "theirs", Path.WriteOptions()).andThen {
+                            Abort.run[CommitConflict](overlay.commit).map {
+                                case Result.Failure(conflict) =>
+                                    val value = conflict.conflicts.head
+                                    val report =
+                                        s"path=${value.path}\nancestor=${ancestorValue(value.ancestor)}\nours=${entryValue(value.ours)}\ntheirs=${entryValue(value.theirs)}"
+                                    assert(conflict.conflicts.size == 1)
+                                    assert(report == FileSystemSnapshotValues.conflictReport)
+                                case other => assert(false, s"expected CommitConflict, got $other")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "recovery record snapshot represents replayed behavior" in {
+        FileSystem.inMemory.map { fileSystem =>
+            val root = Path("root")
+            fileSystem.write(root / "old.txt", "old", Path.WriteOptions()).andThen {
+                fileSystem.write(root / "a.txt", "a", Path.WriteOptions()).andThen {
+                    fileSystem.mkDir(root / "nested").andThen {
+                        fileSystem.write(root / "nested" / "b.txt", "b", Path.WriteOptions()).andThen {
+                            fileSystem.removeExisting(root / "old.txt").andThen {
+                                Async.zip(fileSystem.read(root / "a.txt"), fileSystem.read(root / "nested" / "b.txt")).map { values =>
+                                    fileSystem.exists(root / "old.txt").map { oldExists =>
+                                        assert(values == ("a", "b") && !oldExists)
+                                        assert(FileSystemSnapshotValues.recoveryRecords.linesIterator.size == 4)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     "normalized error snapshot represents typed failures" in {
         val rows = Chunk(
             "Read|root/missing.txt|FileNotFoundException",
@@ -88,6 +154,9 @@ private[kyo] object FileSystemSnapshotValues:
         "*.txt|alpha.txt=true|nested/alpha.txt=false\n**/*.txt|alpha.txt=true|nested/alpha.txt=true\n*.TXT|alpha.txt=false|ALPHA.TXT=true"
     val normalizedTree: String = "root/\nroot/a.txt=a\nroot/nested/\nroot/nested/b.txt=b"
     val watchTrace: String     = "Created(root/a.txt)\nModified(root/a.txt)\nRemoved(root/a.txt)"
+    val conflictReport: String = "path=root/value.txt\nancestor=base\nours=ours\ntheirs=theirs"
+    val recoveryRecords: String =
+        "write(root/a.txt,a)\nmkdir(root/nested)\nwrite(root/nested/b.txt,b)\nremove(root/old.txt)"
     val normalizedErrors: String =
         "Read|root/missing.txt|FileNotFoundException\nWrite|root/missing/value.txt|FileNotFoundException\nCreate|root/a.txt|FileAlreadyExistsException"
 end FileSystemSnapshotValues

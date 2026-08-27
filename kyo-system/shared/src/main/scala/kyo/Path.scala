@@ -65,11 +65,14 @@ sealed trait PathRead extends ArrowEffect[[A] =>> Path.Op[A], Id]
   * context also satisfies read operations, a mixed read plus write program's row collapses to
   * `PathWrite`, and [[Path.runReadOnly]] rejects a program containing a write at the call site.
   *
-  * Discharge with [[Path.run]] or [[Path.runWith]]; only these runners can satisfy `PathWrite`
+  * Discharge with [[Path.run]] or [[Path.runWith]]; only these runners and the staged-write
+  * combinators, which install a temporary overlay, can satisfy `PathWrite`
   * in a program's row.
   *
   * @see
   *   [[PathRead]] for the read capability this extends
+  * @see
+  *   [[Path.stageWrites]], [[Path.commitWritesOnSuccess]], [[Path.discardWrites]] for staged writes
   */
 sealed trait PathWrite extends PathRead
 
@@ -273,8 +276,9 @@ object Path extends PathPlatformSpecific:
     end Op
 
     private[kyo] enum WatchOp[A]:
-        case Open(path: Path, options: WatchOptions)        extends WatchOp[Watcher]
-        case Raise(error: Result.Error[FileWatchException]) extends WatchOp[Nothing]
+        case Open(path: Path, options: WatchOptions)                                        extends WatchOp[Watcher]
+        case OpenWith(fileSystem: FileSystem.Watch[Any], path: Path, options: WatchOptions) extends WatchOp[Watcher]
+        case Raise(error: Result.Error[FileWatchException])                                 extends WatchOp[Nothing]
     end WatchOp
 
     // --- Runners ---
@@ -287,7 +291,7 @@ object Path extends PathPlatformSpecific:
       * Residual: `Sync & Abort[FileSystemException] & S` (the caller's tail `S` rides through).
       *
       * @see
-      *   [[runWith]] to install a custom [[FileSystem]] (in-memory, zip, root-confined host)
+      *   [[runWith]] to install a custom [[FileSystem]] (in-memory, overlay, root-confined host)
       */
     def run[A, S](program: A < (PathWrite & S))(using Frame): A < (Sync & Abort[FileSystemException] & S) =
         FileSystem.useErased(service => runWith(service)(program))
@@ -309,8 +313,8 @@ object Path extends PathPlatformSpecific:
     /** Runs `program` against an explicit `fileSystem`, discharging write and read; the backend's own
       * effect `FS` rides the residual (the Journal `Backend[S]` mapping).
       *
-      * Install [[FileSystem.inMemory]] for hermetic tests, [[FileSystem.zip]] (wrapped in `Scope`)
-      * for whole-archive rewrites, or [[FileSystem.host]](root) for root-confined host I/O. The
+      * Install [[FileSystem.inMemory]] for hermetic tests, [[FileSystem.overlay]] (wrapped in `Scope`)
+      * for copy-on-write staging, or [[FileSystem.host]](root) for root-confined host I/O. The
       * selected service determines when writes become durable relative to the enclosing run.
       */
     def runWith[A, S, FS](fileSystem: FileSystem.Write[FS])(program: A < (PathWrite & S))(using
@@ -348,8 +352,9 @@ object Path extends PathPlatformSpecific:
             [C] =>
                 (op, cont) =>
                     op match
-                        case WatchOp.Open(path, options) => fileSystem.openWatcher(path, options).map(cont)
-                        case WatchOp.Raise(error)        => Abort.error(error)
+                        case WatchOp.Open(path, options)               => fileSystem.openWatcher(path, options).map(cont)
+                        case WatchOp.OpenWith(selected, path, options) => selected.openWatcher(path, options).map(cont)
+                        case WatchOp.Raise(error)                      => Abort.error(error)
         )
 
     /** Runs `program`, discharging [[PathWatch]] against the Local-selected watch backend. */
@@ -365,7 +370,8 @@ object Path extends PathPlatformSpecific:
                     op match
                         case WatchOp.Open(path, options) =>
                             FileSystem.useWatchErased(_.openWatcher(path, options)).map(cont)
-                        case WatchOp.Raise(error) => Abort.error(error)
+                        case WatchOp.OpenWith(fileSystem, path, options) => fileSystem.openWatcher(path, options).map(cont)
+                        case WatchOp.Raise(error)                        => Abort.error(error)
         )
 
     /** Stateless isolation for read operations. Each child captures the Local-selected backend and
@@ -432,6 +438,101 @@ object Path extends PathPlatformSpecific:
                     ArrowEffect.suspend(Tag[PathWatch], WatchOp.Raise(panic))
             }
     end isolateWatch
+
+    /** Shared overlay bootstrap for explicit staged-write scopes.
+      *
+      * Overlay construction uses `Sync.Unsafe.defer` inside the `handleLoop` handler (lazy first
+      * dispatch, or at `done` when the program raised no PathWrite ops). Sync is cast off the
+      * residual the same way `exists`/`read` hide Sync behind suspend/dispatch, so combinator
+      * return rows stay locked without `Sync`.
+      */
+    private def bootstrapOverlay(using Frame): WatchableOverlayFileSystem[PathWrite, PathWrite] < PathWrite =
+        // Unsafe: create overlay without Scope; lifecycle managed by finish callback.
+        // Cast hides Sync (runs at dispatch/done time; outer runner folds Sync).
+        Sync.Unsafe.defer(
+            new WatchableOverlayFileSystem(
+                new ForwardingLowerFileSystem,
+                AtomicRef.Unsafe.init(OverlayFileSystem.OverlayState.empty).safe,
+                AtomicLong.Unsafe.init(0L).safe,
+                summon[Isolate[PathWrite, Sync, PathWrite]]
+            )
+        ).asInstanceOf[WatchableOverlayFileSystem[PathWrite, PathWrite] < PathWrite]
+    end bootstrapOverlay
+
+    private def handleEphemeralOverlay[A, B, S2](
+        overlay: WatchableOverlayFileSystem[PathWrite, PathWrite],
+        program: A < (PathWrite & S2),
+        finish: (A, OverlayFileSystem[PathWrite]) => B < (PathWrite & S2)
+    )(using Frame): B < (PathWrite & S2) =
+        FileSystem.useErased { lower =>
+            val bound = new FileSystem.Watch[Any]:
+                def openWatcher(boundPath: Path, boundOptions: WatchOptions)(using
+                    Frame
+                ): Watcher < (Any & Async & Scope & Abort[FileWatchException]) =
+                    Abort.run[FileSystemException](runWith(lower)(overlay.openWatcher(boundPath, boundOptions))).map {
+                        case Result.Success(watcher)                   => watcher
+                        case Result.Failure(error: FileWatchException) => Abort.fail(error)
+                        case Result.Failure(error) =>
+                            Abort.fail(FileIOException(boundPath, FileSystemOperation.Watch, error))
+                        case Result.Panic(error) => Abort.panic(error)
+                    }
+            FileSystem.letStagedWatchErased(bound) {
+                ArrowEffect.handleLoop(Tag[PathWrite], overlay, program)(
+                    [C] =>
+                        (op, state, cont) =>
+                            // Unsafe: dispatch's Abort[FileSystemException] is never raised here at runtime;
+                            // ForwardingLowerFileSystem re-suspends I/O ops as PathWrite so FileSystemExceptions
+                            // propagate through the outer PathWrite handler, not inside this handler body
+                            dispatch(state, op).asInstanceOf[C < PathWrite].map(result =>
+                                Loop.continue(state, cont(result))
+                        ),
+                    done = (state, result) => finish(result, state)
+                )
+            }
+        }
+    end handleEphemeralOverlay
+
+    private def scopedOverlay[A, B, S2](
+        program: A < (PathWrite & S2),
+        finish: (A, OverlayFileSystem[PathWrite]) => B < (PathWrite & S2)
+    )(using Frame): B < (PathWrite & Scope & S2) =
+        Scope.acquireRelease(bootstrapOverlay) { overlay =>
+            overlay.discardOnScopeExit
+        }.map(overlay => handleEphemeralOverlay(overlay, program, finish))
+            .asInstanceOf[B < (PathWrite & Scope & S2)]
+    end scopedOverlay
+
+    /** Runs `program` against isolated staged writes and commits them when it succeeds. */
+    def commitWritesOnSuccess[A, S](program: A < (PathWrite & S))(using
+        Frame
+    ): A < (PathWrite & Scope & Abort[CommitConflict] & S) =
+        scopedOverlay(
+            program,
+            (result, overlay) =>
+                val commit = overlay.commit.asInstanceOf[Unit < (PathWrite & Abort[CommitConflict])]
+                commit.andThen(result)
+        )
+    end commitWritesOnSuccess
+
+    /** Runs `program` against isolated staged writes and always discards them. */
+    def discardWrites[A, S](program: A < (PathWrite & S))(using Frame): A < (PathWrite & Scope & S) =
+        scopedOverlay(
+            program,
+            (result, overlay) =>
+                overlay.discard.asInstanceOf[Unit < PathWrite].andThen(result)
+        )
+    end discardWrites
+
+    /** Runs `program` against isolated staged writes and returns their one-shot lifecycle handle. */
+    def stageWrites[A, S](program: A < (PathWrite & S))(using
+        Frame
+    ): (A, FileSystem.StagedChanges[Sync]) < (PathWrite & Scope & S) =
+        scopedOverlay(
+            program,
+            (result, overlay) =>
+                (result, overlay.asInstanceOf[FileSystem.StagedChanges[Sync]])
+        )
+    end stageWrites
 
     private def dispatch[S, C](service: FileSystem.Write[S], op: Op[C])(using Frame): C < (S & Abort[FileSystemException]) =
         op match
@@ -548,7 +649,7 @@ object Path extends PathPlatformSpecific:
 
     /** Creates a temporary directory in the active service and registers its recursive removal with
       * the enclosing `Scope`. The removal runs through the service that created the directory (host:
-      * real recursive delete; in-memory: map-subtree removal; zip: upper-entry discard), so a temp
+      * real recursive delete; in-memory: map-subtree removal; overlay: upper-entry discard), so a temp
       * dir made by a staged service is never deleted by a host-tier `removeAll`. There is no unscoped
       * public temp-directory primitive. The location of the created directory is service-defined:
       * unconfined host services use the OS temporary directory; root-confined host services create the
@@ -582,7 +683,7 @@ object Path extends PathPlatformSpecific:
     end ChannelCloseHandle
 
     /** A committed filesystem entry surfaced at commit time by [[Conflict]] (the live lower view and
-      * the staged view) and accepted as input by [[Resolution.Write]] (a caller-supplied
+      * the staged overlay view) and accepted as input by [[Resolution.Write]] (a caller-supplied
       * replacement entry for the conflicting path).
       *
       * Two cases: `File(bytes, stat)` carries the full byte content and stat metadata for a regular
@@ -597,14 +698,14 @@ object Path extends PathPlatformSpecific:
         case File(bytes: Span[Byte], stat: Path.PathStat)
         case Directory(stat: Path.PathStat)
 
-    /** The base observation a staging backend records for a lower entry at first sight, and the value
+    /** The base observation the overlay records for a lower entry at first sight, and the value
       * carried by [[Conflict.ancestor]]. It is exactly what the read-set stores so that a commit
       * can surface it without re-reading the lower: the observed entry kind, the size for a regular
       * file, the last-modified time where available, and a content hash only when the backend can
       * supply one cheaply.
       *
       * No bytes are retained. A `Stamp` is cheaper than a [[Path.Entry]] because it omits file
-      * content; the read-set records one stamp per observed path, not the bytes, keeping staging
+      * content; the read-set records one stamp per observed path, not the bytes, keeping overlay
       * memory cost proportional to the number of distinct paths touched rather than their content
       * size. A stamp is also the unit of divergence detection at commit: the commit compares each
       * stamped path against the live lower to decide whether a conflict exists.
@@ -620,7 +721,7 @@ object Path extends PathPlatformSpecific:
     ) derives CanEqual
 
     object Stamp:
-        /** The entry kind recorded by a [[Path.Stamp]] at the time a staging backend first observed a
+        /** The entry kind recorded by a [[Path.Stamp]] at the time the overlay first observed a
           * lower-layer path.
           *
           * Three cases: `File` means the path existed as a regular file when observed; `Directory`
@@ -628,7 +729,7 @@ object Path extends PathPlatformSpecific:
           *
           * Note the distinction between `Kind.Absent` and a `Maybe.Absent` [[Conflict.ancestor]]:
           * `Kind.Absent` stamps a path that WAS observed but happened to not exist at that moment;
-          * `Maybe.Absent` ancestor means the path was NEVER read through the staging backend at all, so no
+          * `Maybe.Absent` ancestor means the path was NEVER read through the overlay at all, so no
           * stamp was ever recorded for it. Both can appear on a [[Conflict]], but their semantics
           * differ: `Kind.Absent` is a confirmed observation of absence; `Maybe.Absent` is a gap in
           * the read-set.
@@ -870,6 +971,8 @@ object Path extends PathPlatformSpecific:
           *     backends) resolve a path to itself, so the check reduces to a parts-prefix comparison
           *     and an absent path does not fail. Those backends have no symlinks, so resolution has
           *     nothing to defend against.
+          *   - A staged-write overlay defers to its lower for any path it has not staged, and returns
+          *     a path it has already staged unchanged. See [[FileSystem.overlay]].
           */
         def confinedTo(root: Path)(using Frame): Path < (PathRead & Abort[FileSystemException]) =
             ArrowEffect.suspend(Tag[PathRead], Path.Op.RealPath(root)).map { rootReal =>
@@ -1261,7 +1364,10 @@ object Path extends PathPlatformSpecific:
 
         /** Acquires a watcher after its backend registration is active. */
         def openWatcher(options: WatchOptions = WatchOptions())(using Frame): Watcher < PathWatch =
-            ArrowEffect.suspend(Tag[PathWatch], Path.WatchOp.Open(self, options))
+            FileSystem.useStagedWatchErased {
+                case Present(fileSystem) => ArrowEffect.suspend(Tag[PathWatch], Path.WatchOp.OpenWith(fileSystem, self, options))
+                case Absent              => ArrowEffect.suspend(Tag[PathWatch], Path.WatchOp.Open(self, options))
+            }
 
         /** Returns the underlying `Unsafe` implementation for direct use in unsafe code. */
         def unsafe: Path.Unsafe = self

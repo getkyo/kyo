@@ -822,4 +822,74 @@ class PathWatchTest extends FileSystemWatchTestSuite:
             }
         }
     }
+
+    "discarded-write watching observes staged upper mutations" in {
+        Clock.withTimeControl { clock =>
+            FileSystem.inMemory.map { fileSystem =>
+                val root = Path("discarded-watch-root")
+                val file = root / "staged.txt"
+                FileSystem.let(fileSystem) {
+                    Scope.run {
+                        Path.runWatch {
+                            Path.run {
+                                root.mkDir.andThen {
+                                    Path.discardWrites {
+                                        for
+                                            watcher <- root.openWatcher()
+                                            _       <- file.write("staged")
+                                            _       <- clock.advance(Duration.Zero, 10.millis)
+                                            _       <- clock.advance(10.millis, 10.millis)
+                                            events  <- Scope.run(watcher.events.take(1).run)
+                                        yield assert(events == Chunk(PathChange.Created(file)))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "staged watch rows compile through nested scopes without losing residual effects" in {
+        val errors = typeCheckErrors("""
+            given Frame = Frame.internal
+            val root = Path("nested-staged-watch")
+            val program: Path.Watcher < (PathWrite & PathWatch & Async & Scope & Abort[CommitConflict]) =
+                Path.discardWrites {
+                    Path.commitWritesOnSuccess {
+                        Path.stageWrites(root.openWatcher()).map(_._1)
+                    }
+                }
+        """)
+        assert(errors.isEmpty, errors.mkString("\n"))
+    }
+
+    "discarded-write watching observes lower-origin mutations in the effective view" in {
+        Clock.withTimeControl { clock =>
+            FileSystem.inMemory.map { fileSystem =>
+                val root = Path("discarded-lower-watch-root")
+                val file = root / "lower.txt"
+                FileSystem.let(fileSystem) {
+                    fileSystem.mkDir(root).andThen {
+                        Scope.run {
+                            Path.runWatch {
+                                Path.run {
+                                    Path.discardWrites {
+                                        for
+                                            watcher <- root.openWatcher()
+                                            _       <- fileSystem.write(file, "lower", Path.WriteOptions())
+                                            _       <- clock.advance(Duration.Zero, 10.millis)
+                                            _       <- clock.advance(10.millis, 10.millis)
+                                            events  <- Scope.run(watcher.events.take(1).run)
+                                        yield assert(events == Chunk(PathChange.Created(file)))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 end PathWatchTest
