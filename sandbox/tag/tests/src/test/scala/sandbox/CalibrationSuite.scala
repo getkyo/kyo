@@ -46,6 +46,17 @@ class CalibrationSuite extends munit.FunSuite:
         assertEquals(encoding(Time.Duration.unrelated), encoding(Tag[Int]))
     }
 
+    test("MEASURE: inline using parameter in scope") {
+        println("inline inferred, no expected type: " + Time.Duration.inlineInferredErrors.map(_.take(40)))
+        println("inline inferred, expected type:    " + Time.Duration.inlineInferredTypedErrors.map(_.take(40)))
+        println("emitLike inline Tag[Eff[V]]:       " + Time.Duration.emitLikeErrors.map(_.take(40)))
+        println("emitLike inline, expected type:    " + Time.Duration.emitLikeTypedErrors.map(_.take(40)))
+        println("emitLike plain Tag[Eff[V]]:        " + Time.Duration.emitLikePlainErrors.map(_.take(40)))
+        println("listLike inline Tag[List[V]]:      " + Time.Duration.listLikeErrors.map(_.take(40)))
+        println("emitReal typed equals outside:     " + (encoding(Time.Duration(1L).emitReal) == encoding(Tag[Eff[Time.Duration]])))
+        println("emitReal untyped equals outside:   " + (encoding(Time.Duration(1L).emitRealUntyped) == encoding(Tag[Eff[Time.Duration]])))
+    }
+
     test("Duration: Tag.apply, an inferred Duration and a genuine Long are all refused in scope") {
         refusedWith("[Tag.opaque.collapsed]")(Time.Duration.applyErrors)
         refusedWith("[Tag.opaque.collapsed]")(Time.Duration.inferredErrors)
