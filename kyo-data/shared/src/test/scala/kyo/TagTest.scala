@@ -363,6 +363,36 @@ class TagTest extends kyo.test.Test[Any]:
         end Boxed
     end ScopedHigher
 
+    // No declared tag, so a derivation naming the underlying type inside this scope has nothing
+    // saying which type was meant. The probes sit inside the scope because that is where the
+    // substitution happens; compiled from the test body they would say nothing.
+    object RefusesUndeclared:
+        opaque type Undeclared = Long
+        object Undeclared:
+            def bare(using kyo.test.AssertScope, Frame): Unit =
+                typeCheckFailure("Tag[Long]")("nothing here says whether")
+            def nested(using kyo.test.AssertScope, Frame): Unit =
+                typeCheckFailure("Tag[List[Long]]")("nothing here says whether")
+            def inArgument(using kyo.test.AssertScope, Frame): Unit =
+                typeCheckFailure("Tag[Map[String, Long]]")("nothing here says whether")
+        end Undeclared
+    end RefusesUndeclared
+
+    // Two brands over one underlying type, neither declaring a tag: the underlying names both, so
+    // no declaration could say which was meant and the derivation is refused rather than guessing.
+    //
+    // Declaring a tag for one of them does not reach this rule. Inside the scope Tag[Feet] and
+    // Tag[Double] are the same type, so implicit search answers a Tag[Double] query with that
+    // declaration before the macro runs, and the derivation silently means Feet.
+    object RefusesAmbiguous:
+        opaque type Feet   = Double
+        opaque type Metres = Double
+        object Probe:
+            def ambiguous(using kyo.test.AssertScope, Frame): Unit =
+                typeCheckFailure("Tag[Double]")("all of them transparent here")
+        end Probe
+    end RefusesAmbiguous
+
     // One opaque type over another, each in its own scope so neither is transparent where the
     // other is declared.
     object ScopedChain:
@@ -434,6 +464,24 @@ class TagTest extends kyo.test.Test[Any]:
                 assert(Boxed.explicitInside =!= Tag[Higher[List]])
                 assert(Boxed.inferredInside =!= Tag[Higher[List]])
             }
+        }
+
+        "an ambiguous derivation is refused" - {
+            "a bare underlying type" in RefusesUndeclared.Undeclared.bare
+            "nested in a type argument" in RefusesUndeclared.Undeclared.nested
+            "in one argument of several" in RefusesUndeclared.Undeclared.inArgument
+            "when two opaque types claim the same underlying" in RefusesAmbiguous.Probe.ambiguous
+        }
+
+        "the scoped types answer subtyping the way the compiler does" - {
+            import ScopedMeters.*
+            import ScopedBoxed.*
+            test[Meters, Long]
+            test[Long, Meters]
+            test[Meters, Any]
+            test[Boxed[Int], List[Int]]
+            test[List[Int], Boxed[Int]]
+            test[Boxed[Int], Boxed[String]]
         }
 
         "one opaque type over another" - {
