@@ -140,6 +140,10 @@ private[kyo] object SchemaSerializer:
         end if
 
         val structWriter = StructureValueWriter()
+        // The raw materialization below reaches nested schemas through their serializeWrite, which
+        // consults the writer's transform-override stack; carry the enclosing writer's stack so
+        // recursive occurrences of a configured type keep their configuration.
+        structWriter.schemaTransformOverrides = writer.schemaTransformOverrides
         schema.rawSerializeWrite(value, structWriter)
         val original = structWriter.getResult
 
@@ -365,8 +369,9 @@ private[kyo] object SchemaSerializer:
                     "representation-chain decode requires a self-describing reader (such as: Json, Yaml, Ion, MsgPack)"
                 )
         @tailrec def attempt(idx: Int): A =
-            val rep    = chain(idx)
-            val fresh  = new StructureValueReader(captured)
+            val rep   = chain(idx)
+            val fresh = new StructureValueReader(captured)
+            fresh.schemaTransformOverrides = reader.schemaTransformOverrides
             val result = Result.catching[SchemaException](readForRepresentation(schema, fresh, rep))
             result match
                 case Result.Success(value)                       => value
@@ -1187,6 +1192,7 @@ private[kyo] object SchemaSerializer:
                         throw NoVariantMatchException(Seq.empty, wireNames)
                     else
                         val fresh = new StructureValueReader(tree)
+                        fresh.schemaTransformOverrides = reader.schemaTransformOverrides
                         // The per-variant decoders are heterogeneous (typed `Reader => Any` because each
                         // returns a distinct variant subtype); the value a decoder returns is always one of
                         // this sum's variants, which widens to A, so the cast is sound.
@@ -1229,7 +1235,8 @@ private[kyo] object SchemaSerializer:
         @tailrec def collect(idx: Int, acc: List[(Int, A)]): List[(Int, A)] =
             if idx >= decoders.size then acc
             else
-                val fresh  = new StructureValueReader(tree)
+                val fresh = new StructureValueReader(tree)
+                fresh.schemaTransformOverrides = reader.schemaTransformOverrides
                 val result = Result.catching[DecodeException](decoders(idx)(fresh).asInstanceOf[A])
                 result match
                     case Result.Success(value) => collect(idx + 1, (idx, value) :: acc)
@@ -1314,6 +1321,12 @@ private[kyo] object SchemaSerializer:
 
         // A wrapper consumes nothing of its own; whether the input is exhausted is the reader it wraps.
         private[kyo] def requireEndOfInput(): Unit = inner.requireEndOfInput()
+
+        // Share the wrapped reader's transform-override stack: the macro read bodies receive this
+        // wrapper, so a lookup or registration here must reach the same stack the enclosing
+        // transformed read registered on.
+        override private[kyo] def schemaTransformOverrides: List[Schema[?]]               = inner.schemaTransformOverrides
+        override private[kyo] def schemaTransformOverrides_=(next: List[Schema[?]]): Unit = inner.schemaTransformOverrides = next
 
         protected var delegateReader: Maybe[Reader]   = Maybe.empty
         protected var delegateDepth: Int              = 0
@@ -1954,6 +1967,10 @@ private[kyo] object SchemaSerializer:
 
         // A wrapper consumes nothing of its own; whether the input is exhausted is the reader it wraps.
         private[kyo] def requireEndOfInput(): Unit = inner.requireEndOfInput()
+
+        // Share the wrapped reader's transform-override stack (see DelegatingWrapperReader).
+        override private[kyo] def schemaTransformOverrides: List[Schema[?]]               = inner.schemaTransformOverrides
+        override private[kyo] def schemaTransformOverrides_=(next: List[Schema[?]]): Unit = inner.schemaTransformOverrides = next
 
         // Pre-compute the dropped-field bitmask once per reader instance.
         // Bit i is set iff field index i is dropped. Indices >= 64 are clamped to 63 (see the 64-field macro limit).
