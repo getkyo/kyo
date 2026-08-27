@@ -136,7 +136,6 @@ The SEO surface is the sitemap, robots, JSON-LD, and the canonical rules. The si
 The build either produces a correct site or aborts loud; it never ships a half-built one. Failures are a single sealed family, `WebsiteException`, produced by the generator (a reader never constructs one):
 
 - `WebsiteReadmeException(path, detail)`: a README could not be read or parsed. The `detail` is a typed `ReadmeFailure` (`Missing`, `MalformedGroups`, or `MalformedTable`), so a missing required README, a malformed group structure, and a malformed module table are distinct, inspectable cases rather than one opaque string.
-- `WebsiteMarkdownException(slug, detail)`: a genuinely unexpected failure in the render pipeline. This is rare, because the transpiler degrades unknown constructs to plain text rather than raising; it signals a problem the degrade path did not cover.
 - `WebsiteEmitException(route, cause)`: writing a route's file failed (for example, the missing `main.js` that a skipped `fullLinkJS` leaves behind).
 
 `emit` aborts over `WebsiteException` on the first failure, so the whole build stops at the first real problem instead of writing a partial tree. The `WebsiteMain` entry point reports the typed failure to the console.

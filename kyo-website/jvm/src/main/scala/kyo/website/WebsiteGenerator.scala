@@ -162,6 +162,7 @@ object WebsiteGenerator:
             outlines <- outlinesByRoute(c, prefix)
             _        <- emitIntroPage(c, versions, prefix, outDir, isCurrentLatest, outlines)
             _        <- Kyo.foreachDiscard(modules)(m => emitModulePage(c, versions, prefix, m, outDir, isCurrentLatest, outlines))
+            _        <- Kyo.foreachDiscard(c.tutorials)(t => emitTutorialPage(c, versions, prefix, t, outDir, isCurrentLatest, outlines))
             _        <- writeManifest(c, prefix, outDir)
             _        <- writeSearchIndex(c, prefix, outDir)
         yield ()
@@ -204,7 +205,12 @@ object WebsiteGenerator:
             mods <- Kyo.foreach(modules)(m =>
                 DocsMarkdownRender.transpile(m.readme, moduleLinkBase(c, m)).map(r => s"/$prefix/${m.slug}/" -> r.headings)
             )
-        yield Map(s"/$prefix/" -> intro.headings) ++ mods.toSeq
+            tuts <- Kyo.foreach(c.tutorials)(t =>
+                DocsMarkdownRender.transpile(t.content, Present(DocsMarkdownRender.LinkBase(t.module, gitRef(c)))).map(r =>
+                    s"/$prefix/${t.module}/tutorials/${t.declaration.slug}/" -> r.headings
+                )
+            )
+        yield Map(s"/$prefix/" -> intro.headings) ++ mods.toSeq ++ tuts.toSeq
         end for
     end outlinesByRoute
 
@@ -347,6 +353,74 @@ object WebsiteGenerator:
         end for
     end emitModulePage
 
+    private def emitTutorialPage(
+        c: WebsiteContent,
+        versions: Chunk[WebsiteVersion],
+        prefix: String,
+        tutorial: WebsiteContent.Tutorial,
+        outDir: Path,
+        isCurrentLatest: Boolean,
+        outlines: Map[String, Chunk[DocsMarkdown.Heading]]
+    )(using Frame): Unit < (Async & Abort[WebsiteException]) =
+        val route    = s"/$prefix/${tutorial.module}/tutorials/${tutorial.declaration.slug}/"
+        val linkBase = Present(DocsMarkdownRender.LinkBase(tutorial.module, gitRef(c)))
+        for
+            rendered   <- DocsMarkdownRender.renderArticle(tutorial.content, linkBase)
+            fixedRoute <- Signal.initRef(route)
+            // Constant-false `contentLoading`: a static SSG page is always loaded (see emitIntroPage).
+            // The rail reads `outlines` (the whole-version section map) the same way the bundle does.
+            body <- DocsApp.body(
+                c,
+                prefix,
+                fixedRoute,
+                outlines,
+                rendered.article,
+                Signal.initConst(false)
+            )
+            view <- siteShell(versions, docsHome(c, prefix), body)
+            island = docsIsland(c, versions, rendered.articleHtml, rendered.headings, outlines)
+            html <- wrapFirst(
+                tutorialOpts(c, prefix, tutorial, route, isCurrentLatest).copy(dataIslands = islands(island, versions)),
+                view
+            )
+            _ <- writeRoute(outDir / prefix / tutorial.module / "tutorials" / tutorial.declaration.slug / "index.html", html)
+            _ <- writeString(
+                s"$prefix/${tutorial.module}/tutorials/${tutorial.declaration.slug}/content.md",
+                outDir / prefix / tutorial.module / "tutorials" / tutorial.declaration.slug / "content.md",
+                tutorial.content
+            )
+            _ <- writeString(
+                s"$prefix/${tutorial.module}/tutorials/${tutorial.declaration.slug}/content.html",
+                outDir / prefix / tutorial.module / "tutorials" / tutorial.declaration.slug / "content.html",
+                articleEndpointJson(rendered.articleHtml, rendered.headings)
+            )
+        yield ()
+        end for
+    end emitTutorialPage
+
+    private def tutorialOpts(
+        c: WebsiteContent,
+        prefix: String,
+        tutorial: WebsiteContent.Tutorial,
+        route: String,
+        isCurrentLatest: Boolean
+    ): WebsitePage.Options =
+        val title         = s"${tutorial.declaration.title} | Kyo docs ${c.version.label}"
+        val selfCanonical = s"https://getkyo.io$route"
+        val canonical =
+            if isCurrentLatest && prefix != "latest" then
+                s"https://getkyo.io/latest/${tutorial.module}/tutorials/${tutorial.declaration.slug}/"
+            else selfCanonical
+        WebsitePage.Options(
+            title = title,
+            description = s"Kyo ${c.version.label} documentation.",
+            canonical = canonical,
+            bundleHref = "/main.js",
+            jsonLd = buildJsonLd("docs", title, selfCanonical),
+            noindex = false
+        )
+    end tutorialOpts
+
     /** Wrap a route's content `body` in the unified `SiteApp` shell for SSG. The header inputs (the
       * versions dropdown, the `docsHome` target, the empty search query and index) are exactly the
       * inputs the bundle passes for the same route, so the server-rendered shell and the bundle's
@@ -480,7 +554,13 @@ object WebsiteGenerator:
                 val next = if i < modules.size - 1 then Present(modules(i + 1).slug) else Absent
                 DocsMarkdownRender.transpile(m.readme, moduleLinkBase(c, m)).map(r => manifestEntry(m, prev, next, r.headings))
             }
-            json = if entries.isEmpty then "[]" else entries.mkString("[\n", ",\n", "\n]")
+            tutorialEntries <- Kyo.foreach(c.tutorials)(t =>
+                DocsMarkdownRender.transpile(t.content, Present(DocsMarkdownRender.LinkBase(t.module, gitRef(c)))).map(r =>
+                    tutorialManifestEntry(t, r.headings)
+                )
+            )
+            all  = entries ++ tutorialEntries
+            json = if all.isEmpty then "[]" else all.mkString("[\n", ",\n", "\n]")
             _ <- writeString(s"$prefix/manifest.json", outDir / prefix / "manifest.json", json)
         yield ()
         end for
@@ -503,6 +583,17 @@ object WebsiteGenerator:
             )}", "prev": $prevJson, "next": $nextJson, "toc": $tocJson}"""
     end manifestEntry
 
+    // JSON emit; see escJson justification.
+    private def tutorialManifestEntry(t: WebsiteContent.Tutorial, toc: Chunk[DocsMarkdown.Heading]): String =
+        val tocJson = toc.toSeq.map { h =>
+            s"""{"level": ${h.level}, "text": "${escJson(h.text)}", "slug": "${escJson(h.slug)}"}"""
+        }.mkString("[", ", ", "]")
+        val slug = s"${t.module}/tutorials/${t.declaration.slug}"
+        s"""  {"slug": "${escJson(slug)}", "group": "${escJson(t.module)}", "title": "${escJson(
+                t.declaration.title
+            )}", "prev": null, "next": null, "toc": $tocJson}"""
+    end tutorialManifestEntry
+
     // The per-section body cap shipped in the search index: generous enough that a section's defining
     // terms (which cluster in its opening prose) are captured for relevance ranking, bounded so the
     // index stays small.
@@ -520,7 +611,11 @@ object WebsiteGenerator:
             entries <- Kyo.foreach(modules.toSeq) { m =>
                 DocsMarkdownRender.sectionSnippets(m.readme, SnippetMaxChars).map(sections => searchEntryJson(m, sections))
             }
-            json = if entries.isEmpty then "[]" else entries.mkString("[\n", ",\n", "\n]")
+            tutorialEntries <- Kyo.foreach(c.tutorials)(t =>
+                DocsMarkdownRender.sectionSnippets(t.content, SnippetMaxChars).map(sections => tutorialSearchEntryJson(t, sections))
+            )
+            all  = entries ++ tutorialEntries
+            json = if all.isEmpty then "[]" else all.mkString("[\n", ",\n", "\n]")
             _ <- writeString(s"$prefix/search-index.json", outDir / prefix / "search-index.json", json)
         yield ()
         end for
@@ -531,6 +626,18 @@ object WebsiteGenerator:
         val sectionsJson = sections.toSeq.map { case (h, body, symbols) => sectionJson(h, body, symbols) }.mkString("[", ", ", "]")
         s"""  {"slug": "${escJson(m.slug)}", "title": "${escJson(m.title)}", "group": "${escJson(m.group)}", "sections": $sectionsJson}"""
     end searchEntryJson
+
+    // JSON emit; see escJson justification.
+    private def tutorialSearchEntryJson(
+        t: WebsiteContent.Tutorial,
+        sections: Chunk[(DocsMarkdown.Heading, String, Chunk[String])]
+    ): String =
+        val sectionsJson = sections.toSeq.map { case (h, body, symbols) => sectionJson(h, body, symbols) }.mkString("[", ", ", "]")
+        val slug         = s"${t.module}/tutorials/${t.declaration.slug}"
+        s"""  {"slug": "${escJson(slug)}", "title": "${escJson(t.declaration.title)}", "group": "${escJson(
+                t.module
+            )}", "sections": $sectionsJson}"""
+    end tutorialSearchEntryJson
 
     // JSON emit; see escJson justification.
     private def sectionJson(h: DocsMarkdown.Heading, body: String, symbols: Chunk[String]): String =
@@ -767,7 +874,9 @@ object WebsiteGenerator:
       */
     private def sitemapRoutes(content: Chunk[WebsiteContent]): Chunk[String] =
         Chunk("/") ++ pickLatest(content).fold(Chunk.empty)(c =>
-            Chunk("/latest/") ++ c.groups.flatMap(_.modules).map(m => s"/latest/${m.slug}/")
+            Chunk("/latest/") ++
+                c.groups.flatMap(_.modules).map(m => s"/latest/${m.slug}/") ++
+                c.tutorials.map(t => s"/latest/${t.module}/tutorials/${t.declaration.slug}/")
         )
 
     /** Build the sitemap.xml document. `routes` are absolute-URL paths (each starting with `/`);
