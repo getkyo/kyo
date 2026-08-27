@@ -8,29 +8,47 @@ import scala.compiletime.testing.typeCheckErrors
   */
 class CalibrationSuite extends munit.FunSuite:
 
-    test("S2: an inferred Metres inside the two-brand scope must not get Feet's tag") {
-        val feet   = encoding(Tag[TwoBrands.Feet])
-        val metres = encoding(TwoBrands.metresInferred)
-        assert(feet != metres, s"both are $feet")
+    def refusedWith(code: String)(errs: List[String])(using munit.Location): Unit =
+        assert(errs.exists(_.contains(code)), s"expected $code, got: $errs")
+
+    test("S2: a given Tag[Feet] defined where Feet is transparent is refused") {
+        refusedWith("[Tag.opaque.given]")(TwoBrands.givenErrors)
+    }
+
+    test("S2: an inferred Metres inside the two-brand scope is refused") {
+        refusedWith("[Tag.opaque.collapsed]")(TwoBrands.metresInferredErrors)
+    }
+
+    test("a genuine Tag[Double] inside the two-brand scope is refused") {
+        refusedWith("[Tag.opaque.collapsed]")(TwoBrands.doubleErrors)
+    }
+
+    test("explicit derivations inside equal the ones outside, and the two brands differ") {
+        assertEquals(encoding(TwoBrands.feetDerived), encoding(Tag[TwoBrands.Feet]))
+        assertEquals(encoding(TwoBrands.metresDerived), encoding(Tag[TwoBrands.Metres]))
+        assert(encoding(TwoBrands.feetDerived) != encoding(TwoBrands.metresDerived))
     }
 
     test("S6: parameterized opaque types keep their arguments") {
         assert(encoding(Tag[Opt.Opt[Int]]) != encoding(Tag[Opt.Opt[String]]))
     }
 
-    test("Tag.derive inside equals Tag outside") {
+    test("Opt: explicit inside equals outside; inferred is refused, also nested") {
+        assertEquals(encoding(Opt.Opt.derivedInt), encoding(Tag[Opt.Opt[Int]]))
+        refusedWith("[Tag.opaque.collapsed]")(Opt.Opt.inferredIntErrors)
+        refusedWith("[Tag.opaque.collapsed]")(Opt.Opt.listErrors)
+        assertEquals(encoding(Opt.Opt.unrelated), encoding(Tag[List[String]]))
+    }
+
+    test("Duration: explicit inside equals outside") {
         assertEquals(encoding(Time.Duration.derived), encoding(Tag[Time.Duration]))
+        assertEquals(encoding(Time.Duration.unrelated), encoding(Tag[Int]))
     }
 
-    test("report: what the scope does to each provenance") {
-        println("Tag[Duration] in scope:          " + Time.Duration.applyErrors)
-        println("inferred(Duration(1L)) in scope: " + Time.Duration.inferredErrors)
-        println("inferred(1L) in scope:           " + Time.Duration.genuineLongErrors)
-        println("inferred(Opt(1)) in scope:       " + Opt.Opt.inferredIntErrors)
-    }
-
-    test("a genuine Tag[Long] inside Duration's scope is never silently Duration") {
-        assert(Time.Duration.genuineLongErrors.nonEmpty)
+    test("Duration: Tag.apply, an inferred Duration and a genuine Long are all refused in scope") {
+        refusedWith("[Tag.opaque.collapsed]")(Time.Duration.applyErrors)
+        refusedWith("[Tag.opaque.collapsed]")(Time.Duration.inferredErrors)
+        refusedWith("[Tag.opaque.collapsed]")(Time.Duration.genuineLongErrors)
     }
 
     test("transparency would make Tag[Int] a subtype of Tag[Opt[Int]] against the typer") {

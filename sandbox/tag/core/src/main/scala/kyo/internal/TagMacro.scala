@@ -80,7 +80,8 @@ private[kyo] object TagMacro:
                 case None => ()
             end match
         end if
-        val (staticDB, dynamicDB) = deriveDB[A](resolveSurface(TypeRepr.of[A], opaqueScope))
+        refuseCollapsed(TypeRepr.of[A], opaqueScope)
+        val (staticDB, dynamicDB) = deriveDB[A](TypeRepr.of[A])
         val encodedStr            = Tag.internal.encode(staticDB)
         val encoded               = Expr(encodedStr)
         if dynamicDB.isEmpty then
@@ -177,6 +178,8 @@ private[kyo] object TagMacro:
                                     unifyMembers(flattenAnd(pattern).toList, flattenAnd(value).toList)
                                 case (OrType(_, _), OrType(_, _)) =>
                                     unifyMembers(flattenOr(pattern).toList, flattenOr(value).toList)
+                                case (TypeBounds(patternLow, patternHigh), TypeBounds(valueLow, valueHigh)) =>
+                                    unify(patternLow, valueLow) && unify(patternHigh, valueHigh)
                                 case _ => pattern =:= value
 
                 def unifyMembers(patterns: List[TypeRepr], values: List[TypeRepr]): Boolean =
@@ -202,13 +205,14 @@ private[kyo] object TagMacro:
         end match
     end bindUnderlying
 
-    /** Rewrites the surface of a type so opaque types the compiler substituted away are named
-      * again, or refuses the derivation when nothing says which type was meant.
+    /** Refuses a derivation whose surface may carry an opaque type the compiler substituted away.
       *
       * Inside an opaque type's scope the compiler substitutes the underlying type for the opaque one
       * wherever it has to infer, so a type reaching the macro as `Int` may have been written `X`.
       * Nothing in the type says which, and the two encode to different tags, so guessing would
-      * silently produce a tag that disagrees with every derivation outside the scope.
+      * silently produce a tag that disagrees with every derivation outside the scope. No
+      * declaration can settle it either: a `given Tag[X]` in scope is itself a `Tag[Int]` there and
+      * answers the collapsed query before this macro runs. The only sound answer is to refuse.
       *
       * Only the surface is examined: the root and, recursively, its type arguments, the members of
       * its intersections and unions, and the bounds of a wildcard argument. That is the part the
@@ -216,81 +220,103 @@ private[kyo] object TagMacro:
       * class's parents and an opaque type's own bounds, belongs to those types rather than to this
       * call site, so an `Int` found there is `Chunk`'s business rather than a substituted `X`.
       *
-      * A `Tag` for the opaque type declared in scope settles an ambiguous node: it is the author
-      * stating what that type means here. The node is then encoded as the opaque type, which is
-      * byte-identical to what every call site outside the scope derives. The declared tag is only
-      * consulted, never embedded, so this costs no allocation and stays a compile-time constant.
+      * Each refusal names a stable code so tests can assert the exact rule that fired:
+      *   - `[Tag.opaque.collapsed]`: a surface node equals a transparent opaque type's underlying.
+      *   - `[Tag.opaque.unwalkable]`: a transparent opaque type's underlying is a shape this check
+      *     cannot match (a match type or a refinement), so nothing derived here can be trusted.
+      *   - `[Tag.opaque.given]`: the derivation defines a `given Tag[X]` for a transparent `X`,
+      *     which would intercept every collapsed query in the scope.
       */
-    private def resolveSurface(using
+    private def refuseCollapsed(using
         Quotes
     )(
         root: quotes.reflect.TypeRepr,
         scope: List[(quotes.reflect.Symbol, quotes.reflect.TypeRepr)]
-    ): quotes.reflect.TypeRepr =
+    ): Unit =
         import quotes.reflect.*
-        if scope.isEmpty then root
-        else
-            def candidates(node: TypeRepr): List[(Symbol, TypeRepr)] =
-                // A node already spelled as an opaque type says which type it means. Asking whether
-                // it equals some underlying would answer yes, since type comparison in a macro sees
-                // through opacity, and the derivation of the declared tag itself is such a node.
-                if node.typeSymbol.flags.is(Flags.Opaque) then Nil
-                else
-                    scope.flatMap { (sym, underlying) =>
-                        bindUnderlying(underlying, node).map { args =>
-                            sym -> (if args.isEmpty then sym.typeRef else sym.typeRef.appliedTo(args))
-                        }
-                    }
+        if scope.nonEmpty then
+            val transparent = scope.map(_._1).toSet
 
-            def hasDeclaredTag(opaqueRef: TypeRepr): Boolean =
-                // A type constructor cannot be the argument of Tag, so an unapplied one is probed
-                // applied to its parameters' upper bounds. That finds the same declaration an
-                // applied occurrence of it would, which is what the author wrote it to say.
-                val probe =
-                    opaqueRef.dealias match
-                        case lambda: TypeLambda if opaqueRef.typeArgs.isEmpty =>
-                            opaqueRef.appliedTo(lambda.paramBounds.map {
-                                case TypeBounds(_, upper) => upper
-                            })
-                        case _ => opaqueRef
-                probe.asType match
-                    case '[t] => Expr.summon[Tag[t]].isDefined
-            end hasDeclaredTag
+            def walkable(tpe: TypeRepr): Boolean =
+                tpe match
+                    case lambda: TypeLambda           => walkable(lambda.resType)
+                    case AppliedType(tycon, args)     => walkable(tycon) && args.forall(walkable)
+                    case AndType(a, b)                => walkable(a) && walkable(b)
+                    case OrType(a, b)                 => walkable(a) && walkable(b)
+                    case TypeBounds(low, high)        => walkable(low) && walkable(high)
+                    case _: MatchType | _: Refinement => false
+                    case _: RecursiveType             => false
+                    case _                            => true
 
-            def rewrite(node: TypeRepr): TypeRepr =
+            scope.find((_, underlying) => !walkable(underlying)).foreach { (sym, underlying) =>
+                report.errorAndAbort(
+                    s"[Tag.opaque.unwalkable] Cannot derive a Tag for ${root.show} here: opaque type ${sym.fullName} " +
+                        s"is transparent in this scope and its underlying type ${underlying.show} cannot be recognized " +
+                        s"once the compiler has substituted it, so no derivation in this scope can be trusted. Move " +
+                        s"the derivation out of ${sym.name}'s scope."
+                )
+            }
+
+            // A `given Tag[X]` for a transparent X is a `Tag[Underlying]` here, and implicit search
+            // answers every collapsed query with it before this macro can refuse. Catch the one
+            // place that can be caught: its own definition. A given always has an explicit type,
+            // so reading it forces nothing the compiler has not typed yet.
+            Iterator.iterate(Symbol.spliceOwner)(_.owner).takeWhile(sym => !sym.isNoSymbol)
+                .find(sym => sym.flags.is(Flags.Given) && !sym.isClassDef)
+                .foreach { definition =>
+                    definition.tree match
+                        case ValDef(_, tpt, _) if tpt.tpe.typeSymbol.equals(TypeRepr.of[Tag[Any]].typeSymbol) =>
+                            tpt.tpe.typeArgs.headOption.map(_.dealiasKeepOpaques.typeSymbol).filter(transparent.contains).foreach { x =>
+                                val underlying = scope.find(_._1.equals(x)).map(_._2.show).getOrElse("?")
+                                report.errorAndAbort(
+                                    s"[Tag.opaque.given] A given Tag[${x.name}] must not be defined where ${x.fullName} is " +
+                                        s"transparent: there it is also a Tag[$underlying] and would answer every derivation " +
+                                        s"of that type in this scope with ${x.name}'s tag. Define it outside ${x.name}'s scope."
+                                )
+                            }
+                        case _ => ()
+                }
+
+            def candidates(node: TypeRepr): List[Symbol] =
+                // A node spelled as an opaque type that is transparent here is one the author wrote
+                // explicitly, since substitution never produces it. Any other node, including an
+                // opaque type from another scope that a chained alias collapsed to, is compared.
+                if transparent.contains(node.typeSymbol) then Nil
+                else scope.collect { case (sym, underlying) if bindUnderlying(underlying, node).isDefined => sym }
+
+            def check(node: TypeRepr): Unit =
                 candidates(node) match
-                    case Nil                                                => descend(node)
-                    case (_, opaqueRef) :: Nil if hasDeclaredTag(opaqueRef) => opaqueRef
-                    case (sym, _) :: Nil =>
+                    case Nil => descend(node)
+                    case syms =>
+                        val names = syms.map(_.name)
                         report.errorAndAbort(
-                            s"Cannot derive a Tag for ${root.show}: inside the scope of opaque type ${sym.fullName} the " +
-                                s"compiler replaces ${sym.name} with ${node.show} before this macro runs, so nothing here " +
-                                s"says whether ${node.show} means ${sym.name} or ${node.show}, and the two need different " +
-                                s"tags. Move this derivation out of ${sym.name}'s scope, or, if ${node.show} always means " +
-                                s"${sym.name} throughout that scope, declare `given Tag[${sym.name}] = Tag.derive[${sym.name}]` " +
-                                s"alongside the opaque type to say so."
-                        )
-                    case many =>
-                        report.errorAndAbort(
-                            s"Cannot derive a Tag for ${root.show}: ${node.show} is the underlying type of " +
-                                s"${many.map(_._1.fullName).mkString(" and ")}, all of them transparent here, so no " +
-                                s"declaration can say which one it means. Move this derivation out of their scope."
+                            s"[Tag.opaque.collapsed] Cannot derive a Tag for ${root.show}: inside the scope of " +
+                                s"${syms.map(_.fullName).mkString(" and ")} the compiler replaces ${names.mkString(" and ")} " +
+                                s"with ${node.show} before this macro runs, so nothing here says whether ${node.show} means " +
+                                s"${names.mkString(" or ")} or ${node.show}, and they need different tags. Move this " +
+                                s"derivation out of that scope, or write the opaque type explicitly with Tag.derive."
                         )
 
-            def descend(node: TypeRepr): TypeRepr =
+            def descend(node: TypeRepr): Unit =
                 node match
-                    case AndType(a, b) => AndType(rewrite(a), rewrite(b))
-                    case OrType(a, b)  => OrType(rewrite(a), rewrite(b))
-                    case AppliedType(tycon, args) if args.nonEmpty =>
-                        AppliedType(tycon, args.map(arg => rewrite(arg.dealiasKeepOpaques.simplified)))
+                    case AndType(a, b) =>
+                        check(a)
+                        check(b)
+                    case OrType(a, b) =>
+                        check(a)
+                        check(b)
+                    case AppliedType(_, args) =>
+                        args.foreach(arg => check(arg.dealiasKeepOpaques.simplified))
                     // A wildcard argument reaches the macro as bare bounds, and the encoder keeps
                     // its upper bound, so a substitution hiding in there reaches the encoding.
-                    case TypeBounds(low, high) => TypeBounds(rewrite(low), rewrite(high))
-                    case _                     => node
+                    case TypeBounds(low, high) =>
+                        check(low)
+                        check(high)
+                    case _ => ()
 
-            rewrite(root.dealiasKeepOpaques.simplified)
+            check(root.dealiasKeepOpaques.simplified)
         end if
-    end resolveSurface
+    end refuseCollapsed
 
     private def deriveDB[A: SType](using
         q: Quotes

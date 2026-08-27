@@ -12,7 +12,9 @@ import scala.compiletime.testing.typeCheckErrors
 
 def inferred[A](a: A)(using t: Tag[A]): Tag[A] = t
 
-/** S2 shape: two brands over one underlying in one template, one of them declaring a tag. */
+def errors(es: List[scala.compiletime.testing.Error]): List[String] = es.map(_.message)
+
+/** S2 shape: two brands over one underlying in one template. */
 object TwoBrands:
     opaque type Feet   = Double
     opaque type Metres = Double
@@ -20,9 +22,11 @@ object TwoBrands:
         def apply(d: Double): Feet = d
     object Metres:
         def apply(d: Double): Metres = d
-    given feetTag: Tag[Feet] = Tag.derive[Feet]
-    // An inferred query for Tag[Metres] arrives as Tag[Double] here.
-    val metresInferred: Tag[Metres] = inferred(Metres(1.0))
+    val feetDerived: Tag[Feet]     = Tag.derive[Feet]
+    val metresDerived: Tag[Metres] = Tag.derive[Metres]
+    val givenErrors: List[String]  = errors(typeCheckErrors("given feetTag: Tag[Feet] = Tag.derive[Feet]"))
+    val metresInferredErrors: List[String] = errors(typeCheckErrors("inferred(Metres(1.0))"))
+    val doubleErrors: List[String]         = errors(typeCheckErrors("inferred(1.0)"))
 end TwoBrands
 
 /** Maybe's shape, verbatim: a union underlying with a matching lower bound. */
@@ -34,7 +38,11 @@ object Opt:
     opaque type Opt[+A] >: (Absent | Present[A]) = Absent | Present[A]
     object Opt:
         def apply[A](a: A): Opt[A]          = a
-        val inferredIntErrors: List[String] = typeCheckErrors("inferred(Opt(1))").map(_.message)
+        val derivedInt: Tag[Opt[Int]]       = Tag.derive[Opt[Int]]
+        val inferredIntErrors: List[String] = errors(typeCheckErrors("inferred(Opt(1))"))
+        val listErrors: List[String]        = errors(typeCheckErrors("inferred(List(Opt(1)))"))
+        val unrelated: Tag[List[String]]    = Tag.derive[List[String]]
+    end Opt
 end Opt
 
 /** Duration's shape with the Memo pattern: a companion deriving tags, nothing declared. */
@@ -43,7 +51,9 @@ object Time:
     object Duration:
         def apply(l: Long): Duration        = l
         val derived: Tag[Duration]          = Tag.derive[Duration]
-        val applyErrors: List[String]       = typeCheckErrors("Tag[Duration]").map(_.message)
-        val inferredErrors: List[String]    = typeCheckErrors("inferred(Duration(1L))").map(_.message)
-        val genuineLongErrors: List[String] = typeCheckErrors("inferred(1L)").map(_.message)
+        val applyErrors: List[String]       = errors(typeCheckErrors("Tag[Duration]"))
+        val inferredErrors: List[String]    = errors(typeCheckErrors("inferred(Duration(1L))"))
+        val genuineLongErrors: List[String] = errors(typeCheckErrors("inferred(1L)"))
+        val unrelated: Tag[Int]             = Tag.derive[Int]
+    end Duration
 end Time
