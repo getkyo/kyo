@@ -222,6 +222,7 @@ object ContainerPredef:
                 .env("POSTGRES_DB", c.database)
                 .port(c.port, 0)
                 .command("postgres", "-c", "fsync=off")
+                .requireService(true)
                 .healthCheck(readinessLoop(Chunk("psql", "-U", c.username, "-d", c.database, "-c", "SELECT 1"), c.readinessBudget))
     end Postgres
 
@@ -422,6 +423,7 @@ object ContainerPredef:
                 .stopSignal(Container.Signal.SIGKILL)
                 .stopTimeout(defaultStopTimeout)
                 .portMappingTimeout(defaultPortMappingTimeout)
+                .requireService(true)
                 .healthCheck(readinessLoop(healthCmdBase, c.readinessBudget))
             applyEnv(base, c)
         end buildContainerConfig
@@ -530,6 +532,7 @@ object ContainerPredef:
         private[kyo] def buildContainerConfig(c: Config): Container.Config =
             Container.Config(c.image)
                 .port(c.port, 0)
+                .requireService(true)
                 .healthCheck(readinessLoop(Chunk("mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"), c.readinessBudget))
     end MongoDB
 

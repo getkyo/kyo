@@ -2159,8 +2159,9 @@ lazy val `kyo-aeron` =
         .nativeSettings(
             `native-settings`,
             // The UDP round-trip and URI-validation suites bind fixed high ports, which collide if
-            // suites run concurrently. (The JS and Wasm blocks need no equivalent: they inherit the
-            // global Test/parallelExecution := false.)
+            // suites run concurrently. `native-settings-base` now sets this too, for its own
+            // reason; kept here so a change there cannot silently reintroduce the port collision.
+            // (The JS and Wasm blocks need no equivalent: they inherit it from `js-settings`.)
             Test / parallelExecution := false,
             nativeConfig := {
                 val base = nativeConfig.value
@@ -2735,6 +2736,9 @@ lazy val `kyo-pod` =
         .crossType(CrossType.Full)
         .in(file("kyo-pod"))
         .dependsOn(`kyo-core`, `kyo-http`)
+        // Direct, not through kyo-http: `Container.init` opens a host-side TCP connection to prove a published
+        // port is actually served before it hands the caller a handle.
+        .dependsOn(`kyo-net`)
         .dependsOn(`kyo-system`)
         .withKyoTest
         .settings(
@@ -3263,8 +3267,17 @@ def readFfiNativeManifest(cp: Seq[Attributed[File]], relDir: Seq[String], inBuil
 // the kyoNative aggregate (which has no native sources, hence no Test / nativeLink to transform) can
 // take these without the per-module link hook below.
 lazy val `native-settings-base` = Seq(
-    fork                                              := false,
-    bspEnabled                                        := false,
+    fork       := false,
+    bspEnabled := false,
+    // One test task per module, not one per suite. The scala-native TestAdapter keys its runner
+    // processes by sbt task thread id, and sbt's cached task pool reaps a thread after 60s idle, so
+    // one task per suite gives one FRESH runner process per suite whenever consecutive suites are
+    // more than a minute apart. Every kyo-sql suite is, which turned the per-process container
+    // singleton into per-suite provisioning: 24 worker processes and ~2 container starts each in one
+    // module. Serial tasks keep the module on one thread and therefore one worker. Nothing is lost in
+    // concurrency: Native leaf parallelism is already capped at 1 by kyo-test's LeafPool. Matches what
+    // `js-settings` does globally and what kyo-aeron already does for Native.
+    Test / parallelExecution                          := false,
     Test / testForkedParallel                         := false,
     Test / envVars += "SCALANATIVE_THREAD_STACK_SIZE" -> "33554432",
     libraryDependencies += "io.github.cquiroz"       %%% "scala-java-time" % "2.7.0",
