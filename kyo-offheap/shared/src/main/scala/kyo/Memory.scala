@@ -180,10 +180,10 @@ object Memory:
     object Arena:
         opaque type State = JArena
 
-        // State and JArena are the same type inside this scope, so a tag derived here cannot say
-        // which one it means. The effect is State to everyone outside, so that is what it means
-        // here, and saying so keeps a tag derived here equal to one derived there.
-        private given stateTag: Tag[State] = Tag.derive[State]
+        // State and JArena are the same type inside this scope, so a tag summoned here for either
+        // cannot be derived: the macro refuses it. Derived by name, State's tag is the one the
+        // effect carries everywhere outside, and it is passed explicitly below.
+        private val stateTag: Tag[State] = Tag.derive[State]
 
         /** Runs an operation that requires an Arena, ensuring proper cleanup.
           *
@@ -195,13 +195,13 @@ object Memory:
         def run[A, S](f: A < (Arena & S))(using Frame): A < (Sync & S) =
             Sync.defer {
                 val arena = JArena.ofShared()
-                Sync.ensure(Sync.defer(arena.close))(Env.run(arena)(f))
+                Sync.ensure(Sync.defer(arena.close))(Env.runAll(TypeMap[State](arena)(using stateTag))(f))
             }
 
         given isolate: Isolate[Arena, Sync, Any] = Isolate.derive[Env[Arena.State] & Sync, Sync, Any]
 
         private[kyo] def use[A, S](f: JArena => A < S)(using Frame): A < (S & Arena) =
-            Env.use[State](f)
+            Env.use[State](f)(using stateTag, summon[kyo.internal.NotIntersection[State]])
     end Arena
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */

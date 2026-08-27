@@ -25,12 +25,6 @@ opaque type JsonRpcId = String | Long
 
 object JsonRpcId:
 
-    // JsonRpcId and String | Long are the same type inside this scope, so a tag derived here
-    // cannot say which one it means. Ids are JsonRpcId to everyone outside, so that is what it
-    // means here, and saying so keeps the schema discriminator below naming JsonRpcId rather
-    // than its underlying union.
-    private given tag: Tag[JsonRpcId] = Tag.derive[JsonRpcId]
-
     def apply(n: Long): JsonRpcId   = n
     def apply(s: String): JsonRpcId = s
 
@@ -87,8 +81,11 @@ object JsonRpcId:
                 throw TypeMismatchException(Seq.empty, "number or string", "null")(using reader.frame)
             else
                 try JsonRpcId(reader.long())
-                catch case _: TypeMismatchException => JsonRpcId(reader.string()),
-        structure = Structure.Type.Open(Tag[JsonRpcId].asInstanceOf[Tag[Any]])
+                catch
+                    case _: TypeMismatchException => JsonRpcId(reader.string()),
+        // JsonRpcId is String | Long inside its own companion, so a summoned Tag[JsonRpcId] would
+        // arrive as the union's; deriving it by name keeps the discriminator naming JsonRpcId.
+        structure = Structure.Type.Open(Tag.derive[JsonRpcId].asInstanceOf[Tag[Any]])
     )
 
     given CanEqual[JsonRpcId, JsonRpcId] = CanEqual.derived

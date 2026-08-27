@@ -29,10 +29,11 @@ object Memo:
 
     private val empty = Cache(Map.empty)
 
-    // Memo and Var[Cache] are the same type inside this scope, so a tag derived here cannot say
-    // which one it means. Callers outside see the effect as Memo, so that is what it means here,
-    // and saying so keeps a tag derived here equal to one derived there.
-    private given memoTag: Tag[Memo] = Tag.derive[Memo]
+    // Memo and Var[Cache] are the same type inside this scope, so a tag summoned here for either
+    // cannot be derived: the macro refuses it. Derived by name, Memo's tag is the one every call
+    // site outside uses for this effect, and it is passed explicitly below. A val rather than a
+    // given, since a given Tag[Memo] here would answer every Tag[Var[Cache]] query in the scope.
+    private val memoTag: Tag[Memo] = Tag.derive[Memo]
 
     /** Memoizes a function, caching its results for future use.
       *
@@ -54,20 +55,20 @@ object Memo:
                         cached.asInstanceOf[B]
                     case Absent =>
                         f(input).map { result =>
-                            Var.update[Cache](_.updated(input, id, result))
+                            Var.update[Cache](_.updated(input, id, result))(using memoTag, summon[Frame])
                                 .map(_ => result)
                         }
-            }
+            }(using memoTag)
     end apply
 
     def run[A, S](v: A < (Memo & S))(using Frame): A < S =
-        Var.run(empty)(v)
+        Var.run(empty)(v)(using memoTag, summon[Frame])
 
     /** Default isolate that combines memoization caches.
       *
       * When the isolation ends, merges any cached results from the isolated computation with the outer cache using the later result on
       * conflicts. This allows memoized results computed in isolation to be reused later.
       */
-    given isolate: Isolate[Memo, Any, Memo] = Var.isolate.merge[Cache]((a, b) => Cache(a.map ++ b.map))
+    given isolate: Isolate[Memo, Any, Memo] = Var.isolate.merge[Cache](using memoTag)((a, b) => Cache(a.map ++ b.map))
 
 end Memo

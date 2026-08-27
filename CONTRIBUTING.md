@@ -821,33 +821,30 @@ Kyo achieves zero-cost abstractions through opaque types. When designing a new t
 - Factory methods in the companion validate input: `Maybe(null)` returns `Absent`, `Duration.fromNanos` clamps negatives
 - Internal code accesses the underlying value via pattern matching on union members or direct use within the opaque boundary
 - Avoid exposing the underlying representation; if escape hatches are needed, use `private[kyo]`
-- If any code inside the type's own scope derives a `Tag` mentioning the underlying type, declare `given Tag[X] = Tag.derive[X]` alongside the opaque type. See [Tags inside an opaque type's scope](#tags-inside-an-opaque-types-scope)
+- Code inside the type's own scope cannot summon a `Tag` for the type or derive one mentioning its underlying type; it passes `Tag.derive[X]` explicitly. See [Tags inside an opaque type's scope](#tags-inside-an-opaque-types-scope)
 
 **Given instances for new types** — provide as applicable:
 - `CanEqual` — required if the type supports `==`/`!=` (strict equality is enabled project-wide)
 - `Render` — for human-readable display
 - `Ordering` — if the type is naturally sortable
-- `Tag` — automatically derived; declare one explicitly when the type's own scope derives tags (below), or if the type has special encoding
+- `Tag` — automatically derived; never declare a `given Tag[X]` inside `X`'s own scope (below)
 
 #### Tags inside an opaque type's scope
 
 Inside the template that declares an opaque type, and inside its companion, the compiler substitutes the underlying type for the opaque one wherever it has to infer, and it does so before any macro runs. `Env.get[X]` written there reaches the `Tag` macro as the underlying type, so the tag derived inside describes something different from the tag every call site outside derives, and a value stored under one is not found under the other.
 
-The macro refuses such a derivation rather than guessing. Two ways out:
+Nothing at that point can say which type was meant, so the macro refuses any derivation whose type mentions the underlying type of an opaque type transparent there (`[Tag.opaque.collapsed]`), whether it was inferred or written. Naming the opaque type in `Tag.derive[X]` survives the substitution and derives the same tag as anywhere else; an implicit query does not, since the query itself is rewritten before the macro sees it. So inside the scope a tag is passed explicitly:
 
 ```scala
 opaque type Meters = Long
 
 object Meters:
-    // States that Long on a tag surface means Meters throughout this scope.
-    given tag: Tag[Meters] = Tag.derive[Meters]
-
-    def get: Meters < Env[Meters] = Env.get[Meters]
+    def get: Meters < Env[Meters] = Env.get[Meters](using Tag.derive[Meters])
 ```
 
-The declaration is scope-wide: inside it, the underlying type can no longer be named on a tag surface in its own right. A scope needing both meanings keeps the opaque type in an object of its own, which is also what stops a type like `opaque type Count = Int` from making every `Int` in a large file ambiguous.
+A `given Tag[X]` must not be defined inside `X`'s scope (`[Tag.opaque.given]`): there it is also a `Tag` for the underlying type and would answer every such query with `X`'s tag, silently. The same holds for an imported given or an `inline given`, which the macro cannot see; do not define them.
 
-Two opaque types over the same underlying type in one scope are refused outright, since no declaration could say which one was meant; give them separate objects.
+Refusal is per site, so a type like `opaque type Count = Int` refuses every `Int` on a tag surface in its own template. A scope that needs the underlying type on a tag surface keeps the opaque type in an object of its own.
 
 **Sealed trait vs opaque type:**
 - Use **opaque type** when you want zero-cost wrapping of an existing representation
