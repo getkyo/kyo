@@ -3,7 +3,7 @@ package kyo
 import java.nio.charset.Charset
 
 /** Filesystem backend capabilities, effect-polymorphic in the backend effect `S`. [[Read]] exposes
-  * inspection, content reads, and channels. [[Write]] extends it with mutation and structure
+  * inspection, content reads, channels, and locks. [[Write]] extends it with mutation and structure
   * operations. Each public operation records the applicable typed failure category in its effect
   * row and accepts a call-site [[Frame]].
   *
@@ -11,6 +11,44 @@ import java.nio.charset.Charset
   * @see [[Path.runWith]] for installing a write capability
   */
 object FileSystem:
+
+    // Retry pacing for the waiting lock modes. Async.sleep, not Clock.sleep: the latter hands back
+    // the timer Fiber rather than suspending on it, so discarding it would turn these retry loops
+    // into busy spins that contend with the very lock holder they are waiting on.
+    private val lockRetryDelay = 1.millis
+
+    private[kyo] def awaitLock[S](path: Path, wait: Path.LockWait)(
+        attempt: => Maybe[Path.Lock] < (S & Sync & Scope & Abort[FileReadException | FileLockException])
+    )(using Frame): Path.Lock < (S & Async & Scope & Abort[FileReadException | FileLockException]) =
+        def unavailable: Path.Lock < Abort[FileLockException] = Abort.fail(FileLockUnavailableException(path))
+
+        def untilAvailable: Path.Lock < (S & Async & Scope & Abort[FileReadException | FileLockException]) =
+            attempt.map {
+                case Present(lock) => lock
+                case Absent        => Async.sleep(lockRetryDelay).andThen(untilAvailable)
+            }
+
+        def until(deadline: Clock.Deadline, timeout: Duration)
+            : Path.Lock < (S & Async & Scope & Abort[FileReadException | FileLockException]) =
+            deadline.isOverdue.map {
+                case true => Abort.fail(FileLockTimeoutException(path, timeout))
+                case false =>
+                    attempt.map {
+                        case Present(lock) => lock
+                        case Absent        => Async.sleep(lockRetryDelay).andThen(until(deadline, timeout))
+                    }
+            }
+
+        wait match
+            case Path.LockWait.Immediate =>
+                attempt.map {
+                    case Present(lock) => lock
+                    case Absent        => unavailable
+                }
+            case Path.LockWait.UntilAvailable  => untilAvailable
+            case Path.LockWait.Until(deadline) => deadline.timeLeft.map(until(deadline, _))
+        end match
+    end awaitLock
 
     abstract class Read[S]:
         def defaultCaseSensitivity(using Frame): Glob.CaseSensitivity < S
@@ -77,6 +115,23 @@ object FileSystem:
 
         /** Opens `path` for positioned reads. The channel is closed when the current [[Scope]] exits. */
         def openReadChannel(path: Path)(using Frame): Path.ReadChannel[S] < (S & Scope & Abort[FileReadException])
+
+        /** Attempts to acquire a scoped advisory lock without waiting for a conflicting holder.
+          *
+          * `Async` is in the row because "without waiting" is about conflicting holders, not about
+          * suspension: a backend that merges same-process claims onto one platform lock has a span
+          * in which a compatible claim is being taken but is not yet shareable, and answering during
+          * it would deny a lock the contract grants. Waiting out that span is bounded and does not
+          * depend on any holder releasing, unlike [[lock]], which waits for exactly that.
+          */
+        def tryLock(path: Path, mode: Path.LockMode)(using
+            Frame
+        ): Maybe[Path.Lock] < (S & Sync & Async & Scope & Abort[FileReadException | FileLockException])
+
+        /** Acquires a scoped advisory lock according to `wait`. Waiting modes suspend the fiber. */
+        def lock(path: Path, mode: Path.LockMode, wait: Path.LockWait = Path.LockWait.UntilAvailable)(using
+            Frame
+        ): Path.Lock < (S & Async & Scope & Abort[FileReadException | FileLockException])
 
         private[kyo] def openReadChannelUnscoped(path: Path)(using
             Frame
