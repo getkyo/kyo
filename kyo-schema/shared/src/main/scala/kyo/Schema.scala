@@ -2646,13 +2646,13 @@ object Schema:
 
     /** Tag schema: serializes as the string representation. Tags are opaque types backed by String at runtime for static tags.
       */
-    given tagSchema[A]: Schema[Tag[A]] = Schema.init[Tag[A]](
+    given tagSchema[A](using tag: Tag[Tag[A]]): Schema[Tag[A]] = Schema.init[Tag[A]](
         writeFn = (v, w) =>
             v match
                 case s: String => w.string(s)
                 case _         => w.string(v.show),
         readFn = reader => reader.string().asInstanceOf[Tag[A]],
-        structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[Tag[A]].asInstanceOf[Tag[Any]])
+        structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, tag.erased)
     )
 
     /** Schema for java.time.LocalDate values. Serializes as ISO-8601 string. */
@@ -2895,7 +2895,7 @@ object Schema:
     end seqSchema
 
     /** Schema for Span[A] values. */
-    given spanSchema[A](using inner0: => Schema[A], ct: scala.reflect.ClassTag[A]): Schema[Span[A]] =
+    given spanSchema[A](using inner0: => Schema[A], ct: scala.reflect.ClassTag[A], tag: Tag[Span[A]]): Schema[Span[A]] =
         lazy val inner = inner0
         Schema.init[Span[A]](
             writeFn = (value, writer) =>
@@ -2919,7 +2919,7 @@ object Schema:
             absentDefaultValue = Maybe(Span.empty[A]),
             structure = Structure.Type.Collection(
                 "Span",
-                Tag[Span[A]].asInstanceOf[Tag[Any]],
+                tag.erased,
                 inner.structure
             )
         )
