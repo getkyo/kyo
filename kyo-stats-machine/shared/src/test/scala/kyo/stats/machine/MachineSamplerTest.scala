@@ -12,48 +12,6 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    /** A `System.Unsafe` whose env and property maps are staged, so the sample-interval lever is read the way
-      * the sampler reads it at start: a real environment variable cannot be set inside a running process.
-      */
-    private def staged(envs: Map[String, String], props: Map[String, String] = Map.empty): System.Unsafe =
-        new System.Unsafe:
-            def env(name: String)(using AllowUnsafe): Maybe[String]      = Maybe.fromOption(envs.get(name))
-            def property(name: String)(using AllowUnsafe): Maybe[String] = Maybe.fromOption(props.get(name))
-            def lineSeparator()(using AllowUnsafe): String               = "\n"
-            def userName()(using AllowUnsafe): String                    = "test"
-            def operatingSystem()(using AllowUnsafe): System.OS          = System.OS.Unknown
-            def architecture()(using AllowUnsafe): System.Arch           = System.Arch.Unknown
-            def availableProcessors()(using AllowUnsafe): Int            = 1
-
-    "sample interval" - {
-
-        "defaults to one second when nothing overrides it" in {
-            assert(MachineSampler.intervalFrom(staged(Map.empty)) == 1.second)
-            assert(MachineSampler.defaultInterval == 1.second)
-        }
-
-        "the environment variable sets the cadence in milliseconds" in {
-            assert(MachineSampler.intervalFrom(staged(Map("KYO_MACHINE_INTERVAL_MS" -> "100"))) == 100.millis)
-            assert(MachineSampler.intervalFrom(staged(Map("KYO_MACHINE_INTERVAL_MS" -> " 5000 "))) == 5.seconds)
-        }
-
-        "the system property sets the cadence when the environment variable is unset" in {
-            assert(MachineSampler.intervalFrom(staged(Map.empty, Map("kyo.machine.intervalMs" -> "250"))) == 250.millis)
-        }
-
-        "the environment variable wins over the system property" in {
-            val both = staged(Map("KYO_MACHINE_INTERVAL_MS" -> "100"), Map("kyo.machine.intervalMs" -> "250"))
-            assert(MachineSampler.intervalFrom(both) == 100.millis)
-        }
-
-        "an unparseable or non-positive value falls back to the default rather than stopping the sampler" in {
-            assert(MachineSampler.intervalFrom(staged(Map("KYO_MACHINE_INTERVAL_MS" -> "fast"))) == 1.second)
-            assert(MachineSampler.intervalFrom(staged(Map("KYO_MACHINE_INTERVAL_MS" -> "0"))) == 1.second)
-            assert(MachineSampler.intervalFrom(staged(Map("KYO_MACHINE_INTERVAL_MS" -> "-100"))) == 1.second)
-            assert(MachineSampler.intervalFrom(staged(Map("KYO_MACHINE_INTERVAL_MS" -> ""))) == 1.second)
-        }
-    }
-
     "readInto" - {
 
         "passes the SAME retained Decode instance every tick (one Decode per proc file, identity stable)" in {
@@ -250,37 +208,6 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
                     _ <- fiber.interrupt
                     snapshot = recorded.get()
                 yield assert(snapshot == Chunk(1.seconds, 2.seconds, 3.seconds, 4.seconds, 5.seconds))
-                end for
-            }
-        }
-
-        "a configured interval is the cadence the loop actually ticks at" in {
-            // The lever has to move the producer, not just parse: everything downstream inherits this
-            // cadence, so a consumer polling ten times a second reads the same value ten times unless the
-            // sampler itself ticks faster.
-            val recorded = AtomicRef.Unsafe.init(Chunk.empty[Duration])
-            Clock.withTimeControl { tc =>
-                for
-                    handles <- MachineHandles.init
-                    clock   <- Clock.get
-                    machine = new Machine:
-                        def read()(using AllowUnsafe): Unit      = discard(recorded.updateAndGet(_.append(clock.unsafe.nowMonotonic())))
-                        def readDisks()(using AllowUnsafe): Unit = ()
-                        def close()(using AllowUnsafe): Unit     = ()
-                    interval = MachineSampler.intervalFrom(staged(Map("KYO_MACHINE_INTERVAL_MS" -> "100")))
-                    fiber <- Fiber.initUnscoped(Clock.let(clock)(Scope.run(MachineSampler.runWith(handles, _ => machine, interval))))
-                    _     <- tc.advance(Duration.Zero, 100.millis) // let the fiber reach the fast-fiber schedule registration first
-                    _     <- tc.advance(100.millis)
-                    _     <- tc.advance(100.millis)
-                    _     <- tc.advance(100.millis)
-                    _     <- tc.advance(100.millis)
-                    _     <- tc.advance(100.millis)
-                    _     <- fiber.interrupt
-                    snapshot = recorded.get()
-                yield
-                    assert(interval == 100.millis)
-                    // Five ticks in half a second, where the default cadence would have produced none.
-                    assert(snapshot == Chunk(100.millis, 200.millis, 300.millis, 400.millis, 500.millis))
                 end for
             }
         }

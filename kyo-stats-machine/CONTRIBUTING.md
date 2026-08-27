@@ -71,7 +71,7 @@ The sampler starts with zero explicit user call, mirroring
    touches" below); JS/Wasm via `MachineRegistration`'s
    `@JSExportTopLevel`-annotated registration object, which calls
    `JSServiceLoaderRegistry.register`
-   (`js-wasm/src/main/scala/kyo/stats/machine/MachineRegistration.scala:13-19`).
+   (`js/src/main/scala/kyo/stats/machine/MachineRegistration.scala:13-19`).
 2. Construction reads the opt-out once and, unless suppressed, starts exactly
    one sampler via a CAS-gated `AtomicBoolean`
    (`MachineStatFactory.started`, `shared/src/main/scala/kyo/stats/machine/MachineStatFactory.scala:39,82-94`).
@@ -82,10 +82,10 @@ The sampler starts with zero explicit user call, mirroring
    `MachineSampler.run` under its own `Scope`, which drives two fibers: the
    fast family ticks on a drift-corrected 1 Hz schedule
    (`Clock.repeatAtInterval(Schedule.anchored(1.second))(readFast(machine))`,
-   `MachineSampler.scala:158`), and disk reads run on their own
+   `MachineSampler.scala:155`), and disk reads run on their own
    1-second-interval fiber the fast fiber never awaits inline
    (`Clock.repeatAtInterval(diskInterval)(readDisksBounded(sampler, machine))`,
-   `MachineSampler.scala:156`).
+   `MachineSampler.scala:153`).
 4. Opt-out: `KYO_MACHINE_DISABLED=true` (env) or `kyo.machine.disabled=true`
    (system property), read once via an injectable `System.Unsafe` so tests can
    stage a reader without mutating real process env
@@ -168,21 +168,21 @@ is the single detached owner fiber for the whole tick loop. Its contract:
 
 - **Zero-allocation steady-state reads.** The sampler owns one
   `Path.ReadHandle` per proc file, opened once at construction and retained
-  in a `FileSlot` (`MachineSampler.scala:58-63,245-250`); each tick's
+  in a `FileSlot` (`MachineSampler.scala:57-62,197-202`); each tick's
   `readInto` rewinds the handle (`fs.handle.position(0L)`) and refills the
   SAME reused buffer before handing the borrowed bytes to the retained decode
-  callback (`MachineSampler.scala:69-78`). On JVM/Native this rides the
+  callback (`MachineSampler.scala:68-77`). On JVM/Native this rides the
   kyo-core `NioReadHandle`'s retained `ByteBuffer` (see "kyo-core touches"
   below), so a steady-state read allocates no per-read payload. `fill`
-  (`MachineSampler.scala:258-278`) reuses a fixed scratch array across
+  (`MachineSampler.scala:210-230`) reuses a fixed scratch array across
   `readChunk` calls and only grows the output buffer once, the first time a
   file exceeds it; the borrowed `Span[Byte]` handed to the caller's callback
   must never escape that callback.
 - **`Scope`-teardown lifecycle.** `MachineSampler.run`/`runWith` build the
   sampler and its handles UNDER one `Scope`, register the buffer-closing
   finalizer FIRST (`Scope.ensure { machine.close(); sampler.closeHandles() }`,
-  `MachineSampler.scala:152-155`), then register the disk and fast fibers for
-  interrupt (`MachineSampler.scala:156-160`). `Scope` finalizers run LIFO, so
+  `MachineSampler.scala:149-152`), then register the disk and fast fibers for
+  interrupt (`MachineSampler.scala:153-157`). `Scope` finalizers run LIFO, so
   on teardown both fibers are interrupted FIRST and the handle-closing
   finalizer runs LAST, so no tick or disk read ever touches a closed handle.
   Awaiting the fast fiber's `get` (it never returns) keeps the `Scope` open
@@ -260,8 +260,8 @@ allocated exactly once, at reader construction (`MachineMacos.scala:21-24`,
 `MachineWindows.scala:20-23`), never per read, since `Buffer.alloc` opens a
 fresh memory arena per call. Each reader's `close()` method closes every
 retained buffer, invoked exactly once by the sampler's `Scope` finalizer at
-teardown, never per-tick (`MachineMacos.scala:38-66`,
-`MachineWindows.scala:51-56`). `WindowsBindings.fillMemoryStatus` presets the
+teardown, never per-tick (`MachineMacos.scala:42-48`,
+`MachineWindows.scala:49-54`). `WindowsBindings.fillMemoryStatus` presets the
 shared `MEMORYSTATUSEX` buffer's `dwLength` field before the one-per-tick
 `GlobalMemoryStatusEx` call, so both the memory and swap rows read the same
 filled buffer from a single syscall (`WindowsBindings.scala:88-91`).
@@ -320,13 +320,13 @@ An unavailable metric is `Absent`, NEVER a fake zero and NEVER a throw
 - **Per-OS binding-load failure degrades that whole OS's syscall-backed
   families uniformly**, never a partial throw: `MachineMacos.bindings` and
   `MachineWindows.bindings` catch a load failure (e.g. browser-JS with no
-  koffi) to `Absent` (`MachineMacos.scala:80-88`; `MachineWindows.scala:59-64`),
+  koffi) to `Absent` (`MachineMacos.scala:53-55`; `MachineWindows.scala:57-59`),
   and every read method pattern-matches on that `Maybe` to write NOTHING at
-  all rather than returning a reading value (`MachineMacos.scala:28-36`;
-  `MachineWindows.scala:27-49`). Windows additionally catches a LAZY
+  all rather than returning a reading value (`MachineMacos.scala:28-40`;
+  `MachineWindows.scala:27-47`). Windows additionally catches a LAZY
   first-symbol-lookup failure (`LinkageError`, e.g. `ExceptionInInitializerError`
   wrapping a missing Win32 export) at the same degrade boundary
-  (`MachineWindows.scala:34-39,45-48`), since a library that resolves at
+  (`MachineWindows.scala:34-38,44-46`), since a library that resolves at
   `Ffi.load` time can still fail its first real call.
 - **A per-store disk failure skips only that store**, not the whole disk
   set: `LinuxDisk.statvfsInto`, `MacosDisk.statfsInto`, and
@@ -347,7 +347,7 @@ each source's scale applied on read BEFORE the delta:
 
 - `/proc/stat` jiffies -> ns: `1e9 / sysconf(_SC_CLK_TCK)`
   (`MachineLinux.jiffiesToNanos`/`jiffiesFromBinding`,
-  `MachineLinux.scala:55-58,76-77`), falling back to the 100 Hz Linux default
+  `MachineLinux.scala:52-55,73-77`), falling back to the 100 Hz Linux default
   (`defaultJiffiesToNanos = 10000000L`) when `sysconf` is unavailable or
   returns non-positive.
 - cgroup v2 `cpu.max` (quota and period, decoded together off one line) and
@@ -361,7 +361,7 @@ each source's scale applied on read BEFORE the delta:
 - cgroup v1 `cfs_quota_us`/`cfs_period_us` are MICROSECONDS: scale x1000 (the
   v1 branch of `LinuxCgroup.read`, `LinuxCgroup.scala:73-75`).
 - Windows `FILETIME` is 100ns units: scale x100
-  (`MachineWindows.readCpu`, `MachineWindows.scala:66,69-71`).
+  (`MachineWindows.readCpu`, `MachineWindows.scala:61,64-66`).
 
 Mixing up a v1-ns and a v2-us source without applying its own scale is a
 1000x error; any new cumulative-time source added to this module states its
@@ -436,37 +436,26 @@ above do.
 
 ## kyo-core and kyo-stats-registry touches
 
-This module depends on three additive `kyo-core` touches and one
+This module depends on two additive `kyo-core` touches and one
 `kyo-stats-registry` call:
 
 1. **The eager `ExporterFactory` scan hook**, `Stat.eagerExporterScan`
-   (`kyo-core/shared/src/main/scala/kyo/Stat.scala:248-251`), the LAST `val`
+   (`kyo-core/shared/src/main/scala/kyo/Stat.scala:219-222`), the LAST `val`
    in `object Stat`. It forces `Stat.scannedExporter`
-   (`Stat.scala:200-202`) at class-init, which runs
+   (`Stat.scala:189-191`) at class-init, which runs
    `TraceExporter.getIsolated` regardless of whether the application ever
    traces, so a metrics-only app that never calls `traceSpan`/`traceListen`
-   still constructs `MachineStatFactory` and starts the sampler. This hook
-   MUST remain the last `val` declared: a discovered factory's constructor
-   runs inside `Stat`'s own class initializer and must never observe a later,
-   not-yet-initialized `Stat` field.
-2. **The activation entrypoint**, `Stat.activate()` (`Stat.scala:276`), called
-   by `KyoAppRunner.runInitCode` (`kyo-core/shared/src/main/scala/kyo/internal/KyoAppRunner.scala:33`)
-   before an application's own registered code runs. Hook 1 only fires when
-   something reaches `object Stat`, and nothing in kyo-core did: an application
-   built from `Clock`, `Signal`, `Fiber` and a server ran and registered
-   nothing, which is what "classpath presence is the activation event" was
-   claiming falsely. This is the one place kyo-core activates. It is
-   deliberately NOT on the fiber-creation path: that is the only hook broad
-   enough to cover a non-`KyoApp` process, and a stats concern does not belong
-   in the scheduler's hot path, so such a host calls `Stat.activate()` itself.
-   `MachineStatFactoryJvmTest` forks a real process to prove the end-to-end,
-   with a second fork under the opt-out as its control.
-3. **The `Stat` metric-handle API** (`initScope`, `initCounter`,
+   still constructs `MachineStatFactory` and starts the sampler on classpath
+   presence alone. This hook MUST remain the last `val` declared: a
+   discovered factory's constructor runs inside `Stat`'s own class
+   initializer and must never observe a later, not-yet-initialized `Stat`
+   field.
+2. **The `Stat` metric-handle API** (`initScope`, `initCounter`,
    `initHistogram`, `initGauge`) that `MachineHandles` builds every retained
    handle on top of (`MachineHandles.scala:35-87,252`). No cell uses
    `initCounterGauge`: `cpu.cores` and every other fixed-total or
    pre-averaged value is a plain `Gauge`, not a `CounterGauge`.
-4. **`kyo.stats.internal.TraceExporter.getIsolated`**
+3. **`kyo.stats.internal.TraceExporter.getIsolated`**
    (`kyo-stats-registry/shared/src/main/scala/kyo/stats/internal/TraceExporter.scala:40-58`),
    the per-factory-ISOLATED service-loader discovery variant: a factory
    whose construction or `traceExporter()` call throws is skipped rather

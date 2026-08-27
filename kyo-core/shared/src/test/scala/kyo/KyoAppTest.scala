@@ -6,19 +6,6 @@ import scala.util.Try
 
 class KyoAppTest extends kyo.test.Test[Any]:
 
-    "activates the classpath-present stats providers before running the app's own code" in {
-        // The application entrypoint is where kyo-core reaches kyo.Stat, and the only place it does: an app
-        // whose own code never mentions a metric still gets a classpath-present host sampler collecting from
-        // the start. Any hook broad enough to cover a non-KyoApp process would have to sit on the
-        // fiber-creation path, which is not somewhere a stats concern belongs; such a host calls
-        // Stat.activate() itself.
-        val before = Stat.activationCount
-        val app = new KyoApp:
-            run(Sync.defer("done"))
-        app.main(Array.empty)
-        assert(Stat.activationCount > before)
-    }
-
     "main" in {
         val app = new KyoApp:
             run {
