@@ -530,6 +530,18 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
 
     override def hashCode(): Int = pathStr.hashCode
 
+    override private[kyo] def syncDirectory()(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
+        try
+            val directory = if pathStr.isEmpty then "." else pathStr
+            val fd        = NodeFs.openSync(directory, "r")
+            try NodeFs.fsyncSync(fd)
+            finally NodeFs.closeSync(fd)
+            Result.unit
+        catch
+            case e: js.JavaScriptException =>
+                Result.fail(FileIOException(safe, FileSystemOperation.SyncDirectory, new RuntimeException(e.getMessage())))
+            case e: Throwable => Result.panic(e)
+
     // --- Inspection ---
 
     def exists()(using AllowUnsafe, Frame): Result[FileInvalidPathException | FileAccessDeniedException | FileIOException, Boolean] =

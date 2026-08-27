@@ -57,6 +57,15 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
 
     override def hashCode(): Int = jpath.hashCode()
 
+    override private[kyo] def syncDirectory()(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
+        try
+            NioDirectorySyncPlatform.sync(jpath)
+            Result.unit
+        catch
+            case e: IOException if NioExceptionBoundary.isInterrupted(e) => Result.panic(e)
+            case e: IOException => Result.fail(FileIOException(safe, FileSystemOperation.SyncDirectory, e))
+            case e: Throwable   => Result.panic(e)
+
     // --- Inspection ---
 
     def exists()(using AllowUnsafe, Frame): Result[FileInvalidPathException | FileAccessDeniedException | FileIOException, Boolean] =
