@@ -179,10 +179,7 @@ private[kyo] object SqlTestContainers:
       * leaves the owner-pid label as the only predicate, exactly as before this registry existed).
       */
     private[kyo] def ownerRoot(using Frame): Maybe[Path] < Sync =
-        System.property[String]("java.io.tmpdir").map {
-            case Present(tmp) if tmp.nonEmpty => Present(Path(tmp, "kyo-sql-container-owners"))
-            case _                            => Absent
-        }
+        TestTempRoot.get.map(_.map(tmp => Path(tmp, "kyo-sql-container-owners")))
 
     private def ownerDir(root: Path, id: Container.Id): Path = Path(root, id.value.take(12))
 

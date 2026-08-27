@@ -190,11 +190,11 @@ class SqlTestContainersTest extends kyo.Test:
         kyo.test.AssertScope
     ): A < (Async & Abort[Throwable]) =
         Random.nextLong.map { token =>
-            System.property[String]("java.io.tmpdir").map {
+            TestTempRoot.get.map {
                 case Present(tmp) =>
                     val root = Path(tmp, s"kyo-sql-owner-test-${(token & Long.MaxValue).toHexString}")
                     Sync.ensure(Abort.run[FileStructureException](root.removeAll).unit)(f(root))
-                case Absent => fail("no java.io.tmpdir on this platform; the registry cannot be exercised")
+                case Absent => fail("no temp root on this platform; the registry cannot be exercised")
             }
         }
 
