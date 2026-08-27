@@ -122,10 +122,14 @@ private[kyo] object TagMacro:
         // members is not merely wasted work: the splice owner is often a definition whose own type
         // is still being inferred, and listing its members forces it and fails the compilation with
         // a cyclic reference.
-        val declaring      = chain.filter(owner => owner.isClassDef || owner.isPackageDef)
-        val enclosingNames = chain.map(_.name).toSet
+        val declaring = chain.filter(owner => owner.isClassDef || owner.isPackageDef)
+        // A module class is named after its object with a trailing `$`, and the companion of a
+        // package-level opaque type is exactly such a module class.
+        val enclosingNames = chain.map(_.name.stripSuffix("$")).toSet
         declaring.flatMap { owner =>
-            val opaques = owner.declaredTypes.filter(_.flags.is(Flags.Opaque))
+            // A module class whose object declares an opaque type carries the flag too; only a type
+            // definition is an opaque type.
+            val opaques = owner.declaredTypes.filter(sym => sym.flags.is(Flags.Opaque) && !sym.isClassDef)
             val visible = if owner.isPackageDef then opaques.filter(sym => enclosingNames.contains(sym.name)) else opaques
             visible.map(sym => sym -> sym.typeRef.dealias)
         }.distinctBy(_._1)
@@ -152,16 +156,21 @@ private[kyo] object TagMacro:
             // collapses to its underlying constructor rather than to an applied type, so there are
             // no arguments at this node to read back.
             case lambda: TypeLambda if lambda =:= node => Some(Nil)
+            case _ =>
+                val (pattern, holes) =
+                    underlying match
+                        case lambda: TypeLambda => (lambda.resType, Array.fill[Option[TypeRepr]](lambda.paramNames.size)(None))
+                        case simple             => (simple, Array.empty[Option[TypeRepr]])
 
-            case lambda: TypeLambda =>
-                val holes = Array.fill[Option[TypeRepr]](lambda.paramNames.size)(None)
+                def holeIndex(tpe: TypeRepr): Option[Int] =
+                    (underlying, tpe) match
+                        case (lambda: TypeLambda, ref: ParamRef) if ref.binder.equals(lambda) => Some(ref.paramNum)
+                        case _                                                              => None
 
-                def holeIndex(pattern: TypeRepr): Option[Int] =
-                    pattern match
-                        case ref: ParamRef if ref.binder.equals(lambda) => Some(ref.paramNum)
-                        case _                                          => None
-
-                def unify(pattern: TypeRepr, value: TypeRepr): Boolean =
+                // At the root a union or intersection may carry members beyond the underlying's:
+                // `X | Int` collapses to `String | Long | Int` when `X = String | Long`, and the
+                // same for `X & Foo`. Below the root a member is matched whole.
+                def unify(pattern: TypeRepr, value: TypeRepr, allowExtra: Boolean): Boolean =
                     holeIndex(pattern) match
                         case Some(i) =>
                             holes(i) match
@@ -173,24 +182,24 @@ private[kyo] object TagMacro:
                             (pattern, value) match
                                 case (AppliedType(patternCon, patternArgs), AppliedType(valueCon, valueArgs))
                                     if patternArgs.size == valueArgs.size =>
-                                    patternCon =:= valueCon && patternArgs.lazyZip(valueArgs).forall(unify)
+                                    patternCon =:= valueCon && patternArgs.lazyZip(valueArgs).forall(unify(_, _, false))
                                 case (AndType(_, _), AndType(_, _)) =>
-                                    unifyMembers(flattenAnd(pattern).toList, flattenAnd(value).toList)
+                                    unifyMembers(flattenAnd(pattern).toList, flattenAnd(value).toList, allowExtra)
                                 case (OrType(_, _), OrType(_, _)) =>
-                                    unifyMembers(flattenOr(pattern).toList, flattenOr(value).toList)
+                                    unifyMembers(flattenOr(pattern).toList, flattenOr(value).toList, allowExtra)
                                 case (TypeBounds(patternLow, patternHigh), TypeBounds(valueLow, valueHigh)) =>
-                                    unify(patternLow, valueLow) && unify(patternHigh, valueHigh)
+                                    unify(patternLow, valueLow, false) && unify(patternHigh, valueHigh, false)
                                 case _ => pattern =:= value
 
-                def unifyMembers(patterns: List[TypeRepr], values: List[TypeRepr]): Boolean =
-                    patterns.size == values.size && {
+                def unifyMembers(patterns: List[TypeRepr], values: List[TypeRepr], allowExtra: Boolean): Boolean =
+                    (if allowExtra then patterns.size <= values.size else patterns.size == values.size) && {
                         def search(remaining: List[TypeRepr], available: List[TypeRepr]): Boolean =
                             remaining match
-                                case Nil => available.isEmpty
+                                case Nil => allowExtra || available.isEmpty
                                 case pattern :: rest =>
                                     available.indices.exists { i =>
                                         val snapshot = holes.clone()
-                                        if unify(pattern, available(i)) && search(rest, available.patch(i, Nil, 1)) then true
+                                        if unify(pattern, available(i), false) && search(rest, available.patch(i, Nil, 1)) then true
                                         else
                                             Array.copy(snapshot, 0, holes, 0, holes.length)
                                             false
@@ -199,9 +208,7 @@ private[kyo] object TagMacro:
                         search(patterns, values)
                     }
 
-                Option.when(unify(lambda.resType, node) && holes.forall(_.isDefined))(holes.toList.flatten)
-            case simple =>
-                Option.when(simple =:= node)(Nil)
+                Option.when(unify(pattern, node, true) && holes.forall(_.isDefined))(holes.toList.flatten)
         end match
     end bindUnderlying
 
@@ -237,10 +244,20 @@ private[kyo] object TagMacro:
         if scope.nonEmpty then
             val transparent = scope.map(_._1).toSet
 
+            // An alias applied to a lambda parameter does not dealias, so an alias constructor is
+            // opened through its definition. A shape that cannot be opened is not walkable.
+            def aliasBody(tycon: TypeRepr): Option[TypeRepr] =
+                if !tycon.typeSymbol.isAliasType then Some(tycon)
+                else
+                    tycon.typeSymbol.tree match
+                        case TypeDef(_, LambdaTypeTree(_, body: TypeTree)) => Some(body.tpe)
+                        case TypeDef(_, rhs: TypeTree)           => Some(rhs.tpe)
+                        case _                                   => None
+
             def walkable(tpe: TypeRepr): Boolean =
-                tpe match
+                tpe.dealias match
                     case lambda: TypeLambda           => walkable(lambda.resType)
-                    case AppliedType(tycon, args)     => walkable(tycon) && args.forall(walkable)
+                    case AppliedType(tycon, args)     => aliasBody(tycon).exists(walkable) && args.forall(walkable)
                     case AndType(a, b)                => walkable(a) && walkable(b)
                     case OrType(a, b)                 => walkable(a) && walkable(b)
                     case TypeBounds(low, high)        => walkable(low) && walkable(high)
@@ -487,7 +504,7 @@ private[kyo] object TagMacro:
             tpe match
                 case AndType(a, b) => loop(a) ++ loop(b)
                 case tpe           => Seq(tpe)
-        loop(tpe).sortBy(_.show)
+        loop(tpe).sortBy(_.dealiasKeepOpaques.show)
     end flattenAnd
 
     private def flattenOr(using q: Quotes)(tpe: q.reflect.TypeRepr): Seq[q.reflect.TypeRepr] =
@@ -496,7 +513,7 @@ private[kyo] object TagMacro:
             tpe match
                 case OrType(a, b) => loop(a) ++ loop(b)
                 case tpe          => Seq(tpe)
-        loop(tpe).sortBy(_.show)
+        loop(tpe).sortBy(_.dealiasKeepOpaques.show)
     end flattenOr
 
 end TagMacro

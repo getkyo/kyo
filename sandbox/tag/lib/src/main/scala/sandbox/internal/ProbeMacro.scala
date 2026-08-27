@@ -33,6 +33,36 @@ object ProbeMacro:
         Expr(s"${a.show} =:= ${b.show}: ${a =:= b}; <:<: ${a <:< b}; >:>: ${b <:< a}")
     end sameImpl
 
+    inline def underlyingOf[A]: String = ${ underlyingOfImpl[A] }
+
+    private def underlyingOfImpl[A: Type](using Quotes): Expr[String] =
+        import quotes.reflect.*
+        val sym = TypeRepr.of[A].typeSymbol
+        val u   = sym.typeRef.dealias
+        val deeper =
+            u match
+                case lambda: TypeLambda =>
+                    lambda.resType match
+                        case AppliedType(tycon, _) =>
+                            "tycon.dealias=" + tycon.dealias.show(using Printer.TypeReprStructure) +
+                                "; resType.dealias=" + lambda.resType.dealias.show(using Printer.TypeReprStructure) +
+                                "; resType.simplified=" + lambda.resType.simplified.show(using Printer.TypeReprStructure)
+                        case other                 => "resType=" + other.show(using Printer.TypeReprStructure)
+                case other => other.show(using Printer.TypeReprStructure)
+        Expr(s"${sym.fullName}: dealias=${u.show}; $deeper")
+    end underlyingOfImpl
+
+    inline def packageOpaques: String = ${ packageOpaquesImpl }
+
+    private def packageOpaquesImpl(using Quotes): Expr[String] =
+        import quotes.reflect.*
+        val chain = Iterator.iterate(Symbol.spliceOwner)(_.owner).takeWhile(s => !s.isNoSymbol).toList
+        val owners = chain.filter(s => s.isPackageDef || s.isClassDef)
+        Expr(owners.map(p =>
+            p.name + ": " + p.declaredTypes.filter(_.flags.is(Flags.Opaque)).map(t => t.name + "=" + t.typeRef.dealias.show).mkString(",")
+        ).mkString(" | "))
+    end packageOpaquesImpl
+
     inline def owners: String = ${ ownersImpl }
 
     private def ownersImpl(using Quotes): Expr[String] =

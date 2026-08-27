@@ -14,6 +14,12 @@ def inferred[A](a: A)(using t: Tag[A]): Tag[A] = t
 
 def errors(es: List[scala.compiletime.testing.Error]): List[String] = es.map(_.message)
 
+// Cache poisoning: Tag[Long] and Tag[Double] derived out of scope, before every in-scope probe for
+// them in this compilation run. The macro memoizes encodings by type; a lookup that ran before
+// the scope check would hand these back inside Duration's and the two brands' scopes.
+val poisonLong: Tag[Long]     = Tag.derive[Long]
+val poisonDouble: Tag[Double] = Tag.derive[Double]
+
 /** S2 shape: two brands over one underlying in one template. */
 object TwoBrands:
     opaque type Feet   = Double
