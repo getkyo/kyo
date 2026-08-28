@@ -3,13 +3,16 @@ package kyo.proto
 import kyo.Frame
 import kyo.proto.kernel.Effect
 import kyo.proto.kernel.internal.Debugger
+import kyo.proto.kernel.internal.Kyo
 import kyo.proto.kernel.internal.Nested
 import kyo.proto.kernel.internal.Safepoint
 import kyo.proto.kernel.internal.short
 import scala.annotation.nowarn
 
 sealed trait Arrow[-A, +B, -S] extends (A => B < S):
-    Debugger.get.onAlloc(this)
+    // computation nodes report from their own constructor; the guard keeps a node that mixes in the
+    // arrow role from reporting twice
+    if !this.isInstanceOf[Kyo[?, ?]] then Debugger.get.onAlloc(this)
 
     /** The source position this arrow was built at, [[Frame.internal]] for arrows the kernel mints itself. */
     def frame: Frame
