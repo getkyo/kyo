@@ -135,6 +135,15 @@ object Main:
         val body: Int < Add = add(1).map(a => add(a).map(b => a + b))
         runAdd(body).map(_ + 1)
 
+    // the post-handle transform fused into the region node, the merged handle shape
+    def handledMappedFused: Int < Any =
+        val body: Int < Add = add(1).map(a => add(a).map(b => a + b))
+        ArrowEffect.handleContWith(addTag, body)(
+            [C] => (input, cont) => cont(input + 1, Arrow.id),
+            a => a
+        )(_ + 1)
+    end handledMappedFused
+
     // a pending transform held across deferred steps
     def deferBindMapped: Int < Any =
         def go(i: Int): Int < Any =
@@ -225,6 +234,7 @@ object Main:
         scenario("context default")(contextDefault)
         scenario("trailing maps")(chained)
         scenario("handled then mapped")(handledMapped)
+        scenario("handled then mapped fused")(handledMappedFused)
         scenario("defer bind mapped")(deferBindMapped)
         scenario("suspend loop mapped")(suspendLoopMapped)
         scenario("idle handler")(idle)

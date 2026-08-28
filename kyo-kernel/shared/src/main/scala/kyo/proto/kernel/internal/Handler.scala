@@ -21,15 +21,15 @@ end Handler
 object Handler:
 
     abstract class HandlerCont[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Handler[E, A, B, S, Unit]:
-        def handle[X, C, S2](input: I[X], cont: Arrow[O[X], A, E & S], k: Arrow[A, C, S2]): C < (E & S & S2)
+        def run[X, C, S2](input: I[X], cont: Arrow[O[X], A, E & S], k: Arrow[A, C, S2]): C < (E & S & S2)
         def answer[X](input: I[X], next: Arrow[O[X], A, E & S]): A < (E & S) =
-            handle(input, next, Arrow.id)
+            run(input, next, Arrow.id)
     end HandlerCont
 
     abstract class HandlerLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State] extends Handler[E, A, B, S, State]:
-        def handle[X](state: State, input: I[X]): Outcome2[State, O[X] < (E & S), B < S] < S
+        def run[X](state: State, input: I[X]): Outcome2[State, O[X] < (E & S), B < S] < S
         def answer[X](state: State, input: I[X], next: Arrow[O[X], A, E & S]): Outcome2[State, O[X] < (E & S), B < S] =
-            Eval.answerLoop(this, handle(state, input), next)
+            Eval.answerLoop(this, run(state, input), next)
     end HandlerLoop
 
     abstract class HandlerContext[State, E <: ContextEffect[State], A, B, S] extends Handler[E, A, B, S, State]:

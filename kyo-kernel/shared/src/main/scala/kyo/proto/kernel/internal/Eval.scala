@@ -42,30 +42,30 @@ object Eval:
                     val k = contA.chain(contB)
                     if k.isInstanceOf[Arrow.Id[?]] then kyo.asInstanceOf[C < S]
                     else kyo.withCont(kyo.cont.chain(k))
-                case kyo: Kyo.Handle[EX, AX, A, S, VX] @unchecked =>
-                    def region[T](st: VX, v: T < (EX & S), cont: Arrow[T, AX, EX & S], ctx: Context): A < S =
+                case kyo: Kyo.Handle[EX, AX, Y, A, S, VX] @unchecked =>
+                    def region[T](st: VX, v: T < (EX & S), cont: Arrow[T, AX, EX & S], ctx: Context): Y < S =
                         loop(v, cont, Arrow.id, ctx) match
                             case res: Kyo.Suspend[EX, AX, EX & S] @unchecked if !(res.tag.erased <:< kyo.handler.tag.erased) =>
                                 dbg.onForeign(res, kyo.handler)
                                 // TODO it seems we can allocate Kyo.Suspend with Arrow.Transform to avoid an allocation
                                 res.withCont(
-                                    new Arrow.Transform[res.Op, A, S]:
+                                    new Arrow.Transform[res.Op, Y, S]:
                                         def frame             = Frame.internal
                                         override def toString = "Transform"
-                                        def apply[D, S2](x: res.Op < S2, cont: Arrow[A, D, S2]) =
+                                        def apply[D, S2](x: res.Op < S2, cont: Arrow[Y, D, S2]) =
                                             val k = res.cont
-                                            Kyo.handle[EX, AX, A, S & S2, VX](k.head(x, k.tail), kyo.handler, st).chain(cont)
+                                            Kyo.handle[EX, AX, Y, S & S2, VX](k.head(x, k.tail), kyo.handler, st).chain(cont)
                                         end apply
                                 )
                             case suspend: Kyo.SuspendArrow[IX, OX, EX, VX, AX, EX & S] @unchecked =>
                                 dbg.onHandle(suspend, kyo.handler, st)
                                 val next = suspend.cont
                                 kyo.handler match
-                                    case handler: Handler.HandlerCont[IX, OX, EX, AX, A, S] @unchecked =>
+                                    case handler: Handler.HandlerCont[IX, OX, EX, AX, Y, S] @unchecked =>
                                         val r = handler.answer(suspend.input, next)
                                         dbg.onResult(r)
                                         region(st, r, Arrow.id, ctx)
-                                    case handler: Handler.HandlerLoop[IX, OX, EX, AX, A, S, VX] @unchecked =>
+                                    case handler: Handler.HandlerLoop[IX, OX, EX, AX, Y, S, VX] @unchecked =>
                                         val o = handler.answer(st, suspend.input, next)
                                         dbg.onResult(o)
                                         o match
@@ -73,7 +73,7 @@ object Eval:
                                                 region(o._1, o._2, next, ctx)
                                             case o =>
                                                 // a done outcome is its payload in the union representation
-                                                Nested.unnest[A < S](o)
+                                                Nested.unnest[Y < S](o)
                                         end match
                                     case _ =>
                                         bug(s"unhandled: ${kyo.handler}")
@@ -85,13 +85,13 @@ object Eval:
                     end region
                     dbg.onRegionEnter(kyo.handler, kyo.state)
                     val bound = kyo.handler match
-                        case h: Handler.HandlerContext[VX, CX, AX, A, S] @unchecked =>
-                            val hc: Handler.HandlerContext[VX, CX, AX, A, S] = h
+                        case h: Handler.HandlerContext[VX, CX, AX, Y, S] @unchecked =>
+                            val hc: Handler.HandlerContext[VX, CX, AX, Y, S] = h
                             ctx.update[VX, CX](hc.tag, kyo.state)
                         case _ => ctx
                     val res = region(kyo.state, kyo.value, Arrow.id, bound)
                     dbg.onRegionExit(kyo.handler, res)
-                    loop(res, contA, contB, ctx)
+                    loop(res, kyo.cont, contA.chain(contB), ctx)
                 case arrow: Arrow.Transform[Any, A, S] @unchecked =>
                     loop(arrow((), contA.chain(contB)), Arrow.id, Arrow.id, ctx)
                 case arrow: Arrow.Chain[Any, Any, A, S] @unchecked =>

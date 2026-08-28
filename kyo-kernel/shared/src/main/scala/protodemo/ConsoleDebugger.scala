@@ -28,7 +28,7 @@ final class ConsoleDebugger extends Debugger:
             case _: Kyo.SuspendArrow[?, ?, ?, ?, ?, ?]    => "SuspendArrow"
             case _: Kyo.SuspendContext[?, ?, ?, ?]        => "SuspendContext"
             case _: Kyo.SuspendContextDefault[?, ?, ?, ?] => "SuspendContextDefault"
-            case _: Kyo.Handle[?, ?, ?, ?, ?]             => "Handle"
+            case _: Kyo.Handle[?, ?, ?, ?, ?, ?]          => "Handle"
             case _: Arrow.Id[?]                           => "Id"
             case _: Arrow.Chain[?, ?, ?, ?]               => "Chain"
             case _: Loop.Continue[?]                      => "Continue"

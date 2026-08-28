@@ -95,15 +95,38 @@ object Kyo:
     def handle[E <: Effect, A, B, S, State](v: A < (E & S), handler: Handler[E, A, B, S, State], state: State): B < S =
         v match
             case v: Arrow[Any, A, E & S] @unchecked =>
-                Handle[E, A, B, S, State](v, handler, state)
+                Handle[E, A, B, B, S, State](v, handler, state, Arrow.id)
             case _ =>
                 handler.done(state, v.asInstanceOf[A])
 
-    final class Handle[E <: Effect, A, B, -S, State] private[Kyo] (
-        val value: A < (E & S),
-        val handler: Handler[E, A, B, S, State],
-        val state: State
-    ) extends Kyo[B, S]:
-        override def toString = s"Handle(${short(value)}, $handler, $state)"
+    abstract class Handle[E <: Effect, A, B, C, -S, State] extends Kyo[C, S]:
+        def value: A < (E & S)
+        def handler: Handler[E, A, B, S, State]
+        def state: State
+        def cont: Arrow[B, C, S]
+
+        override def chain[D, S2](a: Arrow[C, D, S2]): Arrow[Any, D, S & S2] =
+            if a.isInstanceOf[Arrow.Id[?]] || !cont.isInstanceOf[Arrow.Id[?]] then super.chain(a)
+            else
+                // cont eq Id pins B = C, so `a` composes directly into the free slot
+                Handle[E, A, B, D, S & S2, State](value, handler, state, a.asInstanceOf[Arrow[B, D, S & S2]])
+
+        override def toString =
+            if cont.isInstanceOf[Arrow.Id[?]] then s"Handle(${short(value)}, $handler, $state)"
+            else s"Handle(${short(value)}, $handler, $state, ${if cont eq this then "this" else short(cont)})"
+    end Handle
+
+    object Handle:
+        def apply[E <: Effect, A, B, C, S, State](
+            v: A < (E & S),
+            h: Handler[E, A, B, S, State],
+            st: State,
+            c: Arrow[B, C, S]
+        ): Handle[E, A, B, C, S, State] =
+            new Handle[E, A, B, C, S, State]:
+                def value   = v
+                def handler = h
+                def state   = st
+                def cont    = c
     end Handle
 end Kyo

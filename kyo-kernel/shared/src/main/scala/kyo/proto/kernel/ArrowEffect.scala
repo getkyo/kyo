@@ -106,16 +106,15 @@ object ArrowEffect:
         inline handle: [C] => (I[C], Arrow[O[C], A, E & S & S2]) => A < (E & S & S2),
         inline done: A => B < (S & S2)
     )(using inline _frame: Frame): B < (S & S2) =
-        def onHandle[C](input: I[C], cont: Arrow[O[C], A, E & S & S2]): A < (E & S & S2) = handle[C](input, cont)
-        def onDone(v0: A): B < (S & S2)                                                  = done(v0)
+        def onDone(v0: A): B < (S & S2) = done(v0)
         v match
             case _: Arrow[?, ?, ?] =>
                 Kyo.handle[E, A, B, S & S2, Unit](
                     v,
                     new HandlerCont[I, O, E, A, B, S & S2]:
                         def tag = effectTag
-                        def handle[X, C, S3](input: I[X], cont: Arrow[O[X], A, E & S & S2], k: Arrow[A, C, S3]) =
-                            onHandle[X](input, cont).chain(k)
+                        def run[X, C, S3](input: I[X], cont: Arrow[O[X], A, E & S & S2], k: Arrow[A, C, S3]) =
+                            handle[X](input, cont).chain(k)
                         def done(state: Unit, v0: A) = onDone(v0)
                     ,
                     ()
@@ -196,17 +195,15 @@ object ArrowEffect:
         inline handle: [C] => (State, I[C]) => Loop.Outcome2[State, O[C] < (E & S & S2), B < (S & S2)] < (S & S2),
         inline done: (State, A) => B < (S & S2)
     )(using inline _frame: Frame): B < (S & S2) =
-        def onHandle[C](st: State, input: I[C]): Loop.Outcome2[State, O[C] < (E & S & S2), B < (S & S2)] < (S & S2) =
-            handle[C](st, input)
         def onDone(st: State, v0: A): B < (S & S2) = done(st, v0)
         v match
             case _: Arrow[?, ?, ?] =>
                 Kyo.handle[E, A, B, S & S2, State](
                     v,
                     new HandlerLoop[I, O, E, A, B, S & S2, State]:
-                        def tag                               = effectTag
-                        def handle[X](st: State, input: I[X]) = onHandle[X](st, input)
-                        def done(st: State, v0: A)            = onDone(st, v0)
+                        def tag                            = effectTag
+                        def run[X](st: State, input: I[X]) = handle[X](st, input)
+                        def done(st: State, v0: A)         = onDone(st, v0)
                     ,
                     state
                 )
@@ -223,5 +220,100 @@ object ArrowEffect:
         inline handle: [C] => (State, I[C]) => Loop.Outcome2[State, O[C] < (E & S & S2), A < (S & S2)] < (S & S2)
     )(using inline _frame: Frame): A < (S & S2) =
         handleLoopState(effectTag, state, v)(handle, (_, a) => a)
+
+    /** [[handleCont]] with the transform that follows the region fused into the region node itself. */
+    @nowarn("msg=anonymous")
+    inline def handleContWith[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
+        using inline _frame: Frame
+    )(
+        inline effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        inline handle: [X] => (I[X], Arrow[O[X], A, E & S & S2]) => A < (E & S & S2),
+        inline done: A => B < (S & S2)
+    )[C, S3](
+        inline f: B => C < S3
+    ): C < (S & S2 & S3) =
+        def onDone(v0: A): B < (S & S2) = done(v0)
+        def onF(v0: B): C < S3          = f(v0)
+        v match
+            case _: Arrow[?, ?, ?] =>
+                val h =
+                    new HandlerCont[I, O, E, A, B, S & S2]:
+                        def tag = effectTag
+                        def run[X, C2, S4](input: I[X], cont: Arrow[O[X], A, E & S & S2], k: Arrow[A, C2, S4]) =
+                            handle[X](input, cont).chain(k)
+                        def done(state: Unit, v0: A) = onDone(v0)
+                // one allocation fulfilling both roles: the region and the transform that follows it
+                new Kyo.Handle[E, A, B, C, S & S2 & S3, Unit]:
+                    override def frame = _frame
+                    def value          = v
+                    def handler        = h
+                    def state          = ()
+                    def cont           = this
+                    override def apply[D, S4](b: Any < S4, cont2: Arrow[C, D, S4]) =
+                        b match
+                            case kyo: Arrow[Any, B, S4] @unchecked => Effect.defer(kyo, this, cont2)
+                            case _                                 => cont2(onF(Nested.unnest[B](b)), Arrow.id)
+                end new
+            case _ => onDone(Nested.unnest(v)).map(onF)
+        end match
+    end handleContWith
+
+    /** [[handleLoop]] with the transform that follows the region fused into the region node itself. */
+    inline def handleLoopWith[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
+        using inline _frame: Frame
+    )(
+        inline effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        inline handle: [X] => I[X] => Loop.Outcome2[Unit, O[X] < (E & S & S2), B < (S & S2)] < (S & S2),
+        inline done: A => B < (S & S2)
+    )[C, S3](
+        inline f: B => C < S3
+    ): C < (S & S2 & S3) =
+        handleLoopStateWith[I, O, E, A, B, S, S2, Unit](effectTag, (), v)(
+            [X] => (st: Unit, input: I[X]) => handle[X](input),
+            (st, v0) => done(v0)
+        )(f)
+
+    /** [[handleLoopState]] with the transform that follows the region fused into the region node itself. */
+    @nowarn("msg=anonymous")
+    inline def handleLoopStateWith[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2, State](
+        using inline _frame: Frame
+    )(
+        inline effectTag: Tag[E],
+        state0: State,
+        v: A < (E & S)
+    )(
+        inline handle: [X] => (State, I[X]) => Loop.Outcome2[State, O[X] < (E & S & S2), B < (S & S2)] < (S & S2),
+        inline done: (State, A) => B < (S & S2)
+    )[C, S3](
+        inline f: B => C < S3
+    ): C < (S & S2 & S3) =
+        def onDone(st: State, v0: A): B < (S & S2) = done(st, v0)
+        def onF(v0: B): C < S3                     = f(v0)
+        v match
+            case _: Arrow[?, ?, ?] =>
+                val h =
+                    new HandlerLoop[I, O, E, A, B, S & S2, State]:
+                        def tag                            = effectTag
+                        def run[X](st: State, input: I[X]) = handle[X](st, input)
+                        def done(st: State, v0: A)         = onDone(st, v0)
+                // one allocation fulfilling both roles: the region and the transform that follows it
+                new Kyo.Handle[E, A, B, C, S & S2 & S3, State]:
+                    override def frame = _frame
+                    def value          = v
+                    def handler        = h
+                    def state          = state0
+                    def cont           = this
+                    override def apply[D, S4](b: Any < S4, cont2: Arrow[C, D, S4]) =
+                        b match
+                            case kyo: Arrow[Any, B, S4] @unchecked => Effect.defer(kyo, this, cont2)
+                            case _                                 => cont2(onF(Nested.unnest[B](b)), Arrow.id)
+                end new
+            case _ => onDone(state0, Nested.unnest(v)).map(onF)
+        end match
+    end handleLoopStateWith
 
 end ArrowEffect
