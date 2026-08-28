@@ -20,6 +20,10 @@ object Eval:
     type EX <: ArrowEffect[IX, OX]
     type VX
     type CX <: ContextEffect[VX]
+    type IY[_]
+    type OY[_]
+    type EY <: ArrowEffect[IY, OY]
+    type VY
 
     def apply[A, S](v: A < S): A < S =
         val dbg = Debugger.get
@@ -47,16 +51,33 @@ object Eval:
                         loop(v, cont, Arrow.id, ctx) match
                             case res: Kyo.Suspend[EX, AX, EX & S] @unchecked if !(res.tag.erased <:< kyo.handler.tag.erased) =>
                                 dbg.onForeign(res, kyo.handler)
-                                // TODO it seems we can allocate Kyo.Suspend with Arrow.Transform to avoid an allocation
-                                res.withCont(
-                                    new Arrow.Transform[res.Op, Y, S]:
-                                        def frame             = Frame.internal
-                                        override def toString = "Transform"
-                                        def apply[D, S2](x: res.Op < S2, cont: Arrow[Y, D, S2]) =
-                                            val k = res.cont
-                                            Kyo.handle[EX, AX, Y, S & S2, VX](k.head(x, k.tail), kyo.handler, st).chain(cont)
-                                        end apply
-                                )
+                                val k0 = res.cont
+                                def reenter[D, S2](x: res.Op < S2, cont2: Arrow[Y, D, S2]): D < (S & S2) =
+                                    Kyo.handle[EX, AX, Y, S & S2, VX](k0.head(x, k0.tail), kyo.handler, st).chain(cont2)
+                                res match
+                                    case sa: Kyo.SuspendArrow[IY, OY, EY, VY, AX, EX & S] @unchecked =>
+                                        val sax: Kyo.SuspendArrow[IY, OY, EY, VY, AX, EX & S] = sa
+                                        // one allocation fulfilling both roles: the rebuilt suspension and its re-handling transform
+                                        new Kyo.SuspendArrow[IY, OY, EY, VY, Y, S]:
+                                            def tag   = sax.tag
+                                            def input = sax.input
+                                            def cont  = this
+                                            override def apply[D, S2](x: Any < S2, cont2: Arrow[Y, D, S2]) =
+                                                x match
+                                                    case kyo: Arrow[Any, OY[VY], S2] @unchecked =>
+                                                        Effect.defer(kyo, this, cont2)
+                                                    case _ =>
+                                                        reenter(Nested.unnest[res.Op](x), cont2)
+                                        end new
+                                    case _ =>
+                                        res.withCont(
+                                            new Arrow.Transform[res.Op, Y, S]:
+                                                def frame             = Frame.internal
+                                                override def toString = "Transform"
+                                                def apply[D, S2](x: res.Op < S2, cont2: Arrow[Y, D, S2]) =
+                                                    reenter(x, cont2)
+                                        )
+                                end match
                             case suspend: Kyo.SuspendArrow[IX, OX, EX, VX, AX, EX & S] @unchecked =>
                                 dbg.onHandle(suspend, kyo.handler, st)
                                 val next = suspend.cont
