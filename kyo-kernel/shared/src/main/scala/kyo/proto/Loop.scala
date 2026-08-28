@@ -6,6 +6,7 @@ import kyo.proto.Arrow.Transform
 import kyo.proto.kernel.Effect
 import kyo.proto.kernel.internal.Debugger
 import kyo.proto.kernel.internal.Nested
+import kyo.proto.kernel.internal.Pending
 import kyo.proto.kernel.internal.Safepoint
 import scala.annotation.nowarn
 import scala.annotation.tailrec
@@ -319,13 +320,14 @@ object Loop:
             v match
                 case next: Continue[A] @unchecked =>
                     loop(step, run(next._1))
-                case kyo: Arrow[Any, Outcome[A, O], S] @unchecked =>
+                case kyo: Pending[Outcome[A, O], S] @unchecked =>
                     val arrow = step.getOrElse {
                         new Transform[Outcome[A, O], O, S]:
-                            def frame = _frame
+                            def frame             = _frame
+                            override def toString = s"Transform(${frame.position.show})"
                             def apply[C, S2](v: Outcome[A, O] < S2, cont: Arrow[O, C, S2]): C < (S & S2) =
                                 v match
-                                    case kyo: Arrow[Any, Outcome[A, O], S2] @unchecked =>
+                                    case kyo: Pending[Outcome[A, O], S2] @unchecked =>
                                         Effect.defer(kyo, this, cont)
                                     case _ =>
                                         val slot = Safepoint.get()
@@ -371,13 +373,14 @@ object Loop:
             v match
                 case next: Continue2[A, B] @unchecked =>
                     loop(step, run(next._1, next._2))
-                case kyo: Arrow[Any, Outcome2[A, B, O], S] @unchecked =>
+                case kyo: Pending[Outcome2[A, B, O], S] @unchecked =>
                     val arrow = step.getOrElse {
                         new Transform[Outcome2[A, B, O], O, S]:
-                            def frame = _frame
+                            def frame             = _frame
+                            override def toString = s"Transform(${frame.position.show})"
                             def apply[C, S2](v: Outcome2[A, B, O] < S2, cont: Arrow[O, C, S2]): C < (S & S2) =
                                 v match
-                                    case kyo: Arrow[Any, Outcome2[A, B, O], S2] @unchecked =>
+                                    case kyo: Pending[Outcome2[A, B, O], S2] @unchecked =>
                                         Effect.defer(kyo, this, cont)
                                     case _ =>
                                         val slot = Safepoint.get()
@@ -419,13 +422,14 @@ object Loop:
             v match
                 case next: Continue3[A, B, C] @unchecked =>
                     loop(step, run(next._1, next._2, next._3))
-                case kyo: Arrow[Any, Outcome3[A, B, C, O], S] @unchecked =>
+                case kyo: Pending[Outcome3[A, B, C, O], S] @unchecked =>
                     val arrow = step.getOrElse {
                         new Transform[Outcome3[A, B, C, O], O, S]:
-                            def frame = _frame
+                            def frame             = _frame
+                            override def toString = s"Transform(${frame.position.show})"
                             def apply[C2, S2](v: Outcome3[A, B, C, O] < S2, cont: Arrow[O, C2, S2]): C2 < (S & S2) =
                                 v match
-                                    case kyo: Arrow[Any, Outcome3[A, B, C, O], S2] @unchecked =>
+                                    case kyo: Pending[Outcome3[A, B, C, O], S2] @unchecked =>
                                         Effect.defer(kyo, this, cont)
                                     case _ =>
                                         val slot = Safepoint.get()
@@ -469,13 +473,14 @@ object Loop:
             v match
                 case next: Continue4[A, B, C, D] @unchecked =>
                     loop(step, run(next._1, next._2, next._3, next._4))
-                case kyo: Arrow[Any, Outcome4[A, B, C, D, O], S] @unchecked =>
+                case kyo: Pending[Outcome4[A, B, C, D, O], S] @unchecked =>
                     val arrow = step.getOrElse {
                         new Transform[Outcome4[A, B, C, D, O], O, S]:
-                            def frame = _frame
+                            def frame             = _frame
+                            override def toString = s"Transform(${frame.position.show})"
                             def apply[C2, S2](v: Outcome4[A, B, C, D, O] < S2, cont: Arrow[O, C2, S2]): C2 < (S & S2) =
                                 v match
-                                    case kyo: Arrow[Any, Outcome4[A, B, C, D, O], S2] @unchecked =>
+                                    case kyo: Pending[Outcome4[A, B, C, D, O], S2] @unchecked =>
                                         Effect.defer(kyo, this, cont)
                                     case _ =>
                                         val slot = Safepoint.get()
@@ -659,13 +664,14 @@ object Loop:
             v match
                 case next: Continue[Unit] @unchecked =>
                     loop(step, run)
-                case kyo: Arrow[Any, Outcome[Unit, A], S] @unchecked =>
+                case kyo: Pending[Outcome[Unit, A], S] @unchecked =>
                     val arrow = step.getOrElse {
                         new Transform[Outcome[Unit, A], A, S]:
-                            def frame = _frame
+                            def frame             = _frame
+                            override def toString = s"Transform(${frame.position.show})"
                             def apply[C, S2](v: Outcome[Unit, A] < S2, cont: Arrow[A, C, S2]): C < (S & S2) =
                                 v match
-                                    case kyo: Arrow[Any, Outcome[Unit, A], S2] @unchecked =>
+                                    case kyo: Pending[Outcome[Unit, A], S2] @unchecked =>
                                         Effect.defer(kyo, this, cont)
                                     case _ =>
                                         val slot = Safepoint.get()
@@ -736,13 +742,14 @@ object Loop:
         // Delivery discards the settled value, so no representation crosses it
         @tailrec def loop(step: Maybe[Arrow[Any, Nothing, S]], v: Any < S): Nothing < S =
             v match
-                case kyo: Arrow[Any, Any, S] @unchecked =>
+                case kyo: Pending[Any, S] @unchecked =>
                     val arrow = step.getOrElse {
                         new Transform[Any, Nothing, S]:
-                            def frame = _frame
+                            def frame             = _frame
+                            override def toString = s"Transform(${frame.position.show})"
                             def apply[C, S2](v: Any < S2, cont: Arrow[Nothing, C, S2]): C < (S & S2) =
                                 v match
-                                    case kyo: Arrow[Any, Any, S2] @unchecked =>
+                                    case kyo: Pending[Any, S2] @unchecked =>
                                         Effect.defer(kyo, this, cont)
                                     case _ =>
                                         val slot = Safepoint.get()
@@ -781,13 +788,14 @@ object Loop:
             condition.map {
                 case true =>
                     v match
-                        case kyo: Arrow[Any, Any, S] @unchecked =>
+                        case kyo: Pending[Any, S] @unchecked =>
                             val arrow = step.getOrElse {
                                 new Transform[Any, Unit, S]:
-                                    def frame = _frame
+                                    def frame             = _frame
+                                    override def toString = s"Transform(${frame.position.show})"
                                     def apply[C, S2](v: Any < S2, cont: Arrow[Unit, C, S2]): C < (S & S2) =
                                         v match
-                                            case kyo: Arrow[Any, Any, S2] @unchecked =>
+                                            case kyo: Pending[Any, S2] @unchecked =>
                                                 Effect.defer(kyo, this, cont)
                                             case _ =>
                                                 val slot = Safepoint.get()

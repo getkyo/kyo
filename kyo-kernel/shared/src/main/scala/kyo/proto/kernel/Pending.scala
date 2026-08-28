@@ -9,10 +9,10 @@ import kyo.proto.kernel.internal.*
 import language.implicitConversions
 import scala.annotation.nowarn
 
-opaque type <[+A, -S] >: A = A | Arrow[Any, A, S]
+opaque type <[+A, -S] >: A = A | Pending[A, S]
 
 object `<` extends Implicits:
-    implicit def fromKyo[A, S](kyo: Arrow[Any, A, S]): A < S = kyo
+    implicit def fromKyo[A, S](kyo: Pending[A, S]): A < S = kyo
 
     extension [A, S](self: A < S)
         /** Maps the value produced by this computation to a new computation and flattens the result. This is the monadic bind operation for
@@ -30,21 +30,17 @@ object `<` extends Implicits:
         inline def map[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
             def run[C, S3](v: A < S3, cont: Arrow[B, C, S3]): C < (S2 & S3) =
                 var slot: Safepoint.Slot = -1
-                val shouldDefer          = v.isInstanceOf[Arrow[?, ?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
+                val shouldDefer          = v.isInstanceOf[Pending[?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
                 if shouldDefer then
                     // one allocation fulfilling both roles: the rescue record and its own transform,
                     // with the continuation in the closure, composed by the apply
-                    new Kyo.Defer[A, C, C, S2 & S3]:
+                    new Kyo.Defer[A, C, C, S2 & S3] with Transform[A, C, S2 & S3]:
                         override def frame = _frame
                         def value          = v
                         def contA          = this
                         def contB          = Arrow.id
-                        override def apply[C2, S4](v2: Any < S4, cont2: Arrow[C, C2, S4]) =
-                            val k = cont.chain(cont2)
-                            v2 match
-                                case kyo: Arrow[Any, A, S4] @unchecked => run(kyo, k)
-                                case _                                 => run(Nested.unnest[A](v2), k)
-                        end apply
+                        override def apply[C2, S4](v2: A < S4, cont2: Arrow[C, C2, S4]) =
+                            run(v2, cont.chain(cont2))
                 else
                     val out = cont.head(f(Nested.unnest(v)), cont.tail)
                     Safepoint.exit(slot)
@@ -68,21 +64,17 @@ object `<` extends Implicits:
         inline def flatMap[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
             def run[C, S3](v: A < S3, cont: Arrow[B, C, S3]): C < (S2 & S3) =
                 var slot: Safepoint.Slot = -1
-                val shouldDefer          = v.isInstanceOf[Arrow[?, ?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
+                val shouldDefer          = v.isInstanceOf[Pending[?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
                 if shouldDefer then
                     // one allocation fulfilling both roles: the rescue record and its own transform,
                     // with the continuation in the closure, composed by the apply
-                    new Kyo.Defer[A, C, C, S2 & S3]:
+                    new Kyo.Defer[A, C, C, S2 & S3] with Transform[A, C, S2 & S3]:
                         override def frame = _frame
                         def value          = v
                         def contA          = this
                         def contB          = Arrow.id
-                        override def apply[C2, S4](v2: Any < S4, cont2: Arrow[C, C2, S4]) =
-                            val k = cont.chain(cont2)
-                            v2 match
-                                case kyo: Arrow[Any, A, S4] @unchecked => run(kyo, k)
-                                case _                                 => run(Nested.unnest[A](v2), k)
-                        end apply
+                        override def apply[C2, S4](v2: A < S4, cont2: Arrow[C, C2, S4]) =
+                            run(v2, cont.chain(cont2))
                 else
                     val out = cont.head(f(Nested.unnest(v)), cont.tail)
                     Safepoint.exit(slot)
@@ -103,21 +95,17 @@ object `<` extends Implicits:
         inline def andThen[B, S2](inline f: => B < S2)(using inline _frame: Frame): B < (S & S2) =
             def run[C, S3](v: A < S3, cont: Arrow[B, C, S3]): C < (S2 & S3) =
                 var slot: Safepoint.Slot = -1
-                val shouldDefer          = v.isInstanceOf[Arrow[?, ?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
+                val shouldDefer          = v.isInstanceOf[Pending[?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
                 if shouldDefer then
                     // one allocation fulfilling both roles: the rescue record and its own transform,
                     // with the continuation in the closure, composed by the apply
-                    new Kyo.Defer[A, C, C, S2 & S3]:
+                    new Kyo.Defer[A, C, C, S2 & S3] with Transform[A, C, S2 & S3]:
                         override def frame = _frame
                         def value          = v
                         def contA          = this
                         def contB          = Arrow.id
-                        override def apply[C2, S4](v2: Any < S4, cont2: Arrow[C, C2, S4]) =
-                            val k = cont.chain(cont2)
-                            v2 match
-                                case kyo: Arrow[Any, A, S4] @unchecked => run(kyo, k)
-                                case _                                 => run(Nested.unnest[A](v2), k)
-                        end apply
+                        override def apply[C2, S4](v2: A < S4, cont2: Arrow[C, C2, S4]) =
+                            run(v2, cont.chain(cont2))
                 else
                     val out = cont.head(f, cont.tail)
                     Safepoint.exit(slot)
@@ -136,21 +124,17 @@ object `<` extends Implicits:
         inline def unit(using inline _frame: Frame): Unit < S =
             def run[C, S3](v: A < S3, cont: Arrow[Unit, C, S3]): C < S3 =
                 var slot: Safepoint.Slot = -1
-                val shouldDefer          = v.isInstanceOf[Arrow[?, ?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
+                val shouldDefer          = v.isInstanceOf[Pending[?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
                 if shouldDefer then
                     // one allocation fulfilling both roles: the rescue record and its own transform,
                     // with the continuation in the closure, composed by the apply
-                    new Kyo.Defer[A, C, C, S3]:
+                    new Kyo.Defer[A, C, C, S3] with Transform[A, C, S3]:
                         override def frame = _frame
                         def value          = v
                         def contA          = this
                         def contB          = Arrow.id
-                        override def apply[C2, S4](v2: Any < S4, cont2: Arrow[C, C2, S4]) =
-                            val k = cont.chain(cont2)
-                            v2 match
-                                case kyo: Arrow[Any, A, S4] @unchecked => run(kyo, k)
-                                case _                                 => run(Nested.unnest[A](v2), k)
-                        end apply
+                        override def apply[C2, S4](v2: A < S4, cont2: Arrow[C, C2, S4]) =
+                            run(v2, cont.chain(cont2))
                 else
                     val out = cont.head((), cont.tail)
                     Safepoint.exit(slot)
@@ -408,14 +392,41 @@ object `<` extends Implicits:
         private[kyo] inline def evalNow: Maybe[A] =
             val v = self
             v match
-                case _: Arrow[?, ?, ?] => Maybe.empty
-                case _                 => Maybe(Nested.unnest(v))
+                case _: Pending[?, ?] => Maybe.empty
+                case _                => Maybe(Nested.unnest(v))
         end evalNow
 
+        /** Composes this computation with a continuation. Value composition is the normalizing entry: a node with a free continuation slot
+          * absorbs the arrow directly, and anything else is reified as a deferral record. Continuation composition stays [[Arrow.chain]];
+          * the two roles meet only here.
+          */
         def chain[B, S2](cont: Arrow[A, B, S2]): B < (S & S2) =
             self match
-                case self: Arrow[Any, A, S] @unchecked =>
-                    self.chain(cont)
+                case kyo: Pending[A, S] @unchecked =>
+                    if cont.isInstanceOf[Arrow.Id[?]] then
+                        // Id pins B = A
+                        kyo.asInstanceOf[B < (S & S2)]
+                    else
+                        kyo match
+                            case kyo: Kyo.Suspend[?, A, S] @unchecked if kyo.cont.isInstanceOf[Arrow.Id[?]] =>
+                                // cont eq Id pins Op = A, so the arrow composes directly into the free slot
+                                kyo.withCont(cont.asInstanceOf[Arrow[kyo.Op, B, S & S2]])
+                            case kyo: Kyo.Handle[e, x, b, A, S, st] @unchecked if kyo.cont.isInstanceOf[Arrow.Id[?]] =>
+                                // cont eq Id pins b = A, so the arrow composes directly into the free slot
+                                Kyo.Handle[e, x, b, B, S & S2, st](
+                                    kyo.value,
+                                    kyo.handler,
+                                    kyo.state,
+                                    cont.asInstanceOf[Arrow[b, B, S & S2]]
+                                )
+                            case kyo: Kyo.Defer[a, b, A, S] @unchecked
+                                if kyo.contB.isInstanceOf[Arrow.Id[?]] && !(kyo.contA eq kyo) =>
+                                // contB eq Id pins b = A; the free-slot law re-evaluates the record, which is only
+                                // valid for a constant record: a self-fulfilling one consumes its input in arrow
+                                // position and is reified below instead
+                                Effect.defer(kyo.value, kyo.contA, cont.asInstanceOf[Arrow[b, B, S & S2]])
+                            case _ =>
+                                Effect.defer(kyo, cont)
                 case _ =>
                     cont.head(self.asInstanceOf[A], cont.tail)
             end match
@@ -433,10 +444,11 @@ object `<` extends Implicits:
             def arrow: Arrow[A < S, A, S] =
                 new Transform[A < S, A, S]:
                     def frame                                                = _frame
+                    override def toString                                    = s"Transform(${frame.position.show})"
                     def apply[C, S3](v: (A < S) < S3, cont: Arrow[A, C, S3]) = run(v, cont)
             def run[C, S3](v: (A < S) < S3, cont: Arrow[A, C, S3]): C < (S & S3) =
                 v match
-                    case kyo: Arrow[Any, A < S, S3] @unchecked =>
+                    case kyo: Pending[A < S, S3] @unchecked =>
                         Effect.defer(kyo, arrow, cont)
                     case _ =>
                         val slot = Safepoint.get()
@@ -465,8 +477,8 @@ object `<` extends Implicits:
             // bound once: `v` is inline, so every occurrence re-expands the receiver expression
             val v0 = v
             v0 match
-                case _: Arrow[?, ?, ?] => Nested.unnest[A](Eval(v0.asInstanceOf[A < Any]))
-                case _                 => Nested.unnest(v0)
+                case _: Pending[?, ?] => Nested.unnest[A](Eval(v0.asInstanceOf[A < Any]))
+                case _                => Nested.unnest(v0)
         end eval
     end extension
 
@@ -478,8 +490,8 @@ object `<` extends Implicits:
     given [A, S, APendingS <: A < S](using ra: Render[A]): Render[APendingS] with
         def asString(value: APendingS): String =
             value match
-                case kyo: Arrow[?, ?, ?] => kyo.toString
-                case nested: Nested[?]   => s"Kyo(${nested.value})"
-                case a: A @unchecked     => s"Kyo(${ra.asString(a)})"
+                case kyo: Pending[?, ?] => kyo.toString
+                case nested: Nested[?]  => s"Kyo(${nested.value})"
+                case a: A @unchecked    => s"Kyo(${ra.asString(a)})"
     end given
 end `<`

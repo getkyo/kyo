@@ -12,48 +12,41 @@ import scala.annotation.publicInBinary
 
 private[proto] def short(v: Any): String =
     v match
-        case v: Kyo[?, ?]                => v.toString
+        case v: Pending[?, ?]            => v.toString
         case v: Arrow.Chain[?, ?, ?, ?]  => v.toString
         case _: Arrow.Id[?]              => "Id"
         case _: Arrow.Transform[?, ?, ?] => "Transform"
         case v                           => v.toString
 
-sealed abstract class Kyo[A, -S] extends Arrow.Transform[Any, A, S]:
-    def frame = Frame.internal
-    def apply[C, S2](v: Any < S2, cont: Arrow[A, C, S2]): C < (S & S2) =
-        this.chain(cont)
-end Kyo
+/** A pending computation: the node arm of the pending union.
+  *
+  * Sealed with every node class in this file, so union membership is closed: a value either settled or is one of the nodes below, and the
+  * eval's destructuring match is exhaustive. Bare arrows are not members, which is what makes "not all arrows are computations" structural.
+  */
+sealed trait Pending[+A, -S] extends kyo.proto.Kyo[A, S]:
+    Debugger.get.onAlloc(this)
+    def frame: Frame = Frame.internal
+end Pending
 
+// Public object, private-free members for the same reason as before: the combinators' inline
+// expansions reach the node classes from call sites outside this package.
 object Kyo:
 
-    abstract class Defer[A, B, C, -S] @publicInBinary private[kyo] () extends Kyo[C, S]:
+    abstract class Defer[A, B, C, -S] @publicInBinary private[kyo] () extends Pending[C, S]:
         def value: A < S
         def contA: Arrow[A, B, S]
         def contB: Arrow[B, C, S]
-
-        override def chain[D, S2](a: Arrow[C, D, S2]): Arrow[Any, D, S & S2] =
-            // the free-slot law re-evaluates the record, which is only valid for a constant record: a
-            // self-fulfilling one (contA eq this) consumes its input in arrow position and takes the base law
-            if a.isInstanceOf[Arrow.Id[?]] || !contB.isInstanceOf[Arrow.Id[?]] || (contA eq this) then super.chain(a)
-            else
-                // contB eq Id pins B = C, so `a` composes directly into the free slot
-                Effect.defer(value, contA, a.asInstanceOf[Arrow[B, D, S & S2]])
 
         override def toString =
             def slot(a: Arrow[?, ?, ?]): String = if a eq this then s"this(${frame.snippetShort})" else short(a)
             s"Defer(${short(value)}, ${slot(contA)}, ${slot(contB)})"
     end Defer
 
-    sealed abstract class Suspend[E <: Effect, A, S] extends Kyo[A, S]:
+    sealed abstract class Suspend[E <: Effect, A, S] extends Pending[A, S]:
         type Op
         def tag: Tag[E]
         def cont: Arrow[Op, A, S]
         def withCont[B, S2](c: Arrow[Op, B, S2]): Suspend[E, B, S2]
-        override def chain[D, S2](a: Arrow[A, D, S2]): Arrow[Any, D, S & S2] =
-            if a.isInstanceOf[Arrow.Id[?]] || !cont.isInstanceOf[Arrow.Id[?]] then super.chain(a)
-            else
-                // cont eq Id pins Op = A, so `a` composes directly into the free slot
-                withCont(a.asInstanceOf[Arrow[Op, D, S & S2]])
     end Suspend
 
     abstract class SuspendArrow[I[_], O[_], E <: ArrowEffect[I, O], State, A, S] extends Suspend[E, A, S]:
@@ -121,22 +114,16 @@ object Kyo:
 
     def handle[E <: Effect, A, B, S, State](v: A < (E & S), handler: Handler[E, A, B, S, State], state: State): B < S =
         v match
-            case v: Arrow[Any, A, E & S] @unchecked =>
+            case v: Pending[A, E & S] @unchecked =>
                 Handle[E, A, B, B, S, State](v, handler, state, Arrow.id)
             case _ =>
                 handler.done(state, v.asInstanceOf[A])
 
-    abstract class Handle[E <: Effect, A, B, C, -S, State] extends Kyo[C, S]:
+    abstract class Handle[E <: Effect, A, B, C, -S, State] extends Pending[C, S]:
         def value: A < (E & S)
         def handler: Handler[E, A, B, S, State]
         def state: State
         def cont: Arrow[B, C, S]
-
-        override def chain[D, S2](a: Arrow[C, D, S2]): Arrow[Any, D, S & S2] =
-            if a.isInstanceOf[Arrow.Id[?]] || !cont.isInstanceOf[Arrow.Id[?]] then super.chain(a)
-            else
-                // cont eq Id pins B = C, so `a` composes directly into the free slot
-                Handle[E, A, B, D, S & S2, State](value, handler, state, a.asInstanceOf[Arrow[B, D, S & S2]])
 
         override def toString =
             if cont.isInstanceOf[Arrow.Id[?]] then s"Handle(${short(value)}, $handler, $state)"

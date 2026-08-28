@@ -9,6 +9,7 @@ import kyo.proto.kernel.internal.Handler.HandlerCont
 import kyo.proto.kernel.internal.Handler.HandlerLoop
 import kyo.proto.kernel.internal.Kyo
 import kyo.proto.kernel.internal.Nested
+import kyo.proto.kernel.internal.Pending
 import scala.annotation.nowarn
 
 /** Represents abstract functions whose implementations are provided later by a handler.
@@ -66,15 +67,15 @@ object ArrowEffect:
         inline f: O[C] => B < S
     ): B < (E & S) =
         // one allocation fulfilling both roles: the node is the suspension and its own continuation
-        new Kyo.SuspendArrow[I, O, E, C, B, E & S]:
+        new Kyo.SuspendArrow[I, O, E, C, B, E & S] with Transform[O[C], B, E & S]:
             override def frame = _frame
             def tag            = effectTag
             def input          = effectInput
             def cont           = this
-            override def apply[D, S2](v: Any < S2, cont2: Arrow[B, D, S2]) =
+            override def apply[D, S2](v: O[C] < S2, cont2: Arrow[B, D, S2]) =
                 v match
-                    case kyo: Arrow[Any, O[C], S2] @unchecked => Effect.defer(kyo, this, cont2)
-                    case _                                    => cont2(f(Nested.unnest[O[C]](v)), Arrow.id)
+                    case kyo: Pending[O[C], S2] @unchecked => Effect.defer(kyo, this, cont2)
+                    case _                                 => cont2(f(Nested.unnest[O[C]](v)), Arrow.id)
 
     // The row parameters come in pairs on every region combinator: S is the body's row, pinned when
     // `v` is typed, and S2 is a free variable for whatever the clause adds beyond it. With a single
@@ -108,7 +109,7 @@ object ArrowEffect:
     )(using inline _frame: Frame): B < (S & S2) =
         def onDone(v0: A): B < (S & S2) = done(v0)
         v match
-            case _: Arrow[?, ?, ?] =>
+            case _: Pending[?, ?] =>
                 Kyo.handle[E, A, B, S & S2, Unit](
                     v,
                     new HandlerCont[I, O, E, A, B, S & S2]:
@@ -197,7 +198,7 @@ object ArrowEffect:
     )(using inline _frame: Frame): B < (S & S2) =
         def onDone(st: State, v0: A): B < (S & S2) = done(st, v0)
         v match
-            case _: Arrow[?, ?, ?] =>
+            case _: Pending[?, ?] =>
                 Kyo.handle[E, A, B, S & S2, State](
                     v,
                     new HandlerLoop[I, O, E, A, B, S & S2, State]:
@@ -237,7 +238,7 @@ object ArrowEffect:
         def onDone(v0: A): B < (S & S2) = done(v0)
         def onF(v0: B): C < S3          = f(v0)
         v match
-            case _: Arrow[?, ?, ?] =>
+            case _: Pending[?, ?] =>
                 val h =
                     new HandlerCont[I, O, E, A, B, S & S2]:
                         def tag = effectTag
@@ -245,16 +246,16 @@ object ArrowEffect:
                             handle[X](input, cont).chain(k)
                         def done(state: Unit, v0: A) = onDone(v0)
                 // one allocation fulfilling both roles: the region and the transform that follows it
-                new Kyo.Handle[E, A, B, C, S & S2 & S3, Unit]:
+                new Kyo.Handle[E, A, B, C, S & S2 & S3, Unit] with Transform[B, C, S & S2 & S3]:
                     override def frame = _frame
                     def value          = v
                     def handler        = h
                     def state          = ()
                     def cont           = this
-                    override def apply[D, S4](b: Any < S4, cont2: Arrow[C, D, S4]) =
+                    override def apply[D, S4](b: B < S4, cont2: Arrow[C, D, S4]) =
                         b match
-                            case kyo: Arrow[Any, B, S4] @unchecked => Effect.defer(kyo, this, cont2)
-                            case _                                 => cont2(onF(Nested.unnest[B](b)), Arrow.id)
+                            case kyo: Pending[B, S4] @unchecked => Effect.defer(kyo, this, cont2)
+                            case _                              => cont2(onF(Nested.unnest[B](b)), Arrow.id)
                 end new
             case _ => onDone(Nested.unnest(v)).map(onF)
         end match
@@ -294,23 +295,23 @@ object ArrowEffect:
         def onDone(st: State, v0: A): B < (S & S2) = done(st, v0)
         def onF(v0: B): C < S3                     = f(v0)
         v match
-            case _: Arrow[?, ?, ?] =>
+            case _: Pending[?, ?] =>
                 val h =
                     new HandlerLoop[I, O, E, A, B, S & S2, State]:
                         def tag                            = effectTag
                         def run[X](st: State, input: I[X]) = handle[X](st, input)
                         def done(st: State, v0: A)         = onDone(st, v0)
                 // one allocation fulfilling both roles: the region and the transform that follows it
-                new Kyo.Handle[E, A, B, C, S & S2 & S3, State]:
+                new Kyo.Handle[E, A, B, C, S & S2 & S3, State] with Transform[B, C, S & S2 & S3]:
                     override def frame = _frame
                     def value          = v
                     def handler        = h
                     def state          = state0
                     def cont           = this
-                    override def apply[D, S4](b: Any < S4, cont2: Arrow[C, D, S4]) =
+                    override def apply[D, S4](b: B < S4, cont2: Arrow[C, D, S4]) =
                         b match
-                            case kyo: Arrow[Any, B, S4] @unchecked => Effect.defer(kyo, this, cont2)
-                            case _                                 => cont2(onF(Nested.unnest[B](b)), Arrow.id)
+                            case kyo: Pending[B, S4] @unchecked => Effect.defer(kyo, this, cont2)
+                            case _                              => cont2(onF(Nested.unnest[B](b)), Arrow.id)
                 end new
             case _ => onDone(state0, Nested.unnest(v)).map(onF)
         end match

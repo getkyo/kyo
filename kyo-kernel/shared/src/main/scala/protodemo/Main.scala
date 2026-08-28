@@ -6,6 +6,7 @@ import kyo.Tag
 import kyo.proto.*
 import kyo.proto.kernel.ArrowEffect
 import kyo.proto.kernel.ContextEffect
+import kyo.proto.kernel.Effect
 import kyo.proto.kernel.internal.Debugger
 import kyo.proto.kernel.internal.Eval
 import kyo.proto.kernel.internal.Handler
@@ -35,7 +36,7 @@ object Main:
         ArrowEffect.suspend[Unit](tickTag, n)
 
     def lazily[A](f: => A < Any)(using Frame): A < Any =
-        Arrow[Any]((_: Any) => f)
+        Effect.defer(f)
 
     def cfg: Int < Any =
         Kyo.SuspendContextDefault[Int, Cfg, Int, Any](cfgTag, 0, v => v, Arrow.id)
@@ -219,6 +220,23 @@ object Main:
         runAdd(t2)
     end crossing
 
+    // a generic position accepts a computation by the union's >: A subsumption, the same as a
+    // concrete one: the lift stays dormant and nothing boxes
+    def constAdd[X](x: X): X < Add =
+        add(1).map(_ => x)
+
+    // a computation held as data, the eager join shape: the >: A bound erases data-ness, so the
+    // machine evaluates the payload where it surfaces and the done clause receives it settled
+    def dataJoin: Int < Any =
+        val body: (Int < Any) < Add = constAdd(lazily(42))
+        val listed: List[Int < Any] < Any =
+            ArrowEffect.handleCont[CInt, CInt, Add, Int < Any, List[Int < Any], Any, Any](addTag, body)(
+                [C] => (input, cont) => cont(input + 1, Arrow.id),
+                a => List(a)
+            )
+        listed.map(l => l.head.map(_ + 1))
+    end dataJoin
+
     def scenario(name: String)(v: => Int < Any): Unit =
         println(
             s"""|
@@ -262,5 +280,6 @@ object Main:
         scenario("choice")(choice)
         scenario("handler stack")(stacked)
         scenario("deep crossing")(crossing)
+        scenario("data join")(dataJoin)
     end main
 end Main

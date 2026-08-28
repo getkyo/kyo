@@ -32,7 +32,9 @@ object Nested:
 
     def nest[A, S](v: A): A < S =
         v match
-            case v: (Arrow[?, ?, ?] | Nested[?]) => Nested(v).asInstanceOf[A < S]
-            case _                               => v.asInstanceOf[A < S]
+            // only node payloads are ambiguous in the union now: a bare arrow is not a member, so it
+            // travels as plain settled data and needs no wrapper
+            case v: (Pending[?, ?] | Nested[?]) => Nested(v).asInstanceOf[A < S]
+            case _                              => v.asInstanceOf[A < S]
 
 end Nested
