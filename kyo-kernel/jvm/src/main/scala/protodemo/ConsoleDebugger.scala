@@ -4,7 +4,10 @@ import kyo.proto.Arrow
 import kyo.proto.Loop
 import kyo.proto.kernel.internal.Debugger
 import kyo.proto.kernel.internal.Kyo
+import org.openjdk.jol.datamodel.Model64
+import org.openjdk.jol.datamodel.Model64_Lilliput
 import org.openjdk.jol.info.ClassLayout
+import org.openjdk.jol.layouters.HotSpotLayouter
 import scala.jdk.CollectionConverters.*
 
 object ConsoleDebugger:
@@ -22,16 +25,31 @@ object ConsoleDebugger:
             }
         )
 
-    /** The class's real memory footprint on this VM as a segment map in offset order: header, each field with its size, and every byte
-      * alignment loses, where it loses it. Inline combinators expand an anonymous class per call site, so capture oddities (an `$outer`, a
-      * duplicated capture slot) show up as segments, per site. Compiler suffixes are trimmed from field names; `$`-prefixed synthetics keep
-      * their names.
+    // both header geometries, always: the running VM's mode is measured (marked *), the other is
+    // modeled through JOL's HotSpot layouter (classic = compressed oops and class pointers, 12 B
+    // header; compact = the JEP 450 8 B header)
+    private val jdk           = Runtime.version().feature()
+    private val classicLayout = new HotSpotLayouter(new Model64(true, true, 8), jdk)
+    private val compactLayout = new HotSpotLayouter(new Model64_Lilliput(true, 8, false), jdk)
+
+    /** The class's memory footprint as a segment map in offset order, in both header geometries: header, each field with its size, and
+      * every byte alignment loses, where it loses it. Inline combinators expand an anonymous class per call site, so capture oddities (an
+      * `$outer`, a duplicated capture slot) show up as segments, per site. Compiler suffixes are trimmed from field names; `$`-prefixed
+      * synthetics keep their names.
       */
     private def layout(cls: Class[?]): String =
-        val l      = ClassLayout.parseClass(cls)
+        val measured           = ClassLayout.parseClass(cls)
+        val runsCompact        = measured.headerSize == 8
+        val other              = ClassLayout.parseClass(cls, if runsCompact then classicLayout else compactLayout)
+        val (classic, compact) = if runsCompact then (other, measured) else (measured, other)
+        val star               = if runsCompact then ("", "*") else ("*", "")
+        s"📐 classic${star._1} ${segments(classic)} ∙ compact${star._2} ${segments(compact)}"
+    end layout
+
+    private def segments(l: ClassLayout): String =
         val fields = l.fields().asScala.toSeq.sortBy(_.offset)
         val sb     = new StringBuilder
-        sb.append(s"📐 ${l.instanceSize} B = [hdr ${l.headerSize}")
+        sb.append(s"${l.instanceSize} B [hdr ${l.headerSize}")
         var end: Long = l.headerSize
         for f <- fields do
             if f.offset > end then sb.append(s" | gap ${f.offset - end}")
@@ -42,7 +60,7 @@ object ConsoleDebugger:
         if l.instanceSize > end then sb.append(s" | pad ${l.instanceSize - end}")
         sb.append("]")
         sb.toString
-    end layout
+    end segments
 
 end ConsoleDebugger
 
