@@ -953,18 +953,26 @@ class ResolverTest extends BaseCalibanTest:
     }
 
     "WS - complete from client cancels subscription" in {
+        // The subscription stream carries an ensuring-finalizer that flips `cancelled` when caliban interrupts the
+        // subscription fiber. A client `complete` must trigger that cancellation, so the test awaits the finalizer
+        // rather than sleeping a fixed window: it proves the server-side subscription was actually torn down.
+        val cancelled = new java.util.concurrent.atomic.AtomicBoolean(false)
         case class Forever(values: zio.stream.ZStream[Any, Nothing, Int]) derives caliban.schema.Schema.SemiAuto
         val api =
             graphQL(RootResolver(
                 defaultQuery,
                 Mutation(0),
-                Forever(zio.stream.ZStream.iterate(0)(_ + 1).schedule(zio.Schedule.spaced(zio.Duration.fromMillis(50))))
+                Forever(
+                    zio.stream.ZStream.iterate(0)(_ + 1)
+                        .schedule(zio.Schedule.spaced(zio.Duration.fromMillis(50)))
+                        .ensuring(zio.ZIO.succeed(cancelled.set(true)))
+                )
             ))
         for
             interpreter <- Resolvers.get(api)
             server      <- Resolvers.run(interpreter)
             url = s"ws://localhost:${server.port}/api/graphql/ws"
-            result <- HttpClient.webSocket(url, config = wsSubprotocol("graphql-transport-ws")) { ws =>
+            _ <- HttpClient.webSocket(url, config = wsSubprotocol("graphql-transport-ws")) { ws =>
                 for
                     _ <- ws.put(HttpWebSocket.Payload.Text("""{"type":"connection_init"}"""))
                     _ <- expectMessage(ws, _.contains("connection_ack"))
@@ -973,10 +981,10 @@ class ResolverTest extends BaseCalibanTest:
                     ))
                     _ <- expectMessage(ws, _.contains(""""type":"next""""))
                     _ <- ws.put(HttpWebSocket.Payload.Text("""{"type":"complete","id":"forever"}"""))
-                    _ <- Async.sleep(200.millis)
-                yield "ok"
+                    _ <- assertEventually(Sync.defer(cancelled.get()))
+                yield ()
             }
-        yield assert(result == "ok")
+        yield assert(cancelled.get(), "the subscription must be cancelled server-side after the client sends complete")
         end for
     }
 
@@ -1166,13 +1174,19 @@ class ResolverTest extends BaseCalibanTest:
     }
 
     "WS - transport-ws client disconnect mid-stream cleans up subscription" in {
-        // Subscription that emits forever; we disconnect and verify the WS handler exits cleanly
-        // (no leaked fiber leaves the test hung). Test passes if the run block returns.
+        // The subscription emits forever; its ensuring-finalizer flips `cancelled` when caliban interrupts the
+        // subscription fiber. Disconnecting the client (the run block returns, closing the WS) must tear the
+        // subscription down server-side, so the test awaits the finalizer instead of sleeping a fixed window.
+        val cancelled = new java.util.concurrent.atomic.AtomicBoolean(false)
         case class Forever(values: zio.stream.ZStream[Any, Nothing, Int]) derives caliban.schema.Schema.SemiAuto
         val api = graphQL(RootResolver(
             defaultQuery,
             Mutation(0),
-            Forever(zio.stream.ZStream.iterate(0)(_ + 1).schedule(zio.Schedule.spaced(zio.Duration.fromMillis(20))))
+            Forever(
+                zio.stream.ZStream.iterate(0)(_ + 1)
+                    .schedule(zio.Schedule.spaced(zio.Duration.fromMillis(20)))
+                    .ensuring(zio.ZIO.succeed(cancelled.set(true)))
+            )
         ))
         for
             interpreter <- Resolvers.get(api)
@@ -1188,8 +1202,8 @@ class ResolverTest extends BaseCalibanTest:
                     _ <- expectMessage(ws, _.contains(""""type":"next""""))
                 yield ()
             } // lambda returns -> HttpClient.webSocket closes WS; server should clean up
-            _ <- Async.sleep(100.millis)
-        yield succeed("client disconnect mid-stream lets the server handler exit cleanly, with no leaked fiber")
+            _ <- assertEventually(Sync.defer(cancelled.get()))
+        yield assert(cancelled.get(), "the server must clean up the subscription after the client disconnects")
         end for
     }
 
@@ -1376,11 +1390,18 @@ class ResolverTest extends BaseCalibanTest:
     }
 
     "WS - legacy stop cancels subscription" in {
+        // The subscription stream's ensuring-finalizer flips `cancelled` when caliban interrupts the subscription
+        // fiber; a legacy `stop` must trigger that, so the test awaits the finalizer instead of sleeping a fixed window.
+        val cancelled = new java.util.concurrent.atomic.AtomicBoolean(false)
         case class Forever(values: zio.stream.ZStream[Any, Nothing, Int]) derives caliban.schema.Schema.SemiAuto
         val api = graphQL(RootResolver(
             defaultQuery,
             Mutation(0),
-            Forever(zio.stream.ZStream.iterate(0)(_ + 1).schedule(zio.Schedule.spaced(zio.Duration.fromMillis(20))))
+            Forever(
+                zio.stream.ZStream.iterate(0)(_ + 1)
+                    .schedule(zio.Schedule.spaced(zio.Duration.fromMillis(20)))
+                    .ensuring(zio.ZIO.succeed(cancelled.set(true)))
+            )
         ))
         for
             interpreter <- Resolvers.get(api)
@@ -1395,10 +1416,10 @@ class ResolverTest extends BaseCalibanTest:
                     ))
                     _ <- expectMessage(ws, _.contains(""""type":"data""""))
                     _ <- ws.put(HttpWebSocket.Payload.Text("""{"type":"stop","id":"f"}"""))
-                    _ <- Async.sleep(100.millis)
+                    _ <- assertEventually(Sync.defer(cancelled.get()))
                 yield ()
             }
-        yield succeed("legacy stop cancels the subscription server-side, with no hung emitter")
+        yield assert(cancelled.get(), "the legacy stop must cancel the subscription server-side")
         end for
     }
 
@@ -1880,8 +1901,11 @@ class ResolverTest extends BaseCalibanTest:
                     ))
                     _ <- expectMessage(ws, _.contains(""""type":"next""""))
                     _ <- expectMessage(ws, _.contains(""""type":"complete""""))
-                    // Tiny gap to let the fiber-completion cleanup settle
-                    _ <- Async.sleep(50.millis)
+                    // deviation: caliban releases the subscription id in an async cleanup AFTER it sends `complete`, and neither the public
+                    // Resolvers/WS surface nor a WebSocketHooks seam exposes that release, so there is no barrier to await. The settle is a
+                    // documented margin: 2s is generous next to the ms-scale cleanup, so the reused-id subscribe below only races it on a genuine
+                    // release stall.
+                    _ <- Async.sleep(2.seconds)
                     // Reuse the same id — must NOT be rejected as duplicate
                     _ <- ws.put(HttpWebSocket.Payload.Text(
                         """{"type":"subscribe","id":"reuse","payload":{"query":"{ k1 }"}}"""

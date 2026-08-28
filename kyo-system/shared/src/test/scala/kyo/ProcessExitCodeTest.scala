@@ -213,24 +213,27 @@ class ProcessExitCodeTest extends kyo.test.Test[Any]:
         // loaded machine the same code can carry a process past a deadline it meant to control.
         //
         // Asserting only that the wait returns Absent does not distinguish the two: a platform timer
-        // reaches the same answer, just by burning the full 30 seconds of real time. What separates
-        // them is that here almost no real time passes, so the elapsed wall clock is the assertion.
-        val budget = 10.seconds
+        // reaches the same answer, just by burning the full deadline in real time. What separates them is
+        // that here almost no real time passes, so the elapsed wall clock is the assertion.
+        // deviation: this asserts measured wall-clock elapsed, unavoidable because it IS the discriminator. The
+        // corridor is catastrophic, not tight: the virtual deadline is 30 minutes, so a real-time impl burns far
+        // past both the 60s budget and the suite's per-leaf cap, while the clock-driven impl returns in millis.
+        val budget = 60.seconds
         Clock.withTimeControl { clock =>
             Scope.run {
                 for
                     started <- Clock.live.now
                     proc    <- Command("sleep", "60").spawn
-                    fiber   <- Fiber.initUnscoped(proc.waitFor(30.seconds))
+                    fiber   <- Fiber.initUnscoped(proc.waitFor(30.minutes))
                     // Let the fiber reach the point where it arms its deadline before moving the
                     // clock. Async.timeout arms inside the fiber it starts, so an advance that lands
                     // first would have the deadline computed from the advanced time, putting it
                     // permanently out of reach of the advances below.
                     _ <- clock.advance(Duration.Zero, 100.millis)
                     // Short of the deadline: the wait is still outstanding.
-                    _        <- clock.advance(29.seconds)
+                    _        <- clock.advance(29.minutes)
                     pending  <- fiber.poll
-                    _        <- clock.advance(2.seconds)
+                    _        <- clock.advance(2.minutes)
                     result   <- fiber.get
                     finished <- Clock.live.now
                     elapsed = finished - started

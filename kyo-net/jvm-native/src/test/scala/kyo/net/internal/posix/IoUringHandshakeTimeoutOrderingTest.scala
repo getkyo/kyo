@@ -124,43 +124,29 @@ class IoUringHandshakeTimeoutOrderingTest extends Test:
                                         )
                                         val recvBuf = recording.recvBufs.peek()
                                         assert(recvBuf != null, "recorded recv buffer must be present")
-                                        // The recv is in flight (kernel-owned). It must NOT be closed yet: the handshake is parked, nothing has reaped it.
-                                        assert(
-                                            !recvBuf.isClosed,
-                                            "the in-flight recv readBuffer must be open while the recv SQE is kernel-owned (before any teardown)"
-                                        )
-                                        // Register a reap latch NOW, before the deadline fires. The correct teardown routes the free through
-                                        // ioDriver.closeHandle (deferred) and forces the recv to EOF via shutdown(SHUT_RDWR); that recv CQE reaps, completing
-                                        // this latch, and the deferred close frees the readBuffer AS PART of that reap (closeNow runs inside complete(), before
-                                        // cqe_seen fires this latch). A teardown that freed the readBuffer synchronously while the recv was still kernel-owned,
-                                        // issuing no shutdown, would instead leave the recv CQE unable to reap so this latch would never complete.
-                                        val reap = recording.awaitReap()
-                                        // Let the finite handshakeTimeout fire and run the teardown, then wait for the recv CQE to reap. The bound is
-                                        // generous; the deadline is short, so the reap arrives well within it.
-                                        Abort.run[Timeout](Async.timeout(8.seconds)(reap.safe.get)).map { reapOutcome =>
-                                            // Snapshot the buffer-close state at the moment the reap resolved (or the bound expired).
-                                            val recvClosedAfter = recvBuf.isClosed
-                                            reapOutcome match
-                                                case Result.Success(_) =>
-                                                    // Correct path: the in-flight recv CQE reaped (shutdown-forced EOF), and the deferred PosixHandle.close ran
-                                                    // as part of that reap, so the readBuffer is now closed. The ordering invariant held: the kernel-owned
-                                                    // buffer was never freed while the recv SQE was in flight; the free waited for the reap.
-                                                    assert(
-                                                        recvClosedAfter,
-                                                        "deferred PosixHandle.close must free the recv readBuffer once its in-flight recv CQE reaps"
-                                                    )
-                                                case _ =>
-                                                    // Ordering-violation path: the recv CQE never reaped within the bound. Characterize WHY, so the failure names
-                                                    // the ordering violation rather than a generic timeout. A teardown that freed the readBuffer directly while
-                                                    // the recv SQE was still kernel-owned (in-flight count > 0), issuing no shutdown, leaves the recv unable to
-                                                    // complete: the buffer is observed CLOSED with no reaping CQE, which is exactly the use-after-free ordering.
-                                                    fail(
-                                                        s"ordering violation: the in-flight recv CQE never reaped after the handshake-timeout teardown " +
-                                                            s"(recv readBuffer isClosed=$recvClosedAfter while the recv SQE was still kernel-owned). The teardown " +
-                                                            s"must defer the readBuffer free through ioDriver.closeHandle and force the recv to complete via " +
-                                                            s"shutdown(SHUT_RDWR), so the kernel-owned buffer is freed only after its recv CQE reaps."
-                                                    )
-                                            end match
+                                        // Barrier on the monotone non-wake reap count, NOT a FIFO reap waiter. This leaf's non-wake reaps are exactly
+                                        // (1) the accept and (2) the teardown-forced recv: the stalled handshake submits one recv and neither peer sends. A
+                                        // registered awaitReap() waiter could be consumed by the accept reap (unordered vs the client's connect returning),
+                                        // completing early and failing the post-reap assertion spuriously. cqeSeenCount is incremented only for non-wake CQEs
+                                        // and only AFTER the driver's complete() ran the deferred close (RecordingIoUringBindings.kyo_uring_cqe_seen), so
+                                        // `>= 2` means the recv CQE reaped and the readBuffer free ran as part of that reap. The buffer's pre-teardown liveness
+                                        // is implied by the recorded recv (a recv cannot be submitted into a closed buffer), so no racy live pre-check is
+                                        // needed. A teardown that freed the readBuffer synchronously while the recv was kernel-owned, issuing no shutdown,
+                                        // leaves the recv unable to reap, so the count never reaches 2 and the ordering-violation branch fires.
+                                        awaitCondition(15.seconds)(recording.cqeSeenCount.get >= 2).map { reaped =>
+                                            if reaped then
+                                                assert(
+                                                    recvBuf.isClosed,
+                                                    "deferred PosixHandle.close must free the recv readBuffer once its in-flight recv CQE reaps"
+                                                )
+                                            else
+                                                fail(
+                                                    s"ordering violation: the in-flight recv CQE never reaped after the handshake-timeout teardown " +
+                                                        s"(recv readBuffer isClosed=${recvBuf.isClosed} while the recv SQE was still kernel-owned). The teardown " +
+                                                        s"must defer the readBuffer free through ioDriver.closeHandle and force the recv to complete via " +
+                                                        s"shutdown(SHUT_RDWR), so the kernel-owned buffer is freed only after its recv CQE reaps."
+                                                )
+                                            end if
                                         }
                                     }
                                 }

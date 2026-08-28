@@ -5,6 +5,11 @@ import java.util.concurrent.atomic.AtomicInteger as JAtomicInteger
 
 class AsyncTest extends kyo.test.Test[Any]:
 
+    // Timing-sensitive leaves (runAndBlock, sleeps, timeouts, interrupt/latch scenarios) are starved
+    // by concurrent leaves on slower CI runners, tripping the per-leaf timeout. Run sequentially,
+    // consistent with the other timing-sensitive kyo-core suites (ClockTest/ChannelTest/etc.).
+    override def config = super.config.sequential
+
     "run" - {
         "value" in {
             for

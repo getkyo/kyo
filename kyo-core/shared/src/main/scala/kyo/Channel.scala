@@ -413,6 +413,12 @@ object Channel:
         def full()(using AllowUnsafe, Frame): Result[Closed, Boolean]
         def closed()(using AllowUnsafe): Boolean
 
+        /** Best-effort human-readable snapshot of this channel's coordination state (backing buffer/queue status plus the parked
+          * take/put/priority-put counts and whether the next waiter of each is already completed) for the [[kyo.internal.Diagnostics]]
+          * hang dumpers. Overridden by [[Unsafe.BaseUnsafe]]; the default covers any other implementation.
+          */
+        private[kyo] def dumpState(): String = "(no diagnostic state)"
+
         def safe: Channel[A] = this
     end Unsafe
 
@@ -436,6 +442,21 @@ object Channel:
             val puts            = new MpmcUnboundedUnsafeQueue[Put[A]](8)
             val priorityPuts    = new MpmcUnboundedUnsafeQueue[Put[A]](8)
             val batchInProgress = AtomicBoolean.Unsafe.init(false)
+
+            /** Backend-specific queue-state fragment for [[dumpState]]: the underlying bounded ring for a capacity channel, a
+              * closed-flag for the zero-capacity rendezvous.
+              */
+            protected def queueDiagnostic(): String
+
+            override private[kyo] def dumpState(): String =
+                // Unsafe: reads run under this channel's own construction-time AllowUnsafe. peek() is non-destructive, so the snapshot
+                // never perturbs channel state; the reported next-waiter done() flag distinguishes a live parked waiter from a stale entry.
+                s"queue[${queueDiagnostic()}] " +
+                    s"takes=${takes.size()}(nextDone=${takes.peek().map(_.done())}) " +
+                    s"puts=${puts.size()}(nextDone=${puts.peek().map(_.promise.done())}) " +
+                    s"priorityPuts=${priorityPuts.size()}(nextDone=${priorityPuts.peek().map(_.promise.done())}) " +
+                    s"batchInProgress=${batchInProgress.get()}"
+            end dumpState
 
             protected def flush()(using Frame): Unit
 
@@ -488,6 +509,8 @@ object Channel:
         final class ZeroCapacityUnsafe[A](val initFrame: Frame)(using allow: AllowUnsafe) extends BaseUnsafe[A]:
             val isClosed                                            = AtomicBoolean.Unsafe.init(false)
             @volatile private var pendingBatch: Maybe[Put.Batch[A]] = Absent
+
+            protected def queueDiagnostic(): String = s"zero-capacity(closed=${isClosed.get()}, pendingBatch=${pendingBatch.isDefined})"
 
             private def closedResult(using Frame) = Result.fail(Closed("Channel", initFrame, "zero-capacity"))
 
@@ -686,6 +709,8 @@ object Channel:
         )(using initFrame: Frame, allow: AllowUnsafe) extends BaseUnsafe[A]:
             val queue = Queue.Unsafe.init[A](capacity, access)
 
+            protected def queueDiagnostic(): String = queue.diagnosticState()
+
             def size()(using AllowUnsafe, Frame) = queue.size()
 
             def pendingPuts()(using AllowUnsafe, Frame)  = queue.size().map(_ => priorityPuts.size() + puts.size())
@@ -773,6 +798,16 @@ object Channel:
 
             def closeAwaitEmpty()(using Frame, AllowUnsafe) =
                 val r = queue.closeAwaitEmpty()
+                // The queue is now HalfOpen: it rejects new offers, so a producer parked because the ring was full
+                // can never be transferred in. Fail those parked puts now with the closing error rather than
+                // deferring to `flush`, which fails parked puts only on its FullyClosed drain, and the queue reaches
+                // FullyClosed only once a consumer has drained the ring empty, a consumer that may never come. The
+                // buffered ring values are untouched and still drain to consumers, which is what completes `r`. This
+                // is the same drain `flush`'s FullyClosed branch does, applied at HalfOpen time so it does not depend
+                // on a consumer.
+                val closed = Result.fail(Closed("Channel", initFrame, "closeAwaitEmpty"))
+                discard(priorityPuts.drain(_.promise.completeDiscard(closed)))
+                discard(puts.drain(_.promise.completeDiscard(closed)))
                 r.onComplete(_ => flush())
                 r
             end closeAwaitEmpty
@@ -795,6 +830,16 @@ object Channel:
                     discard(takes.drain(_.completeDiscard(fail.asInstanceOf[Result[Closed, Nothing]])))
                     discard(priorityPuts.drain(_.promise.completeDiscard(fail.map(_ => ()))))
                     discard(puts.drain(_.promise.completeDiscard(fail.map(_ => ()))))
+                    flush()
+                else if !putsEmpty && queue.offersRejected() then
+                    // The queue is soft-closed (HalfOpen: it rejects every new offer while draining its ring to consumers) but not yet
+                    // FullyClosed, so the branch above has not fired. A parked put can never be transferred in from here, and with no
+                    // consumer the ring may never drain to escalate FullyClosed, so nothing else would ever settle it. Fail it now with
+                    // the closing error. This catches a put that registered after closeAwaitEmpty's one-shot drain. Takes are left intact:
+                    // buffered ring values still drain to them via the transfer branch below.
+                    val closing = Result.fail(Closed("Channel", initFrame, "closeAwaitEmpty"))
+                    discard(priorityPuts.drain(_.promise.completeDiscard(closing)))
+                    discard(puts.drain(_.promise.completeDiscard(closing)))
                     flush()
                 else if queueSize > 0 && !takesEmpty then
                     // Attempt to transfer a value from the queue to

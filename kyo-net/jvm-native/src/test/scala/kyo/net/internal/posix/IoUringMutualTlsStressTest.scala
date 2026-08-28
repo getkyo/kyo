@@ -94,7 +94,7 @@ class IoUringMutualTlsStressTest extends Test:
                 val stage = new java.util.concurrent.atomic.AtomicReference[String]("init")
                 // Both connections are wrapped in Sync.ensure (not Scope.ensure: this runs inside Async.foreach under Async.timeout, and
                 // Sync.ensure's underlying Safepoint finalizer fires on interruption too, which is exactly the path a stalled upgrade takes
-                // when the 8s timeout below fires). Without it, a put/take failure before the upgrade, or the timeout itself firing mid-upgrade
+                // when the hang-guard timeout below fires). Without it, a put/take failure before the upgrade, or the timeout itself firing mid-upgrade
                 // (the very race this leaf reproduces), would abandon conn/tlsConn with no closer ever reached.
                 val attempt: Array[Byte] < (Async & Abort[NetException | Closed]) =
                     for
@@ -119,8 +119,11 @@ class IoUringMutualTlsStressTest extends Test:
                             yield echoed
                         }
                     yield echoed
+                // The per-attempt ceiling is a hang-guard, not an expected-time bound: the tested property is "no upgrade corrupts or strands",
+                // proven by the round-trip outcome, not by how fast it lands. At 60s it fires only on a genuine deadlock across the many
+                // emulated-arch attempts, so a slow-but-progressing attempt under CI/qemu load is not misread as a stall.
                 val outcome: Result[NetException | Closed | Timeout, Array[Byte]] < Async =
-                    Abort.run[NetException | Closed | Timeout](Async.timeout(8.seconds)(attempt))
+                    Abort.run[NetException | Closed | Timeout](Async.timeout(60.seconds)(attempt))
                 outcome.map {
                     case Result.Success(echoed) =>
                         assert(

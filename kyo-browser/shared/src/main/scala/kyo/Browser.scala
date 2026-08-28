@@ -448,11 +448,33 @@ object Browser:
             Actionability.withActionable(selector, requireFillable = false, requireEnabled = true) { ref =>
                 if ref.navigatesOnClick then
                     // Skip mutation settlement entirely on nav-intent clicks: the destination is a fresh DOM; settling against
-                    // the old page's observer is moot (the observer itself is wiped on navigation).
+                    // the old page's observer is moot (the observer itself is wiped on navigation). Delivery is not confirmed
+                    // here either: navigation replaces the document the probe lives on, so there is nothing left to read.
                     NavigationWatcher.armAround(Browser.Settle.NetworkIdle, throwOnFailure = true)(BrowserEval.clickAtActionable(ref, 1))
+                        .andThen(false)
                 else
-                    MutationSettlement.afterAction(BrowserEval.clickAtActionable(ref, 1))(scopeSelector = Present(selector))
+                    BrowserEval.armClickProbe.andThen(
+                        MutationSettlement.afterAction(BrowserEval.clickAtActionable(ref, 1))(scopeSelector = Present(selector))
+                    ).andThen(true)
             }
+        }.map { confirmDelivery =>
+            // Deliberately OUTSIDE `withRetry`. The gate's own failures are safe to retry because they fire before anything is
+            // dispatched, but a click is not idempotent: retrying a false negative here would deliver two clicks where the caller
+            // asked for one, turning a lost click into a duplicated one. So a click the page never saw is reported, not re-sent.
+            // The read happens after mutation settlement, which has already given the renderer its grace window; reading straight
+            // after dispatch would race the event loop and manufacture the very false negative described above.
+            if !confirmDelivery then Kyo.unit
+            else
+                BrowserEval.clickWasReceived.map { received =>
+                    if received then Kyo.unit
+                    else
+                        Abort.fail(
+                            BrowserElementNotActionableException(
+                                Browser.selectorNodeDescription(Selector.toNode(selector)),
+                                BrowserElementNotActionableException.Reason.ClickNotReceived
+                            )
+                        )
+                }
         }
 
     /** Double-clicks the element matched by the selector. */

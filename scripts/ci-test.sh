@@ -508,6 +508,33 @@ echo "Tests: succeeded 100, failed 0"; exit 0'
     then record ok "a real compile error is not retried (no resolution signature)"
     else record no "a real compile error is not retried (no resolution signature)"; fi
 
+    # Run phase: a transient resolution failure (the ++ cross-pass linker re-resolve) carries sbt's
+    # ResolveException and the 429 signature, so sbt_run_resolve_retry retries it and passes on the retry.
+    rm -f "$SELFDIR/runresolv"
+    run_runner JVM test 'case "$*" in
+*"--phase"*) echo "Tests: succeeded 100, failed 0"; exit 0 ;;
+*) if [ ! -f "'"$SELFDIR"'/runresolv" ]; then touch "'"$SELFDIR"'/runresolv"
+echo "[error] (Zero / scalaJSLinkerImpl / fullClasspath) sbt.librarymanagement.ResolveException: Error downloading org.scala-js:scalajs-linker_2.12:1.22.0"
+echo "[error]   download error: Server returned HTTP response code: 429 for URL: https://repo1.maven.org/x.pom"; exit 1; fi
+echo "Tests: succeeded 100, failed 0"; exit 0 ;;
+esac'
+    rm -f "$SELFDIR/runresolv"
+    if exit_is 0 && [ "$(grep -c -- 'testKyo --all JVM' "$CALLS")" = 2 ]
+    then record ok "transient run-phase resolution 429 is retried then passes"
+    else record no "transient run-phase resolution 429 is retried then passes"; fi
+
+    # Narrowness guard: a run-phase TEST that legitimately prints a 429 / "download error" (a Chrome
+    # download, a kyo-pod image pull, an HTTP rate-limit test) but no ResolveException is NOT a resolution
+    # failure, so it is not retried and fails fast on the first attempt.
+    run_runner JVM test 'case "$*" in
+*"--phase"*) echo "Tests: succeeded 100, failed 0"; exit 0 ;;
+*) echo "  - some HttpRateLimitTest *** FAILED ***"
+echo "expected Server returned HTTP response code: 429 but downloaded nothing"; exit 1 ;;
+esac'
+    if exit_is 1 && [ "$(grep -c -- 'testKyo --all JVM' "$CALLS")" = 1 ]
+    then record ok "a run-phase test printing 429 without ResolveException is not retried"
+    else record no "a run-phase test printing 429 without ResolveException is not retried"; fi
+
     # A native crash-retry re-runs its batch through testKyo --quick: attempt 1 is the full batch, the
     # retry appends --quick so only the tests sbt did not record as passing (the crashed suites) re-run.
     # The plan invocation must not pick the flag up, so the count is exactly one.
@@ -590,7 +617,7 @@ echo "Tests: succeeded 100, failed 0"; echo "[testKyo] completed"; exit 0'
 
     echo ""
     echo "Results: $PASS/$TOTAL passed, $FAIL failed"
-    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 53 ]
+    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 55 ]
     exit $?
 fi
 
@@ -657,8 +684,8 @@ log() { echo "=== [ci-test] $(date '+%H:%M:%S') $* ==="; }
 # A transient Maven Central error (403/429/5xx) during resolution fails an sbt phase before any build
 # output. Retry with backoff on that signature; a real compile error or unresolvable version carries no
 # such marker (or reproduces every attempt) and still fails. tee keeps output streaming for the console
-# and native watchdog. Compile and link route through here; the run phase retries a no-Tests failure in
-# check_log.
+# and native watchdog. Compile and link route through here; the JVM/JS/Wasm run phase routes through the
+# stricter sbt_run_resolve_retry below, and the run phase also retries a no-Tests failure in check_log.
 sbt_resolve_retry() {
     local attempt=1 rc tmp
     tmp="$(mktemp)"
@@ -669,6 +696,33 @@ sbt_resolve_retry() {
         if [ "$attempt" -lt "$MAX_RETRIES" ] &&
             grep -qE 'Error downloading|[Ff]orbidden: https?://|Server returned HTTP response code: (403|429|50[0-9])|download error' "$tmp"; then
             log "transient dependency-resolution failure (attempt $attempt/$MAX_RETRIES): retrying in $((attempt * RESOLVE_BACKOFF))s"
+            sleep "$((attempt * RESOLVE_BACKOFF))"
+            attempt=$((attempt + 1))
+            continue
+        fi
+        rm -f "$tmp"; return "$rc"
+    done
+}
+
+# Run-phase variant of sbt_resolve_retry. The run phase streams test output, so the generic grep above
+# would false-match a test that legitimately prints a 429 or "download error" (a kyo-browser Chrome
+# download, a kyo-pod image pull, an HTTP rate-limit test) and retry a genuine test failure. Gate the
+# retry on sbt's own resolution-failure class, which test output never emits, together with the transient
+# signature, so only a genuine transient dependency-resolution failure is retried, never a failed test.
+# The trigger is the ++ cross-pass linker (scalajs-linker) re-resolving against Maven Central during
+# the version restore after tests pass; a retry re-runs the whole phase, which the 360-minute leg budget
+# absorbs, and is strictly cheaper than a red leg forcing a full-matrix re-dispatch.
+sbt_run_resolve_retry() {
+    local attempt=1 rc tmp
+    tmp="$(mktemp)"
+    while :; do
+        sbt "$@" 2>&1 | tee "$tmp"
+        rc=${PIPESTATUS[0]}
+        if [ "$rc" -eq 0 ]; then rm -f "$tmp"; return 0; fi
+        if [ "$attempt" -lt "$MAX_RETRIES" ] &&
+            grep -q 'sbt\.librarymanagement\.ResolveException' "$tmp" &&
+            grep -qE 'Server returned HTTP response code: (403|429|50[0-9])|Error downloading|download error' "$tmp"; then
+            log "transient run-phase resolution failure (attempt $attempt/$MAX_RETRIES): retrying in $((attempt * RESOLVE_BACKOFF))s"
             sleep "$((attempt * RESOLVE_BACKOFF))"
             attempt=$((attempt + 1))
             continue
@@ -728,7 +782,7 @@ run_phase_split() {
         *)
             sbt_resolve_retry "testKyo --phase compile-main $arg $PLATFORM" || return $?
             sbt_resolve_retry "testKyo --phase compile-test $arg $PLATFORM" || return $?
-            sbt $(run_phase_heap) "testKyo $arg $PLATFORM" || return $?
+            sbt_run_resolve_retry $(run_phase_heap) "testKyo $arg $PLATFORM" || return $?
             return 0
             ;;
     esac
@@ -870,6 +924,10 @@ check_log() {
 run_watched() {
     local label="$1"; shift
     local -a base=("$@")
+    # Heartbeat: append each watched unit (link batch, test batch, cross pass) to the run summary as it starts,
+    # so a stalled native leg shows on the summary which batch it stopped on, without waiting for the whole
+    # job's log to finalize. No-op off CI (GITHUB_STEP_SUMMARY unset), so the self-test is unaffected.
+    [ -n "${GITHUB_STEP_SUMMARY:-}" ] && printf -- '- %s  %s\n' "$(date -u +%H:%M:%S)" "$label" >> "$GITHUB_STEP_SUMMARY"
     local attempt
     for attempt in $(seq 1 "$MAX_RETRIES"); do
         # A retry re-runs through testKyo --quick so only the tests sbt did not record as passing run

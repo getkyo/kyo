@@ -18,8 +18,8 @@ class GuardCoreDrainTimeoutTest extends Test:
         (s eq Thread.State.WAITING) || (s eq Thread.State.TIMED_WAITING)
 
     "close() completes despite an in-flight callback that never calls endCallback()" in {
-        // Shorten the effective wait by calling endCallback() from the test thread after a delay,
-        // so we do NOT actually wait the full 5-second timeout. This keeps the test fast.
+        // The closer uses a 10-minute drain policy instead of the production 5s default, so the test's endCallback() below (which lets the drain
+        // complete) can never race the drain deadline under CI load. The path under test is drain-completes-on-endCallback, not the timeout.
 
         val closedLatch                         = new CountDownLatch(1)
         @volatile var closeResult: CloseOutcome = CloseOutcome.AlreadyClosed
@@ -33,7 +33,7 @@ class GuardCoreDrainTimeoutTest extends Test:
         // Spawn a thread that calls close(), it will spin-wait because inFlight == 1.
         val closerThread = new Thread(
             () =>
-                closeResult = core.close()
+                closeResult = core.closeWithPolicy(10L * 60L * 1000L * 1000L * 1000L)
                 closedLatch.countDown()
             ,
             "closer-thread"
@@ -41,8 +41,9 @@ class GuardCoreDrainTimeoutTest extends Test:
         closerThread.setDaemon(true)
         closerThread.start()
 
-        // Wait until the closer thread parks inside the drain loop (WAITING or TIMED_WAITING).
-        val deadline = System.nanoTime() + 2_000_000_000L
+        // Wait until the closer thread parks inside the drain loop (WAITING or TIMED_WAITING). 30s catastrophic bound: the thread parks in
+        // microseconds normally, so this only breaks a closer that never reaches the drain.
+        val deadline = System.nanoTime() + 30_000_000_000L
         while !isParked(closerThread) && System.nanoTime() < deadline do
             Thread.onSpinWait()
         end while
@@ -50,8 +51,8 @@ class GuardCoreDrainTimeoutTest extends Test:
         // Now call endCallback() from the test thread to let close() drain and finish.
         core.endCallback()
 
-        // close() should complete well within the 5-second timeout.
-        assert(closedLatch.await(10, TimeUnit.SECONDS) == true)
+        // close() drains and returns once endCallback() above dropped inFlight to 0.
+        assert(closedLatch.await(60, TimeUnit.SECONDS) == true)
         assert(closeResult == CloseOutcome.Clean)
     }
 

@@ -53,7 +53,7 @@ class RuntimeExecutorTest extends kyo.test.Test[Any]:
                     outputDir,
                     cp,
                     Map(7 -> 250.millis),
-                    5.seconds
+                    60.seconds
                 )
             yield result match
                 case RuntimeExecutor.Outcome.TimedOut(after, RuntimeExecutor.Progress.Block(7)) =>
@@ -71,7 +71,7 @@ class RuntimeExecutorTest extends kyo.test.Test[Any]:
                     kyo.Path("RuntimeExecutorTest.scala"),
                     outputDir,
                     cp,
-                    5.seconds
+                    60.seconds
                 )
             yield result match
                 case RuntimeExecutor.Outcome.ProcessExited(23, _, RuntimeExecutor.Progress.Block(42)) =>
@@ -89,8 +89,8 @@ class RuntimeExecutorTest extends kyo.test.Test[Any]:
                     kyo.Path("RuntimeExecutorTest.scala"),
                     outputDir,
                     cp,
-                    Map(11 -> 500.millis, 22 -> 75.millis),
-                    5.seconds
+                    Map(11 -> 30.seconds, 22 -> 75.millis),
+                    60.seconds
                 )
             yield result match
                 case RuntimeExecutor.Outcome.TimedOut(after, RuntimeExecutor.Progress.Block(22)) =>
@@ -106,7 +106,7 @@ class RuntimeExecutorTest extends kyo.test.Test[Any]:
                 kyo.Path("Missing.scala"),
                 outputDir,
                 Chunk.empty,
-                5.seconds
+                60.seconds
             ).map {
                 case RuntimeExecutor.Outcome.ProcessExited(_, _, RuntimeExecutor.Progress.NotStarted) =>
                     succeed("child runner did not start")

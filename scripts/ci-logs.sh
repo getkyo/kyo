@@ -39,17 +39,18 @@ set -uo pipefail
 # Reads per-JOB logs via the REST jobs/<id>/logs endpoint, so it works on a
 # running run too (a job's log is available as soon as that job finishes).
 #
-# Env: REPO (owner/repo, default gh-detected); CI_WORKFLOW (default ci.yml).
+# Repo: -R owner/name (or REPO env, default gh-detected) targets a fork's runs, not just the
+# working directory's repo. Env: CI_WORKFLOW (default ci.yml).
 
 REPO="${REPO:-$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)}"
 CI_WORKFLOW="${CI_WORKFLOW:-ci.yml}"
-[ -n "${REPO:-}" ] || { echo "error: set REPO=owner/name" >&2; exit 2; }
 
 # ---- view options (parsed out of the arg list) ----
 VIEW=failures; GREP_RE=""; TAIL_N=40; ALL_JOBS=0
 POS=()
 while [ $# -gt 0 ]; do
     case "$1" in
+        -R|--repo)  REPO="${2:?-R needs owner/name}"; shift ;;
         --failures) VIEW=failures ;;
         --grep)     VIEW=grep; GREP_RE="${2:?--grep needs a pattern}"; shift ;;
         --metrics)  VIEW=grep; GREP_RE='\[ci-mon\]'; ALL_JOBS=1 ;;
@@ -62,6 +63,12 @@ while [ $# -gt 0 ]; do
     shift
 done
 set -- "${POS[@]:-}"
+
+# Every gh subcommand (run view/list, pr view/list) honors GH_REPO, unlike the bare REPO the gh api calls
+# below already use; export it so a fork's runs are reachable via -R owner/name, not only the working
+# directory's repo.
+[ -n "${REPO:-}" ] || { echo "error: set -R owner/name or REPO=owner/name" >&2; exit 2; }
+export GH_REPO="$REPO"
 
 # Strip ANSI, CR, and the leading ISO-8601 job-log timestamp prefix.
 clean() { perl -pe 's/\e\[[0-9;]*m//g; s/\r$//; s/^\d{4}-\d{2}-\d{2}T[\d:.]+Z[ \t]*//'; }

@@ -569,7 +569,12 @@ class SignalTest extends kyo.test.Test[Any]:
                 // Two independent waiters both see the broadcast when refA fires
                 f1 <- Fiber.initUnscoped(cl.next)
                 f2 <- Fiber.initUnscoped(cl.next)
+                // Each waiter races a subscription to refA against one to refB, in independent fibers, so refA's
+                // count alone does not mean both have reached refB. Fire only once both are subscribed to BOTH:
+                // a waiter that wins on refA before subscribing to refB leaves no ghost behind, and the refB
+                // count below could then never reach 3.
                 _  <- assertEventually(refA.waiters.map(_ >= 2))
+                _  <- assertEventually(refB.waiters.map(_ >= 2))
                 _  <- refA.set(1)
                 v1 <- f1.get
                 v2 <- f2.get
@@ -620,10 +625,15 @@ class SignalTest extends kyo.test.Test[Any]:
                 // Two independent awaitAny waiters both see the broadcast when r0 fires
                 f1 <- Fiber.initUnscoped(Signal.awaitAny(Seq(r0, r1)))
                 f2 <- Fiber.initUnscoped(Signal.awaitAny(Seq(r0, r1)))
-                _  <- assertEventually(r0.waiters.map(_ >= 2))
-                _  <- r0.set(1)
-                _  <- f1.get
-                _  <- f2.get
+                // Each waiter races a subscription to r0 against one to r1, in independent fibers, so r0's count
+                // alone does not mean both have reached r1. Fire only once both are subscribed to BOTH: a waiter
+                // that wins on r0 before subscribing to r1 leaves no ghost behind, and the r1 count below could
+                // then never reach 3.
+                _ <- assertEventually(r0.waiters.map(_ >= 2))
+                _ <- assertEventually(r1.waiters.map(_ >= 2))
+                _ <- r0.set(1)
+                _ <- f1.get
+                _ <- f2.get
                 // After r0 fired: r0 has a fresh promise (0 waiters), r1 has
                 // 2 ghost waiters (one from each race loser). A third waiter
                 // adds 1 more to r1; wait for r1 >= 3 to confirm subscription.
@@ -871,8 +881,10 @@ class SignalTest extends kyo.test.Test[Any]:
     // Leaf and `map`-over-leaf `observe` use the repairing path (the exact register-before-read override was removed
     // because it miscompiled on Scala Native; see SignalRef in Signal.scala). The guarantee is that the final value is
     // never lost: a write that lands in the read/register window is reconciled within `repairInterval`. Drive
-    // back-to-back set(a);set(b) under an explicit short repairInterval (50ms) and require the final value to arrive
-    // within a generous multiple of it (1s); a returned count > 0 means a value was actually lost, not merely late.
+    // back-to-back set(a);set(b) under an explicit short repairInterval (50ms) and await the final value under a generous
+    // hang-guard (10000 x ~1ms polls): the poll returns the instant the value arrives, so the budget only bounds a
+    // genuinely lost value. A tighter budget could expire while a starved repair fiber was merely late, miscounting a
+    // delivered value as lost; only a returned count > 0 after the hang-guard means a value was actually lost.
     private def observeNeverLosesFinalValue(useMap: Boolean, iterations: Int)(using Frame): Int < Async =
         for
             ref <- Signal.initRef("")
@@ -885,7 +897,7 @@ class SignalTest extends kyo.test.Test[Any]:
                 for
                     _   <- ref.set(a)
                     _   <- ref.set(b)
-                    got <- awaitValue(lastSeen, b, 1000)
+                    got <- awaitValue(lastSeen, b, 10000)
                 yield if got then 0 else 1
                 end for
             }
