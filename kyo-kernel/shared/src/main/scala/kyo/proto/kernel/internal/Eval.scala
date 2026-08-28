@@ -47,6 +47,7 @@ object Eval:
                         loop(v, cont, Arrow.id, ctx) match
                             case res: Kyo.Suspend[EX, AX, EX & S] @unchecked if !(res.tag.erased <:< kyo.handler.tag.erased) =>
                                 dbg.onForeign(res, kyo.handler)
+                                // TODO it seems we can allocate Kyo.Suspend with Arrow.Transform to avoid an allocation
                                 res.withCont(
                                     new Arrow.Transform[res.Op, A, S]:
                                         def frame             = Frame.internal
