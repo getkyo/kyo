@@ -205,6 +205,72 @@ class ScopeTest extends kyo.test.Test[Any]:
             end for
         }
 
+        "a resource acquired after the scope closed is released rather than leaked" in {
+            for
+                acquired <- AtomicInt.init(0)
+                released <- AtomicInt.init(0)
+                done     <- Promise.init[Unit, Any]
+                gate     <- Latch.init(1)
+                fiber <- Scope.run {
+                    Fiber.initUnscoped(
+                        gate.await.andThen(
+                            Scope.acquireRelease(acquired.incrementAndGet)(_ =>
+                                released.incrementAndGet.andThen(done.completeUnitDiscard)
+                            )
+                        )
+                    )
+                }
+                // The gate opens only once Scope.run has returned, so the acquisition below is guaranteed to find the scope closed.
+                _       <- gate.release
+                result  <- fiber.getResult
+                settled <- Abort.run[Timeout](Async.timeout(10.seconds)(done.get))
+                a       <- acquired.get
+                r       <- released.get
+            yield
+                assert(result.panic.exists(_.isInstanceOf[Closed]), s"registering on a closed scope must panic Closed: $result")
+                assert(a == 1, s"the resource must have been acquired before the registration was refused: acquired=$a")
+                assert(settled.isSuccess, "the release of a resource acquired after the scope closed must still run")
+                assert(r == a, s"released=$r must match acquired=$a")
+            end for
+        }
+
+        "fibers registering finalizers while their scope closes: each accepted registration runs exactly once" in {
+            // A scope closes by draining its finalizer queue, and the fibers below stay free to register for the whole drain, so
+            // registration and close overlap by construction. The scope is preloaded first so the drain is long enough for the two to
+            // meet. Every registration the scope accepted has to run, and none of them twice.
+            (for
+                accepted <- AtomicInt.init(0)
+                ran      <- AtomicInt.init(0)
+                fibers <- Scope.run {
+                    val register =
+                        Abort.run[Nothing](Scope.ensure(ran.incrementAndGet.unit)).map {
+                            case Result.Success(_) => accepted.incrementAndGet.andThen(true)
+                            case _                 => false
+                        }
+                    for
+                        _       <- Loop.repeat(8192)(register)
+                        started <- Latch.init(8)
+                        fibers <- Kyo.fill(8) {
+                            Fiber.initUnscoped(
+                                started.release.andThen(
+                                    Loop.indexed { i =>
+                                        if i == 100000 then Loop.done
+                                        else register.map(ok => if ok then Loop.continue else Loop.done)
+                                    }
+                                )
+                            )
+                        }
+                        _ <- started.await
+                    yield fibers
+                    end for
+                }
+                _ <- Kyo.foreachDiscard(fibers)(_.get)
+                a <- accepted.get
+                r <- ran.get
+            yield assert(r == a, s"each accepted registration must run exactly once: ran=$r accepted=$a"))
+                .handle(Loop.repeat(20))
+        }
+
         "concurrent acquireRelease all cleaned up" in {
             AtomicInt.init.map { counter =>
                 Scope.run {

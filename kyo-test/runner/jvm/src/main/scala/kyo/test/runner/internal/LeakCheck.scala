@@ -148,7 +148,7 @@ private[runner] object LeakCheck:
     /** A thread dump of every thread that is actually doing something at probe time, for an actionable fiber-leak report: each thread whose
       * state is `RUNNABLE` or whose stack runs kyo code, with its name, state, and stack. Unlike the per-busy-worker dump (which is keyed to
       * the busy scheduler workers' mount threads via [[stackOfThread]]) this also captures NON-worker threads, e.g. a caller stuck mid-`offer`
-      * that holds a queue's race-repair counter while a worker spins in `close()` waiting for it. Idle pool/parked threads with no kyo frame are
+      * that holds a queue's activeOffers count while a worker spins in `close()` waiting for it. Idle pool/parked threads with no kyo frame are
       * filtered out to keep the report focused. The leak check's own thread is excluded.
       */
     def runningThreadsDump(): String =

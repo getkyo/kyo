@@ -68,6 +68,11 @@ object Scope:
 
     /** Acquires a resource and provides a release function.
       *
+      * Acquisition and registration are not one atomic step, so the scope can close in between. When that happens the registration is
+      * refused with a `Closed` panic, and the resource is released here rather than left behind: a resource this method acquired is
+      * always released, whether by the scope or, in that one case, by this method itself. The release runs detached, since this method
+      * offers no `Async`, and the `Closed` panic is re-raised afterwards so the caller still learns the scope had closed.
+      *
       * @param acquire
       *   The effect to acquire the resource.
       * @param release
@@ -80,7 +85,21 @@ object Scope:
     def acquireRelease[A, S](acquire: => A < S)(release: A => Any < (Async & Abort[Throwable]))(using Frame): A < (Scope & Sync & S) =
         Sync.defer {
             acquire.map { resource =>
-                ensure(release(resource)).andThen(resource)
+                // Stands in for the release the scope would have run, failures logged the same way, and detached because the effect row
+                // here offers no Async.
+                def releaseDetached: Unit < Sync =
+                    Abort.run[Throwable](release(resource))
+                        .map(_.foldError(
+                            _ => (),
+                            ex => Log.error("Scope finalizer failed", ex.exception)
+                        ))
+                        .handle(Fiber.initUnscoped[Nothing, Unit, Any, Any])
+                        .unit
+
+                Abort.run[Nothing](ensure(release(resource))).map(_.foldError(
+                    _ => resource: A < Sync,
+                    error => releaseDetached.andThen(Abort.get(error.asInstanceOf[Result[Nothing, A]]))
+                ))
             }
         }
 

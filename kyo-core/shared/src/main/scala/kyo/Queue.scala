@@ -72,10 +72,14 @@ object Queue:
 
         /** Offers an element to the queue.
           *
+          * An offer that is already under way when the queue closes still counts: it returns true and its element is handed to the closer
+          * along with the rest of the backlog. Only an offer that starts after the close is refused, and that one aborts with `Closed`
+          * rather than returning false.
+          *
           * @param v
           *   the element to offer
           * @return
-          *   true if the element was added, false if the queue is full or closed
+          *   true if the element was added, false if the queue is full
           */
         def offer(v: A)(using Frame): Boolean < (Sync & Abort[Closed]) = Sync.Unsafe.defer(Abort.get(self.offer(v)))
 
@@ -114,8 +118,9 @@ object Queue:
           */
         def drainUpTo(max: Int)(using Frame): Chunk[A] < (Sync & Abort[Closed]) = Sync.Unsafe.defer(Abort.get(self.drainUpTo(max)))
 
-        /** Closes the queue and returns any remaining elements. On a queue with a pending `closeAwaitEmpty`, this aborts the drain: the awaiter
-          * completes `false` and this returns the undrained backlog.
+        /** Closes the queue and returns any remaining elements, including any that an offer already under way accepted while this close was
+          * running. On a queue with a pending `closeAwaitEmpty`, this aborts the drain: the awaiter completes `false` and this returns the
+          * undrained backlog.
           *
           * @return
           *   a sequence of remaining elements
@@ -395,6 +400,9 @@ object Queue:
           *   a new Unbounded Queue instance that slides elements when full
           *
           * @note
+          *   Sliding drops the oldest element on the thread that offers, so more than one thread reads from the queue by construction. A
+          *   single-consumer `access` is honored for its producer side only; the consumer side is widened to one that permits that drop.
+          * @note
           *   The actual capacity will be rounded up to the next power of two.
           * @warning
           *   The actual capacity may be larger than the specified capacity due to rounding.
@@ -413,6 +421,9 @@ object Queue:
           * @return
           *   a new Unbounded Queue instance that slides elements when full
           *
+          * @note
+          *   Sliding drops the oldest element on the thread that offers, so more than one thread reads from the queue by construction. A
+          *   single-consumer `access` is honored for its producer side only; the consumer side is widened to one that permits that drop.
           * @note
           *   The actual capacity will be rounded up to the next power of two.
           * @warning
@@ -433,6 +444,9 @@ object Queue:
           * @return
           *   a new Unbounded Queue instance that slides elements when full
           *
+          * @note
+          *   Sliding drops the oldest element on the thread that offers, so more than one thread reads from the queue by construction. A
+          *   single-consumer `access` is honored for its producer side only; the consumer side is widened to one that permits that drop.
           * @note
           *   The actual capacity will be rounded up to the next power of two.
           * @warning
@@ -488,13 +502,27 @@ object Queue:
                 end new
             end initDropping
 
+            // Sliding removes the oldest element to make room, and that removal runs on whichever thread offered. A queue that admits
+            // only one consumer cannot serve that: the offering thread would be a second consumer beside the real one, which is exactly
+            // what the single-consumer algorithms are not written for, so they spin on a slot the other consumer already emptied. The
+            // consumer side is therefore widened to one that permits it, the same substitution `Queue.Unsafe.init` already makes when
+            // the requested implementation cannot meet the requirement. The caller's own contract is untouched: as many producers as
+            // asked for, and one consumer. The cost is a multi-consumer structure on every sliding path, which a backing ring that
+            // overwrites its oldest slot by design, letting a producer advance the consumer index without becoming a second consumer,
+            // would remove by making the cheaper single-consumer implementations usable here again.
+            private def slidingAccess(access: Access): Access =
+                access match
+                    case Access.MultiProducerSingleConsumer  => Access.MultiProducerMultiConsumer
+                    case Access.SingleProducerSingleConsumer => Access.SingleProducerMultiConsumer
+                    case multiConsumer                       => multiConsumer
+
             def initSliding[A](_capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(
                 using
                 frame: Frame,
                 allow: AllowUnsafe
             ): Unsafe[A] =
                 new Unsafe[A]:
-                    val underlying                 = Queue.Unsafe.init[A](_capacity, access)
+                    val underlying                 = Queue.Unsafe.init[A](_capacity, slidingAccess(access))
                     def capacity                   = _capacity
                     def size()(using AllowUnsafe)  = underlying.size()
                     def empty()(using AllowUnsafe) = underlying.empty()
@@ -572,16 +600,12 @@ object Queue:
                     end match
                 end escalate
                 Maybe.when(escalate()) {
-                    // Race: an in-flight offer that read state=Open before our CAS may still
-                    // commit and run race-repair, which can re-insert via q.offer (when the
-                    // polled item is not its own). If that re-insert lands AFTER _drain() exits,
-                    // the item is stranded in the closed queue. Wait for active offers to drain
-                    // out, then re-drain to capture any late re-inserts. The increment in
-                    // offerOp happens BEFORE the state read, so any offer that could possibly
-                    // commit is observable here as activeOffers > 0.
-                    val initial = _drain()
+                    // An offer counts itself in activeOffers before it reads the state, so once the count reaches zero after the CAS
+                    // above, every offer that can still commit has already committed: any later one reads FullyClosed and gives up.
+                    // Waiting for that point keeps this close the queue's only consumer, which the single-consumer access patterns
+                    // require, and makes one drain from here enough to capture everything that was ever enqueued.
                     while activeOffers.get() > 0 do ()
-                    initial ++ _drain()
+                    _drain()
                 }
             end close
 
@@ -633,30 +657,27 @@ object Queue:
                     case State.HalfOpen(_, r) => Present(r)
                     case State.FullyClosed(r) => Present(r)
 
-            protected inline def offerOp(inline f: => Boolean, inline raceRepair: => Boolean): Result[Closed, Boolean] =
-                // Increment BEFORE reading state. Pairs with close()'s wait-for-zero: any offer
-                // that could still commit (already past offerClosed) is observable as in-flight.
-                // try/finally ensures the decrement runs even if `f` throws — leaking the counter
-                // would deadlock close()'s spin.
+            protected inline def offerOp(inline f: => Boolean): Result[Closed, Boolean] =
+                // Increment BEFORE reading state. Pairs with the wait-for-zero in close() and handleHalfOpen(): any offer that can
+                // still commit, meaning one already past offerClosed, is observable to them as in-flight. An offer never consumes
+                // from the queue, so a closing transition stays the only consumer. try/finally ensures the decrement runs even if
+                // `f` throws, since leaking the counter would deadlock those waits.
                 discard(activeOffers.incrementAndGet())
-                try
-                    offerClosed.getOrElse {
-                        val result = f
-                        if result && closed() then
-                            Result(raceRepair)
-                        else
-                            Result(result)
-                        end if
-                    }
-                finally
-                    discard(activeOffers.decrementAndGet())
+                try offerClosed.getOrElse(Result(f))
+                finally discard(activeOffers.decrementAndGet())
                 end try
             end offerOp
 
             private def handleHalfOpen(): Unit =
                 state.get() match
-                    case s: State.HalfOpen if _isEmpty() && state.compareAndSet(s, State.FullyClosed(s.r)) =>
-                        s.p.completeDiscard(Result.succeed(true))
+                    case s: State.HalfOpen if _isEmpty() =>
+                        // The queue looks drained, but an offer that read the state while it was still Open can commit after this point,
+                        // and once the transition below lands nothing will ever consume it again. Wait the in-flight offers out first, by
+                        // the same argument close() uses: any offer that starts from here reads HalfOpen and gives up, so once the count
+                        // reaches zero the emptiness the awaiter is told about is a stable answer rather than a snapshot.
+                        while activeOffers.get() > 0 do ()
+                        if _isEmpty() && state.compareAndSet(s, State.FullyClosed(s.r)) then
+                            s.p.completeDiscard(Result.succeed(true))
                     case _ =>
 
         end Closeable
@@ -679,15 +700,14 @@ object Queue:
                         def _isEmpty()                             = true
                 case 1 =>
                     new Closeable[A](initFrame):
-                        private val state              = AtomicRef.Unsafe.init(Maybe.empty[A])
-                        def capacity                   = 1
-                        def empty()(using AllowUnsafe) = op(state.get().isEmpty)
-                        def size()(using AllowUnsafe)  = op(if state.get().isEmpty then 0 else 1)
-                        def full()(using AllowUnsafe)  = op(state.get().isDefined)
-                        def offer(v: A)(using AllowUnsafe) =
-                            offerOp(state.compareAndSet(Maybe.empty, Maybe(v)), !state.compareAndSet(Maybe(v), Maybe.empty))
-                        def poll()(using AllowUnsafe) = pollOp(state.getAndSet(Maybe.empty))
-                        def peek()(using AllowUnsafe) = op(state.get())
+                        private val state                  = AtomicRef.Unsafe.init(Maybe.empty[A])
+                        def capacity                       = 1
+                        def empty()(using AllowUnsafe)     = op(state.get().isEmpty)
+                        def size()(using AllowUnsafe)      = op(if state.get().isEmpty then 0 else 1)
+                        def full()(using AllowUnsafe)      = op(state.get().isDefined)
+                        def offer(v: A)(using AllowUnsafe) = offerOp(state.compareAndSet(Maybe.empty, Maybe(v)))
+                        def poll()(using AllowUnsafe)      = pollOp(state.getAndSet(Maybe.empty))
+                        def peek()(using AllowUnsafe)      = op(state.get())
                         def _drain(max: Maybe[Int] = Maybe.Absent) =
                             max.fold(
                                 state.getAndSet(Maybe.empty).fold(Chunk.empty)(Chunk(_))
@@ -712,24 +732,13 @@ object Queue:
 
         private[Queue] def fromInternal[A](q: UnsafeQueue[A])(using initFrame: Frame, allow: AllowUnsafe): Unsafe[A] =
             new Closeable[A](initFrame):
-                def capacity                   = q.capacity
-                def size()(using AllowUnsafe)  = op(q.size())
-                def empty()(using AllowUnsafe) = op(q.isEmpty())
-                def full()(using AllowUnsafe)  = op(q.isFull())
-                def offer(v: A)(using AllowUnsafe) =
-                    offerOp(
-                        q.offer(v),
-                        q.poll() match
-                            case Maybe.Present(polled) =>
-                                val isOurs = polled.asInstanceOf[AnyRef] eq v.asInstanceOf[AnyRef]
-                                if !isOurs then
-                                    // Polled someone else's element — put it back
-                                    discard(q.offer(polled))
-                                !isOurs
-                            case _ => true
-                    )
-                def poll()(using AllowUnsafe) = pollOp(q.poll())
-                def peek()(using AllowUnsafe) = op(q.peek())
+                def capacity                       = q.capacity
+                def size()(using AllowUnsafe)      = op(q.size())
+                def empty()(using AllowUnsafe)     = op(q.isEmpty())
+                def full()(using AllowUnsafe)      = op(q.isFull())
+                def offer(v: A)(using AllowUnsafe) = offerOp(q.offer(v))
+                def poll()(using AllowUnsafe)      = pollOp(q.poll())
+                def peek()(using AllowUnsafe)      = op(q.peek())
                 def _drain(max: Maybe[Int] = Maybe.Absent) =
                     val b = Chunk.newBuilder[A]
                     max match
