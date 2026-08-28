@@ -13,6 +13,14 @@ package kyo.proto.kernel.internal
   */
 abstract class Debugger:
 
+    /** Whether a strict application may run inline; false routes it through the eval. The strict-path gate consulted by
+      * `Safepoint.enterPark`: a session drains its eval's slot so every strict application lands on that cold path, keeping the hot
+      * `Safepoint.enter` byte-identical for everyone else. Frameless on purpose, since even a frame operand alone taxes every call site; a
+      * session that wants frames routes the application and reads it in the eval. Consulted per application, so a session that refuses must
+      * allow the delivery retry or the application defers against its own refusal forever.
+      */
+    def enter(): Boolean = true
+
     /** A node or outcome allocated; fired from the constructors. */
     def onAlloc(value: Any): Unit = ()
 
