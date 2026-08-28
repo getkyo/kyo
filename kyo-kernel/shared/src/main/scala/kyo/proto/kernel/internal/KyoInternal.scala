@@ -121,8 +121,17 @@ object Kyo:
 
     def handle[E <: Effect, A, B, S, State](v: A < (E & S), handler: Handler[E, A, B, S, State], state: State): B < S =
         v match
-            case v: Pending[A, E & S] @unchecked =>
-                Handle[E, A, B, B, S, State](v, handler, state, Arrow.id)
+            case kyo: Pending[A, E & S] @unchecked =>
+                // built directly rather than through the companion: the identity continuation is a
+                // constant, not a captured field
+                val h  = handler
+                val st = state
+                new Handle[E, A, B, B, S, State]:
+                    def value   = kyo
+                    def handler = h
+                    def state   = st
+                    def cont    = Arrow.id
+                end new
             case _ =>
                 handler.done(state, v.asInstanceOf[A])
 
