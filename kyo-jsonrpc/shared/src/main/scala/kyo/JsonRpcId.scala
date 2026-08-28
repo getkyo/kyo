@@ -85,7 +85,7 @@ object JsonRpcId:
                     case _: TypeMismatchException => JsonRpcId(reader.string()),
         // JsonRpcId is String | Long inside its own companion, so a summoned Tag[JsonRpcId] would
         // arrive as the union's; deriving it by name keeps the discriminator naming JsonRpcId.
-        structure = Structure.Type.Open(Tag.derive[JsonRpcId].asInstanceOf[Tag[Any]])
+        structure = Structure.Type.Open(Tag.derive[JsonRpcId].erased
     )
 
     given CanEqual[JsonRpcId, JsonRpcId] = CanEqual.derived
