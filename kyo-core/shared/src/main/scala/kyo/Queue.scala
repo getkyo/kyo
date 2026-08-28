@@ -536,6 +536,19 @@ object Queue:
         def close()(using Frame, AllowUnsafe): Maybe[Seq[A]]
         def closeAwaitEmpty()(using Frame, AllowUnsafe): Fiber.Unsafe[Boolean, Any]
         def closed()(using AllowUnsafe): Boolean
+
+        /** Best-effort human-readable snapshot of this queue's coordination state (open/half-open/closed status, ring emptiness and
+          * size, in-flight offer count) for the [[kyo.internal.Diagnostics]] hang dumpers. Renders even when the queue is FullyClosed,
+          * unlike [[size]]. Overridden by the closeable backends; the default covers any other implementation.
+          */
+        private[kyo] def diagnosticState(): String = "(non-closeable queue)"
+
+        /** True once this queue rejects new offers: soft-closed (HalfOpen, still draining its ring to consumers) or fully closed. A
+          * producer parked because the ring was full can never be transferred in once this holds, so a channel must fail such a producer
+          * rather than wait for a delivery that can never happen. Default false; overridden by the closeable backend.
+          */
+        private[kyo] def offersRejected(): Boolean = false
+
         final def safe: Queue[A] = this
     end Unsafe
 
@@ -604,6 +617,19 @@ object Queue:
 
             final def closed()(using AllowUnsafe) =
                 state.get().isInstanceOf[State.FullyClosed]
+
+            override private[kyo] def diagnosticState(): String =
+                val st = state.get() match
+                    case State.Open           => "Open"
+                    case State.HalfOpen(p, _) => s"HalfOpen(awaitEmptyDone=${p.done()})"
+                    case _: State.FullyClosed => "FullyClosed"
+                val ringSize = this.size() match
+                    case Result.Success(n) => n.toString
+                    case _                 => "closed"
+                s"state=$st ringEmpty=${_isEmpty()} ringSize=$ringSize activeOffers=${activeOffers.get()}"
+            end diagnosticState
+
+            override private[kyo] def offersRejected(): Boolean = offerClosed.isDefined
 
             final def drainUpTo(max: Int)(using AllowUnsafe): Result[Closed, Chunk[A]] = pollOp(_drain(Maybe.Present(max)))
 

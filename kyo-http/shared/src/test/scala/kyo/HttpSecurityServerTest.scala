@@ -52,7 +52,11 @@ class HttpSecurityServerTest extends BaseHttpTest:
                 def drain(acc: String, n: Int): String < (Async & Abort[Any]) =
                     if n > 8 then acc
                     else
-                        Abort.run[Any](Async.timeout(500.millis)(Abort.run[Closed](conn.inbound.safe.take))).map {
+                        // A generous first-read budget covers the server's processing latency for the staged request; a shorter per-span idle
+                        // budget bounds the tail wait once bytes are flowing (matches sendRawBytes). A flat short budget would give up on the
+                        // first read before a loaded runner finished processing, capturing only a partial response and failing the leaf spuriously.
+                        val budget = if n == 0 then 2.seconds else 1.second
+                        Abort.run[Any](Async.timeout(budget)(Abort.run[Closed](conn.inbound.safe.take))).map {
                             case Result.Success(Result.Success(d)) => drain(acc + new String(d.toArray, "ISO-8859-1"), n + 1)
                             case _                                 => acc
                         }

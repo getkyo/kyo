@@ -39,10 +39,15 @@ import scala.util.control.NonFatal
   *
   * #### State Management
   *
-  * The worker transitions between three states:
+  * The worker transitions between four states:
   *   - Idle: No tasks to execute
+  *   - Dispatched: A thread was requested from the executor but has not claimed the worker yet
   *   - Running: Actively executing tasks
   *   - Stalled: Detected as blocked or exceeding time slice
+  *
+  * The scheduler has no recovery of its own for a dispatch the executor accepts and then drops: it relies on the executor honoring
+  * every accepted runnable. A worker reported as not running, with load above zero and no mount thread, is that failure's
+  * fingerprint in a status dump.
   *
   * Thread state monitoring detects when workers become blocked on I/O or synchronization, allowing the scheduler to compensate by not
   * scheduling new tasks to blocked workers.
@@ -151,11 +156,12 @@ abstract private class Worker(
         wakeup()
     }
 
-    /** Transitions the worker from Idle to Running state and requests a new thread from the executor if successful. Used when new work
-      * arrives for an idle worker.
+    /** Transitions the worker from Idle to Dispatched and requests a thread from the executor. run() claims the
+      * worker by taking the Dispatched -> Running edge, so a dispatch that never mounts leaves the worker
+      * Dispatched, which is what recoverStrand detects.
       */
     def wakeup() = {
-        if ((state.get() eq State.Idle) && state.compareAndSet(State.Idle, State.Running))
+        if ((state.get() eq State.Idle) && state.compareAndSet(State.Idle, State.Dispatched))
             exec.execute(this)
     }
 
@@ -263,7 +269,13 @@ abstract private class Worker(
     }
 
     def run(): Unit = {
-        Thread.interrupted() // clear stale interrupt from pool reuse
+        // Clear any stale interrupt from pool reuse before the ownership claim, so a loser that bows out below
+        // does not carry a leftover interrupt back into the pooled thread.
+        Thread.interrupted()
+        // Claim the worker by taking the Dispatched -> Running edge. A strand-recovery re-dispatch can race the
+        // original dispatch when that original was merely slow rather than lost; the loser of this CAS returns
+        // immediately, before writing any single-owner field, so the worker is never mounted by two threads.
+        if (!state.compareAndSet(State.Dispatched, State.Running)) return
         // Set up worker state
         mounts += 1
         mount = Thread.currentThread()
@@ -333,22 +345,22 @@ abstract private class Worker(
                         completions += 1
                     }
                 } else {
-                    // No tasks available: release ownership and go idle. Clear the active-run fields
-                    // BEFORE publishing Idle: while state is Running no wakeup can dispatch a successor,
-                    // so these writes cannot race one. Once Idle is published a successor may mount and
-                    // set its own fields, so from then on this invocation must not write them.
+                    // No tasks available: go idle. Clear the active-run fields BEFORE publishing Idle:
+                    // while state is Running or Stalled no successor can be dispatched, so these writes
+                    // cannot race one. Once Idle is published the Idle edge has two contenders, this
+                    // invocation's re-claim (Idle -> Running) and a wakeup (Idle -> Dispatched, whose
+                    // successor claims at entry); the CAS arbitration leaves exactly one owner.
                     blocked = false
                     mountId = -1L
                     mount = null
                     state.set(State.Idle)
                     if (queue.isEmpty() || !state.compareAndSet(State.Idle, State.Running)) {
-                        // Queue empty (released as the last owner) or a wakeup re-acquired ahead of us
-                        // (a fresh run() now owns the worker): either way this invocation is done. Leave
-                        // the shared fields untouched so a successor's setup is not clobbered.
+                        // Queue empty or a wakeup took the Idle edge first (its successor now owns the
+                        // worker): either way this invocation is done. Leave the shared fields untouched
+                        // so a successor's setup is not clobbered.
                         released = true
                         return
                     }
-                    // Re-acquired before any successor: re-mount and keep running.
                     mount = Thread.currentThread()
                     mountId = ThreadUserTime.currentThreadId()
                 }
@@ -445,9 +457,10 @@ private object Worker {
 
     sealed trait State
     object State {
-        case object Idle    extends State
-        case object Running extends State
-        case object Stalled extends State
+        case object Idle       extends State
+        case object Dispatched extends State
+        case object Running    extends State
+        case object Stalled    extends State
     }
 
     private[Worker] object internal {

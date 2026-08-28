@@ -42,6 +42,8 @@ class UpdateHistoryTest extends AnyFreeSpec {
         }
 
         "history includes timestamp" in {
+            // The recorded timestamp is captured between two real-clock reads, so before <= ts <= after bounds it without
+            // asserting any elapsed duration. NTP slews rather than steps on CI, so the bracket cannot invert.
             val before = java.lang.System.currentTimeMillis()
             val flag   = HistoryTestFlags.timestamp
             flag.update("rollout:new@expr")

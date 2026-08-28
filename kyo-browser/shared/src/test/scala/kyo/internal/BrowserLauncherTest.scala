@@ -2,7 +2,7 @@ package kyo.internal
 
 import kyo.*
 
-class BrowserLauncherTest extends BaseBrowserTest:
+class BrowserLauncherTest extends BaseChromeTest:
 
     override def timeout = 2.minutes
 

@@ -397,28 +397,32 @@ object TestRunner:
         // Retrieve the buffered body INSIDE a `Sync.defer` so a body that throws synchronously (e.g. a bare
         // `assert(1 == 2)` whose entire body is the throwing expression) is captured by the conversion below rather than
         // escaping eagerly during retrieval. The suite's `aroundLeaf` hook wraps every leaf body (default identity).
-        val rawBody: Unit < (Async & Abort[Any] & Scope) =
-            // Start each evaluation of the body from an empty sink. Retry/repeat re-run this computation, and an early
-            // attempt that THREW a failure (which the assert macro recorded into the sink before throwing) then RECOVERED
-            // would otherwise leave a stale record that the drain-then-flip below wrongly turns into a Failed leaf. The
-            // clear runs BEFORE the body spawns any detached fiber, so a detached fiber's later record (the plain
-            // detached-capture path) is preserved and still flips the leaf; only the FINAL attempt's records survive.
-            Sync.defer { val _ = as.drain(); () }
-                .andThen(instance.aroundLeaf(Sync.defer(ctx.takeRegisteredBody(as))))
-        // The leaf baseline is `Abort[Any]` (a leaf may abort with ANY value, not only a Throwable). Convert it to the
-        // runner's `Abort[Throwable]` pipeline here, at the single production point, so Retry/timeout/repeat and the
+        // Convert a leaf computation from the `Abort[Any]` baseline (a leaf may abort with ANY value, not only a
+        // Throwable) into the runner's `Abort[Throwable]` pipeline, so Retry/timeout/repeat and the
         // `Abort.run[Throwable]` boundary below stay Throwable-shaped (mirrors `KyoApp.abortAnyToThrowable`):
         //   - `Abort.catching[Throwable]` turns a thrown failure (e.g. `assert` throws `AssertionFailed`) into an Abort
         //     FAILURE, which is what makes retry-on-throw work: Kyo's `Retry` re-raises a `Result.Panic` WITHOUT retrying,
         //     and a raw `throw` is a Panic, so an uncaught thrown assertion would never be retried.
         //   - a `Throwable` abort passes through unchanged; a non-`Throwable` abort is wrapped in `LeafAborted`.
-        val body: Unit < (Async & Abort[Throwable] & Scope) =
-            Abort.run[Any](Abort.catching[Throwable](rawBody)).map {
+        // Applied at two layers below (the test body, then again around the `aroundLeaf` wrapper). It is idempotent on
+        // Throwable-shaped aborts: Timeout, AssertionFailed, and LeafAborted all take the Throwable arm and re-raise
+        // unchanged, so the outer application only ever catches something the `aroundLeaf` hook itself throws.
+        def toThrowable(x: Unit < (Async & Abort[Any] & Scope)): Unit < (Async & Abort[Throwable] & Scope) =
+            Abort.run[Any](Abort.catching[Throwable](x)).map {
                 case Result.Success(value)            => value
                 case Result.Failure(error: Throwable) => Abort.fail(error)
                 case Result.Failure(error)            => Abort.fail(LeafAborted(error))
                 case panic: Result.Panic              => Abort.get(panic)
             }
+
+        // The test body per attempt: start each evaluation from an empty sink, then take the registered body.
+        // Retry/repeat re-run this, so the drain runs per attempt; an early attempt that THREW a failure (recorded into
+        // the sink before throwing) then RECOVERED would otherwise leave a stale record the drain-then-flip below wrongly
+        // turns into a Failed leaf. The clear runs BEFORE the body spawns any detached fiber, so a detached fiber's later
+        // record is preserved and still flips the leaf; only the FINAL attempt's records survive. The `aroundLeaf` hook is
+        // applied OUTSIDE the timeout (below), not here, so its setup does not spend the leaf's timeout budget.
+        val body: Unit < (Async & Abort[Throwable] & Scope) =
+            toThrowable(Sync.defer { val _ = as.drain(); () }.andThen(Sync.defer(ctx.takeRegisteredBody(as))))
 
         // pendingUntilFixed bodies are EXPECTED to fail and run exactly once; retry/repeat do not apply.
         val isXfail = builder.pendingUntilFixed.isDefined
@@ -435,16 +439,22 @@ object TestRunner:
         // timeout OUTSIDE Retry is also what makes retry-on-throw work: a throw wrapped in `Async.timeout` surfaces as a
         // `Result.Panic` (which Retry would not retry), whereas the un-wrapped body's throw stays a retryable
         // `Result.Failure`. A genuine timeout expiry raises `Abort[Timeout]`, mapped to TimedOut at the boundary below.
-        // The no-retry path keeps the single-attempt behavior: a thrown AssertionFailed surfaces as a `Result.Panic` that
-        // resultToTestResult maps to the same Failed leaf.
         val timed: Unit < (Async & Abort[Throwable] & Scope) =
             builder.timeout match
                 case Maybe.Present(d) => Async.timeout(d)(retried)
                 case Maybe.Absent     => retried
 
+        // Apply the suite's `aroundLeaf` hook from OUTSIDE the timeout, so any setup it performs (a resource
+        // acquisition, a browser warm-up) runs untimed and does not consume the leaf's timeout budget; only the wrapped
+        // body is timed, and the hook runs once around the retry loop. `aroundLeaf` takes an `Abort[Any]` leaf and the
+        // `Abort[Throwable]`-shaped `timed` widens to it (`Abort[-E]` and `<[+A, -S]` are contravariant), then its result
+        // is normalized back through `toThrowable`.
+        val wrapped: Unit < (Async & Abort[Throwable] & Scope) =
+            toThrowable(instance.aroundLeaf(timed))
+
         val repeated: Unit < (Async & Abort[Throwable] & Scope) =
-            if isXfail || builder.repeat <= 1 then timed
-            else Kyo.foreachDiscard(0 until builder.repeat)(_ => timed)
+            if isXfail || builder.repeat <= 1 then wrapped
+            else Kyo.foreachDiscard(0 until builder.repeat)(_ => wrapped)
 
         // Discharge Scope per-leaf (Scope is fiber-shared; per-leaf Scope.run bounds resource release to leaf end), spawn the
         // body as its own fiber so the per-leaf Local context is inherited, then catch the Abort/Panic boundary.

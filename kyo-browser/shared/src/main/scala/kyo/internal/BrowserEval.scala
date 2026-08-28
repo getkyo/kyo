@@ -139,6 +139,33 @@ private[kyo] object BrowserEval:
 
     // ---- Mouse-event dispatch ----
 
+    /** Records the page's current click tally as the baseline a following [[clickWasReceived]] compares against.
+      *
+      * The listener goes on `window` in the CAPTURE phase, which is the first node an event visits and the only placement that survives a
+      * page suppressing its own clicks: `stopPropagation` blocks the next node, never the remaining listeners on the node already being
+      * visited, so an app that swallows clicks at window capture is still counted here. On `document` it would not be, and a legitimate
+      * page would be reported as having lost a click it actually received.
+      *
+      * What it deliberately cannot observe is an event the browser never delivered, which is the case this exists to name. It counts
+      * delivery only, never that a handler ran, so an element nobody listens to is still a real click. A navigation wipes `window`, so the
+      * next arm re-installs against the fresh document. A page calling `stopImmediatePropagation` from a window-capture listener
+      * registered before this one is the one blind spot, and it suppresses every observer, not just this probe.
+      */
+    private[kyo] def armClickProbe(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
+        evalJs(
+            """(function(){var w=window;if(!w.__kyoClickProbe){w.__kyoClickProbe={count:0};""" +
+                """w.addEventListener('click',function(){w.__kyoClickProbe.count++;},true);}""" +
+                """w.__kyoClickProbe.baseline=w.__kyoClickProbe.count;return 'armed';})()"""
+        ).unit
+
+    /** True when at least one click reached the document since [[armClickProbe]]. A missing probe reads as received: the document was
+      * replaced (a navigation) between arming and reading, and a lost-click claim we cannot substantiate must never fail a caller.
+      */
+    private[kyo] def clickWasReceived(using Frame): Boolean < (Browser & Abort[BrowserReadException]) =
+        evalJs(
+            """(function(){var p=window.__kyoClickProbe;return String(!p||p.count>p.baseline);})()"""
+        ).map(_ == "true")
+
     /** Dispatches a click at pre-resolved coordinates. Called from the Actionability-gated interaction paths; the gate has already produced
       * the center, so there is no need to re-evaluate the element's rect.
       */

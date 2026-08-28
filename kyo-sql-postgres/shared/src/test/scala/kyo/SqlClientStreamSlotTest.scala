@@ -97,7 +97,9 @@ class SqlClientStreamSlotTest extends Test:
     ): SqlConfig =
         SqlConfig(
             maxConnections = maxConnections,
-            acquireTimeout = 500.millis,
+            // Generous acquire deadline: the fake server's accept+startup handshake is fast, but 500ms was too tight for it under CI load; these
+            // leaves exercise slot bookkeeping, not the acquire deadline, so a connection must reliably land.
+            acquireTimeout = 15.seconds,
             queryTimeout = 100.millis,
             idleTimeout = 10.minutes,
             metricsScope = metricsScope

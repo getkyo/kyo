@@ -71,7 +71,7 @@ import kyo.internal.SharedChrome
 //
 // ────────────────────────────────────────────────────────────────────────────
 
-abstract class BrowserTest extends BaseBrowserTest:
+abstract class BrowserTest extends BaseChromeTest:
 
     /** Cold-Chrome warmup gate. The shared-Chrome first-call cost (~2.8s for Chrome launch + CDP roundtrip) would otherwise blow
       * per-call schedule budgets in `BrowserPerCallScheduleTest`. Eat that cost on the FIRST integration-test call so subsequent tests see a

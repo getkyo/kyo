@@ -344,101 +344,103 @@ object ClasspathOrchestrator:
             Scope.run {
                 Channel.initUnscoped[(String, String)](entryCap, Access.MultiProducerMultiConsumer).map { entryCh =>
                     Channel.initUnscoped[DecodeResult](resultCap, Access.MultiProducerMultiConsumer).map { resultCh =>
-                        // Scope.ensure registrations guarantee channels close on ANY exit (success, abort, interrupt).
-                        // Uses close (not closeAwaitEmpty) so that on abort the signal is immediate: interrupted
-                        // consumers are no longer draining, and closeAwaitEmpty would block forever waiting for them.
-                        // streamUntilClosed handles the Closed signal correctly on any exit path.
-                        Scope.ensure(entryCh.close.unit).andThen {
-                            Scope.ensure(resultCh.close.unit).andThen {
-                                val producerStage = Async.foreach(Chunk.from(roots), rootCount) { root =>
-                                    TastyStat.scope.traceSpan(
-                                        "walkRoot",
-                                        Attributes.empty.add("root", root)
-                                    )(walkRoot(root, entryCh))
-                                }
+                        registerPipelineDiagnostics(entryCh, resultCh, t_listEnd, t_decodeEnd, t_mergeEnd).andThen {
+                            // Scope.ensure registrations guarantee channels close on ANY exit (success, abort, interrupt).
+                            // Uses close (not closeAwaitEmpty) so that on abort the signal is immediate: interrupted
+                            // consumers are no longer draining, and closeAwaitEmpty would block forever waiting for them.
+                            // streamUntilClosed handles the Closed signal correctly on any exit path.
+                            Scope.ensure(entryCh.close.unit).andThen {
+                                Scope.ensure(resultCh.close.unit).andThen {
+                                    val producerStage = Async.foreach(Chunk.from(roots), rootCount) { root =>
+                                        TastyStat.scope.traceSpan(
+                                            "walkRoot",
+                                            Attributes.empty.add("root", root)
+                                        )(walkRoot(root, entryCh))
+                                    }
 
-                                val decoderStage = Async.foreach(Chunk.fill(decodeConcurrency)(()), decodeConcurrency) { _ =>
-                                    TastyStat.scope.traceSpan("decoder") {
-                                        entryCh.streamUntilClosed().foreach { (entryPath, kind) =>
-                                            decodeOneEntry(entryPath, kind, mode, nextGlobalId).map { result =>
-                                                // If resultCh closed early (FailFast abort), silently discard
-                                                Abort.run[Closed](resultCh.put(result)).unit
+                                    val decoderStage = Async.foreach(Chunk.fill(decodeConcurrency)(()), decodeConcurrency) { _ =>
+                                        TastyStat.scope.traceSpan("decoder") {
+                                            entryCh.streamUntilClosed().foreach { (entryPath, kind) =>
+                                                decodeOneEntry(entryPath, kind, mode, nextGlobalId).map { result =>
+                                                    // If resultCh closed early (FailFast abort), silently discard
+                                                    Abort.run[Closed](resultCh.put(result)).unit
+                                                }
                                             }
                                         }
                                     }
-                                }
 
-                                val mergerStage: Unit < (Async & Abort[TastyError]) =
-                                    TastyStat.scope.traceSpan("merger") {
-                                        resultCh.streamUntilClosed().foreach { result =>
-                                            Sync.defer(mergeOneInto(mergeState, result))
+                                    val mergerStage: Unit < (Async & Abort[TastyError]) =
+                                        TastyStat.scope.traceSpan("merger") {
+                                            resultCh.streamUntilClosed().foreach { result =>
+                                                Sync.defer(mergeOneInto(mergeState, result))
+                                            }
                                         }
+
+                                    // Producer closes entryCh after all puts complete (closeAwaitEmpty so decoders drain buffer).
+                                    val producerWithClose: Unit < (Abort[TastyError] & Async) =
+                                        producerStage
+                                            .andThen(Sync.Unsafe.defer(t_listEnd.set(java.lang.System.nanoTime())))
+                                            .andThen(entryCh.closeAwaitEmpty.unit)
+                                    // Decoders close resultCh after all puts complete.
+                                    val decoderWithClose: Unit < (Abort[TastyError] & Async) =
+                                        decoderStage
+                                            .andThen(Sync.Unsafe.defer(t_decodeEnd.set(java.lang.System.nanoTime())))
+                                            .andThen(resultCh.closeAwaitEmpty.unit)
+                                    // Merger records its end time after draining resultCh.
+                                    val mergerWithTiming: Unit < (Async & Abort[TastyError]) =
+                                        mergerStage.andThen(Sync.Unsafe.defer(t_mergeEnd.set(java.lang.System.nanoTime())))
+
+                                    // Async.foreach with concurrency=3 and 3 items runs all 3 stages concurrently.
+                                    // Unlike Async.gather, Async.foreach propagates the first Abort failure and
+                                    // interrupts the other fibers (including a stuck merger) via IOPromise.interrupts.
+                                    val stages: Chunk[Unit < (Abort[TastyError] & Async)] =
+                                        Chunk(producerWithClose, decoderWithClose, mergerWithTiming)
+                                    Async.foreach(stages, 3) { stage =>
+                                        stage
+                                    }.andThen(finalizeMerge(
+                                        mergeState,
+                                        mode,
+                                        bodyStoreOutput,
+                                        positionsStoreOutput,
+                                        declarationRangeStoreOutput,
+                                        parentOccurrenceStoreOutput
+                                    )).map { result =>
+                                        (if timingEnabled then
+                                             Sync.Unsafe.defer {
+                                                 val t_end       = java.lang.System.nanoTime()
+                                                 val t0          = t_start.get()
+                                                 val tList       = t_listEnd.get()
+                                                 val tDec        = t_decodeEnd.get()
+                                                 val tMrg        = t_mergeEnd.get()
+                                                 val listMs      = if tList > 0 then (tList - t0) / 1_000_000L else -1L
+                                                 val decodeMs    = if tDec > 0 then (tDec - t0) / 1_000_000L else -1L
+                                                 val mergeMs     = if tMrg > 0 then (tMrg - t0) / 1_000_000L else -1L
+                                                 val totalMs     = (t_end - t0) / 1_000_000L
+                                                 val finalizeMs  = if tMrg > 0 then (t_end - tMrg) / 1_000_000L else -1L
+                                                 val jars        = TastyPerfStats.jarOpens.get()
+                                                 val entries     = TastyPerfStats.entryReads.get()
+                                                 val bytesRaw    = TastyPerfStats.bytesRead.get()
+                                                 val bytesMB     = bytesRaw / (1024L * 1024L)
+                                                 val constructMs = TastyPerfStats.jarConstructNs.get() / 1_000_000L
+                                                 val readMs      = TastyPerfStats.jarReadNs.get() / 1_000_000L
+                                                 val headerMs    = TastyPerfStats.tastyHeaderNs.get() / 1_000_000L
+                                                 val namesMs     = TastyPerfStats.nameUnpicklerNs.get() / 1_000_000L
+                                                 val sectionMs   = TastyPerfStats.sectionIndexNs.get() / 1_000_000L
+                                                 val attrMs      = TastyPerfStats.attributeUnpicklerNs.get() / 1_000_000L
+                                                 val astMs       = TastyPerfStats.astPass1Ns.get() / 1_000_000L
+                                                 val posMs       = TastyPerfStats.positionsUnpicklerNs.get() / 1_000_000L
+                                                 val commentsMs  = TastyPerfStats.commentsUnpicklerNs.get() / 1_000_000L
+                                                 (
+                                                     s"[kyo-tasty] cold-load: list=${listMs}ms decode=${decodeMs}ms merge=${mergeMs}ms finalize=${finalizeMs}ms total=${totalMs}ms | jars=$jars (construct=${constructMs}ms read=${readMs}ms) entries=$entries bytes=${bytesMB}MB",
+                                                     s"[kyo-tasty]   decode-breakdown: header=${headerMs}ms names=${namesMs}ms section=${sectionMs}ms attr=${attrMs}ms ast=${astMs}ms pos=${posMs}ms comments=${commentsMs}ms"
+                                                 )
+                                             }.map { (msg1, msg2) =>
+                                                 Log.info(msg1).andThen(Log.info(msg2))
+                                             }
+                                         else
+                                             Kyo.unit
+                                        ).andThen(result)
                                     }
-
-                                // Producer closes entryCh after all puts complete (closeAwaitEmpty so decoders drain buffer).
-                                val producerWithClose: Unit < (Abort[TastyError] & Async) =
-                                    producerStage
-                                        .andThen(Sync.Unsafe.defer(t_listEnd.set(java.lang.System.nanoTime())))
-                                        .andThen(entryCh.closeAwaitEmpty.unit)
-                                // Decoders close resultCh after all puts complete.
-                                val decoderWithClose: Unit < (Abort[TastyError] & Async) =
-                                    decoderStage
-                                        .andThen(Sync.Unsafe.defer(t_decodeEnd.set(java.lang.System.nanoTime())))
-                                        .andThen(resultCh.closeAwaitEmpty.unit)
-                                // Merger records its end time after draining resultCh.
-                                val mergerWithTiming: Unit < (Async & Abort[TastyError]) =
-                                    mergerStage.andThen(Sync.Unsafe.defer(t_mergeEnd.set(java.lang.System.nanoTime())))
-
-                                // Async.foreach with concurrency=3 and 3 items runs all 3 stages concurrently.
-                                // Unlike Async.gather, Async.foreach propagates the first Abort failure and
-                                // interrupts the other fibers (including a stuck merger) via IOPromise.interrupts.
-                                val stages: Chunk[Unit < (Abort[TastyError] & Async)] =
-                                    Chunk(producerWithClose, decoderWithClose, mergerWithTiming)
-                                Async.foreach(stages, 3) { stage =>
-                                    stage
-                                }.andThen(finalizeMerge(
-                                    mergeState,
-                                    mode,
-                                    bodyStoreOutput,
-                                    positionsStoreOutput,
-                                    declarationRangeStoreOutput,
-                                    parentOccurrenceStoreOutput
-                                )).map { result =>
-                                    (if timingEnabled then
-                                         Sync.Unsafe.defer {
-                                             val t_end       = java.lang.System.nanoTime()
-                                             val t0          = t_start.get()
-                                             val tList       = t_listEnd.get()
-                                             val tDec        = t_decodeEnd.get()
-                                             val tMrg        = t_mergeEnd.get()
-                                             val listMs      = if tList > 0 then (tList - t0) / 1_000_000L else -1L
-                                             val decodeMs    = if tDec > 0 then (tDec - t0) / 1_000_000L else -1L
-                                             val mergeMs     = if tMrg > 0 then (tMrg - t0) / 1_000_000L else -1L
-                                             val totalMs     = (t_end - t0) / 1_000_000L
-                                             val finalizeMs  = if tMrg > 0 then (t_end - tMrg) / 1_000_000L else -1L
-                                             val jars        = TastyPerfStats.jarOpens.get()
-                                             val entries     = TastyPerfStats.entryReads.get()
-                                             val bytesRaw    = TastyPerfStats.bytesRead.get()
-                                             val bytesMB     = bytesRaw / (1024L * 1024L)
-                                             val constructMs = TastyPerfStats.jarConstructNs.get() / 1_000_000L
-                                             val readMs      = TastyPerfStats.jarReadNs.get() / 1_000_000L
-                                             val headerMs    = TastyPerfStats.tastyHeaderNs.get() / 1_000_000L
-                                             val namesMs     = TastyPerfStats.nameUnpicklerNs.get() / 1_000_000L
-                                             val sectionMs   = TastyPerfStats.sectionIndexNs.get() / 1_000_000L
-                                             val attrMs      = TastyPerfStats.attributeUnpicklerNs.get() / 1_000_000L
-                                             val astMs       = TastyPerfStats.astPass1Ns.get() / 1_000_000L
-                                             val posMs       = TastyPerfStats.positionsUnpicklerNs.get() / 1_000_000L
-                                             val commentsMs  = TastyPerfStats.commentsUnpicklerNs.get() / 1_000_000L
-                                             (
-                                                 s"[kyo-tasty] cold-load: list=${listMs}ms decode=${decodeMs}ms merge=${mergeMs}ms finalize=${finalizeMs}ms total=${totalMs}ms | jars=$jars (construct=${constructMs}ms read=${readMs}ms) entries=$entries bytes=${bytesMB}MB",
-                                                 s"[kyo-tasty]   decode-breakdown: header=${headerMs}ms names=${namesMs}ms section=${sectionMs}ms attr=${attrMs}ms ast=${astMs}ms pos=${posMs}ms comments=${commentsMs}ms"
-                                             )
-                                         }.map { (msg1, msg2) =>
-                                             Log.info(msg1).andThen(Log.info(msg2))
-                                         }
-                                     else
-                                         Kyo.unit
-                                    ).andThen(result)
                                 }
                             }
                         }
@@ -447,6 +449,40 @@ object ClasspathOrchestrator:
             }
         }
     end runPhaseAB
+
+    /** Registers a best-effort [[kyo.internal.Diagnostics]] dumper over the two cold-load pipeline channels plus the stage-completion
+      * markers, and scopes its removal so it never leaks across the process. On a rare cold-load hang the kyo-test runner's stuck-leaf
+      * handler calls `Diagnostics.dumpAll()`, and this dumper then names the parked primitive: which channel, its open/half-open/closed
+      * state, ring emptiness, and the parked take/put counts with whether the next waiter is already completed. That is what an idle
+      * scheduler alone cannot tell us: it says a fiber parked, not what it parked on.
+      */
+    private def registerPipelineDiagnostics(
+        entryCh: Channel[(String, String)],
+        resultCh: Channel[DecodeResult],
+        t_listEnd: AtomicLong.Unsafe,
+        t_decodeEnd: AtomicLong.Unsafe,
+        t_mergeEnd: AtomicLong.Unsafe
+    )(using Frame): Unit < (Sync & Scope) =
+        Sync.defer {
+            // System.identityHashCode disambiguates the two independent cold-loads that run in one process (one per hanging leaf).
+            val name = "kyo-tasty-runPhaseAB@" + java.lang.System.identityHashCode(entryCh)
+            kyo.internal.Diagnostics.register(name)(dump = () =>
+                // Unsafe: best-effort snapshot taken on the diagnostics consumer's thread, concurrently with the live pipeline. Every
+                // read tolerates a stale or partially-updated view and never mutates state; dumpState() peeks non-destructively and the
+                // AtomicLong reads run under an embraced AllowUnsafe scoped to this thunk.
+                import AllowUnsafe.embrace.danger
+                val entry =
+                    try entryCh.unsafe.dumpState()
+                    catch case t: Throwable => "dump threw: " + t
+                val result =
+                    try resultCh.unsafe.dumpState()
+                    catch case t: Throwable => "dump threw: " + t
+                s"producerDone=${t_listEnd.get() > 0} decodersDone=${t_decodeEnd.get() > 0} mergerDone=${t_mergeEnd.get() > 0}\n" +
+                    s"  entryCh:  $entry\n  resultCh: $result")
+        }.map { reg =>
+            Scope.ensure(Sync.defer(reg.close()))
+        }
+    end registerPipelineDiagnostics
 
     /** Walk a single root, putting (entryPath, kind) pairs into entryCh.
       *

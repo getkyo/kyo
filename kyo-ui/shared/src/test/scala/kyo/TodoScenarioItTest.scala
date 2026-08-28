@@ -268,10 +268,10 @@ class TodoScenarioItTest extends UITest:
             // Windows Chrome can drop a synthetic click, leaving the inline editor unopened or the save unfired. Retry
             // each action with its follow-up: the click re-fires until it takes effect, then the follow-up succeeds and the retry stops.
             for
-                _ <- Retry[BrowserException](Schedule.fixed(300.millis).take(5)) {
+                _ <- Retry[BrowserException](Schedule.fixed(300.millis).take(15)) {
                     Browser.click(Selector.id("item-0")).andThen(Browser.fill(Selector.id("edit"), "Buy eggs"))
                 }
-                _ <- Retry[BrowserException](Schedule.fixed(300.millis).take(5)) {
+                _ <- Retry[BrowserException](Schedule.fixed(300.millis).take(15)) {
                     Browser.click(Selector.id("save")).andThen(
                         Browser.assertText(Selector.id("v"), "list:Buy eggs,Walk dog", Present(Schedule.fixed(100.millis).take(2)))
                     )

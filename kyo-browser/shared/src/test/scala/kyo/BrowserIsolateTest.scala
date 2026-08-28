@@ -1150,10 +1150,10 @@ class BrowserIsolateTest extends BrowserTest:
     }
 
     // ── withPopup schedule clause routes the per-call schedule to the polling loop ──
-    // No popup-triggering element; the trigger is a no-op eval. The schedule (50 ms × 300 ms) bounds the
-    // wait at well under the default loadSchedule's 8 s; we assert the abort fires in [300, 1500) ms with
-    // BrowserProtocolErrorException("withPopup", "no new tab detected"), proving the schedule actually
-    // overrides the config default.
+    // No popup-triggering element; the trigger is a no-op eval. The per-call schedule (50 ms × 300 ms) bounds the
+    // wait well under the default loadSchedule's 8 s; the outer config is set effectively-infinite so a schedule that
+    // failed to override it would hang, and the typed BrowserProtocolErrorException("withPopup", "no new tab detected")
+    // is the proof the per-call schedule fired instead of the config default.
     "withPopup with a schedule clause bounds the wait time" in {
         withBrowser {
             onPage("<div>no popup here</div>") {

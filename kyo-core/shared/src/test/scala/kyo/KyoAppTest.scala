@@ -6,6 +6,11 @@ import scala.util.Try
 
 class KyoAppTest extends kyo.test.Test[Any]:
 
+    // Leaves drive full KyoApp runs via blocking KyoApp.Unsafe.runAndBlock plus Clock/Async timers.
+    // Run them sequentially so concurrent leaves don't starve the scheduler and exceed the per-leaf
+    // timeout under CI load (consistent with ClockTest/ChannelTest).
+    override def config = super.config.sequential
+
     "main" in {
         val app = new KyoApp:
             run {

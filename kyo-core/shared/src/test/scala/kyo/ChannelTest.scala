@@ -1609,6 +1609,59 @@ class ChannelTest extends kyo.test.Test[Any]:
         }
     }
 
+    "dumpState" - {
+        "renders parked takes with the next waiter's done flag on an open channel" in {
+            import AllowUnsafe.embrace.danger
+            Sync.defer {
+                val c = Channel.Unsafe.init[Int](2)
+                discard(c.takeFiber()) // parks: the channel is empty
+                discard(c.takeFiber())
+                val s = c.dumpState()
+                assert(s.contains("state=Open"), s)
+                assert(s.contains("ringEmpty=true"), s)
+                assert(s.contains("takes=2(nextDone=false)"), s) // two live parked takers, neither completed
+                assert(s.contains("puts=0(nextDone=Absent)"), s)
+                assert(s.contains("batchInProgress=false"), s)
+                succeed
+            }
+        }
+
+        "renders the buffered ring and a producer parked on a full channel" in {
+            import AllowUnsafe.embrace.danger
+            Sync.defer {
+                val c = Channel.Unsafe.init[Int](2)
+                discard(c.offer(1))
+                discard(c.offer(2))
+                discard(c.putFiber(3)) // parks: the ring is full
+                val s = c.dumpState()
+                assert(s.contains("ringSize=2"), s)
+                assert(s.contains("ringEmpty=false"), s)
+                assert(s.contains("puts=1(nextDone=false)"), s) // one live parked producer
+                succeed
+            }
+        }
+
+        "tracks the HalfOpen then FullyClosed transition under closeAwaitEmpty" in {
+            import AllowUnsafe.embrace.danger
+            Sync.defer {
+                val c = Channel.Unsafe.init[Int](2)
+                discard(c.offer(1))
+                discard(c.offer(2))
+                val drain = c.closeAwaitEmpty() // HalfOpen: the ring is non-empty, no consumer yet
+                val half  = c.dumpState()
+                assert(half.contains("state=HalfOpen"), half)
+                assert(half.contains("ringSize=2"), half)
+                discard(c.poll()) // drain the ring; the last poll escalates HalfOpen -> FullyClosed
+                discard(c.poll())
+                discard(drain)
+                val full = c.dumpState()
+                assert(full.contains("state=FullyClosed"), full)
+                assert(full.contains("ringEmpty=true"), full)
+                succeed
+            }
+        }
+    }
+
     "closeAwaitEmpty" - {
         "returns true when channel is already empty" in {
             for
@@ -1671,6 +1724,45 @@ class ChannelTest extends kyo.test.Test[Any]:
                 assert(p3r.exists { case Result.Failure(_: Closed) => true; case _ => false }, s"parked put settled=$p3r")
                 assert(dr.exists { case Result.Success(b) => !b.eval; case _ => false }, s"await-empty settled=$dr")
                 assert(c.closed(), "channel fully closed after the hard close")
+                succeed
+            }
+        }
+
+        "closeAwaitEmpty fails a producer parked on a full ring even with no consumer (does not hang it)" in {
+            import AllowUnsafe.embrace.danger
+            Sync.defer {
+                val c = Channel.Unsafe.init[Int](2)
+                discard(c.offer(1))
+                discard(c.offer(2))
+                val p3 = c.putFiber(3) // parks: the ring is full
+                // Soft-close with NO consumer draining. The ring never empties on its own, so the queue never
+                // reaches FullyClosed, and flush fails parked puts only on the FullyClosed drain: unless
+                // closeAwaitEmpty fails the parked puts itself, p3 hangs forever (HalfOpen also rejects new offers,
+                // so the value can never be delivered). closeAwaitEmpty must settle p3 Closed at HalfOpen time.
+                val drain = c.closeAwaitEmpty()
+                val p3r   = p3.poll()
+                discard(drain)
+                assert(p3r.exists { case Result.Failure(_: Closed) => true; case _ => false }, s"parked put must fail Closed, got $p3r")
+                succeed
+            }
+        }
+
+        "a put registered AFTER closeAwaitEmpty soft-closes fails Closed instead of hanging (no consumer)" in {
+            import AllowUnsafe.embrace.danger
+            Sync.defer {
+                val c = Channel.Unsafe.init[Int](2)
+                discard(c.offer(1))
+                discard(c.offer(2))
+                // Soft-close FIRST (ring full, no producer parked yet): the queue goes HalfOpen. THEN a producer
+                // registers a put. It races past closeAwaitEmpty's one-shot drain, so only flush can fail it, but the
+                // ring is full and the queue is not yet FullyClosed, so no flush branch fires and (with no consumer to
+                // drain the ring) it would park forever. HalfOpen rejects every offer, so the value can never be
+                // delivered: flush must fail it on the soft-closed state, not wait for a FullyClosed that never comes.
+                val drain = c.closeAwaitEmpty()
+                val p3    = c.putFiber(3)
+                val p3r   = p3.poll()
+                discard(drain)
+                assert(p3r.exists { case Result.Failure(_: Closed) => true; case _ => false }, s"late put must fail Closed, got $p3r")
                 succeed
             }
         }
