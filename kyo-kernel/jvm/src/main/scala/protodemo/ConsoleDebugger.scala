@@ -22,22 +22,26 @@ object ConsoleDebugger:
             }
         )
 
-    /** The class's real memory footprint on this VM, one line: total size, header, each field at its offset, and what alignment loses.
-      * Inline combinators expand an anonymous class per call site, so capture oddities (an `$outer`, a duplicated capture slot) show up
-      * here by field name, per site.
+    /** The class's real memory footprint on this VM as a segment map in offset order: header, each field with its size, and every byte
+      * alignment loses, where it loses it. Inline combinators expand an anonymous class per call site, so capture oddities (an `$outer`, a
+      * duplicated capture slot) show up as segments, per site. Compiler suffixes are trimmed from field names; `$`-prefixed synthetics keep
+      * their names.
       */
     private def layout(cls: Class[?]): String =
         val l      = ClassLayout.parseClass(cls)
         val fields = l.fields().asScala.toSeq.sortBy(_.offset)
-        val fs =
-            if fields.isEmpty then "no fields"
-            else fields.map(f => s"${f.name}:${f.size}@${f.offset}").mkString(", ")
-        val losses = (l.getLossesInternal, l.getLossesExternal) match
-            case (0, 0)   => ""
-            case (in, 0)  => s", gaps $in B"
-            case (0, ex)  => s", pad $ex B"
-            case (in, ex) => s", gaps $in B, pad $ex B"
-        s"📐 ${cls.getName}: ${l.instanceSize} B (header ${l.headerSize} B, $fs$losses)"
+        val sb     = new StringBuilder
+        sb.append(s"📐 ${l.instanceSize} B = [hdr ${l.headerSize}")
+        var end: Long = l.headerSize
+        for f <- fields do
+            if f.offset > end then sb.append(s" | gap ${f.offset - end}")
+            val name = if f.name.startsWith("$") then f.name else f.name.takeWhile(_ != '$')
+            sb.append(s" | $name ${f.size}")
+            end = f.offset + f.size
+        end for
+        if l.instanceSize > end then sb.append(s" | pad ${l.instanceSize - end}")
+        sb.append("]")
+        sb.toString
     end layout
 
 end ConsoleDebugger
