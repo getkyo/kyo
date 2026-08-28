@@ -9,9 +9,18 @@ import scala.jdk.CollectionConverters.*
 
 object ConsoleDebugger:
 
-    // a layout is class-static, so it renders once per run, at the class's first allocation:
-    // later scenarios stay quiet and the cache keeps the JOL parse a one-time cost per class
-    private var layoutSeen = Set.empty[Class[?]]
+    // a layout is class-static, so the JOL parse and the rendering are a one-time cost per
+    // class; every allocation prints the cached line
+    private var layoutCache = Map.empty[Class[?], String]
+
+    private def layoutLine(cls: Class[?]): String =
+        layoutCache.getOrElse(
+            cls, {
+                val line = layout(cls)
+                layoutCache = layoutCache.updated(cls, line)
+                line
+            }
+        )
 
     /** The class's real memory footprint on this VM, one line: total size, header, each field at its offset, and what alignment loses.
       * Inline combinators expand an anonymous class per call site, so capture oddities (an `$outer`, a duplicated capture slot) show up
@@ -67,10 +76,7 @@ final class ConsoleDebugger extends Debugger:
             case v                                        => v.getClass.getSimpleName
         counts = counts.updated(name, counts.getOrElse(name, 0) + 1)
         println(s"$pad🧮 alloc: $value")
-        val cls = value.getClass
-        if !ConsoleDebugger.layoutSeen.contains(cls) then
-            ConsoleDebugger.layoutSeen += cls
-            println(s"$pad${ConsoleDebugger.layout(cls)}")
+        println(s"$pad${ConsoleDebugger.layoutLine(value.getClass)}")
     end onAlloc
 
     override def onUnfused(arrow: Any): Unit =
