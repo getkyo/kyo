@@ -149,6 +149,12 @@ object Main:
         )(_ + 1)
     end handledMappedFused
 
+    // a bind returning an effect under trailing transforms, the mid-chain re-deferral shape
+    def rebind: Int < Any =
+        val body: Int < Add = add(1).map(a => add(a)).map(b => b + 1).map(c => c * 2)
+        runAdd(body)
+    end rebind
+
     // a pending transform held across deferred steps
     def deferBindMapped: Int < Any =
         def go(i: Int): Int < Any =
@@ -246,6 +252,7 @@ object Main:
         scenario("trailing maps")(chained)
         scenario("handled then mapped")(handledMapped)
         scenario("handled then mapped fused")(handledMappedFused)
+        scenario("pending rebind")(rebind)
         scenario("defer bind mapped")(deferBindMapped)
         scenario("suspend loop mapped")(suspendLoopMapped)
         scenario("idle handler")(idle)
