@@ -8,6 +8,7 @@ import kyo.proto.Loop.Outcome2
 import kyo.proto.kernel.<
 import kyo.proto.kernel.ArrowEffect
 import kyo.proto.kernel.ContextEffect
+import kyo.proto.kernel.Effect
 import language.implicitConversions
 
 object Eval:
@@ -67,10 +68,11 @@ object Eval:
                                         val o = handler.answer(st, suspend.input, next)
                                         dbg.onResult(o)
                                         o match
-                                            case o: Loop.Continue[VX, OX[VX] < (EX & S), A < S] @unchecked =>
-                                                region(o.state, o.value, next, ctx)
-                                            case o: Loop.Done[VX, OX[VX] < (EX & S), A < S] @unchecked =>
-                                                o.value
+                                            case o: Loop.Continue2[VX, OX[VX] < (EX & S)] @unchecked =>
+                                                region(o._1, o._2, next, ctx)
+                                            case o =>
+                                                // a done outcome is its payload in the union representation
+                                                Nested.unnest[A < S](o)
                                         end match
                                     case _ =>
                                         bug(s"unhandled: ${kyo.handler}")
@@ -132,22 +134,26 @@ object Eval:
                             cont: Arrow[B, D, S2]
                         ) =
                             out match
-                                case out: Loop.Continue[State, O[W] < (E & S), B < S] @unchecked =>
+                                case kyo: Arrow[Any, Outcome2[State, O[W] < (E & S), B < S], S2] @unchecked =>
+                                    Effect.defer(kyo, this, cont)
+                                case out: Loop.Continue2[State, O[W] < (E & S)] @unchecked =>
                                     Kyo.handle[E, A, B, S, State](
-                                        out.value.chain(next),
+                                        out._2.chain(next),
                                         handler,
-                                        out.state
+                                        out._1
                                     ).chain(cont)
-                                case out: Loop.Done[State, O[W] < (E & S), B < S] @unchecked =>
-                                    out.value.chain(cont)
+                                case out =>
+                                    // a done outcome is its payload in the union representation
+                                    Nested.unnest[B < S](out).chain(cont)
                 val out: B < S =
                     r match
                         case r: Kyo.Suspend[E, Outcome2[State, O[W] < (E & S), B < S], S] @unchecked =>
                             r.withCont(r.cont.chain(transform))
                         case _ =>
                             r.chain(transform)
-                Loop.done(out)
-            case r: Outcome2[State, O[W] < (E & S), B < S] @unchecked =>
-                r
+                // a done outcome is its payload in the union representation
+                Nested.unnest[Outcome2[State, O[W] < (E & S), B < S]](out)
+            case r =>
+                Nested.unnest[Outcome2[State, O[W] < (E & S), B < S]](r)
     end answerLoop
 end Eval

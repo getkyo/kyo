@@ -31,8 +31,10 @@ final class ConsoleDebugger extends Debugger:
             case _: Kyo.Handle[?, ?, ?, ?, ?]             => "Handle"
             case _: Arrow.Id[?]                           => "Id"
             case _: Arrow.Chain[?, ?, ?, ?]               => "Chain"
-            case _: Loop.Continue[?, ?, ?]                => "Continue"
-            case _: Loop.Done[?, ?, ?]                    => "Done"
+            case _: Loop.Continue[?]                      => "Continue"
+            case _: Loop.Continue2[?, ?]                  => "Continue2"
+            case _: Loop.Continue3[?, ?, ?]               => "Continue3"
+            case _: Loop.Continue4[?, ?, ?, ?]            => "Continue4"
             case _: Arrow.Transform[?, ?, ?]              => "Transform"
             case v                                        => v.getClass.getSimpleName
         counts = counts.updated(name, counts.getOrElse(name, 0) + 1)
