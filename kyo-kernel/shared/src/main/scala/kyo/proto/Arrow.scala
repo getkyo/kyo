@@ -7,6 +7,7 @@ import kyo.proto.kernel.internal.Nested
 import kyo.proto.kernel.internal.Pending
 import kyo.proto.kernel.internal.Safepoint
 import kyo.proto.kernel.internal.short
+import kyo.proto.kernel.internal.site
 import scala.annotation.nowarn
 
 /** The root of the kernel's value hierarchy: everything the machine holds is a [[Kyo]].
@@ -66,7 +67,7 @@ object Arrow:
     inline def apply[A](using _frame: Frame)[B, S](inline f: A => B < S): Arrow[A, B, S] =
         new Transform[A, B, S]:
             def frame                = _frame
-            override def toString    = s"Transform(${frame.position.show})"
+            override def toString    = s"Transform(${site(frame)})"
             override def apply(v: A) = f(v)
             def apply[C, S2](v: A < S2, cont: Arrow[B, C, S2]) =
                 v match

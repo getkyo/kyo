@@ -444,7 +444,7 @@ object `<` extends Implicits:
             def arrow: Arrow[A < S, A, S] =
                 new Transform[A < S, A, S]:
                     def frame                                                = _frame
-                    override def toString                                    = s"Transform(${frame.position.show})"
+                    override def toString                                    = s"Transform(${site(frame)})"
                     def apply[C, S3](v: (A < S) < S3, cont: Arrow[A, C, S3]) = run(v, cont)
             def run[C, S3](v: (A < S) < S3, cont: Arrow[A, C, S3]): C < (S & S3) =
                 v match

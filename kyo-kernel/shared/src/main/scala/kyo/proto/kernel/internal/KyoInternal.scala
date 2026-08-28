@@ -18,6 +18,13 @@ private[proto] def short(v: Any): String =
         case _: Arrow.Transform[?, ?, ?] => "Transform"
         case v                           => v.toString
 
+/** A construction site rendered as the call it was: the enclosing method, the combinator it called, and the position to jump to. */
+private[proto] def site(frame: Frame): String =
+    val callee = frame.calleeName
+    if callee.isEmpty then s"${frame.callerName}(${frame.position.show})"
+    else s"${frame.callerName}.$callee(${frame.position.show})"
+end site
+
 /** A pending computation: the node arm of the pending union.
   *
   * Sealed with every node class in this file, so union membership is closed: a value either settled or is one of the nodes below, and the
@@ -38,7 +45,7 @@ object Kyo:
         def contB: Arrow[B, C, S]
 
         override def toString =
-            def slot(a: Arrow[?, ?, ?]): String = if a eq this then s"this(${frame.snippetShort})" else short(a)
+            def slot(a: Arrow[?, ?, ?]): String = if a eq this then s"this(${site(frame)})" else short(a)
             s"Defer(${short(value)}, ${slot(contA)}, ${slot(contB)})"
     end Defer
 

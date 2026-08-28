@@ -8,6 +8,7 @@ import kyo.proto.kernel.internal.Debugger
 import kyo.proto.kernel.internal.Nested
 import kyo.proto.kernel.internal.Pending
 import kyo.proto.kernel.internal.Safepoint
+import kyo.proto.kernel.internal.site
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.annotation.targetName
@@ -324,7 +325,7 @@ object Loop:
                     val arrow = step.getOrElse {
                         new Transform[Outcome[A, O], O, S]:
                             def frame             = _frame
-                            override def toString = s"Transform(${frame.position.show})"
+                            override def toString = s"Transform(${site(frame)})"
                             def apply[C, S2](v: Outcome[A, O] < S2, cont: Arrow[O, C, S2]): C < (S & S2) =
                                 v match
                                     case kyo: Pending[Outcome[A, O], S2] @unchecked =>
@@ -377,7 +378,7 @@ object Loop:
                     val arrow = step.getOrElse {
                         new Transform[Outcome2[A, B, O], O, S]:
                             def frame             = _frame
-                            override def toString = s"Transform(${frame.position.show})"
+                            override def toString = s"Transform(${site(frame)})"
                             def apply[C, S2](v: Outcome2[A, B, O] < S2, cont: Arrow[O, C, S2]): C < (S & S2) =
                                 v match
                                     case kyo: Pending[Outcome2[A, B, O], S2] @unchecked =>
@@ -426,7 +427,7 @@ object Loop:
                     val arrow = step.getOrElse {
                         new Transform[Outcome3[A, B, C, O], O, S]:
                             def frame             = _frame
-                            override def toString = s"Transform(${frame.position.show})"
+                            override def toString = s"Transform(${site(frame)})"
                             def apply[C2, S2](v: Outcome3[A, B, C, O] < S2, cont: Arrow[O, C2, S2]): C2 < (S & S2) =
                                 v match
                                     case kyo: Pending[Outcome3[A, B, C, O], S2] @unchecked =>
@@ -477,7 +478,7 @@ object Loop:
                     val arrow = step.getOrElse {
                         new Transform[Outcome4[A, B, C, D, O], O, S]:
                             def frame             = _frame
-                            override def toString = s"Transform(${frame.position.show})"
+                            override def toString = s"Transform(${site(frame)})"
                             def apply[C2, S2](v: Outcome4[A, B, C, D, O] < S2, cont: Arrow[O, C2, S2]): C2 < (S & S2) =
                                 v match
                                     case kyo: Pending[Outcome4[A, B, C, D, O], S2] @unchecked =>
@@ -668,7 +669,7 @@ object Loop:
                     val arrow = step.getOrElse {
                         new Transform[Outcome[Unit, A], A, S]:
                             def frame             = _frame
-                            override def toString = s"Transform(${frame.position.show})"
+                            override def toString = s"Transform(${site(frame)})"
                             def apply[C, S2](v: Outcome[Unit, A] < S2, cont: Arrow[A, C, S2]): C < (S & S2) =
                                 v match
                                     case kyo: Pending[Outcome[Unit, A], S2] @unchecked =>
@@ -746,7 +747,7 @@ object Loop:
                     val arrow = step.getOrElse {
                         new Transform[Any, Nothing, S]:
                             def frame             = _frame
-                            override def toString = s"Transform(${frame.position.show})"
+                            override def toString = s"Transform(${site(frame)})"
                             def apply[C, S2](v: Any < S2, cont: Arrow[Nothing, C, S2]): C < (S & S2) =
                                 v match
                                     case kyo: Pending[Any, S2] @unchecked =>
@@ -792,7 +793,7 @@ object Loop:
                             val arrow = step.getOrElse {
                                 new Transform[Any, Unit, S]:
                                     def frame             = _frame
-                                    override def toString = s"Transform(${frame.position.show})"
+                                    override def toString = s"Transform(${site(frame)})"
                                     def apply[C, S2](v: Any < S2, cont: Arrow[Unit, C, S2]): C < (S & S2) =
                                         v match
                                             case kyo: Pending[Any, S2] @unchecked =>
