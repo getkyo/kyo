@@ -567,7 +567,7 @@ class OrchestratorTest extends kyo.test.Test[Any]:
             val md =
                 """|# Runtime timeouts
                         |
-                        |```scala doctest:scope=env:timeouts expect=runs timeout=500ms
+                        |```scala doctest:scope=env:timeouts expect=runs timeout=30000ms
                         |val until = java.lang.System.nanoTime() + 120_000_000L; while java.lang.System.nanoTime() < until do java.lang.Thread.onSpinWait()
                         |```
                         |

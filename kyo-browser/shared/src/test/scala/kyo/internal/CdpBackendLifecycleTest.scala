@@ -148,11 +148,13 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
                             )
                         }
 
-                        // Settle so the send is actually registered before close starts polling.
-                        _ <- Async.delay(50.millis)(Kyo.unit)
+                        // deviation: the slow send must be registered (written to the WS, inflight >= 1) before close starts draining, but no
+                        // observable exposes the pending-request count (CdpBackend has only awaitDrain, which waits for the opposite, inflight ==
+                        // 0). This settle is a documented margin, generous next to the ms-scale WS write.
+                        _ <- Async.delay(500.millis)(Kyo.unit)
 
-                        // close(5s) must wait for the 1-second send to drain.
-                        _           <- Async.timeout(10.seconds)(backend.close(5.seconds))
+                        // close(5s) must wait for the 1-second send to drain. A close that hangs past its grace is caught by the suite's per-leaf cap.
+                        _           <- backend.close(5.seconds)
                         fiberResult <- slowFiber.getResult
                     yield fiberResult match
                         case Result.Success(_) =>

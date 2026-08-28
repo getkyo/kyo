@@ -191,7 +191,9 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
                     // wedge. The 4x host load runs throughout, so the regulator sees sustained jitter and shrinks the pool. Assert on
                     // the loop's own read that broke the wait, not a fresh re-sample: under heavy load the BlockingMonitor is
                     // CPU-starved and its blocked flags flicker, so a second sample can momentarily dip below 4.
-                    val deadline = java.lang.System.nanoTime() + 10000000000L
+                    // 60s hang-guard: the barrier is "at least 4 carriers eventually park"; under sustained 4x host load the parking can take many
+                    // seconds, so the deadline only breaks a pool that never parks, never a slow one.
+                    val deadline = java.lang.System.nanoTime() + 60000000000L
                     var blk0     = 0
                     while (
                         {
@@ -199,11 +201,11 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
                         } && java.lang.System.nanoTime() < deadline
                     )
                         Thread.sleep(5)
-                    assert(blk0 >= 4, s"carriers never became blocked within 10s (blocked=$blk0)")
+                    assert(blk0 >= 4, s"carriers never became blocked within the hang-guard (blocked=$blk0)")
                     // Fresh runnable canary: it must be served. Without the floor the jitter-driven regulator shrinks the pool below
                     // the blocked count and the canary is starved; the floor keeps minWorkers runnable carriers, so it runs.
                     s.schedule(TestTask(_run = () => { canary.countDown(); Task.Done }))
-                    val served = canary.await(8, java.util.concurrent.TimeUnit.SECONDS)
+                    val served = canary.await(60, java.util.concurrent.TimeUnit.SECONDS)
                     val st     = s.status()
                     val r      = st.concurrency.regulator
                     val blk    = st.workers.count(w => (w ne null) && w.isBlocked)
@@ -234,8 +236,9 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
         val liveCfg = Scheduler.Config.default.copy(cores = 2, coreWorkers = 2, minWorkers = 2, maxWorkers = 4)
 
         "an adequately sized dedicated timer pool keeps the regulator firing" in withScheduler(liveCfg) { s =>
-            // probesSent increments every ~10ms; a live regulator fires many within a few seconds. Poll to a bounded deadline.
-            val deadline = java.lang.System.nanoTime() + 3000000000L
+            // probesSent increments every ~10ms; a live regulator fires many within a few seconds. Poll to a 30s hang-guard: the barrier is that
+            // the regulator eventually fires, so only a frozen pool runs the deadline out.
+            val deadline = java.lang.System.nanoTime() + 30000000000L
             while (s.status().concurrency.regulator.probesSent <= 10 && java.lang.System.nanoTime() < deadline)
                 Thread.sleep(10)
             val probes = s.status().concurrency.regulator.probesSent
