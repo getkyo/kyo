@@ -1,0 +1,2078 @@
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::arrayBaseOffset has been called by net.openhft.hashing.UnsafeAccess (file:/Users/fwbrasil/.sbt/boot/scala-2.12.21/org.scala-sbt/sbt/1.12.13/zero-allocation-hashing-0.16.jar)
+WARNING: Please consider reporting this to the maintainers of class net.openhft.hashing.UnsafeAccess
+WARNING: sun.misc.Unsafe::arrayBaseOffset will be removed in a future release
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by org.scalasbt.ipcsocket.NativeLoader in an unnamed module (file:/Users/fwbrasil/.sbt/boot/scala-2.12.21/org.scala-sbt/sbt/1.12.13/ipcsocket-1.7.0.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+[info] welcome to sbt 1.12.13 (Eclipse Adoptium Java 25.0.3)
+[info] loading settings for project kyo-root-impl-build from build.sbt, plugins.sbt...
+[info] loading project definition from /Users/fwbrasil/workspace/kyo/.claude/worktrees/kyo-root-impl/project
+[info] loading settings for project kyoJVM from build.sbt...
+[info] resolving key references (262444 settings) ...
+[info] set current project to kyoJVM (in build file:/Users/fwbrasil/workspace/kyo/.claude/worktrees/kyo-root-impl/)
+[info] set current project to kyoJVM (in build file:/Users/fwbrasil/workspace/kyo/.claude/worktrees/kyo-root-impl/)
+[info] scalafmt: Formatting 1 Scala sources (/Users/fwbrasil/workspace/kyo/.claude/worktrees/kyo-root-impl/kyo-kernel/jvm)...
+[info] compiling 1 Scala source to /Users/fwbrasil/workspace/kyo/.claude/worktrees/kyo-root-impl/kyo-kernel/jvm/target/scala-3.8.4/classes ...
+[info] done compiling
+[info] compiling 6 Scala sources to /Users/fwbrasil/workspace/kyo/.claude/worktrees/kyo-root-impl/kyo-kernel/jvm/target/scala-3.8.4/classes ...
+[info] done compiling
+[info] compiling 11 Scala sources to /Users/fwbrasil/workspace/kyo/.claude/worktrees/kyo-root-impl/kyo-kernel/jvm/target/scala-3.8.4/classes ...
+[info] done compiling
+[info] compiling 16 Scala sources to /Users/fwbrasil/workspace/kyo/.claude/worktrees/kyo-root-impl/kyo-kernel/jvm/target/scala-3.8.4/classes ...
+[info] done compiling
+[info] running (fork) protodemo.Main 
+[info] ================================================================================
+[info] 🧪 pure
+[info] ================================================================================
+[info] 🧮 alloc: Id
+[info] # WARNING: Unable to attach Serviceability Agent. You can try again with escalated privileges. Two options: a) use -Djol.tryWithSudo=true to try with sudo; b) echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
+[info] 📐 kyo.proto.Arrow$Id: 16 B (header 12 B, no fields, pad 4 B)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: 7
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📊 allocs: 1 (Id x1) | unfused applies: 0
+[info] ✅ result: 7
+[info] ================================================================================
+[info] 🧪 defer bind
+[info] ================================================================================
+[info] 🧮 alloc: Defer((), this(go.lazily(Main.scala:97:51)), Id)
+[info] 📐 kyo.proto.kernel.Effect$$anon$4: 24 B (header 12 B, x$2$1:4@12, f$1:4@16, pad 4 B)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Defer((), this(go.lazily(Main.scala:97:51)), Id)
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: ()
+[info] contA: Defer((), this(go.lazily(Main.scala:97:51)), Id)
+[info] contB: Id
+[info] 🧮 alloc: Defer((), this(go.lazily(Main.scala:97:51)), Id)
+[info] 📐 kyo.proto.kernel.Effect$$anon$4: 24 B (header 12 B, x$2$1:4@12, f$1:4@16, pad 4 B)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Defer((), this(go.lazily(Main.scala:97:51)), Id)
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: ()
+[info] contA: Defer((), this(go.lazily(Main.scala:97:51)), Id)
+[info] contB: Id
+[info] 🧮 alloc: Defer((), this(go.lazily(Main.scala:97:51)), Id)
+[info] 📐 kyo.proto.kernel.Effect$$anon$4: 24 B (header 12 B, x$2$1:4@12, f$1:4@16, pad 4 B)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Defer((), this(go.lazily(Main.scala:97:51)), Id)
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: ()
+[info] contA: Defer((), this(go.lazily(Main.scala:97:51)), Id)
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: 3
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📊 allocs: 3 (Defer x3) | unfused applies: 0
+[info] ✅ result: 3
+[info] ================================================================================
+[info] 🧪 cont handler
+[info] ================================================================================
+[info] 🧮 alloc: SuspendArrow(protodemo.Main$.Add, 1, Id)
+[info] 📐 protodemo.Main$$anon$2: 16 B (header 12 B, n$1:4@12)
+[info] 🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(cont.map(Main.scala:103:70)), Id)
+[info] 📐 protodemo.Main$$anon$11: 24 B (header 12 B, v$6:4@12, cont$7:4@16, pad 4 B)
+[info] 🧮 alloc: Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(cont.map(Main.scala:103:70)), Id), Handler(protodemo.Main$.Add), ())
+[info] 📐 protodemo.Main$$anon$14: 24 B (header 12 B, body$1:4@12, h$2:4@16, pad 4 B)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(cont.map(Main.scala:103:70)), Id), Handler(protodemo.Main$.Add), ())
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📥 region enter
+[info] handler: Handler(protodemo.Main$.Add)
+[info] state: ()
+[info] stack: 8
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(cont.map(Main.scala:103:70)), Id)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: SuspendArrow(protodemo.Main$.Add, 1, Id)
+[info]     contA: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(cont.map(Main.scala:103:70)), Id)
+[info]     contB: Id
+[info]     🧮 alloc: SuspendArrow(protodemo.Main$.Add, 1, Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(cont.map(Main.scala:103:70)), Id))
+[info]     📐 kyo.proto.kernel.internal.Kyo$SuspendArrow$$anon$1: 24 B (header 12 B, t$1:4@12, in$1:4@16, c$1:4@20)
+[info]     ----------------------------------------------------------------------------
+[info]     ⚡ handle
+[info]     suspend: SuspendArrow(protodemo.Main$.Add, 1, Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(cont.map(Main.scala:103:70)), Id))
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     state: ()
+[info]         🧮 alloc: SuspendArrow(protodemo.Main$.Add, 2, Id)
+[info]         📐 protodemo.Main$$anon$2: 16 B (header 12 B, n$1:4@12)
+[info]         🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:103:69)), Id)
+[info]         📐 protodemo.Main$$anon$12: 24 B (header 12 B, a$1:4@12, v$7:4@16, cont$8:4@20)
+[info]         ------------------------------------------------------------------------
+[info]         📦 result
+[info]         value: Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:103:69)), Id)
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:103:69)), Id)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: SuspendArrow(protodemo.Main$.Add, 2, Id)
+[info]     contA: Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:103:69)), Id)
+[info]     contB: Id
+[info]     🧮 alloc: SuspendArrow(protodemo.Main$.Add, 2, Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:103:69)), Id))
+[info]     📐 kyo.proto.kernel.internal.Kyo$SuspendArrow$$anon$1: 24 B (header 12 B, t$1:4@12, in$1:4@16, c$1:4@20)
+[info]     ----------------------------------------------------------------------------
+[info]     ⚡ handle
+[info]     suspend: SuspendArrow(protodemo.Main$.Add, 2, Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:103:69)), Id))
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     state: ()
+[info]         ------------------------------------------------------------------------
+[info]         📦 result
+[info]         value: 5
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: 5
+[info]     contA: Id
+[info]     contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📤 region exit
+[info] handler: Handler(protodemo.Main$.Add)
+[info] result: 5
+[info] stack: 8
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: 5
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📊 allocs: 7 (SuspendArrow x4, Defer x2, Handle x1) | unfused applies: 0
+[info] ✅ result: 5
+[info] ================================================================================
+[info] 🧪 suspend loop
+[info] ================================================================================
+[info] 🧮 alloc: SuspendArrow(protodemo.Main$.Add, 0, Id)
+[info] 📐 protodemo.Main$$anon$2: 16 B (header 12 B, n$1:4@12)
+[info] 🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Add, 0, Id), this(go.map(Main.scala:109:60)), Id)
+[info] 📐 protodemo.Main$$anon$15: 24 B (header 12 B, i$3:4@12, v$8:4@16, cont$9:4@20)
+[info] 🧮 alloc: Handle(Defer(SuspendArrow(protodemo.Main$.Add, 0, Id), this(go.map(Main.scala:109:60)), Id), Handler(protodemo.Main$.Add), ())
+[info] 📐 protodemo.Main$$anon$17: 24 B (header 12 B, v$proxy1$1:4@12, h$3:4@16, pad 4 B)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Handle(Defer(SuspendArrow(protodemo.Main$.Add, 0, Id), this(go.map(Main.scala:109:60)), Id), Handler(protodemo.Main$.Add), ())
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📥 region enter
+[info] handler: Handler(protodemo.Main$.Add)
+[info] state: ()
+[info] stack: 8
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(SuspendArrow(protodemo.Main$.Add, 0, Id), this(go.map(Main.scala:109:60)), Id)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: SuspendArrow(protodemo.Main$.Add, 0, Id)
+[info]     contA: Defer(SuspendArrow(protodemo.Main$.Add, 0, Id), this(go.map(Main.scala:109:60)), Id)
+[info]     contB: Id
+[info]     🧮 alloc: SuspendArrow(protodemo.Main$.Add, 0, Defer(SuspendArrow(protodemo.Main$.Add, 0, Id), this(go.map(Main.scala:109:60)), Id))
+[info]     📐 kyo.proto.kernel.internal.Kyo$SuspendArrow$$anon$1: 24 B (header 12 B, t$1:4@12, in$1:4@16, c$1:4@20)
+[info]     ----------------------------------------------------------------------------
+[info]     ⚡ handle
+[info]     suspend: SuspendArrow(protodemo.Main$.Add, 0, Defer(SuspendArrow(protodemo.Main$.Add, 0, Id), this(go.map(Main.scala:109:60)), Id))
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     state: ()
+[info]         🧮 alloc: SuspendArrow(protodemo.Main$.Add, 1, Id)
+[info]         📐 protodemo.Main$$anon$2: 16 B (header 12 B, n$1:4@12)
+[info]         🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(go.map(Main.scala:109:60)), Id)
+[info]         📐 protodemo.Main$$anon$15: 24 B (header 12 B, i$3:4@12, v$8:4@16, cont$9:4@20)
+[info]         ------------------------------------------------------------------------
+[info]         📦 result
+[info]         value: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(go.map(Main.scala:109:60)), Id)
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(go.map(Main.scala:109:60)), Id)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: SuspendArrow(protodemo.Main$.Add, 1, Id)
+[info]     contA: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(go.map(Main.scala:109:60)), Id)
+[info]     contB: Id
+[info]     🧮 alloc: SuspendArrow(protodemo.Main$.Add, 1, Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(go.map(Main.scala:109:60)), Id))
+[info]     📐 kyo.proto.kernel.internal.Kyo$SuspendArrow$$anon$1: 24 B (header 12 B, t$1:4@12, in$1:4@16, c$1:4@20)
+[info]     ----------------------------------------------------------------------------
+[info]     ⚡ handle
+[info]     suspend: SuspendArrow(protodemo.Main$.Add, 1, Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(go.map(Main.scala:109:60)), Id))
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     state: ()
+[info]         ------------------------------------------------------------------------
+[info]         📦 result
+[info]         value: 3
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: 3
+[info]     contA: Id
+[info]     contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📤 region exit
+[info] handler: Handler(protodemo.Main$.Add)
+[info] result: 3
+[info] stack: 8
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: 3
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📊 allocs: 7 (SuspendArrow x4, Defer x2, Handle x1) | unfused applies: 0
+[info] ✅ result: 3
+[info] ================================================================================
+[info] 🧪 suspend with
+[info] ================================================================================
+[info] 🧮 alloc: SuspendArrow(protodemo.Main$.Add, 0, this)
+[info] 📐 protodemo.Main$$anon$18: 16 B (header 12 B, i$5:4@12)
+[info] 🧮 alloc: Handle(SuspendArrow(protodemo.Main$.Add, 0, this), Handler(protodemo.Main$.Add), ())
+[info] 📐 protodemo.Main$$anon$20: 24 B (header 12 B, v$proxy2$1:4@12, h$4:4@16, pad 4 B)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Handle(SuspendArrow(protodemo.Main$.Add, 0, this), Handler(protodemo.Main$.Add), ())
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📥 region enter
+[info] handler: Handler(protodemo.Main$.Add)
+[info] state: ()
+[info] stack: 8
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: SuspendArrow(protodemo.Main$.Add, 0, this)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     ⚡ handle
+[info]     suspend: SuspendArrow(protodemo.Main$.Add, 0, this)
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     state: ()
+[info]         🧮 alloc: SuspendArrow(protodemo.Main$.Add, 1, this)
+[info]         📐 protodemo.Main$$anon$18: 16 B (header 12 B, i$5:4@12)
+[info]         ------------------------------------------------------------------------
+[info]         📦 result
+[info]         value: SuspendArrow(protodemo.Main$.Add, 1, this)
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: SuspendArrow(protodemo.Main$.Add, 1, this)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     ⚡ handle
+[info]     suspend: SuspendArrow(protodemo.Main$.Add, 1, this)
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     state: ()
+[info]         ------------------------------------------------------------------------
+[info]         📦 result
+[info]         value: 3
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: 3
+[info]     contA: Id
+[info]     contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📤 region exit
+[info] handler: Handler(protodemo.Main$.Add)
+[info] result: 3
+[info] stack: 8
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: 3
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📊 allocs: 3 (SuspendArrow x2, Handle x1) | unfused applies: 0
+[info] ✅ result: 3
+[info] ================================================================================
+[info] 🧪 loop handler
+[info] ================================================================================
+[info] 🧮 alloc: SuspendArrow(protodemo.Main$.Add, 10, Id)
+[info] 📐 protodemo.Main$$anon$2: 16 B (header 12 B, n$1:4@12)
+[info] 🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Add, 10, Id), this(loop.map(Main.scala:122:72)), Id)
+[info] 📐 protodemo.Main$$anon$21: 24 B (header 12 B, v$9:4@12, cont$10:4@16, pad 4 B)
+[info] 🧮 alloc: Handle(Defer(SuspendArrow(protodemo.Main$.Add, 10, Id), this(loop.map(Main.scala:122:72)), Id), Handler(protodemo.Main$.Add), 0)
+[info] 📐 protodemo.Main$$anon$25: 24 B (header 12 B, state0$1:4@12, body$2:4@16, h$5:4@20)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Handle(Defer(SuspendArrow(protodemo.Main$.Add, 10, Id), this(loop.map(Main.scala:122:72)), Id), Handler(protodemo.Main$.Add), 0)
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📥 region enter
+[info] handler: Handler(protodemo.Main$.Add)
+[info] state: 0
+[info] stack: 8
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(SuspendArrow(protodemo.Main$.Add, 10, Id), this(loop.map(Main.scala:122:72)), Id)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: SuspendArrow(protodemo.Main$.Add, 10, Id)
+[info]     contA: Defer(SuspendArrow(protodemo.Main$.Add, 10, Id), this(loop.map(Main.scala:122:72)), Id)
+[info]     contB: Id
+[info]     🧮 alloc: SuspendArrow(protodemo.Main$.Add, 10, Defer(SuspendArrow(protodemo.Main$.Add, 10, Id), this(loop.map(Main.scala:122:72)), Id))
+[info]     📐 kyo.proto.kernel.internal.Kyo$SuspendArrow$$anon$1: 24 B (header 12 B, t$1:4@12, in$1:4@16, c$1:4@20)
+[info]     ----------------------------------------------------------------------------
+[info]     ⚡ handle
+[info]     suspend: SuspendArrow(protodemo.Main$.Add, 10, Defer(SuspendArrow(protodemo.Main$.Add, 10, Id), this(loop.map(Main.scala:122:72)), Id))
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     state: 0
+[info]         🧮 alloc: Continue(())
+[info]         📐 kyo.proto.Loop$$anon$1: 16 B (header 12 B, no fields, pad 4 B)
+[info]         🧮 alloc: Continue2(10, 10)
+[info]         📐 protodemo.Main$$anon$24: 24 B (header 12 B, v1x$1:4@12, v2x$1:4@16, pad 4 B)
+[info]         ------------------------------------------------------------------------
+[info]         📦 result
+[info]         value: Continue2(10, 10)
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: 10
+[info]     contA: Defer(SuspendArrow(protodemo.Main$.Add, 10, Id), this(loop.map(Main.scala:122:72)), Id)
+[info]     contB: Id
+[info]     🧮 alloc: SuspendArrow(protodemo.Main$.Add, 20, Id)
+[info]     📐 protodemo.Main$$anon$2: 16 B (header 12 B, n$1:4@12)
+[info]     🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Add, 20, Id), this($anonfun.map(Main.scala:122:71)), Id)
+[info]     📐 protodemo.Main$$anon$22: 24 B (header 12 B, a$3:4@12, v$10:4@16, cont$11:4@20)
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(SuspendArrow(protodemo.Main$.Add, 20, Id), this($anonfun.map(Main.scala:122:71)), Id)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: SuspendArrow(protodemo.Main$.Add, 20, Id)
+[info]     contA: Defer(SuspendArrow(protodemo.Main$.Add, 20, Id), this($anonfun.map(Main.scala:122:71)), Id)
+[info]     contB: Id
+[info]     🧮 alloc: SuspendArrow(protodemo.Main$.Add, 20, Defer(SuspendArrow(protodemo.Main$.Add, 20, Id), this($anonfun.map(Main.scala:122:71)), Id))
+[info]     📐 kyo.proto.kernel.internal.Kyo$SuspendArrow$$anon$1: 24 B (header 12 B, t$1:4@12, in$1:4@16, c$1:4@20)
+[info]     ----------------------------------------------------------------------------
+[info]     ⚡ handle
+[info]     suspend: SuspendArrow(protodemo.Main$.Add, 20, Defer(SuspendArrow(protodemo.Main$.Add, 20, Id), this($anonfun.map(Main.scala:122:71)), Id))
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     state: 10
+[info]         🧮 alloc: Continue2(30, 20)
+[info]         📐 protodemo.Main$$anon$24: 24 B (header 12 B, v1x$1:4@12, v2x$1:4@16, pad 4 B)
+[info]         ------------------------------------------------------------------------
+[info]         📦 result
+[info]         value: Continue2(30, 20)
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: 20
+[info]     contA: Defer(SuspendArrow(protodemo.Main$.Add, 20, Id), this($anonfun.map(Main.scala:122:71)), Id)
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: 30
+[info]     contA: Id
+[info]     contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📤 region exit
+[info] handler: Handler(protodemo.Main$.Add)
+[info] result: 60
+[info] stack: 8
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: 60
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📊 allocs: 10 (SuspendArrow x4, Continue2 x2, Defer x2, Continue x1, Handle x1) | unfused applies: 0
+[info] ✅ result: 60
+[info] ================================================================================
+[info] 🧪 context
+[info] ================================================================================
+[info] 🧮 alloc: SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id)
+[info] 📐 kyo.proto.kernel.internal.Kyo$SuspendContextDefault$$anon$3: 32 B (header 12 B, t$3:4@12, d$1:4@16, u$2:4@20, c$3:4@24, pad 4 B)
+[info] 🧮 alloc: Defer(SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id), this(context.map(Main.scala:127:45)), Id)
+[info] 📐 protodemo.Main$$anon$26: 24 B (header 12 B, v$11:4@12, cont$12:4@16, pad 4 B)
+[info] 🧮 alloc: Handle(Defer(SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id), this(context.map(Main.scala:127:45)), Id), Handler(protodemo.Main$.Cfg), 41)
+[info] 📐 kyo.proto.kernel.internal.Kyo$Handle$$anon$4: 32 B (header 12 B, v$1:4@12, h$1:4@16, st$1:4@20, c$4:4@24, pad 4 B)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Handle(Defer(SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id), this(context.map(Main.scala:127:45)), Id), Handler(protodemo.Main$.Cfg), 41)
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📥 region enter
+[info] handler: Handler(protodemo.Main$.Cfg)
+[info] state: 41
+[info] stack: 8
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id), this(context.map(Main.scala:127:45)), Id)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id)
+[info]     contA: Defer(SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id), this(context.map(Main.scala:127:45)), Id)
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     📖 context
+[info]     suspend: SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id)
+[info]     state: 41
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: 41
+[info]     contA: Defer(SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id), this(context.map(Main.scala:127:45)), Id)
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: 42
+[info]     contA: Id
+[info]     contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📤 region exit
+[info] handler: Handler(protodemo.Main$.Cfg)
+[info] result: 42
+[info] stack: 8
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: 42
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📊 allocs: 3 (Defer x1, Handle x1, SuspendContextDefault x1) | unfused applies: 0
+[info] ✅ result: 42
+[info] ================================================================================
+[info] 🧪 context default
+[info] ================================================================================
+[info] 🧮 alloc: SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id)
+[info] 📐 kyo.proto.kernel.internal.Kyo$SuspendContextDefault$$anon$3: 32 B (header 12 B, t$3:4@12, d$1:4@16, u$2:4@20, c$3:4@24, pad 4 B)
+[info] 🧮 alloc: Defer(SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id), this(contextDefault.map(Main.scala:132:25)), Id)
+[info] 📐 protodemo.Main$$anon$27: 24 B (header 12 B, v$12:4@12, cont$13:4@16, pad 4 B)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Defer(SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id), this(contextDefault.map(Main.scala:132:25)), Id)
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id)
+[info] contA: Defer(SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id), this(contextDefault.map(Main.scala:132:25)), Id)
+[info] contB: Id
+[info] 🧮 alloc: SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Defer(SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id), this(contextDefault.map(Main.scala:132:25)), Id))
+[info] 📐 kyo.proto.kernel.internal.Kyo$SuspendContextDefault$$anon$3: 32 B (header 12 B, t$3:4@12, d$1:4@16, u$2:4@20, c$3:4@24, pad 4 B)
+[info] --------------------------------------------------------------------------------
+[info] 📖 context default
+[info] suspend: SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Defer(SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id), this(contextDefault.map(Main.scala:132:25)), Id))
+[info] state: 0
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: 100
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📊 allocs: 3 (SuspendContextDefault x2, Defer x1) | unfused applies: 0
+[info] ✅ result: 100
+[info] ================================================================================
+[info] 🧪 trailing maps
+[info] ================================================================================
+[info] 🧮 alloc: SuspendArrow(protodemo.Main$.Add, 1, Id)
+[info] 📐 protodemo.Main$$anon$2: 16 B (header 12 B, n$1:4@12)
+[info] 🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id)
+[info] 📐 protodemo.Main$$anon$28: 24 B (header 12 B, v$13:4@12, cont$14:4@16, pad 4 B)
+[info] 🧮 alloc: Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id)
+[info] 📐 protodemo.Main$$anon$29: 24 B (header 12 B, v$14:4@12, cont$15:4@16, pad 4 B)
+[info] 🧮 alloc: Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), this(chained.map(Main.scala:136:70)), Id)
+[info] 📐 protodemo.Main$$anon$30: 24 B (header 12 B, v$15:4@12, cont$16:4@16, pad 4 B)
+[info] 🧮 alloc: Defer(Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), this(chained.map(Main.scala:136:70)), Id), this(chained.map(Main.scala:136:81)), Id)
+[info] 📐 protodemo.Main$$anon$31: 24 B (header 12 B, v$16:4@12, cont$17:4@16, pad 4 B)
+[info] 🧮 alloc: Defer(Defer(Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), this(chained.map(Main.scala:136:70)), Id), this(chained.map(Main.scala:136:81)), Id), this(chained.map(Main.scala:136:92)), Id)
+[info] 📐 protodemo.Main$$anon$32: 24 B (header 12 B, v$17:4@12, cont$18:4@16, pad 4 B)
+[info] 🧮 alloc: Handle(Defer(Defer(Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), this(chained.map(Main.scala:136:70)), Id), this(chained.map(Main.scala:136:81)), Id), this(chained.map(Main.scala:136:92)), Id), Handler(protodemo.Main$.Add), ())
+[info] 📐 protodemo.Main$$anon$34: 24 B (header 12 B, body$3:4@12, h$6:4@16, pad 4 B)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Handle(Defer(Defer(Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), this(chained.map(Main.scala:136:70)), Id), this(chained.map(Main.scala:136:81)), Id), this(chained.map(Main.scala:136:92)), Id), Handler(protodemo.Main$.Add), ())
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📥 region enter
+[info] handler: Handler(protodemo.Main$.Add)
+[info] state: ()
+[info] stack: 8
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(Defer(Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), this(chained.map(Main.scala:136:70)), Id), this(chained.map(Main.scala:136:81)), Id), this(chained.map(Main.scala:136:92)), Id)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), this(chained.map(Main.scala:136:70)), Id), this(chained.map(Main.scala:136:81)), Id)
+[info]     contA: Defer(Defer(Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), this(chained.map(Main.scala:136:70)), Id), this(chained.map(Main.scala:136:81)), Id), this(chained.map(Main.scala:136:92)), Id)
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), this(chained.map(Main.scala:136:70)), Id)
+[info]     contA: Defer(Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), this(chained.map(Main.scala:136:70)), Id), this(chained.map(Main.scala:136:81)), Id)
+[info]     contB: Defer(Defer(Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), this(chained.map(Main.scala:136:70)), Id), this(chained.map(Main.scala:136:81)), Id), this(chained.map(Main.scala:136:92)), Id)
+[info]     🧮 alloc: Chain(Defer(Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), this(chained.map(Main.scala:136:70)), Id), this(chained.map(Main.scala:136:81)), Id), Defer(Defer(Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), this(chained.map(Main.scala:136:70)), Id), this(chained.map(Main.scala:136:81)), Id), this(chained.map(Main.scala:136:92)), Id))
+[info]     📐 kyo.proto.Arrow$Chain: 24 B (header 12 B, a:4@12, b:4@16, pad 4 B)
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id)
+[info]     contA: Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), this(chained.map(Main.scala:136:70)), Id)
+[info]     contB: Chain(Defer(Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), this(chained.map(Main.scala:136:70)), Id), this(chained.map(Main.scala:136:81)), Id), Defer(Defer(Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), this(chained.map(Main.scala:136:70)), Id), this(chained.map(Main.scala:136:81)), Id), this(chained.map(Main.scala:136:92)), Id))
+[info]     🧮 alloc: Chain(Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), this(chained.map(Main.scala:136:70)), Id), Chain(Defer(Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), this(chained.map(Main.scala:136:70)), Id), this(chained.map(Main.scala:136:81)), Id), Defer(Defer(Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), this(chained.map(Main.scala:136:70)), Id), this(chained.map(Main.scala:136:81)), Id), this(chained.map(Main.scala:136:92)), Id)))
+[info]     📐 kyo.proto.Arrow$Chain: 24 B (header 12 B, a:4@12, b:4@16, pad 4 B)
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id)
+[info]     contA: Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id)
+[info]     contB: Chain(Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), this(chained.map(Main.scala:136:70)), Id), Chain(Defer(Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), this(chained.map(Main.scala:136:70)), Id), this(chained.map(Main.scala:136:81)), Id), Defer(Defer(Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), this(chained.map(Main.scala:136:70)), Id), this(chained.map(Main.scala:136:81)), Id), this(chained.map(Main.scala:136:92)), Id)))
+[info]     🧮 alloc: Chain(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), Chain(Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), this(chained.map(Main.scala:136:70)), Id), Chain(Defer(Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), this(chained.map(Main.scala:136:70)), Id), this(chained.map(Main.scala:136:81)), Id), Defer(Defer(Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), this(chained.map(Main.scala:136:70)), Id), this(chained.map(Main.scala:136:81)), Id), this(chained.map(Main.scala:136:92)), Id))))
+[info]     📐 kyo.proto.Arrow$Chain: 24 B (header 12 B, a:4@12, b:4@16, pad 4 B)
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: SuspendArrow(protodemo.Main$.Add, 1, Id)
+[info]     contA: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id)
+[info]     contB: Chain(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), Chain(Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), this(chained.map(Main.scala:136:70)), Id), Chain(Defer(Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), this(chained.map(Main.scala:136:70)), Id), this(chained.map(Main.scala:136:81)), Id), Defer(Defer(Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(chained.map(Main.scala:136:48)), Id), this(chained.map(Main.scala:136:59)), Id), this(chained.map(Main.scala:136:70)), Id), this(chained.map(Main.scala:136:81)), Id), this(chained.map(Main.scala:136:92)), Id))))
+[info]     🧮 alloc: SuspendArrow(protodemo.Main$.Add, 1, this)
+[info]     📐 kyo.proto.kernel.internal.Eval$$anon$1: 32 B (header 12 B, sax$1:4@12, cA$1:4@16, k0$1:4@20, cB$1:4@24, pad 4 B)
+[info]     ----------------------------------------------------------------------------
+[info]     ⚡ handle
+[info]     suspend: SuspendArrow(protodemo.Main$.Add, 1, this)
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     state: ()
+[info]         ------------------------------------------------------------------------
+[info]         📦 result
+[info]         value: 20
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: 20
+[info]     contA: Id
+[info]     contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📤 region exit
+[info] handler: Handler(protodemo.Main$.Add)
+[info] result: 20
+[info] stack: 8
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: 20
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📊 allocs: 11 (Defer x5, Chain x3, SuspendArrow x2, Handle x1) | unfused applies: 0
+[info] ✅ result: 20
+[info] ================================================================================
+[info] 🧪 handled then mapped
+[info] ================================================================================
+[info] 🧮 alloc: SuspendArrow(protodemo.Main$.Add, 1, Id)
+[info] 📐 protodemo.Main$$anon$2: 16 B (header 12 B, n$1:4@12)
+[info] 🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(handledMapped.map(Main.scala:141:70)), Id)
+[info] 📐 protodemo.Main$$anon$35: 24 B (header 12 B, v$18:4@12, cont$19:4@16, pad 4 B)
+[info] 🧮 alloc: Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(handledMapped.map(Main.scala:141:70)), Id), Handler(protodemo.Main$.Add), ())
+[info] 📐 protodemo.Main$$anon$38: 24 B (header 12 B, body$4:4@12, h$7:4@16, pad 4 B)
+[info] 🧮 alloc: Defer(Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(handledMapped.map(Main.scala:141:70)), Id), Handler(protodemo.Main$.Add), ()), this(handledMapped.map(Main.scala:142:32)), Id)
+[info] 📐 protodemo.Main$$anon$39: 24 B (header 12 B, v$20:4@12, cont$21:4@16, pad 4 B)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Defer(Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(handledMapped.map(Main.scala:141:70)), Id), Handler(protodemo.Main$.Add), ()), this(handledMapped.map(Main.scala:142:32)), Id)
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(handledMapped.map(Main.scala:141:70)), Id), Handler(protodemo.Main$.Add), ())
+[info] contA: Defer(Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(handledMapped.map(Main.scala:141:70)), Id), Handler(protodemo.Main$.Add), ()), this(handledMapped.map(Main.scala:142:32)), Id)
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📥 region enter
+[info] handler: Handler(protodemo.Main$.Add)
+[info] state: ()
+[info] stack: 8
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(handledMapped.map(Main.scala:141:70)), Id)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: SuspendArrow(protodemo.Main$.Add, 1, Id)
+[info]     contA: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(handledMapped.map(Main.scala:141:70)), Id)
+[info]     contB: Id
+[info]     🧮 alloc: SuspendArrow(protodemo.Main$.Add, 1, Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(handledMapped.map(Main.scala:141:70)), Id))
+[info]     📐 kyo.proto.kernel.internal.Kyo$SuspendArrow$$anon$1: 24 B (header 12 B, t$1:4@12, in$1:4@16, c$1:4@20)
+[info]     ----------------------------------------------------------------------------
+[info]     ⚡ handle
+[info]     suspend: SuspendArrow(protodemo.Main$.Add, 1, Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(handledMapped.map(Main.scala:141:70)), Id))
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     state: ()
+[info]         🧮 alloc: SuspendArrow(protodemo.Main$.Add, 2, Id)
+[info]         📐 protodemo.Main$$anon$2: 16 B (header 12 B, n$1:4@12)
+[info]         🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:141:69)), Id)
+[info]         📐 protodemo.Main$$anon$36: 24 B (header 12 B, a$5:4@12, v$19:4@16, cont$20:4@20)
+[info]         ------------------------------------------------------------------------
+[info]         📦 result
+[info]         value: Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:141:69)), Id)
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:141:69)), Id)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: SuspendArrow(protodemo.Main$.Add, 2, Id)
+[info]     contA: Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:141:69)), Id)
+[info]     contB: Id
+[info]     🧮 alloc: SuspendArrow(protodemo.Main$.Add, 2, Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:141:69)), Id))
+[info]     📐 kyo.proto.kernel.internal.Kyo$SuspendArrow$$anon$1: 24 B (header 12 B, t$1:4@12, in$1:4@16, c$1:4@20)
+[info]     ----------------------------------------------------------------------------
+[info]     ⚡ handle
+[info]     suspend: SuspendArrow(protodemo.Main$.Add, 2, Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:141:69)), Id))
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     state: ()
+[info]         ------------------------------------------------------------------------
+[info]         📦 result
+[info]         value: 5
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: 5
+[info]     contA: Id
+[info]     contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📤 region exit
+[info] handler: Handler(protodemo.Main$.Add)
+[info] result: 5
+[info] stack: 8
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: 5
+[info] contA: Id
+[info] contB: Defer(Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(handledMapped.map(Main.scala:141:70)), Id), Handler(protodemo.Main$.Add), ()), this(handledMapped.map(Main.scala:142:32)), Id)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: 6
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📊 allocs: 8 (SuspendArrow x4, Defer x3, Handle x1) | unfused applies: 0
+[info] ✅ result: 6
+[info] ================================================================================
+[info] 🧪 handled then mapped fused
+[info] ================================================================================
+[info] 🧮 alloc: SuspendArrow(protodemo.Main$.Add, 1, Id)
+[info] 📐 protodemo.Main$$anon$2: 16 B (header 12 B, n$1:4@12)
+[info] 🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(handledMappedFused.map(Main.scala:146:70)), Id)
+[info] 📐 protodemo.Main$$anon$40: 24 B (header 12 B, v$21:4@12, cont$22:4@16, pad 4 B)
+[info] 🧮 alloc: Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(handledMappedFused.map(Main.scala:146:70)), Id), Handler(protodemo.Main$.Add), (), this)
+[info] 📐 protodemo.Main$$anon$43: 24 B (header 12 B, body$5:4@12, h$8:4@16, pad 4 B)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(handledMappedFused.map(Main.scala:146:70)), Id), Handler(protodemo.Main$.Add), (), this)
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📥 region enter
+[info] handler: Handler(protodemo.Main$.Add)
+[info] state: ()
+[info] stack: 8
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(handledMappedFused.map(Main.scala:146:70)), Id)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: SuspendArrow(protodemo.Main$.Add, 1, Id)
+[info]     contA: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(handledMappedFused.map(Main.scala:146:70)), Id)
+[info]     contB: Id
+[info]     🧮 alloc: SuspendArrow(protodemo.Main$.Add, 1, Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(handledMappedFused.map(Main.scala:146:70)), Id))
+[info]     📐 kyo.proto.kernel.internal.Kyo$SuspendArrow$$anon$1: 24 B (header 12 B, t$1:4@12, in$1:4@16, c$1:4@20)
+[info]     ----------------------------------------------------------------------------
+[info]     ⚡ handle
+[info]     suspend: SuspendArrow(protodemo.Main$.Add, 1, Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(handledMappedFused.map(Main.scala:146:70)), Id))
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     state: ()
+[info]         🧮 alloc: SuspendArrow(protodemo.Main$.Add, 2, Id)
+[info]         📐 protodemo.Main$$anon$2: 16 B (header 12 B, n$1:4@12)
+[info]         🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:146:69)), Id)
+[info]         📐 protodemo.Main$$anon$41: 24 B (header 12 B, a$7:4@12, v$22:4@16, cont$23:4@20)
+[info]         ------------------------------------------------------------------------
+[info]         📦 result
+[info]         value: Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:146:69)), Id)
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:146:69)), Id)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: SuspendArrow(protodemo.Main$.Add, 2, Id)
+[info]     contA: Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:146:69)), Id)
+[info]     contB: Id
+[info]     🧮 alloc: SuspendArrow(protodemo.Main$.Add, 2, Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:146:69)), Id))
+[info]     📐 kyo.proto.kernel.internal.Kyo$SuspendArrow$$anon$1: 24 B (header 12 B, t$1:4@12, in$1:4@16, c$1:4@20)
+[info]     ----------------------------------------------------------------------------
+[info]     ⚡ handle
+[info]     suspend: SuspendArrow(protodemo.Main$.Add, 2, Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:146:69)), Id))
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     state: ()
+[info]         ------------------------------------------------------------------------
+[info]         📦 result
+[info]         value: 5
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: 5
+[info]     contA: Id
+[info]     contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📤 region exit
+[info] handler: Handler(protodemo.Main$.Add)
+[info] result: 5
+[info] stack: 8
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: 5
+[info] contA: Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(handledMappedFused.map(Main.scala:146:70)), Id), Handler(protodemo.Main$.Add), (), this)
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: 6
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📊 allocs: 7 (SuspendArrow x4, Defer x2, Handle x1) | unfused applies: 0
+[info] ✅ result: 6
+[info] ================================================================================
+[info] 🧪 pending rebind
+[info] ================================================================================
+[info] 🧮 alloc: SuspendArrow(protodemo.Main$.Add, 1, Id)
+[info] 📐 protodemo.Main$$anon$2: 16 B (header 12 B, n$1:4@12)
+[info] 🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(rebind.map(Main.scala:155:54)), Id)
+[info] 📐 protodemo.Main$$anon$45: 24 B (header 12 B, v$24:4@12, cont$25:4@16, pad 4 B)
+[info] 🧮 alloc: Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(rebind.map(Main.scala:155:54)), Id), this(rebind.map(Main.scala:155:70)), Id)
+[info] 📐 protodemo.Main$$anon$46: 24 B (header 12 B, v$25:4@12, cont$26:4@16, pad 4 B)
+[info] 🧮 alloc: Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(rebind.map(Main.scala:155:54)), Id), this(rebind.map(Main.scala:155:70)), Id), this(rebind.map(Main.scala:155:86)), Id)
+[info] 📐 protodemo.Main$$anon$47: 24 B (header 12 B, v$26:4@12, cont$27:4@16, pad 4 B)
+[info] 🧮 alloc: Handle(Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(rebind.map(Main.scala:155:54)), Id), this(rebind.map(Main.scala:155:70)), Id), this(rebind.map(Main.scala:155:86)), Id), Handler(protodemo.Main$.Add), ())
+[info] 📐 protodemo.Main$$anon$49: 24 B (header 12 B, body$6:4@12, h$9:4@16, pad 4 B)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Handle(Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(rebind.map(Main.scala:155:54)), Id), this(rebind.map(Main.scala:155:70)), Id), this(rebind.map(Main.scala:155:86)), Id), Handler(protodemo.Main$.Add), ())
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📥 region enter
+[info] handler: Handler(protodemo.Main$.Add)
+[info] state: ()
+[info] stack: 8
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(rebind.map(Main.scala:155:54)), Id), this(rebind.map(Main.scala:155:70)), Id), this(rebind.map(Main.scala:155:86)), Id)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(rebind.map(Main.scala:155:54)), Id), this(rebind.map(Main.scala:155:70)), Id)
+[info]     contA: Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(rebind.map(Main.scala:155:54)), Id), this(rebind.map(Main.scala:155:70)), Id), this(rebind.map(Main.scala:155:86)), Id)
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(rebind.map(Main.scala:155:54)), Id)
+[info]     contA: Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(rebind.map(Main.scala:155:54)), Id), this(rebind.map(Main.scala:155:70)), Id)
+[info]     contB: Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(rebind.map(Main.scala:155:54)), Id), this(rebind.map(Main.scala:155:70)), Id), this(rebind.map(Main.scala:155:86)), Id)
+[info]     🧮 alloc: Chain(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(rebind.map(Main.scala:155:54)), Id), this(rebind.map(Main.scala:155:70)), Id), Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(rebind.map(Main.scala:155:54)), Id), this(rebind.map(Main.scala:155:70)), Id), this(rebind.map(Main.scala:155:86)), Id))
+[info]     📐 kyo.proto.Arrow$Chain: 24 B (header 12 B, a:4@12, b:4@16, pad 4 B)
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: SuspendArrow(protodemo.Main$.Add, 1, Id)
+[info]     contA: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(rebind.map(Main.scala:155:54)), Id)
+[info]     contB: Chain(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(rebind.map(Main.scala:155:54)), Id), this(rebind.map(Main.scala:155:70)), Id), Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(rebind.map(Main.scala:155:54)), Id), this(rebind.map(Main.scala:155:70)), Id), this(rebind.map(Main.scala:155:86)), Id))
+[info]     🧮 alloc: SuspendArrow(protodemo.Main$.Add, 1, this)
+[info]     📐 kyo.proto.kernel.internal.Eval$$anon$1: 32 B (header 12 B, sax$1:4@12, cA$1:4@16, k0$1:4@20, cB$1:4@24, pad 4 B)
+[info]     ----------------------------------------------------------------------------
+[info]     ⚡ handle
+[info]     suspend: SuspendArrow(protodemo.Main$.Add, 1, this)
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     state: ()
+[info]         🧮 alloc: SuspendArrow(protodemo.Main$.Add, 2, Id)
+[info]         📐 protodemo.Main$$anon$2: 16 B (header 12 B, n$1:4@12)
+[info]         🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this(rebind.map(Main.scala:155:70)), Id)
+[info]         📐 protodemo.Main$$anon$46: 24 B (header 12 B, v$25:4@12, cont$26:4@16, pad 4 B)
+[info]         ------------------------------------------------------------------------
+[info]         📦 result
+[info]         value: Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this(rebind.map(Main.scala:155:70)), Id)
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this(rebind.map(Main.scala:155:70)), Id)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: SuspendArrow(protodemo.Main$.Add, 2, Id)
+[info]     contA: Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this(rebind.map(Main.scala:155:70)), Id)
+[info]     contB: Id
+[info]     🧮 alloc: SuspendArrow(protodemo.Main$.Add, 2, Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this(rebind.map(Main.scala:155:70)), Id))
+[info]     📐 kyo.proto.kernel.internal.Kyo$SuspendArrow$$anon$1: 24 B (header 12 B, t$1:4@12, in$1:4@16, c$1:4@20)
+[info]     ----------------------------------------------------------------------------
+[info]     ⚡ handle
+[info]     suspend: SuspendArrow(protodemo.Main$.Add, 2, Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this(rebind.map(Main.scala:155:70)), Id))
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     state: ()
+[info]         ------------------------------------------------------------------------
+[info]         📦 result
+[info]         value: 8
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: 8
+[info]     contA: Id
+[info]     contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📤 region exit
+[info] handler: Handler(protodemo.Main$.Add)
+[info] result: 8
+[info] stack: 8
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: 8
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📊 allocs: 10 (Defer x4, SuspendArrow x4, Chain x1, Handle x1) | unfused applies: 0
+[info] ✅ result: 8
+[info] ================================================================================
+[info] 🧪 defer bind mapped
+[info] ================================================================================
+[info] 🧮 alloc: Defer((), this(go.lazily(Main.scala:162:51)), Id)
+[info] 📐 kyo.proto.kernel.Effect$$anon$4: 24 B (header 12 B, x$2$1:4@12, f$1:4@16, pad 4 B)
+[info] 🧮 alloc: Defer(Defer((), this(go.lazily(Main.scala:162:51)), Id), this(deferBindMapped.map(Main.scala:163:25)), Id)
+[info] 📐 protodemo.Main$$anon$50: 24 B (header 12 B, v$27:4@12, cont$28:4@16, pad 4 B)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Defer(Defer((), this(go.lazily(Main.scala:162:51)), Id), this(deferBindMapped.map(Main.scala:163:25)), Id)
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Defer((), this(go.lazily(Main.scala:162:51)), Id)
+[info] contA: Defer(Defer((), this(go.lazily(Main.scala:162:51)), Id), this(deferBindMapped.map(Main.scala:163:25)), Id)
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: ()
+[info] contA: Defer((), this(go.lazily(Main.scala:162:51)), Id)
+[info] contB: Defer(Defer((), this(go.lazily(Main.scala:162:51)), Id), this(deferBindMapped.map(Main.scala:163:25)), Id)
+[info] 🧮 alloc: Defer((), this(go.lazily(Main.scala:162:51)), Id)
+[info] 📐 kyo.proto.kernel.Effect$$anon$4: 24 B (header 12 B, x$2$1:4@12, f$1:4@16, pad 4 B)
+[info] 🧮 alloc: Defer(Defer((), this(go.lazily(Main.scala:162:51)), Id), this(deferBindMapped.map(Main.scala:163:25)), Id)
+[info] 📐 protodemo.Main$$anon$50: 24 B (header 12 B, v$27:4@12, cont$28:4@16, pad 4 B)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Defer(Defer((), this(go.lazily(Main.scala:162:51)), Id), this(deferBindMapped.map(Main.scala:163:25)), Id)
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Defer((), this(go.lazily(Main.scala:162:51)), Id)
+[info] contA: Defer(Defer((), this(go.lazily(Main.scala:162:51)), Id), this(deferBindMapped.map(Main.scala:163:25)), Id)
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: ()
+[info] contA: Defer((), this(go.lazily(Main.scala:162:51)), Id)
+[info] contB: Defer(Defer((), this(go.lazily(Main.scala:162:51)), Id), this(deferBindMapped.map(Main.scala:163:25)), Id)
+[info] 🧮 alloc: Defer((), this(go.lazily(Main.scala:162:51)), Id)
+[info] 📐 kyo.proto.kernel.Effect$$anon$4: 24 B (header 12 B, x$2$1:4@12, f$1:4@16, pad 4 B)
+[info] 🧮 alloc: Defer(Defer((), this(go.lazily(Main.scala:162:51)), Id), this(deferBindMapped.map(Main.scala:163:25)), Id)
+[info] 📐 protodemo.Main$$anon$50: 24 B (header 12 B, v$27:4@12, cont$28:4@16, pad 4 B)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Defer(Defer((), this(go.lazily(Main.scala:162:51)), Id), this(deferBindMapped.map(Main.scala:163:25)), Id)
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Defer((), this(go.lazily(Main.scala:162:51)), Id)
+[info] contA: Defer(Defer((), this(go.lazily(Main.scala:162:51)), Id), this(deferBindMapped.map(Main.scala:163:25)), Id)
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: ()
+[info] contA: Defer((), this(go.lazily(Main.scala:162:51)), Id)
+[info] contB: Defer(Defer((), this(go.lazily(Main.scala:162:51)), Id), this(deferBindMapped.map(Main.scala:163:25)), Id)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: 4
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📊 allocs: 6 (Defer x6) | unfused applies: 0
+[info] ✅ result: 4
+[info] ================================================================================
+[info] 🧪 suspend loop mapped
+[info] ================================================================================
+[info] 🧮 alloc: SuspendArrow(protodemo.Main$.Add, 0, Id)
+[info] 📐 protodemo.Main$$anon$2: 16 B (header 12 B, n$1:4@12)
+[info] 🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Add, 0, Id), this(go.map(Main.scala:169:60)), Id)
+[info] 📐 protodemo.Main$$anon$51: 24 B (header 12 B, i$7:4@12, v$28:4@16, cont$29:4@20)
+[info] 🧮 alloc: Defer(Defer(SuspendArrow(protodemo.Main$.Add, 0, Id), this(go.map(Main.scala:169:60)), Id), this(go.map(Main.scala:169:71)), Id)
+[info] 📐 protodemo.Main$$anon$52: 24 B (header 12 B, v$29:4@12, cont$30:4@16, pad 4 B)
+[info] 🧮 alloc: Handle(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 0, Id), this(go.map(Main.scala:169:60)), Id), this(go.map(Main.scala:169:71)), Id), Handler(protodemo.Main$.Add), ())
+[info] 📐 protodemo.Main$$anon$54: 24 B (header 12 B, v$proxy3$1:4@12, h$10:4@16, pad 4 B)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Handle(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 0, Id), this(go.map(Main.scala:169:60)), Id), this(go.map(Main.scala:169:71)), Id), Handler(protodemo.Main$.Add), ())
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📥 region enter
+[info] handler: Handler(protodemo.Main$.Add)
+[info] state: ()
+[info] stack: 8
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(Defer(SuspendArrow(protodemo.Main$.Add, 0, Id), this(go.map(Main.scala:169:60)), Id), this(go.map(Main.scala:169:71)), Id)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(SuspendArrow(protodemo.Main$.Add, 0, Id), this(go.map(Main.scala:169:60)), Id)
+[info]     contA: Defer(Defer(SuspendArrow(protodemo.Main$.Add, 0, Id), this(go.map(Main.scala:169:60)), Id), this(go.map(Main.scala:169:71)), Id)
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: SuspendArrow(protodemo.Main$.Add, 0, Id)
+[info]     contA: Defer(SuspendArrow(protodemo.Main$.Add, 0, Id), this(go.map(Main.scala:169:60)), Id)
+[info]     contB: Defer(Defer(SuspendArrow(protodemo.Main$.Add, 0, Id), this(go.map(Main.scala:169:60)), Id), this(go.map(Main.scala:169:71)), Id)
+[info]     🧮 alloc: SuspendArrow(protodemo.Main$.Add, 0, this)
+[info]     📐 kyo.proto.kernel.internal.Eval$$anon$1: 32 B (header 12 B, sax$1:4@12, cA$1:4@16, k0$1:4@20, cB$1:4@24, pad 4 B)
+[info]     ----------------------------------------------------------------------------
+[info]     ⚡ handle
+[info]     suspend: SuspendArrow(protodemo.Main$.Add, 0, this)
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     state: ()
+[info]         🧮 alloc: SuspendArrow(protodemo.Main$.Add, 1, Id)
+[info]         📐 protodemo.Main$$anon$2: 16 B (header 12 B, n$1:4@12)
+[info]         🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(go.map(Main.scala:169:60)), Id)
+[info]         📐 protodemo.Main$$anon$51: 24 B (header 12 B, i$7:4@12, v$28:4@16, cont$29:4@20)
+[info]         🧮 alloc: Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(go.map(Main.scala:169:60)), Id), this(go.map(Main.scala:169:71)), Id)
+[info]         📐 protodemo.Main$$anon$52: 24 B (header 12 B, v$29:4@12, cont$30:4@16, pad 4 B)
+[info]         🧮 alloc: Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(go.map(Main.scala:169:60)), Id), this(go.map(Main.scala:169:71)), Id), this(go.map(Main.scala:169:71)), Id)
+[info]         📐 protodemo.Main$$anon$52: 24 B (header 12 B, v$29:4@12, cont$30:4@16, pad 4 B)
+[info]         ------------------------------------------------------------------------
+[info]         📦 result
+[info]         value: Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(go.map(Main.scala:169:60)), Id), this(go.map(Main.scala:169:71)), Id), this(go.map(Main.scala:169:71)), Id)
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(go.map(Main.scala:169:60)), Id), this(go.map(Main.scala:169:71)), Id), this(go.map(Main.scala:169:71)), Id)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(go.map(Main.scala:169:60)), Id), this(go.map(Main.scala:169:71)), Id)
+[info]     contA: Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(go.map(Main.scala:169:60)), Id), this(go.map(Main.scala:169:71)), Id), this(go.map(Main.scala:169:71)), Id)
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(go.map(Main.scala:169:60)), Id)
+[info]     contA: Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(go.map(Main.scala:169:60)), Id), this(go.map(Main.scala:169:71)), Id)
+[info]     contB: Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(go.map(Main.scala:169:60)), Id), this(go.map(Main.scala:169:71)), Id), this(go.map(Main.scala:169:71)), Id)
+[info]     🧮 alloc: Chain(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(go.map(Main.scala:169:60)), Id), this(go.map(Main.scala:169:71)), Id), Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(go.map(Main.scala:169:60)), Id), this(go.map(Main.scala:169:71)), Id), this(go.map(Main.scala:169:71)), Id))
+[info]     📐 kyo.proto.Arrow$Chain: 24 B (header 12 B, a:4@12, b:4@16, pad 4 B)
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: SuspendArrow(protodemo.Main$.Add, 1, Id)
+[info]     contA: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(go.map(Main.scala:169:60)), Id)
+[info]     contB: Chain(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(go.map(Main.scala:169:60)), Id), this(go.map(Main.scala:169:71)), Id), Defer(Defer(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(go.map(Main.scala:169:60)), Id), this(go.map(Main.scala:169:71)), Id), this(go.map(Main.scala:169:71)), Id))
+[info]     🧮 alloc: SuspendArrow(protodemo.Main$.Add, 1, this)
+[info]     📐 kyo.proto.kernel.internal.Eval$$anon$1: 32 B (header 12 B, sax$1:4@12, cA$1:4@16, k0$1:4@20, cB$1:4@24, pad 4 B)
+[info]     ----------------------------------------------------------------------------
+[info]     ⚡ handle
+[info]     suspend: SuspendArrow(protodemo.Main$.Add, 1, this)
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     state: ()
+[info]         ------------------------------------------------------------------------
+[info]         📦 result
+[info]         value: 5
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: 5
+[info]     contA: Id
+[info]     contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📤 region exit
+[info] handler: Handler(protodemo.Main$.Add)
+[info] result: 5
+[info] stack: 8
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: 5
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📊 allocs: 11 (Defer x5, SuspendArrow x4, Chain x1, Handle x1) | unfused applies: 0
+[info] ✅ result: 5
+[info] ================================================================================
+[info] 🧪 idle handler
+[info] ================================================================================
+[info] 🧮 alloc: Defer((), this(go.lazily(Main.scala:176:51)), Id)
+[info] 📐 kyo.proto.kernel.Effect$$anon$4: 24 B (header 12 B, x$2$1:4@12, f$1:4@16, pad 4 B)
+[info] 🧮 alloc: Handle(Defer((), this(go.lazily(Main.scala:176:51)), Id), Handler(protodemo.Main$.Add), ())
+[info] 📐 protodemo.Main$$anon$56: 24 B (header 12 B, v$proxy4$1:4@12, h$11:4@16, pad 4 B)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Handle(Defer((), this(go.lazily(Main.scala:176:51)), Id), Handler(protodemo.Main$.Add), ())
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📥 region enter
+[info] handler: Handler(protodemo.Main$.Add)
+[info] state: ()
+[info] stack: 8
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer((), this(go.lazily(Main.scala:176:51)), Id)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: ()
+[info]     contA: Defer((), this(go.lazily(Main.scala:176:51)), Id)
+[info]     contB: Id
+[info]     🧮 alloc: Defer((), this(go.lazily(Main.scala:176:51)), Id)
+[info]     📐 kyo.proto.kernel.Effect$$anon$4: 24 B (header 12 B, x$2$1:4@12, f$1:4@16, pad 4 B)
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer((), this(go.lazily(Main.scala:176:51)), Id)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: ()
+[info]     contA: Defer((), this(go.lazily(Main.scala:176:51)), Id)
+[info]     contB: Id
+[info]     🧮 alloc: Defer((), this(go.lazily(Main.scala:176:51)), Id)
+[info]     📐 kyo.proto.kernel.Effect$$anon$4: 24 B (header 12 B, x$2$1:4@12, f$1:4@16, pad 4 B)
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer((), this(go.lazily(Main.scala:176:51)), Id)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: ()
+[info]     contA: Defer((), this(go.lazily(Main.scala:176:51)), Id)
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: 3
+[info]     contA: Id
+[info]     contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📤 region exit
+[info] handler: Handler(protodemo.Main$.Add)
+[info] result: 3
+[info] stack: 8
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: 3
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📊 allocs: 4 (Defer x3, Handle x1) | unfused applies: 0
+[info] ✅ result: 3
+[info] ================================================================================
+[info] 🧪 nested regions
+[info] ================================================================================
+[info] 🧮 alloc: SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id)
+[info] 📐 kyo.proto.kernel.internal.Kyo$SuspendContextDefault$$anon$3: 32 B (header 12 B, t$3:4@12, d$1:4@16, u$2:4@20, c$3:4@24, pad 4 B)
+[info] 🧮 alloc: Defer(SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id), this(nested.map(Main.scala:182:63)), Id)
+[info] 📐 protodemo.Main$$anon$57: 24 B (header 12 B, v$30:4@12, cont$31:4@16, pad 4 B)
+[info] 🧮 alloc: Handle(Defer(SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id), this(nested.map(Main.scala:182:63)), Id), Handler(protodemo.Main$.Add), ())
+[info] 📐 protodemo.Main$$anon$60: 24 B (header 12 B, body$7:4@12, h$12:4@16, pad 4 B)
+[info] 🧮 alloc: Handle(Handle(Defer(SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id), this(nested.map(Main.scala:182:63)), Id), Handler(protodemo.Main$.Add), ()), Handler(protodemo.Main$.Cfg), 10)
+[info] 📐 kyo.proto.kernel.internal.Kyo$Handle$$anon$4: 32 B (header 12 B, v$1:4@12, h$1:4@16, st$1:4@20, c$4:4@24, pad 4 B)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Handle(Handle(Defer(SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id), this(nested.map(Main.scala:182:63)), Id), Handler(protodemo.Main$.Add), ()), Handler(protodemo.Main$.Cfg), 10)
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📥 region enter
+[info] handler: Handler(protodemo.Main$.Cfg)
+[info] state: 10
+[info] stack: 8
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Handle(Defer(SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id), this(nested.map(Main.scala:182:63)), Id), Handler(protodemo.Main$.Add), ())
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     📥 region enter
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     state: ()
+[info]     stack: 10
+[info]         ------------------------------------------------------------------------
+[info]         🔁 loop
+[info]         value: Defer(SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id), this(nested.map(Main.scala:182:63)), Id)
+[info]         contA: Id
+[info]         contB: Id
+[info]         ------------------------------------------------------------------------
+[info]         🔁 loop
+[info]         value: SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id)
+[info]         contA: Defer(SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id), this(nested.map(Main.scala:182:63)), Id)
+[info]         contB: Id
+[info]         ------------------------------------------------------------------------
+[info]         📖 context
+[info]         suspend: SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id)
+[info]         state: 10
+[info]         ------------------------------------------------------------------------
+[info]         🔁 loop
+[info]         value: 10
+[info]         contA: Defer(SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id), this(nested.map(Main.scala:182:63)), Id)
+[info]         contB: Id
+[info]         🧮 alloc: SuspendArrow(protodemo.Main$.Add, 10, Id)
+[info]         📐 protodemo.Main$$anon$2: 16 B (header 12 B, n$1:4@12)
+[info]         🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Add, 10, Id), this($anonfun.map(Main.scala:182:62)), Id)
+[info]         📐 protodemo.Main$$anon$58: 24 B (header 12 B, c$1:4@12, v$31:4@16, cont$32:4@20)
+[info]         ------------------------------------------------------------------------
+[info]         🔁 loop
+[info]         value: Defer(SuspendArrow(protodemo.Main$.Add, 10, Id), this($anonfun.map(Main.scala:182:62)), Id)
+[info]         contA: Id
+[info]         contB: Id
+[info]         ------------------------------------------------------------------------
+[info]         🔁 loop
+[info]         value: SuspendArrow(protodemo.Main$.Add, 10, Id)
+[info]         contA: Defer(SuspendArrow(protodemo.Main$.Add, 10, Id), this($anonfun.map(Main.scala:182:62)), Id)
+[info]         contB: Id
+[info]         🧮 alloc: SuspendArrow(protodemo.Main$.Add, 10, Defer(SuspendArrow(protodemo.Main$.Add, 10, Id), this($anonfun.map(Main.scala:182:62)), Id))
+[info]         📐 kyo.proto.kernel.internal.Kyo$SuspendArrow$$anon$1: 24 B (header 12 B, t$1:4@12, in$1:4@16, c$1:4@20)
+[info]         ------------------------------------------------------------------------
+[info]         ⚡ handle
+[info]         suspend: SuspendArrow(protodemo.Main$.Add, 10, Defer(SuspendArrow(protodemo.Main$.Add, 10, Id), this($anonfun.map(Main.scala:182:62)), Id))
+[info]         handler: Handler(protodemo.Main$.Add)
+[info]         state: ()
+[info]             --------------------------------------------------------------------
+[info]             📦 result
+[info]             value: 21
+[info]         ------------------------------------------------------------------------
+[info]         🔁 loop
+[info]         value: 21
+[info]         contA: Id
+[info]         contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     📤 region exit
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     result: 21
+[info]     stack: 10
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: 21
+[info]     contA: Id
+[info]     contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📤 region exit
+[info] handler: Handler(protodemo.Main$.Cfg)
+[info] result: 21
+[info] stack: 8
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: 21
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📊 allocs: 7 (Defer x2, Handle x2, SuspendArrow x2, SuspendContextDefault x1) | unfused applies: 0
+[info] ✅ result: 21
+[info] ================================================================================
+[info] 🧪 foreign context
+[info] ================================================================================
+[info] 🧮 alloc: SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id)
+[info] 📐 kyo.proto.kernel.internal.Kyo$SuspendContextDefault$$anon$3: 32 B (header 12 B, t$3:4@12, d$1:4@16, u$2:4@20, c$3:4@24, pad 4 B)
+[info] 🧮 alloc: Defer(SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id), this(foreignContext.map(Main.scala:189:62)), Id)
+[info] 📐 protodemo.Main$$anon$61: 24 B (header 12 B, v$32:4@12, cont$33:4@16, pad 4 B)
+[info] 🧮 alloc: Handle(Defer(SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id), this(foreignContext.map(Main.scala:189:62)), Id), Handler(protodemo.Main$.Add), ())
+[info] 📐 protodemo.Main$$anon$64: 24 B (header 12 B, body$8:4@12, h$13:4@16, pad 4 B)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Handle(Defer(SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id), this(foreignContext.map(Main.scala:189:62)), Id), Handler(protodemo.Main$.Add), ())
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📥 region enter
+[info] handler: Handler(protodemo.Main$.Add)
+[info] state: ()
+[info] stack: 8
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id), this(foreignContext.map(Main.scala:189:62)), Id)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id)
+[info]     contA: Defer(SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id), this(foreignContext.map(Main.scala:189:62)), Id)
+[info]     contB: Id
+[info]     🧮 alloc: SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Defer(SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id), this(foreignContext.map(Main.scala:189:62)), Id))
+[info]     📐 kyo.proto.kernel.internal.Kyo$SuspendContextDefault$$anon$3: 32 B (header 12 B, t$3:4@12, d$1:4@16, u$2:4@20, c$3:4@24, pad 4 B)
+[info]     ----------------------------------------------------------------------------
+[info]     🫧 foreign suspend
+[info]     suspend: SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Defer(SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, Id), this(foreignContext.map(Main.scala:189:62)), Id))
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     🧮 alloc: SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, this)
+[info]     📐 kyo.proto.kernel.internal.Eval$$anon$6: 24 B (header 12 B, sdx$2:4@12, kyo$5:4@16, st$tailLocal1$4:4@20)
+[info] --------------------------------------------------------------------------------
+[info] 📤 region exit
+[info] handler: Handler(protodemo.Main$.Add)
+[info] result: SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, this)
+[info] stack: 8
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, this)
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📖 context default
+[info] suspend: SuspendContextDefault(protodemo.Main$.Cfg, 0, protodemo.Main$$$Lambda/0x00003f00011b2738@f2ff811, this)
+[info] state: 0
+[info] 🧮 alloc: SuspendArrow(protodemo.Main$.Add, 0, Id)
+[info] 📐 protodemo.Main$$anon$2: 16 B (header 12 B, n$1:4@12)
+[info] 🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Add, 0, Id), this($anonfun.map(Main.scala:189:61)), Id)
+[info] 📐 protodemo.Main$$anon$62: 24 B (header 12 B, c$3:4@12, v$33:4@16, cont$34:4@20)
+[info] 🧮 alloc: Handle(Defer(SuspendArrow(protodemo.Main$.Add, 0, Id), this($anonfun.map(Main.scala:189:61)), Id), Handler(protodemo.Main$.Add), ())
+[info] 📐 kyo.proto.kernel.internal.Kyo$Handle$$anon$4: 32 B (header 12 B, v$1:4@12, h$1:4@16, st$1:4@20, c$4:4@24, pad 4 B)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Handle(Defer(SuspendArrow(protodemo.Main$.Add, 0, Id), this($anonfun.map(Main.scala:189:61)), Id), Handler(protodemo.Main$.Add), ())
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📥 region enter
+[info] handler: Handler(protodemo.Main$.Add)
+[info] state: ()
+[info] stack: 8
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(SuspendArrow(protodemo.Main$.Add, 0, Id), this($anonfun.map(Main.scala:189:61)), Id)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: SuspendArrow(protodemo.Main$.Add, 0, Id)
+[info]     contA: Defer(SuspendArrow(protodemo.Main$.Add, 0, Id), this($anonfun.map(Main.scala:189:61)), Id)
+[info]     contB: Id
+[info]     🧮 alloc: SuspendArrow(protodemo.Main$.Add, 0, Defer(SuspendArrow(protodemo.Main$.Add, 0, Id), this($anonfun.map(Main.scala:189:61)), Id))
+[info]     📐 kyo.proto.kernel.internal.Kyo$SuspendArrow$$anon$1: 24 B (header 12 B, t$1:4@12, in$1:4@16, c$1:4@20)
+[info]     ----------------------------------------------------------------------------
+[info]     ⚡ handle
+[info]     suspend: SuspendArrow(protodemo.Main$.Add, 0, Defer(SuspendArrow(protodemo.Main$.Add, 0, Id), this($anonfun.map(Main.scala:189:61)), Id))
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     state: ()
+[info]         ------------------------------------------------------------------------
+[info]         📦 result
+[info]         value: 1
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: 1
+[info]     contA: Id
+[info]     contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📤 region exit
+[info] handler: Handler(protodemo.Main$.Add)
+[info] result: 1
+[info] stack: 8
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: 1
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📊 allocs: 9 (SuspendContextDefault x3, Defer x2, Handle x2, SuspendArrow x2) | unfused applies: 0
+[info] ✅ result: 1
+[info] ================================================================================
+[info] 🧪 emitting handler
+[info] ================================================================================
+[info] 🧮 alloc: SuspendArrow(protodemo.Main$.Add, 1, Id)
+[info] 📐 protodemo.Main$$anon$2: 16 B (header 12 B, n$1:4@12)
+[info] 🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(emitting.map(Main.scala:195:72)), Id)
+[info] 📐 protodemo.Main$$anon$65: 24 B (header 12 B, v$34:4@12, cont$35:4@16, pad 4 B)
+[info] 🧮 alloc: Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(emitting.map(Main.scala:195:72)), Id), Handler(protodemo.Main$.Add), 0)
+[info] 📐 protodemo.Main$$anon$70: 24 B (header 12 B, state0$2:4@12, body$9:4@16, h$14:4@20)
+[info] 🧮 alloc: Handle(Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(emitting.map(Main.scala:195:72)), Id), Handler(protodemo.Main$.Add), 0), Handler(protodemo.Main$.Tick), ())
+[info] 📐 protodemo.Main$$anon$72: 24 B (header 12 B, inner$1:4@12, h$15:4@16, pad 4 B)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Handle(Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(emitting.map(Main.scala:195:72)), Id), Handler(protodemo.Main$.Add), 0), Handler(protodemo.Main$.Tick), ())
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📥 region enter
+[info] handler: Handler(protodemo.Main$.Tick)
+[info] state: ()
+[info] stack: 8
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(emitting.map(Main.scala:195:72)), Id), Handler(protodemo.Main$.Add), 0)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     📥 region enter
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     state: 0
+[info]     stack: 10
+[info]         ------------------------------------------------------------------------
+[info]         🔁 loop
+[info]         value: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(emitting.map(Main.scala:195:72)), Id)
+[info]         contA: Id
+[info]         contB: Id
+[info]         ------------------------------------------------------------------------
+[info]         🔁 loop
+[info]         value: SuspendArrow(protodemo.Main$.Add, 1, Id)
+[info]         contA: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(emitting.map(Main.scala:195:72)), Id)
+[info]         contB: Id
+[info]         🧮 alloc: SuspendArrow(protodemo.Main$.Add, 1, Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(emitting.map(Main.scala:195:72)), Id))
+[info]         📐 kyo.proto.kernel.internal.Kyo$SuspendArrow$$anon$1: 24 B (header 12 B, t$1:4@12, in$1:4@16, c$1:4@20)
+[info]         ------------------------------------------------------------------------
+[info]         ⚡ handle
+[info]         suspend: SuspendArrow(protodemo.Main$.Add, 1, Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(emitting.map(Main.scala:195:72)), Id))
+[info]         handler: Handler(protodemo.Main$.Add)
+[info]         state: 0
+[info]             🧮 alloc: SuspendArrow(protodemo.Main$.Tick, 1, Id)
+[info]             📐 protodemo.Main$$anon$3: 16 B (header 12 B, n$2:4@12)
+[info]             🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Tick, 1, Id), this($anonfun.runAddEmit(Main.scala:196:33)), Id)
+[info]             📐 protodemo.Main$$anon$68: 32 B (header 12 B, st$1:4@12, input$3:4@16, v$36:4@20, cont$37:4@24, $outer:4@28)
+[info]             🧮 alloc: Defer(Defer(SuspendArrow(protodemo.Main$.Tick, 1, Id), this($anonfun.runAddEmit(Main.scala:196:33)), Id), this(<internal>.<internal>(<internal>:0:0)), Id)
+[info]             📐 kyo.proto.kernel.internal.Eval$$anon$8: 24 B (header 12 B, r$1:4@12, next$3:4@16, handler$3:4@20)
+[info]             --------------------------------------------------------------------
+[info]             📦 result
+[info]             value: Defer(Defer(SuspendArrow(protodemo.Main$.Tick, 1, Id), this($anonfun.runAddEmit(Main.scala:196:33)), Id), this(<internal>.<internal>(<internal>:0:0)), Id)
+[info]     ----------------------------------------------------------------------------
+[info]     📤 region exit
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     result: Defer(Defer(SuspendArrow(protodemo.Main$.Tick, 1, Id), this($anonfun.runAddEmit(Main.scala:196:33)), Id), this(<internal>.<internal>(<internal>:0:0)), Id)
+[info]     stack: 10
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(Defer(SuspendArrow(protodemo.Main$.Tick, 1, Id), this($anonfun.runAddEmit(Main.scala:196:33)), Id), this(<internal>.<internal>(<internal>:0:0)), Id)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(SuspendArrow(protodemo.Main$.Tick, 1, Id), this($anonfun.runAddEmit(Main.scala:196:33)), Id)
+[info]     contA: Defer(Defer(SuspendArrow(protodemo.Main$.Tick, 1, Id), this($anonfun.runAddEmit(Main.scala:196:33)), Id), this(<internal>.<internal>(<internal>:0:0)), Id)
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: SuspendArrow(protodemo.Main$.Tick, 1, Id)
+[info]     contA: Defer(SuspendArrow(protodemo.Main$.Tick, 1, Id), this($anonfun.runAddEmit(Main.scala:196:33)), Id)
+[info]     contB: Defer(Defer(SuspendArrow(protodemo.Main$.Tick, 1, Id), this($anonfun.runAddEmit(Main.scala:196:33)), Id), this(<internal>.<internal>(<internal>:0:0)), Id)
+[info]     🧮 alloc: SuspendArrow(protodemo.Main$.Tick, 1, this)
+[info]     📐 kyo.proto.kernel.internal.Eval$$anon$1: 32 B (header 12 B, sax$1:4@12, cA$1:4@16, k0$1:4@20, cB$1:4@24, pad 4 B)
+[info]     ----------------------------------------------------------------------------
+[info]     ⚡ handle
+[info]     suspend: SuspendArrow(protodemo.Main$.Tick, 1, this)
+[info]     handler: Handler(protodemo.Main$.Tick)
+[info]     state: ()
+[info]         🧮 alloc: Continue2(2, 1)
+[info]         📐 protodemo.Main$$anon$69: 24 B (header 12 B, v1x$2:4@12, v2x$2:4@16, pad 4 B)
+[info]         🧮 alloc: SuspendArrow(protodemo.Main$.Add, 1, Id)
+[info]         📐 protodemo.Main$$anon$2: 16 B (header 12 B, n$1:4@12)
+[info]         🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this($anonfun.map(Main.scala:195:71)), Id)
+[info]         📐 protodemo.Main$$anon$66: 24 B (header 12 B, a$9:4@12, v$35:4@16, cont$36:4@20)
+[info]         🧮 alloc: Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this($anonfun.map(Main.scala:195:71)), Id), Handler(protodemo.Main$.Add), 2)
+[info]         📐 kyo.proto.kernel.internal.Kyo$Handle$$anon$4: 32 B (header 12 B, v$1:4@12, h$1:4@16, st$1:4@20, c$4:4@24, pad 4 B)
+[info]         ------------------------------------------------------------------------
+[info]         📦 result
+[info]         value: Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this($anonfun.map(Main.scala:195:71)), Id), Handler(protodemo.Main$.Add), 2)
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this($anonfun.map(Main.scala:195:71)), Id), Handler(protodemo.Main$.Add), 2)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     📥 region enter
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     state: 2
+[info]     stack: 10
+[info]         ------------------------------------------------------------------------
+[info]         🔁 loop
+[info]         value: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this($anonfun.map(Main.scala:195:71)), Id)
+[info]         contA: Id
+[info]         contB: Id
+[info]         ------------------------------------------------------------------------
+[info]         🔁 loop
+[info]         value: SuspendArrow(protodemo.Main$.Add, 1, Id)
+[info]         contA: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this($anonfun.map(Main.scala:195:71)), Id)
+[info]         contB: Id
+[info]         🧮 alloc: SuspendArrow(protodemo.Main$.Add, 1, Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this($anonfun.map(Main.scala:195:71)), Id))
+[info]         📐 kyo.proto.kernel.internal.Kyo$SuspendArrow$$anon$1: 24 B (header 12 B, t$1:4@12, in$1:4@16, c$1:4@20)
+[info]         ------------------------------------------------------------------------
+[info]         ⚡ handle
+[info]         suspend: SuspendArrow(protodemo.Main$.Add, 1, Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this($anonfun.map(Main.scala:195:71)), Id))
+[info]         handler: Handler(protodemo.Main$.Add)
+[info]         state: 2
+[info]             🧮 alloc: SuspendArrow(protodemo.Main$.Tick, 1, Id)
+[info]             📐 protodemo.Main$$anon$3: 16 B (header 12 B, n$2:4@12)
+[info]             🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Tick, 1, Id), this($anonfun.runAddEmit(Main.scala:196:33)), Id)
+[info]             📐 protodemo.Main$$anon$68: 32 B (header 12 B, st$1:4@12, input$3:4@16, v$36:4@20, cont$37:4@24, $outer:4@28)
+[info]             🧮 alloc: Defer(Defer(SuspendArrow(protodemo.Main$.Tick, 1, Id), this($anonfun.runAddEmit(Main.scala:196:33)), Id), this(<internal>.<internal>(<internal>:0:0)), Id)
+[info]             📐 kyo.proto.kernel.internal.Eval$$anon$8: 24 B (header 12 B, r$1:4@12, next$3:4@16, handler$3:4@20)
+[info]             --------------------------------------------------------------------
+[info]             📦 result
+[info]             value: Defer(Defer(SuspendArrow(protodemo.Main$.Tick, 1, Id), this($anonfun.runAddEmit(Main.scala:196:33)), Id), this(<internal>.<internal>(<internal>:0:0)), Id)
+[info]     ----------------------------------------------------------------------------
+[info]     📤 region exit
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     result: Defer(Defer(SuspendArrow(protodemo.Main$.Tick, 1, Id), this($anonfun.runAddEmit(Main.scala:196:33)), Id), this(<internal>.<internal>(<internal>:0:0)), Id)
+[info]     stack: 10
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(Defer(SuspendArrow(protodemo.Main$.Tick, 1, Id), this($anonfun.runAddEmit(Main.scala:196:33)), Id), this(<internal>.<internal>(<internal>:0:0)), Id)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(SuspendArrow(protodemo.Main$.Tick, 1, Id), this($anonfun.runAddEmit(Main.scala:196:33)), Id)
+[info]     contA: Defer(Defer(SuspendArrow(protodemo.Main$.Tick, 1, Id), this($anonfun.runAddEmit(Main.scala:196:33)), Id), this(<internal>.<internal>(<internal>:0:0)), Id)
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: SuspendArrow(protodemo.Main$.Tick, 1, Id)
+[info]     contA: Defer(SuspendArrow(protodemo.Main$.Tick, 1, Id), this($anonfun.runAddEmit(Main.scala:196:33)), Id)
+[info]     contB: Defer(Defer(SuspendArrow(protodemo.Main$.Tick, 1, Id), this($anonfun.runAddEmit(Main.scala:196:33)), Id), this(<internal>.<internal>(<internal>:0:0)), Id)
+[info]     🧮 alloc: SuspendArrow(protodemo.Main$.Tick, 1, this)
+[info]     📐 kyo.proto.kernel.internal.Eval$$anon$1: 32 B (header 12 B, sax$1:4@12, cA$1:4@16, k0$1:4@20, cB$1:4@24, pad 4 B)
+[info]     ----------------------------------------------------------------------------
+[info]     ⚡ handle
+[info]     suspend: SuspendArrow(protodemo.Main$.Tick, 1, this)
+[info]     handler: Handler(protodemo.Main$.Tick)
+[info]     state: ()
+[info]         🧮 alloc: Continue2(4, 1)
+[info]         📐 protodemo.Main$$anon$69: 24 B (header 12 B, v1x$2:4@12, v2x$2:4@16, pad 4 B)
+[info]         ------------------------------------------------------------------------
+[info]         📦 result
+[info]         value: 6
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: 6
+[info]     contA: Id
+[info]     contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📤 region exit
+[info] handler: Handler(protodemo.Main$.Tick)
+[info] result: 6
+[info] stack: 8
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: 6
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📊 allocs: 19 (SuspendArrow x8, Defer x6, Handle x3, Continue2 x2) | unfused applies: 0
+[info] ✅ result: 6
+[info] ================================================================================
+[info] 🧪 choice
+[info] ================================================================================
+[info] 🧮 alloc: SuspendArrow(protodemo.Main$.Pick, 2, Id)
+[info] 📐 protodemo.Main$$anon$4: 16 B (header 12 B, n$3:4@12)
+[info] 🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Pick, 2, Id), this(choice.map(Main.scala:202:78)), Id)
+[info] 📐 protodemo.Main$$anon$73: 24 B (header 12 B, v$37:4@12, cont$38:4@16, pad 4 B)
+[info] 🧮 alloc: Handle(Defer(SuspendArrow(protodemo.Main$.Pick, 2, Id), this(choice.map(Main.scala:202:78)), Id), Handler(protodemo.Main$.Pick), (), this)
+[info] 📐 protodemo.Main$$anon$6: 24 B (header 12 B, v$1:4@12, h$1:4@16, f$2:4@20)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Handle(Defer(SuspendArrow(protodemo.Main$.Pick, 2, Id), this(choice.map(Main.scala:202:78)), Id), Handler(protodemo.Main$.Pick), (), this)
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📥 region enter
+[info] handler: Handler(protodemo.Main$.Pick)
+[info] state: ()
+[info] stack: 8
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(SuspendArrow(protodemo.Main$.Pick, 2, Id), this(choice.map(Main.scala:202:78)), Id)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: SuspendArrow(protodemo.Main$.Pick, 2, Id)
+[info]     contA: Defer(SuspendArrow(protodemo.Main$.Pick, 2, Id), this(choice.map(Main.scala:202:78)), Id)
+[info]     contB: Id
+[info]     🧮 alloc: SuspendArrow(protodemo.Main$.Pick, 2, Defer(SuspendArrow(protodemo.Main$.Pick, 2, Id), this(choice.map(Main.scala:202:78)), Id))
+[info]     📐 kyo.proto.kernel.internal.Kyo$SuspendArrow$$anon$1: 24 B (header 12 B, t$1:4@12, in$1:4@16, c$1:4@20)
+[info]     ----------------------------------------------------------------------------
+[info]     ⚡ handle
+[info]     suspend: SuspendArrow(protodemo.Main$.Pick, 2, Defer(SuspendArrow(protodemo.Main$.Pick, 2, Id), this(choice.map(Main.scala:202:78)), Id))
+[info]     handler: Handler(protodemo.Main$.Pick)
+[info]     state: ()
+[info]         🧮 alloc: SuspendArrow(protodemo.Main$.Pick, 2, Id)
+[info]         📐 protodemo.Main$$anon$4: 16 B (header 12 B, n$3:4@12)
+[info]         🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Pick, 2, Id), this($anonfun.map(Main.scala:202:77)), Id)
+[info]         📐 protodemo.Main$$anon$74: 24 B (header 12 B, a$11:4@12, v$38:4@16, cont$39:4@20)
+[info]         🧮 alloc: Handle(Defer(SuspendArrow(protodemo.Main$.Pick, 2, Id), this($anonfun.map(Main.scala:202:77)), Id), Handler(protodemo.Main$.Pick), (), this)
+[info]         📐 protodemo.Main$$anon$6: 24 B (header 12 B, v$1:4@12, h$1:4@16, f$2:4@20)
+[info]         ------------------------------------------------------------------------
+[info]         📦 result
+[info]         value: Handle(Defer(SuspendArrow(protodemo.Main$.Pick, 2, Id), this($anonfun.map(Main.scala:202:77)), Id), Handler(protodemo.Main$.Pick), (), this)
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Handle(Defer(SuspendArrow(protodemo.Main$.Pick, 2, Id), this($anonfun.map(Main.scala:202:77)), Id), Handler(protodemo.Main$.Pick), (), this)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     📥 region enter
+[info]     handler: Handler(protodemo.Main$.Pick)
+[info]     state: ()
+[info]     stack: 10
+[info]         ------------------------------------------------------------------------
+[info]         🔁 loop
+[info]         value: Defer(SuspendArrow(protodemo.Main$.Pick, 2, Id), this($anonfun.map(Main.scala:202:77)), Id)
+[info]         contA: Id
+[info]         contB: Id
+[info]         ------------------------------------------------------------------------
+[info]         🔁 loop
+[info]         value: SuspendArrow(protodemo.Main$.Pick, 2, Id)
+[info]         contA: Defer(SuspendArrow(protodemo.Main$.Pick, 2, Id), this($anonfun.map(Main.scala:202:77)), Id)
+[info]         contB: Id
+[info]         🧮 alloc: SuspendArrow(protodemo.Main$.Pick, 2, Defer(SuspendArrow(protodemo.Main$.Pick, 2, Id), this($anonfun.map(Main.scala:202:77)), Id))
+[info]         📐 kyo.proto.kernel.internal.Kyo$SuspendArrow$$anon$1: 24 B (header 12 B, t$1:4@12, in$1:4@16, c$1:4@20)
+[info]         ------------------------------------------------------------------------
+[info]         ⚡ handle
+[info]         suspend: SuspendArrow(protodemo.Main$.Pick, 2, Defer(SuspendArrow(protodemo.Main$.Pick, 2, Id), this($anonfun.map(Main.scala:202:77)), Id))
+[info]         handler: Handler(protodemo.Main$.Pick)
+[info]         state: ()
+[info]             --------------------------------------------------------------------
+[info]             📦 result
+[info]             value: 1
+[info]         ------------------------------------------------------------------------
+[info]         🔁 loop
+[info]         value: 1
+[info]         contA: Id
+[info]         contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     📤 region exit
+[info]     handler: Handler(protodemo.Main$.Pick)
+[info]     result: 1
+[info]     stack: 10
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: 1
+[info]     contA: Handle(Defer(SuspendArrow(protodemo.Main$.Pick, 2, Id), this($anonfun.map(Main.scala:202:77)), Id), Handler(protodemo.Main$.Pick), (), this)
+[info]     contB: Id
+[info]     🧮 alloc: SuspendArrow(protodemo.Main$.Pick, 2, Id)
+[info]     📐 protodemo.Main$$anon$4: 16 B (header 12 B, n$3:4@12)
+[info]     🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Pick, 2, Id), this($anonfun.map(Main.scala:202:77)), Id)
+[info]     📐 protodemo.Main$$anon$74: 24 B (header 12 B, a$11:4@12, v$38:4@16, cont$39:4@20)
+[info]     🧮 alloc: Handle(Defer(SuspendArrow(protodemo.Main$.Pick, 2, Id), this($anonfun.map(Main.scala:202:77)), Id), Handler(protodemo.Main$.Pick), (), this)
+[info]     📐 protodemo.Main$$anon$6: 24 B (header 12 B, v$1:4@12, h$1:4@16, f$2:4@20)
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Handle(Defer(SuspendArrow(protodemo.Main$.Pick, 2, Id), this($anonfun.map(Main.scala:202:77)), Id), Handler(protodemo.Main$.Pick), (), this)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     📥 region enter
+[info]     handler: Handler(protodemo.Main$.Pick)
+[info]     state: ()
+[info]     stack: 10
+[info]         ------------------------------------------------------------------------
+[info]         🔁 loop
+[info]         value: Defer(SuspendArrow(protodemo.Main$.Pick, 2, Id), this($anonfun.map(Main.scala:202:77)), Id)
+[info]         contA: Id
+[info]         contB: Id
+[info]         ------------------------------------------------------------------------
+[info]         🔁 loop
+[info]         value: SuspendArrow(protodemo.Main$.Pick, 2, Id)
+[info]         contA: Defer(SuspendArrow(protodemo.Main$.Pick, 2, Id), this($anonfun.map(Main.scala:202:77)), Id)
+[info]         contB: Id
+[info]         🧮 alloc: SuspendArrow(protodemo.Main$.Pick, 2, Defer(SuspendArrow(protodemo.Main$.Pick, 2, Id), this($anonfun.map(Main.scala:202:77)), Id))
+[info]         📐 kyo.proto.kernel.internal.Kyo$SuspendArrow$$anon$1: 24 B (header 12 B, t$1:4@12, in$1:4@16, c$1:4@20)
+[info]         ------------------------------------------------------------------------
+[info]         ⚡ handle
+[info]         suspend: SuspendArrow(protodemo.Main$.Pick, 2, Defer(SuspendArrow(protodemo.Main$.Pick, 2, Id), this($anonfun.map(Main.scala:202:77)), Id))
+[info]         handler: Handler(protodemo.Main$.Pick)
+[info]         state: ()
+[info]             --------------------------------------------------------------------
+[info]             📦 result
+[info]             value: 21
+[info]         ------------------------------------------------------------------------
+[info]         🔁 loop
+[info]         value: 21
+[info]         contA: Id
+[info]         contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     📤 region exit
+[info]     handler: Handler(protodemo.Main$.Pick)
+[info]     result: 21
+[info]     stack: 10
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: 21
+[info]     contA: Handle(Defer(SuspendArrow(protodemo.Main$.Pick, 2, Id), this($anonfun.map(Main.scala:202:77)), Id), Handler(protodemo.Main$.Pick), (), this)
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: 22
+[info]     contA: Id
+[info]     contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📤 region exit
+[info] handler: Handler(protodemo.Main$.Pick)
+[info] result: 22
+[info] stack: 8
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: 22
+[info] contA: Handle(Defer(SuspendArrow(protodemo.Main$.Pick, 2, Id), this(choice.map(Main.scala:202:78)), Id), Handler(protodemo.Main$.Pick), (), this)
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: 22
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📊 allocs: 12 (SuspendArrow x6, Defer x3, Handle x3) | unfused applies: 0
+[info] ✅ result: 22
+[info] ================================================================================
+[info] 🧪 handler stack
+[info] ================================================================================
+[info] 🧮 alloc: SuspendArrow(protodemo.Main$.Add, 1, Id)
+[info] 📐 protodemo.Main$$anon$2: 16 B (header 12 B, n$1:4@12)
+[info] 🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(stacked.map(Main.scala:208:70)), Id)
+[info] 📐 protodemo.Main$$anon$75: 24 B (header 12 B, v$39:4@12, cont$40:4@16, pad 4 B)
+[info] 🧮 alloc: Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(stacked.map(Main.scala:208:70)), Id), Handler(protodemo.Main$.Add), ())
+[info] 📐 protodemo.Main$$anon$78: 24 B (header 12 B, body$10:4@12, h$16:4@16, pad 4 B)
+[info] 🧮 alloc: Handle(Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(stacked.map(Main.scala:208:70)), Id), Handler(protodemo.Main$.Add), ()), Handler(protodemo.Main$.Add), ())
+[info] 📐 protodemo.Main$$anon$80: 24 B (header 12 B, r1$1:4@12, h$17:4@16, pad 4 B)
+[info] 🧮 alloc: Handle(Handle(Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(stacked.map(Main.scala:208:70)), Id), Handler(protodemo.Main$.Add), ()), Handler(protodemo.Main$.Add), ()), Handler(protodemo.Main$.Add), ())
+[info] 📐 protodemo.Main$$anon$82: 24 B (header 12 B, r2$1:4@12, h$18:4@16, pad 4 B)
+[info] 🧮 alloc: Handle(Handle(Handle(Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(stacked.map(Main.scala:208:70)), Id), Handler(protodemo.Main$.Add), ()), Handler(protodemo.Main$.Add), ()), Handler(protodemo.Main$.Add), ()), Handler(protodemo.Main$.Add), ())
+[info] 📐 protodemo.Main$$anon$84: 24 B (header 12 B, r3$1:4@12, h$19:4@16, pad 4 B)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Handle(Handle(Handle(Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(stacked.map(Main.scala:208:70)), Id), Handler(protodemo.Main$.Add), ()), Handler(protodemo.Main$.Add), ()), Handler(protodemo.Main$.Add), ()), Handler(protodemo.Main$.Add), ())
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📥 region enter
+[info] handler: Handler(protodemo.Main$.Add)
+[info] state: ()
+[info] stack: 8
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Handle(Handle(Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(stacked.map(Main.scala:208:70)), Id), Handler(protodemo.Main$.Add), ()), Handler(protodemo.Main$.Add), ()), Handler(protodemo.Main$.Add), ())
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     📥 region enter
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     state: ()
+[info]     stack: 10
+[info]         ------------------------------------------------------------------------
+[info]         🔁 loop
+[info]         value: Handle(Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(stacked.map(Main.scala:208:70)), Id), Handler(protodemo.Main$.Add), ()), Handler(protodemo.Main$.Add), ())
+[info]         contA: Id
+[info]         contB: Id
+[info]         ------------------------------------------------------------------------
+[info]         📥 region enter
+[info]         handler: Handler(protodemo.Main$.Add)
+[info]         state: ()
+[info]         stack: 12
+[info]             --------------------------------------------------------------------
+[info]             🔁 loop
+[info]             value: Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(stacked.map(Main.scala:208:70)), Id), Handler(protodemo.Main$.Add), ())
+[info]             contA: Id
+[info]             contB: Id
+[info]             --------------------------------------------------------------------
+[info]             📥 region enter
+[info]             handler: Handler(protodemo.Main$.Add)
+[info]             state: ()
+[info]             stack: 14
+[info]                 ----------------------------------------------------------------
+[info]                 🔁 loop
+[info]                 value: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(stacked.map(Main.scala:208:70)), Id)
+[info]                 contA: Id
+[info]                 contB: Id
+[info]                 ----------------------------------------------------------------
+[info]                 🔁 loop
+[info]                 value: SuspendArrow(protodemo.Main$.Add, 1, Id)
+[info]                 contA: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(stacked.map(Main.scala:208:70)), Id)
+[info]                 contB: Id
+[info]                 🧮 alloc: SuspendArrow(protodemo.Main$.Add, 1, Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(stacked.map(Main.scala:208:70)), Id))
+[info]                 📐 kyo.proto.kernel.internal.Kyo$SuspendArrow$$anon$1: 24 B (header 12 B, t$1:4@12, in$1:4@16, c$1:4@20)
+[info]                 ----------------------------------------------------------------
+[info]                 ⚡ handle
+[info]                 suspend: SuspendArrow(protodemo.Main$.Add, 1, Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(stacked.map(Main.scala:208:70)), Id))
+[info]                 handler: Handler(protodemo.Main$.Add)
+[info]                 state: ()
+[info]                     🧮 alloc: SuspendArrow(protodemo.Main$.Add, 2, Id)
+[info]                     📐 protodemo.Main$$anon$2: 16 B (header 12 B, n$1:4@12)
+[info]                     🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:208:69)), Id)
+[info]                     📐 protodemo.Main$$anon$76: 24 B (header 12 B, a$13:4@12, v$40:4@16, cont$41:4@20)
+[info]                     ------------------------------------------------------------
+[info]                     📦 result
+[info]                     value: Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:208:69)), Id)
+[info]                 ----------------------------------------------------------------
+[info]                 🔁 loop
+[info]                 value: Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:208:69)), Id)
+[info]                 contA: Id
+[info]                 contB: Id
+[info]                 ----------------------------------------------------------------
+[info]                 🔁 loop
+[info]                 value: SuspendArrow(protodemo.Main$.Add, 2, Id)
+[info]                 contA: Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:208:69)), Id)
+[info]                 contB: Id
+[info]                 🧮 alloc: SuspendArrow(protodemo.Main$.Add, 2, Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:208:69)), Id))
+[info]                 📐 kyo.proto.kernel.internal.Kyo$SuspendArrow$$anon$1: 24 B (header 12 B, t$1:4@12, in$1:4@16, c$1:4@20)
+[info]                 ----------------------------------------------------------------
+[info]                 ⚡ handle
+[info]                 suspend: SuspendArrow(protodemo.Main$.Add, 2, Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:208:69)), Id))
+[info]                 handler: Handler(protodemo.Main$.Add)
+[info]                 state: ()
+[info]                     ------------------------------------------------------------
+[info]                     📦 result
+[info]                     value: 5
+[info]                 ----------------------------------------------------------------
+[info]                 🔁 loop
+[info]                 value: 5
+[info]                 contA: Id
+[info]                 contB: Id
+[info]             --------------------------------------------------------------------
+[info]             📤 region exit
+[info]             handler: Handler(protodemo.Main$.Add)
+[info]             result: 5
+[info]             stack: 14
+[info]             --------------------------------------------------------------------
+[info]             🔁 loop
+[info]             value: 5
+[info]             contA: Id
+[info]             contB: Id
+[info]         ------------------------------------------------------------------------
+[info]         📤 region exit
+[info]         handler: Handler(protodemo.Main$.Add)
+[info]         result: 5
+[info]         stack: 12
+[info]         ------------------------------------------------------------------------
+[info]         🔁 loop
+[info]         value: 5
+[info]         contA: Id
+[info]         contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     📤 region exit
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     result: 5
+[info]     stack: 10
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: 5
+[info]     contA: Id
+[info]     contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📤 region exit
+[info] handler: Handler(protodemo.Main$.Add)
+[info] result: 5
+[info] stack: 8
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: 5
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📊 allocs: 10 (Handle x4, SuspendArrow x4, Defer x2) | unfused applies: 0
+[info] ✅ result: 5
+[info] ================================================================================
+[info] 🧪 deep crossing
+[info] ================================================================================
+[info] 🧮 alloc: SuspendArrow(protodemo.Main$.Add, 1, Id)
+[info] 📐 protodemo.Main$$anon$2: 16 B (header 12 B, n$1:4@12)
+[info] 🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(crossing.map(Main.scala:217:70)), Id)
+[info] 📐 protodemo.Main$$anon$85: 24 B (header 12 B, v$41:4@12, cont$42:4@16, pad 4 B)
+[info] 🧮 alloc: Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(crossing.map(Main.scala:217:70)), Id), Handler(protodemo.Main$.Tick), ())
+[info] 📐 protodemo.Main$$anon$88: 24 B (header 12 B, body$11:4@12, h$20:4@16, pad 4 B)
+[info] 🧮 alloc: Handle(Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(crossing.map(Main.scala:217:70)), Id), Handler(protodemo.Main$.Tick), ()), Handler(protodemo.Main$.Tick), ())
+[info] 📐 protodemo.Main$$anon$90: 24 B (header 12 B, t1$1:4@12, h$21:4@16, pad 4 B)
+[info] 🧮 alloc: Handle(Handle(Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(crossing.map(Main.scala:217:70)), Id), Handler(protodemo.Main$.Tick), ()), Handler(protodemo.Main$.Tick), ()), Handler(protodemo.Main$.Add), ())
+[info] 📐 protodemo.Main$$anon$92: 24 B (header 12 B, t2$1:4@12, h$22:4@16, pad 4 B)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Handle(Handle(Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(crossing.map(Main.scala:217:70)), Id), Handler(protodemo.Main$.Tick), ()), Handler(protodemo.Main$.Tick), ()), Handler(protodemo.Main$.Add), ())
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📥 region enter
+[info] handler: Handler(protodemo.Main$.Add)
+[info] state: ()
+[info] stack: 8
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Handle(Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(crossing.map(Main.scala:217:70)), Id), Handler(protodemo.Main$.Tick), ()), Handler(protodemo.Main$.Tick), ())
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     📥 region enter
+[info]     handler: Handler(protodemo.Main$.Tick)
+[info]     state: ()
+[info]     stack: 10
+[info]         ------------------------------------------------------------------------
+[info]         🔁 loop
+[info]         value: Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(crossing.map(Main.scala:217:70)), Id), Handler(protodemo.Main$.Tick), ())
+[info]         contA: Id
+[info]         contB: Id
+[info]         ------------------------------------------------------------------------
+[info]         📥 region enter
+[info]         handler: Handler(protodemo.Main$.Tick)
+[info]         state: ()
+[info]         stack: 12
+[info]             --------------------------------------------------------------------
+[info]             🔁 loop
+[info]             value: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(crossing.map(Main.scala:217:70)), Id)
+[info]             contA: Id
+[info]             contB: Id
+[info]             --------------------------------------------------------------------
+[info]             🔁 loop
+[info]             value: SuspendArrow(protodemo.Main$.Add, 1, Id)
+[info]             contA: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(crossing.map(Main.scala:217:70)), Id)
+[info]             contB: Id
+[info]             🧮 alloc: SuspendArrow(protodemo.Main$.Add, 1, Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(crossing.map(Main.scala:217:70)), Id))
+[info]             📐 kyo.proto.kernel.internal.Kyo$SuspendArrow$$anon$1: 24 B (header 12 B, t$1:4@12, in$1:4@16, c$1:4@20)
+[info]             --------------------------------------------------------------------
+[info]             🫧 foreign suspend
+[info]             suspend: SuspendArrow(protodemo.Main$.Add, 1, Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(crossing.map(Main.scala:217:70)), Id))
+[info]             handler: Handler(protodemo.Main$.Tick)
+[info]             🧮 alloc: SuspendArrow(protodemo.Main$.Add, 1, this)
+[info]             📐 kyo.proto.kernel.internal.Eval$$anon$4: 24 B (header 12 B, sax$2:4@12, kyo$3:4@16, st$tailLocal1$2:4@20)
+[info]         ------------------------------------------------------------------------
+[info]         📤 region exit
+[info]         handler: Handler(protodemo.Main$.Tick)
+[info]         result: SuspendArrow(protodemo.Main$.Add, 1, this)
+[info]         stack: 12
+[info]         ------------------------------------------------------------------------
+[info]         🔁 loop
+[info]         value: SuspendArrow(protodemo.Main$.Add, 1, this)
+[info]         contA: Id
+[info]         contB: Id
+[info]         ------------------------------------------------------------------------
+[info]         🫧 foreign suspend
+[info]         suspend: SuspendArrow(protodemo.Main$.Add, 1, this)
+[info]         handler: Handler(protodemo.Main$.Tick)
+[info]         🧮 alloc: SuspendArrow(protodemo.Main$.Add, 1, this)
+[info]         📐 kyo.proto.kernel.internal.Eval$$anon$4: 24 B (header 12 B, sax$2:4@12, kyo$3:4@16, st$tailLocal1$2:4@20)
+[info]     ----------------------------------------------------------------------------
+[info]     📤 region exit
+[info]     handler: Handler(protodemo.Main$.Tick)
+[info]     result: SuspendArrow(protodemo.Main$.Add, 1, this)
+[info]     stack: 10
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: SuspendArrow(protodemo.Main$.Add, 1, this)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     ⚡ handle
+[info]     suspend: SuspendArrow(protodemo.Main$.Add, 1, this)
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     state: ()
+[info]         🧮 alloc: SuspendArrow(protodemo.Main$.Add, 2, Id)
+[info]         📐 protodemo.Main$$anon$2: 16 B (header 12 B, n$1:4@12)
+[info]         🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:217:69)), Id)
+[info]         📐 protodemo.Main$$anon$86: 24 B (header 12 B, a$15:4@12, v$42:4@16, cont$43:4@20)
+[info]         🧮 alloc: Handle(Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:217:69)), Id), Handler(protodemo.Main$.Tick), ())
+[info]         📐 kyo.proto.kernel.internal.Kyo$Handle$$anon$4: 32 B (header 12 B, v$1:4@12, h$1:4@16, st$1:4@20, c$4:4@24, pad 4 B)
+[info]         🧮 alloc: Handle(Handle(Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:217:69)), Id), Handler(protodemo.Main$.Tick), ()), Handler(protodemo.Main$.Tick), ())
+[info]         📐 kyo.proto.kernel.internal.Kyo$Handle$$anon$4: 32 B (header 12 B, v$1:4@12, h$1:4@16, st$1:4@20, c$4:4@24, pad 4 B)
+[info]         ------------------------------------------------------------------------
+[info]         📦 result
+[info]         value: Handle(Handle(Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:217:69)), Id), Handler(protodemo.Main$.Tick), ()), Handler(protodemo.Main$.Tick), ())
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Handle(Handle(Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:217:69)), Id), Handler(protodemo.Main$.Tick), ()), Handler(protodemo.Main$.Tick), ())
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     📥 region enter
+[info]     handler: Handler(protodemo.Main$.Tick)
+[info]     state: ()
+[info]     stack: 10
+[info]         ------------------------------------------------------------------------
+[info]         🔁 loop
+[info]         value: Handle(Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:217:69)), Id), Handler(protodemo.Main$.Tick), ())
+[info]         contA: Id
+[info]         contB: Id
+[info]         ------------------------------------------------------------------------
+[info]         📥 region enter
+[info]         handler: Handler(protodemo.Main$.Tick)
+[info]         state: ()
+[info]         stack: 12
+[info]             --------------------------------------------------------------------
+[info]             🔁 loop
+[info]             value: Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:217:69)), Id)
+[info]             contA: Id
+[info]             contB: Id
+[info]             --------------------------------------------------------------------
+[info]             🔁 loop
+[info]             value: SuspendArrow(protodemo.Main$.Add, 2, Id)
+[info]             contA: Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:217:69)), Id)
+[info]             contB: Id
+[info]             🧮 alloc: SuspendArrow(protodemo.Main$.Add, 2, Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:217:69)), Id))
+[info]             📐 kyo.proto.kernel.internal.Kyo$SuspendArrow$$anon$1: 24 B (header 12 B, t$1:4@12, in$1:4@16, c$1:4@20)
+[info]             --------------------------------------------------------------------
+[info]             🫧 foreign suspend
+[info]             suspend: SuspendArrow(protodemo.Main$.Add, 2, Defer(SuspendArrow(protodemo.Main$.Add, 2, Id), this($anonfun.map(Main.scala:217:69)), Id))
+[info]             handler: Handler(protodemo.Main$.Tick)
+[info]             🧮 alloc: SuspendArrow(protodemo.Main$.Add, 2, this)
+[info]             📐 kyo.proto.kernel.internal.Eval$$anon$4: 24 B (header 12 B, sax$2:4@12, kyo$3:4@16, st$tailLocal1$2:4@20)
+[info]         ------------------------------------------------------------------------
+[info]         📤 region exit
+[info]         handler: Handler(protodemo.Main$.Tick)
+[info]         result: SuspendArrow(protodemo.Main$.Add, 2, this)
+[info]         stack: 12
+[info]         ------------------------------------------------------------------------
+[info]         🔁 loop
+[info]         value: SuspendArrow(protodemo.Main$.Add, 2, this)
+[info]         contA: Id
+[info]         contB: Id
+[info]         ------------------------------------------------------------------------
+[info]         🫧 foreign suspend
+[info]         suspend: SuspendArrow(protodemo.Main$.Add, 2, this)
+[info]         handler: Handler(protodemo.Main$.Tick)
+[info]         🧮 alloc: SuspendArrow(protodemo.Main$.Add, 2, this)
+[info]         📐 kyo.proto.kernel.internal.Eval$$anon$4: 24 B (header 12 B, sax$2:4@12, kyo$3:4@16, st$tailLocal1$2:4@20)
+[info]     ----------------------------------------------------------------------------
+[info]     📤 region exit
+[info]     handler: Handler(protodemo.Main$.Tick)
+[info]     result: SuspendArrow(protodemo.Main$.Add, 2, this)
+[info]     stack: 10
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: SuspendArrow(protodemo.Main$.Add, 2, this)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     ⚡ handle
+[info]     suspend: SuspendArrow(protodemo.Main$.Add, 2, this)
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     state: ()
+[info]         ------------------------------------------------------------------------
+[info]         📦 result
+[info]         value: 5
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: 5
+[info]     contA: Id
+[info]     contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📤 region exit
+[info] handler: Handler(protodemo.Main$.Add)
+[info] result: 5
+[info] stack: 8
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: 5
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📊 allocs: 15 (SuspendArrow x8, Handle x5, Defer x2) | unfused applies: 0
+[info] ✅ result: 5
+[info] ================================================================================
+[info] 🧪 data join
+[info] ================================================================================
+[info] 🧮 alloc: Defer((), this(dataJoin.lazily(Main.scala:231:58)), Id)
+[info] 📐 kyo.proto.kernel.Effect$$anon$4: 24 B (header 12 B, x$2$1:4@12, f$1:4@16, pad 4 B)
+[info] 🧮 alloc: SuspendArrow(protodemo.Main$.Add, 1, Id)
+[info] 📐 protodemo.Main$$anon$2: 16 B (header 12 B, n$1:4@12)
+[info] 🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(constAdd.map(Main.scala:226:27)), Id)
+[info] 📐 protodemo.Main$$anon$93: 24 B (header 12 B, v$43:4@12, cont$44:4@16, x$1:4@20)
+[info] 🧮 alloc: Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(constAdd.map(Main.scala:226:27)), Id), Handler(protodemo.Main$.Add), ())
+[info] 📐 protodemo.Main$$anon$95: 24 B (header 12 B, body$12:4@12, h$23:4@16, pad 4 B)
+[info] 🧮 alloc: Defer(Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(constAdd.map(Main.scala:226:27)), Id), Handler(protodemo.Main$.Add), ()), this(dataJoin.map(Main.scala:237:43)), Id)
+[info] 📐 protodemo.Main$$anon$96: 24 B (header 12 B, v$44:4@12, cont$45:4@16, pad 4 B)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Defer(Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(constAdd.map(Main.scala:226:27)), Id), Handler(protodemo.Main$.Add), ()), this(dataJoin.map(Main.scala:237:43)), Id)
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(constAdd.map(Main.scala:226:27)), Id), Handler(protodemo.Main$.Add), ())
+[info] contA: Defer(Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(constAdd.map(Main.scala:226:27)), Id), Handler(protodemo.Main$.Add), ()), this(dataJoin.map(Main.scala:237:43)), Id)
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📥 region enter
+[info] handler: Handler(protodemo.Main$.Add)
+[info] state: ()
+[info] stack: 8
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(constAdd.map(Main.scala:226:27)), Id)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: SuspendArrow(protodemo.Main$.Add, 1, Id)
+[info]     contA: Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(constAdd.map(Main.scala:226:27)), Id)
+[info]     contB: Id
+[info]     🧮 alloc: SuspendArrow(protodemo.Main$.Add, 1, Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(constAdd.map(Main.scala:226:27)), Id))
+[info]     📐 kyo.proto.kernel.internal.Kyo$SuspendArrow$$anon$1: 24 B (header 12 B, t$1:4@12, in$1:4@16, c$1:4@20)
+[info]     ----------------------------------------------------------------------------
+[info]     ⚡ handle
+[info]     suspend: SuspendArrow(protodemo.Main$.Add, 1, Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(constAdd.map(Main.scala:226:27)), Id))
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     state: ()
+[info]         ------------------------------------------------------------------------
+[info]         📦 result
+[info]         value: Defer((), this(dataJoin.lazily(Main.scala:231:58)), Id)
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer((), this(dataJoin.lazily(Main.scala:231:58)), Id)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: ()
+[info]     contA: Defer((), this(dataJoin.lazily(Main.scala:231:58)), Id)
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: 42
+[info]     contA: Id
+[info]     contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📤 region exit
+[info] handler: Handler(protodemo.Main$.Add)
+[info] result: List(42)
+[info] stack: 8
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: List(42)
+[info] contA: Id
+[info] contB: Defer(Handle(Defer(SuspendArrow(protodemo.Main$.Add, 1, Id), this(constAdd.map(Main.scala:226:27)), Id), Handler(protodemo.Main$.Add), ()), this(dataJoin.map(Main.scala:237:43)), Id)
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: 43
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📊 allocs: 6 (Defer x3, SuspendArrow x2, Handle x1) | unfused applies: 0
+[info] ✅ result: 43
+[success] Total time: 10 s, completed Aug 28, 2026, 7:58:10 PM

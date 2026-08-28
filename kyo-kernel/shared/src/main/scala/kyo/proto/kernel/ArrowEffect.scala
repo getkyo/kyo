@@ -38,13 +38,20 @@ object ArrowEffect:
       * @return
       *   A computation that will receive the requested function when executed
       */
+    @nowarn("msg=anonymous")
     inline def suspend[C](
         using inline _frame: Frame
     )[I[_], O[_], E <: ArrowEffect[I, O]](
         inline effectTag: Tag[E],
         inline effectInput: I[C]
     ): O[C] < E =
-        Kyo.SuspendArrow[I, O, E, C, O[C], E](effectTag, effectInput, Arrow.id)
+        // built at the site rather than through the companion: the identity continuation is a
+        // constant, not a captured field
+        new Kyo.SuspendArrow[I, O, E, C, O[C], E]:
+            override def frame = _frame
+            def tag            = effectTag
+            def input          = effectInput
+            def cont           = Arrow.id
 
     /** Creates a suspended computation that requests a function implementation and transforms its result immediately upon receipt.
       *
@@ -110,16 +117,21 @@ object ArrowEffect:
         def onDone(v0: A): B < (S & S2) = done(v0)
         v match
             case _: Pending[?, ?] =>
-                Kyo.handle[E, A, B, S & S2, Unit](
-                    v,
+                val h =
                     new HandlerCont[I, O, E, A, B, S & S2]:
                         def tag = effectTag
                         def run[X, C, S3](input: I[X], cont: Arrow[O[X], A, E & S & S2], k: Arrow[A, C, S3]) =
                             handle[X](input, cont).chain(k)
                         def done(state: Unit, v0: A) = onDone(v0)
-                    ,
-                    ()
-                )
+                // the region node is built at the site: the unit state and the identity continuation
+                // are constants, not captured fields
+                new Kyo.Handle[E, A, B, B, S & S2, Unit]:
+                    override def frame = _frame
+                    def value          = v
+                    def handler        = h
+                    def state          = ()
+                    def cont           = Arrow.id
+                end new
             case _ => onDone(Nested.unnest(v))
         end match
     end handleCont
@@ -199,15 +211,21 @@ object ArrowEffect:
         def onDone(st: State, v0: A): B < (S & S2) = done(st, v0)
         v match
             case _: Pending[?, ?] =>
-                Kyo.handle[E, A, B, S & S2, State](
-                    v,
+                val h =
                     new HandlerLoop[I, O, E, A, B, S & S2, State]:
                         def tag                            = effectTag
                         def run[X](st: State, input: I[X]) = handle[X](st, input)
                         def done(st: State, v0: A)         = onDone(st, v0)
-                    ,
-                    state
-                )
+                val state0 = state
+                // the region node is built at the site: the identity continuation is a constant,
+                // not a captured field
+                new Kyo.Handle[E, A, B, B, S & S2, State]:
+                    override def frame = _frame
+                    def value          = v
+                    def handler        = h
+                    def state          = state0
+                    def cont           = Arrow.id
+                end new
             case _ => onDone(state, Nested.unnest(v))
         end match
     end handleLoopState

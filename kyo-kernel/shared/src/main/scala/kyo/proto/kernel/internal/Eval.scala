@@ -31,11 +31,60 @@ object Eval:
                     val k = kyo.cont
                     loop(k.head(nv, k.tail), contA, contB, ctx.update[VX, CX](kyo.tag, nv))
                 case kyo: Kyo.Suspend[EX, A, S] @unchecked =>
-                    val k = contA.chain(contB)
-                    if k.isInstanceOf[Arrow.Id[?]] then
-                        kyo.asInstanceOf[C < S]
+                    if contA.isInstanceOf[Arrow.Id[?]] && contB.isInstanceOf[Arrow.Id[?]] then kyo.asInstanceOf[C < S]
+                    else if kyo.cont.isInstanceOf[Arrow.Id[?]] && (contA.isInstanceOf[Arrow.Id[?]] || contB.isInstanceOf[Arrow.Id[?]]) then
+                        // a single live register absorbs into the free slot: only the copy allocates
+                        kyo.withCont(kyo.cont.chain(contA.chain(contB)))
                     else
-                        kyo.withCont(kyo.cont.chain(k)) // TODO fusion candidate
+                        // two or more live continuations: reifying through chains would allocate a copy
+                        // plus a Chain per composition. One allocation fulfills every role instead: the
+                        // reified suspension captures its continuation and the registers, and delivery
+                        // composes by nested application; arriving through head and tail with an identity
+                        // continuation, the chain law composes without allocating
+                        kyo match
+                            case sa: Kyo.SuspendArrow[IX, OX, EX, VX, A, S] @unchecked =>
+                                val sax: Kyo.SuspendArrow[IX, OX, EX, VX, A, S] = sa
+                                val k0                                          = sax.cont
+                                val cA                                          = contA
+                                val cB                                          = contB
+                                new Kyo.SuspendArrow[IX, OX, EX, VX, C, S] with Arrow.Transform[OX[VX], C, S]:
+                                    def tag   = sax.tag
+                                    def input = sax.input
+                                    def cont  = this
+                                    override def apply[D, S2](x: OX[VX] < S2, c2: Arrow[C, D, S2]) =
+                                        x match
+                                            case p: Pending[OX[VX], S2] @unchecked => Effect.defer(p, this, c2)
+                                            case _                                 => cA(k0(x, Arrow.id), cB.chain(c2))
+                                end new
+                            case sc: Kyo.SuspendContext[VX, CX, A, S] @unchecked =>
+                                val scx: Kyo.SuspendContext[VX, CX, A, S] = sc
+                                val k0                                    = scx.cont
+                                val cA                                    = contA
+                                val cB                                    = contB
+                                new Kyo.SuspendContext[VX, CX, C, S] with Arrow.Transform[VX, C, S]:
+                                    def tag    = scx.tag
+                                    def update = scx.update
+                                    def cont   = this
+                                    override def apply[D, S2](x: VX < S2, c2: Arrow[C, D, S2]) =
+                                        x match
+                                            case p: Pending[VX, S2] @unchecked => Effect.defer(p, this, c2)
+                                            case _                             => cA(k0(x, Arrow.id), cB.chain(c2))
+                                end new
+                            case sd: Kyo.SuspendContextDefault[VX, CX, A, S] @unchecked =>
+                                val sdx: Kyo.SuspendContextDefault[VX, CX, A, S] = sd
+                                val k0                                           = sdx.cont
+                                val cA                                           = contA
+                                val cB                                           = contB
+                                new Kyo.SuspendContextDefault[VX, CX, C, S] with Arrow.Transform[VX, C, S]:
+                                    def tag     = sdx.tag
+                                    def default = sdx.default
+                                    def update  = sdx.update
+                                    def cont    = this
+                                    override def apply[D, S2](x: VX < S2, c2: Arrow[C, D, S2]) =
+                                        x match
+                                            case p: Pending[VX, S2] @unchecked => Effect.defer(p, this, c2)
+                                            case _                             => cA(k0(x, Arrow.id), cB.chain(c2))
+                                end new
                     end if
                 case kyo: Kyo.Handle[EX, AX, Y, A, S, VX] @unchecked =>
                     // TODO let's move to a separate method, not nested
