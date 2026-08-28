@@ -137,7 +137,7 @@ object Loop:
 
     private val _continueUnit: Continue[Unit] =
         new Continue:
-            val _1 = ()
+            def _1 = ()
 
     /** Creates an outcome signaling continuation with no state value.
       *
@@ -166,9 +166,13 @@ object Loop:
       */
     @nowarn("msg=anonymous")
     inline def continue[A, O, S](inline v: A): Outcome[A, O] < S =
+        // captures over vals: a capture field assigns before the carrier's constructor, so the
+        // alloc hook can render the slots during construction
+        val v0 = v
         (new Continue[A]:
-            val _1 = v
+            def _1 = v0
         ).asInstanceOf[Outcome[A, O] < S]
+    end continue
 
     /** Creates an outcome signaling continuation with two state values.
       *
@@ -182,10 +186,13 @@ object Loop:
       */
     @nowarn("msg=anonymous")
     inline def continue[A, B, O](inline v1: A, inline v2: B): Outcome2[A, B, O] < Any =
+        val v1x = v1
+        val v2x = v2
         (new Continue2[A, B]:
-            val _1 = v1
-            val _2 = v2
+            def _1 = v1x
+            def _2 = v2x
         ).asInstanceOf[Outcome2[A, B, O] < Any]
+    end continue
 
     /** Creates an outcome signaling continuation with three state values.
       *
@@ -198,11 +205,15 @@ object Loop:
       */
     @nowarn("msg=anonymous")
     inline def continue[A, B, C, O](inline v1: A, inline v2: B, inline v3: C): Outcome3[A, B, C, O] < Any =
+        val v1x = v1
+        val v2x = v2
+        val v3x = v3
         (new Continue3[A, B, C]:
-            val _1 = v1
-            val _2 = v2
-            val _3 = v3
+            def _1 = v1x
+            def _2 = v2x
+            def _3 = v3x
         ).asInstanceOf[Outcome3[A, B, C, O] < Any]
+    end continue
 
     /** Creates an outcome signaling continuation with four state values.
       *
@@ -222,12 +233,17 @@ object Loop:
         inline v3: C,
         inline v4: D
     ): Outcome4[A, B, C, D, O] < Any =
+        val v1x = v1
+        val v2x = v2
+        val v3x = v3
+        val v4x = v4
         (new Continue4[A, B, C, D]:
-            val _1 = v1
-            val _2 = v2
-            val _3 = v3
-            val _4 = v4
+            def _1 = v1x
+            def _2 = v2x
+            def _3 = v3x
+            def _4 = v4x
         ).asInstanceOf[Outcome4[A, B, C, D, O] < Any]
+    end continue
 
     /** Creates an outcome signaling completion with no value.
       *

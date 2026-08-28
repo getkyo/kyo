@@ -147,32 +147,63 @@ object Eval:
     ): Outcome2[State, O[W] < (E & S), B < S] =
         r match
             case r: Arrow[Any, Outcome2[State, O[W] < (E & S), B < S], S] @unchecked =>
-                val transform =
-                    new Arrow.Transform[Outcome2[State, O[W] < (E & S), B < S], B, S]:
-                        def frame             = Frame.internal
-                        override def toString = "Transform"
-                        def apply[D, S2](
-                            out: Outcome2[State, O[W] < (E & S), B < S] < S2,
-                            cont: Arrow[B, D, S2]
-                        ) =
-                            out match
-                                case kyo: Arrow[Any, Outcome2[State, O[W] < (E & S), B < S], S2] @unchecked =>
-                                    Effect.defer(kyo, this, cont)
-                                case out: Loop.Continue2[State, O[W] < (E & S)] @unchecked =>
-                                    Kyo.handle[E, A, B, S, State](
-                                        out._2.chain(next),
-                                        handler,
-                                        out._1
-                                    ).chain(cont)
-                                case out =>
-                                    // a done outcome is its payload in the union representation
-                                    Nested.unnest[B < S](out).chain(cont)
+                def outcome[D, S2](
+                    self: Arrow[Outcome2[State, O[W] < (E & S), B < S], B, S],
+                    out: Outcome2[State, O[W] < (E & S), B < S] < S2,
+                    cont: Arrow[B, D, S2]
+                ): D < (S & S2) =
+                    out match
+                        case kyo: Arrow[Any, Outcome2[State, O[W] < (E & S), B < S], S2] @unchecked =>
+                            Effect.defer(kyo, self, cont)
+                        case out: Loop.Continue2[State, O[W] < (E & S)] @unchecked =>
+                            Kyo.handle[E, A, B, S, State](
+                                out._2.chain(next),
+                                handler,
+                                out._1
+                            ).chain(cont)
+                        case out =>
+                            // a done outcome is its payload in the union representation
+                            Nested.unnest[B < S](out).chain(cont)
                 val out: B < S =
                     r match
-                        case r: Kyo.Suspend[E, Outcome2[State, O[W] < (E & S), B < S], S] @unchecked =>
-                            r.withCont(r.cont.chain(transform))
+                        case rd: Kyo.Defer[AX, Y, Outcome2[State, O[W] < (E & S), B < S], S] @unchecked
+                            if rd.contB.isInstanceOf[Arrow.Id[?]] =>
+                            val rdx: Kyo.Defer[AX, Y, Outcome2[State, O[W] < (E & S), B < S], S] = rd
+                            // one allocation fulfilling both roles: the rebuilt record and its outcome dispatch
+                            new Kyo.Defer[AX, Y, B, S]:
+                                def value = rdx.value
+                                def contA = rdx.contA
+                                def contB = this
+                                override def apply[D, S2](out0: Any < S2, cont2: Arrow[B, D, S2]) =
+                                    outcome(this, out0.asInstanceOf[Outcome2[State, O[W] < (E & S), B < S] < S2], cont2)
+                            end new
+                        case rs: Kyo.SuspendArrow[IY, OY, EY, VY, Outcome2[State, O[W] < (E & S), B < S], S] @unchecked
+                            if rs.cont.isInstanceOf[Arrow.Id[?]] =>
+                            val rsx: Kyo.SuspendArrow[IY, OY, EY, VY, Outcome2[State, O[W] < (E & S), B < S], S] = rs
+                            // one allocation fulfilling both roles: the rebuilt suspension and its outcome dispatch
+                            new Kyo.SuspendArrow[IY, OY, EY, VY, B, S]:
+                                def tag   = rsx.tag
+                                def input = rsx.input
+                                def cont  = this
+                                override def apply[D, S2](out0: Any < S2, cont2: Arrow[B, D, S2]) =
+                                    outcome(this, out0.asInstanceOf[Outcome2[State, O[W] < (E & S), B < S] < S2], cont2)
+                            end new
                         case _ =>
-                            r.chain(transform)
+                            val transform =
+                                new Arrow.Transform[Outcome2[State, O[W] < (E & S), B < S], B, S]:
+                                    def frame             = Frame.internal
+                                    override def toString = "Transform"
+                                    def apply[D, S2](
+                                        out0: Outcome2[State, O[W] < (E & S), B < S] < S2,
+                                        cont2: Arrow[B, D, S2]
+                                    ) =
+                                        outcome(this, out0, cont2)
+                            r match
+                                case r: Kyo.Suspend[E, Outcome2[State, O[W] < (E & S), B < S], S] @unchecked =>
+                                    r.withCont(r.cont.chain(transform))
+                                case _ =>
+                                    r.chain(transform)
+                            end match
                 // a done outcome is its payload in the union representation
                 Nested.unnest[Outcome2[State, O[W] < (E & S), B < S]](out)
             case r =>

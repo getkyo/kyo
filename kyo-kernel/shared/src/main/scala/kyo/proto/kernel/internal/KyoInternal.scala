@@ -8,6 +8,7 @@ import kyo.proto.kernel.ArrowEffect
 import kyo.proto.kernel.ContextEffect
 import kyo.proto.kernel.Effect
 import language.implicitConversions
+import scala.annotation.publicInBinary
 
 private[proto] def short(v: Any): String =
     v match
@@ -25,18 +26,22 @@ end Kyo
 
 object Kyo:
 
-    abstract class Defer[A, B, C, -S] private[kyo] () extends Kyo[C, S]:
+    abstract class Defer[A, B, C, -S] @publicInBinary private[kyo] () extends Kyo[C, S]:
         def value: A < S
         def contA: Arrow[A, B, S]
         def contB: Arrow[B, C, S]
 
         override def chain[D, S2](a: Arrow[C, D, S2]): Arrow[Any, D, S & S2] =
-            if a.isInstanceOf[Arrow.Id[?]] || !contB.isInstanceOf[Arrow.Id[?]] then super.chain(a)
+            // the free-slot law re-evaluates the record, which is only valid for a constant record: a
+            // self-fulfilling one (contA eq this) consumes its input in arrow position and takes the base law
+            if a.isInstanceOf[Arrow.Id[?]] || !contB.isInstanceOf[Arrow.Id[?]] || (contA eq this) then super.chain(a)
             else
                 // contB eq Id pins B = C, so `a` composes directly into the free slot
                 Effect.defer(value, contA, a.asInstanceOf[Arrow[B, D, S & S2]])
 
-        override def toString = s"Defer(${short(value)}, ${short(contA)}, ${short(contB)})"
+        override def toString =
+            def slot(a: Arrow[?, ?, ?]): String = if a eq this then s"this(${frame.snippetShort})" else short(a)
+            s"Defer(${short(value)}, ${slot(contA)}, ${slot(contB)})"
     end Defer
 
     sealed abstract class Suspend[E <: Effect, A, S] extends Kyo[A, S]:

@@ -28,14 +28,18 @@ object `<` extends Implicits:
           */
         @nowarn("msg=anonymous")
         inline def map[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
-            def arrow: Arrow[A, B, S2] =
-                new Transform[A, B, S2]:
-                    def frame                                          = _frame
-                    def apply[C, S3](v: A < S3, cont: Arrow[B, C, S3]) = run(v, cont)
             def run[C, S3](v: A < S3, cont: Arrow[B, C, S3]): C < (S2 & S3) =
                 var slot: Safepoint.Slot = -1
                 val shouldDefer          = v.isInstanceOf[Arrow[?, ?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
-                if shouldDefer then Effect.defer(v, arrow, cont)
+                if shouldDefer then
+                    (new Kyo.Defer[A, B, B, S2 & S3]:
+                        override def frame = _frame
+                        def value          = v
+                        def contA          = this
+                        def contB          = Arrow.id
+                        override def apply[C2, S4](v2: Any < S4, cont2: Arrow[B, C2, S4]) =
+                            run(v2.asInstanceOf[A < S4], cont2)
+                    ).chain(cont)
                 else
                     val out = cont.head(f(Nested.unnest(v)), cont.tail)
                     Safepoint.exit(slot)
@@ -57,23 +61,24 @@ object `<` extends Implicits:
           */
         @nowarn("msg=anonymous")
         inline def flatMap[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
-            def arrow =
-                new Transform[A, B, S2]:
-                    def frame                                          = _frame
-                    def apply[C, S3](v: A < S3, cont: Arrow[B, C, S3]) = run(v, cont)
             def run[C, S3](v: A < S3, cont: Arrow[B, C, S3]): C < (S2 & S3) =
-                v match
-                    case kyo: Arrow[Any, A, S3] @unchecked =>
-                        Effect.defer(kyo, arrow, cont)
-                    case _ =>
-                        val slot = Safepoint.get()
-                        if !Safepoint.enter(slot) then
-                            Effect.defer(v, arrow, cont)
-                        else
-                            val out = cont.head(f(Nested.unnest(v)), cont.tail)
-                            Safepoint.exit(slot)
-                            out
-                        end if
+                var slot: Safepoint.Slot = -1
+                val shouldDefer          = v.isInstanceOf[Arrow[?, ?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
+                if shouldDefer then
+                    (new Kyo.Defer[A, B, B, S2 & S3]:
+                        override def frame = _frame
+                        def value          = v
+                        def contA          = this
+                        def contB          = Arrow.id
+                        override def apply[C2, S4](v2: Any < S4, cont2: Arrow[B, C2, S4]) =
+                            run(v2.asInstanceOf[A < S4], cont2)
+                    ).chain(cont)
+                else
+                    val out = cont.head(f(Nested.unnest(v)), cont.tail)
+                    Safepoint.exit(slot)
+                    out
+                end if
+            end run
             run(self, Arrow.id)
         end flatMap
 
@@ -86,23 +91,24 @@ object `<` extends Implicits:
           */
         @nowarn("msg=anonymous")
         inline def andThen[B, S2](inline f: => B < S2)(using inline _frame: Frame): B < (S & S2) =
-            def arrow =
-                new Transform[A, B, S2]:
-                    def frame                                          = _frame
-                    def apply[C, S3](v: A < S3, cont: Arrow[B, C, S3]) = run(v, cont)
             def run[C, S3](v: A < S3, cont: Arrow[B, C, S3]): C < (S2 & S3) =
-                v match
-                    case kyo: Arrow[Any, A, S3] @unchecked =>
-                        Effect.defer(kyo, arrow, cont)
-                    case _ =>
-                        val slot = Safepoint.get()
-                        if !Safepoint.enter(slot) then
-                            Effect.defer(v, arrow, cont)
-                        else
-                            val out = cont.head(f, cont.tail)
-                            Safepoint.exit(slot)
-                            out
-                        end if
+                var slot: Safepoint.Slot = -1
+                val shouldDefer          = v.isInstanceOf[Arrow[?, ?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
+                if shouldDefer then
+                    (new Kyo.Defer[A, B, B, S2 & S3]:
+                        override def frame = _frame
+                        def value          = v
+                        def contA          = this
+                        def contB          = Arrow.id
+                        override def apply[C2, S4](v2: Any < S4, cont2: Arrow[B, C2, S4]) =
+                            run(v2.asInstanceOf[A < S4], cont2)
+                    ).chain(cont)
+                else
+                    val out = cont.head(f, cont.tail)
+                    Safepoint.exit(slot)
+                    out
+                end if
+            end run
             run(self, Arrow.id)
         end andThen
 
@@ -113,23 +119,24 @@ object `<` extends Implicits:
           */
         @nowarn("msg=anonymous")
         inline def unit(using inline _frame: Frame): Unit < S =
-            def arrow =
-                new Transform[A, Unit, Any]:
-                    def frame                                             = _frame
-                    def apply[C, S3](v: A < S3, cont: Arrow[Unit, C, S3]) = run(v, cont)
             def run[C, S3](v: A < S3, cont: Arrow[Unit, C, S3]): C < S3 =
-                v match
-                    case kyo: Arrow[Any, A, S3] @unchecked =>
-                        Effect.defer(kyo, arrow, cont)
-                    case _ =>
-                        val slot = Safepoint.get()
-                        if !Safepoint.enter(slot) then
-                            Effect.defer(v, arrow, cont)
-                        else
-                            val out = cont.head((), cont.tail)
-                            Safepoint.exit(slot)
-                            out
-                        end if
+                var slot: Safepoint.Slot = -1
+                val shouldDefer          = v.isInstanceOf[Arrow[?, ?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
+                if shouldDefer then
+                    (new Kyo.Defer[A, Unit, Unit, S3]:
+                        override def frame = _frame
+                        def value          = v
+                        def contA          = this
+                        def contB          = Arrow.id
+                        override def apply[C2, S4](v2: Any < S4, cont2: Arrow[Unit, C2, S4]) =
+                            run(v2.asInstanceOf[A < S4], cont2)
+                    ).chain(cont)
+                else
+                    val out = cont.head((), cont.tail)
+                    Safepoint.exit(slot)
+                    out
+                end if
+            end run
             run(self, Arrow.id)
         end unit
 
