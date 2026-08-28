@@ -1,5 +1,6 @@
 package kyo.proto.kernel.internal
 
+import kyo.Frame
 import kyo.bug
 import kyo.proto.Arrow
 import kyo.proto.Loop
@@ -47,9 +48,11 @@ object Eval:
                                 dbg.onForeign(res, kyo.handler)
                                 res.withCont(
                                     new Arrow.Transform[res.Op, A, S]:
-                                        def apply[D, S2](x: res.Op, cont: Arrow[A, D, S2]) =
+                                        def frame             = Frame.internal
+                                        override def toString = "Transform"
+                                        def apply[D, S2](x: res.Op < S2, cont: Arrow[A, D, S2]) =
                                             val k = res.cont
-                                            Kyo.handle[EX, AX, A, S, VX](k.head(x, k.tail), kyo.handler, st).chain(cont)
+                                            Kyo.handle[EX, AX, A, S & S2, VX](k.head(x, k.tail), kyo.handler, st).chain(cont)
                                         end apply
                                 )
                             case suspend: Kyo.SuspendArrow[IX, OX, EX, VX, AX, EX & S] @unchecked =>
@@ -122,8 +125,10 @@ object Eval:
             case r: Arrow[Any, Outcome2[State, O[W] < (E & S), B < S], S] @unchecked =>
                 val transform =
                     new Arrow.Transform[Outcome2[State, O[W] < (E & S), B < S], B, S]:
+                        def frame             = Frame.internal
+                        override def toString = "Transform"
                         def apply[D, S2](
-                            out: Outcome2[State, O[W] < (E & S), B < S],
+                            out: Outcome2[State, O[W] < (E & S), B < S] < S2,
                             cont: Arrow[B, D, S2]
                         ) =
                             out match

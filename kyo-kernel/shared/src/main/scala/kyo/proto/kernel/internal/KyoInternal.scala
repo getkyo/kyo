@@ -1,5 +1,6 @@
 package kyo.proto.kernel.internal
 
+import kyo.Frame
 import kyo.Tag
 import kyo.proto.Arrow
 import kyo.proto.kernel.<
@@ -17,46 +18,22 @@ private[proto] def short(v: Any): String =
         case v                           => v.toString
 
 sealed abstract class Kyo[A, -S] extends Arrow.Transform[Any, A, S]:
-    def apply[C, S2](v: Any, cont: Arrow[A, C, S2]): C < (S & S2) =
+    def frame = Frame.internal
+    def apply[C, S2](v: Any < S2, cont: Arrow[A, C, S2]): C < (S & S2) =
         this.chain(cont)
+end Kyo
 
 object Kyo:
 
-    def defer[A, B, S](v: A, cont: Arrow[A, B, S]): Kyo[B, S] =
-        cont match
-            case cont: Arrow.Chain[A, Any, B, S] @unchecked =>
-                new Defer[A, Any, B, S]:
-                    def value = v
-                    def contA = cont.a
-                    def contB = cont.b
-            case _ =>
-                new Defer[A, B, B, S]:
-                    def value = v
-                    def contA = cont
-                    def contB = Arrow.id
-
-    def defer[A, B, C, S](v: A, cont1: Arrow[A, B, S], cont2: Arrow[B, C, S]): Kyo[C, S] =
-        if cont1.isInstanceOf[Arrow.Id[?]] then
-            defer(v, cont2.asInstanceOf[Arrow[A, C, S]])
-        else if cont2.isInstanceOf[Arrow.Id[?]] then
-            defer(v, cont1.asInstanceOf[Arrow[A, C, S]])
-        else
-            new Defer[A, B, C, S]:
-                def value = v
-                def contA = cont1
-                def contB = cont2
-            end new
-    end defer
-
-    abstract class Defer[A, B, C, -S] private[Kyo] () extends Kyo[C, S]:
-        def value: A
+    abstract class Defer[A, B, C, -S] private[kyo] () extends Kyo[C, S]:
+        def value: A < S
         def contA: Arrow[A, B, S]
         def contB: Arrow[B, C, S]
 
         override def chain[D, S2](a: Arrow[C, D, S2]): Arrow[Any, D, S & S2] =
             if contB.isInstanceOf[Arrow.Id[?]] then
                 // contB eq Id pins B = C, so `a` composes directly into the free slot
-                Kyo.defer(value, contA, a.asInstanceOf[Arrow[B, D, S & S2]])
+                Effect.defer(value, contA, a.asInstanceOf[Arrow[B, D, S & S2]])
             else
                 super.chain(a)
 

@@ -2,8 +2,8 @@ package kyo.proto.kernel
 
 import kyo.Frame
 import kyo.proto.Arrow
-import kyo.proto.kernel.internal.Kyo
-import kyo.proto.kernel.internal.Safepoint
+import kyo.proto.Arrow.Transform
+import kyo.proto.kernel.internal.*
 import language.implicitConversions
 import scala.annotation.nowarn
 
@@ -16,27 +16,18 @@ object `<`:
         @nowarn("msg=anonymous")
         inline def map[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
             def arrow: Arrow[A, B, S2] =
-                new Arrow.Transform[A, B, S2]:
-                    def apply[C, S3](v: A, cont: Arrow[B, C, S3]) = run(v, cont)
-                    override def toString                         = s"Transform(${_frame.snippetShort})"
+                new Transform[A, B, S2]:
+                    def frame                                          = _frame
+                    def apply[C, S3](v: A < S3, cont: Arrow[B, C, S3]) = run(v, cont)
             def run[C, S3](v: A < S3, cont: Arrow[B, C, S3]): C < (S2 & S3) =
-                v match
-                    case v: Arrow[Any, A, S3] @unchecked =>
-                        v.chain(arrow.chain(cont))
-                    case _ =>
-                        val slot = Safepoint.get()
-                        if !Safepoint.enter(slot) then
-                            Kyo.defer(v.asInstanceOf[A], arrow, cont)
-                        else
-                            val out =
-                                f(v.asInstanceOf[A]) match
-                                    case r: Arrow[Any, B, S2] @unchecked =>
-                                        r.chain(cont)
-                                    case r =>
-                                        cont.head(r.asInstanceOf[B], cont.tail)
-                            Safepoint.exit(slot)
-                            out
-                        end if
+                var slot: Safepoint.Slot = -1
+                val shouldDefer          = v.isInstanceOf[Arrow[?, ?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
+                if shouldDefer then Effect.defer(v, arrow, cont)
+                else
+                    val out = cont.head(f(v.asInstanceOf[A]), cont.tail)
+                    Safepoint.exit(slot)
+                    out
+                end if
             end run
             run(self, Arrow.id)
         end map
