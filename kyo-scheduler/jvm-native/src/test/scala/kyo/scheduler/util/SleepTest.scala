@@ -28,9 +28,10 @@ class SleepTest extends AnyFreeSpec with NonImplicitAssertions {
         val thread = new Thread((() => {
             threadId.set(ThreadUserTime.currentThreadId())
             entered.countDown()
-            // The test's final interrupt releases this thread where Sleep is interruptible; catching it keeps it quiet.
+            // The test's final interrupt releases this thread where Sleep is interruptible; catching it keeps it quiet. The duration is 10 minutes,
+            // far past the 30s observation below, so the "still parked" check can never race the Sleep actually returning at its own deadline.
             try {
-                Sleep(30000)
+                Sleep(600000)
                 returned.set(true)
             } catch {
                 case _: InterruptedException => ()

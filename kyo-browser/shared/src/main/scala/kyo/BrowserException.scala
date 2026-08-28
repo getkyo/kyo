@@ -267,6 +267,21 @@ object BrowserElementNotActionableException:
         case object FillDesync extends Reason:
             val description = "the target's value did not reflect the intended text after typing -- framework likely rejected it"
 
+        /** The browser accepted the click dispatch but the page never saw a click event.
+          *
+          * Unlike every other reason here, this one is decided AFTER the dispatch: the pre-dispatch gate can only prove the element was
+          * attached, visible, stable, enabled and on top, never that the event it is about to send arrives. A synthetic
+          * `Input.dispatchMouseEvent` can be accepted by the browser and never materialise, and without this check the caller sees a
+          * successful click whose effect silently never happened.
+          *
+          * The probe records only that SOME click reached the document, never that a handler ran, so an element with no listener at all is
+          * still a legitimate no-op click and does not fail. This reason is never retried: a click is not idempotent, so re-dispatching on a
+          * false negative would turn one lost click into two delivered ones.
+          */
+        case object ClickNotReceived extends Reason:
+            val description =
+                "the click was dispatched but no click event reached the page -- the browser accepted the dispatch without delivering it"
+
     end Reason
 
 end BrowserElementNotActionableException
