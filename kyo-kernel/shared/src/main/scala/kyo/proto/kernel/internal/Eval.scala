@@ -69,14 +69,35 @@ object Eval:
                                                     case _ =>
                                                         reenter(Nested.unnest[res.Op](x), cont2)
                                         end new
-                                    case _ =>
-                                        res.withCont(
-                                            new Arrow.Transform[res.Op, Y, S]:
-                                                def frame             = Frame.internal
-                                                override def toString = "Transform"
-                                                def apply[D, S2](x: res.Op < S2, cont2: Arrow[Y, D, S2]) =
-                                                    reenter(x, cont2)
-                                        )
+                                    case sc: Kyo.SuspendContext[VX, CX, AX, EX & S] @unchecked =>
+                                        val scx: Kyo.SuspendContext[VX, CX, AX, EX & S] = sc
+                                        // one allocation fulfilling both roles: the rebuilt suspension and its re-handling transform
+                                        new Kyo.SuspendContext[VX, CX, Y, S]:
+                                            def tag    = scx.tag
+                                            def update = scx.update
+                                            def cont   = this
+                                            override def apply[D, S2](x: Any < S2, cont2: Arrow[Y, D, S2]) =
+                                                x match
+                                                    case kyo: Arrow[Any, VX, S2] @unchecked =>
+                                                        Effect.defer(kyo, this, cont2)
+                                                    case _ =>
+                                                        reenter(Nested.unnest[res.Op](x), cont2)
+                                        end new
+                                    case sd: Kyo.SuspendContextDefault[VX, CX, AX, EX & S] @unchecked =>
+                                        val sdx: Kyo.SuspendContextDefault[VX, CX, AX, EX & S] = sd
+                                        // one allocation fulfilling both roles: the rebuilt suspension and its re-handling transform
+                                        new Kyo.SuspendContextDefault[VX, CX, Y, S]:
+                                            def tag     = sdx.tag
+                                            def default = sdx.default
+                                            def update  = sdx.update
+                                            def cont    = this
+                                            override def apply[D, S2](x: Any < S2, cont2: Arrow[Y, D, S2]) =
+                                                x match
+                                                    case kyo: Arrow[Any, VX, S2] @unchecked =>
+                                                        Effect.defer(kyo, this, cont2)
+                                                    case _ =>
+                                                        reenter(Nested.unnest[res.Op](x), cont2)
+                                        end new
                                 end match
                             case suspend: Kyo.SuspendArrow[IX, OX, EX, VX, AX, EX & S] @unchecked =>
                                 dbg.onHandle(suspend, kyo.handler, st)

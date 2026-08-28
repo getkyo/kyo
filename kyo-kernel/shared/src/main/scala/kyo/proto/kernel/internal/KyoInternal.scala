@@ -76,25 +76,47 @@ object Kyo:
                 def cont  = c
     end SuspendArrow
 
-    final class SuspendContext[State, E <: ContextEffect[State], A, S](
-        val tag: Tag[E],
-        val update: State => State,
-        val cont: Arrow[State, A, S]
-    ) extends Suspend[E, A, S]:
+    abstract class SuspendContext[State, E <: ContextEffect[State], A, S] extends Suspend[E, A, S]:
         type Op = State
+        def update: State => State
         def withCont[B, S2](c: Arrow[Op, B, S2]) = SuspendContext(tag, update, c)
-        override def toString                    = s"SuspendContext(${tag.show}, $update, ${short(cont)})"
+        override def toString =
+            s"SuspendContext(${tag.show}, $update, ${if cont eq this then "this" else short(cont)})"
     end SuspendContext
 
-    final class SuspendContextDefault[State, E <: ContextEffect[State], A, S](
-        val tag: Tag[E],
-        val default: State,
-        val update: State => State,
-        val cont: Arrow[State, A, S]
-    ) extends Suspend[E, A, S]:
+    object SuspendContext:
+        def apply[State, E <: ContextEffect[State], A, S](
+            t: Tag[E],
+            u: State => State,
+            c: Arrow[State, A, S]
+        ): SuspendContext[State, E, A, S] =
+            new SuspendContext[State, E, A, S]:
+                def tag    = t
+                def update = u
+                def cont   = c
+    end SuspendContext
+
+    abstract class SuspendContextDefault[State, E <: ContextEffect[State], A, S] extends Suspend[E, A, S]:
         type Op = State
+        def default: State
+        def update: State => State
         def withCont[B, S2](c: Arrow[Op, B, S2]) = SuspendContextDefault(tag, default, update, c)
-        override def toString                    = s"SuspendContextDefault(${tag.show}, $default, $update, ${short(cont)})"
+        override def toString =
+            s"SuspendContextDefault(${tag.show}, $default, $update, ${if cont eq this then "this" else short(cont)})"
+    end SuspendContextDefault
+
+    object SuspendContextDefault:
+        def apply[State, E <: ContextEffect[State], A, S](
+            t: Tag[E],
+            d: State,
+            u: State => State,
+            c: Arrow[State, A, S]
+        ): SuspendContextDefault[State, E, A, S] =
+            new SuspendContextDefault[State, E, A, S]:
+                def tag     = t
+                def default = d
+                def update  = u
+                def cont    = c
     end SuspendContextDefault
 
     def handle[E <: Effect, A, B, S, State](v: A < (E & S), handler: Handler[E, A, B, S, State], state: State): B < S =

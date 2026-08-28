@@ -65,15 +65,20 @@ object Main:
     def pick(n: Int): Int < Pick =
         ArrowEffect.suspend[Unit](pickTag, n)
 
-    def runPick(v: Int < Pick): Int < Any =
-        ArrowEffect.handleCont[CInt, CInt, Pick, Int, Any, Any](pickTag, v)(
-            [C] =>
+    def runPickWith[C](v: Int < Pick)(f: Int => C < Any): C < Any =
+        ArrowEffect.handleContWith[CInt, CInt, Pick, Int, Int, Any, Any](pickTag, v)(
+            [X] =>
                 (input, cont) =>
                     def branches(i: Int, acc: Int): Int < Any =
                         if i == input then acc
-                        else runPick(cont(i, Arrow.id)).map(b => branches(i + 1, acc + b))
+                        else runPickWith(cont(i, Arrow.id))(b => branches(i + 1, acc + b))
                     branches(0, 0)
-        )
+            ,
+            a => a
+        )(f)
+
+    def runPick(v: Int < Pick): Int < Any =
+        runPickWith(v)(a => a)
 
     val cfgHandler = new Handler.HandlerContext[Int, Cfg, Int, Int, Any]:
         def tag                                                           = cfgTag
@@ -172,6 +177,12 @@ object Main:
         Kyo.handle[Cfg, Int, Int, Any, Int](inner, cfgHandler, 10)
     end nested
 
+    // an unbound context read crossing a region to the boundary default, the foreign context shape
+    def foreignContext: Int < Any =
+        val body: Int < Add = cfg.map(c => add(c).map(_ + c))
+        runAdd(body)
+    end foreignContext
+
     // the inner handler emits an outer effect from its clause, the region rebuild shape
     def emitting: Int < Any =
         val body: Int < Add   = add(1).map(a => add(a).map(b => a + b))
@@ -239,6 +250,7 @@ object Main:
         scenario("suspend loop mapped")(suspendLoopMapped)
         scenario("idle handler")(idle)
         scenario("nested regions")(nested)
+        scenario("foreign context")(foreignContext)
         scenario("emitting handler")(emitting)
         scenario("choice")(choice)
         scenario("handler stack")(stacked)
