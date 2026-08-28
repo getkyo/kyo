@@ -110,11 +110,15 @@ object Protobuf:
             case _ => false
     end isProto3MapKey
 
-    /** Walks a schema structure under [[Conformance.Strict]] and rejects any shape proto3 cannot
-      * encode canonically. The only non-canonical shape this codec can produce is a map whose key is
-      * not a proto3-native scalar (the entry-message key form), so that is the entire rejection set.
-      * Product / Sum recursion is cycle-guarded by name; every container is reached so a map nested
-      * anywhere is validated.
+    /** Walks a schema structure under [[Conformance.Strict]] and rejects any shape this codec
+      * cannot round-trip. The rejection set is measured, not assumed: the only losing shape is a
+      * map whose key is not a proto3-native scalar (the entry-message key form). Shapes proto3
+      * cannot DECLARE but this codec round-trips losslessly are accepted: an empty repeated or
+      * empty map value decodes back from its key-only entry via the value schema's absent
+      * default, and a nested repeated is one length-delimited record per inner collection (a
+      * non-canonical extension; [[protoSchema]] still rejects it in `.proto` text generation,
+      * where the shape genuinely has no declaration). Product / Sum recursion is cycle-guarded by
+      * name; every container is reached so a map nested anywhere is validated.
       */
     private def validateCanonical(structure: Structure.Type)(using Frame): Unit =
         // Explicit work-stack loop (tail-recursive): a Structure walk has multiple children per node

@@ -10,7 +10,7 @@ import kyo.internal.postgres.PostgresConnection
   * `"`-doubling identifier quoting, and the `CREATE`/`DROP DATABASE` SQL. kyo-sql-tests names no engine and reaches this behavior only through
   * [[withFreshSchema]] and the capability flags, so the coordinates a conformance body sees are engine-free.
   *
-  * The container is shared, not per-test: [[withFreshSchema]] memoizes one postgres container per JVM through
+  * The container is shared, not per-test: [[withFreshSchema]] memoizes one postgres container per process through
   * [[SqlTestContainers.getOrInit]] over the core [[SqlTestContainers.containers]] table, keyed by the descriptor id `"postgres"`, so a container
   * inited here shares the single entry with any other caller for that id. Each leaf then provisions a fresh database inside that shared
   * container and drops it on scope exit, so leaves never collide yet pay the container start once.

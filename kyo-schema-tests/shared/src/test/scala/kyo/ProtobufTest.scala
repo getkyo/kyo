@@ -762,12 +762,17 @@ class ProtobufTest extends kyo.test.Test[Any]:
             assert(result.failure.exists(_.isInstanceOf[LimitExceededException]))
         }
 
-        // --- Protobuf.decode: MissingFieldException ---
+        // --- Protobuf.decode: absent fields ---
 
-        "Protobuf.decode returns MissingFieldException when required field is absent" in {
+        "Protobuf.decode reads absent scalar fields as proto3 defaults" in {
+            // A canonical proto3 serializer omits default-valued fields, so an all-defaults
+            // message is zero bytes on the wire. Decoding absence as the proto3 default is what
+            // every conformant implementation does (verified against protobuf-java in
+            // ProtobufDifferentialTest); it used to raise MissingFieldException here, which made
+            // canonical external output undecodable.
             val empty  = Span.empty[Byte]
             val result = Protobuf.decode[MTPerson](empty)
-            assert(result.failure.exists(_.isInstanceOf[MissingFieldException]))
+            assert(result == Result.succeed(MTPerson("", 0)))
         }
 
         // --- Protobuf.decode: UnknownVariantException ---

@@ -112,7 +112,10 @@ class ScramPlusIntegrationTest extends SqlContainerTest:
     "connecting plaintext to a PG that offers PLUS falls back to SCRAM-SHA-256".tagged("kyo.OwnContainer") in {
         Scope.run {
             // Use a plain non-TLS Postgres container. Without TLS, no cert hash, so non-PLUS.
-            ContainerPredef.Postgres.initWith(ContainerPredef.Postgres.Config.default) { pg =>
+            // Through `SqlTestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
+            // container carries the `kyo-sql-singleton` and `kyo-sql-owner-pid` labels and a killed test
+            // process leaves something the reaper can find.
+            SqlTestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-scram-plus-leaf").map { pg =>
                 pg.container.mappedPort(pg.config.port).flatMap { port =>
                     AtomicRef.init("").flatMap { mechanismRef =>
                         PostgresConnection.connectWithCertHashOverride(
