@@ -96,6 +96,8 @@ object Loop:
       * @tparam O
       *   The type of the final value if completing
       */
+    // TODO Do we need to handle nesting like in the pending type? I've always wondred if we have unsoundess here
+    // TODO Continue is the most common case by far, maybe it shouldn't be unboxed and done is boxed instead?
     opaque type Outcome[A, +O] = O | Continue[A]
 
     /** Represents the result of a loop iteration with two state values.
