@@ -32,14 +32,19 @@ object `<` extends Implicits:
                 var slot: Safepoint.Slot = -1
                 val shouldDefer          = v.isInstanceOf[Arrow[?, ?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
                 if shouldDefer then
-                    (new Kyo.Defer[A, B, B, S2 & S3]:
+                    // one allocation fulfilling both roles: the rescue record and its own transform,
+                    // with the continuation in the closure, composed by the apply
+                    new Kyo.Defer[A, C, C, S2 & S3]:
                         override def frame = _frame
                         def value          = v
                         def contA          = this
                         def contB          = Arrow.id
-                        override def apply[C2, S4](v2: Any < S4, cont2: Arrow[B, C2, S4]) =
-                            run(v2.asInstanceOf[A < S4], cont2)
-                    ).chain(cont)
+                        override def apply[C2, S4](v2: Any < S4, cont2: Arrow[C, C2, S4]) =
+                            val k = cont.chain(cont2)
+                            v2 match
+                                case kyo: Arrow[Any, A, S4] @unchecked => run(kyo, k)
+                                case _                                 => run(Nested.unnest[A](v2), k)
+                        end apply
                 else
                     val out = cont.head(f(Nested.unnest(v)), cont.tail)
                     Safepoint.exit(slot)
@@ -65,14 +70,19 @@ object `<` extends Implicits:
                 var slot: Safepoint.Slot = -1
                 val shouldDefer          = v.isInstanceOf[Arrow[?, ?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
                 if shouldDefer then
-                    (new Kyo.Defer[A, B, B, S2 & S3]:
+                    // one allocation fulfilling both roles: the rescue record and its own transform,
+                    // with the continuation in the closure, composed by the apply
+                    new Kyo.Defer[A, C, C, S2 & S3]:
                         override def frame = _frame
                         def value          = v
                         def contA          = this
                         def contB          = Arrow.id
-                        override def apply[C2, S4](v2: Any < S4, cont2: Arrow[B, C2, S4]) =
-                            run(v2.asInstanceOf[A < S4], cont2)
-                    ).chain(cont)
+                        override def apply[C2, S4](v2: Any < S4, cont2: Arrow[C, C2, S4]) =
+                            val k = cont.chain(cont2)
+                            v2 match
+                                case kyo: Arrow[Any, A, S4] @unchecked => run(kyo, k)
+                                case _                                 => run(Nested.unnest[A](v2), k)
+                        end apply
                 else
                     val out = cont.head(f(Nested.unnest(v)), cont.tail)
                     Safepoint.exit(slot)
@@ -95,14 +105,19 @@ object `<` extends Implicits:
                 var slot: Safepoint.Slot = -1
                 val shouldDefer          = v.isInstanceOf[Arrow[?, ?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
                 if shouldDefer then
-                    (new Kyo.Defer[A, B, B, S2 & S3]:
+                    // one allocation fulfilling both roles: the rescue record and its own transform,
+                    // with the continuation in the closure, composed by the apply
+                    new Kyo.Defer[A, C, C, S2 & S3]:
                         override def frame = _frame
                         def value          = v
                         def contA          = this
                         def contB          = Arrow.id
-                        override def apply[C2, S4](v2: Any < S4, cont2: Arrow[B, C2, S4]) =
-                            run(v2.asInstanceOf[A < S4], cont2)
-                    ).chain(cont)
+                        override def apply[C2, S4](v2: Any < S4, cont2: Arrow[C, C2, S4]) =
+                            val k = cont.chain(cont2)
+                            v2 match
+                                case kyo: Arrow[Any, A, S4] @unchecked => run(kyo, k)
+                                case _                                 => run(Nested.unnest[A](v2), k)
+                        end apply
                 else
                     val out = cont.head(f, cont.tail)
                     Safepoint.exit(slot)
@@ -123,14 +138,19 @@ object `<` extends Implicits:
                 var slot: Safepoint.Slot = -1
                 val shouldDefer          = v.isInstanceOf[Arrow[?, ?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
                 if shouldDefer then
-                    (new Kyo.Defer[A, Unit, Unit, S3]:
+                    // one allocation fulfilling both roles: the rescue record and its own transform,
+                    // with the continuation in the closure, composed by the apply
+                    new Kyo.Defer[A, C, C, S3]:
                         override def frame = _frame
                         def value          = v
                         def contA          = this
                         def contB          = Arrow.id
-                        override def apply[C2, S4](v2: Any < S4, cont2: Arrow[Unit, C2, S4]) =
-                            run(v2.asInstanceOf[A < S4], cont2)
-                    ).chain(cont)
+                        override def apply[C2, S4](v2: Any < S4, cont2: Arrow[C, C2, S4]) =
+                            val k = cont.chain(cont2)
+                            v2 match
+                                case kyo: Arrow[Any, A, S4] @unchecked => run(kyo, k)
+                                case _                                 => run(Nested.unnest[A](v2), k)
+                        end apply
                 else
                     val out = cont.head((), cont.tail)
                     Safepoint.exit(slot)
