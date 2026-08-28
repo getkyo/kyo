@@ -695,4 +695,71 @@ class EmitTest extends kyo.test.Test[Any]:
         }
 
     }
+
+    // Emitting from inside an opaque type's own scope once tagged the effect by the underlying
+    // type, while the handler installed outside was keyed on the opaque one, so the values never
+    // reached it (issue #1367).
+    "across an opaque type's scope boundary" - {
+        import EmitTestOpaques.*
+
+        "values emitted inside are seen by a handler installed outside" in {
+            val (values, _) = Emit.run(Meters.emitInside(Meters(5L), Meters(7L))).eval
+            assert(values.map(Meters.unwrap) == Chunk(5L, 7L))
+        }
+
+        "and a handler installed inside sees values emitted outside" in {
+            val (values, _) = Meters.runInside(Emit.value(Meters(9L))).eval
+            assert(values.map(Meters.unwrap) == Chunk(9L))
+        }
+
+        "the extension method from #1367 emits under the opaque type's tag" - {
+            "with the tag passed explicitly" in {
+                val (values, _) = Emit.run(Meters(3L).emit).eval
+                assert(values.map(Meters.unwrap) == Chunk(3L))
+            }
+            "inferred, with the declared result type" in {
+                val (values, _) = Emit.run[Meters](Meters(3L).emitInferred).eval
+                assert(values.map(Meters.unwrap) == Chunk(3L))
+            }
+            "inferred, without a declared result type" in {
+                val (values, _) = Emit.run[Meters](Meters(3L).emitInferredNoExpected).eval
+                assert(values.map(Meters.unwrap) == Chunk(3L))
+            }
+            "and a handler installed inside the scope sees it too" in {
+                val (values, _) = Meters.runInside(Meters(3L).emitInferred).eval
+                assert(values.map(Meters.unwrap) == Chunk(3L))
+            }
+            "and it is not the underlying type's effect" in {
+                assert(Tag[Emit[Long]] =!= Tag[Emit[Meters]])
+                assert(!(Tag[Emit[Long]] <:< Tag[Emit[Meters]]))
+            }
+        }
+    }
 end EmitTest
+
+object EmitTestOpaques:
+    opaque type Meters = Long
+    object Meters:
+        def apply(value: Long): Meters  = value
+        def unwrap(value: Meters): Long = value
+        // A summoned tag is refused inside the scope; the one derived by name is passed explicitly.
+        val tag: Tag[Emit[Meters]] = Tag.derive[Emit[Meters]]
+
+        def emitInside(a: Meters, b: Meters): Unit < Emit[Meters] =
+            Emit.valueWith(a)(Emit.value(b)(using tag, summon[Frame]).unit)(using tag, summon[Frame])
+
+        def runInside[A, S](v: A < (Emit[Meters] & S)): (Chunk[Meters], A) < S =
+            Emit.run[Meters](using tag, summon[Frame])(v)
+
+        // The shape reported in #1367: an extension method in the companion emitting the value.
+        // Inferred, the value's type reaches the tag macro as Long and the derivation is refused;
+        // with the tag passed explicitly the emitted value reaches a handler installed outside.
+        extension (m: Meters)
+            def emit: Unit < Emit[Meters] = Emit.value(m)(using tag, summon[Frame])
+
+        extension (m: Meters)
+            def emitInferred: Unit < Emit[Meters] = Emit.value(m)
+            def emitInferredNoExpected            = Emit.value(m)
+        end extension
+    end Meters
+end EmitTestOpaques

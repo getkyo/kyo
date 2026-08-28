@@ -989,18 +989,17 @@ private[kyo] object SchemaSerializer:
         show.startsWith("scala.collection.Set[")
     end isSetTag
 
-    /** True iff `field`'s declared type is `OrderedDict[K, V]` or `Dict[K, V]`. Both are opaque
-      * types over an erased union (`Span[K | V] | TreeSeqMap[K, V]` / `Span[K | V] | HashMap[K, V]`),
-      * so their `Tag.show` is the SAME opaque-bound string for every key/value instantiation (unlike
-      * `Map`, whose show carries the element types): neither a `<:<` check nor a `scala.collection.*`
-      * show-prefix check can discriminate them. A show-prefix check against the opaque type's own
-      * qualified name is the only reliable discriminator, the same idiom `isMapTag` uses for its own
-      * variance gap.
+    /** True iff `field`'s declared type is `OrderedDict[K, V]` or `Dict[K, V]`. Both are invariant in
+      * their key and value, so `Tag[Dict[String, Int]] <:< Tag[Dict[Any, Any]]` does not hold, and
+      * neither does a `scala.collection.*` show prefix, since the underlying union is erased behind
+      * the opaque type. A show-prefix check against the opaque type's own qualified name is the
+      * reliable discriminator, the same idiom `isMapTag` uses for its own variance gap. An opaque
+      * type's show renders its arguments in brackets after the name, as an applied class type does.
       */
     private def isOrderedDictOrDictTag(field: Field[?, ?]): Boolean =
         val show = field.tag.show
-        show.startsWith("(kyo.OrderedDict$package$.OrderedDict ") ||
-        show.startsWith("(kyo.Dict$package$.Dict ")
+        show.startsWith("(kyo.OrderedDict$package$.OrderedDict[") ||
+        show.startsWith("(kyo.Dict$package$.Dict[")
     end isOrderedDictOrDictTag
 
     /** True iff `field`'s declared type is a sequence-like collection, a set, or a map (including
