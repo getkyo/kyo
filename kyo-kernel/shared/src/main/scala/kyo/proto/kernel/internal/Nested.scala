@@ -1,6 +1,7 @@
 package kyo.proto.kernel.internal
 
-import kyo.proto.<
+import kyo.proto.Arrow
+import kyo.proto.kernel.<
 
 private[kyo] class Nested[+A](val value: A)
 
@@ -31,7 +32,7 @@ object Nested:
 
     def nest[A, S](v: A): A < S =
         v match
-            case v: (Kyo[?, ?] | Nested[?]) => Nested(v).asInstanceOf[A < S]
-            case _                          => v.asInstanceOf[A < S]
+            case v: (Arrow[?, ?, ?] | Nested[?]) => Nested(v).asInstanceOf[A < S]
+            case _                               => v.asInstanceOf[A < S]
 
 end Nested

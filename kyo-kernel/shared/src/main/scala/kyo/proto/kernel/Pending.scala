@@ -9,7 +9,7 @@ import scala.annotation.nowarn
 
 opaque type <[+A, -S] >: A = A | Arrow[Any, A, S]
 
-object `<`:
+object `<` extends Implicits:
     implicit def fromKyo[A, S](kyo: Arrow[Any, A, S]): A < S = kyo
 
     extension [A, S](self: A < S)
@@ -24,7 +24,7 @@ object `<`:
                 val shouldDefer          = v.isInstanceOf[Arrow[?, ?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
                 if shouldDefer then Effect.defer(v, arrow, cont)
                 else
-                    val out = cont.head(f(v.asInstanceOf[A]), cont.tail)
+                    val out = cont.head(f(Nested.unnest(v)), cont.tail)
                     Safepoint.exit(slot)
                     out
                 end if

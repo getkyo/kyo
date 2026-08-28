@@ -3,6 +3,7 @@ package kyo.proto
 import kyo.Frame
 import kyo.proto.kernel.Effect
 import kyo.proto.kernel.internal.Debugger
+import kyo.proto.kernel.internal.Nested
 import kyo.proto.kernel.internal.Safepoint
 import kyo.proto.kernel.internal.short
 import scala.annotation.nowarn
@@ -60,7 +61,7 @@ object Arrow:
                         if !Safepoint.enter(slot) then
                             Effect.defer(v, this, cont)
                         else
-                            val out = cont.head(apply(v.asInstanceOf[A]), cont.tail)
+                            val out = cont.head(apply(Nested.unnest(v)), cont.tail)
                             Safepoint.exit(slot)
                             out
                         end if
