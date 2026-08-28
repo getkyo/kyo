@@ -4,6 +4,34 @@ import kyo.proto.Arrow
 import kyo.proto.Loop
 import kyo.proto.kernel.internal.Debugger
 import kyo.proto.kernel.internal.Kyo
+import org.openjdk.jol.info.ClassLayout
+import scala.jdk.CollectionConverters.*
+
+object ConsoleDebugger:
+
+    // a layout is class-static, so it renders once per run, at the class's first allocation:
+    // later scenarios stay quiet and the cache keeps the JOL parse a one-time cost per class
+    private var layoutSeen = Set.empty[Class[?]]
+
+    /** The class's real memory footprint on this VM, one line: total size, header, each field at its offset, and what alignment loses.
+      * Inline combinators expand an anonymous class per call site, so capture oddities (an `$outer`, a duplicated capture slot) show up
+      * here by field name, per site.
+      */
+    private def layout(cls: Class[?]): String =
+        val l      = ClassLayout.parseClass(cls)
+        val fields = l.fields().asScala.toSeq.sortBy(_.offset)
+        val fs =
+            if fields.isEmpty then "no fields"
+            else fields.map(f => s"${f.name}:${f.size}@${f.offset}").mkString(", ")
+        val losses = (l.getLossesInternal, l.getLossesExternal) match
+            case (0, 0)   => ""
+            case (in, 0)  => s", gaps $in B"
+            case (0, ex)  => s", pad $ex B"
+            case (in, ex) => s", gaps $in B, pad $ex B"
+        s"📐 ${cls.getName}: ${l.instanceSize} B (header ${l.headerSize} B, $fs$losses)"
+    end layout
+
+end ConsoleDebugger
 
 /** Console tracer for the eval: renders the execution timeline (loop steps, regions, handler answers, context reads, allocations) with
   * region-depth indentation and keeps the per-run allocation tally. One instance per scenario; install before running, read `stats` after.
@@ -39,6 +67,10 @@ final class ConsoleDebugger extends Debugger:
             case v                                        => v.getClass.getSimpleName
         counts = counts.updated(name, counts.getOrElse(name, 0) + 1)
         println(s"$pad🧮 alloc: $value")
+        val cls = value.getClass
+        if !ConsoleDebugger.layoutSeen.contains(cls) then
+            ConsoleDebugger.layoutSeen += cls
+            println(s"$pad${ConsoleDebugger.layout(cls)}")
     end onAlloc
 
     override def onUnfused(arrow: Any): Unit =

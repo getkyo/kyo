@@ -786,6 +786,10 @@ lazy val `kyo-kernel` =
             // Bytecode-shape pins (PendingBytecodeTest, ArrowEffectBytecodeTest) read method
             // sizes through javassist, matching the old kernel's BytecodeTest.
             libraryDependencies += "org.javassist" % "javassist" % "3.32.0-GA" % Test,
+            // The proto demo's debugger reports each allocated class's real memory layout
+            // (field offsets, header, padding) through JOL; demo-only debt, dropped when the
+            // proto graduates.
+            libraryDependencies += "org.openjdk.jol" % "jol-core" % "0.17",
             // Benchmarks run on default JVM flags: Jmh extends Test, which carries
             // UseCompactObjectHeaders from kyo-settings, and a collector-dependent layout
             // flag must not be baked into the canonical numbers.
