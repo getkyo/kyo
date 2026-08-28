@@ -13,18 +13,6 @@ import language.implicitConversions
 
 object Eval:
 
-    type AX
-    type Y
-    type IX[_]
-    type OX[_]
-    type EX <: ArrowEffect[IX, OX]
-    type VX
-    type CX <: ContextEffect[VX]
-    type IY[_]
-    type OY[_]
-    type EY <: ArrowEffect[IY, OY]
-    type VY
-
     def apply[A, S](v: A < S): A < S =
         val dbg = Debugger.get
         def loop[A, B, C, S](v: A < S, contA: Arrow[A, B, S], contB: Arrow[B, C, S], ctx: Context): C < S =
@@ -44,9 +32,13 @@ object Eval:
                     loop(k.head(nv, k.tail), contA, contB, ctx.update[VX, CX](kyo.tag, nv))
                 case kyo: Kyo.Suspend[EX, A, S] @unchecked =>
                     val k = contA.chain(contB)
-                    if k.isInstanceOf[Arrow.Id[?]] then kyo.asInstanceOf[C < S]
-                    else kyo.withCont(kyo.cont.chain(k))
+                    if k.isInstanceOf[Arrow.Id[?]] then
+                        kyo.asInstanceOf[C < S]
+                    else
+                        kyo.withCont(kyo.cont.chain(k)) // TODO fusion candidate
+                    end if
                 case kyo: Kyo.Handle[EX, AX, Y, A, S, VX] @unchecked =>
+                    // TODO let's move to a separate method, not nested
                     def region[T](st: VX, v: T < (EX & S), cont: Arrow[T, AX, EX & S], ctx: Context): Y < S =
                         loop(v, cont, Arrow.id, ctx) match
                             case res: Kyo.Suspend[EX, AX, EX & S] @unchecked if !(res.tag.erased <:< kyo.handler.tag.erased) =>
@@ -130,7 +122,7 @@ object Eval:
                     val bound = kyo.handler match
                         case h: Handler.HandlerContext[VX, CX, AX, Y, S] @unchecked =>
                             val hc: Handler.HandlerContext[VX, CX, AX, Y, S] = h
-                            ctx.update[VX, CX](hc.tag, kyo.state)
+                            ctx.update(hc.tag, kyo.state)
                         case _ => ctx
                     val res = region(kyo.state, kyo.value, Arrow.id, bound)
                     dbg.onRegionExit(kyo.handler, res)
@@ -215,4 +207,16 @@ object Eval:
             case r =>
                 Nested.unnest[Outcome2[State, O[W] < (E & S), B < S]](r)
     end answerLoop
+
+    type AX
+    type Y
+    type IX[_]
+    type OX[_]
+    type EX <: ArrowEffect[IX, OX]
+    type VX
+    type CX <: ContextEffect[VX]
+    type IY[_]
+    type OY[_]
+    type EY <: ArrowEffect[IY, OY]
+    type VY
 end Eval
