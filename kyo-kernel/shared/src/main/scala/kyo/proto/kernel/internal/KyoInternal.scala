@@ -31,11 +31,10 @@ object Kyo:
         def contB: Arrow[B, C, S]
 
         override def chain[D, S2](a: Arrow[C, D, S2]): Arrow[Any, D, S & S2] =
-            if contB.isInstanceOf[Arrow.Id[?]] then
+            if a.isInstanceOf[Arrow.Id[?]] || !contB.isInstanceOf[Arrow.Id[?]] then super.chain(a)
+            else
                 // contB eq Id pins B = C, so `a` composes directly into the free slot
                 Effect.defer(value, contA, a.asInstanceOf[Arrow[B, D, S & S2]])
-            else
-                super.chain(a)
 
         override def toString = s"Defer(${short(value)}, ${short(contA)}, ${short(contB)})"
     end Defer
@@ -52,14 +51,24 @@ object Kyo:
                 withCont(a.asInstanceOf[Arrow[Op, D, S & S2]])
     end Suspend
 
-    final class SuspendArrow[I[_], O[_], E <: ArrowEffect[I, O], State, A, S](
-        val tag: Tag[E],
-        val input: I[State],
-        val cont: Arrow[O[State], A, S]
-    ) extends Suspend[E, A, S]:
+    abstract class SuspendArrow[I[_], O[_], E <: ArrowEffect[I, O], State, A, S] extends Suspend[E, A, S]:
         type Op = O[State]
+        def input: I[State]
         def withCont[B, S2](c: Arrow[Op, B, S2]) = SuspendArrow(tag, input, c)
-        override def toString                    = s"SuspendArrow(${tag.show}, $input, ${short(cont)})"
+        override def toString =
+            s"SuspendArrow(${tag.show}, $input, ${if cont eq this then "this" else short(cont)})"
+    end SuspendArrow
+
+    object SuspendArrow:
+        def apply[I[_], O[_], E <: ArrowEffect[I, O], State, A, S](
+            t: Tag[E],
+            in: I[State],
+            c: Arrow[O[State], A, S]
+        ): SuspendArrow[I, O, E, State, A, S] =
+            new SuspendArrow[I, O, E, State, A, S]:
+                def tag   = t
+                def input = in
+                def cont  = c
     end SuspendArrow
 
     final class SuspendContext[State, E <: ContextEffect[State], A, S](

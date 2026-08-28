@@ -29,10 +29,10 @@ object Main:
     val pickTag = Tag[Pick]
 
     def add(n: Int): Int < Add =
-        Kyo.SuspendArrow[CInt, CInt, Add, Int, Int, Add](addTag, n, Arrow.id)
+        ArrowEffect.suspend[Unit](addTag, n)
 
     def tick(n: Int): Int < Tick =
-        Kyo.SuspendArrow[CInt, CInt, Tick, Int, Int, Tick](tickTag, n, Arrow.id)
+        ArrowEffect.suspend[Unit](tickTag, n)
 
     def lazily[A](f: => A < Any)(using Frame): A < Any =
         Arrow[Any]((_: Any) => f)
@@ -40,44 +40,40 @@ object Main:
     def cfg: Int < Any =
         Kyo.SuspendContextDefault[Int, Cfg, Int, Any](cfgTag, 0, v => v, Arrow.id)
 
-    val addCont = new Handler.HandlerCont[CInt, CInt, Add, Int, Int, Any]:
-        def tag = addTag
-        def handle[X, C, S2](input: Int, cont: Arrow[Int, Int, Add & Any], k: Arrow[Int, C, S2]) =
-            cont(input + 1, k)
-        def done(state: Unit, v: Int) = v
+    inline def runAdd[S](v: Int < (Add & S)): Int < S =
+        ArrowEffect.handleCont[CInt, CInt, Add, Int, S, Any](addTag, v)(
+            [C] => (input, cont) => cont(input + 1, Arrow.id)
+        )
 
-    val tickCont = new Handler.HandlerCont[CInt, CInt, Tick, Int, Int, Any]:
-        def tag = tickTag
-        def handle[X, C, S2](input: Int, cont: Arrow[Int, Int, Tick & Any], k: Arrow[Int, C, S2]) =
-            cont(input + 1, k)
-        def done(state: Unit, v: Int) = v
+    inline def runTick[S](v: Int < (Tick & S)): Int < S =
+        ArrowEffect.handleCont[CInt, CInt, Tick, Int, S, Any](tickTag, v)(
+            [C] => (input, cont) => cont(input + 1, Arrow.id)
+        )
 
-    val addLoop = new Handler.HandlerLoop[CInt, CInt, Add, Int, Int, Any, Int]:
-        def tag                               = addTag
-        def handle[X](state: Int, input: Int) = Loop.continue(state + input, input)
-        def done(state: Int, v: Int)          = state + v
+    inline def runAddLoop[S](v: Int < (Add & S)): Int < S =
+        ArrowEffect.handleLoopState[CInt, CInt, Add, Int, Int, S, Any, Int](addTag, 0, v)(
+            [C] => (state, input) => Loop.continue(state + input, input),
+            (state, v0) => state + v0
+        )
 
-    val addEmit = new Handler.HandlerLoop[CInt, CInt, Add, Int, Int, Tick, Int]:
-        def tag                               = addTag
-        def handle[X](state: Int, input: Int) = tick(input).map(t => Loop.continue(state + t, input))
-        def done(state: Int, v: Int)          = state + v
+    inline def runAddEmit(v: Int < (Add & Tick)): Int < Tick =
+        ArrowEffect.handleLoopState[CInt, CInt, Add, Int, Int, Tick, Any, Int](addTag, 0, v)(
+            [C] => (state, input) => tick(input).map(t => Loop.continue(state + t, input)),
+            (state, v0) => state + v0
+        )
 
     def pick(n: Int): Int < Pick =
-        Kyo.SuspendArrow[CInt, CInt, Pick, Int, Int, Pick](pickTag, n, Arrow.id)
-
-    val pickAll: Handler.HandlerCont[CInt, CInt, Pick, Int, Int, Any] =
-        new Handler.HandlerCont[CInt, CInt, Pick, Int, Int, Any]:
-            def tag = pickTag
-            def handle[X, C, S2](input: Int, cont: Arrow[Int, Int, Pick & Any], k: Arrow[Int, C, S2]) =
-                def branches(i: Int, acc: Int): Int < Any =
-                    if i == input then acc
-                    else runPick(cont(i, Arrow.id)).map(b => branches(i + 1, acc + b))
-                branches(0, 0).chain(k)
-            end handle
-            def done(state: Unit, v: Int) = v
+        ArrowEffect.suspend[Unit](pickTag, n)
 
     def runPick(v: Int < Pick): Int < Any =
-        Kyo.handle[Pick, Int, Int, Any, Unit](v, pickAll, ())
+        ArrowEffect.handleCont[CInt, CInt, Pick, Int, Any, Any](pickTag, v)(
+            [C] =>
+                (input, cont) =>
+                    def branches(i: Int, acc: Int): Int < Any =
+                        if i == input then acc
+                        else runPick(cont(i, Arrow.id)).map(b => branches(i + 1, acc + b))
+                    branches(0, 0)
+        )
 
     val cfgHandler = new Handler.HandlerContext[Int, Cfg, Int, Int, Any]:
         def tag                                                           = cfgTag
@@ -99,19 +95,26 @@ object Main:
     // two answered operations under a continuation handler, the suspension shape
     def cont: Int < Any =
         val body: Int < Add = add(1).map(a => add(a).map(b => a + b))
-        Kyo.handle[Add, Int, Int, Any, Unit](body, addCont, ())
+        runAdd(body)
 
     // recursive bind through the effect, a resumption per iteration
     def suspendLoop: Int < Any =
         def go(i: Int): Int < Add =
             if i > 2 then i else add(i).map(a => go(i + a))
-        Kyo.handle[Add, Int, Int, Any, Unit](go(0), addCont, ())
+        runAdd(go(0))
     end suspendLoop
+
+    // a fused suspend-and-transform per iteration, the merged node shape
+    def fused: Int < Any =
+        def go(i: Int): Int < Add =
+            if i > 2 then i else ArrowEffect.suspendWith[Unit](addTag, i)(a => go(i + a))
+        runAdd(go(0))
+    end fused
 
     // state threaded per operation with a stateful done, the stateful handler shape
     def loop: Int < Any =
         val body: Int < Add = add(10).map(a => add(20).map(b => a + b))
-        Kyo.handle[Add, Int, Int, Any, Int](body, addLoop, 0)
+        runAddLoop(body)
 
     // a read answered by an enclosing region
     def context: Int < Any =
@@ -125,12 +128,12 @@ object Main:
     // several transforms pending after an answered operation, the trailing-maps shape
     def chained: Int < Any =
         val body: Int < Add = add(1).map(_ + 1).map(_ * 2).map(_ + 3).map(_ + 1).map(_ * 2)
-        Kyo.handle[Add, Int, Int, Any, Unit](body, addCont, ())
+        runAdd(body)
 
     // a transform pending outside the region, the handled-then-mapped shape
     def handledMapped: Int < Any =
         val body: Int < Add = add(1).map(a => add(a).map(b => a + b))
-        Kyo.handle[Add, Int, Int, Any, Unit](body, addCont, ()).map(_ + 1)
+        runAdd(body).map(_ + 1)
 
     // a pending transform held across deferred steps
     def deferBindMapped: Int < Any =
@@ -143,28 +146,28 @@ object Main:
     def suspendLoopMapped: Int < Any =
         def go(i: Int): Int < Add =
             if i > 2 then i else add(i).map(a => go(i + a)).map(_ + 1)
-        Kyo.handle[Add, Int, Int, Any, Unit](go(0), addCont, ())
+        runAdd(go(0))
     end suspendLoopMapped
 
     // a region whose effect the body never uses, the idle handler shape
     def idle: Int < Any =
         def go(i: Int): Int < Any =
             if i > 2 then i else lazily(go(i + 1))
-        Kyo.handle[Add, Int, Int, Any, Unit](go(0), addCont, ())
+        runAdd(go(0))
     end idle
 
     // a foreign read crossing the inner region, the nested regions shape
     def nested: Int < Any =
         val body: Int < Add  = cfg.map(c => add(c).map(_ + c))
-        val inner: Int < Any = Kyo.handle[Add, Int, Int, Any, Unit](body, addCont, ())
+        val inner: Int < Any = runAdd(body)
         Kyo.handle[Cfg, Int, Int, Any, Int](inner, cfgHandler, 10)
     end nested
 
     // the inner handler emits an outer effect from its clause, the region rebuild shape
     def emitting: Int < Any =
         val body: Int < Add   = add(1).map(a => add(a).map(b => a + b))
-        val inner: Int < Tick = Kyo.handle[Add, Int, Int, Tick, Int](body, addEmit, 0)
-        Kyo.handle[Tick, Int, Int, Any, Unit](inner, tickCont, ())
+        val inner: Int < Tick = runAddEmit(body)
+        runTick(inner)
     end emitting
 
     // a multi-shot clause re-handling each branch, the nondeterminism shape
@@ -176,18 +179,18 @@ object Main:
     // several handlers stacked around one body, the handler stack shape
     def stacked: Int < Any =
         val body: Int < Add = add(1).map(a => add(a).map(b => a + b))
-        val r1: Int < Any   = Kyo.handle[Add, Int, Int, Any, Unit](body, addCont, ())
-        val r2: Int < Any   = Kyo.handle[Add, Int, Int, Any, Unit](r1, addCont, ())
-        val r3: Int < Any   = Kyo.handle[Add, Int, Int, Any, Unit](r2, addCont, ())
-        Kyo.handle[Add, Int, Int, Any, Unit](r3, addCont, ())
+        val r1: Int < Any   = runAdd(body)
+        val r2: Int < Any   = runAdd(r1)
+        val r3: Int < Any   = runAdd(r2)
+        runAdd(r3)
     end stacked
 
     // operations handled across intervening regions, the deep crossing shape
     def crossing: Int < Any =
         val body: Int < Add = add(1).map(a => add(a).map(b => a + b))
-        val t1: Int < Add   = Kyo.handle[Tick, Int, Int, Add, Unit](body, tickCont, ())
-        val t2: Int < Add   = Kyo.handle[Tick, Int, Int, Add, Unit](t1, tickCont, ())
-        Kyo.handle[Add, Int, Int, Any, Unit](t2, addCont, ())
+        val t1: Int < Add   = runTick(body)
+        val t2: Int < Add   = runTick(t1)
+        runAdd(t2)
     end crossing
 
     def scenario(name: String)(v: => Int < Any): Unit =
@@ -216,6 +219,7 @@ object Main:
         scenario("defer bind")(deferBind)
         scenario("cont handler")(cont)
         scenario("suspend loop")(suspendLoop)
+        scenario("suspend with")(fused)
         scenario("loop handler")(loop)
         scenario("context")(context)
         scenario("context default")(contextDefault)
