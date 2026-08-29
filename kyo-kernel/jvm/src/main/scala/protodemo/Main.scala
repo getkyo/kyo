@@ -249,39 +249,18 @@ object Main:
         Kyo.handle[Add, Int, Int, Any, Unit](body, h, ())
     end recovering
 
-    // an acquisition whose release runs when the extent ends, the bracket shape
-    def bracketed: Int < Any =
-        Effect.bracket(lazily(10))(a => lazily(a))(a => lazily(a + 1)).map(_ + 100)
-
-    // a release owed through a crossing and a failure, the bracket panic shape
-    def bracketedPanic: Int < Any =
-        val h = new Handler.HandlerCont[CInt, CInt, Add, Int, Int, Any]:
-            def tag                                          = addTag
+    // a throw after a resumption crossing a foreign region, the resumed recovery shape: the
+    // crossed region's recover answers a throw raised while its continuation is being reapplied
+    def crossingRecovery: Int < Any =
+        val h = new Handler.HandlerCont[CInt, CInt, Tick, Int, Int, Any]:
+            def tag                                          = tickTag
             override def recover(state: Unit, ex: Throwable) = Maybe(-1)
             def done(state: Unit, v: Int)                    = v
-            def run[X, C, S2](input: Int, cont: Arrow[Int, Int, Add], k: Arrow[Int, C, S2]): C < (Add & S2) =
+            def run[X, C, S2](input: Int, cont: Arrow[Int, Int, Tick], k: Arrow[Int, C, S2]): C < (Tick & S2) =
                 k(cont(input + 1, Arrow.id), Arrow.id)
-        val body: Int < Add =
-            Effect.bracket(lazily(10))(a => lazily(a))(a => add(a).map(v => (throw new Exception("boom")): Int))
-        Kyo.handle[Add, Int, Int, Any, Unit](body, h, ())
-    end bracketedPanic
-
-    // a clause dropping a continuation that owes a release, the discard shape
-    def discarded: Int < Any =
-        val body: Int < Add =
-            Effect.bracket(lazily(10))(a => lazily(a))(a => add(a).map(_ + 1))
-        ArrowEffect.handleCont[CInt, CInt, Add, Int, Any, Any](addTag, body)(
-            [C] =>
-                (input, cont) => 99
-        )
-    end discarded
-
-    // a release owed through a crossing that resumes and completes, the bracket crossing shape
-    def bracketedCrossing: Int < Any =
-        val body: Int < Add =
-            Effect.bracket(lazily(10))(a => lazily(a))(a => add(a).map(_ + 1))
-        runAdd(body)
-    end bracketedCrossing
+        val body: Int < Add = add(1).map(v => (throw new Exception("boom")): Int)
+        runAdd(Kyo.handle[Tick, Int, Int, Add, Unit](body, h, ()))
+    end crossingRecovery
 
     def scenario(name: String)(v: => Int < Any): Unit =
         println(
@@ -329,9 +308,6 @@ object Main:
         scenario("data join")(dataJoin)
         scenario("layered binding")(layered)
         scenario("panic recovery")(recovering)
-        scenario("bracket")(bracketed)
-        scenario("bracket panic")(bracketedPanic)
-        scenario("discarded continuation")(discarded)
-        scenario("bracket crossing")(bracketedCrossing)
+        scenario("crossing recovery")(crossingRecovery)
     end main
 end Main
