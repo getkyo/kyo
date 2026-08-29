@@ -262,6 +262,57 @@ object Main:
         runAdd(Kyo.handle[Tick, Int, Int, Add, Unit](body, h, ()))
     end crossingRecovery
 
+    type CUnit[X] = Unit
+
+    abstract class Res extends ArrowEffect[CInt, CUnit]
+
+    val resTag = Tag[Res]
+
+    // an operation of the encoded bracket effect: registers a finalizer with the last handler
+    def ensure(id: Int): Unit < Res =
+        ArrowEffect.suspend[Unit](resTag, id)
+
+    // the encoded bracket effect, the shape Sync will take: the run accepts the bare row, so it is
+    // the last handler by type and no inner handler's continuation can ever contain this region.
+    // Registrations live in the handler's own registry, outside every produced continuation; done
+    // drains at completion and recover drains before answering a throw, last registered first
+    def runRes(v: Int < Res): Int < Any =
+        val h = new Handler.HandlerLoop[CInt, CUnit, Res, Int, Int, Any, Unit]:
+            // the registry is handler-owned mutable state, the shape the real Scope uses: recover
+            // receives install-time state by contract, so an evolving loop state would hand the
+            // throw path an empty registry, while the mutable cell is what every edge sees. Each
+            // finalizer drains as a deferred computation, and the result encodes the drain order
+            // one digit per release, so the trace and the value both witness last-registered-first
+            private var fins = List.empty[Int]
+            def tag          = resTag
+            def run[X](state: Unit, id: Int) =
+                fins = id :: fins
+                Loop.continue((), ())
+            private def drain(base: Int < Any): Int < Any =
+                fins.foldLeft(base)((acc, id) => acc.flatMap(r => lazily(id).map(_ => r * 10 + id)))
+            def done(state: Unit, v0: Int)                   = drain(v0)
+            override def recover(state: Unit, ex: Throwable) = Maybe(drain(-1))
+        Kyo.handle[Res, Int, Int, Any, Unit](v, h, ())
+    end runRes
+
+    // finalizers drain at completion, last registered first
+    def encodedBracket: Int < Any =
+        runRes(ensure(1).andThen(ensure(2)).andThen(40).map(_ + 2))
+
+    // a throw inside the extent: the registered finalizer drains before the recovery answers
+    def encodedBracketPanic: Int < Any =
+        runRes(ensure(1).map(_ => (throw new Exception("boom")): Int))
+
+    // the guarantee the handling order buys: an inner clause discards its continuation, and the
+    // registration survives, because it escaped to the last handler before the drop
+    def encodedBracketDiscard: Int < Any =
+        val body: Int < (Add & Res) = ensure(1).andThen(add(5)).map(_ + 1)
+        val dropped: Int < Res = ArrowEffect.handleCont[CInt, CInt, Add, Int, Res, Any](addTag, body)(
+            [C] => (input, cont) => 99
+        )
+        runRes(dropped)
+    end encodedBracketDiscard
+
     def scenario(name: String)(v: => Int < Any): Unit =
         println(
             s"""|
@@ -309,5 +360,8 @@ object Main:
         scenario("layered binding")(layered)
         scenario("panic recovery")(recovering)
         scenario("crossing recovery")(crossingRecovery)
+        scenario("encoded bracket")(encodedBracket)
+        scenario("encoded bracket panic")(encodedBracketPanic)
+        scenario("encoded bracket discard")(encodedBracketDiscard)
     end main
 end Main
