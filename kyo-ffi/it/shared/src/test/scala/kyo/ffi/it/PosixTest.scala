@@ -86,16 +86,17 @@ class PosixTest extends ItTestBase:
         "reads the same epoch clock as java.lang.System" in {
             assumePosixSymbols()
             val posix = Ffi.load[PosixBindings]
-            // Assert the native time(2) read is the same ORDER OF MAGNITUDE as java.lang.System's epoch, not equal to
-            // the second. The two are different clocks (on Scala.js java.lang.System is V8's Date.now while posix.time
-            // is a native time(2) downcall), so any exact or few-seconds comparison flips whenever the process stalls
-            // across that gap. What the binding can actually get wrong is off by orders of magnitude: milliseconds
-            // instead of seconds (~1000x), the wrong epoch, or garbage. An order-of-magnitude window catches all of
-            // those and can never flip on a stall, since a stall would have to shift the wall clock by decades to
-            // leave it. Ordering and positivity are asserted independently by the other leaves.
-            val jSecs = java.lang.System.currentTimeMillis() / 1000L
-            val cSecs = posix.time(0L)
-            assert(cSecs > jSecs / 2 && cSecs < jSecs * 2, s"time()=$cSecs not the same order of magnitude as java.lang.System=$jSecs")
+            // Bracket the C read between two Java reads, with a second of slack. The bracket absorbs host slowness
+            // structurally: however long the process stalls between the reads, a same-clock value still lands inside
+            // it. The slack absorbs the one real cross-clock difference, that on Scala.js `java.lang.System` reads
+            // V8's Date.now while `posix.time` is a genuine time(2) downcall, so the two can round across a second
+            // boundary differently. A binding with the wrong unit, the wrong epoch, or garbage misses by orders of
+            // magnitude and still fails here, and unlike a magnitude window this also catches one that is merely off
+            // by an hour or a day. Ordering and positivity are asserted independently by the other leaves.
+            val jBefore = java.lang.System.currentTimeMillis() / 1000L
+            val cSecs   = posix.time(0L)
+            val jAfter  = java.lang.System.currentTimeMillis() / 1000L
+            assert(cSecs >= jBefore - 1 && cSecs <= jAfter + 1, s"time()=$cSecs not within a second of [$jBefore, $jAfter]")
         }
 
         "two calls are monotonic non-decreasing" in {
@@ -135,18 +136,19 @@ class PosixTest extends ItTestBase:
             last
         }
 
-        "each rapid read stays the same order of magnitude as java.lang.System" in {
+        "each rapid read stays within a second of java.lang.System" in {
             assumePosixSymbols()
-            // Same order-of-magnitude check across a 32-call burst (see the single-read leaf above): the two are
-            // different clocks on Scala.js, so any exact or few-seconds comparison flips on a stall. The magnitude
-            // window catches wrong-unit/epoch/garbage without flake; ordering is a separate leaf.
+            // The single-read leaf's bracket applied to every call in a 32-call burst, so a binding that drifts only
+            // under repeated calls is caught too. Each read gets its own surrounding pair rather than one pair around
+            // the whole loop, which would widen the window by the loop's duration and weaken every iteration.
             val posix      = Ffi.load[PosixBindings]
             var i          = 0
             var last: Unit = succeed
             while i < 32 do
-                val jSecs = java.lang.System.currentTimeMillis() / 1000L
-                val cur   = posix.time(0L)
-                last = assert(cur > jSecs / 2 && cur < jSecs * 2, s"time()=$cur not the same order of magnitude as java.lang.System=$jSecs")
+                val jBefore = java.lang.System.currentTimeMillis() / 1000L
+                val cur     = posix.time(0L)
+                val jAfter  = java.lang.System.currentTimeMillis() / 1000L
+                last = assert(cur >= jBefore - 1 && cur <= jAfter + 1, s"time()=$cur not within a second of [$jBefore, $jAfter]")
                 i += 1
             end while
             last

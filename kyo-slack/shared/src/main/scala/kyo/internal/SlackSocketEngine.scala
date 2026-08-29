@@ -247,7 +247,7 @@ final private[kyo] class SlackSocketEngine private[kyo] (
       * they share one close rather than racing a plain `close` against a `closeAwaitEmpty`
       * that would leave the channel waiting for a consumer the rotation has stopped being.
       */
-    private[kyo] def closeInbound(using Frame): Unit < Sync =
+    private[kyo] def closeInbound(using Frame): Unit < Async =
         inbound.close.map {
             case Present(residue) => inboundResidue.complete(Result.succeed(Chunk.from(residue))).unit
             case Absent           => Kyo.unit

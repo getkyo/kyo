@@ -400,7 +400,7 @@ object StreamCoreExtensions:
                     Meter.useSemaphore(parallel): semaphore =>
                         // Ensure lingering fibers are interrupted
                         val cleanup = Abort.run[Closed]:
-                            Sync.ensure(channelOut.close):
+                            Sync.ensure(channelOut.closeDiscard):
                                 Loop.foreach:
                                     channelOut.drain.map: chunk =>
                                         if chunk.isEmpty then Loop.done
@@ -448,7 +448,7 @@ object StreamCoreExtensions:
                                             case Result.Failure(e) =>
                                                 // Not Closed, must be E
                                                 fiberError.set(Present(Right(e)))
-                                Sync.ensure(channelOut.close):
+                                Sync.ensure(channelOut.closeDiscard):
                                     Abort.run[Closed](emit).unit
                                 .andThen(fiberError)
                         end emitResults
@@ -508,7 +508,7 @@ object StreamCoreExtensions:
                         Meter.useSemaphore(parallel): semaphore =>
                             // Ensure lingering fibers are interrupted
                             val cleanup = Abort.run[Closed]:
-                                Sync.ensure(channelPar.close.andThen(channelOut.close)):
+                                Sync.ensure(channelPar.closeDiscard.andThen(channelOut.closeDiscard)):
                                     Loop.foreach:
                                         channelPar.drain.map: chunk =>
                                             if chunk.isEmpty then Loop.done
@@ -620,7 +620,7 @@ object StreamCoreExtensions:
                     Meter.useSemaphore(parallel): semaphore =>
                         // Ensure lingering fibers are interrupted
                         val cleanup = Abort.run[Closed]:
-                            Sync.ensure(channelOut.close):
+                            Sync.ensure(channelOut.closeDiscard):
                                 Loop.foreach:
                                     channelOut.drain.map: chunk =>
                                         if chunk.isEmpty then Loop.done
@@ -670,7 +670,7 @@ object StreamCoreExtensions:
                                             case Result.Failure(e) =>
                                                 // Not Closed, must be E
                                                 fiberError.set(Present(Right(e)))
-                                Sync.ensure(channelOut.close):
+                                Sync.ensure(channelOut.closeDiscard):
                                     Abort.run[Closed](emit).unit
                                 .andThen(fiberError)
                         end emitResults
@@ -736,7 +736,7 @@ object StreamCoreExtensions:
                         Meter.useSemaphore(parallel): semaphore =>
                             // Ensure lingering fibers are interrupted
                             val cleanup = Abort.run[Closed]:
-                                Sync.ensure(channelPar.close.andThen(channelOut.close)):
+                                Sync.ensure(channelPar.closeDiscard.andThen(channelOut.closeDiscard)):
                                     Loop.foreach:
                                         channelPar.drain.map: chunk =>
                                             if chunk.isEmpty then Loop.done

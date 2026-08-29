@@ -42,8 +42,12 @@ abstract class Connection:
       * Returns any bytes that the ReadPump had already placed in the inbound channel. These bytes are raw ciphertext that must be fed to the
       * TLS engine before registering for further socket reads, to avoid silently discarding data that was already consumed from the kernel
       * buffer. Returns Absent if the connection was already closed (idempotent).
+      *
+      * The bytes arrive through a handover rather than a return value because the driver is detached only after the inbound channel closes,
+      * so a ReadPump offer carrying the peer's first handshake flight can still be committing at that moment. Losing one strands the
+      * handshake waiting for data that was read and dropped. The handover settles inside this call whenever no offer is in flight.
       */
-    def detachForUpgrade()(using AllowUnsafe, Frame): Maybe[Chunk[Span[Byte]]]
+    def detachForUpgrade()(using AllowUnsafe, Frame): Fiber.Unsafe[Maybe[Chunk[Span[Byte]]], Any]
 
     /** Start the connection. Begins pumping data between socket and channels. Called by Transport after creating the connection. Returns true
       * when the Created -> Established CAS won and the pumps started; false when the connection had already raced to a terminal or Upgrading

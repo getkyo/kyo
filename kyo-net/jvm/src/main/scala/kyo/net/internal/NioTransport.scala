@@ -1489,35 +1489,54 @@ final private[kyo] class NioTransport private (
                 // blocks forever waiting for data that was consumed and discarded. Whether the pump raced
                 // ahead and buffered this flight is timing-dependent on fast loopback, so preRead is often
                 // empty (no-op) and sometimes non-empty (corrective).
-                val preRead: Maybe[Chunk[Span[Byte]]] = nioConn.detachForUpgrade()
-                if preRead.isEmpty then
-                    // The claim was won but the connection reached a terminal state before the detach (a close raced or preceded this call):
-                    // nothing was detached and the close path owns the channel, so fail typed. The failure settlement runs the owner arm
-                    // above, whose closeQuietly is idempotent against the close that won.
-                    promise.completeDiscard(Result.fail(NetAlreadyDetachedException()))
-                // Step 2: re-register the same channel (still open) with the driver for TLS handshake I/O.
-                else if !driver.registerChannel(handle) then
-                    promise.completeDiscard(Result.fail(NetTlsHandshakeException(host, -1, "")))
-                else
-                    // Step 3: drive TLS handshake on the same SocketChannel.
-                    // The TLS role follows the connection's TCP origin: an accepted connection (isServerOrigin) upgrades as the TLS server, a
-                    // connected one as the client (e.g. a Postgres client doing an SSLRequest upgrade). The origin is authoritative: a config
-                    // heuristic ("has a cert+key therefore server") would misclassify a mutual-TLS client that presents its own client certificate.
-                    val isServer = nioConn.isServerOrigin
-                    startTlsHandshake(
-                        handle.channel,
-                        host,
-                        -1,
-                        tls,
-                        isServer = isServer,
-                        promise,
-                        Present(handle),
-                        preRead,
-                        channelCapacity,
-                        handle.readBufferSize,
-                        handle.peerCloseGrace
-                    )
-                end if
+                // The detach reports the staged bytes through a handover rather than a return value, because a pump offer carrying that
+                // first flight can still be committing when the inbound channel closes. Everything downstream of the detach therefore runs
+                // on the handover's completion, which settles inline whenever no offer is in flight. The try lives inside the callback:
+                // completion callbacks are run under a catch-all that logs rather than propagates, so an exception raised out here would be
+                // swallowed instead of failing the upgrade promise.
+                nioConn.detachForUpgrade().onComplete { detached =>
+                    try
+                        val preRead: Maybe[Chunk[Span[Byte]]] = detached.foldError(_.eval, _ => Absent)
+                        if preRead.isEmpty then
+                            // The claim was won but the connection reached a terminal state before the detach (a close raced or preceded this
+                            // call): nothing was detached and the close path owns the channel, so fail typed. The failure settlement runs the
+                            // owner arm above, whose closeQuietly is idempotent against the close that won.
+                            promise.completeDiscard(Result.fail(NetAlreadyDetachedException()))
+                        // Step 2: re-register the same channel (still open) with the driver for TLS handshake I/O.
+                        else if !driver.registerChannel(handle) then
+                            promise.completeDiscard(Result.fail(NetTlsHandshakeException(host, -1, "")))
+                        else
+                            // Step 3: drive TLS handshake on the same SocketChannel.
+                            // The TLS role follows the connection's TCP origin: an accepted connection (isServerOrigin) upgrades as the TLS
+                            // server, a connected one as the client (e.g. a Postgres client doing an SSLRequest upgrade). The origin is
+                            // authoritative: a config heuristic ("has a cert+key therefore server") would misclassify a mutual-TLS client that
+                            // presents its own client certificate.
+                            val isServer = nioConn.isServerOrigin
+                            startTlsHandshake(
+                                handle.channel,
+                                host,
+                                -1,
+                                tls,
+                                isServer = isServer,
+                                promise,
+                                Present(handle),
+                                preRead,
+                                channelCapacity,
+                                handle.readBufferSize,
+                                handle.peerCloseGrace
+                            )
+                        end if
+                    catch
+                        case e: Exception =>
+                            promise.completeDiscard(Result.fail(NetTlsHandshakeException(host, -1, e)))
+                        case t: Throwable =>
+                            // The outer catch this mirrors takes Exception, which is the right leaf for a handshake that failed on its own
+                            // terms. An Error is not that, and here it cannot be left to unwind either: the enclosing callback runs under a
+                            // catch-all that logs rather than propagates, so an unhandled one would settle nothing and park the caller on an
+                            // upgrade that can never finish. Hand it back as the panic it would have been before the detach became a handover.
+                            promise.completeDiscard(Result.panic(t))
+                    end try
+                }
             end if
         catch
             case e: Exception =>

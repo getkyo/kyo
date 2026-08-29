@@ -569,6 +569,16 @@ object Log extends kyo.internal.LogPlatformSpecific:
 
         /** Default overflow policy (`-Dkyo.Log.asyncLogging.overflow`), parsed by the custom `Flag.Reader[Log.Overflow]`. */
         private[kyo] object overflow extends StaticFlag[Overflow](Overflow.SyncFallback)
+
+        /** How long the JVM/Native exit hook waits for the buffer to hand over its remaining events before letting the process exit
+          * (`-Dkyo.Log.asyncLogging.shutdownDrainBudget`), clamped `>= 0`.
+          *
+          * Bounds a wait whose expected duration is the tail of one in-flight log call, so the default is generous by orders of
+          * magnitude: it is reached only when a producer is wedged, and it caps how long that producer can delay exit. Deployments that
+          * would rather lose the tail than delay exit can shorten it; `0` gives up immediately. No effect on JS/Wasm, which log
+          * synchronously and install no hook.
+          */
+        private[kyo] object shutdownDrainBudget extends StaticFlag[Duration](2.seconds, d => Right(d.max(Duration.Zero)))
     end asyncLogging
 
 end Log

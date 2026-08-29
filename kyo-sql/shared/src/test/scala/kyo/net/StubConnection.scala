@@ -29,10 +29,11 @@ object StubConnection:
             end close
             private[kyo] def onClosing: Fiber.Unsafe[Unit, Any] =
                 closing
-            def detachForUpgrade()(using AllowUnsafe, Frame): Maybe[Chunk[Span[Byte]]] = Maybe.Absent
-            private[net] def start()(using AllowUnsafe, Frame): Boolean                = true
-            def serverCertificateHash: Maybe[Span[Byte]]                               = Maybe.Absent
-            def status: Connection.Status                                              = Connection.Status.Active
+            def detachForUpgrade()(using AllowUnsafe, Frame): Fiber.Unsafe[Maybe[Chunk[Span[Byte]]], Any] =
+                Fiber.Unsafe.fromResult(Result.succeed(Maybe.Absent))
+            private[net] def start()(using AllowUnsafe, Frame): Boolean = true
+            def serverCertificateHash: Maybe[Span[Byte]]                = Maybe.Absent
+            def status: Connection.Status                               = Connection.Status.Active
         end new
     end apply
 

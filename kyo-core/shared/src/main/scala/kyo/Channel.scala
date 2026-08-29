@@ -212,10 +212,23 @@ object Channel:
 
         /** Closes the channel.
           *
+          * The returned elements are the buffered ones, complete: a `put` that was accepted is among them, and one that was refused never
+          * reached the buffer. Delivering that guarantee costs a suspension, because a put that began before this close can still be
+          * committing when it runs. Use `closeDiscard` to close without the elements and stay in `Sync`.
+          *
+          * Interrupting a caller parked here discards those elements. The channel still closes, but they have no receiver, so an
+          * interrupted close behaves as `closeDiscard`. Mask the interrupt where the elements own a resource that must be released.
+          *
           * @return
-          *   A sequence of remaining elements
+          *   A sequence of remaining elements, or absent when another close owns the closure
           */
-        def close(using Frame): Maybe[Seq[A]] < Sync = Sync.Unsafe.defer(self.close())
+        def close(using Frame): Maybe[Seq[A]] < Async = Sync.Unsafe.defer(self.close().safe.get)
+
+        /** Closes the channel, discarding any buffered elements.
+          *
+          * The `Sync`-only counterpart to `close`, for callers that do not read the remaining elements.
+          */
+        def closeDiscard(using Frame): Unit < Sync = Sync.Unsafe.defer(discard(self.close()))
 
         /** Closes the channel and asynchronously waits until it's empty.
           *
@@ -350,7 +363,7 @@ object Channel:
     )(using inline frame: Frame): B < (S & Sync) =
         Sync.Unsafe.defer:
             val channel = Unsafe.init[A](capacity, access)
-            Sync.ensure(Channel.close(channel)):
+            Sync.ensure(Channel.closeDiscard(channel)):
                 f(channel)
 
     /** Initializes a new Channel without guaranteeing eventual cleanup.
@@ -406,7 +419,7 @@ object Channel:
 
         def drain()(using AllowUnsafe, Frame): Result[Closed, Chunk[A]]
         def drainUpTo(max: Int)(using AllowUnsafe, Frame): Result[Closed, Chunk[A]]
-        def close()(using Frame, AllowUnsafe): Maybe[Seq[A]]
+        def close()(using Frame, AllowUnsafe): Fiber.Unsafe[Maybe[Seq[A]], Any]
         def closeAwaitEmpty()(using Frame, AllowUnsafe): Fiber.Unsafe[Boolean, Any]
 
         def empty()(using AllowUnsafe, Frame): Result[Closed, Boolean]
@@ -629,15 +642,18 @@ object Channel:
                 loop(Chunk.empty)
             end drain
 
-            def close()(using frame: Frame, allow: AllowUnsafe) =
+            // A zero-capacity channel has no ring, so no offer can be mid-commit and the backlog is always known immediately.
+            private def closeAndFlush()(using Frame, AllowUnsafe): Maybe[Chunk[A]] =
                 if isClosed.getAndSet(true) then Absent
                 else
                     flush()
                     Present(Chunk.empty)
-            end close
+
+            def close()(using frame: Frame, allow: AllowUnsafe) =
+                Fiber.Unsafe.fromResult(Result.succeed(closeAndFlush()))
 
             def closeAwaitEmpty()(using Frame, AllowUnsafe) =
-                Fiber.Unsafe.fromResult(Result.succeed(close().isDefined))
+                Fiber.Unsafe.fromResult(Result.succeed(closeAndFlush().isDefined))
 
             def empty()(using AllowUnsafe, Frame) = succeedIfOpen(true)
             def full()(using AllowUnsafe, Frame)  = succeedIfOpen(true)
@@ -791,10 +807,12 @@ object Channel:
             end drain
 
             def close()(using Frame, AllowUnsafe) =
-                queue.close().map { backlog =>
-                    flush()
-                    backlog
-                }
+                val r = queue.close()
+                // The ring is drained by whoever wins the queue's handover, which may be an offer still in flight, so the flush that
+                // fails parked puts and wakes parked takes runs on completion rather than here. Same shape as closeAwaitEmpty below.
+                r.onComplete(_ => flush())
+                r
+            end close
 
             def closeAwaitEmpty()(using Frame, AllowUnsafe) =
                 val r = queue.closeAwaitEmpty()

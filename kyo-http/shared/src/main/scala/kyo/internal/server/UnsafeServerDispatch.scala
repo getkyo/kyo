@@ -442,7 +442,7 @@ private[kyo] object UnsafeServerDispatch:
                         // conn), eliminating the put/close race that surfaced under caliban WS load on arm64 CI.
                         val closeFn: (Int, String) => Unit < Async = (code, reason) =>
                             closeReasonRef.set(Present((code, reason))).andThen {
-                                outbound.close.unit
+                                outbound.closeDiscard
                             }
                         val ws      = new HttpWebSocket(inbound, outbound, closeReasonRef, peerClosedPromise, closeFn)
                         val request = HttpRequest(HttpMethod.GET, url, headers, Record.empty)
@@ -470,7 +470,7 @@ private[kyo] object UnsafeServerDispatch:
                                         case Result.Failure(_) => Kyo.unit
                                         case Result.Panic(t)   => Log.warn("HttpWebSocket server reader panicked", t)
                                         case Result.Success(_) => Kyo.unit
-                                    log.andThen(inbound.close.unit).andThen(peerClosedPromise.completeUnit.unit)
+                                    log.andThen(inbound.closeDiscard).andThen(peerClosedPromise.completeUnit.unit)
                                 }
                             }.map { monitorFiber =>
                                 Fiber.initUnscoped {
@@ -495,14 +495,14 @@ private[kyo] object UnsafeServerDispatch:
                                                     Abort.run[Any](WebSocketCodec.writeClose(conn, code, reason, mask = false)).unit
                                                 case Absent => Kyo.unit
                                             }
-                                        }.andThen(outbound.close.unit)
+                                        }.andThen(outbound.closeDiscard)
                                     }
                                 }.map { writeFiber =>
                                     Sync.ensure(
                                         readFiber.interrupt.unit
                                             .andThen(writeFiber.interrupt.unit)
                                             .andThen(monitorFiber.interrupt.unit)
-                                            .andThen(outbound.close.unit)
+                                            .andThen(outbound.closeDiscard)
                                     ) {
                                         Abort.run[Any](wsHandler.wsHandler(request, ws)).map { _ =>
                                             // After handler returns: if no close reason was registered AND the reader
@@ -513,9 +513,9 @@ private[kyo] object UnsafeServerDispatch:
                                                 case Absent =>
                                                     readFiber.done.map { isDone =>
                                                         if isDone then Kyo.unit
-                                                        else closeReasonRef.set(Present((1000, ""))).andThen(outbound.close.unit)
+                                                        else closeReasonRef.set(Present((1000, ""))).andThen(outbound.closeDiscard)
                                                     }
-                                                case _ => outbound.close.unit
+                                                case _ => outbound.closeDiscard
                                             }.andThen(writeFiber.get.unit)
                                         }
                                     }

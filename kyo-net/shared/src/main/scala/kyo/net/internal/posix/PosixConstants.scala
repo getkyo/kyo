@@ -143,15 +143,17 @@ private[net] object PosixConstants:
     val EV_ADD: Short      = 0x0001
     val EV_DELETE: Short   = 0x0002
     val EV_ENABLE: Short   = 0x0004
-    // EV_DISABLE deactivates a kqueue filter without removing it from the interest list. Used to suppress spurious write-ready events after a
-    // write completes: the EVFILT_WRITE filter stays registered (EV_ADD | EV_CLEAR | EV_ENABLE) and is toggled off with EV_DISABLE after the
-    // write drains, then toggled back on with EV_ENABLE when the next awaitWritable call arms the fd for writing. This avoids the overhead of
-    // EV_DELETE + EV_ADD per write cycle while preventing the send-buffer-full filter from firing continuously.
-    val EV_DISABLE: Short = 0x0008
     // EV_CLEAR auto-resets the EVFILT_USER trigger state after the event is delivered, so one NOTE_TRIGGER wakes the poll exactly once and the
     // filter re-arms for the next wake without an explicit reset (the level-vs-edge analog of draining the epoll eventfd counter).
     val EV_CLEAR: Short   = 0x0020
     val EV_ONESHOT: Short = 0x0010
+    // EV_RECEIPT makes a change submission report per-entry results instead of failing the whole call. `man 2 kevent`: "useful for making bulk
+    // changes to a kqueue without draining any pending events. When passed as input, it forces EV_ERROR to always be returned. When a filter is
+    // successfully added, the data field will be zero." Both halves matter for the mid-drain changelist flush. Without it, a submission that
+    // passes no eventlist room hits the other branch of the same contract ("Otherwise, -1 will be returned"), which aborts at the first bad
+    // entry and silently leaves the rest of the batch unapplied; with it, every entry is processed and reports its own errno. And because the
+    // eventlist fills with one receipt per change, a readiness event cannot be consumed by a call whose results nothing reads.
+    val EV_RECEIPT: Short = 0x0040
     // NOTE_TRIGGER is the fflags bit that fires an already-registered EVFILT_USER filter; the wake path encodes it into the change so the parked
     // `kevent` returns. Stable macOS/BSD ABI value.
     val NOTE_TRIGGER: Int = 0x01000000

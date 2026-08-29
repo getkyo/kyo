@@ -76,10 +76,10 @@ class ConnectionStateTest extends Test:
         val spy  = new SpyDriver
         val conn = makeEstablished(spy)
         Sync.defer {
-            val buffered = conn.detachForUpgrade()
+            val buffered = conn.detachForUpgrade().poll()
             assert(
-                buffered.isDefined || buffered.isEmpty,
-                "detachForUpgrade returns a Maybe (present or absent, both OK for empty channel)"
+                buffered.exists(_.isSuccess),
+                s"detachForUpgrade must settle synchronously when nothing is in flight (present or absent both OK for an empty channel), got $buffered"
             )
             conn.close()
             assert(spy.closeHandleCount.get() == 0, s"closeHandle must NOT be called after a detach, got ${spy.closeHandleCount.get()}")
@@ -95,8 +95,11 @@ class ConnectionStateTest extends Test:
             conn.close()
             // After close() the outbound channel is empty (no queued writes in this test), so teardownHandle fires synchronously:
             // the state advances Closing -> Closed.
-            val result = conn.detachForUpgrade()
-            assert(result.isEmpty, s"detachForUpgrade after close must return Absent, got $result")
+            val result = conn.detachForUpgrade().poll()
+            assert(
+                result.exists { case Result.Success(v) => v.eval.isEmpty; case _ => false },
+                s"detachForUpgrade after close must report Absent, got $result"
+            )
             // No second teardown: closeHandle count is exactly 1 from the close() path.
             assert(spy.closeHandleCount.get() == 1, s"closeHandle must be called exactly once, got ${spy.closeHandleCount.get()}")
         }

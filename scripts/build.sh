@@ -263,6 +263,12 @@ run_in_container() {
     if [ -n "${KYO_POD_SOCKET:-}" ]; then
         args+=(--network host -v "${KYO_POD_SOCKET}:${KYO_POD_SOCKET}")
         envs+=(-e "CONTAINER_HOST=unix://${KYO_POD_SOCKET}")
+        # /tmp at the SAME path on both sides, because a sibling container's bind mounts are resolved by the daemon, not by us. A suite that
+        # generates a file and hands its path to a sibling (kyo-sql's TLS suites write server certs to a temp dir and bind it into Postgres at
+        # /etc/ssl-pg) otherwise names a path that exists only inside this container: the sibling mounts an empty directory, Postgres starts
+        # without TLS, and every TLS leaf fails with the server answering 'N' to SSLRequest rather than anything resembling the real defect.
+        # Sharing the daemon's own /tmp makes the two views agree, so the generated path resolves identically on both.
+        args+=(-v /tmp:/tmp)
     fi
     # Forward the BoringSSL-staging flag; when set the container builds the vendored BoringSSL before the command so kyo-net's TLS tests run
     # against real libssl/libcrypto instead of cancelling.

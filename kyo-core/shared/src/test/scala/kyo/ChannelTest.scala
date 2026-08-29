@@ -1717,9 +1717,13 @@ class ChannelTest extends kyo.test.Test[Any]:
                 val p3    = c.putFiber(3)       // parks: channel full
                 val drain = c.closeAwaitEmpty() // HalfOpen: queue non-empty, put parked
                 // pre-fix: close() only transitioned from Open, so it no-oped on a HalfOpen queue and both promises hung forever
-                val backlog = c.close()
-                val p3r     = p3.poll()    // the parked put must be settled Closed, not left hanging
-                val dr      = drain.poll() // the await-empty must settle (aborted), not left pending
+                // close hands its elements over through a fiber so a put still committing is not missed. Nothing is in flight on this
+                // single thread, so the handover settles inside close and refusing to wait keeps a regression there visible.
+                val backlog = c.close().poll() match
+                    case Present(Result.Success(b)) => b.eval
+                    case other                      => throw AssertionError(s"close did not settle synchronously: $other")
+                val p3r = p3.poll()    // the parked put must be settled Closed, not left hanging
+                val dr  = drain.poll() // the await-empty must settle (aborted), not left pending
                 assert(backlog.contains(Seq(1, 2)), s"the closer must receive the undrained backlog=$backlog")
                 assert(p3r.exists { case Result.Failure(_: Closed) => true; case _ => false }, s"parked put settled=$p3r")
                 assert(dr.exists { case Result.Success(b) => !b.eval; case _ => false }, s"await-empty settled=$dr")

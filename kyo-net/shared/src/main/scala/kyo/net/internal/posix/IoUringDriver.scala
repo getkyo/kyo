@@ -933,6 +933,11 @@ final private[net] class IoUringDriver private[posix] (
       *   - `flushSubmits` pushes the prepped SQEs to the kernel while the fd is still open (the kernel resolves the fd at submit), so no
       *     unsubmitted SQE can resolve the number after `closeFd` releases it. The shutdown inside `closeFd` then completes the in-kernel
       *     accept, whose CQE reaps the pending entry onto the already-failed promise.
+      *
+      * A bare `requestClose` is correct HERE specifically, unlike on a connection handle, where the read path routes through `closeHandle`
+      * instead because a kernel-owned recv can already hold a reference to the buffers `requestClose` frees. An accept SQE captures none of
+      * that state: it names the listen fd and its own completion, never the handle's read buffer, staging buffers, or TLS engine. So freeing
+      * those here cannot be observed by an accept still in the kernel, and the accept's own ordering is handled by the three steps above.
       */
     override def closeListener(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
         submitEngineOp { () =>
@@ -1996,6 +2001,9 @@ final private[net] class IoUringDriver private[posix] (
                                                 // recv for this same handle (the STARTTLS upgrade-handoff window allows more than one) is still
                                                 // in flight and has already captured a reference to those buffers. closeHandle defers the actual
                                                 // free until every op still in flight for the handle (this deferred decrement included) drains.
+                                                // This is a rule about CONNECTION handles, not a blanket ban on requestClose: what makes the bare
+                                                // form unsafe is an in-flight op holding the freed buffers, and only a recv does that. closeListener
+                                                // does use the bare form, correctly, because an accept SQE captures none of that state.
                                                 // fatalRecord is a LOCAL flag, not a shared/ambient signal: closeHandle only marks pendingCloses
                                                 // (shared across every close reason for this handle) synchronously, so checking pendingCloses here
                                                 // would also misfire for an unrelated concurrent close racing a read that decoded cleanly.
