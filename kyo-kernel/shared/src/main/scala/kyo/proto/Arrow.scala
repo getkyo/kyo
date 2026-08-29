@@ -26,15 +26,6 @@ end Kyo
 // site uses (the reference measured it), and its toString would shadow a merged node's rendering
 // through the mixin linearization
 sealed trait Arrow[-A, +B, -S] extends Kyo[B, S]:
-    // computation nodes report from their own constructor; the guard keeps a node that mixes in the
-    // arrow role from reporting twice. The inline indirection exists because a constructor body
-    // cannot hold an inline if directly; disabled, the splice is empty and the guard erases with the
-    // hook
-    private inline def reportAlloc(): Unit =
-        inline if Debugger.enabled then
-            if !this.isInstanceOf[Pending[?, ?]] then Debugger.onAlloc(this)
-    reportAlloc()
-
     def apply(v: A): B < S =
         Debugger.onUnfused(this)
         this(v, Arrow.id)
@@ -53,7 +44,7 @@ end Arrow
 
 object Arrow:
 
-    class Id[A] extends Transform[A, A, Any]:
+    class Id[A] extends Step[A, A, Any]:
         def frame                         = Frame.internal
         override def apply(v: A): A < Any = v
         def apply[C, S2](v: A < S2, cont: Arrow[A, C, S2]) =
@@ -70,9 +61,8 @@ object Arrow:
 
     @nowarn("msg=anonymous")
     inline def apply[A](using _frame: Frame)[B, S](inline f: A => B < S): Arrow[A, B, S] =
-        new Transform[A, B, S]:
+        new Step[A, B, S]:
             def frame                = _frame
-            override def toString    = s"Transform(${site(frame)})"
             override def apply(v: A) = f(v)
             def apply[C, S2](v: A < S2, cont: Arrow[B, C, S2]) =
                 v match
@@ -92,7 +82,7 @@ object Arrow:
       *
       * A trait rather than a class so a fusion site can mix it onto a node class: a merged node extends its node class for the value role
       * and this at its true input for the arrow role. It carries no toString so a node's own rendering survives the mixin; standalone sites
-      * that want the arrow rendering supply the one-liner.
+      * extend [[Step]], which carries the arrow rendering.
       */
     trait Transform[-A, B, -S] extends Arrow[A, B, S]:
         type X = B
@@ -100,10 +90,28 @@ object Arrow:
         def tail = Arrow.id
     end Transform
 
+    /** [[Transform]] as a class, for the sites that mint a standalone arrow.
+      *
+      * Two emission costs vanish against a bare anonymous Transform. A mixin forwarder is emitted into every class that mixes a trait in,
+      * for each concrete trait member not already implemented in a superclass; since Arrow and Transform are both traits, a bare anonymous
+      * Transform is the first class in its chain and re-emits head, tail, apply and chain, while a subclass of this inherits them and
+      * carries only what it implements. And the allocation hook lives here because only a class constructor erases: a trait body statement
+      * emits a `$init$` plus a call in every mixing class even when the statement folds away, while a class constructor whose folded body
+      * is empty is byte-identical to one that never had the statement.
+      *
+      * Transform stays a trait because fusion sites mix it onto a node class, and those cannot take a second superclass; the nodes report
+      * from their own constructors instead.
+      */
+    abstract class Step[-A, B, -S] extends Transform[A, B, S]:
+        Debugger.onAlloc(this)
+        override def toString = s"Step(${site(frame)})"
+    end Step
+
     final class Chain[A, B, C, S] private[proto] (
         val a: Arrow[A, B, S],
         val b: Arrow[B, C, S]
     ) extends Arrow[A, C, S]:
+        Debugger.onAlloc(this)
         def frame = Frame.internal
         def apply[D, S2](v: A < S2, cont: Arrow[C, D, S2]) =
             a(v, b.chain(cont))

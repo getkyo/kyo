@@ -4,6 +4,7 @@ import kyo.proto.Arrow
 import kyo.proto.Loop
 import kyo.proto.kernel.internal.Debugger
 import kyo.proto.kernel.internal.Kyo
+import kyo.proto.kernel.internal.Pending
 import org.openjdk.jol.datamodel.Model64
 import org.openjdk.jol.datamodel.Model64_Lilliput
 import org.openjdk.jol.info.ClassLayout
@@ -73,6 +74,19 @@ final class ConsoleDebugger extends Debugger:
     private var counts       = Map.empty[String, Int]
     private var unfusedCount = 0
 
+    // every allocation reported so far, by identity: the completeness net. Any Pending or Arrow
+    // operand reaching a hook below must have been born through onAlloc; an orphan means an
+    // allocation site lost its hook, and the run fails on the spot instead of silently
+    // under-reporting. Seeded with the identity arrow, which is minted at module initialization
+    // and may predate any installed debugger.
+    private val reported = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap[Any, java.lang.Boolean])
+    reported.add(Arrow.id)
+
+    private def checkReported(vs: Any*): Unit =
+        for v <- vs do
+            if (v.isInstanceOf[Pending[?, ?]] || v.isInstanceOf[Arrow[?, ?, ?]]) && !reported.contains(v) then
+                throw new IllegalStateException(s"unreported allocation reached a hook: $v (${v.getClass.getName})")
+
     private def pad = "    " * depth
 
     private def log(entry: String): Unit =
@@ -82,6 +96,7 @@ final class ConsoleDebugger extends Debugger:
     private def stackSize: Int = (new Exception).getStackTrace.length
 
     override def onAlloc(value: Any): Unit =
+        reported.add(value)
         val name = value match
             case _: Kyo.Defer[?, ?, ?, ?]                 => "Defer"
             case _: Kyo.SuspendArrow[?, ?, ?, ?, ?, ?]    => "SuspendArrow"
@@ -94,6 +109,7 @@ final class ConsoleDebugger extends Debugger:
             case _: Loop.Continue2[?, ?]                  => "Continue2"
             case _: Loop.Continue3[?, ?, ?]               => "Continue3"
             case _: Loop.Continue4[?, ?, ?, ?]            => "Continue4"
+            case _: Arrow.Step[?, ?, ?]                   => "Step"
             case _: Arrow.Transform[?, ?, ?]              => "Transform"
             case v                                        => v.getClass.getSimpleName
         counts = counts.updated(name, counts.getOrElse(name, 0) + 1)
@@ -102,32 +118,41 @@ final class ConsoleDebugger extends Debugger:
     end onAlloc
 
     override def onUnfused(arrow: Any): Unit =
+        checkReported(arrow)
         unfusedCount += 1
         println(s"$pad✂️ apply: $arrow")
+    end onUnfused
 
     override def onLoop(value: Any, contA: Any, contB: Any): Unit =
+        checkReported(value, contA, contB)
         log(
             s"""|🔁 loop
                 |value: $value
                 |contA: $contA
                 |contB: $contB""".stripMargin
         )
+    end onLoop
 
     override def onContext(suspend: Any, state: Any): Unit =
+        checkReported(suspend, state)
         log(
             s"""|📖 context
                 |suspend: $suspend
                 |state: $state""".stripMargin
         )
+    end onContext
 
     override def onContextDefault(suspend: Any, state: Any): Unit =
+        checkReported(suspend, state)
         log(
             s"""|📖 context default
                 |suspend: $suspend
                 |state: $state""".stripMargin
         )
+    end onContextDefault
 
     override def onRegionEnter(handler: Any, state: Any): Unit =
+        checkReported(state)
         log(
             s"""|📥 region enter
                 |handler: $handler
@@ -138,6 +163,7 @@ final class ConsoleDebugger extends Debugger:
     end onRegionEnter
 
     override def onRegionExit(handler: Any, result: Any): Unit =
+        checkReported(result)
         depth -= 1
         log(
             s"""|📤 region exit
@@ -148,13 +174,16 @@ final class ConsoleDebugger extends Debugger:
     end onRegionExit
 
     override def onForeign(suspend: Any, handler: Any): Unit =
+        checkReported(suspend)
         log(
             s"""|🫧 foreign suspend
                 |suspend: $suspend
                 |handler: $handler""".stripMargin
         )
+    end onForeign
 
     override def onHandle(suspend: Any, handler: Any, state: Any): Unit =
+        checkReported(suspend, state)
         log(
             s"""|⚡ handle
                 |suspend: $suspend
@@ -165,6 +194,7 @@ final class ConsoleDebugger extends Debugger:
     end onHandle
 
     override def onResult(value: Any): Unit =
+        checkReported(value)
         log(
             s"""|📦 result
                 |value: $value""".stripMargin

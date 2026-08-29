@@ -29,9 +29,12 @@ end site
   *
   * Sealed with every node class in this file, so union membership is closed: a value either settled or is one of the nodes below, and the
   * eval's destructuring match is exhaustive. Bare arrows are not members, which is what makes "not all arrows are computations" structural.
+  *
+  * Allocation reporting fires from the sealed node classes' constructors, never from this trait: a trait body statement emits a `$init$`
+  * plus a call in every mixing class even when disabled folds it away, while a class constructor whose folded body is empty leaves no
+  * trace. Sealedness is what keeps the three carriers exhaustive.
   */
 sealed trait Pending[+A, -S] extends kyo.proto.Kyo[A, S]:
-    Debugger.onAlloc(this)
     def frame: Frame = Frame.internal
 end Pending
 
@@ -40,6 +43,7 @@ end Pending
 object Kyo:
 
     abstract class Defer[A, B, C, -S] @publicInBinary private[kyo] () extends Pending[C, S]:
+        Debugger.onAlloc(this)
         def value: A < S
         def contA: Arrow[A, B, S]
         def contB: Arrow[B, C, S]
@@ -50,6 +54,7 @@ object Kyo:
     end Defer
 
     sealed abstract class Suspend[E <: Effect, A, S] extends Pending[A, S]:
+        Debugger.onAlloc(this)
         type Op
         def tag: Tag[E]
         def cont: Arrow[Op, A, S]
@@ -124,6 +129,7 @@ object Kyo:
                 handler.done(state, v.asInstanceOf[A])
 
     abstract class Handle[E <: Effect, A, B, C, -S, State] extends Pending[C, S]:
+        Debugger.onAlloc(this)
         def value: A < (E & S)
         def handler: Handler[E, A, B, S, State]
         def state: State

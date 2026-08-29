@@ -4,6 +4,7 @@ import kyo.Frame
 import kyo.Maybe
 import kyo.Render
 import kyo.proto.Arrow
+import kyo.proto.Arrow.Step
 import kyo.proto.Arrow.Transform
 import kyo.proto.kernel.internal.*
 import language.implicitConversions
@@ -442,9 +443,8 @@ object `<` extends Implicits:
         @nowarn("msg=anonymous")
         def flatten(using _frame: Frame): A < (S & S2) =
             def arrow: Arrow[A < S, A, S] =
-                new Transform[A < S, A, S]:
+                new Step[A < S, A, S]:
                     def frame                                                = _frame
-                    override def toString                                    = s"Transform(${site(frame)})"
                     def apply[C, S3](v: (A < S) < S3, cont: Arrow[A, C, S3]) = run(v, cont)
             def run[C, S3](v: (A < S) < S3, cont: Arrow[A, C, S3]): C < (S & S3) =
                 v match

@@ -74,10 +74,14 @@ object Safepoint:
     end enter
 
     private def enterPark(slot: Slot, s: State): Boolean =
-        val d = Debugger.get
         // preemption outranks the session: an armed slice with a stop pending refuses whatever the
-        // gate would say, so the eval parks instead of running the program to completion unobserved
-        if (d ne Debugger.Noop) && !(s.isArmed && stopped(slot)) && d.enter() then
+        // gate would say, so the eval parks instead of running the program to completion unobserved.
+        // The whole consult folds away with the debugger disabled: the park arm is all that remains
+        if Debugger.enabled && {
+                val d = Debugger.get
+                (d ne Debugger.Noop) && !(s.isArmed && stopped(slot)) && d.enter()
+            }
+        then
             true
         else
             depth = s.drained
