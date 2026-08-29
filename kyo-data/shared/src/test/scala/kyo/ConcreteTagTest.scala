@@ -41,7 +41,41 @@ class ConcreteTagTest extends kyo.test.Test[Any]:
             "Double" in {
                 val doubleTag = ConcreteTag[Double]
                 assert(doubleTag.accepts(3.14))
-                assert(!doubleTag.accepts(42))
+                assert(!doubleTag.accepts("3.14"))
+                // A JS number carries no width, so every numeric value is a Double there and the
+                // widening a JVM box rules out is not observable.
+                if Platform.isJS then assert(doubleTag.accepts(42))
+                else assert(!doubleTag.accepts(42))
+            }
+
+            "Float" in {
+                val floatTag = ConcreteTag[Float]
+                assert(floatTag.accepts(1.5f))
+                assert(!floatTag.accepts("1.5"))
+            }
+
+            "Byte" in {
+                val byteTag = ConcreteTag[Byte]
+                assert(byteTag.accepts(42.toByte))
+                assert(!byteTag.accepts("42"))
+            }
+
+            "Short" in {
+                val shortTag = ConcreteTag[Short]
+                assert(shortTag.accepts(7.toShort))
+                assert(!shortTag.accepts("7"))
+            }
+
+            "Long" in {
+                val longTag = ConcreteTag[Long]
+                assert(longTag.accepts(9L))
+                assert(!longTag.accepts("9"))
+            }
+
+            "Char" in {
+                val charTag = ConcreteTag[Char]
+                assert(charTag.accepts('c'))
+                assert(!charTag.accepts("c"))
             }
 
             "Boolean" in {
@@ -629,10 +663,13 @@ class ConcreteTagTest extends kyo.test.Test[Any]:
 
             "nested unions and intersections" in {
                 val tag = ConcreteTag[((Int & 42) | (String & "hello")) & (Double | Boolean)]
-                assert(!tag.accepts(42))
                 assert(!tag.accepts("hello"))
                 assert(!tag.accepts(3.14))
                 assert(!tag.accepts(true))
+                // On JS the Double member of the right half accepts 42, so both halves of the
+                // intersection do and the whole tag does.
+                if Platform.isJS then assert(tag.accepts(42))
+                else assert(!tag.accepts(42))
             }
 
             "union of literal types and regular types" in {
@@ -641,9 +678,11 @@ class ConcreteTagTest extends kyo.test.Test[Any]:
                 assert(tag.accepts("hello"))
                 assert(tag.accepts(true))
                 assert(tag.accepts(3.14))
-                assert(!tag.accepts(43))
                 assert(!tag.accepts(false))
                 assert(tag <:< ConcreteTag[Int | String | Boolean | Double])
+                // On JS the Double member accepts 43, so the union does even though no literal matches.
+                if Platform.isJS then assert(tag.accepts(43))
+                else assert(!tag.accepts(43))
             }
 
             "complex union and intersection with traits" in {

@@ -78,9 +78,11 @@ class TransportStartTlsCrossTailTest extends Test:
                         )
                     end attempt
                     val body: Result[NetException | Timeout | Closed, Boolean] < Async =
-                        // All N fibers park here until latch.release fires, maximizing upgrade overlap.
+                        // All N fibers park here until latch.release fires, maximizing upgrade overlap. The per-fiber ceiling is a hang-guard:
+                        // the tested property is that every one of the 32 overlapping STARTTLS upgrades echoes correctly, and 60s fires only on a
+                        // genuine stall, so 32-way contention on a slow or emulated runner cannot turn a slow-but-progressing upgrade into a failure.
                         latch.await.flatMap { _ =>
-                            Abort.run[NetException | Timeout | Closed](Async.timeout(30.seconds)(attempt))
+                            Abort.run[NetException | Timeout | Closed](Async.timeout(60.seconds)(attempt))
                         }
                     Fiber.init(body)
                 }

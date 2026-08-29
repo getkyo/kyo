@@ -859,7 +859,11 @@ lazy val `kyo-schema-tests` =
         // The shared kyo-schema README exercises every format; only this project's Test
         // classpath sees the core plus all six format modules, so it hosts the validation.
         .jvmConfigure(_.settings(
-            doctestSources := Seq((ThisBuild / baseDirectory).value / "kyo-schema" / "README.md")
+            doctestSources := Seq((ThisBuild / baseDirectory).value / "kyo-schema" / "README.md"),
+            // Differential-oracle deps (ProtobufDifferentialTest): protobuf-java is the wire
+            // oracle, Proteus the code-first schema-mapping oracle. JVM test scope only.
+            libraryDependencies += "com.google.protobuf"    % "protobuf-java" % "4.35.0" % Test,
+            libraryDependencies += "com.github.ghostdogpr" %% "proteus-core"  % "0.6.0"  % Test
         ))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))

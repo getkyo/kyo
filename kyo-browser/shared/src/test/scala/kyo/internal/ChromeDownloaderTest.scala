@@ -12,6 +12,32 @@ import kyo.System.Parser
   */
 class ChromeDownloaderTest extends BaseBrowserTest:
 
+    // These tests exercise the Chrome-download machinery. On a platform with no chrome-headless-shell artifact
+    // (linux-arm64, windows-arm) `resolvePlatform` aborts, so a leaf that reads the host os/arch to build a cacheDir
+    // cannot run. Cancel the whole suite cleanly there, mirroring `BaseChromeTest.aroundLeaf` (same check, minus the
+    // Chrome pre-launch these download-logic tests never need); the arch-independent resolution logic and the
+    // fixed-arg `resolvePlatform` branches stay covered on the supported poles. `resolvePlatform` is the single
+    // source of truth for which tuples are supported.
+    private lazy val chromeUnsupportedReason: Option[String] =
+        import AllowUnsafe.embrace.danger
+        // Unsafe: the platform check runs off the main effect stack so its verdict is available synchronously to aroundLeaf.
+        Sync.Unsafe.evalOrThrow {
+            for
+                os      <- System.operatingSystem
+                arch    <- System.architecture
+                outcome <- Abort.run[BrowserSetupException](ChromeDownloader.resolvePlatform(os, arch))
+            yield outcome match
+                case Result.Success(_)  => None
+                case Result.Failure(ex) => Option(ex.getMessage)
+                case Result.Panic(ex)   => Option(ex.getMessage)
+        }
+    end chromeUnsupportedReason
+
+    override def aroundLeaf[A](body: A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
+        chromeUnsupportedReason match
+            case Some(reason) => Sync.defer(cancel(reason))
+            case None         => body
+
     // ---- helpers ----
 
     /** Fake `System` used across ChromeDownloader tests to control `KYO_BROWSER_CACHE`, OS, and arch. */

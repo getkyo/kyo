@@ -145,17 +145,17 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
             Path.tempDir("kyo-srt-conc").map { dir =>
                 val cacheDir = dir.toString
                 val finalKey = s"$cacheDir/$hex.krfl"
-                Abort.run[TastyError | Timeout](
-                    Async.timeout(5.seconds)(
-                        Tasty.withPickles(Chunk(plainClassPickle)) {
-                            Tasty.classpath.map { classpath =>
-                                Async.zip[TastyError, Unit, Unit, Any](
-                                    SnapshotWriter.write(classpath, cacheDir, digest),
-                                    SnapshotWriter.write(classpath, cacheDir, digest)
-                                ).map(_ => ())
-                            }
+                Abort.run[TastyError](
+                    // The Async.zip of the two writers completing is the barrier; a genuine hang is caught by the suite's per-leaf cap, so no
+                    // in-test timeout is needed.
+                    Tasty.withPickles(Chunk(plainClassPickle)) {
+                        Tasty.classpath.map { classpath =>
+                            Async.zip[TastyError, Unit, Unit, Any](
+                                SnapshotWriter.write(classpath, cacheDir, digest),
+                                SnapshotWriter.write(classpath, cacheDir, digest)
+                            ).map(_ => ())
                         }
-                    )
+                    }
                 ).map {
                     case Result.Success(_) =>
                         // Both writers completed; the final snapshot file must exist and be valid
@@ -168,8 +168,6 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
                             case Result.Panic(t) =>
                                 throw t
                         }
-                    case Result.Failure(_: Timeout) =>
-                        fail("Concurrent snapshot write timed out")
                     case Result.Failure(e) =>
                         // One writer may fail with SnapshotIoError (rename collision); final file must still exist
                         Abort.run[FileReadException](Path(finalKey).exists).map {

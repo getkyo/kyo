@@ -113,25 +113,90 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       * `Schema.init`'s inline `serializeWrite` / `serializeRead` call these only when transforms exist.
       */
     @publicInBinary private[kyo] def transformedWrite(value: A, writer: Writer): Unit =
-        internal.SchemaSerializer.writeWithTransforms(this, value, writer)(using Frame.internal)
+        val prior = writer.schemaTransformOverrides
+        if nominalIdentity.nonEmpty then writer.schemaTransformOverrides = this :: prior
+        try internal.SchemaSerializer.writeWithTransforms(this, value, writer)(using Frame.internal)
+        finally writer.schemaTransformOverrides = prior
+    end transformedWrite
     @publicInBinary private[kyo] def transformedRead(reader: Reader): A =
-        representationChain match
-            case Maybe.Present(chain) =>
-                internal.SchemaSerializer.readChain(this, reader, chain)
-            case Maybe.Absent =>
-                representation match
-                    case Schema.UnionRepresentation.External =>
-                        internal.SchemaSerializer.readWithTransforms(this, reader)
-                    case Schema.UnionRepresentation.Internal(_) =>
-                        internal.SchemaSerializer.readWithDiscriminator(this, reader)
-                    case Schema.UnionRepresentation.Adjacent(tagKey, contentKey) =>
-                        internal.SchemaSerializer.readAdjacent(this, reader, tagKey, contentKey)
-                    case Schema.UnionRepresentation.Tuple =>
-                        internal.SchemaSerializer.readTuple(this, reader)
-                    case Schema.UnionRepresentation.TupleFlat =>
-                        internal.SchemaSerializer.readTupleFlat(this, reader)
-                    case Schema.UnionRepresentation.Untagged =>
-                        internal.SchemaSerializer.readUntagged(this, reader)
+        val prior = reader.schemaTransformOverrides
+        if nominalIdentity.nonEmpty then reader.schemaTransformOverrides = this :: prior
+        try
+            representationChain match
+                case Maybe.Present(chain) =>
+                    internal.SchemaSerializer.readChain(this, reader, chain)
+                case Maybe.Absent =>
+                    representation match
+                        case Schema.UnionRepresentation.External =>
+                            internal.SchemaSerializer.readWithTransforms(this, reader)
+                        case Schema.UnionRepresentation.Internal(_) =>
+                            internal.SchemaSerializer.readWithDiscriminator(this, reader)
+                        case Schema.UnionRepresentation.Adjacent(tagKey, contentKey) =>
+                            internal.SchemaSerializer.readAdjacent(this, reader, tagKey, contentKey)
+                        case Schema.UnionRepresentation.Tuple =>
+                            internal.SchemaSerializer.readTuple(this, reader)
+                        case Schema.UnionRepresentation.TupleFlat =>
+                            internal.SchemaSerializer.readTupleFlat(this, reader)
+                        case Schema.UnionRepresentation.Untagged =>
+                            internal.SchemaSerializer.readUntagged(this, reader)
+        finally reader.schemaTransformOverrides = prior
+        end try
+    end transformedRead
+
+    /** This schema's nominal identity (simple name plus runtime tag) when its structure is a Product
+      * or Sum, absent otherwise. Container and primitive schemas have no nominal identity and never
+      * participate in transform-override resolution. Lazy: forcing `structure` during init would
+      * break recursive structure graphs.
+      */
+    @publicInBinary private[kyo] lazy val nominalIdentity: Maybe[(String, Tag[Any])] =
+        structure match
+            case p: Structure.Type.Product => Maybe((p.name, p.tag))
+            case s: Structure.Type.Sum     => Maybe((s.name, s.tag))
+            case _                         => Maybe.empty
+
+    /** Resolves the innermost registered transform override matching this schema's nominal type.
+      * `this` never matches itself, so a configured schema running its own raw write/read is not
+      * re-dispatched into its transformed path.
+      */
+    @publicInBinary private[kyo] def transformOverrideFor(overrides: List[Schema[?]]): Maybe[Schema[A]] =
+        nominalIdentity match
+            case Maybe.Present((name, tag)) =>
+                @tailrec def loop(rest: List[Schema[?]]): Maybe[Schema[A]] =
+                    rest match
+                        case Nil => Maybe.empty
+                        case s :: tail =>
+                            val matches = (s ne this) && (s.nominalIdentity match
+                                case Maybe.Present((n, t)) => n == name && t.equals(tag)
+                                case _                     => false)
+                            if matches then Maybe(s.asInstanceOf[Schema[A]])
+                            else loop(tail)
+                loop(overrides)
+            case _ => Maybe.empty
+
+    /** Raw write, unless a configured schema for this nominal type is registered on the writer, in
+      * which case the write delegates there so recursive occurrences keep the configuration. Called
+      * by `serializeWrite` on the transform-free branch only.
+      */
+    @publicInBinary private[kyo] def writeResolvingOverride(value: A, writer: Writer): Unit =
+        val overrides = writer.schemaTransformOverrides
+        if overrides.isEmpty then rawSerializeWrite(value, writer)
+        else
+            transformOverrideFor(overrides) match
+                case Maybe.Present(configured) => configured.serializeWrite(value, writer)
+                case _                         => rawSerializeWrite(value, writer)
+        end if
+    end writeResolvingOverride
+
+    /** Read counterpart of [[writeResolvingOverride]]. */
+    @publicInBinary private[kyo] def readResolvingOverride(reader: Reader): A =
+        val overrides = reader.schemaTransformOverrides
+        if overrides.isEmpty then rawSerializeRead(reader)
+        else
+            transformOverrideFor(overrides) match
+                case Maybe.Present(configured) => configured.serializeRead(reader)
+                case _                         => rawSerializeRead(reader)
+        end if
+    end readResolvingOverride
 
     /** Threads this schema's own field-id overrides onto a Protobuf writer/reader, at whatever nesting
       * depth this schema is reached (the outermost schema passed to `Schema.encode[C]`/`Protobuf.encode`,
@@ -1813,7 +1878,7 @@ object Schema:
                 val priorFieldIdOverrides = threadFieldIdOverridesForWrite(writeWriter)
                 try
                     if hasTransforms then transformedWrite(value, writeWriter)
-                    else rawSerializeWrite(value, writeWriter)
+                    else writeResolvingOverride(value, writeWriter)
                 finally restoreFieldIdOverridesForWrite(writeWriter, priorFieldIdOverrides)
                 end try
             end serializeWrite
@@ -1821,7 +1886,7 @@ object Schema:
                 val priorFieldIdOverrides = threadFieldIdOverridesForRead(reader)
                 try
                     if hasReadTransforms then transformedRead(reader)
-                    else rawSerializeRead(reader)
+                    else readResolvingOverride(reader)
                 finally restoreFieldIdOverridesForRead(reader, priorFieldIdOverrides)
                 end try
             end serializeRead
@@ -2481,11 +2546,17 @@ object Schema:
     end checkVariantWireExists
 
     // --- Primitive Schema givens ---
+    // Each primitive declares its proto3 default as absentDefaultValue: a canonical proto3
+    // serializer omits default-valued fields, so a reader that reports absence-as-default
+    // (ProtobufReader) decodes them back. Self-describing codecs ignore these for product
+    // fields (their absentDefaultedFieldsMask stays 0), so JSON and friends still require
+    // presence.
 
     /** Schema for String values. */
     given stringSchema: Schema[String] = Schema.init[String](
         writeFn = (v, w) => w.string(v),
         readFn = _.string(),
+        absentDefaultValue = Maybe(""),
         structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[String].asInstanceOf[Tag[Any]])
     )
 
@@ -2493,6 +2564,7 @@ object Schema:
     given booleanSchema: Schema[Boolean] = Schema.init[Boolean](
         writeFn = (v, w) => w.boolean(v),
         readFn = _.boolean(),
+        absentDefaultValue = Maybe(false),
         structure = Structure.Type.Primitive(Structure.PrimitiveKind.Boolean, Tag[Boolean].asInstanceOf[Tag[Any]])
     )
 
@@ -2500,6 +2572,7 @@ object Schema:
     given intSchema: Schema[Int] = Schema.init[Int](
         writeFn = (v, w) => w.int(v),
         readFn = _.int(),
+        absentDefaultValue = Maybe(0),
         structure = Structure.Type.Primitive(Structure.PrimitiveKind.Int, Tag[Int].asInstanceOf[Tag[Any]])
     )
 
@@ -2507,6 +2580,7 @@ object Schema:
     given longSchema: Schema[Long] = Schema.init[Long](
         writeFn = (v, w) => w.long(v),
         readFn = _.long(),
+        absentDefaultValue = Maybe(0L),
         structure = Structure.Type.Primitive(Structure.PrimitiveKind.Long, Tag[Long].asInstanceOf[Tag[Any]])
     )
 
@@ -2517,6 +2591,7 @@ object Schema:
     given floatSchema: Schema[Float] = Schema.init[Float](
         writeFn = (v, w) => w.float(v),
         readFn = _.float(),
+        absentDefaultValue = Maybe(0.0f),
         structure = Structure.Type.Primitive(Structure.PrimitiveKind.Float, Tag[Float].asInstanceOf[Tag[Any]])
     )
 
@@ -2524,6 +2599,7 @@ object Schema:
     given doubleSchema: Schema[Double] = Schema.init[Double](
         writeFn = (v, w) => w.double(v),
         readFn = _.double(),
+        absentDefaultValue = Maybe(0.0d),
         structure = Structure.Type.Primitive(Structure.PrimitiveKind.Double, Tag[Double].asInstanceOf[Tag[Any]])
     )
 
@@ -2531,6 +2607,7 @@ object Schema:
     given shortSchema: Schema[Short] = Schema.init[Short](
         writeFn = (v, w) => w.short(v),
         readFn = _.short(),
+        absentDefaultValue = Maybe(0.toShort),
         structure = Structure.Type.Primitive(Structure.PrimitiveKind.Short, Tag[Short].asInstanceOf[Tag[Any]])
     )
 
@@ -2538,6 +2615,7 @@ object Schema:
     given byteSchema: Schema[Byte] = Schema.init[Byte](
         writeFn = (v, w) => w.byte(v),
         readFn = _.byte(),
+        absentDefaultValue = Maybe(0.toByte),
         structure = Structure.Type.Primitive(Structure.PrimitiveKind.Byte, Tag[Byte].asInstanceOf[Tag[Any]])
     )
 
@@ -2545,6 +2623,7 @@ object Schema:
     given charSchema: Schema[Char] = Schema.init[Char](
         writeFn = (v, w) => w.char(v),
         readFn = _.char(),
+        absentDefaultValue = Maybe(0.toChar),
         structure = Structure.Type.Primitive(Structure.PrimitiveKind.Char, Tag[Char].asInstanceOf[Tag[Any]])
     )
 
@@ -2553,6 +2632,7 @@ object Schema:
         Schema.init[BigDecimal](
             writeFn = (v, w) => w.bigDecimal(v),
             readFn = _.bigDecimal(),
+            absentDefaultValue = Maybe(BigDecimal(0)),
             structure = Structure.Type.Primitive(Structure.PrimitiveKind.BigDecimal, Tag[BigDecimal].asInstanceOf[Tag[Any]])
         )
 
@@ -2560,6 +2640,7 @@ object Schema:
     given bigIntSchema: Schema[BigInt] = Schema.init[BigInt](
         writeFn = (v, w) => w.bigInt(v),
         readFn = _.bigInt(),
+        absentDefaultValue = Maybe(BigInt(0)),
         structure = Structure.Type.Primitive(Structure.PrimitiveKind.BigInt, Tag[BigInt].asInstanceOf[Tag[Any]])
     )
 
@@ -2568,6 +2649,7 @@ object Schema:
         Schema.init[java.time.Instant](
             writeFn = (v, w) => w.instant(v),
             readFn = _.instant(),
+            absentDefaultValue = Maybe(java.time.Instant.EPOCH),
             structure = Structure.Type.Primitive(Structure.PrimitiveKind.Instant, Tag[java.time.Instant].asInstanceOf[Tag[Any]])
         )
 
@@ -2576,6 +2658,7 @@ object Schema:
         Schema.init[java.time.Duration](
             writeFn = (v, w) => w.duration(v),
             readFn = _.duration(),
+            absentDefaultValue = Maybe(java.time.Duration.ZERO),
             structure = Structure.Type.Primitive(Structure.PrimitiveKind.Duration, Tag[java.time.Duration].asInstanceOf[Tag[Any]])
         )
 
@@ -2649,13 +2732,13 @@ object Schema:
 
     /** Tag schema: serializes as the string representation. Tags are opaque types backed by String at runtime for static tags.
       */
-    given tagSchema[A]: Schema[Tag[A]] = Schema.init[Tag[A]](
+    given tagSchema[A](using tag: Tag[Tag[A]]): Schema[Tag[A]] = Schema.init[Tag[A]](
         writeFn = (v, w) =>
             v match
                 case s: String => w.string(s)
                 case _         => w.string(v.show),
         readFn = reader => reader.string().asInstanceOf[Tag[A]],
-        structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[Tag[A]].asInstanceOf[Tag[Any]])
+        structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, tag.erased)
     )
 
     /** Schema for java.time.LocalDate values. Serializes as ISO-8601 string. */
@@ -2898,7 +2981,7 @@ object Schema:
     end seqSchema
 
     /** Schema for Span[A] values. */
-    given spanSchema[A](using inner0: => Schema[A], ct: scala.reflect.ClassTag[A]): Schema[Span[A]] =
+    given spanSchema[A](using inner0: => Schema[A], ct: scala.reflect.ClassTag[A], tag: Tag[Span[A]]): Schema[Span[A]] =
         lazy val inner = inner0
         Schema.init[Span[A]](
             writeFn = (value, writer) =>
@@ -2922,7 +3005,7 @@ object Schema:
             absentDefaultValue = Maybe(Span.empty[A]),
             structure = Structure.Type.Collection(
                 "Span",
-                Tag[Span[A]].asInstanceOf[Tag[Any]],
+                tag.erased,
                 inner.structure
             )
         )
@@ -2944,6 +3027,9 @@ object Schema:
             readFn = reader =>
                 if reader.isNil() then Maybe.empty
                 else Maybe(inner.serializeRead(reader)),
+            // Absent on the wire decodes to Absent: proto3 encodes an absent optional map value as
+            // a key-only entry, and the map read loops fall back to this default.
+            absentDefaultValue = Maybe(Maybe.empty[A]),
             // Non-inline givens have no implicit Tag[A] in scope; fall back to Tag[Any].
             structure = Structure.Type.Optional(
                 "Maybe",
@@ -2966,6 +3052,9 @@ object Schema:
             readFn = reader =>
                 if reader.isNil() then None
                 else Some(inner.serializeRead(reader)),
+            // Absent on the wire decodes to None: proto3 encodes an absent optional map value as
+            // a key-only entry, and the map read loops fall back to this default.
+            absentDefaultValue = Maybe(None),
             // Non-inline givens have no implicit Tag[A] in scope; fall back to Tag[Any].
             structure = Structure.Type.Optional(
                 "Option",
@@ -3049,9 +3138,17 @@ object Schema:
                         discard(reader.hasNextField())
                         discard(reader.field()) // "key"
                         val k = kSchema.serializeRead(reader)
-                        discard(reader.hasNextField())
-                        discard(reader.field()) // "value"
-                        val v = vSchema.serializeRead(reader)
+                        // The value-side hasNextField both advances the separator and carries the
+                        // presence signal: proto3 encodes an empty or default value as a key-only
+                        // entry, which decodes to the value schema's absent default.
+                        val v =
+                            if reader.hasNextField() then
+                                discard(reader.field()) // "value"
+                                vSchema.serializeRead(reader)
+                            else
+                                vSchema.absentDefaultValue match
+                                    case Maybe.Present(dv) => dv
+                                    case _                 => throw MissingFieldException(Seq.empty, "value")(using reader.frame)
                         reader.objectEnd()
                         builder += (k -> v)
                         loop(count + 1)
@@ -3288,9 +3385,17 @@ object Schema:
                         discard(reader.hasNextField())
                         discard(reader.field()) // "key"
                         val k = kSchema.serializeRead(reader)
-                        discard(reader.hasNextField())
-                        discard(reader.field()) // "value"
-                        val v = vSchema.serializeRead(reader)
+                        // The value-side hasNextField both advances the separator and carries the
+                        // presence signal: proto3 encodes an empty or default value as a key-only
+                        // entry, which decodes to the value schema's absent default.
+                        val v =
+                            if reader.hasNextField() then
+                                discard(reader.field()) // "value"
+                                vSchema.serializeRead(reader)
+                            else
+                                vSchema.absentDefaultValue match
+                                    case Maybe.Present(dv) => dv
+                                    case _                 => throw MissingFieldException(Seq.empty, "value")(using reader.frame)
                         reader.objectEnd()
                         loop(dict.update(k, v), count + 1)
                     else dict
@@ -3398,9 +3503,17 @@ object Schema:
                         discard(reader.hasNextField())
                         discard(reader.field()) // "key"
                         val k = kSchema.serializeRead(reader)
-                        discard(reader.hasNextField())
-                        discard(reader.field()) // "value"
-                        val v = vSchema.serializeRead(reader)
+                        // The value-side hasNextField both advances the separator and carries the
+                        // presence signal: proto3 encodes an empty or default value as a key-only
+                        // entry, which decodes to the value schema's absent default.
+                        val v =
+                            if reader.hasNextField() then
+                                discard(reader.field()) // "value"
+                                vSchema.serializeRead(reader)
+                            else
+                                vSchema.absentDefaultValue match
+                                    case Maybe.Present(dv) => dv
+                                    case _                 => throw MissingFieldException(Seq.empty, "value")(using reader.frame)
                         reader.objectEnd()
                         loop(map.update(k, v), count + 1)
                     else map
@@ -3626,7 +3739,7 @@ object Schema:
                 val priorFieldIdOverrides = threadFieldIdOverridesForWrite(writeWriter)
                 try
                     if hasTransforms then transformedWrite(value, writeWriter)
-                    else rawSerializeWrite(value, writeWriter)
+                    else writeResolvingOverride(value, writeWriter)
                 finally restoreFieldIdOverridesForWrite(writeWriter, priorFieldIdOverrides)
                 end try
             end serializeWrite
@@ -3634,7 +3747,7 @@ object Schema:
                 val priorFieldIdOverrides = threadFieldIdOverridesForRead(reader)
                 try
                     if hasReadTransforms then transformedRead(reader)
-                    else rawSerializeRead(reader)
+                    else readResolvingOverride(reader)
                 finally restoreFieldIdOverridesForRead(reader, priorFieldIdOverrides)
                 end try
             end serializeRead

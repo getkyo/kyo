@@ -1,7 +1,11 @@
 package kyo
 
-import kyo.internal.ChromeDownloader
-
+/** Shared base for kyo-browser suites: the per-suite leaf config and the CDP/decode helpers, and nothing that launches a
+  * browser. Suites that actually drive a headless Chrome extend [[BaseChromeTest]] (which adds the Chrome pre-launch and
+  * the unsupported-platform cancel); suites that live in kyo-browser but never open one (the launcher, selector, key,
+  * image, exception-hierarchy, and downloader unit tests) extend this directly, so they neither start Chrome nor cancel
+  * where Chrome is unavailable.
+  */
 abstract class BaseBrowserTest extends kyo.test.Test[Any]:
 
     // Browser suites drive a single per-suite Chrome (the sbt build forks one JVM + one SharedChrome per suite
@@ -23,35 +27,6 @@ abstract class BaseBrowserTest extends kyo.test.Test[Any]:
     override def config =
         super.config.sequential.failOnNoAssertion(false).leakCheckSockets(false).leakCheckFileDescriptors(false)
 
-    // Pre-flight: check whether the current (OS, arch) tuple has a chrome-headless-shell artifact
-    // (mac-arm64 / mac-x64 / linux64 / win64 / win32). Linux/Aarch64 and Windows/ARM have no published
-    // artifact, so any test that needs Chrome cannot run; cancel the leaf cleanly with the install
-    // instructions instead of letting the BrowserSetupException leak as a red failure. Reuses
-    // `ChromeDownloader.resolvePlatform` as the single source of truth for which tuples are supported.
-    private lazy val chromeUnsupportedReason: Option[String] =
-        import AllowUnsafe.embrace.danger
-        // Unsafe: tests are off the main effect stack; evaluating the platform check synchronously is the
-        // cleanest way to make the verdict available to the `aroundLeaf` hook below.
-        Sync.Unsafe.evalOrThrow {
-            for
-                os      <- System.operatingSystem
-                arch    <- System.architecture
-                outcome <- Abort.run[BrowserSetupException](ChromeDownloader.resolvePlatform(os, arch))
-            yield outcome match
-                case Result.Success(_)  => None
-                case Result.Failure(ex) => Option(ex.getMessage)
-                case Result.Panic(ex)   => Option(ex.getMessage)
-        }
-    end chromeUnsupportedReason
-
-    // Cancel every leaf cleanly on platforms with no chrome-headless-shell artifact. Ported from the ScalaTest
-    // base's `run` override to the kyo-test `aroundLeaf` hook; the cancel is deferred into a `Sync` so the runner
-    // discharges it as a Cancelled result rather than an eager throw.
-    override def aroundLeaf[A](body: A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
-        chromeUnsupportedReason match
-            case Some(reason) => Sync.defer(cancel(reason))
-            case None         => body
-
     /** JSON decode helper used across CDP tests. */
     def decode[A: Schema](json: String)(using Frame, kyo.test.AssertScope): A =
         Json.decode[A](json) match
@@ -72,12 +47,6 @@ abstract class BaseBrowserTest extends kyo.test.Test[Any]:
                             case Present(err) => fail(s"expected CdpReply.result but got error: $err")
                             case Absent       => fail(s"CdpReply has neither result nor error: $reply")
             case other => fail(s"CdpReply decode failed: $other")
-
-    /** Measures the elapsed monotonic duration of a computation. */
-    def timed[A, S](v: A < (Async & S))(using Frame): (Duration, A) < (Async & S) =
-        Clock.nowMonotonic.map { t0 =>
-            v.map { a => Clock.nowMonotonic.map { t1 => (t1 - t0, a) } }
-        }
 
     /** Outer `Result.{Success,Failure,Panic}` fold helper that fails the test on `Failure`/`Panic`.
       *

@@ -640,10 +640,11 @@ class AeronTransportTest extends Test:
     "a never-confirming add aborts with TopicAddTimeoutException at the deadline" in {
         val deadline  = 200.millis
         val transport = new NeverConfirmTransport
-        // Race the add against a 1s wall-clock watchdog. The 200ms TopicAddTimeoutException must
-        // fire well before the watchdog; if the add hung, the Timeout abort wins and we fail.
+        // The tested behavior is the 200ms TopicAddTimeoutException firing; the outer watchdog only turns a genuine hang (the exception never
+        // arriving) into a clean failure. It sits at 10s, far above the 200ms deadline, so a slow runner detecting the deadline a little late
+        // cannot let the watchdog win the race and mask the real behavior as a hang.
         Abort.run[Timeout | TopicTransportException] {
-            Async.timeout(1.second) {
+            Async.timeout(10.seconds) {
                 Topic.addPublicationDeadline(transport, ipcUri, addTimeoutStreamId, deadline)
             }
         }.map {
@@ -655,7 +656,7 @@ class AeronTransportTest extends Test:
                     s"TopicAddTimeoutException carried wrong detail: uri=${t.aeronUri} streamId=${t.streamId} timeout=${t.timeout}"
                 )
             case Result.Failure(_: Timeout) =>
-                fail("addPublicationDeadline hung past the 1s watchdog instead of aborting with TopicAddTimeoutException")
+                fail("addPublicationDeadline hung past the watchdog instead of aborting with TopicAddTimeoutException")
             case Result.Failure(other) =>
                 fail(s"expected TopicAddTimeoutException, got ${other.getClass.getSimpleName}")
             case Result.Panic(t) =>

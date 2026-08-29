@@ -841,7 +841,9 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                     Kyo.foreachDiscard(1 to 5) { i =>
                         a.sendUnmatched("noop", (), JsonRpcId.Num(i.toLong))
                     }.andThen {
-                        Async.timeout(200.millis)(a.awaitDrain).map(_ => succeed)
+                        // awaitDrain completing IS the barrier: if any sendUnmatched had wrongly registered a pending caller, the drain would
+                        // never complete and the leaf hangs until the suite's per-leaf cap. A correct drain finishes in microseconds.
+                        a.awaitDrain.map(_ => succeed)
                     }
                 }
             }

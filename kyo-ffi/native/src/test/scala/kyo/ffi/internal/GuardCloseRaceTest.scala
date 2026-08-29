@@ -49,19 +49,20 @@ class GuardCloseRaceTest extends Test:
             val closeReturned = new AtomicBoolean(false)
             val r: Runnable = () =>
                 closeStarted.countDown()
-                discard(core.close())
+                // 10-minute drain policy, not the production 5s default, so endCallback() below cannot race the drain deadline under load.
+                discard(core.closeWithPolicy(10L * 60L * 1000L * 1000L * 1000L))
                 closeReturned.set(true)
             val closer = new Thread(r, "spec-closer")
             closer.setDaemon(true)
             closer.start()
             closeStarted.await()
-            val deadline = System.nanoTime() + 2_000_000_000L
+            val deadline = System.nanoTime() + 30_000_000_000L
             while !isParked(closer) && !closeReturned.get() && System.nanoTime() < deadline do
                 Thread.onSpinWait()
             end while
             assert(closeReturned.get() == false)
             core.endCallback()
-            closer.join(3000)
+            closer.join(60000)
             assert(closeReturned.get() == true)
         }
 

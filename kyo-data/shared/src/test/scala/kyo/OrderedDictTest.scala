@@ -292,6 +292,37 @@ class OrderedDictTest extends kyo.test.Test[Any]:
             assert(m.values.toArray.toList == largeMapInsertOrder.map(_ * 10).toList)
             assert(m.toChunk.map(_._1) == Chunk.from(largeMapInsertOrder))
         }
+
+        /** The same, under the threshold, where the answer is read out of the backing array rather than out of a `TreeSeqMap`.
+          *
+          * The leaf above runs the large path only. Both paths build their answer the same way, allocating through the `ClassTag`
+          * and filling element by element; they differ only in where the elements come from. Two things force that shape, and both
+          * are the reason this leaf exists rather than being covered by the one above.
+          *
+          * A `Span[K]` handed back to a caller erases to `K[]` THERE, and `Span`'s own `size` and `apply` are inline, so the
+          * caller's first look at it checkcasts whatever array it really holds. An array allocated as an `Object[]` and cast on the
+          * way out satisfies the compiler here, where K is abstract, and fails at the call site with
+          * `[Ljava.lang.Object; cannot be cast to [Ljava.lang.String;`. Only allocating the right array avoids it.
+          *
+          * And the array the `ClassTag` allocates for a primitive K or V is a primitive one, which `System.arraycopy` will not move
+          * boxed elements into. A per-element store unboxes; a bulk copy answers `can not copy object array[] into int[]`.
+          *
+          * So this exercises the size and the element access at a concrete key type, on a `String` key and an `Int` value, which is
+          * one of each: a reference type for the erasure and a primitive for the store.
+          */
+        "are insertion-ordered on the small path" in {
+            val m = OrderedDict("b" -> 1, "a" -> 2)
+            val k = m.keys
+            val v = m.values
+            assert(k.size == 2)
+            assert(v.size == 2)
+            assert(k(0) == "b")
+            assert(k(1) == "a")
+            assert(v(0) == 1)
+            assert(k.toArray.toList == List("b", "a"))
+            assert(v.toArray.toList == List(1, 2))
+            assert(m.toChunk.map(_._1) == Chunk("b", "a"))
+        }
     }
 
     "toMap" - {
@@ -364,6 +395,103 @@ class OrderedDictTest extends kyo.test.Test[Any]:
             val outcome = Result.catching[Exception](reader("=noKey,alsoBad"))
             assert(outcome.isSuccess)
             assert(outcome.getOrThrow.isLeft)
+        }
+    }
+
+    /** Every operation works whatever the key and value types are, and the ordered ones still answer in insertion order.
+      *
+      * '''The backing array is an `Object[]`, and an inline body must never name it as an array of anything narrower.''' Under the
+      * threshold an OrderedDict is a `Span[K | V]`, and `Span[A]` is `Array[? <: A]`, so a body that casts the backing array to
+      * `Array[K | V]` compiles to a checkcast against the ERASED lub of K and V. Inside OrderedDict.scala that lub is `Object`,
+      * because K and V are abstract there; at an INLINED call site they are the caller's concrete types, and the moment those two
+      * share a supertype the emitted checkcast names it. `OrderedDict[String, <a case class>]` is enough, since `String` and every
+      * case class are `Serializable`, and the array is an `Object[]`:
+      * `class [Ljava.lang.Object; cannot be cast to class [Ljava.io.Serializable;`.
+      *
+      * The same defect Dict carried, in Dict's twin, and pinned here for the same reason: an `OrderedDict[String, Int]` was fine,
+      * which is why the existing leaves never saw it, and one whose value is a case class or an enum case was not.
+      *
+      * What this adds over the Dict group is ORDER, which is the whole of what this type promises over Dict. A filter or a mapValues
+      * that answered the right entries in the wrong order would pass every set-shaped assertion, so each ordered operation is
+      * asserted against a `Chunk` in insertion order, and the fixtures are inserted out of alphabetical order so that order cannot
+      * be satisfied by accident.
+      */
+    "key and value types with a shared supertype" - {
+
+        case class Entry(name: String, count: Int) derives CanEqual
+
+        enum Wake derives CanEqual:
+            case At(millis: Long)
+            case OnField(field: String)
+
+        val entries: OrderedDict[String, Entry] =
+            OrderedDict("c" -> Entry("c", 3), "a" -> Entry("a", 1), "b" -> Entry("b", 2))
+
+        val wakes: OrderedDict[String, Wake] =
+            OrderedDict("sleep" -> Wake.At(10L), "input" -> Wake.OnField("x"))
+
+        "the inline operations answer rather than throwing, on a case-class value" in {
+            assert(entries.exists((_, e) => e.count == 2))
+            assert(!entries.forall((_, e) => e.count == 2))
+            assert(entries.count((_, e) => e.count > 1) == 2)
+            assert(entries.find((_, e) => e.count == 1) == Maybe(("a", Entry("a", 1))))
+            assert(entries.filter((_, e) => e.count > 1).toChunk == Chunk("c" -> Entry("c", 3), "b" -> Entry("b", 2)))
+            assert(entries.filterNot((_, e) => e.count > 1).toChunk == Chunk("a" -> Entry("a", 1)))
+            assert(entries.map((k, e) => (k, e.count)).toChunk == Chunk("c" -> 3, "a" -> 1, "b" -> 2))
+            assert(entries.flatMap((k, e) => OrderedDict(k -> e.count)).toChunk == Chunk("c" -> 3, "a" -> 1, "b" -> 2))
+            assert(entries.mapValues(_.count).toChunk == Chunk("c" -> 3, "a" -> 1, "b" -> 2))
+            var keys = Chunk.empty[String]
+            entries.foreachKey(k => keys = keys.append(k))
+            assert(keys == Chunk("c", "a", "b"))
+            var counts = Chunk.empty[Int]
+            entries.foreachValue(e => counts = counts.append(e.count))
+            assert(counts == Chunk(3, 1, 2))
+        }
+
+        "the inline operations answer rather than throwing, on an enum value" in {
+            assert(wakes.exists((_, w) => w == Wake.OnField("x")))
+            assert(!wakes.forall((_, w) => w == Wake.OnField("x")))
+            assert(wakes.count((_, w) => w == Wake.At(10L)) == 1)
+            assert(wakes.find((k, _) => k == "sleep") == Maybe(("sleep", Wake.At(10L))))
+            assert(wakes.filter((_, w) => w == Wake.At(10L)).toChunk == Chunk("sleep" -> Wake.At(10L)))
+            assert(wakes.filterNot((_, w) => w == Wake.At(10L)).toChunk == Chunk("input" -> Wake.OnField("x")))
+            assert(wakes.mapValues(_.toString).toChunk.map(_._1) == Chunk("sleep", "input"))
+            var seen = Chunk.empty[String]
+            wakes.foreachKey(k => seen = seen.append(k))
+            assert(seen == Chunk("sleep", "input"))
+            var values = 0
+            wakes.foreachValue(_ => values += 1)
+            assert(values == 2)
+        }
+
+        /** The control: these were always correct and must stay so. */
+        "the non-inline operations are unaffected" in {
+            assert(entries.get("a") == Maybe(Entry("a", 1)))
+            assert(entries.contains("b"))
+            assert(entries("c") == Entry("c", 3))
+            assert(entries.size == 3)
+            assert(entries.update("d", Entry("d", 4)).toChunk.map(_._1) == Chunk("c", "a", "b", "d"))
+            assert(entries.remove("c").toChunk.map(_._1) == Chunk("a", "b"))
+            assert(entries.foldLeft(0)((acc, _, e) => acc + e.count) == 6)
+            assert(entries.toChunk.map(_._1) == Chunk("c", "a", "b"))
+            assert(entries.toMap.keySet == Set("a", "b", "c"))
+            assert(entries.concat(OrderedDict("d" -> Entry("d", 4))).toChunk.map(_._1) == Chunk("c", "a", "b", "d"))
+            assert(entries.collect { case (k, e) if e.count > 1 => (k, e.count) }.toChunk == Chunk("c" -> 3, "b" -> 2))
+            var order = Chunk.empty[String]
+            entries.foreach((k, _) => order = order.append(k))
+            assert(order == Chunk("c", "a", "b"))
+        }
+
+        /** Above the threshold an OrderedDict is a `TreeSeqMap` and the array branch is never taken, so these always worked there. */
+        "an OrderedDict above the threshold answers the same" in {
+            val inserted = Seq(9, 3, 7, 1, 5, 10, 2, 8, 4, 6)
+            val large    = inserted.foldLeft(OrderedDict.empty[String, Entry])((d, i) => d.update(s"k$i", Entry(s"k$i", i)))
+            assert(large.size == 10)
+            assert(large.toChunk.map(_._1) == Chunk.from(inserted.map(i => s"k$i")))
+            assert(large.exists((_, e) => e.count == 10))
+            assert(large.count((_, e) => e.count > 5) == 5)
+            assert(large.filter((_, e) => e.count <= 3).toChunk.map(_._2.count) == Chunk(3, 1, 2))
+            assert(large.mapValues(_.count).toChunk.map(_._2) == Chunk.from(inserted))
         }
     }
 

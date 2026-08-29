@@ -1017,4 +1017,95 @@ class DictTest extends kyo.test.Test[Any]:
         }
     }
 
+    /** Every operation works whatever the key and value types are, which the array-backed representation used to decide otherwise.
+      *
+      * '''The backing array is an `Object[]`, and an inline body must never name it as an array of anything narrower.''' Under the
+      * threshold a Dict is a `Span[K | V]`, and `Span[A]` is `Array[? <: A]`, so a body that casts the backing array to
+      * `Array[K | V]` compiles to a checkcast against the ERASED lub of K and V. Inside this file that lub is `Object`, because K and
+      * V are abstract there; at an INLINED call site they are the caller's concrete types, and the moment those two share a
+      * supertype the emitted checkcast names it. `Dict[String, <a case class>]` is enough, since `String` and every case class are
+      * `Serializable`, and the array is an `Object[]`: `class [Ljava.lang.Object; cannot be cast to class [Ljava.io.Serializable;`.
+      *
+      * That made an ordinary Dict throw on ordinary use. `Dict[String, Int]` was fine, which is why the existing leaves never saw it,
+      * and a Dict whose value is a case class, a tuple or an enum case was not. The keys and values below are picked for that: a
+      * `String` key with a case-class value, and one with an enum-of-case-classes value, which are the two shapes a caller reaches
+      * for first.
+      *
+      * The non-inline operations are the control. They were always correct, because their casts are compiled once here against the
+      * abstract parameters, and they pass on both sides of the fix.
+      */
+    "key and value types with a shared supertype" - {
+
+        case class Entry(name: String, count: Int) derives CanEqual
+
+        enum Wake derives CanEqual:
+            case At(millis: Long)
+            case OnField(field: String)
+
+        val entries: Dict[String, Entry] =
+            Dict("a" -> Entry("a", 1), "b" -> Entry("b", 2), "c" -> Entry("c", 3))
+
+        val wakes: Dict[String, Wake] =
+            Dict("sleep" -> Wake.At(10L), "input" -> Wake.OnField("x"))
+
+        "the inline operations answer rather than throwing, on a case-class value" in {
+            assert(entries.exists((_, e) => e.count == 2))
+            assert(!entries.forall((_, e) => e.count == 2))
+            assert(entries.count((_, e) => e.count > 1) == 2)
+            assert(entries.find((_, e) => e.count == 3) == Maybe(("c", Entry("c", 3))))
+            assert(entries.filter((k, _) => k == "a").toChunk == Chunk("a" -> Entry("a", 1)))
+            assert(entries.filterNot((k, _) => k == "a").size == 2)
+            assert(entries.map((k, e) => (k, e.count)).toChunk.toSet == Set("a" -> 1, "b" -> 2, "c" -> 3))
+            assert(entries.flatMap((k, e) => Dict(k -> e.count)).toChunk.toSet == Set("a" -> 1, "b" -> 2, "c" -> 3))
+            assert(entries.mapValues(_.count).toChunk.toSet == Set("a" -> 1, "b" -> 2, "c" -> 3))
+            var keys = List.empty[String]
+            entries.foreachKey(k => keys = k :: keys)
+            assert(keys.toSet == Set("a", "b", "c"))
+            var counts = 0
+            entries.foreachValue(e => counts += e.count)
+            assert(counts == 6)
+        }
+
+        "the inline operations answer rather than throwing, on an enum value" in {
+            assert(wakes.exists((_, w) => w == Wake.OnField("x")))
+            assert(!wakes.forall((_, w) => w == Wake.OnField("x")))
+            assert(wakes.count((_, w) => w == Wake.At(10L)) == 1)
+            assert(wakes.find((k, _) => k == "sleep") == Maybe(("sleep", Wake.At(10L))))
+            assert(wakes.filter((_, w) => w == Wake.At(10L)).toChunk == Chunk("sleep" -> Wake.At(10L)))
+            assert(wakes.filterNot((_, w) => w == Wake.At(10L)).toChunk == Chunk("input" -> Wake.OnField("x")))
+            assert(wakes.mapValues(_.toString).size == 2)
+            var seen = 0
+            wakes.foreachKey(_ => seen += 1)
+            wakes.foreachValue(_ => seen += 1)
+            assert(seen == 4)
+        }
+
+        /** The control: these were always correct and must stay so. */
+        "the non-inline operations are unaffected" in {
+            assert(entries.get("a") == Maybe(Entry("a", 1)))
+            assert(entries.contains("b"))
+            assert(entries("c") == Entry("c", 3))
+            assert(entries.size == 3)
+            assert(entries.update("d", Entry("d", 4)).size == 4)
+            assert(entries.remove("a").size == 2)
+            assert(entries.foldLeft(0)((acc, _, e) => acc + e.count) == 6)
+            assert(entries.toChunk.size == 3)
+            assert(entries.toMap.keySet == Set("a", "b", "c"))
+            assert(entries.concat(Dict("d" -> Entry("d", 4))).size == 4)
+            assert(entries.collect { case (k, e) if e.count > 2 => (k, e.count) }.toChunk == Chunk("c" -> 3))
+            var total = 0
+            entries.foreach((_, e) => total += e.count)
+            assert(total == 6)
+        }
+
+        /** Above the threshold a Dict is a `HashMap` and the array branch is never taken, so the same calls always worked there. */
+        "a Dict above the threshold answers the same" in {
+            val large = (1 to 20).foldLeft(Dict.empty[String, Entry])((d, i) => d.update(s"k$i", Entry(s"k$i", i)))
+            assert(large.exists((_, e) => e.count == 20))
+            assert(large.count((_, e) => e.count > 10) == 10)
+            assert(large.filter((_, e) => e.count <= 2).size == 2)
+            assert(large.mapValues(_.count).size == 20)
+        }
+    }
+
 end DictTest

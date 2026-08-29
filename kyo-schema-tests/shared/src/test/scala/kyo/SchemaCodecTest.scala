@@ -1531,9 +1531,10 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
             assert(decoded.name == user.name)
             assert(decoded.age == user.age)
             assert(decoded.email == user.email)
-            // ssn was dropped from serialization, so it gets the JVM default for its declared type
-            // (`null` for `String`, `0` for `Int`, `false` for `Boolean`, etc.).
-            assert(decoded.ssn == null)
+            // ssn was dropped from serialization, so it decodes to its schema's absent default:
+            // the typed empty value (`""` for `String`, `0` for `Int`, `false` for `Boolean`),
+            // never `null`.
+            assert(decoded.ssn == "")
         }
 
         "schema.encode[Json] produces bytes" in {
@@ -2232,7 +2233,7 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
             "Dict[String, Int] schema round-trip" in {
                 given schema: Schema[Dict[String, Int]] = Schema.stringDictSchema[Int]
                 val v                                   = Dict("a" -> 1, "b" -> 2, "c" -> 3)
-                val decoded                             = roundTrip(v)(using schema)
+                val decoded                             = jsonRoundTrip(v)(using schema)
                 assert(decoded.get("a") == Maybe(1))
                 assert(decoded.get("b") == Maybe(2))
                 assert(decoded.get("c") == Maybe(3))
@@ -2241,7 +2242,7 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
             "Dict[String, Int] empty round-trip" in {
                 given schema: Schema[Dict[String, Int]] = Schema.stringDictSchema[Int]
                 val v                                   = Dict.empty[String, Int]
-                val decoded                             = roundTrip(v)(using schema)
+                val decoded                             = jsonRoundTrip(v)(using schema)
                 assert(decoded.isEmpty)
             }
 
@@ -2265,19 +2266,19 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
 
             // OrderedDict codec
 
-            "stringOrderedDictSchema encode/decode preserves insertion order over the format-agnostic Writer/Reader contract" in {
+            "stringOrderedDictSchema encode/decode preserves insertion order over a real codec" in {
                 given schema: Schema[OrderedDict[String, Int]] = Schema.stringOrderedDictSchema[Int]
                 val v       = OrderedDict("zeta" -> 10, "alpha" -> 20, "mike" -> 30, "bravo" -> 40, "yankee" -> 50, "delta" -> 60)
-                val decoded = roundTrip(v)(using schema)
+                val decoded = jsonRoundTrip(v)(using schema)
                 assert(decoded.size == 6)
                 assert(decoded.get("zeta") == Maybe(10))
                 assert(decoded.toChunk.map(_._1) == Chunk("zeta", "alpha", "mike", "bravo", "yankee", "delta"))
             }
 
-            "orderedDictSchema round-trips non-String keys as OBJECT-form entries preserving insertion order, not sorted" in {
+            "orderedDictSchema round-trips non-String keys preserving insertion order, not sorted" in {
                 given schema: Schema[OrderedDict[Int, String]] = Schema.orderedDictSchema[Int, String]
                 val v       = OrderedDict(30 -> "gold", 10 -> "bronze", 20 -> "silver", 50 -> "copper", 40 -> "tin", 60 -> "iron")
-                val decoded = roundTrip(v)(using schema)
+                val decoded = jsonRoundTrip(v)(using schema)
                 assert(decoded.toChunk.map(_._1) == Chunk(30, 10, 20, 50, 40, 60))
             }
 

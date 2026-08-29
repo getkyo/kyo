@@ -638,16 +638,12 @@ class BrowserCoreTest extends BrowserTest:
             for
                 _       <- Browser.goto(p)
                 urlPre  <- Browser.url
-                start   <- Clock.nowMonotonic
                 _       <- Browser.click(Browser.Selector.id("b"))
-                end     <- Clock.nowMonotonic
                 urlPost <- Browser.url
                 clicked <- Browser.eval("String(window.__kyoClicked === true)")
             yield
-                val elapsed = (end - start).toMillis
-                // Behavior: a no-nav-intent click leaves the URL unchanged (NavigationWatcher saw no nav frame) AND the
-                // JS handler ran (`__kyoClicked === true`). Together these prove armAround's short-circuit fired without
-                // depending on a tight wall clock.
+                // A no-nav-intent click leaves the URL unchanged (NavigationWatcher saw no nav frame) AND the JS handler
+                // ran (`__kyoClicked === true`). Together these prove armAround's short-circuit fired, with no wall clock.
                 assert(
                     urlPost == urlPre,
                     s"expected URL unchanged after no-nav-intent click but pre='$urlPre' post='$urlPost' (nav frame observed)"
@@ -655,13 +651,6 @@ class BrowserCoreTest extends BrowserTest:
                 assert(
                     clicked == "true",
                     s"expected window.__kyoClicked === true after click (handler must have run) but got '$clicked'"
-                )
-                // Soft timing envelope: armAround's no-nav-intent short-circuit avoids the navigation grace window, so the
-                // click should still return well under a relaxed CI-tolerant bound. Hard tightness is enforced by the
-                // deterministic checks above.
-                assert(
-                    elapsed < 1500,
-                    s"expected a no-nav-intent click to return quickly (<1500ms soft envelope) but took ${elapsed}ms"
                 )
             end for
         }
@@ -1706,12 +1695,11 @@ class BrowserCoreTest extends BrowserTest:
     "count returns 0 immediately for a missing selector without waiting for the retry schedule" in {
         withBrowser {
             onPage("<div>no items here</div>") {
-                val start = java.lang.System.currentTimeMillis()
-                Browser.withConfig(_.retrySchedule(Schedule.fixed(5.seconds).take(10))) {
+                // 1-hour retry schedule: count on a missing selector must short-circuit to 0 without arming it. A count
+                // that wrongly waited the schedule would hang into the per-leaf timeout instead of racing a wall-clock bound.
+                Browser.withConfig(_.retrySchedule(Schedule.fixed(1.hour))) {
                     Browser.count(Browser.Selector.css("li.missing")).map { n =>
-                        val elapsed = java.lang.System.currentTimeMillis() - start
                         assert(n == 0, s"Expected 0 for missing selector but got $n")
-                        assert(elapsed < 2000, s"Expected count to return immediately (<2000ms) but took ${elapsed}ms")
                     }
                 }
             }

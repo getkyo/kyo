@@ -669,6 +669,9 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
             executor.execute { () =>
                 started.countDown()
                 val worker = createWorker(stop = () => stop.get())
+                // The worker's own executor is the no-op default, so wakeup only takes the
+                // Idle -> Dispatched edge and run() below claims it.
+                worker.wakeup()
                 worker.run()
                 done.countDown()
             }
@@ -1055,7 +1058,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
 
         // Now enqueue a trivial second task. A healthy Worker re-arms via wakeup() ->
         // exec.execute(this) and runs it. A wedged Worker has state stuck at Running,
-        // so the CAS Idle->Running in wakeup() fails and the task never runs. `eventually` is the
+        // so the CAS Idle->Dispatched in wakeup() fails and the task never runs. `eventually` is the
         // barrier: a wedged worker never runs task2 and fails at its own timeout.
         val task2 = TestTask()
         worker.enqueue(task2)
@@ -1065,6 +1068,49 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
                 task2.executions == 1,
                 s"Worker should recover and execute the next task after fatal, but task2.executions=${task2.executions}"
             )
+        }
+    }
+
+    "dispatch claim" - {
+        // wakeup() takes Idle -> Dispatched and asks the executor for a thread; run() claims the worker on the
+        // Dispatched -> Running edge. An executor that counts dispatches without running them models a handoff
+        // the pool accepted and dropped, so run() below stands in for the arrival that eventually mounts.
+        "a second arrival for the same dispatch loses the claim and bows out" in {
+            val dispatches = new AtomicInteger(0)
+            val lostHandoff: Executor = command =>
+                if (command.isInstanceOf[Worker]) { val _ = dispatches.incrementAndGet() }
+            val worker = createWorker(executor = lostHandoff)
+            val task   = TestTask()
+            worker.enqueue(task)
+            assert(dispatches.get() == 1, s"expected one dispatch, got ${dispatches.get()}")
+            assert(worker.load() == 1, "task queued on an unmounted Dispatched worker")
+            // First arrival: claims Dispatched -> Running, runs the queued task, exits through the idle path.
+            worker.run()
+            assert(task.executions == 1)
+            assert(worker.load() == 0)
+            // Second arrival for the same dispatch: the Dispatched edge is gone, so it must return without
+            // mounting or re-running anything.
+            worker.run()
+            assert(task.executions == 1, "a duplicate arrival must not re-run anything")
+        }
+
+        "a worker emptied by a thief before its arrival parks Idle and accepts the next wakeup" in {
+            val dispatches = new AtomicInteger(0)
+            val lostHandoff: Executor = command =>
+                if (command.isInstanceOf[Worker]) { val _ = dispatches.incrementAndGet() }
+            val worker = createWorker(executor = lostHandoff)
+            val thief  = createWorker(executor = lostHandoff)
+            val task   = TestTask()
+            worker.enqueue(task)
+            assert(dispatches.get() == 1)
+            val stolen = worker.stealingBy(thief)
+            assert(stolen eq task, "the thief empties the queue before the dispatch arrives")
+            // The arrival still comes: it claims the worker, finds nothing to run, and parks it back at Idle.
+            worker.run()
+            assert(task.executions == 0, "the stolen task belongs to the thief now")
+            // Back at Idle, so the next enqueue dispatches normally.
+            worker.enqueue(TestTask())
+            assert(dispatches.get() == 2, "a worker parked at Idle takes a fresh dispatch")
         }
     }
 }

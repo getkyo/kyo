@@ -357,6 +357,27 @@ class QueueTest extends kyo.test.Test[Any]:
             assert(testUnsafe.offer(3).isFailure, "offers fail Closed after the hard close")
             assert(testUnsafe.poll().isFailure, "polls fail Closed after the hard close")
         }
+
+        "diagnosticState renders the open state, ring size, and emptiness" in withQueue { testUnsafe =>
+            discard(testUnsafe.offer(1))
+            discard(testUnsafe.offer(2))
+            val s = testUnsafe.diagnosticState()
+            assert(s.contains("state=Open"), s)
+            assert(s.contains("ringSize=2"), s)
+            assert(s.contains("ringEmpty=false"), s)
+            assert(s.contains("activeOffers=0"), s)
+        }
+
+        "diagnosticState tracks the HalfOpen then FullyClosed transition, rendering even when closed" in withQueue { testUnsafe =>
+            discard(testUnsafe.offer(1))
+            val await = testUnsafe.closeAwaitEmpty() // HalfOpen: the ring is non-empty, so the await parks
+            assert(testUnsafe.diagnosticState().contains("state=HalfOpen"), testUnsafe.diagnosticState())
+            discard(testUnsafe.poll()) // draining the last element escalates HalfOpen -> FullyClosed via handleHalfOpen
+            discard(await)
+            val s = testUnsafe.diagnosticState()
+            assert(s.contains("state=FullyClosed"), s) // still renders after close, unlike size()
+            assert(s.contains("ringEmpty=true"), s)
+        }
     }
 
     "concurrency" - {

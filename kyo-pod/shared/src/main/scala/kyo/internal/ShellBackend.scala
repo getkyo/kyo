@@ -1292,9 +1292,38 @@ final private[kyo] class ShellBackend(
                         platform.map(p => Chunk("--platform", p.reference)).getOrElse(Chunk.empty) ++
                         Chunk(ref)
                 case _ => baseArgs
-            runUnit(ctx, args.toSeq*)
+            normalizePullError(image, auth)(runUnit(ctx, args.toSeq*))
         }
     end imagePull
+
+    /** Reclassify a pull failure that credentials make ambiguous.
+      *
+      * A registry that hides private images answers an unauthorized pull with a not-found shape rather than a denial, so the client cannot
+      * tell a rejected credential from an absent image. The CLI relays that text verbatim, and [[mapError]] classifies on text alone, so
+      * the pull surfaces as [[ContainerImageMissingException]].
+      *
+      * That classification is actively harmful once credentials are in play: `Container.init` retries a missing image on the assumption
+      * that a pull may still land it, so a rejected credential turns into a retry loop that cannot succeed, and the message points the
+      * caller at the image name when the fix is the credential. When auth was supplied, report the ambiguity as a registry denial.
+      *
+      * Only the auth-supplied path is touched: with no credentials the caller has nothing to correct, and missing is both accurate and
+      * actionable. Mirrors the auth-aware normalization the HTTP backend applies to the same pull.
+      */
+    private def normalizePullError(image: ContainerImage, auth: Maybe[ContainerImage.RegistryAuth])(
+        pull: Unit < (Async & Abort[ContainerException])
+    )(using Frame): Unit < (Async & Abort[ContainerException]) =
+        if auth.isEmpty then pull
+        else
+            Abort.run[ContainerException](pull).map {
+                case Result.Failure(_: ContainerImageMissingException) =>
+                    val registry = image.registry.map(_.value).getOrElse("docker.io")
+                    Abort.fail(ContainerAuthException(
+                        registry,
+                        s"registry rejected the supplied credentials for ${image.reference}, or the image is not visible to them"
+                    ))
+                case other => Abort.get(other)
+            }
+    end normalizePullError
 
     /** Decode the Base64 `username:password` credential the API stored under [[ContainerImage.RegistryAuth.auths]] for the image's
       * registry, and apply it to the surrounding pull/push action.

@@ -140,6 +140,10 @@ private[kyo] object SchemaSerializer:
         end if
 
         val structWriter = StructureValueWriter()
+        // The raw materialization below reaches nested schemas through their serializeWrite, which
+        // consults the writer's transform-override stack; carry the enclosing writer's stack so
+        // recursive occurrences of a configured type keep their configuration.
+        structWriter.schemaTransformOverrides = writer.schemaTransformOverrides
         schema.rawSerializeWrite(value, structWriter)
         val original = structWriter.getResult
 
@@ -365,8 +369,9 @@ private[kyo] object SchemaSerializer:
                     "representation-chain decode requires a self-describing reader (such as: Json, Yaml, Ion, MsgPack)"
                 )
         @tailrec def attempt(idx: Int): A =
-            val rep    = chain(idx)
-            val fresh  = new StructureValueReader(captured)
+            val rep   = chain(idx)
+            val fresh = new StructureValueReader(captured)
+            fresh.schemaTransformOverrides = reader.schemaTransformOverrides
             val result = Result.catching[SchemaException](readForRepresentation(schema, fresh, rep))
             result match
                 case Result.Success(value)                       => value
@@ -984,18 +989,17 @@ private[kyo] object SchemaSerializer:
         show.startsWith("scala.collection.Set[")
     end isSetTag
 
-    /** True iff `field`'s declared type is `OrderedDict[K, V]` or `Dict[K, V]`. Both are opaque
-      * types over an erased union (`Span[K | V] | TreeSeqMap[K, V]` / `Span[K | V] | HashMap[K, V]`),
-      * so their `Tag.show` is the SAME opaque-bound string for every key/value instantiation (unlike
-      * `Map`, whose show carries the element types): neither a `<:<` check nor a `scala.collection.*`
-      * show-prefix check can discriminate them. A show-prefix check against the opaque type's own
-      * qualified name is the only reliable discriminator, the same idiom `isMapTag` uses for its own
-      * variance gap.
+    /** True iff `field`'s declared type is `OrderedDict[K, V]` or `Dict[K, V]`. Both are invariant in
+      * their key and value, so `Tag[Dict[String, Int]] <:< Tag[Dict[Any, Any]]` does not hold, and
+      * neither does a `scala.collection.*` show prefix, since the underlying union is erased behind
+      * the opaque type. A show-prefix check against the opaque type's own qualified name is the
+      * reliable discriminator, the same idiom `isMapTag` uses for its own variance gap. An opaque
+      * type's show renders its arguments in brackets after the name, as an applied class type does.
       */
     private def isOrderedDictOrDictTag(field: Field[?, ?]): Boolean =
         val show = field.tag.show
-        show.startsWith("(kyo.OrderedDict$package$.OrderedDict ") ||
-        show.startsWith("(kyo.Dict$package$.Dict ")
+        show.startsWith("(kyo.OrderedDict$package$.OrderedDict[") ||
+        show.startsWith("(kyo.Dict$package$.Dict[")
     end isOrderedDictOrDictTag
 
     /** True iff `field`'s declared type is a sequence-like collection, a set, or a map (including
@@ -1187,6 +1191,7 @@ private[kyo] object SchemaSerializer:
                         throw NoVariantMatchException(Seq.empty, wireNames)
                     else
                         val fresh = new StructureValueReader(tree)
+                        fresh.schemaTransformOverrides = reader.schemaTransformOverrides
                         // The per-variant decoders are heterogeneous (typed `Reader => Any` because each
                         // returns a distinct variant subtype); the value a decoder returns is always one of
                         // this sum's variants, which widens to A, so the cast is sound.
@@ -1229,7 +1234,8 @@ private[kyo] object SchemaSerializer:
         @tailrec def collect(idx: Int, acc: List[(Int, A)]): List[(Int, A)] =
             if idx >= decoders.size then acc
             else
-                val fresh  = new StructureValueReader(tree)
+                val fresh = new StructureValueReader(tree)
+                fresh.schemaTransformOverrides = reader.schemaTransformOverrides
                 val result = Result.catching[DecodeException](decoders(idx)(fresh).asInstanceOf[A])
                 result match
                     case Result.Success(value) => collect(idx + 1, (idx, value) :: acc)
@@ -1314,6 +1320,12 @@ private[kyo] object SchemaSerializer:
 
         // A wrapper consumes nothing of its own; whether the input is exhausted is the reader it wraps.
         private[kyo] def requireEndOfInput(): Unit = inner.requireEndOfInput()
+
+        // Share the wrapped reader's transform-override stack: the macro read bodies receive this
+        // wrapper, so a lookup or registration here must reach the same stack the enclosing
+        // transformed read registered on.
+        override private[kyo] def schemaTransformOverrides: List[Schema[?]]               = inner.schemaTransformOverrides
+        override private[kyo] def schemaTransformOverrides_=(next: List[Schema[?]]): Unit = inner.schemaTransformOverrides = next
 
         protected var delegateReader: Maybe[Reader]   = Maybe.empty
         protected var delegateDepth: Int              = 0
@@ -1954,6 +1966,10 @@ private[kyo] object SchemaSerializer:
 
         // A wrapper consumes nothing of its own; whether the input is exhausted is the reader it wraps.
         private[kyo] def requireEndOfInput(): Unit = inner.requireEndOfInput()
+
+        // Share the wrapped reader's transform-override stack (see DelegatingWrapperReader).
+        override private[kyo] def schemaTransformOverrides: List[Schema[?]]               = inner.schemaTransformOverrides
+        override private[kyo] def schemaTransformOverrides_=(next: List[Schema[?]]): Unit = inner.schemaTransformOverrides = next
 
         // Pre-compute the dropped-field bitmask once per reader instance.
         // Bit i is set iff field index i is dropped. Indices >= 64 are clamped to 63 (see the 64-field macro limit).

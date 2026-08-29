@@ -89,13 +89,31 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
         assert(warmedUp.await(5, TimeUnit.SECONDS))
 
         val ids = Array(threadId.get())
-        eventually(timeout(scaled(org.scalatest.time.Span(2, org.scalatest.time.Seconds)))) {
-            detector.sample(ids, 1)
-            assert(!detector.isBlocked(0), "active thread should not be detected as blocked")
-        }
+        assertNotBlockedActive(detector, ids)
 
         stop.set(true)
         thread.join(5000)
+    }
+
+    /** Asserts the detector never flags position 0 as blocked while its thread is actively running, bracketing the detector's own window with an
+      * independent read of the thread's user CPU time. The detector calls a thread "blocked" when its user time did not advance between two samples,
+      * which is exactly what a spinning thread looks like when CI oversubscription starves it of a scheduling slice. Reading the user time right
+      * after sample n-1 (cPrev) and right before sample n (cCur) and asserting only when cCur > cPrev means the assertion fires solely on a window
+      * that (by monotonicity) also advanced for the detector, so a starved spinner just retries. Deterministic under arbitrary starvation, no product change.
+      */
+    private def assertNotBlockedActive(detector: BlockingMonitor, ids: Array[Long]): Unit = {
+        val cpuBuf          = new Array[Long](1)
+        def userCpu(): Long = { ThreadUserTime.userTimes(ids, 1, cpuBuf); cpuBuf(0) }
+        detector.sample(ids, 1)
+        var cPrev = userCpu()
+        val _ = eventually(timeout(scaled(org.scalatest.time.Span(30, org.scalatest.time.Seconds)))) {
+            val cCur = userCpu()
+            detector.sample(ids, 1)
+            val advanced = cCur > cPrev
+            cPrev = cCur
+            assert(advanced, "the active thread accumulated no CPU time in this detector window (host-starved); retrying")
+            assert(!detector.isBlocked(0), "active thread should not be detected as blocked")
+        }
     }
 
     private object NoOpCloseable extends AutoCloseable { def close(): Unit = () }
@@ -280,10 +298,9 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
                 unblock.countDown()
                 assert(computing.await(5, TimeUnit.SECONDS))
 
-                eventually(timeout(scaled(org.scalatest.time.Span(2, org.scalatest.time.Seconds)))) {
-                    detector.sample(ids, 1)
-                    assert(!detector.isBlocked(0), "blocking should clear after resume")
-                }
+                // The resumed thread spins, so not-blocked must be asserted on a window that actually advanced its CPU (see assertNotBlockedActive),
+                // or CI starvation of the spinner would read as a failure to clear the blocked flag.
+                assertNotBlockedActive(detector, ids)
 
                 stop.set(true)
                 thread.join(5000)
@@ -320,10 +337,8 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
                 unblock.countDown()
                 assert(warmedUp.await(5, TimeUnit.SECONDS))
 
-                eventually(timeout(scaled(org.scalatest.time.Span(2, org.scalatest.time.Seconds)))) {
-                    detector.sample(ids, 1)
-                    assert(!detector.isBlocked(0))
-                }
+                // Same bracketing as above: the resumed thread spins, so only a CPU-advancing window may assert not-blocked.
+                assertNotBlockedActive(detector, ids)
 
                 stop.set(true)
                 thread.join(5000)

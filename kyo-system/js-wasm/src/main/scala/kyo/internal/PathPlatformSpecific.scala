@@ -430,9 +430,18 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
                     val nowSec = js.Date.now() / 1000.0
                     NodeFs.utimesSync(toStr, nowSec, nowSec)
             end if
-            if options.copyAttributes && !(linkStat.isSymbolicLink() && !options.followLinks) then
-                val epochSec = sourceStat.mtimeMs / 1000.0
-                NodeFs.utimesSync(toStr, epochSec, epochSec)
+            if !(linkStat.isSymbolicLink() && !options.followLinks) then
+                if options.copyAttributes then
+                    val epochSec = sourceStat.mtimeMs / 1000.0
+                    NodeFs.utimesSync(toStr, epochSec, epochSec)
+                else
+                    // Node's copyFileSync inherits Win32 CopyFileEx timestamp preservation on Windows, so a
+                    // copyAttributes=false copy keeps the source mtime there; POSIX copyFileSync already gives the
+                    // destination a fresh mtime. Reset to the current time so the destination matches the
+                    // JVM/Native contract (Files.copy without COPY_ATTRIBUTES) on every platform.
+                    val nowSec = js.Date.now() / 1000.0
+                    NodeFs.utimesSync(toStr, nowSec, nowSec)
+                end if
             end if
         }
 

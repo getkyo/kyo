@@ -198,34 +198,30 @@ class TopicUniformInvariantsTest extends Test:
     }
 
     // @Ffi.blocking routes the connect off the JS event loop (a libuv worker thread) and parks a JVM/Native
-    // carrier under the scheduler's blocking monitor, so the ticker keeps advancing during the ~10 s
-    // connect; a plain binding would freeze the Node loop and strand a Native carrier at ticks == 0.
-    "a concurrent ticker keeps ticking (>= 50) during a slow absent-driver connect (JVM/JS/Native)" in {
+    // carrier under the scheduler's blocking monitor, so a concurrent ticker keeps advancing during the ~10 s
+    // connect; a plain binding would freeze the Node loop and strand a Native carrier. The ticker releases a
+    // latch once per tick: reaching the target while the connect blocks proves liveness, and a frozen carrier
+    // never lands the final release, so the leaf hangs into the per-leaf timeout rather than racing a count.
+    "a concurrent ticker keeps advancing during a slow absent-driver connect (JVM/JS/Native)" in {
+        val targetTicks = 50
         Path.tempDir("kyo-aeron-absent-ticker").map { absentDir =>
-            AtomicInt.init.map { ticker =>
+            Latch.init(targetTicks).map { ticked =>
                 for
                     tickerFiber <- Fiber.initUnscoped {
-                        Loop.forever {
-                            Async.sleep(5.millis).andThen(ticker.incrementAndGet)
-                        }
+                        Loop.repeat(targetTicks)(Async.sleep(5.millis).andThen(ticked.release))
                     }
                     connectFiber <- Fiber.initUnscoped {
                         Abort.run[TopicException] {
                             Topic.run(absentDir)(Topic.stream[String]("aeron:ipc").take(1).run)
                         }
                     }
+                    _             <- ticked.await
                     connectResult <- connectFiber.get
                     _             <- tickerFiber.interrupt
-                    ticks         <- ticker.get
-                yield
-                    assert(
-                        connectResult.isFailure && connectResult.failure.forall(_.isInstanceOf[TopicTransportFailedException]),
-                        s"absent-driver connect should fail with TopicTransportFailedException but got $connectResult"
-                    )
-                    assert(
-                        ticks >= 50,
-                        s"ticker advanced only $ticks times during the ~10 s connect; the event loop / carrier may be frozen. @Ffi.blocking is not engaging."
-                    )
+                yield assert(
+                    connectResult.isFailure && connectResult.failure.forall(_.isInstanceOf[TopicTransportFailedException]),
+                    s"absent-driver connect should fail with TopicTransportFailedException but got $connectResult"
+                )
             }
         }
     }
@@ -573,15 +569,14 @@ class TopicUniformInvariantsTest extends Test:
     // The AeronClient.connect counterpart to the Topic.run(aeronDir) ticker leaf above: non-freeze must
     // hold regardless of how the driver connection is initiated. On a failed connect the
     // Scope.acquireRelease acquire aborts before producing a value, so nothing is acquired and no release
-    // runs.
-    "via AeronClient.connect: a concurrent ticker keeps ticking (>= 50) during a slow absent-driver connect (JVM/JS/Native)" in {
+    // runs. Same latch barrier: a frozen carrier never lands the final release and the leaf times out.
+    "via AeronClient.connect: a concurrent ticker keeps advancing during a slow absent-driver connect (JVM/JS/Native)" in {
+        val targetTicks = 50
         Path.tempDir("kyo-aeron-inv015-client").map { absentDir =>
-            AtomicInt.init.map { ticker =>
+            Latch.init(targetTicks).map { ticked =>
                 for
                     tickerFiber <- Fiber.initUnscoped {
-                        Loop.forever {
-                            Async.sleep(5.millis).andThen(ticker.incrementAndGet)
-                        }
+                        Loop.repeat(targetTicks)(Async.sleep(5.millis).andThen(ticked.release))
                     }
                     connectFiber <- Fiber.initUnscoped {
                         Scope.run {
@@ -592,18 +587,13 @@ class TopicUniformInvariantsTest extends Test:
                             }
                         }
                     }
+                    _             <- ticked.await
                     connectResult <- connectFiber.get
                     _             <- tickerFiber.interrupt
-                    ticks         <- ticker.get
-                yield
-                    assert(
-                        connectResult.isFailure && connectResult.failure.forall(_.isInstanceOf[TopicTransportFailedException]),
-                        s"absent-driver AeronClient.connect should fail with TopicTransportFailedException but got $connectResult"
-                    )
-                    assert(
-                        ticks >= 50,
-                        s"ticker advanced only $ticks times during the ~10 s connect; the event loop / carrier may be frozen. @Ffi.blocking is not engaging."
-                    )
+                yield assert(
+                    connectResult.isFailure && connectResult.failure.forall(_.isInstanceOf[TopicTransportFailedException]),
+                    s"absent-driver AeronClient.connect should fail with TopicTransportFailedException but got $connectResult"
+                )
             }
         }
     }

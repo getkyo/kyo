@@ -238,24 +238,27 @@ class SlackSocketEngineTest extends kyo.test.Test[Any]:
     }
 
     "a payload ack returned within ackDeadline is emitted as that payload, not the bare ack" in {
-        // The handler returns a CommandResponse promptly (well within the deadline), so the
-        // emitted ack carries the payload, proving the deadline race does not clobber a
-        // timely handler ack with the bare ack.
+        // The handler returns a CommandResponse without suspending, so it wins the raceFirst against the ackDeadline and its payload ack is
+        // emitted rather than the engine's bare ack. Under withTimeControl the ackDeadline's Async.sleep is virtual, and the clock is never
+        // advanced, so it can never fire: the handler's return is the only leg that can complete, which makes the emitted ack independent of the
+        // handler winning a real-time race against the deadline.
         val fastCfg = cfg.copy(ackDeadline = 2.seconds)
-        for
-            c      <- conduit
-            engine <- SlackSocketEngine.initUnscoped(c, url, fastCfg)
-            handler = (_: SlackEnvelope) =>
-                SlackAck.CommandResponse(SlackMessage(SlackId.ChannelId("C1"), "done")): SlackAck < (Async & Abort[SlackException])
-            _    <- Fiber.initUnscoped(Abort.run[SlackException](engine.receiveLoop(handler)))
-            _    <- c.feed.put(eventFrame("E1"))
-            acks <- c.recorded.stream().take(1).run
-            _    <- engine.closeNow
-        yield
-            assert(acks.size == 1)
-            assert(acks.head.contains("\"envelope_id\":\"E1\""), s"ack carries E1, got: $acks")
-            assert(acks.head.contains("\"text\":\"done\""), s"timely handler payload ack emitted, got: $acks")
-        end for
+        Clock.withTimeControl { _ =>
+            for
+                c      <- conduit
+                engine <- SlackSocketEngine.initUnscoped(c, url, fastCfg)
+                handler = (_: SlackEnvelope) =>
+                    SlackAck.CommandResponse(SlackMessage(SlackId.ChannelId("C1"), "done")): SlackAck < (Async & Abort[SlackException])
+                _    <- Fiber.initUnscoped(Abort.run[SlackException](engine.receiveLoop(handler)))
+                _    <- c.feed.put(eventFrame("E1"))
+                acks <- c.recorded.stream().take(1).run
+                _    <- engine.closeNow
+            yield
+                assert(acks.size == 1)
+                assert(acks.head.contains("\"envelope_id\":\"E1\""), s"ack carries E1, got: $acks")
+                assert(acks.head.contains("\"text\":\"done\""), s"timely handler payload ack emitted, got: $acks")
+            end for
+        }
     }
 
     "disconnect(link_disabled) ends the loop with SlackTerminalException; envelope delivered first" in {
@@ -318,12 +321,14 @@ class SlackSocketEngineTest extends kyo.test.Test[Any]:
             _    <- c.feed.put(eventFrame("E1"))
             _    <- entered.await
             // End the feed with no disconnect frame, mimicking an abnormal transport EOF.
-            _      <- c.feed.close
-            result <- Abort.run[Timeout](Async.timeout(2.seconds)(loop.get))
+            _ <- c.feed.close
+            // loop.get IS the termination barrier: it completes exactly when the receive loop returns. A loop that never terminates (a hang) is
+            // caught by the suite's per-leaf cap.
+            result <- loop.get
             _      <- engine.closeNow
         yield result match
-            case Result.Success(Result.Success(())) => assert(true)
-            case other                              => assert(false, s"loop must terminate on abnormal close, got: $other")
+            case Result.Success(()) => assert(true)
+            case other              => assert(false, s"loop must terminate on abnormal close, got: $other")
         end for
     }
 

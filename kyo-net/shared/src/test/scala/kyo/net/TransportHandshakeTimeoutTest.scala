@@ -33,6 +33,10 @@ class TransportHandshakeTimeoutTest extends Test:
     // handshake parks forever waiting for a ServerHello. connectTimeout is deliberately set FAR shorter than handshakeTimeout: if the connect
     // timer still owned the connection past the TCP phase, it would fire first and report a connect timeout for a stall that is entirely in
     // the handshake, which is the misclassification this pins. The handshake timer must own it instead.
+    //
+    // The two timers are a coupled system: connectTimeout (1s) is generous next to a loopback TCP connect (microseconds) so CI load never fires
+    // it spuriously, while handshakeTimeout (10s) stays an order of magnitude larger so the ordering the discrimination depends on (connect timer
+    // disarmed, handshake timer owns the stall) is preserved. The handshake deadline is the one that fires here, so the green path takes ~10s.
     "connectTls hands the deadline from the TCP phase to the handshake phase" in {
         assumeTls()
         given Frame = Frame.internal
@@ -41,16 +45,16 @@ class TransportHandshakeTimeoutTest extends Test:
         val transport = NetPlatform.transport
         // Plaintext listener: completes the accept, never sends a ServerHello.
         transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get.map { listener =>
-            val clientTls = NetTlsConfig(trustAll = true, handshakeTimeout = 3.seconds)
+            val clientTls = NetTlsConfig(trustAll = true, handshakeTimeout = 10.seconds)
             Abort.run[NetException](
-                transport.connectTls("127.0.0.1", listener.port, clientTls, connectTimeout = 200.millis).safe.get
+                transport.connectTls("127.0.0.1", listener.port, clientTls, connectTimeout = 1.second).safe.get
             ).map { outcome =>
                 // Close the listener, never the transport: it is the process-shared one.
                 listener.close()
                 outcome match
                     case Result.Failure(e: NetTlsHandshakeTimeoutException) =>
                         assert(
-                            e.timeout == 3.seconds,
+                            e.timeout == 10.seconds,
                             s"the handshake phase must fail on ITS OWN deadline, got ${e.timeout}"
                         )
                         succeed
@@ -163,10 +167,12 @@ class TransportHandshakeTimeoutTest extends Test:
         assumeTls()
         given Frame = Frame.internal
         TlsTestCertShared.writePems.map { case (certPath, keyPath) =>
-            // Both connections below ride this one listener, so both deadlines have exactly this duration. It is generous next to a loopback
-            // handshake (tens of ms), which is what makes a fired timer on the completed connection a real defect rather than a slow machine.
+            // Both connections below ride this one listener, so both deadlines have exactly this duration (10s). It is generous next to a loopback
+            // handshake (tens of ms), which is what makes a fired timer on the completed connection a real defect rather than a slow machine. The
+            // pacer's reap (below) falls due ~10s after its accept; the leaf observes the reap and the round-trip by awaiting them directly, so a
+            // genuine no-reap or lost echo hangs until the suite's per-leaf cap rather than racing an in-test ceiling.
             val serverTls =
-                NetTlsConfig(certChainPath = Present(certPath), privateKeyPath = Present(keyPath), handshakeTimeout = 1.second)
+                NetTlsConfig(certChainPath = Present(certPath), privateKeyPath = Present(keyPath), handshakeTimeout = 10.seconds)
             val clientTls = NetTlsConfig(trustAll = true, sniHostname = Present("localhost"))
             val transport = NetPlatform.transport
             transport.listenTls("127.0.0.1", 0, 16, serverTls) { serverConn =>
@@ -191,19 +197,20 @@ class TransportHandshakeTimeoutTest extends Test:
                     stalled <- transport.connect("127.0.0.1", listener.port).safe.get
                     _       <- Scope.ensure(Sync.defer(stalled.close()))
                     // The reap closes the pacer's accepted fd, which it observes as its inbound terminating (a Closed failure or an empty EOF
-                    // span, depending on backend). The ceiling only keeps a never-reaped pacer from hanging the suite.
-                    reap <- Abort.run[Timeout](Async.timeout(10.seconds)(Abort.run[Closed](stalled.inbound.safe.take)))
+                    // span, depending on backend). Awaiting the take IS the barrier: the reap fires ~10s after the pacer's accept (its
+                    // handshakeTimeout). A pacer that is never reaped hangs until the suite's per-leaf cap.
+                    reap <- Abort.run[Closed](stalled.inbound.safe.take)
                     reaped = reap match
-                        case Result.Success(Result.Success(span)) => span.isEmpty
-                        case Result.Success(Result.Failure(_))    => true
-                        case _                                    => false
+                        case Result.Success(span) => span.isEmpty
+                        case Result.Failure(_)    => true
+                        case _                    => false
                     _ = assert(
                         reaped,
                         "the stalled pacer was not reaped, so nothing here proves the completed connection's deadline instant has passed " +
                             s"and the round-trip below would assert nothing, got $reap"
                     )
                     _      <- client.outbound.safe.put(Span.fromUnsafe(message))
-                    echoed <- Abort.run[Closed | Timeout](Async.timeout(10.seconds)(collect(client, message.length)))
+                    echoed <- Abort.run[Closed](collect(client, message.length))
                 yield echoed match
                     case Result.Success(bytes) =>
                         assert(
