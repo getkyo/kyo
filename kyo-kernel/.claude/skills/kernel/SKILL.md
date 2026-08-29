@@ -6,8 +6,152 @@ description: Design ethos and type-safety discipline for working on the kernel. 
 # Working on the kernel
 
 This skill captures how kernel work is done, distilled from the sessions that built the Arrow-based kernel. It is
-the standard the code is held to, not a suggestion. Scope for now: design ethos, type safety, how concessions are
-made, and how performance claims are established. Other areas (porting, docs) come later.
+the standard the code is held to, not a suggestion. Scope for now: how work reaches the tree, design ethos, type
+safety, how concessions are made, and how performance claims are established. Other areas (porting, docs) come
+later.
+
+## How work reaches the tree: the live review
+
+Kernel sources are the user's code. The agent does not edit them as it goes, and a compaction does not reset
+that: an agent that finds itself mid-edit in the kernel tree without a review under way has already broken this
+rule and stops.
+
+Work happens in an **isolated worktree**, where the agent is free and uses whatever tooling is fastest. Nothing
+crosses into the user's tree except through a **live review**: the agent proposes it, the user opens it, and only
+then are edits applied to kernel sources, one at a time, **with the Edit tool**, with the user watching and
+ruling as they go. Scripted edits (`sed`, heredocs, rewrites through bash) are for the isolated worktree only.
+
+The measure of the isolated work is not that it compiles or that the suite is green. It is **whether the review
+will pass**, run by a picky reviewer who reads every line. That reframes what "done" means before the review is
+even proposed:
+
+- **Arrive with the design settled, not with options.** A review is not where a fork gets discovered. Forks are
+  raised as questions before the review opens, and the review carries the ruling already applied.
+- **Every line has to be defensible on its own.** A line the agent cannot justify unprompted is a line the
+  reviewer will stop on, and stopping on it costs more than deleting it did.
+- **Bring the evidence with the diff**: the clean batch build, the proto suites, the benchmark rows the change
+  reaches, and the pinning tests for whatever the change could break. A review that turns into a request to go
+  measure something has already failed.
+- **The reviewer's time is the scarce resource.** Anything the agent could have decided, verified, or removed
+  beforehand and did not is a defect in the preparation, whatever the code does.
+
+### Naming and shape discipline
+
+These are review-blocking on sight, because they are cheap to get right and expensive to read past:
+
+- **No new terminology.** The machine's vocabulary is fixed and every new synonym costs the reader a
+  translation. "drive" is banned; the evaluator **evals**. There is no "after" arrow; a continuation is a
+  **cont**. A name that already exists in the kernel is the correct name, and consistency across a change is
+  not negotiable.
+- **Avoid new types.** A new type must earn itself against the ones already here. Reach for an existing shape
+  before inventing a carrier, and when a new one is unavoidable, it is named for what the kernel already calls
+  that concept.
+- **Correct by construction beats correct by inspection.** Prefer a shape where the invariant cannot be
+  violated over one where it holds because every call site remembered to. Structural properties are not
+  asserted in comments; they are made true by the structure, so that a reader can see them without simulating
+  the code.
+- **Multiple edge cases mean the approach is wrong.** Accumulating special arms, flags, or "unless it is also"
+  clauses is the signal to stop and re-read the problem, not to keep adding arms. The correct shape usually
+  makes most of the cases stop existing.
+
+## Preparing a live review
+
+The pipeline exists to absorb thrash. Everything an agent gets wrong on the way to a change should be caught
+inside the isolated worktree, so the reviewer sees **one artifact** and spends judgment on the design rather
+than on catching drift. A phase that does not reduce what the reviewer has to look at is ceremony; delete it.
+
+```
+DERIVE    equation -> surface -> forks                [STOP only on a surviving fork]
+BUILD     isolated worktree; flags.sh as you go; kernel-pulse at the first compile
+EVIDENCE  clean batch build, proto suites, pinning tests, benchmark rows
+REVIEW    flags.sh -> flags.md, every row adjudicated [gate: zero unadjudicated rows]
+REHEARSE  kernel-conformance | kernel-discipline | kernel-rehearsal, in parallel
+PACKAGE   reviews/<change>/review.md                  [STOP: propose the live review]
+LIVE      the user opens it; edits applied one at a time with the Edit tool
+ESCAPE    anything the user catches that the pipeline missed -> rulings.md, verbatim
+```
+
+Two user touchpoints, not seven: a fork that survives, and the review itself.
+
+### DERIVE, which is not delegated
+
+Write `reviews/<change>/derivation.md` yourself. It carries the equation in the existing combinators, the
+mapping of each piece to a value the kernel already has, the **surface** (the exact files and methods that
+change, and what must not), and the forks. This is the phase the user collaborates on, so delegating it would
+delegate the collaboration rather than protect it.
+
+A piece with no counterpart is a **fork for the user**, never an invention. That single rule is what stops a
+new carrier type from appearing because the types would not line up otherwise. Present a surviving fork alone,
+never as a menu; when none survives, the phase passes without a stop.
+
+### REVIEW, the phase that does the most work
+
+Judgment misses things; enumeration cannot. `flags.sh` lists every construct of concern on the diff's added
+lines, and each one gets a row and a written verdict in `reviews/<change>/flags.md`:
+
+```
+| id | site           | added line                    | class   | verdict |
+|----|----------------|-------------------------------|---------|---------|
+| F1 | Eval.scala:113 | stack.handler.asInstanceOf[…] | cast    | justified: erasure-forced, array element re-typing at the storage boundary |
+| F2 | Eval.scala:36  | ): Any < Nothing =            | carrier | REMOVE: the signature must state the eval's answer, A < S |
+```
+
+A verdict is a **category from the cast ladder's closed set, a measurement, a `moved` provenance naming where
+the code came from, or `REMOVE`**. Nothing else counts, and these in particular do not: "needed for the types
+to work", "the evaluator is the engine room", "consistent with the existing code". Each is a conclusion that
+requires a category or an experiment behind it.
+
+The mechanism is not the table, it is **being made to write the verdict**. A line whose author cannot defend it
+is usually a line the author already knew was weak, and an empty verdict cell next to it makes that visible
+while it is still cheap to delete. Gate: zero unadjudicated rows.
+
+Classes the script cannot emit, because they need reading rather than a pattern: work outside the declared
+**surface**, a **claim** with no number behind it, and a **tail call** asserted in a comment that is not one
+(a call under a cast, inside a `try`, or crossing into another method). Those are `kernel-discipline`'s to apply.
+
+### The lenses, and what they are denied
+
+Dispatch the three in one message; they are independent.
+
+| lens | judges | reads |
+|---|---|---|
+| `kernel-conformance` | did the code become the derived design, and is everything inside the surface | derivation + diff |
+| `kernel-discipline` | is every flag in the table, and is every verdict a category or a number | flags.md + diff + this skill |
+| `kernel-rehearsal` | would the reviewer stop on any line | package + diff + this skill + rulings.md |
+
+Held-out means **denied**: the session transcript, the agent's own reasoning, the worktree's failed attempts,
+and any summary asserting that something is fine. `kernel-rehearsal` reads exactly what the user will read and
+nothing more, because the author found every one of these lines acceptable at the time and re-supplying that
+reasoning re-supplies the blind spot. Findings are mandatory fixes with stable ids; a fix is a new diff, so the
+lenses whose input changed are re-dispatched.
+
+### rulings.md, and why this does not become theater
+
+`rulings.md` beside this file records the user's objections verbatim and dated, and it is `kernel-rehearsal`'s
+rubric. A **rehearsal that passes and is then contradicted by the live review is a defect in the rehearsal**,
+recorded as an escape entry naming which rung should have caught it. The two repairs are different and
+conflating them is how a pipeline accretes stages instead of getting sharper:
+
+- the construct was never flagged: a hole in `flags.sh`, fix the script;
+- it was flagged and rationalised: a hole in the gate, tighten what counts as a verdict;
+- it was neither, and only a reader would have seen it: a rulings entry, so the rehearsal has it next time.
+
+**No stage is added to this pipeline without an escape entry justifying it.**
+
+### Scaling, so a two-line fix does not get a fleet
+
+| the change touches | run |
+|---|---|
+| the inside of one method, no signature change | derivation as a paragraph in the package; `kernel-discipline` |
+| a method's shape, or a new private helper | add `kernel-conformance` |
+| the evaluator, the representation, a node class, the public surface, or any signature | all three lenses, `kernel-pulse`, and benchmarks are mandatory |
+
+### PACKAGE
+
+`reviews/<change>/review.md` is the one file the user opens. It carries the derivation folded in, the diff
+walked **in the order the edits will be applied**, each with the one sentence to say when applying it, the
+adjudication table, the evidence in the form the benchmark section dictates, and the open rulings. A live
+review is a sequence, so preparing one means having the sequence, not a pile of changes and an explanation.
 
 ## Composition first, the evaluator second
 
@@ -143,8 +287,8 @@ measure + a pinning test.** A concession missing any of the four is a defect. St
 Two meta-rules bind the concessions together:
 
 - **Reproduce before you fix, and pin what the concession could break.** Every concession that touches
-  representation or replay has tests on the hostile axes: multi-shot application, capture and replay in foreign
-  drives, double nesting, budget parks mid-path. A fix without a reproduction that failed for the right reason
+  representation or replay has tests on the hostile axes: multi-shot application, capture and replay in a foreign
+  eval, double nesting, budget parks mid-path. A fix without a reproduction that failed for the right reason
   is not done.
 - **Nothing is rolled back or accepted on feel.** Optimizations are not reverted, and regressions are not
   accepted, without measurement and explicit sign-off; probes are run one variable at a time and reported with
@@ -177,7 +321,7 @@ What this forbids, concretely:
 
 **The claim covers every row, not the rows you chose.** A subset run cannot support "no regression". The rows an
 author picks are the ones the author is already thinking about, and the surprise lives in the others: kernel
-changes land on shared machinery (node layout, delivery, currency handling, the drive loop, the safepoint poll),
+changes land on shared machinery (node layout, delivery, currency handling, the eval loop, the safepoint poll),
 so an edit aimed at trailing maps also runs under stateful handlers, region rebuilds, nested payloads, the idle
 handler, and every fusion row.
 
@@ -257,7 +401,7 @@ invisible to every measurement except the inlining log.
 
 Two corollaries the logs make concrete:
 
-- **The drive itself will never inline** (`Eval$::loop` at ~1500 bytes, `dispatch` at ~557 report
+- **The eval itself will never inline** (`Eval$::loop` at ~1500 bytes, `dispatch` at ~557 report
   `inlining prohibited by policy` / `hot method too big`). That is expected and fine; it is precisely why
   everything they call on the per-suspension path must be small enough to inline *into* them.
 - **`no static binding` on a 0-byte abstract method is megamorphism, not a defect.** `Step::head`, `Step::tail`,
