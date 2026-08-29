@@ -11,6 +11,7 @@ import kyo.proto.kernel.ArrowEffect
 import kyo.proto.kernel.ContextEffect
 import kyo.proto.kernel.Effect
 import language.implicitConversions
+import scala.util.control.NonFatal
 
 object Eval:
 
@@ -178,7 +179,18 @@ object Eval:
                             ctx.update(hc.tag, st0)
                         case _ => ctx
                     Debugger.onRegionEnter(kyo.handler, st0)
-                    val res = region(st0, kyo.value, Arrow.id, bound)
+                    // the extent's guard: a NonFatal throw anywhere under the region consults the
+                    // handler once, with the state the region was installed with. A recovered
+                    // computation replaces the region's outcome and takes the same continuation a
+                    // normal result would; a decline keeps the failure unwinding through the
+                    // enclosing regions' own guards
+                    val res =
+                        try region(st0, kyo.value, Arrow.id, bound)
+                        catch
+                            case ex if NonFatal(ex) =>
+                                val r = kyo.handler.recover(st0, ex).getOrElse(throw ex)
+                                Debugger.onRecover(kyo.handler, ex)
+                                r
                     Debugger.onRegionExit(kyo.handler, res)
                     loop(res, kyo.cont, contA.chain(contB), ctx)
                 case res =>

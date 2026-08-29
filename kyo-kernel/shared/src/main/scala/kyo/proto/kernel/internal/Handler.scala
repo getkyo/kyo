@@ -13,7 +13,12 @@ import kyo.proto.kernel.Effect
 
 abstract class Handler[E <: Effect, A, B, -S, State]:
     def tag: Tag[E]
-    def recover(ex: Throwable): Maybe[B < S] = Absent
+
+    /** Consulted when a NonFatal throw unwinds the region's extent, with the state the region was installed with. A Present computation
+      * replaces the region's outcome, and what follows the extent still follows; Absent declines, and the failure keeps unwinding through
+      * the enclosing regions.
+      */
+    def recover(state: State, ex: Throwable): Maybe[B < S] = Absent
     def done(state: State, v: A): B < S
     override def toString = s"Handler(${tag.show})"
 end Handler

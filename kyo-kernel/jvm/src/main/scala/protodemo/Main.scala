@@ -1,6 +1,7 @@
 package protodemo
 
 import kyo.Frame
+import kyo.Maybe
 import kyo.Result
 import kyo.Tag
 import kyo.proto.*
@@ -236,6 +237,18 @@ object Main:
         val body: Int < Any = cfg.map(_ + 1)
         ContextEffect.handle(cfgTag, 41)(ContextEffect.handle(cfgTag)(_.fold(0)(_ * 2))(body))
 
+    // a throw inside the extent answered by the region's recover, the failure recovery shape
+    def recovering: Int < Any =
+        val h = new Handler.HandlerCont[CInt, CInt, Add, Int, Int, Any]:
+            def tag                                          = addTag
+            override def recover(state: Unit, ex: Throwable) = Maybe(-1)
+            def done(state: Unit, v: Int)                    = v
+            def run[X, C, S2](input: Int, cont: Arrow[Int, Int, Add], k: Arrow[Int, C, S2]): C < (Add & S2) =
+                k(cont(input + 1, Arrow.id), Arrow.id)
+        val body: Int < Add = add(1).map(a => (throw new Exception("boom")): Int)
+        Kyo.handle[Add, Int, Int, Any, Unit](body, h, ())
+    end recovering
+
     def scenario(name: String)(v: => Int < Any): Unit =
         println(
             s"""|
@@ -281,5 +294,6 @@ object Main:
         scenario("deep crossing")(crossing)
         scenario("data join")(dataJoin)
         scenario("layered binding")(layered)
+        scenario("panic recovery")(recovering)
     end main
 end Main
