@@ -188,6 +188,13 @@ final class ConsoleDebugger extends Debugger:
         )
     end onForeign
 
+    override def onRelease(handler: Any, ex: Any): Unit =
+        log(
+            s"""|🧹 release
+                |handler: $handler
+                |ex: $ex""".stripMargin
+        )
+
     override def onRecover(handler: Any, ex: Any): Unit =
         log(
             s"""|🩹 recover

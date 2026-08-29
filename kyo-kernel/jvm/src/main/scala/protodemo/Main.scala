@@ -266,6 +266,18 @@ object Main:
         Kyo.handle[Add, Int, Int, Any, Unit](body, h, ())
     end bracketedPanic
 
+    // a clause dropping a continuation that owes a release, the discard shape
+    def discarded: Int < Any =
+        val body: Int < Add =
+            Effect.bracket(lazily(10))(a => lazily(a))(a => add(a).map(_ + 1))
+        ArrowEffect.handleCont[CInt, CInt, Add, Int, Any, Any](addTag, body)(
+            [C] =>
+                (input, cont) =>
+                    Eval.release(cont)
+                99
+        )
+    end discarded
+
     def scenario(name: String)(v: => Int < Any): Unit =
         println(
             s"""|
@@ -314,5 +326,6 @@ object Main:
         scenario("panic recovery")(recovering)
         scenario("bracket")(bracketed)
         scenario("bracket panic")(bracketedPanic)
+        scenario("discarded continuation")(discarded)
     end main
 end Main

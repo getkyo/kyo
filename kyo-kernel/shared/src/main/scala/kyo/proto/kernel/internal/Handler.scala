@@ -19,6 +19,11 @@ abstract class Handler[E <: Effect, A, B, -S, State]:
       * the enclosing regions.
       */
     def recover(state: State, ex: Throwable): Maybe[B < S] = Absent
+
+    /** The abandonment notification: consulted when a holder gives up on an extent's continuation, with the state the region was installed
+      * with. It runs where nothing is installed to answer for it, so it takes no effects; the default owes nothing.
+      */
+    def release(state: State, ex: Throwable): Any < Any = ()
     def done(state: State, v: A): B < S
     override def toString = s"Handler(${tag.show})"
 end Handler

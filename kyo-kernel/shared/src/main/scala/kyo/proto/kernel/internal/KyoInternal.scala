@@ -2,6 +2,7 @@ package kyo.proto.kernel.internal
 
 import kyo.Frame
 import kyo.Tag
+import kyo.discard
 import kyo.proto.Arrow
 import kyo.proto.kernel.<
 import kyo.proto.kernel.ArrowEffect
@@ -9,6 +10,7 @@ import kyo.proto.kernel.ContextEffect
 import kyo.proto.kernel.Effect
 import language.implicitConversions
 import scala.annotation.publicInBinary
+import scala.util.control.NonFatal
 
 private[proto] def short(v: Any): String =
     v match
@@ -17,6 +19,20 @@ private[proto] def short(v: Any): String =
         case _: Arrow.Id[?]              => "Id"
         case _: Arrow.Transform[?, ?, ?] => "Transform"
         case v                           => v.toString
+
+/** The failure a released extent is told about: its holder gave up on resuming the continuation, so the extent ends without an outcome. A
+  * shared stackless instance: the signal's identity is the information, not a trace.
+  */
+private[kyo] object Discarded extends Exception("continuation discarded", null, false, false)
+
+/** Runs one region's release under its own guard: releases must not starve each other, so a throw here, including the rethrow a bracket's
+  * recover owes, ends this region's turn and the walk continues.
+  */
+def releaseRegion[E <: Effect, A, B, S, State](h: Handler[E, A, B, S, State], state: State, ex: Throwable): Unit =
+    Debugger.onRelease(h, ex)
+    try discard(Eval(h.release(state, ex)))
+    catch case ex2 if NonFatal(ex2) => ()
+end releaseRegion
 
 /** A construction site rendered as the call it was: the enclosing method, the combinator it called, and the position to jump to. */
 private[proto] def site(frame: Frame): String =
@@ -36,6 +52,13 @@ end site
   */
 sealed trait Pending[+A, -S] extends kyo.proto.Kyo[A, S]:
     def frame: Frame = Frame.internal
+
+    /** Delivers the abandonment signal: the holder gave up on resuming this computation. Only an open region owes anything, so only the
+      * region carriers act: a rotation dispatches to its rotated handler after its wrapped suspension, and a Handle releases its own
+      * extent, so nesting drains innermost first. Everything else states that it owes nothing. Abstract on purpose: every node class must
+      * declare its stance, so a new carrier cannot silently miss its override.
+      */
+    def release(ex: Throwable): Unit
 end Pending
 
 // Public object, private-free members for the same reason as before: the combinators' inline
@@ -44,6 +67,12 @@ object Kyo:
 
     abstract class Defer[A, B, C, -S] @publicInBinary private[kyo] () extends Pending[C, S]:
         Debugger.onAlloc(this)
+
+        def release(ex: Throwable): Unit =
+            value match
+                case p: Pending[?, ?] => p.release(ex)
+                case _                => ()
+
         def value: A < S
         def contA: Arrow[A, B, S]
         def contB: Arrow[B, C, S]
@@ -55,6 +84,9 @@ object Kyo:
 
     sealed abstract class Suspend[E <: Effect, A, S] extends Pending[A, S]:
         Debugger.onAlloc(this)
+
+        def release(ex: Throwable): Unit = ()
+
         type Op
         def tag: Tag[E]
         def cont: Arrow[Op, A, S]
@@ -130,6 +162,14 @@ object Kyo:
 
     abstract class Handle[E <: Effect, A, B, C, -S, State] extends Pending[C, S]:
         Debugger.onAlloc(this)
+
+        def release(ex: Throwable): Unit =
+            value match
+                case p: Pending[?, ?] => p.release(ex)
+                case _                => ()
+            releaseRegion(handler, state, ex)
+        end release
+
         def value: A < (E & S)
         def handler: Handler[E, A, B, S, State]
         def state: State

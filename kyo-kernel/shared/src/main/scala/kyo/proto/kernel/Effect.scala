@@ -81,11 +81,15 @@ object Effect:
         acquire.map { a =>
             val h =
                 new Handler[Bracket, B, B, S, A]:
-                    def tag = Tag[Bracket]
+                    // bound once: the release is inline and all three edges below speak it
+                    private def rel(state: A, r: Result[Any, B]) = _release(state, r)
+                    def tag                                      = Tag[Bracket]
                     override def recover(state: A, ex: Throwable) =
-                        Maybe(_release(state, Result.panic(ex)).map(_ => throw ex))
+                        Maybe(rel(state, Result.panic(ex)).map(_ => throw ex))
+                    override def release(state: A, ex: Throwable) =
+                        rel(state, Result.panic(ex))
                     def done(state: A, v: B) =
-                        _release(state, Result.succeed(v)).map(_ => v)
+                        rel(state, Result.succeed(v)).map(_ => v)
             // the use is deferred into the extent, so a throw while the computation is being built
             // still releases; the acquire sits outside it, so a failed acquisition owes nothing
             Kyo.handle[Bracket, B, B, S, A](deferInline(_use(a)), h, a)

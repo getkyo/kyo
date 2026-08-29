@@ -43,6 +43,9 @@ abstract class Debugger:
     /** A suspend bubbling past a region that does not handle it. */
     def onForeign(suspend: Any, handler: Any): Unit = ()
 
+    /** A region told its extent was abandoned. */
+    def onRelease(handler: Any, ex: Any): Unit = ()
+
     /** A throw answered by a region's recover. */
     def onRecover(handler: Any, ex: Any): Unit = ()
 
@@ -79,6 +82,7 @@ object Debugger:
     inline def onRegionExit(handler: Any, result: Any): Unit          = inline if enabled then get.onRegionExit(handler, result)
     inline def onForeign(suspend: Any, handler: Any): Unit            = inline if enabled then get.onForeign(suspend, handler)
     inline def onRecover(handler: Any, ex: Any): Unit                 = inline if enabled then get.onRecover(handler, ex)
+    inline def onRelease(handler: Any, ex: Any): Unit                 = inline if enabled then get.onRelease(handler, ex)
     inline def onHandle(suspend: Any, handler: Any, state: Any): Unit = inline if enabled then get.onHandle(suspend, handler, state)
     inline def onResult(value: Any): Unit                             = inline if enabled then get.onResult(value)
 

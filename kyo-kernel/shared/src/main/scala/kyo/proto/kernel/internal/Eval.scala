@@ -15,6 +15,14 @@ import scala.util.control.NonFatal
 
 object Eval:
 
+    /** Runs the releases a computation still owes, for a holder giving up on resuming it: the abandonment signal reaches every region the
+      * machine already installed, innermost first. Anything that never acquired, or is not a computation at all, is a no-op.
+      */
+    def release(v: Any): Unit =
+        v match
+            case p: Pending[?, ?] => p.release(Discarded)
+            case _                => ()
+
     def apply[A, S](v: A < S): A < S =
         def loop[A, B, C, S](v: A < S, contA: Arrow[A, B, S], contB: Arrow[B, C, S], ctx: Context): C < S =
             Debugger.onLoop(v, contA, contB)
@@ -115,6 +123,9 @@ object Eval:
                                             def tag   = sax.tag
                                             def input = sax.input
                                             def cont  = this
+                                            override def release(ex: Throwable): Unit =
+                                                sax.release(ex)
+                                                releaseRegion(kyo.handler, st, ex)
                                             override def apply[D, S2](x: OY[VY] < S2, cont2: Arrow[Y, D, S2]) =
                                                 x match
                                                     case kyo: Pending[OY[VY], S2] @unchecked =>
@@ -129,6 +140,9 @@ object Eval:
                                             def tag           = scx.tag
                                             def update(v: VX) = scx.update(v)
                                             def cont          = this
+                                            override def release(ex: Throwable): Unit =
+                                                scx.release(ex)
+                                                releaseRegion(kyo.handler, st, ex)
                                             override def apply[D, S2](x: VX < S2, cont2: Arrow[Y, D, S2]) =
                                                 x match
                                                     case kyo: Pending[VX, S2] @unchecked =>
@@ -144,6 +158,9 @@ object Eval:
                                             def default       = sdx.default
                                             def update(v: VX) = sdx.update(v)
                                             def cont          = this
+                                            override def release(ex: Throwable): Unit =
+                                                sdx.release(ex)
+                                                releaseRegion(kyo.handler, st, ex)
                                             override def apply[D, S2](x: VX < S2, cont2: Arrow[Y, D, S2]) =
                                                 x match
                                                     case kyo: Pending[VX, S2] @unchecked =>

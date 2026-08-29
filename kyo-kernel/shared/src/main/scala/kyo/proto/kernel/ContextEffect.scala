@@ -150,7 +150,7 @@ object ContextEffect:
       *
       * The optional parameters say what happens at the edges of the extent, and each defaults to the plainest answer: `onFork` is what a
       * computation forked from here receives, and `onJoin` is what this holds once a fork ends, given what it held, what the fork
-      * received, and how the fork ended. The reference's `release` slot has no counterpart yet: the machine has no finalizer story.
+      * received, and how the fork ended. A release rides the handler protocol (`Handler.release`); this surface does not take one.
       *
       * @param effectTag
       *   Identifies which context effect to handle
