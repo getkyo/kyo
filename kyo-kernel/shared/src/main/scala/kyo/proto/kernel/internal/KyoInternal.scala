@@ -105,6 +105,7 @@ object Kyo:
             s"SuspendContextDefault(${tag.show}, $default, $update, ${if cont eq this then "this" else short(cont)})"
     end SuspendContextDefault
 
+    // TODO let's avoid these factory methods. The development is a lot about memoty layout, allocations, being explicit about instantiations is good and gives space to find optimizations for example avoiding a field for a contsntat
     object SuspendContextDefault:
         def apply[State, E <: ContextEffect[State], A, S](
             t: Tag[E],
