@@ -73,6 +73,56 @@ ESCAPE    anything the user catches that the pipeline missed -> rulings.md, verb
 
 Two user touchpoints, not seven: a fork that survives, and the review itself.
 
+### The coordinator
+
+You hold the full context and you are the only actor that talks to the user. Unlike a pure supervisor you also
+do the work: the derivation, the build, the adjudication, and the live review itself. You dispatch the lenses,
+you decide what the findings mean, and you own the result whatever they returned.
+
+**Three things are never delegated**, and the reasons differ:
+
+- **The derivation**, because it is what the user collaborates on. Delegating it would delegate the
+  collaboration rather than protect it.
+- **The adjudication**, because the entire mechanism of the REVIEW phase is that *the author* must write the
+  justification. A line whose author cannot defend it is usually one the author already knew was weak, and an
+  empty verdict cell is what makes that visible. Hand the table to an agent and the mechanism is gone while the
+  artifact still looks the same.
+- **Forks and measurements**: a fork is the user's to rule, and a measurement is mechanical, so run it.
+
+**Findings are mandatory, and disagreement escalates rather than overrides.** A finding you believe is wrong
+goes to the user with the evidence, never quietly dropped and never argued away in the package. Two moves are
+banned outright: **re-dispatching a lens hoping for a different verdict**, and **weakening a brief because the
+lens is inconvenient**. Both convert the pipeline into a machine for producing PASS. A PASS is also not a
+decision: the lenses inform your judgment, they do not replace it, and shipping something you would not defend
+because three reports were green is the same failure in a new costume.
+
+**A user interruption is a finding from the highest-authority reviewer.** Stop immediately. Then locate the
+cause before changing anything, because the strong pull is to make a change in the direction of the
+complaint's surface, and that is how a small correct objection produces a large wrong change: told the code
+was unsafe, the right move is to ask where the unsafety is, not to reach for a safer-looking shape. Record the
+objection verbatim in `rulings.md` before continuing, while the words are still exact.
+
+**Stop conditions, which autonomy makes more binding rather than less.** Working unattended means nobody else
+is watching the drift, so each of these ends the current line of work:
+
+- you are about to write a line you could not defend in one sentence if asked;
+- the design has started needing a special case, a flag, or an "unless it is also" clause;
+- a type error is being routed around rather than read as information about the design;
+- you are working outside the derivation's surface.
+
+The first is the one that fires most and gets overridden most. Treat the feeling of "I will explain this later"
+as the signal itself.
+
+**The artifacts are the memory, not the conversation.** After a compaction, re-read `derivation.md` and
+`rulings.md` rather than trusting recall: a summary of a summary is how a settled question gets relitigated and
+how a ruling quietly stops binding.
+
+**At the two stops.** A surviving fork is presented alone, with the evidence and a recommendation, never as a
+menu. The review is *proposed*, not started: the user opens it. During the review, edits are applied one at a
+time **with the Edit tool**, each preceded by the one sentence that justifies it, never batched and never
+applied ahead of a ruling. Any objection stops the sequence and goes into `rulings.md` verbatim before work
+resumes.
+
 ### DERIVE, which is not delegated
 
 Write `reviews/<change>/derivation.md` yourself. It carries the equation in the existing combinators, the
