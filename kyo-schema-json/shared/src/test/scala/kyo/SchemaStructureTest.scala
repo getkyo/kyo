@@ -1657,6 +1657,26 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
             assert(decoded == v)
         }
 
+        "BigNum encodes as a bare JSON number" in {
+            val v    = Structure.Value.BigNum(BigDecimal("18446744073709551615"))
+            val json = Json.encode(v)
+            assert(json == "18446744073709551615")
+        }
+
+        "integer beyond Long range decodes losslessly as BigNum" in {
+            val json    = "18446744073709551615"
+            val decoded = Json.decode[Structure.Value](json).getOrThrow
+            assert(decoded == Structure.Value.BigNum(BigDecimal(json)))
+        }
+
+        "high-precision decimal round-trips through JSON as BigNum" in {
+            val v       = Structure.Value.BigNum(BigDecimal("0.12345678901234567890123456789"))
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[Structure.Value](encoded).getOrThrow
+            assert(encoded == "0.12345678901234567890123456789")
+            assert(decoded == v)
+        }
+
         "Bool encodes as bare JSON boolean" in {
             val v    = Structure.Value.Bool(true)
             val json = Json.encode(v)

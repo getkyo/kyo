@@ -374,6 +374,14 @@ object Codec:
         def bytes(value: Span[Byte]): Unit
         def bigInt(value: BigInt): Unit
         def bigDecimal(value: BigDecimal): Unit
+
+        /** Writes an arbitrary-precision numeric scalar.
+          *
+          * The default delegates to [[bigDecimal]] so existing codecs retain their wire representation. Self-describing codecs whose
+          * native number representation differs from their typed `BigDecimal` representation can override this hook.
+          */
+        def bigNumber(value: BigDecimal): Unit = bigDecimal(value)
+
         def instant(value: java.time.Instant): Unit
         def duration(value: java.time.Duration): Unit
         def result(): Span[Byte]
