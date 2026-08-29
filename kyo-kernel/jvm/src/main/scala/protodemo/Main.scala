@@ -272,9 +272,7 @@ object Main:
             Effect.bracket(lazily(10))(a => lazily(a))(a => add(a).map(_ + 1))
         ArrowEffect.handleCont[CInt, CInt, Add, Int, Any, Any](addTag, body)(
             [C] =>
-                (input, cont) =>
-                    Eval.release(cont)
-                99
+                (input, cont) => 99
         )
     end discarded
 

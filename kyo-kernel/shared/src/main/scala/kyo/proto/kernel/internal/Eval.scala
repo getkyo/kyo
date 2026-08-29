@@ -15,10 +15,12 @@ import scala.util.control.NonFatal
 
 object Eval:
 
-    /** Runs the releases a computation still owes, for a holder giving up on resuming it: the abandonment signal reaches every region the
-      * machine already installed, innermost first. Anything that never acquired, or is not a computation at all, is a no-op.
+    /** The releases a computation still owes, for a holder giving up on resuming it: every region the machine already installed speaks,
+      * innermost first, and a settled value owes nothing. A computation rather than a run: the holder sequences the result into its own
+      * stream, which is what lets the ambient context reach the releases. Typed on the pending union on purpose: bare arrows are not
+      * computations and do not release.
       */
-    def release(v: Any): Unit =
+    def release[A, S](v: A < S): Any < Any =
         v match
             case p: Pending[?, ?] => p.release(Discarded)
             case _                => ()
@@ -123,9 +125,9 @@ object Eval:
                                             def tag   = sax.tag
                                             def input = sax.input
                                             def cont  = this
-                                            override def release(ex: Throwable): Unit =
-                                                sax.release(ex)
-                                                releaseRegion(kyo.handler, st, ex)
+                                            override def release(ex: Throwable): Any < Any =
+                                                Debugger.onRelease(kyo.handler, ex)
+                                                sax.release(ex).andThen(kyo.handler.release(st, ex))(using Frame.internal)
                                             override def apply[D, S2](x: OY[VY] < S2, cont2: Arrow[Y, D, S2]) =
                                                 x match
                                                     case kyo: Pending[OY[VY], S2] @unchecked =>
@@ -140,9 +142,9 @@ object Eval:
                                             def tag           = scx.tag
                                             def update(v: VX) = scx.update(v)
                                             def cont          = this
-                                            override def release(ex: Throwable): Unit =
-                                                scx.release(ex)
-                                                releaseRegion(kyo.handler, st, ex)
+                                            override def release(ex: Throwable): Any < Any =
+                                                Debugger.onRelease(kyo.handler, ex)
+                                                scx.release(ex).andThen(kyo.handler.release(st, ex))(using Frame.internal)
                                             override def apply[D, S2](x: VX < S2, cont2: Arrow[Y, D, S2]) =
                                                 x match
                                                     case kyo: Pending[VX, S2] @unchecked =>
@@ -158,9 +160,9 @@ object Eval:
                                             def default       = sdx.default
                                             def update(v: VX) = sdx.update(v)
                                             def cont          = this
-                                            override def release(ex: Throwable): Unit =
-                                                sdx.release(ex)
-                                                releaseRegion(kyo.handler, st, ex)
+                                            override def release(ex: Throwable): Any < Any =
+                                                Debugger.onRelease(kyo.handler, ex)
+                                                sdx.release(ex).andThen(kyo.handler.release(st, ex))(using Frame.internal)
                                             override def apply[D, S2](x: VX < S2, cont2: Arrow[Y, D, S2]) =
                                                 x match
                                                     case kyo: Pending[VX, S2] @unchecked =>
