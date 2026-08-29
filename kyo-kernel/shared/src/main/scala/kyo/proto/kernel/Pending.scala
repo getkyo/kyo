@@ -10,7 +10,10 @@ import kyo.proto.kernel.internal.*
 import language.implicitConversions
 import scala.annotation.nowarn
 
-opaque type <[+A, -S] >: A = A | Pending[A, S]
+// no lower bound on purpose: a raw value reaches the pending type only through the implicit lift,
+// which is what preserves a computation held as data (the lift nests payloads; subsumption would
+// carry them bare and erase their data-ness where they surface)
+opaque type <[+A, -S] = A | Pending[A, S]
 
 object `<` extends Implicits:
     implicit def fromKyo[A, S](kyo: Pending[A, S]): A < S = kyo

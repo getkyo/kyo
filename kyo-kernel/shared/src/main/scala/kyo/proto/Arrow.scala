@@ -22,6 +22,27 @@ trait Kyo[+A, -S]:
     def frame: Frame
 end Kyo
 
+object Kyo:
+
+    /** Explicitly lifts a value to a pending computation.
+      *
+      * Values lift implicitly in most positions, but the implicit deliberately refuses a value that is itself a pending computation:
+      * holding a computation as data is a semantic choice, so it gets an explicit spelling instead of an inference. This method is that
+      * spelling. It routes through the same single lift, resolved with the payload type abstract, so it nests exactly when the value is a
+      * computation and is a zero-cost ascription otherwise.
+      *
+      * @tparam A
+      *   The type of the value
+      * @tparam S
+      *   The effect context (can be Any)
+      * @param v
+      *   The value to lift into the effect context
+      * @return
+      *   A computation that directly produces the given value without suspension
+      */
+    inline def lift[A, S](inline v: A): A < S = v
+end Kyo
+
 // deliberately not a Function1: the specialization forwarder grid costs a method surface no call
 // site uses (the reference measured it), and its toString would shadow a merged node's rendering
 // through the mixin linearization

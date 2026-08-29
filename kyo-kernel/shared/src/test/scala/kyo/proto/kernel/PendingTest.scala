@@ -4,6 +4,7 @@ import kyo.Const
 import kyo.Maybe
 import kyo.Tag
 import kyo.proto.Arrow
+import kyo.proto.Kyo
 import kyo.proto.Loop
 import kyo.proto.kernel.internal.Eval
 import kyo.proto.kernel.internal.Nested
@@ -177,7 +178,7 @@ class PendingTest extends AnyFreeSpec:
         val inner: Int < Ask = ask.map(_ + 1)
         val body: Int < Give = give.map(_ => 0)
         val r: (Int < Ask) < Any = ArrowEffect.handleLoop(Tag[Give], body)(
-            [C] => _ => Loop.done(inner),
+            [C] => _ => Loop.done(Kyo.lift(inner)),
             a => settled(inner)
         )
         val payload: Int < Ask = eval(r)
@@ -233,7 +234,7 @@ class PendingTest extends AnyFreeSpec:
     "a loop can end its region effectfully with a computation result" in {
         val inner: Int < Ask = ask.map(_ + 1)
         val r: (Int < Ask) < Ask = ArrowEffect.handleLoop(Tag[Give], give)(
-            [C] => _ => after(0).map(_ => Loop.done(inner)),
+            [C] => _ => after(0).map(_ => Loop.done(Kyo.lift(inner))),
             a => settled(a)
         )
         val payload: Int < Ask = eval(answerAsk(0)(r))
