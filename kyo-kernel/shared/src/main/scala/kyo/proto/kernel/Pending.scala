@@ -15,7 +15,10 @@ opaque type <[+A, -S] >: A = A | Pending[A, S]
 object `<` extends Implicits:
     implicit def fromKyo[A, S](kyo: Pending[A, S]): A < S = kyo
 
-    extension [A, S](self: A < S)
+    // the receiver is inline so call sites splice it with its ascribed type: a proxied receiver is
+    // typed as its singleton intersected with the pending type, and that conformance fails against a
+    // nested payload. Every occurrence re-expands the receiver expression, so each body binds it once
+    extension [A, S](inline self: A < S)
         /** Maps the value produced by this computation to a new computation and flattens the result. This is the monadic bind operation for
           * the pending type.
           *
@@ -396,6 +399,10 @@ object `<` extends Implicits:
                 case _: Pending[?, ?] => Maybe.empty
                 case _                => Maybe(Nested.unnest(v))
         end evalNow
+    end extension
+
+    // chain stays non-inline, so it lives outside the inline-receiver block
+    extension [A, S](self: A < S)
 
         /** Composes this computation with a continuation. Value composition is the normalizing entry: a node with a free continuation slot
           * absorbs the arrow directly, and anything else is reified as a deferral record. Continuation composition stays [[Arrow.chain]];
