@@ -14,20 +14,19 @@ import language.implicitConversions
 object Eval:
 
     def apply[A, S](v: A < S): A < S =
-        val dbg = Debugger.get
         def loop[A, B, C, S](v: A < S, contA: Arrow[A, B, S], contB: Arrow[B, C, S], ctx: Context): C < S =
-            dbg.onLoop(v, contA, contB)
+            Debugger.onLoop(v, contA, contB)
             v match
                 case kyo: Kyo.Defer[AX, Y, A, S] @unchecked =>
                     loop(kyo.value, kyo.contA, kyo.contB.chain(contA.chain(contB)), ctx)
                 case kyo: Kyo.SuspendContext[VX, CX, A, S] @unchecked if ctx.contains(kyo.tag) =>
                     val nv = kyo.update(ctx.apply[VX, CX](kyo.tag))
-                    dbg.onContext(kyo, nv)
+                    Debugger.onContext(kyo, nv)
                     val k = kyo.cont
                     loop(k.head(nv, k.tail), contA, contB, ctx.update[VX, CX](kyo.tag, nv))
                 case kyo: Kyo.SuspendContextDefault[VX, CX, A, S] @unchecked if ctx.contains(kyo.tag) =>
                     val nv = kyo.update(ctx.apply[VX, CX](kyo.tag))
-                    dbg.onContext(kyo, nv)
+                    Debugger.onContext(kyo, nv)
                     val k = kyo.cont
                     loop(k.head(nv, k.tail), contA, contB, ctx.update[VX, CX](kyo.tag, nv))
                 case kyo: Kyo.Suspend[EX, A, S] @unchecked =>
@@ -91,7 +90,7 @@ object Eval:
                     def region[T](st: VX, v: T < (EX & S), cont: Arrow[T, AX, EX & S], ctx: Context): Y < S =
                         loop(v, cont, Arrow.id, ctx) match
                             case res: Kyo.Suspend[EX, AX, EX & S] @unchecked if !(res.tag.erased <:< kyo.handler.tag.erased) =>
-                                dbg.onForeign(res, kyo.handler)
+                                Debugger.onForeign(res, kyo.handler)
                                 // parameterized over the suspension's payload so each arm calls it with its own
                                 // refined continuation, keeping the rebuilt applies typed at the true input
                                 def reenter[P, D, S2](k0: Arrow[P, AX, EX & S], x: P < S2, cont2: Arrow[Y, D, S2]): D < (S & S2) =
@@ -142,16 +141,16 @@ object Eval:
                                         end new
                                 end match
                             case suspend: Kyo.SuspendArrow[IX, OX, EX, VX, AX, EX & S] @unchecked =>
-                                dbg.onHandle(suspend, kyo.handler, st)
+                                Debugger.onHandle(suspend, kyo.handler, st)
                                 val next = suspend.cont
                                 kyo.handler match
                                     case handler: Handler.HandlerCont[IX, OX, EX, AX, Y, S] @unchecked =>
                                         val r = handler.answer(suspend.input, next)
-                                        dbg.onResult(r)
+                                        Debugger.onResult(r)
                                         region(st, r, Arrow.id, ctx)
                                     case handler: Handler.HandlerLoop[IX, OX, EX, AX, Y, S, VX] @unchecked =>
                                         val o = handler.answer(st, suspend.input, next)
-                                        dbg.onResult(o)
+                                        Debugger.onResult(o)
                                         o match
                                             case o: Loop.Continue2[VX, OX[VX] < (EX & S)] @unchecked =>
                                                 region(o._1, o._2, next, ctx)
@@ -167,14 +166,14 @@ object Eval:
                             case res: AX @unchecked =>
                                 kyo.handler.done(st, res)
                     end region
-                    dbg.onRegionEnter(kyo.handler, kyo.state)
+                    Debugger.onRegionEnter(kyo.handler, kyo.state)
                     val bound = kyo.handler match
                         case h: Handler.HandlerContext[VX, CX, AX, Y, S] @unchecked =>
                             val hc: Handler.HandlerContext[VX, CX, AX, Y, S] = h
                             ctx.update(hc.tag, kyo.state)
                         case _ => ctx
                     val res = region(kyo.state, kyo.value, Arrow.id, bound)
-                    dbg.onRegionExit(kyo.handler, res)
+                    Debugger.onRegionExit(kyo.handler, res)
                     loop(res, kyo.cont, contA.chain(contB), ctx)
                 case res =>
                     if contA.isInstanceOf[Arrow.Id[?]] && contB.isInstanceOf[Arrow.Id[?]] then
@@ -191,7 +190,7 @@ object Eval:
             loop(v, Arrow.id, Arrow.id, Context.empty) match
                 case suspend: Kyo.SuspendContextDefault[VX, CX, A, S] @unchecked =>
                     val nv = suspend.update(suspend.default)
-                    dbg.onContextDefault(suspend, nv)
+                    Debugger.onContextDefault(suspend, nv)
                     val k = suspend.cont
                     run(k.head(nv, k.tail))
                 case res =>

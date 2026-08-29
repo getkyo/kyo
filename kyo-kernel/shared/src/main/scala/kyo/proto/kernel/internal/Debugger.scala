@@ -2,14 +2,12 @@ package kyo.proto.kernel.internal
 
 /** The walker's observability seam: one installed instance, one no-op default, and nothing else in the kernel.
   *
-  * Every hook is a pure observation returning Unit, so the no-op makes the kernel behave exactly as if the class did not exist. The
-  * zero-cost mechanism is class hierarchy analysis, not a flag: real implementations live outside the kernel (the demo installs a console
-  * tracer), so a production classpath never loads one, the no-op defaults stay monomorphic, and every call site devirtualizes and inlines
-  * to nothing. Hooks receive structured operands, never strings, so no formatting or stack capture happens unless an installed
-  * implementation asks for it.
-  *
-  * The eval reads the installed instance once at entry; the constructor hooks (onAlloc, onUnfused) read the cell directly since they fire
-  * outside any eval extent.
+  * Every hook is a pure observation returning Unit, and every site reaches it through the companion's inline forwarders, gated on the
+  * `enabled` constant. The zero-cost mechanism is compile-time erasure, not devirtualization: with the constant false, the typer folds
+  * each forwarder call to nothing, so the emitted bytecode carries no trace of the hooks, node constructors leak no reference to `this`,
+  * and there is nothing left for the JIT to prove dead. An instrumented build (the constant flipped to true) dispatches through the
+  * installed instance; real implementations live outside the kernel (the demo installs a console tracer). Hooks receive structured
+  * operands, never strings, so no formatting or stack capture happens unless an installed implementation asks for it.
   */
 abstract class Debugger:
 
@@ -54,7 +52,13 @@ end Debugger
 
 object Debugger:
 
-    // a plain module cell: the proto runs single-threaded demos, and the eval reads the debugger once at entry
+    /** The compile-time gate. The forwarders below splice their dispatch only when this constant is true; false folds every call site to
+      * nothing at the typer, so a production build carries no bytecode at the sites and no `this` escapes the node constructors.
+      * Instrumenting a build is a source edit here.
+      */
+    inline val enabled = true
+
+    // a plain module cell: the proto runs single-threaded demos
     private var current: Debugger = Noop
 
     def install(d: Debugger): Unit = current = d
@@ -62,6 +66,17 @@ object Debugger:
     def uninstall(): Unit = current = Noop
 
     def get: Debugger = current
+
+    inline def onAlloc(value: Any): Unit                              = inline if enabled then get.onAlloc(value)
+    inline def onUnfused(arrow: Any): Unit                            = inline if enabled then get.onUnfused(arrow)
+    inline def onLoop(value: Any, contA: Any, contB: Any): Unit       = inline if enabled then get.onLoop(value, contA, contB)
+    inline def onContext(suspend: Any, state: Any): Unit              = inline if enabled then get.onContext(suspend, state)
+    inline def onContextDefault(suspend: Any, state: Any): Unit       = inline if enabled then get.onContextDefault(suspend, state)
+    inline def onRegionEnter(handler: Any, state: Any): Unit          = inline if enabled then get.onRegionEnter(handler, state)
+    inline def onRegionExit(handler: Any, result: Any): Unit          = inline if enabled then get.onRegionExit(handler, result)
+    inline def onForeign(suspend: Any, handler: Any): Unit            = inline if enabled then get.onForeign(suspend, handler)
+    inline def onHandle(suspend: Any, handler: Any, state: Any): Unit = inline if enabled then get.onHandle(suspend, handler, state)
+    inline def onResult(value: Any): Unit                             = inline if enabled then get.onResult(value)
 
     object Noop extends Debugger
 end Debugger

@@ -27,11 +27,16 @@ end Kyo
 // through the mixin linearization
 sealed trait Arrow[-A, +B, -S] extends Kyo[B, S]:
     // computation nodes report from their own constructor; the guard keeps a node that mixes in the
-    // arrow role from reporting twice
-    if !this.isInstanceOf[Pending[?, ?]] then Debugger.get.onAlloc(this)
+    // arrow role from reporting twice. The inline indirection exists because a constructor body
+    // cannot hold an inline if directly; disabled, the splice is empty and the guard erases with the
+    // hook
+    private inline def reportAlloc(): Unit =
+        inline if Debugger.enabled then
+            if !this.isInstanceOf[Pending[?, ?]] then Debugger.onAlloc(this)
+    reportAlloc()
 
     def apply(v: A): B < S =
-        Debugger.get.onUnfused(this)
+        Debugger.onUnfused(this)
         this(v, Arrow.id)
     def apply[C, S2](v: A < S2, cont: Arrow[B, C, S2]): C < (S & S2)
 

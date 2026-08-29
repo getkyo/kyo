@@ -33,7 +33,7 @@ object Loop:
       *   The type of the single state value maintained between iterations
       */
     sealed abstract class Continue[A] extends Serializable:
-        Debugger.get.onAlloc(this)
+        Debugger.onAlloc(this)
         private[kyo] def _1: A
         override def toString = s"Continue(${_1})"
     end Continue
@@ -46,7 +46,7 @@ object Loop:
       *   The type of the second state value
       */
     sealed abstract class Continue2[A, B] extends Serializable:
-        Debugger.get.onAlloc(this)
+        Debugger.onAlloc(this)
         private[kyo] def _1: A
         private[kyo] def _2: B
         override def toString = s"Continue2(${_1}, ${_2})"
@@ -62,7 +62,7 @@ object Loop:
       *   The type of the third state value
       */
     sealed abstract class Continue3[A, B, C] extends Serializable:
-        Debugger.get.onAlloc(this)
+        Debugger.onAlloc(this)
         private[kyo] def _1: A
         private[kyo] def _2: B
         private[kyo] def _3: C
@@ -81,7 +81,7 @@ object Loop:
       *   The type of the fourth state value
       */
     sealed abstract class Continue4[A, B, C, D] extends Serializable:
-        Debugger.get.onAlloc(this)
+        Debugger.onAlloc(this)
         private[kyo] def _1: A
         private[kyo] def _2: B
         private[kyo] def _3: C

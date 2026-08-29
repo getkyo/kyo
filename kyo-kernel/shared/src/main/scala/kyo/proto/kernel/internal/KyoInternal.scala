@@ -31,7 +31,7 @@ end site
   * eval's destructuring match is exhaustive. Bare arrows are not members, which is what makes "not all arrows are computations" structural.
   */
 sealed trait Pending[+A, -S] extends kyo.proto.Kyo[A, S]:
-    Debugger.get.onAlloc(this)
+    Debugger.onAlloc(this)
     def frame: Frame = Frame.internal
 end Pending
 
