@@ -195,7 +195,9 @@ object Eval:
                             case res: Pending[AX, S] @unchecked =>
                                 bug(s"unhandled: $res")
                             case res: AX @unchecked =>
-                                kyo.handler.done(st, res)
+                                // a completion delivers the raw payload: `done` speaks values, not the
+                                // union, so the representation is stripped exactly once here
+                                kyo.handler.done(st, Nested.unnest[AX](res))
                     end region
                     // a context binding resolves at installation: it derives from whatever the
                     // enclosing scope binds for its tag, and a re-installed region derives again
@@ -230,7 +232,11 @@ object Eval:
                             case contA: Arrow.Chain[A, Any, B, S] @unchecked =>
                                 loop(res, contA.a, contA.b.chain(contB), ctx)
                             case _ =>
-                                loop(contA(res.asInstanceOf[A], contB), Arrow.id, Arrow.id, ctx)
+                                // the value is already union currency and arrows take it as such: casting
+                                // it back to a raw payload would let the lift fire and nest it a second
+                                // time, which is how a computation held as data acquires a wrapper the
+                                // delivery cannot strip
+                                loop(contA(res, contB), Arrow.id, Arrow.id, ctx)
             end match
         end loop
         def run(v: A < S): A < S =

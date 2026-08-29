@@ -47,8 +47,8 @@ object Effect:
     def defer[A, S](f: => A < S)(using Frame): A < S =
         deferInline(f)
 
-    // The payload a deferred body stands on: a raw value inhabits the union's first arm through the
-    // `>: A` bound, so nothing nests and nothing lifts.
+    // The payload a deferred body stands on: the lift resolves Unit through its primitive arm, so the
+    // value is carried as it stands and nothing nests.
     private val unitValue: Unit < Any = ()
 
     // The body lives in the arrow, not the payload: building the record does not run it, and applying

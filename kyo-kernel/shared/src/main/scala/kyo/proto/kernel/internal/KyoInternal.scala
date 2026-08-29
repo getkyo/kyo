@@ -148,7 +148,8 @@ object Kyo:
                     def cont    = Arrow.id
                 end new
             case _ =>
-                handler.done(state, v.asInstanceOf[A])
+                // a completion delivers the raw payload, so the union representation is stripped here
+                handler.done(state, Nested.unnest[A](v))
 
     abstract class Handle[E <: Effect, A, B, C, -S, State] extends Pending[C, S]:
         Debugger.onAlloc(this)
