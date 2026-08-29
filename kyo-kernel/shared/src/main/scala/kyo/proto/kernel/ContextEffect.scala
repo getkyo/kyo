@@ -1,6 +1,7 @@
 package kyo.proto.kernel
 
 import kyo.Frame
+import kyo.Maybe
 import kyo.Result
 import kyo.Tag
 import kyo.proto.Arrow
@@ -177,18 +178,18 @@ object ContextEffect:
                 val h =
                     new HandlerContext[A, E, B, B, S]:
                         def tag                                                     = effectTag
-                        def derive(outer: A)                                        = ifDefined(outer)
+                        def derive(outer: Maybe[A])                                 = outer.fold(ifUndefined)(ifDefined)
                         def fork(current: A)                                        = onFork(current)
                         def join(current: A, forked: A, result: Result[Nothing, A]) = onJoin(current, forked, result)
                         def done(state: A, v0: B)                                   = v0
-                val state0 = ifUndefined
-                // the region node is built at the site: the identity continuation is a constant,
-                // not a captured field
+                // the region node is built at the site: the identity continuation is a constant and
+                // the state slot delegates to the derivation, so neither takes a field and nothing
+                // evaluates before installation
                 new Kyo.Handle[E, B, B, B, S, A]:
                     override def frame = _frame
                     def value          = v
                     def handler        = h
-                    def state          = state0
+                    def state          = h.derive(Maybe.empty)
                     def cont           = Arrow.id
                 end new
             case _ => Nested.unnest[B](v)

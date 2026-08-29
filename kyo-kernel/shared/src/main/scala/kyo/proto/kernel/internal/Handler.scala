@@ -33,10 +33,10 @@ object Handler:
     end HandlerLoop
 
     abstract class HandlerContext[State, E <: ContextEffect[State], A, B, S] extends Handler[E, A, B, S, State]:
-        /** What this binding installs when an enclosing binding of the same tag holds `outer`; the region node's state is what it installs
-          * when nothing is bound. A binding resolves at installation, so a re-installed region derives again from wherever it stands.
+        /** What this binding installs, given what the enclosing scope binds for its tag, Absent when nothing is bound. A binding resolves
+          * at installation, so a re-installed region derives again from wherever it stands.
           */
-        def derive(outer: State): State
+        def derive(outer: Maybe[State]): State
         def fork(current: State): State < S
         def join(current: State, forked: State, result: Result[Nothing, State]): Result[Nothing, State] < S
     end HandlerContext

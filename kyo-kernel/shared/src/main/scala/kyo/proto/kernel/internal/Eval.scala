@@ -1,6 +1,7 @@
 package kyo.proto.kernel.internal
 
 import kyo.Frame
+import kyo.Maybe
 import kyo.bug
 import kyo.proto.Arrow
 import kyo.proto.Loop
@@ -173,7 +174,7 @@ object Eval:
                     val bound = kyo.handler match
                         case h: Handler.HandlerContext[VX, CX, AX, Y, S] @unchecked =>
                             val hc: Handler.HandlerContext[VX, CX, AX, Y, S] = h
-                            if ctx.contains(hc.tag) then st0 = hc.derive(ctx[VX, CX](hc.tag))
+                            st0 = hc.derive(if ctx.contains(hc.tag) then Maybe(ctx[VX, CX](hc.tag)) else Maybe.empty)
                             ctx.update(hc.tag, st0)
                         case _ => ctx
                     Debugger.onRegionEnter(kyo.handler, st0)
