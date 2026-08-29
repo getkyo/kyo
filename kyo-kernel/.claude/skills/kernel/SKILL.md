@@ -125,6 +125,41 @@ nothing more, because the author found every one of these lines acceptable at th
 reasoning re-supplies the blind spot. Findings are mandatory fixes with stable ids; a fix is a new diff, so the
 lenses whose input changed are re-dispatched.
 
+### Dispatch and model selection
+
+Dispatch as `general-purpose` with the sub-skill in the prompt, the way the readme pipeline does:
+
+```
+Agent({ subagent_type: "general-purpose", model: "<below>",
+        description: "...", prompt: "/kernel-rehearsal <change-dir> <diff-range>" })
+```
+
+**Never dispatch a lens as `fork`.** A fork inherits the full parent context, which is precisely the exclusion
+set, and it silently destroys the one property that makes the lens worth running. The failure is invisible: the
+report still arrives, still looks like a review, and is worthless. A fork also ignores the model override.
+
+| lens | model | why |
+|---|---|---|
+| `kernel-rehearsal` | fable | it is the gate, and predicting a picky reviewer is the hardest judgment here: no rubric names what it looks for, and a miss becomes a finding raised live at the user's expense |
+| `kernel-conformance` | opus | detecting substitution is semantic judgment about whether two shapes are the same design, which pattern matching does not reach |
+| `kernel-discipline` | opus | half of it is mechanical set comparison, but the half that matters is refusing a rationalisation, and that is exactly where the author's own judgment already failed |
+| `kernel-pulse` | sonnet | a narrow catalog on an unfinished tree, dispatched often; it has to stay cheap and quiet or it stops being read at the moment it is useful |
+
+Model choice tracks judgment difficulty, never context. A stronger model does not license a weaker brief: the
+exclusion set is the mechanism, and the model only decides how well the lens uses what it was given.
+
+**Correlated blind spots** are the one risk this table does not solve. A `fable` rehearsal reading a change
+written by a `fable` author shares its author's instincts even with the transcript withheld, so the failures it
+is least likely to catch are exactly the author's characteristic ones. Three things mitigate it, in order of
+how much they carry: `rulings.md` supplies a rubric the author did not write, `kernel-discipline` enumerates
+mechanically rather than judging, and the tiers below put a second lens on anything touching the evaluator. On
+a tier-three change where the rehearsal returns PASS on the first round, consider a second rehearsal at a
+different model before believing it; a first-round PASS on a large change is more often a lens that did not
+engage than a change that is clean.
+
+Re-dispatch after fixes runs only the lenses whose input changed. A fix to a flag verdict re-runs
+`kernel-discipline`; a fix to the code re-runs all of them, because the diff is every lens's input.
+
 ### rulings.md, and why this does not become theater
 
 `rulings.md` beside this file records the user's objections verbatim and dated, and it is `kernel-rehearsal`'s
