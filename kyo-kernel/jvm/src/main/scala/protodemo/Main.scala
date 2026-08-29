@@ -249,6 +249,23 @@ object Main:
         Kyo.handle[Add, Int, Int, Any, Unit](body, h, ())
     end recovering
 
+    // an acquisition whose release runs when the extent ends, the bracket shape
+    def bracketed: Int < Any =
+        Effect.bracket(lazily(10))(a => lazily(a))(a => lazily(a + 1)).map(_ + 100)
+
+    // a release owed through a crossing and a failure, the bracket panic shape
+    def bracketedPanic: Int < Any =
+        val h = new Handler.HandlerCont[CInt, CInt, Add, Int, Int, Any]:
+            def tag                                          = addTag
+            override def recover(state: Unit, ex: Throwable) = Maybe(-1)
+            def done(state: Unit, v: Int)                    = v
+            def run[X, C, S2](input: Int, cont: Arrow[Int, Int, Add], k: Arrow[Int, C, S2]): C < (Add & S2) =
+                k(cont(input + 1, Arrow.id), Arrow.id)
+        val body: Int < Add =
+            Effect.bracket(lazily(10))(a => lazily(a))(a => add(a).map(v => (throw new Exception("boom")): Int))
+        Kyo.handle[Add, Int, Int, Any, Unit](body, h, ())
+    end bracketedPanic
+
     def scenario(name: String)(v: => Int < Any): Unit =
         println(
             s"""|
@@ -295,5 +312,7 @@ object Main:
         scenario("data join")(dataJoin)
         scenario("layered binding")(layered)
         scenario("panic recovery")(recovering)
+        scenario("bracket")(bracketed)
+        scenario("bracket panic")(bracketedPanic)
     end main
 end Main

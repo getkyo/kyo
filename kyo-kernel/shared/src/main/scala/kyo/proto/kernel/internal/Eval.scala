@@ -96,7 +96,17 @@ object Eval:
                                 // parameterized over the suspension's payload so each arm calls it with its own
                                 // refined continuation, keeping the rebuilt applies typed at the true input
                                 def reenter[P, D, S2](k0: Arrow[P, AX, EX & S], x: P < S2, cont2: Arrow[Y, D, S2]): D < (S & S2) =
-                                    Kyo.handle[EX, AX, Y, S & S2, VX](k0.head(x, k0.tail), kyo.handler, st).chain(cont2)
+                                    // the resumed application runs before the region re-installs, so the
+                                    // extent's guard is carried here: a throw consults the same recover the
+                                    // entry guard would, and the recovered outcome replaces the region
+                                    // instead of re-entering it. Nothing inside the try is driven, so a
+                                    // throw consults at most once
+                                    try Kyo.handle[EX, AX, Y, S & S2, VX](k0.head(x, k0.tail), kyo.handler, st).chain(cont2)
+                                    catch
+                                        case ex if NonFatal(ex) =>
+                                            val r = kyo.handler.recover(st, ex).getOrElse(throw ex)
+                                            Debugger.onRecover(kyo.handler, ex)
+                                            r.chain(cont2)
                                 res match
                                     case sa: Kyo.SuspendArrow[IY, OY, EY, VY, AX, EX & S] @unchecked =>
                                         val sax: Kyo.SuspendArrow[IY, OY, EY, VY, AX, EX & S] = sa
