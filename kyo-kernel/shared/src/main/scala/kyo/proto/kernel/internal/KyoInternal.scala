@@ -64,6 +64,7 @@ object Kyo:
             s"SuspendArrow(${tag.show}, $input, ${if cont eq this then "this" else short(cont)})"
     end SuspendArrow
 
+    // TODO let's avoid these factory methods. The development is a lot about memoty layout, allocations, being explicit about instantiations is good and gives space to find optimizations for example avoiding a field for a contsntat
     object SuspendArrow:
         def apply[I[_], O[_], E <: ArrowEffect[I, O], State, A, S](
             t: Tag[E],
@@ -78,46 +79,32 @@ object Kyo:
 
     abstract class SuspendContext[State, E <: ContextEffect[State], A, S] extends Suspend[E, A, S]:
         type Op = State
-        def update: State => State
-        def withCont[B, S2](c: Arrow[Op, B, S2]) = SuspendContext(tag, update, c)
+        def update(v: State): State
+        def withCont[B, S2](c: Arrow[Op, B, S2]) =
+            // the copy delegates to the original through the outer reference instead of capturing
+            // each member as its own field
+            new SuspendContext[State, E, B, S2]:
+                def tag              = SuspendContext.this.tag
+                def update(v: State) = SuspendContext.this.update(v)
+                def cont             = c
         override def toString =
-            s"SuspendContext(${tag.show}, $update, ${if cont eq this then "this" else short(cont)})"
-    end SuspendContext
-
-    object SuspendContext:
-        def apply[State, E <: ContextEffect[State], A, S](
-            t: Tag[E],
-            u: State => State,
-            c: Arrow[State, A, S]
-        ): SuspendContext[State, E, A, S] =
-            new SuspendContext[State, E, A, S]:
-                def tag    = t
-                def update = u
-                def cont   = c
+            s"SuspendContext(${tag.show}, ${if cont eq this then "this" else short(cont)})"
     end SuspendContext
 
     abstract class SuspendContextDefault[State, E <: ContextEffect[State], A, S] extends Suspend[E, A, S]:
         type Op = State
         def default: State
-        def update: State => State
-        def withCont[B, S2](c: Arrow[Op, B, S2]) = SuspendContextDefault(tag, default, update, c)
+        def update(v: State): State
+        def withCont[B, S2](c: Arrow[Op, B, S2]) =
+            // the copy delegates to the original through the outer reference instead of capturing
+            // each member as its own field
+            new SuspendContextDefault[State, E, B, S2]:
+                def tag              = SuspendContextDefault.this.tag
+                def default          = SuspendContextDefault.this.default
+                def update(v: State) = SuspendContextDefault.this.update(v)
+                def cont             = c
         override def toString =
-            s"SuspendContextDefault(${tag.show}, $default, $update, ${if cont eq this then "this" else short(cont)})"
-    end SuspendContextDefault
-
-    // TODO let's avoid these factory methods. The development is a lot about memoty layout, allocations, being explicit about instantiations is good and gives space to find optimizations for example avoiding a field for a contsntat
-    object SuspendContextDefault:
-        def apply[State, E <: ContextEffect[State], A, S](
-            t: Tag[E],
-            d: State,
-            u: State => State,
-            c: Arrow[State, A, S]
-        ): SuspendContextDefault[State, E, A, S] =
-            new SuspendContextDefault[State, E, A, S]:
-                def tag     = t
-                def default = d
-                def update  = u
-                def cont    = c
+            s"SuspendContextDefault(${tag.show}, $default, ${if cont eq this then "this" else short(cont)})"
     end SuspendContextDefault
 
     def handle[E <: Effect, A, B, S, State](v: A < (E & S), handler: Handler[E, A, B, S, State], state: State): B < S =

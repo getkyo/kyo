@@ -39,7 +39,7 @@ object Main:
         Effect.defer(f)
 
     def cfg: Int < Any =
-        Kyo.SuspendContextDefault[Int, Cfg, Int, Any](cfgTag, 0, v => v, Arrow.id)
+        ContextEffect.suspend[Int, Cfg](cfgTag, 0)
 
     inline def runAdd[S](v: Int < (Add & S)): Int < S =
         ArrowEffect.handleCont[CInt, CInt, Add, Int, S, Any](addTag, v)(
@@ -81,12 +81,6 @@ object Main:
     def runPick(v: Int < Pick): Int < Any =
         runPickWith(v)(a => a)
 
-    val cfgHandler = new Handler.HandlerContext[Int, Cfg, Int, Int, Any]:
-        def tag                                                           = cfgTag
-        def fork(current: Int)                                            = current
-        def join(current: Int, forked: Int, result: Result[Nothing, Int]) = result
-        def done(state: Int, v: Int)                                      = v
-
     // deep pure map chain, the pure iteration shape
     def pure: Int < Any =
         (1: Int < Any).map(_ + 1).map(_ * 2).map(_ + 3)
@@ -125,7 +119,7 @@ object Main:
     // a read answered by an enclosing region
     def context: Int < Any =
         val body: Int < Any = cfg.map(_ + 1)
-        Kyo.handle[Cfg, Int, Int, Any, Int](body, cfgHandler, 41)
+        ContextEffect.handle(cfgTag, 41)(body)
 
     // a read past every region, answered by the boundary default
     def contextDefault: Int < Any =
@@ -181,7 +175,7 @@ object Main:
     def nested: Int < Any =
         val body: Int < Add  = cfg.map(c => add(c).map(_ + c))
         val inner: Int < Any = runAdd(body)
-        Kyo.handle[Cfg, Int, Int, Any, Int](inner, cfgHandler, 10)
+        ContextEffect.handle(cfgTag, 10)(inner)
     end nested
 
     // an unbound context read crossing a region to the boundary default, the foreign context shape

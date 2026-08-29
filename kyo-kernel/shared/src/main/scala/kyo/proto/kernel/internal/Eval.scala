@@ -62,9 +62,9 @@ object Eval:
                                 val cA                                    = contA
                                 val cB                                    = contB
                                 new Kyo.SuspendContext[VX, CX, C, S] with Arrow.Transform[VX, C, S]:
-                                    def tag    = scx.tag
-                                    def update = scx.update
-                                    def cont   = this
+                                    def tag           = scx.tag
+                                    def update(v: VX) = scx.update(v)
+                                    def cont          = this
                                     override def apply[D, S2](x: VX < S2, c2: Arrow[C, D, S2]) =
                                         x match
                                             case p: Pending[VX, S2] @unchecked => Effect.defer(p, this, c2)
@@ -76,10 +76,10 @@ object Eval:
                                 val cA                                           = contA
                                 val cB                                           = contB
                                 new Kyo.SuspendContextDefault[VX, CX, C, S] with Arrow.Transform[VX, C, S]:
-                                    def tag     = sdx.tag
-                                    def default = sdx.default
-                                    def update  = sdx.update
-                                    def cont    = this
+                                    def tag           = sdx.tag
+                                    def default       = sdx.default
+                                    def update(v: VX) = sdx.update(v)
+                                    def cont          = this
                                     override def apply[D, S2](x: VX < S2, c2: Arrow[C, D, S2]) =
                                         x match
                                             case p: Pending[VX, S2] @unchecked => Effect.defer(p, this, c2)
@@ -115,9 +115,9 @@ object Eval:
                                         val scx: Kyo.SuspendContext[VX, CX, AX, EX & S] = sc
                                         // one allocation fulfilling both roles: the rebuilt suspension and its re-handling transform
                                         new Kyo.SuspendContext[VX, CX, Y, S] with Arrow.Transform[VX, Y, S]:
-                                            def tag    = scx.tag
-                                            def update = scx.update
-                                            def cont   = this
+                                            def tag           = scx.tag
+                                            def update(v: VX) = scx.update(v)
+                                            def cont          = this
                                             override def apply[D, S2](x: VX < S2, cont2: Arrow[Y, D, S2]) =
                                                 x match
                                                     case kyo: Pending[VX, S2] @unchecked =>
@@ -129,10 +129,10 @@ object Eval:
                                         val sdx: Kyo.SuspendContextDefault[VX, CX, AX, EX & S] = sd
                                         // one allocation fulfilling both roles: the rebuilt suspension and its re-handling transform
                                         new Kyo.SuspendContextDefault[VX, CX, Y, S] with Arrow.Transform[VX, Y, S]:
-                                            def tag     = sdx.tag
-                                            def default = sdx.default
-                                            def update  = sdx.update
-                                            def cont    = this
+                                            def tag           = sdx.tag
+                                            def default       = sdx.default
+                                            def update(v: VX) = sdx.update(v)
+                                            def cont          = this
                                             override def apply[D, S2](x: VX < S2, cont2: Arrow[Y, D, S2]) =
                                                 x match
                                                     case kyo: Pending[VX, S2] @unchecked =>
