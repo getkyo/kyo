@@ -276,6 +276,13 @@ object Main:
         )
     end discarded
 
+    // a release owed through a crossing that resumes and completes, the bracket crossing shape
+    def bracketedCrossing: Int < Any =
+        val body: Int < Add =
+            Effect.bracket(lazily(10))(a => lazily(a))(a => add(a).map(_ + 1))
+        runAdd(body)
+    end bracketedCrossing
+
     def scenario(name: String)(v: => Int < Any): Unit =
         println(
             s"""|
@@ -325,5 +332,6 @@ object Main:
         scenario("bracket")(bracketed)
         scenario("bracket panic")(bracketedPanic)
         scenario("discarded continuation")(discarded)
+        scenario("bracket crossing")(bracketedCrossing)
     end main
 end Main

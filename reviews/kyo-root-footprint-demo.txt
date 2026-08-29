@@ -13,21 +13,19 @@ WARNING: Restricted methods will be blocked in a future release unless native ac
 [info] loading settings for project effervescent-painting-backus-build-build from metals.sbt...
 [info] loading project definition from /Users/fwbrasil/workspace/kyo/.claude/worktrees/effervescent-painting-backus/project/project
 [success] Generated .bloop/effervescent-painting-backus-build-build.json
-[success] Total time: 1 s, completed Aug 29, 2026, 11:17:57 AM
+[success] Total time: 1 s, completed Aug 29, 2026, 11:22:46 AM
 [info] loading settings for project effervescent-painting-backus-build from build.sbt, metals.sbt, plugins.sbt...
 [info] loading project definition from /Users/fwbrasil/workspace/kyo/.claude/worktrees/effervescent-painting-backus/project
 [success] Generated .bloop/effervescent-painting-backus-build.json
-[success] Total time: 1 s, completed Aug 29, 2026, 11:17:58 AM
+[success] Total time: 1 s, completed Aug 29, 2026, 11:22:46 AM
 [info] loading settings for project kyoJVM from build.sbt...
 [info] resolving key references (272374 settings) ...
 [info] set current project to kyoJVM (in build file:/Users/fwbrasil/workspace/kyo/.claude/worktrees/effervescent-painting-backus/)
 [info] set current project to kyoJVM (in build file:/Users/fwbrasil/workspace/kyo/.claude/worktrees/effervescent-painting-backus/)
-[success] Total time: 0 s, completed Aug 29, 2026, 11:18:09 AM
-[info] scalafmt: Formatting 36 Scala sources (/Users/fwbrasil/workspace/kyo/.claude/worktrees/effervescent-painting-backus/kyo-kernel/jvm)...
-[info] scalafmt: Formatting 41 Scala sources (/Users/fwbrasil/workspace/kyo/.claude/worktrees/effervescent-painting-backus/kyo-kernel/jvm)...
-[info] compiling 41 Scala sources to /Users/fwbrasil/workspace/kyo/.claude/worktrees/effervescent-painting-backus/kyo-kernel/jvm/target/scala-3.8.4/classes ...
+[info] scalafmt: Formatting 1 Scala sources (/Users/fwbrasil/workspace/kyo/.claude/worktrees/effervescent-painting-backus/kyo-kernel/jvm)...
+[info] scalafmt: Reformatted 1 Scala sources
+[info] compiling 1 Scala source to /Users/fwbrasil/workspace/kyo/.claude/worktrees/effervescent-painting-backus/kyo-kernel/jvm/target/scala-3.8.4/classes ...
 [info] done compiling
-[success] Total time: 16 s, completed Aug 29, 2026, 11:18:25 AM
 [info] running (fork) protodemo.Main 
 [info] ================================================================================
 [info] 🧪 pure
@@ -2576,28 +2574,150 @@ WARNING: Restricted methods will be blocked in a future release unless native ac
 [info] --------------------------------------------------------------------------------
 [info] 📊 allocs: 9 (Defer x4, SuspendArrow x3, Handle x2) | unfused applies: 0
 [info] ✅ result: 99
-[success] Total time: 1 s, completed Aug 29, 2026, 11:18:26 AM
-[info] compiling 18 Scala sources to /Users/fwbrasil/workspace/kyo/.claude/worktrees/effervescent-painting-backus/kyo-prelude/jvm/target/scala-3.8.4/classes ...
-Warning: mocking up superclass for module class internal
-[info] done compiling
-[info] compiling 3 Scala sources to /Users/fwbrasil/workspace/kyo/.claude/worktrees/effervescent-painting-backus/kyo-parse/jvm/target/scala-3.8.4/classes ...
-[info] compiling 50 Scala sources to /Users/fwbrasil/workspace/kyo/.claude/worktrees/effervescent-painting-backus/kyo-core/jvm/target/scala-3.8.4/classes ...
-[info] done compiling
-[info] done compiling
-[info] compiling 15 Scala sources to /Users/fwbrasil/workspace/kyo/.claude/worktrees/effervescent-painting-backus/kyo-system/jvm/target/scala-3.8.4/classes ...
-[info] done compiling
-[info] compiling 1 Scala source to /Users/fwbrasil/workspace/kyo/.claude/worktrees/effervescent-painting-backus/kyo-schema-json/jvm/target/scala-3.8.4/classes ...
-[info] done compiling
-[info] compiling 18 Scala sources to /Users/fwbrasil/workspace/kyo/.claude/worktrees/effervescent-painting-backus/kyo-doctest/jvm/target/scala-3.8.4/classes ...
-[info] done compiling
-[info] compiling 36 Scala sources to /Users/fwbrasil/workspace/kyo/.claude/worktrees/effervescent-painting-backus/kyo-kernel/jvm/target/scala-3.8.4/test-classes ...
+[info] ================================================================================
+[info] 🧪 bracket crossing
+[info] ================================================================================
+[info] 🧮 alloc: Defer((), this(bracketedCrossing.lazily(Main.scala:282:38)), Id)
+[info] 📐 classic* 24 B [hdr 12 | x 4 | f 4 | pad 4] ∙ compact 16 B [hdr 8 | x 4 | f 4]
+[info] 🧮 alloc: Defer(Defer((), this(bracketedCrossing.lazily(Main.scala:282:38)), Id), this(bracketedCrossing.bracket(Main.scala:282:79)), Id)
+[info] 📐 classic* 24 B [hdr 12 | v 4 | cont 4 | pad 4] ∙ compact 16 B [hdr 8 | v 4 | cont 4]
+[info] 🧮 alloc: Handle(Defer(Defer((), this(bracketedCrossing.lazily(Main.scala:282:38)), Id), this(bracketedCrossing.bracket(Main.scala:282:79)), Id), Handler(protodemo.Main$.Add), ())
+[info] 📐 classic* 24 B [hdr 12 | body 4 | h 4 | pad 4] ∙ compact 16 B [hdr 8 | body 4 | h 4]
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: Handle(Defer(Defer((), this(bracketedCrossing.lazily(Main.scala:282:38)), Id), this(bracketedCrossing.bracket(Main.scala:282:79)), Id), Handler(protodemo.Main$.Add), ())
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📥 region enter
+[info] handler: Handler(protodemo.Main$.Add)
+[info] state: ()
+[info] stack: 8
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(Defer((), this(bracketedCrossing.lazily(Main.scala:282:38)), Id), this(bracketedCrossing.bracket(Main.scala:282:79)), Id)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer((), this(bracketedCrossing.lazily(Main.scala:282:38)), Id)
+[info]     contA: Defer(Defer((), this(bracketedCrossing.lazily(Main.scala:282:38)), Id), this(bracketedCrossing.bracket(Main.scala:282:79)), Id)
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: ()
+[info]     contA: Defer((), this(bracketedCrossing.lazily(Main.scala:282:38)), Id)
+[info]     contB: Defer(Defer((), this(bracketedCrossing.lazily(Main.scala:282:38)), Id), this(bracketedCrossing.bracket(Main.scala:282:79)), Id)
+[info]     🧮 alloc: Defer((), this(bracketedCrossing.bracket(Main.scala:282:79)), Id)
+[info]     📐 classic* 16 B [hdr 12 | a 4] ∙ compact 16 B [hdr 8 | a 4 | pad 4]
+[info]     🧮 alloc: Handle(Defer((), this(bracketedCrossing.bracket(Main.scala:282:79)), Id), Handler(kyo.proto.kernel.Bracket), 10)
+[info]     📐 classic* 24 B [hdr 12 | kyo 4 | h 4 | st 4] ∙ compact 24 B [hdr 8 | kyo 4 | h 4 | st 4 | pad 4]
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Handle(Defer((), this(bracketedCrossing.bracket(Main.scala:282:79)), Id), Handler(kyo.proto.kernel.Bracket), 10)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     📥 region enter
+[info]     handler: Handler(kyo.proto.kernel.Bracket)
+[info]     state: 10
+[info]     stack: 10
+[info]         ------------------------------------------------------------------------
+[info]         🔁 loop
+[info]         value: Defer((), this(bracketedCrossing.bracket(Main.scala:282:79)), Id)
+[info]         contA: Id
+[info]         contB: Id
+[info]         ------------------------------------------------------------------------
+[info]         🔁 loop
+[info]         value: ()
+[info]         contA: Defer((), this(bracketedCrossing.bracket(Main.scala:282:79)), Id)
+[info]         contB: Id
+[info]         🧮 alloc: SuspendArrow(protodemo.Main$.Add, 10, Id)
+[info]         📐 classic* 16 B [hdr 12 | n 4] ∙ compact 16 B [hdr 8 | n 4 | pad 4]
+[info]         🧮 alloc: Defer(SuspendArrow(protodemo.Main$.Add, 10, Id), this($anonfun.map(Main.scala:282:78)), Id)
+[info]         📐 classic* 24 B [hdr 12 | v 4 | cont 4 | $outer 4] ∙ compact 24 B [hdr 8 | v 4 | cont 4 | $outer 4 | pad 4]
+[info]         ------------------------------------------------------------------------
+[info]         🔁 loop
+[info]         value: Defer(SuspendArrow(protodemo.Main$.Add, 10, Id), this($anonfun.map(Main.scala:282:78)), Id)
+[info]         contA: Id
+[info]         contB: Id
+[info]         ------------------------------------------------------------------------
+[info]         🔁 loop
+[info]         value: SuspendArrow(protodemo.Main$.Add, 10, Id)
+[info]         contA: Defer(SuspendArrow(protodemo.Main$.Add, 10, Id), this($anonfun.map(Main.scala:282:78)), Id)
+[info]         contB: Id
+[info]         🧮 alloc: SuspendArrow(protodemo.Main$.Add, 10, Defer(SuspendArrow(protodemo.Main$.Add, 10, Id), this($anonfun.map(Main.scala:282:78)), Id))
+[info]         📐 classic* 24 B [hdr 12 | t 4 | in 4 | c 4] ∙ compact 24 B [hdr 8 | t 4 | in 4 | c 4 | pad 4]
+[info]         ------------------------------------------------------------------------
+[info]         🫧 foreign suspend
+[info]         suspend: SuspendArrow(protodemo.Main$.Add, 10, Defer(SuspendArrow(protodemo.Main$.Add, 10, Id), this($anonfun.map(Main.scala:282:78)), Id))
+[info]         handler: Handler(kyo.proto.kernel.Bracket)
+[info]         🧮 alloc: SuspendArrow(protodemo.Main$.Add, 10, this)
+[info]         📐 classic* 24 B [hdr 12 | sax 4 | kyo 4 | st 4] ∙ compact 24 B [hdr 8 | sax 4 | kyo 4 | st 4 | pad 4]
+[info]     ----------------------------------------------------------------------------
+[info]     📤 region exit
+[info]     handler: Handler(kyo.proto.kernel.Bracket)
+[info]     result: SuspendArrow(protodemo.Main$.Add, 10, this)
+[info]     stack: 10
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: SuspendArrow(protodemo.Main$.Add, 10, this)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     ⚡ handle
+[info]     suspend: SuspendArrow(protodemo.Main$.Add, 10, this)
+[info]     handler: Handler(protodemo.Main$.Add)
+[info]     state: ()
+[info]         🧮 alloc: Defer((), this($anonfun.lazily(Main.scala:282:54)), Id)
+[info]         📐 classic* 24 B [hdr 12 | x 4 | f 4 | pad 4] ∙ compact 16 B [hdr 8 | x 4 | f 4]
+[info]         🧮 alloc: Defer(Defer((), this($anonfun.lazily(Main.scala:282:54)), Id), this(bracketedCrossing.bracket(Main.scala:282:79)), Id)
+[info]         📐 classic* 32 B [hdr 12 | v 4 | v 4 | cont 4 | $outer 4 | pad 4] ∙ compact 24 B [hdr 8 | v 4 | v 4 | cont 4 | $outer 4]
+[info]         ------------------------------------------------------------------------
+[info]         📦 result
+[info]         value: Defer(Defer((), this($anonfun.lazily(Main.scala:282:54)), Id), this(bracketedCrossing.bracket(Main.scala:282:79)), Id)
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer(Defer((), this($anonfun.lazily(Main.scala:282:54)), Id), this(bracketedCrossing.bracket(Main.scala:282:79)), Id)
+[info]     contA: Id
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: Defer((), this($anonfun.lazily(Main.scala:282:54)), Id)
+[info]     contA: Defer(Defer((), this($anonfun.lazily(Main.scala:282:54)), Id), this(bracketedCrossing.bracket(Main.scala:282:79)), Id)
+[info]     contB: Id
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: ()
+[info]     contA: Defer((), this($anonfun.lazily(Main.scala:282:54)), Id)
+[info]     contB: Defer(Defer((), this($anonfun.lazily(Main.scala:282:54)), Id), this(bracketedCrossing.bracket(Main.scala:282:79)), Id)
+[info]     ----------------------------------------------------------------------------
+[info]     🔁 loop
+[info]     value: 12
+[info]     contA: Id
+[info]     contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📤 region exit
+[info] handler: Handler(protodemo.Main$.Add)
+[info] result: 12
+[info] stack: 8
+[info] --------------------------------------------------------------------------------
+[info] 🔁 loop
+[info] value: 12
+[info] contA: Id
+[info] contB: Id
+[info] --------------------------------------------------------------------------------
+[info] 📊 allocs: 11 (Defer x6, SuspendArrow x3, Handle x2) | unfused applies: 0
+[info] ✅ result: 12
+[success] Total time: 7 s, completed Aug 29, 2026, 11:23:04 AM
+[info] compiling 1 Scala source to /Users/fwbrasil/workspace/kyo/.claude/worktrees/effervescent-painting-backus/kyo-kernel/jvm/target/scala-3.8.4/classes ...
 [info] done compiling
 WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
 WARNING: sun.misc.Unsafe::objectFieldOffset has been called by scala.runtime.LazyVals$ (file:/Users/fwbrasil/Library/Caches/Coursier/v1/https/repo1.maven.org/maven2/org/scala-lang/scala-library/3.8.4/scala-library-3.8.4.jar)
 WARNING: Please consider reporting this to the maintainers of class scala.runtime.LazyVals$
 WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] DebuggerTest:
-[info] - the noop leaves results untouched (18 milliseconds)
+[info] - the noop leaves results untouched (19 milliseconds)
 [info] - enter observes strict applications inside the eval (2 milliseconds)
 [info] - full-trace mode routes every strict step through the eval (1 millisecond)
 [info] - routed steps surface with their call-site frames at onDefer (1 millisecond)
@@ -2609,60 +2729,60 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] - uninstall stops the stream (1 millisecond)
 [info] - an eval that began before install never observes the stack hooks (1 millisecond)
 [info] - a park and resume inside a session keeps the stream and the result (1 millisecond)
-[info] - a routed bracket still releases exactly once (2 milliseconds)
+[info] - a routed bracket still releases exactly once (3 milliseconds)
 [info] EffectTraceThreadingTest:
-[info] - concurrent attach on a shared exception instance stays bounded and non-throwing (67 milliseconds)
+[info] - concurrent attach on a shared exception instance stays bounded and non-throwing (68 milliseconds)
 [info] EvalThreadingTest:
-[info] - a captured continuation resumes on another thread (4 milliseconds)
+[info] - a captured continuation resumes on another thread (5 milliseconds)
 [info] partial evaluation under stops
 [info] - a preemption stop reifies and resumes with handler state (1 millisecond)
-[info] - a stop delivered between slices short-circuits (1 millisecond)
-[info] - a cross-thread stop parks a running slice (1 millisecond)
+[info] - a stop delivered between slices short-circuits (0 milliseconds)
+[info] - a cross-thread stop parks a running slice (0 milliseconds)
 [info] - a cross-thread stop parks a settled spin with no suspensions (1 millisecond)
-[info] - a stop the slice outruns is consumed at the boundary (0 milliseconds)
+[info] - a stop the slice outruns is consumed at the boundary (1 millisecond)
 [info] ArrowEffectBytecodeTest:
 [info] - suspend (23 milliseconds)
 [info] - suspendWith (7 milliseconds)
 [info] - handleCont (7 milliseconds)
 [info] EffectTraceTest:
-[info] - a throw in a handler clause carries the suspension and its region (2 milliseconds)
-[info] - a throw in a continuation frame names its site (1 millisecond)
+[info] - a throw in a handler clause carries the suspension and its region (1 millisecond)
+[info] - a throw in a continuation frame names its site (2 milliseconds)
 [info] - an unhandled suspension arrives enriched (2 milliseconds)
-[info] - nested evals accumulate their regions innermost first (2 milliseconds)
+[info] - nested evals accumulate their regions innermost first (3 milliseconds)
 [info] - NoStackTrace keeps its carrier and its empty stack (1 millisecond)
-[info] - a chain past the cap reports the drop (2 milliseconds)
+[info] - a chain past the cap reports the drop (3 milliseconds)
 [info] - a fatal error passes through untouched (1 millisecond)
 [info] the effect frames of a throw inside a mapped step
 [info] - are carried through an eval (1 millisecond)
-[info] - name the call site's callee and the enclosing definition (0 milliseconds)
+[info] - name the call site's callee and the enclosing definition (1 millisecond)
 [info] - run innermost first (0 milliseconds)
 [info] - skip the internal frame placeholder (1 millisecond)
 [info] - a fused suspension carries the operation's own frame (1 millisecond)
 [info] - a suspension boundary the physical stack cannot cross (0 milliseconds)
 [info] a deferred block
-[info] - carries the steps after a budget rescue (0 milliseconds)
+[info] - carries the steps after a budget rescue (1 millisecond)
 [info] region nesting
 [info] - appears as one element per handler tag, innermost first (1 millisecond)
 [info] - names each region exactly once (1 millisecond)
 [info] - a fused region names the body, then the region (1 millisecond)
 [info] - a throw under an emitting clause walks without looping (1 millisecond)
-[info] - a throw in the second application of a multi-shot capture names each region once (1 millisecond)
+[info] - a throw in the second application of a multi-shot capture names each region once (0 milliseconds)
 [info] - a fatal error keeps its original stack trace (0 milliseconds)
 [info] the cap
 [info] - stops the walk at exactly the cap and records what it did not reach (1 millisecond)
-[info] - bounds a chain far deeper than the Java stack (54 milliseconds)
+[info] - bounds a chain far deeper than the Java stack (53 milliseconds)
 [info] - a failure of the walk itself leaves the original failure travelling (1 millisecond)
-[info] - the carrier renders the frames as a message (1 millisecond)
+[info] - the carrier renders the frames as a message (0 milliseconds)
 [info] - the effect frames of a throw are carried through a catching guard (1 millisecond)
 [info] - a second crossing rewrites the spliced trace rather than duplicating it (1 millisecond)
 [info] EvalCaptureTowerTest:
 [info] - a long map tower across captures evaluates in bounded stack (17 milliseconds)
-[info] - a capture across an inner region keeps the region as an entry (3 milliseconds)
-[info] - a deep capture is multi-shot (1 millisecond)
+[info] - a capture across an inner region keeps the region as an entry (1 millisecond)
+[info] - a deep capture is multi-shot (0 milliseconds)
 [info] ArrowEffectThreadingTest:
 [info] - a capture across the fast path replays on another thread (2 milliseconds)
-[info] - a hoarded fast-path continuation replays on another thread after the region finished (0 milliseconds)
-[info] - deep state transitions under a suspending clause fit a small stack (14 milliseconds)
+[info] - a hoarded fast-path continuation replays on another thread after the region finished (1 millisecond)
+[info] - deep state transitions under a suspending clause fit a small stack (18 milliseconds)
 [info] EvalTest:
 [info] values and map
 [info] - a settled value evaluates to itself (0 milliseconds)
@@ -2670,7 +2790,7 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] - map composes (0 milliseconds)
 [info] - evaluates andThen and unit (0 milliseconds)
 [info] - evalNow is present only for settled values (1 millisecond)
-[info] - a long map tower evaluates in bounded stack (11 milliseconds)
+[info] - a long map tower evaluates in bounded stack (10 milliseconds)
 [info] - a deep map tower over a suspension evaluates in bounded stack (13 milliseconds)
 [info] - deep recursion through map pays rescues only (8 milliseconds)
 [info] - a computation held as a value round trips through the box (1 millisecond)
@@ -2681,23 +2801,23 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] - map receives a computation held as a value unopened (0 milliseconds)
 [info] handleCont
 [info] - answers with the continuation in hand (1 millisecond)
-[info] - the captured continuation is multi-shot (0 milliseconds)
-[info] - can end the computation without resuming (1 millisecond)
+[info] - the captured continuation is multi-shot (1 millisecond)
+[info] - can end the computation without resuming (0 milliseconds)
 [info] - a settled input applies done strictly (0 milliseconds)
 [info] - done applies to the settled result (0 milliseconds)
 [info] - deep sequential operations are stack safe (9 milliseconds)
-[info] - a capture crossing an inner region resumes it without re-running its body (0 milliseconds)
-[info] - each shot of a multi-shot capture resumes from capture-time state (1 millisecond)
+[info] - a capture crossing an inner region resumes it without re-running its body (1 millisecond)
+[info] - each shot of a multi-shot capture resumes from capture-time state (2 milliseconds)
 [info] handleLoop
-[info] - answers every operation in place (1 millisecond)
-[info] - Loop.done stops the region and bypasses done (0 milliseconds)
-[info] - done sees the settled result (1 millisecond)
+[info] - answers every operation in place (0 milliseconds)
+[info] - Loop.done stops the region and bypasses done (1 millisecond)
+[info] - done sees the settled result (0 milliseconds)
 [info] - a settled input applies done strictly (0 milliseconds)
 [info] - deep sequential operations are stack safe (10 milliseconds)
 [info] - the innermost region of a tag answers (0 milliseconds)
 [info] - a map after the region applies to the result (0 milliseconds)
-[info] - regions exit innermost first (1 millisecond)
-[info] - a foreign operation crosses the region in place (0 milliseconds)
+[info] - regions exit innermost first (0 milliseconds)
+[info] - a foreign operation crosses the region in place (1 millisecond)
 [info] - an effectful answer built by a deferred block resolves on the settled outcome path (1 millisecond)
 [info] - a deferred clause outcome resolves before the region continues (1 millisecond)
 [info] - a clause that suspends before its outcome runs outside its region (1 millisecond)
@@ -2707,9 +2827,9 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] - a clause suspending and then answering effectfully runs the answer under this handler (0 milliseconds)
 [info] - an effectful answer's own-tag re-raise is answered by this handler (1 millisecond)
 [info] - a clause suspending and then answering with an own-tag re-raise is answered by this handler (1 millisecond)
-[info] - an effectful answer's remainder runs inside the interior region (0 milliseconds)
+[info] - an effectful answer's remainder runs inside the interior region (1 millisecond)
 [info] - an effectful answer's remainder raises the interior's effect with no outer handler for it (0 milliseconds)
-[info] - a clause suspending and then answering effectfully keeps the remainder inside the interior region (1 millisecond)
+[info] - a clause suspending and then answering effectfully keeps the remainder inside the interior region (0 milliseconds)
 [info] - an effectful answer's fused remainder runs inside the interior region (1 millisecond)
 [info] - an effectful answer's fused remainder raises the interior's effect with no outer handler for it (1 millisecond)
 [info] - a clause suspending and then answering effectfully keeps the fused remainder inside the interior region (0 milliseconds)
@@ -2720,7 +2840,7 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] handleLoopState
 [info] - threads state through operations (1 millisecond)
 [info] - done observes the final state (1 millisecond)
-[info] - Loop.done bypasses done (1 millisecond)
+[info] - Loop.done bypasses done (0 milliseconds)
 [info] - composes a state update with a done (1 millisecond)
 [info] - state survives a foreign crossing (1 millisecond)
 [info] - state threads through updates (1 millisecond)
@@ -2732,45 +2852,45 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] clause scope
 [info] - a stateful clause's suspension is answered outside its scope (1 millisecond)
 [info] - a handleCont clause's suspension is answered outside its scope (0 milliseconds)
-[info] - a clause's suspension before done is answered outside its scope (0 milliseconds)
-[info] - a clause's effectful answer is answered outside its scope (1 millisecond)
+[info] - a clause's suspension before done is answered outside its scope (1 millisecond)
+[info] - a clause's effectful answer is answered outside its scope (0 milliseconds)
 [info] - a clause's own-tag suspension before its outcome is answered by the successor (1 millisecond)
 [info] - a clause does not see handlers inside its own scope (1 millisecond)
 [info] - a leaked clause effect cannot observe the region's inner state (1 millisecond)
 [info] - the region body's handlers are intact after the clause returns (1 millisecond)
 [info] a captured continuation is a value
 [info] - resumes after its region completed, in a fresh evaluation, each shot from capture-time state (1 millisecond)
-[info] - resumes under a later region of the same tag, which answers the remainder (1 millisecond)
-[info] - a shot evaluated inside the clause leaves the region intact for the next (0 milliseconds)
-[info] - a continuation folded from the eval stack runs every pending map exactly once (1 millisecond)
-[info] - a continuation applied twice replays trailing maps twice at any depth (1 millisecond)
+[info] - resumes under a later region of the same tag, which answers the remainder (0 milliseconds)
+[info] - a shot evaluated inside the clause leaves the region intact for the next (1 millisecond)
+[info] - a continuation folded from the eval stack runs every pending map exactly once (2 milliseconds)
+[info] - a continuation applied twice replays trailing maps twice at any depth (0 milliseconds)
 [info] - stays valid after its eval completes, replaying the trailing maps once per shot (1 millisecond)
-[info] - an unhandled operation is a bug (0 milliseconds)
-[info] - an operation no region in the row handles is a bug (1 millisecond)
-[info] - a nested eval shares the thread's stack and sees none of the outer regions (0 milliseconds)
-[info] - an eval cleans its stack after a throw (1 millisecond)
+[info] - an unhandled operation is a bug (1 millisecond)
+[info] - an operation no region in the row handles is a bug (0 milliseconds)
+[info] - a nested eval shares the thread's stack and sees none of the outer regions (1 millisecond)
+[info] - an eval cleans its stack after a throw (0 milliseconds)
 [info] - a throw inside a region leaves no findable handler behind (1 millisecond)
-[info] - a throw escaping a root eval leaves the safepoint depth unchanged (2 milliseconds)
-[info] - the budget rescues rather than overflowing (0 milliseconds)
+[info] - a throw escaping a root eval leaves the safepoint depth unchanged (1 millisecond)
+[info] - the budget rescues rather than overflowing (1 millisecond)
 [info] partial evaluation
 [info] - partial completes when nothing stops (0 milliseconds)
-[info] - a stop already pending ends the slice before it starts (0 milliseconds)
+[info] - a stop already pending ends the slice before it starts (1 millisecond)
 [info] - a parked slice re-enters and completes on the next slice (0 milliseconds)
-[info] - a computation held as a value passes through a parked slice intact (0 milliseconds)
+[info] - a computation held as a value passes through a parked slice intact (1 millisecond)
 [info] ContextEffectThreadingTest:
 [info] - a parked computation resumes with its binding (1 millisecond)
 [info] - a park holding a binding resumes on another thread against that thread's enclosing scope (1 millisecond)
-[info] - concurrent resumes under different enclosures do not observe each other's resolution (15 milliseconds)
+[info] - concurrent resumes under different enclosures do not observe each other's resolution (14 milliseconds)
 [info] ArrowTest:
 [info] identity
 [info] - returns its input (0 milliseconds)
-[info] - is one shared instance across element types (0 milliseconds)
+[info] - is one shared instance across element types (1 millisecond)
 [info] - is its own head and tail (0 milliseconds)
-[info] - passes a pending input through unchanged (1 millisecond)
+[info] - passes a pending input through unchanged (0 milliseconds)
 [info] apply builds an arrow from a function
-[info] - over a settled input (0 milliseconds)
+[info] - over a settled input (1 millisecond)
 [info] - over a pending input (0 milliseconds)
-[info] - with an effectful body (0 milliseconds)
+[info] - with an effectful body (1 millisecond)
 [info] - is multi-shot (0 milliseconds)
 [info] - runs its body once per application (0 milliseconds)
 [info] recursive builds an arrow that can call itself
@@ -2783,62 +2903,62 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] - with identity on the right returns the same arrow (0 milliseconds)
 [info] - exposes the two halves as head and tail (0 milliseconds)
 [info] - a transform is its own head with an identity tail (0 milliseconds)
-[info] - a deep chain evaluates in bounded stack (723 milliseconds)
+[info] - a deep chain evaluates in bounded stack (753 milliseconds)
 [info] - carries effects from both halves (1 millisecond)
 [info] the two-argument apply
 [info] - is application fused with composition (0 milliseconds)
 [info] - defers on a suspended input and evaluates as the composition (0 milliseconds)
 [info] - defers when the budget is drained and still completes (0 milliseconds)
-[info] - stays budget-balanced across repeated direct calls (1 millisecond)
-[info] - a throwing body leaves the thread evaluating normally afterwards (1 millisecond)
+[info] - stays budget-balanced across repeated direct calls (0 milliseconds)
+[info] - a throwing body leaves the thread evaluating normally afterwards (0 milliseconds)
 [info] frame
-[info] - a transform reports the frame it was built with (0 milliseconds)
+[info] - a transform reports the frame it was built with (1 millisecond)
 [info] - a chain reports the internal frame (0 milliseconds)
 [info] - an arrow is not a function (0 milliseconds)
-[info] - an arrow applies to a plain value (1 millisecond)
+[info] - an arrow applies to a plain value (0 milliseconds)
 [info] toString
 [info] - renders identity (0 milliseconds)
 [info] - renders a transform with its frame (0 milliseconds)
 [info] - renders a chain as its two links (0 milliseconds)
-[info] - renders a nested chain at every level (1 millisecond)
+[info] - renders a nested chain at every level (0 milliseconds)
 [info] - renders a deep chain in bounded stack (4 milliseconds)
 [info] LoopTest:
 [info] apply
-[info] - with a single iteration (0 milliseconds)
+[info] - with a single iteration (1 millisecond)
 [info] - with multiple iterations (0 milliseconds)
 [info] - with no iterations (0 milliseconds)
 [info] - accumulate results in a List (0 milliseconds)
 [info] - stack safety (5 milliseconds)
 [info] - stack safety with nested loops (1 millisecond)
-[info] - stack safety with multiple levels of nested loops (1 millisecond)
+[info] - stack safety with multiple levels of nested loops (0 milliseconds)
+[info] - suspend at the beginning (0 milliseconds)
+[info] - suspend in the middle (1 millisecond)
+[info] - suspend at the end (0 milliseconds)
+[info] apply2
+[info] - with a single iteration (1 millisecond)
+[info] - with multiple iterations (0 milliseconds)
+[info] - with no iterations (0 milliseconds)
+[info] - stack safety (5 milliseconds)
+[info] - stack safety with nested loops (14 milliseconds)
+[info] - stack safety with interleaved iterations (7 milliseconds)
+[info] - suspend at the beginning (0 milliseconds)
+[info] - suspend in the middle (1 millisecond)
+[info] - suspend at the end (0 milliseconds)
+[info] apply3
+[info] - with a single iteration (1 millisecond)
+[info] - with multiple iterations (0 milliseconds)
+[info] - with no iterations (0 milliseconds)
+[info] - stack safety (4 milliseconds)
+[info] - stack safety with interleaved iterations (9 milliseconds)
 [info] - suspend at the beginning (1 millisecond)
 [info] - suspend in the middle (0 milliseconds)
 [info] - suspend at the end (1 millisecond)
-[info] apply2
-[info] - with a single iteration (0 milliseconds)
-[info] - with multiple iterations (0 milliseconds)
-[info] - with no iterations (0 milliseconds)
-[info] - stack safety (4 milliseconds)
-[info] - stack safety with nested loops (12 milliseconds)
-[info] - stack safety with interleaved iterations (7 milliseconds)
-[info] - suspend at the beginning (1 millisecond)
-[info] - suspend in the middle (0 milliseconds)
-[info] - suspend at the end (0 milliseconds)
-[info] apply3
-[info] - with a single iteration (0 milliseconds)
-[info] - with multiple iterations (1 millisecond)
-[info] - with no iterations (0 milliseconds)
-[info] - stack safety (4 milliseconds)
-[info] - stack safety with interleaved iterations (10 milliseconds)
-[info] - suspend at the beginning (1 millisecond)
-[info] - suspend in the middle (0 milliseconds)
-[info] - suspend at the end (0 milliseconds)
 [info] apply4
-[info] - with a single iteration (1 millisecond)
+[info] - with a single iteration (0 milliseconds)
 [info] - with multiple iterations (0 milliseconds)
-[info] - with no iterations (1 millisecond)
-[info] - stack safety (4 milliseconds)
-[info] - stack safety with interleaved iterations (11 milliseconds)
+[info] - with no iterations (0 milliseconds)
+[info] - stack safety (5 milliseconds)
+[info] - stack safety with interleaved iterations (12 milliseconds)
 [info] - suspend at the beginning (1 millisecond)
 [info] - suspend in the middle (1 millisecond)
 [info] - suspend at the end (0 milliseconds)
@@ -2846,31 +2966,31 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] - with a single iteration (0 milliseconds)
 [info] - with multiple iterations (0 milliseconds)
 [info] - with no iterations (0 milliseconds)
-[info] - stack safety (2 milliseconds)
-[info] - suspend (1 millisecond)
+[info] - stack safety (3 milliseconds)
+[info] - suspend (0 milliseconds)
 [info] indexed
-[info] - with a single iteration (0 milliseconds)
+[info] - with a single iteration (1 millisecond)
 [info] - with multiple iterations (0 milliseconds)
 [info] - with no iterations (0 milliseconds)
 [info] - stack safety (6 milliseconds)
 [info] - suspend (1 millisecond)
 [info] indexed2
 [info] - with a single iteration (0 milliseconds)
-[info] - with multiple iterations (1 millisecond)
-[info] - with no iterations (0 milliseconds)
-[info] - stack safety (8 milliseconds)
-[info] - suspend (0 milliseconds)
-[info] indexed3
-[info] - with a single iteration (0 milliseconds)
 [info] - with multiple iterations (0 milliseconds)
 [info] - with no iterations (0 milliseconds)
-[info] - stack safety (9 milliseconds)
+[info] - stack safety (8 milliseconds)
+[info] - suspend (1 millisecond)
+[info] indexed3
+[info] - with a single iteration (1 millisecond)
+[info] - with multiple iterations (0 milliseconds)
+[info] - with no iterations (0 milliseconds)
+[info] - stack safety (10 milliseconds)
 [info] - suspend (1 millisecond)
 [info] indexed4
 [info] - with a single iteration (0 milliseconds)
-[info] - with multiple iterations (0 milliseconds)
-[info] - with no iterations (1 millisecond)
-[info] - stack safety (18 milliseconds)
+[info] - with multiple iterations (1 millisecond)
+[info] - with no iterations (0 milliseconds)
+[info] - stack safety (11 milliseconds)
 [info] - suspend (1 millisecond)
 [info] foreach
 [info] - with a single iteration (0 milliseconds)
@@ -2885,36 +3005,36 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] - continues while condition is true (0 milliseconds)
 [info] - does not execute when condition is initially false (0 milliseconds)
 [info] - with suspended condition (0 milliseconds)
-[info] - with suspended body (1 millisecond)
-[info] - stack safety (4 milliseconds)
+[info] - with suspended body (0 milliseconds)
+[info] - stack safety (3 milliseconds)
 [info] - stack safety with suspended operations (6 milliseconds)
 [info] constructors
-[info] - take explicit type arguments at every arity (0 milliseconds)
+[info] - take explicit type arguments at every arity (1 millisecond)
 [info] - the no-state constructors take one type argument (0 milliseconds)
 [info] - a two-state outcome states its three type arguments (0 milliseconds)
-[info] - continue evaluates its state once, at construction (0 milliseconds)
-[info] - a done payload that is a computation held as a value stays data (1 millisecond)
+[info] - continue evaluates its state once, at construction (1 millisecond)
+[info] - a done payload that is a computation held as a value stays data (0 milliseconds)
 [info] outcome payloads held as data
-[info] - stay data when the outcome computation suspends first (0 milliseconds)
+[info] - stay data when the outcome computation suspends first (1 millisecond)
 [info] - stay data when suspended iterations precede the done (0 milliseconds)
 [info] - stay data when a suspended iteration produces the done (0 milliseconds)
-[info] - stay data through indexed when the outcome computation suspends (1 millisecond)
+[info] - stay data through indexed when the outcome computation suspends (0 milliseconds)
 [info] - stay data through the two-state loop when the outcome computation suspends (0 milliseconds)
 [info] - stay data through foreach when the outcome computation suspends (0 milliseconds)
-[info] - a continue state that is a computation stays data across iterations (1 millisecond)
+[info] - a continue state that is a computation stays data across iterations (0 milliseconds)
 [info] - a doubly nested payload loses exactly one level per eval (0 milliseconds)
 [info] MaskTest:
 [info] - a masked operation tunnels past an inner handler and is answered outside run (1 millisecond)
-[info] - every operation of the masked effect tunnels (0 milliseconds)
+[info] - every operation of the masked effect tunnels (1 millisecond)
 [info] - an operation outside the mask is answered by the inner handler (0 milliseconds)
 [info] - masking is selective: other effects stay live for local handlers and outer answers flow back in (1 millisecond)
 [info] interactions
-[info] - a bracket inside the mask releases after the tunneled answer flows back (1 millisecond)
-[info] - a bracket inside the mask releases when the outer handler discards the continuation (1 millisecond)
+[info] - a bracket inside the mask releases after the tunneled answer flows back (2 milliseconds)
+[info] - a bracket inside the mask releases when the outer handler discards the continuation (0 milliseconds)
 [info] - catching inside the mask catches a failure raised after the tunneled answer returns (4 milliseconds)
 [info] - a stateful local handler threads its state across tunneled operations (1 millisecond)
 [info] - a multi-shot outer handler replays the masked region and its local effects (1 millisecond)
-[info] - deep masked operations are stack safe (19 milliseconds)
+[info] - deep masked operations are stack safe (18 milliseconds)
 [info] - masking the same effect twice behaves as one mask (0 milliseconds)
 [info] - masks of different effects stack independently (1 millisecond)
 [info] HandlerTest:
@@ -2923,58 +3043,58 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] - defers a pending region result and answers it once the eval reaches it (1 millisecond)
 [info] - runs its continuation after done (0 milliseconds)
 [info] a stateful handler
-[info] - applies done with its initial state when applied as a plain arrow (0 milliseconds)
+[info] - applies done with its initial state when applied as a plain arrow (1 millisecond)
 [info] - applies done with an explicit state (0 milliseconds)
-[info] - the successor carries a new initial state and delegates everything else (1 millisecond)
+[info] - the successor carries a new initial state and delegates everything else (0 milliseconds)
 [info] - the successor leaves the original's initial state alone (0 milliseconds)
-[info] - answers a region through the eval (0 milliseconds)
+[info] - answers a region through the eval (1 millisecond)
 [info] - the generic cont answers commits the continuation before running the clause (1 millisecond)
 [info] ImplicitsTest:
 [info] lift
 [info] - primitives (0 milliseconds)
 [info] - String (0 milliseconds)
 [info] - Unit (0 milliseconds)
-[info] - concrete class (0 milliseconds)
+[info] - concrete class (1 millisecond)
 [info] - AnyVal wrapper (0 milliseconds)
 [info] - case object (0 milliseconds)
 [info] - collection (0 milliseconds)
 [info] - generic value (0 milliseconds)
 [info] - generic value holding a computation nests (0 milliseconds)
 [info] lift rejections
-[info] - inference widening does not nest implicitly (0 milliseconds)
-[info] - generic method effect mismatch (1 millisecond)
+[info] - inference widening does not nest implicitly (1 millisecond)
+[info] - generic method effect mismatch (0 milliseconds)
 [info] - kyo modules do not lift (0 milliseconds)
 [info] lifted functions
 [info] - one param (0 milliseconds)
-[info] - two params (0 milliseconds)
-[info] - three params (1 millisecond)
+[info] - two params (1 millisecond)
+[info] - three params (0 milliseconds)
 [info] - four params (0 milliseconds)
 [info] - do not lift into nested computations (0 milliseconds)
 [info] Render instance
 [info] - displays pure values wrapped, inner types via their own Render (1 millisecond)
-[info] - displays a computation that has not settled as the operation it waits on (0 milliseconds)
+[info] - displays a computation that has not settled as the operation it waits on (1 millisecond)
 [info] EffectTest:
-[info] - defer delays evaluation until the eval (1 millisecond)
-[info] - defer suspends effects performed by its body (0 milliseconds)
+[info] - defer delays evaluation until the eval (0 milliseconds)
+[info] - defer suspends effects performed by its body (1 millisecond)
 [info] - defer composes with maps without running early (0 milliseconds)
 [info] - deferInline delays evaluation until the eval (0 milliseconds)
-[info] - defer evaluates once per eval of a fresh value (0 milliseconds)
-[info] - nested defer calls run innermost last, in order (1 millisecond)
+[info] - defer evaluates once per eval of a fresh value (1 millisecond)
+[info] - nested defer calls run innermost last, in order (0 milliseconds)
 [info] the deferral node
 [info] - runs the value into its continuation (0 milliseconds)
 [info] - runs both continuations in order (0 milliseconds)
 [info] - collapses an identity second continuation into the one-continuation node (0 milliseconds)
-[info] - defers a pending value (0 milliseconds)
+[info] - defers a pending value (1 millisecond)
 [info] catching
 [info] - match (0 milliseconds)
 [info] - no match (0 milliseconds)
 [info] - failure in map (1 millisecond)
 [info] - multiple exception types (0 milliseconds)
 [info] - failure in a map after a region (1 millisecond)
-[info] - failure in a map after a first region (1 millisecond)
-[info] - failure in a map after a stateful region (0 milliseconds)
+[info] - failure in a map after a first region (2 milliseconds)
+[info] - failure in a map after a stateful region (1 millisecond)
 [info] - failure after a stateful region reached through a continuation (1 millisecond)
-[info] - catching catches past the budget rescue (1 millisecond)
+[info] - catching catches past the budget rescue (0 milliseconds)
 [info] - catching catches past the budget inside a stateful region (1 millisecond)
 [info] - catching does not reach into a boxed computation (1 millisecond)
 [info] - catching guards a stateful region across a park (1 millisecond)
@@ -2983,53 +3103,53 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] - combining multiple effects (0 milliseconds)
 [info] bracket
 [info] - releases after the use completes, not at the boundary (1 millisecond)
-[info] - releases when the use throws, and the exception still propagates (1 millisecond)
+[info] - releases when the use throws, and the exception still propagates (0 milliseconds)
 [info] - releases when the use suspends and the continuation is answered (1 millisecond)
-[info] - releases when a clause receives the continuation and never applies it (0 milliseconds)
-[info] - a handleLoop clause that stops the computation still releases (1 millisecond)
+[info] - releases when a clause receives the continuation and never applies it (1 millisecond)
+[info] - a handleLoop clause that stops the computation still releases (0 milliseconds)
 [info] - a handleLoopState clause that stops the computation still releases (1 millisecond)
 [info] - a stateful clause that stops after advancing still releases (1 millisecond)
-[info] - every outstanding bracket releases when a clause stops the computation (1 millisecond)
+[info] - every outstanding bracket releases when a clause stops the computation (2 milliseconds)
 [info] - a discarded continuation releases every outstanding bracket (1 millisecond)
-[info] - does not release when the acquire never completes (0 milliseconds)
-[info] - releases exactly once when the use completes and the eval then ends (1 millisecond)
-[info] - nested brackets release innermost first (1 millisecond)
+[info] - does not release when the acquire never completes (1 millisecond)
+[info] - releases exactly once when the use completes and the eval then ends (0 milliseconds)
+[info] - nested brackets release innermost first (2 milliseconds)
 [info] - nested brackets both release when the inner use throws (1 millisecond)
 [info] - sequential brackets each release (1 millisecond)
-[info] - the release itself may be a deferred computation (1 millisecond)
+[info] - the release itself may be a deferred computation (0 milliseconds)
 [info] - a continuation held past the end of the eval refuses to run again (1 millisecond)
-[info] - an acquire resumed twice owes a release for each resume (2 milliseconds)
-[info] - a bracket spanning a budget park releases once (0 milliseconds)
+[info] - an acquire resumed twice owes a release for each resume (1 millisecond)
+[info] - a bracket spanning a budget park releases once (1 millisecond)
 [info] - a slice stopped inside a bracket releases once, at the end (1 millisecond)
-[info] - deeply nested brackets release in bounded stack (3 milliseconds)
-[info] - many sequential brackets each release (3 milliseconds)
-[info] - a bracket inside a nested eval releases at that eval's boundary (0 milliseconds)
+[info] - deeply nested brackets release in bounded stack (4 milliseconds)
+[info] - many sequential brackets each release (4 milliseconds)
+[info] - a bracket inside a nested eval releases at that eval's boundary (1 millisecond)
 [info] - an acquire that is itself a bracket releases both (1 millisecond)
 [info] - the release receives the outcome: the result on completion, the failure on a throw (1 millisecond)
 [info] - nested releases run innermost first on a failure (1 millisecond)
 [info] - a use that fails after a resume still releases once with the failure (1 millisecond)
 [info] - a park inside nested brackets carries both releases (1 millisecond)
 [info] - a park evaluated twice releases its resource once (1 millisecond)
-[info] - abandoning a parked bracket releases with the abandoned outcome, and a later resume is harmless (0 milliseconds)
-[info] - abandoning nested parked brackets releases innermost first (1 millisecond)
+[info] - abandoning a parked bracket releases with the abandoned outcome, and a later resume is harmless (10 milliseconds)
+[info] - abandoning nested parked brackets releases innermost first (2 milliseconds)
 [info] - abandoning a park with no outstanding releases is a no-op (0 milliseconds)
 [info] - abandoning a slice parked in the acquire window still releases (1 millisecond)
 [info] - a release that throws during unwind does not lose the failure or the recovery (0 milliseconds)
-[info] - a recovery that throws surfaces its own failure with the original suppressed (0 milliseconds)
-[info] - an acquire that throws owes no release (1 millisecond)
-[info] - an effectful acquire whose handler fails owes no release (0 milliseconds)
-[info] - an interior recovery turns the release outcome into the recovered success (1 millisecond)
+[info] - a recovery that throws surfaces its own failure with the original suppressed (1 millisecond)
+[info] - an acquire that throws owes no release (0 milliseconds)
+[info] - an effectful acquire whose handler fails owes no release (1 millisecond)
+[info] - an interior recovery turns the release outcome into the recovered success (0 milliseconds)
 [info] - a failing use with an effectful acquire still releases with the failure (0 milliseconds)
 [info] - a release that throws during abandonment does not silence the others (1 millisecond)
 [info] - a release may itself bracket (1 millisecond)
 [info] - a resource the use hands back is still released (1 millisecond)
 [info] - a use that ignores the resource still releases it (0 milliseconds)
-[info] - a release that throws on the completing path surfaces (0 milliseconds)
+[info] - a release that throws on the completing path surfaces (1 millisecond)
 [info] - a release that throws does not stop the releases after it (1 millisecond)
 [info] - a release that throws while the eval is already failing is suppressed onto the original (1 millisecond)
 [info] - every release runs even when several throw (1 millisecond)
 [info] - a bracket interleaved with a region releases after the region completes (1 millisecond)
-[info] - a region installed inside the use does not intercept the release (0 milliseconds)
+[info] - a region installed inside the use does not intercept the release (1 millisecond)
 [info] - a resource a multi-shot clause shares is released at the first branch, and the second is refused (2 milliseconds)
 [info] - a multi-shot clause that acquires per branch releases each where its branch ends (1 millisecond)
 [info] - a discarded continuation releases when its region completes, before the handler's continuation (1 millisecond)
@@ -3041,8 +3161,8 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] - nested brackets shared by a multi-shot clause are refused at the second branch (2 milliseconds)
 [info] - a continuation held past the end of the eval refuses every time it is applied (1 millisecond)
 [info] - a multi-shot handleFirst clause is refused at its second branch (1 millisecond)
-[info] - branches of a multi-shot clause share the resource the use closed over (0 milliseconds)
-[info] - a branch built inside a clause and evaluated later is refused (1 millisecond)
+[info] - branches of a multi-shot clause share the resource the use closed over (1 millisecond)
+[info] - a branch built inside a clause and evaluated later is refused (0 milliseconds)
 [info] - a bracket that encloses a multi-shot region releases after every branch (1 millisecond)
 [info] - a recovery outside the bracket runs after the release, which is told the failure (1 millisecond)
 [info] - nested brackets separated by a handler still release innermost first on a failure (1 millisecond)
@@ -3064,24 +3184,24 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] EffectTracePhysicalTest:
 [info] - the synthesized frames lead the spliced trace (1 millisecond)
 [info] - the spliced trace leads with the file the effect frames name (0 milliseconds)
-[info] - a suspension boundary the physical stack cannot cross (1 millisecond)
+[info] - a suspension boundary the physical stack cannot cross (0 milliseconds)
 [info] SafepointUnstartedThreadTest:
-[info] - stop misses a thread that never evaluated (0 milliseconds)
+[info] - stop misses a thread that never evaluated (1 millisecond)
 [info] PendingTest:
 [info] - a settled payload evaluates to itself (0 milliseconds)
 [info] - eval returns a pending payload without running it (1 millisecond)
 [info] - map receives a pending payload as a value (0 milliseconds)
 [info] - a map can return a computation as its value (0 milliseconds)
-[info] - a payload returned past the budget stays a value (1 millisecond)
+[info] - a payload returned past the budget stays a value (2 milliseconds)
 [info] - a handler applies done to a settled payload without driving it (0 milliseconds)
-[info] - a region returns a foreign payload untouched (1 millisecond)
+[info] - a region returns a foreign payload untouched (0 milliseconds)
 [info] - an answer can be a computation value (0 milliseconds)
-[info] - a captured continuation accepts a computation answer (1 millisecond)
+[info] - a captured continuation accepts a computation answer (0 milliseconds)
 [info] - mapping over a payload derives a new payload (0 milliseconds)
 [info] - a payload handles inside map (1 millisecond)
 [info] - a generic function nests its result across effects (0 milliseconds)
-[info] - a loop can end its region with a computation result (0 milliseconds)
-[info] - a fused continuation receives the answer payload (1 millisecond)
+[info] - a loop can end its region with a computation result (1 millisecond)
+[info] - a fused continuation receives the answer payload (0 milliseconds)
 [info] - double nesting round trips (0 milliseconds)
 [info] - a loop answer payload delivers unwrapped through a bare suspension (0 milliseconds)
 [info] - a suspended loop answer delivering a payload resumes unwrapped (1 millisecond)
@@ -3089,7 +3209,7 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] - a loop can end its region effectfully with a computation result (1 millisecond)
 [info] - a fused handler continuation receives a payload as a value (0 milliseconds)
 [info] - flatMap chains a settled value into an effectful computation (0 milliseconds)
-[info] - flatMap receives a pending payload as a value (1 millisecond)
+[info] - flatMap receives a pending payload as a value (0 milliseconds)
 [info] - andThen sequences effects and discards the value (0 milliseconds)
 [info] - andThen leaves a discarded payload untouched (0 milliseconds)
 [info] - unit discards the result (0 milliseconds)
@@ -3098,7 +3218,7 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] - evalNow is absent for a suspended computation (0 milliseconds)
 [info] - evalNow builds its receiver once (0 milliseconds)
 [info] - evalNow returns a payload unwrapped (0 milliseconds)
-[info] - flatten runs a nested payload (1 millisecond)
+[info] - flatten runs a nested payload (0 milliseconds)
 [info] - flatten merges the effects of both layers (0 milliseconds)
 [info] - handle applies transformations fluently (0 milliseconds)
 [info] - map on a settled value runs eagerly (0 milliseconds)
@@ -3106,14 +3226,14 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] - flatMap and andThen compose (0 milliseconds)
 [info] - a computation as a value round-trips through the nested box (0 milliseconds)
 [info] - a computation as a value survives mapping (0 milliseconds)
-[info] - the extension surface applies to a val of nested type (0 milliseconds)
+[info] - the extension surface applies to a val of nested type (1 millisecond)
 [info] - a pending value does not lift into a nested computation implicitly (0 milliseconds)
 [info] - a kyo module does not lift into a computation (0 milliseconds)
-[info] - deep map chains evaluate (2 milliseconds)
+[info] - deep map chains evaluate (1 millisecond)
 [info] - deep nested computations evaluate (5 milliseconds)
-[info] - construction past the safepoint budget rescues instead of overflowing (1 millisecond)
-[info] - a long map tower on a rescued computation evaluates in bounded stack (57 milliseconds)
-[info] - eval does not compile for pending effects (0 milliseconds)
+[info] - construction past the safepoint budget rescues instead of overflowing (0 milliseconds)
+[info] - a long map tower on a rescued computation evaluates in bounded stack (109 milliseconds)
+[info] - eval does not compile for pending effects (1 millisecond)
 [info] - a for-comprehension chains through flatMap and map (0 milliseconds)
 [info] lift
 [info] - a pure value lifts into a computation (0 milliseconds)
@@ -3123,11 +3243,11 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info]   - three params (0 milliseconds)
 [info]   - four params (0 milliseconds)
 [info]   - five params (0 milliseconds)
-[info]   - six params (1 millisecond)
-[info] - a computation-returning function does not lift again (0 milliseconds)
+[info]   - six params (0 milliseconds)
+[info] - a computation-returning function does not lift again (1 millisecond)
 [info] - a generic method does not accept a wider effect row (0 milliseconds)
 [info] - a pure function passes to map point-free (1 millisecond)
-[info] - a generic function passes to map point-free (1 millisecond)
+[info] - a generic function passes to map point-free (0 milliseconds)
 [info] handle
 [info] - applies a function to a settled value (0 milliseconds)
 [info] - applies a function to an effectful value (0 milliseconds)
@@ -3136,7 +3256,7 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] - can produce a value instead of a computation (0 milliseconds)
 [info] - works with two functions (0 milliseconds)
 [info] - works with three functions (0 milliseconds)
-[info] - works with four functions (1 millisecond)
+[info] - works with four functions (0 milliseconds)
 [info] - works with five functions (0 milliseconds)
 [info] - works with six functions (0 milliseconds)
 [info] - works with seven functions (0 milliseconds)
@@ -3146,104 +3266,104 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] show
 [info] - displays a settled value through the inner type's Render (0 milliseconds)
 [info] nested computations
-[info] - basic nesting operations (0 milliseconds)
+[info] - basic nesting operations (1 millisecond)
 [info] - multiple effects (1 millisecond)
 [info] - map over a nested value denied by the budget defers the wrapped value (1 millisecond)
 [info] - flatMap over a nested value denied by the budget defers the wrapped value (0 milliseconds)
 [info] - flatten over a doubly nested value denied by the budget strips exactly one level (0 milliseconds)
-[info] - andThen over a nested value denied by the budget discards it unevaluated (1 millisecond)
+[info] - andThen over a nested value denied by the budget discards it unevaluated (0 milliseconds)
 [info] - unit over a nested value denied by the budget discards it unevaluated (0 milliseconds)
 [info] - map on nested (0 milliseconds)
 [info] - unit on nested (0 milliseconds)
-[info] - andThen on nested (1 millisecond)
-[info] - handle on nested (0 milliseconds)
+[info] - andThen on nested (0 milliseconds)
+[info] - handle on nested (1 millisecond)
 [info] - multiple operations (1 millisecond)
 [info] - method returning nested computation (0 milliseconds)
 [info] - nested effect suspensions (0 milliseconds)
 [info] - nested effect suspension lifted function (0 milliseconds)
-[info] - nested effect suspension widened lifted function (1 millisecond)
+[info] - nested effect suspension widened lifted function (0 milliseconds)
 [info] - generic lifted functions (0 milliseconds)
 [info] - evalNow accepts nested computations (0 milliseconds)
-[info] - depth leaked by throwing maps resets at the eval loop (1 millisecond)
+[info] - depth leaked by throwing maps resets at the eval loop (2 milliseconds)
 [info] CanLiftTest:
 [info] - resolves for non-pending types (0 milliseconds)
 [info] - resolves for an abstract type in a generic context (0 milliseconds)
 [info] - rejects a known pending type (0 milliseconds)
 [info] - resolves for Unit and Nothing (0 milliseconds)
-[info] - sees through a type alias (0 milliseconds)
+[info] - sees through a type alias (1 millisecond)
 [info] - resolves for higher-kinded types (0 milliseconds)
 [info] - resolves for a multi-parameter type (0 milliseconds)
-[info] - gates an extension method (1 millisecond)
+[info] - gates an extension method (0 milliseconds)
 [info] - resolves under a type bound (0 milliseconds)
 [info] - resolves for a union, including one with a pending arm (0 milliseconds)
-[info] - resolves for an intersection of non-pending types and rejects one with a pending arm (0 milliseconds)
+[info] - resolves for an intersection of non-pending types and rejects one with a pending arm (1 millisecond)
 [info] - case objects lift without reaching the macro (0 milliseconds)
 [info] - a kyo module object does not lift (0 milliseconds)
 [info] ArrowEffectTest:
 [info] handleLoop
-[info] - answers every operation in place (1 millisecond)
+[info] - answers every operation in place (0 milliseconds)
 [info] - Loop.done stops the region (1 millisecond)
 [info] - done sees the settled result (0 milliseconds)
 [info] - a settled input applies done strictly (0 milliseconds)
-[info] - deep sequential operations are stack safe (11 milliseconds)
+[info] - deep sequential operations are stack safe (12 milliseconds)
 [info] - the innermost region of a tag answers (1 millisecond)
 [info] - a clause answers effectfully (1 millisecond)
-[info] - a clause ends the region effectfully (1 millisecond)
+[info] - a clause ends the region effectfully (0 milliseconds)
 [info] - every clause suspension re-arms the region (1 millisecond)
-[info] - a clause suspension resolves outside the region (1 millisecond)
+[info] - a clause suspension resolves outside the region (2 milliseconds)
 [info] - a clause answer survives its own deep evaluation (2 milliseconds)
 [info] - a clause suspends on its own effect per operation (1 millisecond)
-[info] - a suspended clause dispatch is multi-shot (1 millisecond)
+[info] - a suspended clause dispatch is multi-shot (0 milliseconds)
 [info] - a foreign operation crosses the region in place (1 millisecond)
 [info] - an effectful answer resolves through an outer handler (1 millisecond)
-[info] - a clause may suspend before producing its outcome (0 milliseconds)
+[info] - a clause may suspend before producing its outcome (1 millisecond)
 [info] - done climbs past an inner handler without running its remainder (0 milliseconds)
-[info] - handles nested per recursion step in bounded stack (19 milliseconds)
+[info] - handles nested per recursion step in bounded stack (15 milliseconds)
 [info] - context effects arise from answering handlers (0 milliseconds)
-[info] - stays in force across a foreign crossing captured by an outer handle (1 millisecond)
+[info] - stays in force across a foreign crossing captured by an outer handle (0 milliseconds)
 [info] - the innermost done wins under nested same-tag handlers (1 millisecond)
 [info] handle
 [info] - answers with the continuation in hand (0 milliseconds)
 [info] - the captured continuation is multi-shot (1 millisecond)
 [info] - can end the computation without resuming (0 milliseconds)
 [info] - a settled input applies done strictly (0 milliseconds)
-[info] - done applies to the settled result (1 millisecond)
-[info] - deep sequential operations are stack safe (7 milliseconds)
+[info] - done applies to the settled result (0 milliseconds)
+[info] - deep sequential operations are stack safe (26 milliseconds)
 [info] - answers a single operation (0 milliseconds)
-[info] - lazy: the handled computation is a value and answers at eval (0 milliseconds)
-[info] - a long map tower on a pending suspension handles in bounded stack (51 milliseconds)
+[info] - lazy: the handled computation is a value and answers at eval (1 millisecond)
+[info] - a long map tower on a pending suspension handles in bounded stack (98 milliseconds)
 [info] - stays in force across a foreign crossing with a trailing transform (1 millisecond)
-[info] - stays in force across a budget bounce with a trailing transform (1 millisecond)
-[info] - handler state threads through resumptions (0 milliseconds)
+[info] - stays in force across a budget bounce with a trailing transform (0 milliseconds)
+[info] - handler state threads through resumptions (1 millisecond)
 [info] - a foreign operation passes through and keeps the handler attached (0 milliseconds)
 [info] - nested handlers answer their own operations (1 millisecond)
 [info] - a supertype handler leaves a subtype effect in the row (1 millisecond)
-[info] - a handler at a subtype effect answers a computation typed at the supertype (0 milliseconds)
+[info] - a handler at a subtype effect answers a computation typed at the supertype (1 millisecond)
 [info] - a map chained after the region applies to the result (0 milliseconds)
 [info] - a map chained after the region runs outside the scope (1 millisecond)
 [info] - a map chained after a settled pass-through applies strictly (0 milliseconds)
 [info] handleLoopState
 [info] - threads state through operations (1 millisecond)
-[info] - done observes the final state (1 millisecond)
-[info] - deep state transitions under a suspending clause are stack safe (7 milliseconds)
-[info] - Loop.done bypasses done (1 millisecond)
+[info] - done observes the final state (0 milliseconds)
+[info] - deep state transitions under a suspending clause are stack safe (8 milliseconds)
+[info] - Loop.done bypasses done (0 milliseconds)
 [info] - a stateful clause answers effectfully (1 millisecond)
-[info] - state survives a foreign crossing (1 millisecond)
+[info] - state survives a foreign crossing (0 milliseconds)
 [info] - a settled input applies done strictly with the initial state (0 milliseconds)
 [info] - state composes with done (0 milliseconds)
 [info] - state survives an inner handler's exit (1 millisecond)
 [info] - done sees the final answer (1 millisecond)
 [info] - done may be effectful (0 milliseconds)
-[info] - the overload without done completes with the result and discards the state (0 milliseconds)
-[info] - a parked stateful region resumes with its state and done (1 millisecond)
+[info] - the overload without done completes with the result and discards the state (1 millisecond)
+[info] - a parked stateful region resumes with its state and done (0 milliseconds)
 [info] handleWith
 [info] - applies the continuation to the region result (0 milliseconds)
 [info] - applies the continuation to a settled input (0 milliseconds)
 [info] - the continuation can suspend on an outer effect (1 millisecond)
 [info] - deep sequential operations stay stack safe through the continuation (8 milliseconds)
 [info] handleLoopWith
-[info] - applies the continuation to the region result (0 milliseconds)
-[info] - applies the continuation to a settled input (1 millisecond)
+[info] - applies the continuation to the region result (1 millisecond)
+[info] - applies the continuation to a settled input (0 milliseconds)
 [info] - Loop.done flows through the continuation (0 milliseconds)
 [info] handleLoopStateWith
 [info] - applies the continuation with the final state observed (1 millisecond)
@@ -3251,20 +3371,20 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] suspendWith
 [info] - suspends and continues in one node (0 milliseconds)
 [info] - deep recursion is stack safe (8 milliseconds)
-[info] - maps chain onto the node (1 millisecond)
+[info] - maps chain onto the node (0 milliseconds)
 [info] - an effectful continuation suspends again (0 milliseconds)
-[info] - a long map tower on the node evaluates in bounded stack (48 milliseconds)
+[info] - a long map tower on the node evaluates in bounded stack (66 milliseconds)
 [info] - a handle capture crossing an inner region (1 millisecond)
 [info] - a crossed region resumes without re-running its body (1 millisecond)
 [info] - a crossed stateful region resumes with its in-flight state (1 millisecond)
 [info] - each shot of a multi-shot capture resumes from capture-time state (1 millisecond)
-[info] - a map after the region applies to the result (0 milliseconds)
+[info] - a map after the region applies to the result (1 millisecond)
 [info] - an unresumed handler skips trailing maps at any depth (1 millisecond)
 [info] - state survives dumping above a live region (1 millisecond)
 [info] park
 [info] - a clause parks by returning and resumes by rewrapping the continuation (0 milliseconds)
-[info] - a park preserves standing sibling regions (0 milliseconds)
-[info] - a union tag subsumes both effects the way regions are found (1 millisecond)
+[info] - a park preserves standing sibling regions (1 millisecond)
+[info] - a union tag subsumes both effects the way regions are found (0 milliseconds)
 [info] answering only the first operation
 [info] - answers the first and leaves the rest unhandled (1 millisecond)
 [info] - the clause may end the computation without resuming (0 milliseconds)
@@ -3274,35 +3394,35 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] - a settled body takes the done clause (0 milliseconds)
 [info] - deep sequential operations are stack safe (10 milliseconds)
 [info] handleFirst
-[info] - answers the first operation and leaves the rest unhandled (1 millisecond)
-[info] - the handler stays installed until the operation arrives after a foreign crossing (1 millisecond)
+[info] - answers the first operation and leaves the rest unhandled (2 milliseconds)
+[info] - the handler stays installed until the operation arrives after a foreign crossing (0 milliseconds)
 [info] - the done clause runs when the computation settles without the operation (1 millisecond)
-[info] - the continuation re-enters the regions the operation was raised under (0 milliseconds)
-[info] - the remainder is handed out as a value and re-handled after a foreign crossing (1 millisecond)
+[info] - the continuation re-enters the regions the operation was raised under (1 millisecond)
+[info] - the remainder is handed out as a value and re-handled after a foreign crossing (0 milliseconds)
 [info] - one effect at two type arguments crosses to the outer handler (1 millisecond)
-[info] - one effect at two type arguments hands out the remainder as a value (0 milliseconds)
+[info] - one effect at two type arguments hands out the remainder as a value (1 millisecond)
 [info] - the clause may end the computation without resuming (0 milliseconds)
-[info] - the continuation is handed out as a value and resumed later (1 millisecond)
-[info] - the continuation is multi-shot (0 milliseconds)
-[info] - an operation raised by the clause reaches the outer handler (1 millisecond)
-[info] - a settled input applies the done clause strictly (0 milliseconds)
+[info] - the continuation is handed out as a value and resumed later (0 milliseconds)
+[info] - the continuation is multi-shot (1 millisecond)
+[info] - an operation raised by the clause reaches the outer handler (0 milliseconds)
+[info] - a settled input applies the done clause strictly (1 millisecond)
 [info] - the done clause may suspend (0 milliseconds)
 [info] - maps chained after the region apply to both clauses (1 millisecond)
 [info] - the innermost handleFirst wins under nested same-tag handlers (1 millisecond)
-[info] - the done clause receives a computation held as a value unboxed (1 millisecond)
+[info] - the done clause receives a computation held as a value unboxed (0 milliseconds)
 [info] - deep sequential operations are stack safe (8 milliseconds)
 [info] dispatchFirst
-[info] - runs the clause on the standing operation (0 milliseconds)
+[info] - runs the clause on the standing operation (1 millisecond)
 [info] - reads the input of a mapped suspension through its root (0 milliseconds)
-[info] - peels a region node to reach the operation (1 millisecond)
+[info] - peels a region node to reach the operation (0 milliseconds)
 [info] - peels a stateless and a stateful region node (0 milliseconds)
-[info] - does nothing when the standing operation has another tag (1 millisecond)
-[info] - reads through a deferral without running the body behind it (0 milliseconds)
+[info] - does nothing when the standing operation has another tag (0 milliseconds)
+[info] - reads through a deferral without running the body behind it (1 millisecond)
 [info] - reads through the deferrals a map chain composes to the operation under them (0 milliseconds)
 [info] - stops at a settled value (0 milliseconds)
-[info] - leaves the computation as it was (1 millisecond)
+[info] - leaves the computation as it was (0 milliseconds)
 [info] handleCatching
-[info] - answers operations when nothing fails (1 millisecond)
+[info] - answers operations when nothing fails (0 milliseconds)
 [info] - recovers a throw raised while the computation is built (0 milliseconds)
 [info] - recovers a throw in the computation (1 millisecond)
 [info] - recovers a throw raised after a resumption (0 milliseconds)
@@ -3311,61 +3431,61 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] - recovers a throw raised after an inner region's exit (1 millisecond)
 [info] - the recovered value is the region's result (0 milliseconds)
 [info] - a throw after the region is not recovered (1 millisecond)
-[info] - a throw inside a region nested in the computation is recovered (1 millisecond)
-[info] - a fatal error in the computation is not recovered (0 milliseconds)
+[info] - a throw inside a region nested in the computation is recovered (0 milliseconds)
+[info] - a fatal error in the computation is not recovered (1 millisecond)
 [info] - a fatal error in the handler is not recovered (0 milliseconds)
 [info] - an inner handler keeps answering its own operations (1 millisecond)
-[info] - the done clause takes the region's result (1 millisecond)
+[info] - the done clause takes the region's result (0 milliseconds)
 [info] - a throw in the done clause is not recovered (1 millisecond)
 [info] - the recovery answers at the region's row, so the done clause is not reached (0 milliseconds)
-[info] - a computation held as a value passes through untouched (1 millisecond)
-[info] - eval throws on an unhandled suspension (0 milliseconds)
+[info] - a computation held as a value passes through untouched (0 milliseconds)
+[info] - eval throws on an unhandled suspension (1 millisecond)
 [info] contracts
-[info] - a clause raising a foreign effect is answered by the outer handler across the region (1 millisecond)
-[info] - a continuation is a value: invoking it twice runs the rest twice (0 milliseconds)
+[info] - a clause raising a foreign effect is answered by the outer handler across the region (0 milliseconds)
+[info] - a continuation is a value: invoking it twice runs the rest twice (1 millisecond)
 [info] - a handler may run another handle inside its answer (1 millisecond)
 [info] - a computation held as a value passes through a handler untouched (0 milliseconds)
 [info] - a throw in the handler surfaces at eval (1 millisecond)
 [info] - a throw in a map surfaces at construction on the settled path (0 milliseconds)
 [info] nested box
-[info] - a pending computation held as a value double-boxes and unboxes one level per eval (0 milliseconds)
-[info] - mapping over a double-boxed computation sees the once-boxed value (1 millisecond)
-[info] - a pending computation held as a value crosses a handler boxed (0 milliseconds)
-[info] - a stateful handler passes a pending computation value through intact (1 millisecond)
-[info] - a handler stepping a rescue at the exact budget boundary floats it outward (0 milliseconds)
+[info] - a pending computation held as a value double-boxes and unboxes one level per eval (1 millisecond)
+[info] - mapping over a double-boxed computation sees the once-boxed value (0 milliseconds)
+[info] - a pending computation held as a value crosses a handler boxed (1 millisecond)
+[info] - a stateful handler passes a pending computation value through intact (0 milliseconds)
+[info] - a handler stepping a rescue at the exact budget boundary floats it outward (1 millisecond)
 [info] coverage
 [info] - the innermost handle wins under nested same-tag handlers (0 milliseconds)
-[info] - settled inputs pass through strictly (0 milliseconds)
-[info] - a map chained after a parked handler runs after the handler completes (1 millisecond)
-[info] - evaluation recovers after a thrown handler (0 milliseconds)
+[info] - settled inputs pass through strictly (1 millisecond)
+[info] - a map chained after a parked handler runs after the handler completes (0 milliseconds)
+[info] - evaluation recovers after a thrown handler (1 millisecond)
 [info] the answer fast path
-[info] - a capture across the fast path is multi-shot, including across threads (0 milliseconds)
-[info] - a clause keeps only the values it was given (1 millisecond)
+[info] - a capture across the fast path is multi-shot, including across threads (1 millisecond)
+[info] - a clause keeps only the values it was given (0 milliseconds)
 [info] - a clause can run a full eval of its own mid-loop (1 millisecond)
-[info] - a throw after settled answers recovers with every commit already made (1 millisecond)
+[info] - a throw after settled answers recovers with every commit already made (2 milliseconds)
 [info] - a park taken mid answer loop resumes in a fresh full eval (0 milliseconds)
 [info] the cont answer fast path
-[info] - a clause may apply its continuation twice in one answer (0 milliseconds)
-[info] - a mid-loop continuation applied twice replays the tail independently (1 millisecond)
+[info] - a clause may apply its continuation twice in one answer (1 millisecond)
+[info] - a mid-loop continuation applied twice replays the tail independently (0 milliseconds)
 [info] - a hoarded fast-path continuation replays after the region finished (0 milliseconds)
 [info] - a clause can run a full eval of its own mid-loop (1 millisecond)
 [info] - a throw while applying the continuation recovers after the answers made (0 milliseconds)
-[info] - a park taken mid answer loop resumes in a fresh full eval (1 millisecond)
+[info] - a park taken mid answer loop resumes in a fresh full eval (0 milliseconds)
 [info] safety audit pins
-[info] - a deferred payload that throws mid answer loop cannot commit another dispatch's state or continuation (1 millisecond)
+[info] - a deferred payload that throws mid answer loop cannot commit another dispatch's state or continuation (2 milliseconds)
 [info] - a clause that suspends on the outer effect keeps its state lane across the shared cell (1 millisecond)
-[info] - a clause throw escapes the region on every dispatch path (2 milliseconds)
-[info] - a clause throw escapes the region on the fast and general cont paths (0 milliseconds)
-[info] - a clause throw releases the interior brackets it escapes (2 milliseconds)
+[info] - a clause throw escapes the region on every dispatch path (1 millisecond)
+[info] - a clause throw escapes the region on the fast and general cont paths (1 millisecond)
+[info] - a clause throw releases the interior brackets it escapes (1 millisecond)
 [info] - a throwing release in a nested eval does not disarm the enclosing slice (1 millisecond)
-[info] - a throwing release on the completing path leaves the caller's safepoint state intact (1 millisecond)
-[info] - a throwing deferred payload after an answer does not re-run the consumed continuation (0 milliseconds)
-[info] - a stop arriving during eager construction inside a slice reifies and parks the chain (1 millisecond)
-[info] - a boxed answer crosses the answers loop unopened (1 millisecond)
+[info] - a throwing release on the completing path leaves the caller's safepoint state intact (0 milliseconds)
+[info] - a throwing deferred payload after an answer does not re-run the consumed continuation (1 millisecond)
+[info] - a stop arriving during eager construction inside a slice reifies and parks the chain (0 milliseconds)
+[info] - a boxed answer crosses the answers loop unopened (0 milliseconds)
 [info] non-Const inputs and outputs
-[info] - suspend and handle (0 milliseconds)
+[info] - suspend and handle (1 millisecond)
 [info] - chained effects (0 milliseconds)
-[info] - handle with state (0 milliseconds)
+[info] - handle with state (1 millisecond)
 [info] - two effects interleaved at depth cross regions each step (3 milliseconds)
 [info] IsolateTest:
 [info] derive
@@ -3377,25 +3497,25 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] run
 [info] - threads capture, isolation, and restore (1 millisecond)
 [info] - isolation starts from the captured enclosing state (0 milliseconds)
-[info] - a local isolate keeps the enclosing state untouched (1 millisecond)
-[info] - a pending arrow effect crosses the boundary and is handled outside (0 milliseconds)
-[info] - an operation raised at a subtype tag crosses and is answered outside (1 millisecond)
+[info] - a local isolate keeps the enclosing state untouched (0 milliseconds)
+[info] - a pending arrow effect crosses the boundary and is handled outside (1 millisecond)
+[info] - an operation raised at a subtype tag crosses and is answered outside (0 milliseconds)
 [info] andThen
 [info] - composes captures, isolations, and restores of both isolates (1 millisecond)
-[info] - composing with Contextual leaves the other side's management untouched (1 millisecond)
+[info] - composing with Contextual leaves the other side's management untouched (0 milliseconds)
 [info] use
-[info] - provides the isolate as a given (0 milliseconds)
+[info] - provides the isolate as a given (1 millisecond)
 [info] Contextual
 [info] - passes the computation through untouched (0 milliseconds)
 [info]   nested bindings of one tag
-[info]   - the inner binding still answers its own value after a crossing (1 millisecond)
-[info]   - the inner binding still derives from the outer after a crossing (0 milliseconds)
+[info]   - the inner binding still answers its own value after a crossing (0 milliseconds)
+[info]   - the inner binding still derives from the outer after a crossing (1 millisecond)
 [info]   - every layer of a three-deep nest survives a crossing (1 millisecond)
 [info]   - a merging join updates the layer that was visible at the fork (0 milliseconds)
 [info]   - a join never reaches a scope that did not own the crossing (1 millisecond)
 [info] variance
 [info]   Remove parameter (invariant)
-[info]   - cannot accept supertypes (1 millisecond)
+[info]   - cannot accept supertypes (0 milliseconds)
 [info]   - cannot accept subtypes (0 milliseconds)
 [info]   Keep parameter (contravariant)
 [info]   - accepts subtypes (0 milliseconds)
@@ -3409,25 +3529,25 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info]   - complex intersection types (0 milliseconds)
 [info]   - all three variance interactions (0 milliseconds)
 [info] nest
-[info] - tunnels effects through isolation (1 millisecond)
-[info] - allows effect handling between nest and flatten (0 milliseconds)
+[info] - tunnels effects through isolation (0 milliseconds)
+[info] - allows effect handling between nest and flatten (1 millisecond)
 [info] - transforms Remove to Restore in type signature (0 milliseconds)
 [info] - a stateful isolate defers the restore to the nested layer (0 milliseconds)
 [info] apply
-[info] - with nothing bound, the computation is unchanged (0 milliseconds)
+[info] - with nothing bound, the computation is unchanged (1 millisecond)
 [info] - a bound value crosses into the computation (0 milliseconds)
 [info] - a binding that refuses the crossing does not cross (0 milliseconds)
-[info] - a binding crosses as what its strategy answers (0 milliseconds)
+[info] - a binding crosses as what its strategy answers (1 millisecond)
 [info] - every binding in scope is asked (1 millisecond)
 [info] - the innermost binding of a tag is what crosses (0 milliseconds)
 [info] - the crossed value is complete: it runs more than once, anywhere (0 milliseconds)
 [info] - an intervening map leaves the crossing resolving against the stack live at its point (0 milliseconds)
-[info] - the forking computation keeps what it had (1 millisecond)
+[info] - the forking computation keeps what it had (0 milliseconds)
 [info] - a resource does not cross (0 milliseconds)
-[info] - a crossing runs where it was defined (1 millisecond)
+[info] - a crossing runs where it was defined (0 milliseconds)
 [info] - the fused form hands the crossing straight to its consumer (0 milliseconds)
 [info] - what a fork ended holding is joined into what is bound here (0 milliseconds)
-[info] - a binding the fork did not carry is left alone (0 milliseconds)
+[info] - a binding the fork did not carry is left alone (1 millisecond)
 [info] - a composed isolate crosses the context too (0 milliseconds)
 [info] - a fork of a fork asks the same strategies (0 milliseconds)
 [info] SafepointTest:
@@ -3435,40 +3555,40 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] - a second stop while one is pending is idempotent (0 milliseconds)
 [info] - get resolves the owning slot while a stop is pending (0 milliseconds)
 [info] - an addressed stop is honored only while its slice runs (0 milliseconds)
-[info] - a wildcard stop is honored inside a slice (0 milliseconds)
+[info] - a wildcard stop is honored inside a slice (1 millisecond)
 [info] - the slice boundary drops its own late stop (0 milliseconds)
 [info] - a stop addressed to a departed slice does not short-circuit the next evaluation (0 milliseconds)
 [info] - the budget flows through enter, exit, save, and restore (0 milliseconds)
 [info] StackThreadingTest:
-[info] - borrow is thread local (0 milliseconds)
+[info] - borrow is thread local (1 millisecond)
 [info] KyoTest:
 [info] - toString (1 millisecond)
 [info] - eval (1 millisecond)
-[info] - eval widened (1 millisecond)
+[info] - eval widened (0 milliseconds)
 [info] - map (0 milliseconds)
 [info] - flatMap (0 milliseconds)
-[info] - unit (0 milliseconds)
+[info] - unit (1 millisecond)
 [info] - flatten (0 milliseconds)
 [info] - andThen (0 milliseconds)
 [info] - zip (6 milliseconds)
 [info] nested
 [info] - map + flatten (0 milliseconds)
-[info] - eval (0 milliseconds)
+[info] - eval (1 millisecond)
 [info] stack safety
 [info]   recursive method
 [info]   - no effect (5 milliseconds)
-[info]   - effect at the start (1 millisecond)
-[info]   - effect at the end (5 milliseconds)
+[info]   - effect at the start (4 milliseconds)
+[info]   - effect at the end (7 milliseconds)
 [info]   - multiple effects (8 milliseconds)
 [info]   dynamic computation
-[info]   - no effect (5 milliseconds)
+[info]   - no effect (6 milliseconds)
 [info]   - suspension at the start (20 milliseconds)
 [info]   - effect at the end (1 millisecond)
-[info]   - multiple effects (12 milliseconds)
+[info]   - multiple effects (11 milliseconds)
 [info] when
-[info] - true (0 milliseconds)
+[info] - true (1 millisecond)
 [info] - false (0 milliseconds)
-[info] - effectful true (0 milliseconds)
+[info] - effectful true (1 millisecond)
 [info] - effectful false (0 milliseconds)
 [info]   single branch
 [info]   - true (0 milliseconds)
@@ -3485,22 +3605,106 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] - foreach (2 milliseconds)
 [info] - foreachDiscard (0 milliseconds)
 [info] - foldLeft (1 millisecond)
-[info] - fill (0 milliseconds)
+[info] - fill (1 millisecond)
 [info] - dropWhile (1 millisecond)
 [info] - takeWhile (1 millisecond)
 [info] - shiftedWhile (2 milliseconds)
 [info]   stack safety
 [info]   - collect (2 milliseconds)
 [info]   - collectDiscard (2 milliseconds)
-[info]   - foreach (2 milliseconds)
+[info]   - foreach (1 millisecond)
 [info]   - foreachDiscard (5 milliseconds)
 [info]   - foldLeft (1 millisecond)
 [info]   - fill (1 millisecond)
-[info] - foreachIndexed (1 millisecond)
+[info] - foreachIndexed (2 milliseconds)
 [info]   Vector
 [info]     span
 [info]     - empty sequence (0 milliseconds)
 [info]     - all elements satisfy predicate (1 millisecond)
+[info]     - no elements satisfy predicate (0 milliseconds)
+[info]     - split in middle (0 milliseconds)
+[info]     - works with effects (0 milliseconds)
+[info]     partition
+[info]     - empty sequence (1 millisecond)
+[info]     - all elements satisfy predicate (0 milliseconds)
+[info]     - no elements satisfy predicate (0 milliseconds)
+[info]     - mixed elements (0 milliseconds)
+[info]     - works with effects (1 millisecond)
+[info]     partitionMap
+[info]     - empty sequence (0 milliseconds)
+[info]     - all Left (0 milliseconds)
+[info]     - all Right (0 milliseconds)
+[info]     - mixed Left and Right (0 milliseconds)
+[info]     - works with effects (1 millisecond)
+[info]     scanLeft
+[info]     - empty sequence (0 milliseconds)
+[info]     - single element (0 milliseconds)
+[info]     - multiple elements (0 milliseconds)
+[info]     - works with effects (1 millisecond)
+[info]     groupBy
+[info]     - empty sequence (1 millisecond)
+[info]     - single group (1 millisecond)
+[info]     - multiple groups (0 milliseconds)
+[info]     - works with effects (1 millisecond)
+[info]     groupMap
+[info]     - empty sequence (0 milliseconds)
+[info]     - single group (0 milliseconds)
+[info]     - multiple groups (0 milliseconds)
+[info]     - works with effects (0 milliseconds)
+[info]     collect
+[info]     - empty sequence (0 milliseconds)
+[info]     - single element - present (0 milliseconds)
+[info]     - single element - absent (0 milliseconds)
+[info]     - multiple elements - all present (0 milliseconds)
+[info]     - multiple elements - some absent (0 milliseconds)
+[info]     - works with effects (0 milliseconds)
+[info]     - stack safety (2 milliseconds)
+[info]   Chunk
+[info]     span
+[info]     - empty sequence (0 milliseconds)
+[info]     - all elements satisfy predicate (0 milliseconds)
+[info]     - no elements satisfy predicate (1 millisecond)
+[info]     - split in middle (0 milliseconds)
+[info]     - works with effects (0 milliseconds)
+[info]     partition
+[info]     - empty sequence (0 milliseconds)
+[info]     - all elements satisfy predicate (0 milliseconds)
+[info]     - no elements satisfy predicate (0 milliseconds)
+[info]     - mixed elements (0 milliseconds)
+[info]     - works with effects (0 milliseconds)
+[info]     partitionMap
+[info]     - empty sequence (0 milliseconds)
+[info]     - all Left (0 milliseconds)
+[info]     - all Right (0 milliseconds)
+[info]     - mixed Left and Right (0 milliseconds)
+[info]     - works with effects (0 milliseconds)
+[info]     scanLeft
+[info]     - empty sequence (0 milliseconds)
+[info]     - single element (1 millisecond)
+[info]     - multiple elements (0 milliseconds)
+[info]     - works with effects (0 milliseconds)
+[info]     groupBy
+[info]     - empty sequence (0 milliseconds)
+[info]     - single group (0 milliseconds)
+[info]     - multiple groups (0 milliseconds)
+[info]     - works with effects (0 milliseconds)
+[info]     groupMap
+[info]     - empty sequence (0 milliseconds)
+[info]     - single group (0 milliseconds)
+[info]     - multiple groups (0 milliseconds)
+[info]     - works with effects (0 milliseconds)
+[info]     collect
+[info]     - empty sequence (0 milliseconds)
+[info]     - single element - present (0 milliseconds)
+[info]     - single element - absent (0 milliseconds)
+[info]     - multiple elements - all present (0 milliseconds)
+[info]     - multiple elements - some absent (0 milliseconds)
+[info]     - works with effects (0 milliseconds)
+[info]     - stack safety (1 millisecond)
+[info]   List
+[info]     span
+[info]     - empty sequence (0 milliseconds)
+[info]     - all elements satisfy predicate (0 milliseconds)
 [info]     - no elements satisfy predicate (0 milliseconds)
 [info]     - split in middle (0 milliseconds)
 [info]     - works with effects (0 milliseconds)
@@ -3513,36 +3717,36 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info]     partitionMap
 [info]     - empty sequence (0 milliseconds)
 [info]     - all Left (0 milliseconds)
-[info]     - all Right (1 millisecond)
+[info]     - all Right (0 milliseconds)
 [info]     - mixed Left and Right (0 milliseconds)
 [info]     - works with effects (0 milliseconds)
 [info]     scanLeft
 [info]     - empty sequence (0 milliseconds)
-[info]     - single element (1 millisecond)
+[info]     - single element (0 milliseconds)
 [info]     - multiple elements (0 milliseconds)
 [info]     - works with effects (0 milliseconds)
 [info]     groupBy
-[info]     - empty sequence (1 millisecond)
+[info]     - empty sequence (0 milliseconds)
 [info]     - single group (0 milliseconds)
 [info]     - multiple groups (0 milliseconds)
 [info]     - works with effects (0 milliseconds)
 [info]     groupMap
-[info]     - empty sequence (1 millisecond)
+[info]     - empty sequence (0 milliseconds)
 [info]     - single group (0 milliseconds)
 [info]     - multiple groups (0 milliseconds)
-[info]     - works with effects (1 millisecond)
+[info]     - works with effects (0 milliseconds)
 [info]     collect
 [info]     - empty sequence (0 milliseconds)
 [info]     - single element - present (0 milliseconds)
 [info]     - single element - absent (0 milliseconds)
-[info]     - multiple elements - all present (1 millisecond)
+[info]     - multiple elements - all present (0 milliseconds)
 [info]     - multiple elements - some absent (0 milliseconds)
 [info]     - works with effects (0 milliseconds)
-[info]     - stack safety (2 milliseconds)
-[info]   Chunk
+[info]     - stack safety (1 millisecond)
+[info]   Set
 [info]     span
 [info]     - empty sequence (0 milliseconds)
-[info]     - all elements satisfy predicate (0 milliseconds)
+[info]     - all elements satisfy predicate (1 millisecond)
 [info]     - no elements satisfy predicate (0 milliseconds)
 [info]     - split in middle (0 milliseconds)
 [info]     - works with effects (0 milliseconds)
@@ -3580,8 +3784,8 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info]     - multiple elements - all present (0 milliseconds)
 [info]     - multiple elements - some absent (0 milliseconds)
 [info]     - works with effects (0 milliseconds)
-[info]     - stack safety (1 millisecond)
-[info]   List
+[info]     - stack safety (3 milliseconds)
+[info]   Seq
 [info]     span
 [info]     - empty sequence (0 milliseconds)
 [info]     - all elements satisfy predicate (0 milliseconds)
@@ -3589,11 +3793,11 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info]     - split in middle (0 milliseconds)
 [info]     - works with effects (0 milliseconds)
 [info]     partition
-[info]     - empty sequence (1 millisecond)
+[info]     - empty sequence (0 milliseconds)
 [info]     - all elements satisfy predicate (0 milliseconds)
 [info]     - no elements satisfy predicate (0 milliseconds)
 [info]     - mixed elements (0 milliseconds)
-[info]     - works with effects (0 milliseconds)
+[info]     - works with effects (1 millisecond)
 [info]     partitionMap
 [info]     - empty sequence (0 milliseconds)
 [info]     - all Left (0 milliseconds)
@@ -3623,96 +3827,12 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info]     - multiple elements - some absent (0 milliseconds)
 [info]     - works with effects (0 milliseconds)
 [info]     - stack safety (0 milliseconds)
-[info]   Set
-[info]     span
-[info]     - empty sequence (0 milliseconds)
-[info]     - all elements satisfy predicate (0 milliseconds)
-[info]     - no elements satisfy predicate (0 milliseconds)
-[info]     - split in middle (0 milliseconds)
-[info]     - works with effects (0 milliseconds)
-[info]     partition
-[info]     - empty sequence (1 millisecond)
-[info]     - all elements satisfy predicate (0 milliseconds)
-[info]     - no elements satisfy predicate (0 milliseconds)
-[info]     - mixed elements (0 milliseconds)
-[info]     - works with effects (0 milliseconds)
-[info]     partitionMap
-[info]     - empty sequence (0 milliseconds)
-[info]     - all Left (0 milliseconds)
-[info]     - all Right (0 milliseconds)
-[info]     - mixed Left and Right (0 milliseconds)
-[info]     - works with effects (0 milliseconds)
-[info]     scanLeft
-[info]     - empty sequence (0 milliseconds)
-[info]     - single element (0 milliseconds)
-[info]     - multiple elements (0 milliseconds)
-[info]     - works with effects (0 milliseconds)
-[info]     groupBy
-[info]     - empty sequence (0 milliseconds)
-[info]     - single group (0 milliseconds)
-[info]     - multiple groups (0 milliseconds)
-[info]     - works with effects (0 milliseconds)
-[info]     groupMap
-[info]     - empty sequence (0 milliseconds)
-[info]     - single group (0 milliseconds)
-[info]     - multiple groups (0 milliseconds)
-[info]     - works with effects (0 milliseconds)
-[info]     collect
-[info]     - empty sequence (0 milliseconds)
-[info]     - single element - present (0 milliseconds)
-[info]     - single element - absent (0 milliseconds)
-[info]     - multiple elements - all present (0 milliseconds)
-[info]     - multiple elements - some absent (0 milliseconds)
-[info]     - works with effects (0 milliseconds)
-[info]     - stack safety (4 milliseconds)
-[info]   Seq
-[info]     span
-[info]     - empty sequence (0 milliseconds)
-[info]     - all elements satisfy predicate (0 milliseconds)
-[info]     - no elements satisfy predicate (0 milliseconds)
-[info]     - split in middle (0 milliseconds)
-[info]     - works with effects (0 milliseconds)
-[info]     partition
-[info]     - empty sequence (0 milliseconds)
-[info]     - all elements satisfy predicate (0 milliseconds)
-[info]     - no elements satisfy predicate (1 millisecond)
-[info]     - mixed elements (0 milliseconds)
-[info]     - works with effects (0 milliseconds)
-[info]     partitionMap
-[info]     - empty sequence (0 milliseconds)
-[info]     - all Left (0 milliseconds)
-[info]     - all Right (0 milliseconds)
-[info]     - mixed Left and Right (0 milliseconds)
-[info]     - works with effects (0 milliseconds)
-[info]     scanLeft
-[info]     - empty sequence (0 milliseconds)
-[info]     - single element (0 milliseconds)
-[info]     - multiple elements (0 milliseconds)
-[info]     - works with effects (0 milliseconds)
-[info]     groupBy
-[info]     - empty sequence (0 milliseconds)
-[info]     - single group (1 millisecond)
-[info]     - multiple groups (0 milliseconds)
-[info]     - works with effects (0 milliseconds)
-[info]     groupMap
-[info]     - empty sequence (0 milliseconds)
-[info]     - single group (0 milliseconds)
-[info]     - multiple groups (0 milliseconds)
-[info]     - works with effects (0 milliseconds)
-[info]     collect
-[info]     - empty sequence (0 milliseconds)
-[info]     - single element - present (0 milliseconds)
-[info]     - single element - absent (0 milliseconds)
-[info]     - multiple elements - all present (0 milliseconds)
-[info]     - multiple elements - some absent (0 milliseconds)
-[info]     - works with effects (0 milliseconds)
-[info]     - stack safety (1 millisecond)
 [info] lift
 [info] - should create a pure effect (0 milliseconds)
 [info] - should work with different types (0 milliseconds)
-[info] - should work with effects (0 milliseconds)
+[info] - should work with effects (1 millisecond)
 [info] findFirst
-[info] - empty sequence (1 millisecond)
+[info] - empty sequence (0 milliseconds)
 [info] - single element - found (0 milliseconds)
 [info] - single element - not found (0 milliseconds)
 [info] - multiple elements - first match (0 milliseconds)
@@ -3724,7 +3844,7 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] StackTest:
 [info] - starts empty (0 milliseconds)
 [info] push and pop
-[info] - are LIFO, index zero innermost (0 milliseconds)
+[info] - are LIFO, index zero innermost (1 millisecond)
 [info] - pushing identity is a no-op (0 milliseconds)
 [info] - a chain is flattened into one entry per link (0 milliseconds)
 [info] - a right-nested chain is flattened fully (0 milliseconds)
@@ -3732,10 +3852,10 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] - identity links inside a chain are skipped (0 milliseconds)
 [info] find
 [info] - locates a handler by its tag (0 milliseconds)
-[info] - misses on an unrelated tag (1 millisecond)
+[info] - misses on an unrelated tag (0 milliseconds)
 [info] - returns the innermost matching handler (0 milliseconds)
 [info] - skips non-handler entries (0 milliseconds)
-[info] - a subtype handler resolves a supertype suspension tag (0 milliseconds)
+[info] - a subtype handler resolves a supertype suspension tag (1 millisecond)
 [info] - a supertype handler does not resolve a subtype suspension tag (0 milliseconds)
 [info] - an empty stack misses (0 milliseconds)
 [info] - a popped handler is no longer found (0 milliseconds)
@@ -3750,10 +3870,10 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] - past the bottom stops at empty (0 milliseconds)
 [info] - clear empties the stack (0 milliseconds)
 [info] dump
-[info] - folds the entries below the position, innermost first (1 millisecond)
+[info] - folds the entries below the position, innermost first (0 milliseconds)
 [info] - consumes exactly the requested entries (0 milliseconds)
 [info] - of nothing is the identity arrow (0 milliseconds)
-[info] - composes the captured transforms in order (0 milliseconds)
+[info] - composes the captured transforms in order (1 millisecond)
 [info] - the captured arrow is multi-shot (0 milliseconds)
 [info] - a handler-free capture is wrapped and pushes back link by link (0 milliseconds)
 [info] - a capture holding a handler is left normalized (0 milliseconds)
@@ -3762,30 +3882,30 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] - stops at the innermost handler (0 milliseconds)
 [info] - takes the whole stack when no handler is below (0 milliseconds)
 [info] - caps at half the safepoint period (0 milliseconds)
-[info] - leaves a capture that pushes back link by link (0 milliseconds)
+[info] - leaves a capture that pushes back link by link (1 millisecond)
 [info] - growth beyond the initial capacity preserves entries and state (0 milliseconds)
 [info] the pool
 [info] - hands out a stack and takes it back (0 milliseconds)
 [info] - borrows are distinct while held (0 milliseconds)
 [info] finalizers
-[info] - hold until drained (1 millisecond)
+[info] - hold until drained (0 milliseconds)
 [info] - drain innermost first (0 milliseconds)
 [info] - one that already ran is a no-op at the drain (0 milliseconds)
-[info] - a run of released finalizers does not accumulate (0 milliseconds)
+[info] - a run of released finalizers does not accumulate (1 millisecond)
 [info] - an outstanding finalizer is not dropped by a later push (0 milliseconds)
-[info] - a release that throws does not stop the rest, and surfaces when the eval is not already failing (1 millisecond)
+[info] - a release that throws does not stop the rest, and surfaces when the eval is not already failing (0 milliseconds)
 [info] - a release that throws is suppressed onto the eval's own failure (0 milliseconds)
 [info] - clear forgets them, since the stack is pooled (0 milliseconds)
 [info] KyoForeachCollTest:
 [info] Coll specialized
 [info] - collectAll (2 milliseconds)
-[info] - collect (1 millisecond)
+[info] - collect (0 milliseconds)
 [info] - collectDiscard (0 milliseconds)
 [info] - foreach (1 millisecond)
-[info] - foreachIndexed (0 milliseconds)
-[info] - foreachDiscard (1 millisecond)
-[info] - foldLeft (0 milliseconds)
-[info] - dropWhile (1 millisecond)
+[info] - foreachIndexed (1 millisecond)
+[info] - foreachDiscard (0 milliseconds)
+[info] - foldLeft (1 millisecond)
+[info] - dropWhile (0 milliseconds)
 [info] - takeWhile (0 milliseconds)
 [info] - shiftedWhile (1 millisecond)
 [info]   span
@@ -3793,10 +3913,10 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info]   - all elements satisfy predicate (0 milliseconds)
 [info]   - no elements satisfy predicate (0 milliseconds)
 [info]   - split in middle (0 milliseconds)
-[info]   - works with effects (0 milliseconds)
+[info]   - works with effects (1 millisecond)
 [info]   partition
 [info]   - empty sequence (0 milliseconds)
-[info]   - all elements satisfy predicate (1 millisecond)
+[info]   - all elements satisfy predicate (0 milliseconds)
 [info]   - no elements satisfy predicate (0 milliseconds)
 [info]   - mixed elements (0 milliseconds)
 [info]   - works with effects (0 milliseconds)
@@ -3805,11 +3925,11 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info]   - all Left (0 milliseconds)
 [info]   - all Right (0 milliseconds)
 [info]   - mixed Left and Right (0 milliseconds)
-[info]   - works with effects (1 millisecond)
+[info]   - works with effects (0 milliseconds)
 [info]   scanLeft
 [info]   - empty sequence (0 milliseconds)
 [info]   - single element (0 milliseconds)
-[info]   - multiple elements (0 milliseconds)
+[info]   - multiple elements (1 millisecond)
 [info]   - works with effects (0 milliseconds)
 [info]   groupBy
 [info]   - empty sequence (0 milliseconds)
@@ -3817,12 +3937,12 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info]   - multiple groups (0 milliseconds)
 [info]   - works with effects (0 milliseconds)
 [info]   groupMap
-[info]   - empty sequence (0 milliseconds)
+[info]   - empty sequence (1 millisecond)
 [info]   - single group (0 milliseconds)
 [info]   - multiple groups (0 milliseconds)
-[info]   - works with effects (1 millisecond)
+[info]   - works with effects (0 milliseconds)
 [info]   collect
-[info]   - empty sequence (0 milliseconds)
+[info]   - empty sequence (1 millisecond)
 [info]   - single element - present (0 milliseconds)
 [info]   - single element - absent (0 milliseconds)
 [info]   - multiple elements - all present (0 milliseconds)
@@ -3832,30 +3952,30 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info]   stack safety
 [info]   - collect (0 milliseconds)
 [info]   - collectDiscard (1 millisecond)
-[info]   - foreach (1 millisecond)
+[info]   - foreach (0 milliseconds)
 [info]   - foreachDiscard (4 milliseconds)
 [info] EffectThreadingTest:
 [info] - a cross-thread stop parks inside a bracket and abandonment releases (1 millisecond)
-[info] - an abandonment racing a resume releases exactly once (24 milliseconds)
+[info] - an abandonment racing a resume releases exactly once (21 milliseconds)
 [info] KernelTest:
 [info] the pending combinators
-[info] - map (1 millisecond)
+[info] - map (0 milliseconds)
 [info] - flatMap (0 milliseconds)
 [info] - andThen (0 milliseconds)
 [info] - unit (0 milliseconds)
-[info] - flatten (0 milliseconds)
+[info] - flatten (1 millisecond)
 [info] - eval (0 milliseconds)
 [info] handle, at every arity
 [info] - one (0 milliseconds)
 [info] - two (0 milliseconds)
-[info] - three (1 millisecond)
+[info] - three (0 milliseconds)
 [info] - four (0 milliseconds)
 [info] - five (0 milliseconds)
 [info] - six (1 millisecond)
 [info] - seven (0 milliseconds)
-[info] - eight (1 millisecond)
-[info] - nine (0 milliseconds)
-[info] - ten (1 millisecond)
+[info] - eight (0 milliseconds)
+[info] - nine (1 millisecond)
+[info] - ten (0 milliseconds)
 [info] the arrow constructors
 [info] - Arrow.apply (0 milliseconds)
 [info] - Arrow.recursive (0 milliseconds)
@@ -3863,31 +3983,31 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] - suspend (0 milliseconds)
 [info] - suspendWith (0 milliseconds)
 [info] - handleCont (0 milliseconds)
-[info] - handleLoop (1 millisecond)
+[info] - handleLoop (0 milliseconds)
 [info] - handleLoop completing from the clause (0 milliseconds)
-[info] - handleLoopState (1 millisecond)
-[info] - handleLoopState without a done clause (0 milliseconds)
+[info] - handleLoopState (0 milliseconds)
+[info] - handleLoopState without a done clause (1 millisecond)
 [info] - handleContWith (0 milliseconds)
-[info] - handleLoopWith (1 millisecond)
-[info] - handleLoopStateWith (0 milliseconds)
+[info] - handleLoopWith (0 milliseconds)
+[info] - handleLoopStateWith (1 millisecond)
 [info] - catching (0 milliseconds)
-[info] - bracket (1 millisecond)
-[info] - ContextEffect.suspend and handle (0 milliseconds)
-[info] - ContextEffect.suspendWith (1 millisecond)
+[info] - bracket (0 milliseconds)
+[info] - ContextEffect.suspend and handle (1 millisecond)
+[info] - ContextEffect.suspendWith (0 milliseconds)
 [info] - ContextEffect.suspend with a default (0 milliseconds)
 [info] - ContextEffect.suspendWith with a default (0 milliseconds)
-[info] - ContextEffect.handle layering (2 milliseconds)
+[info] - ContextEffect.handle layering (1 millisecond)
 [info] - a region nested under another effect (1 millisecond)
 [info] Loop
 [info] - apply with one state (0 milliseconds)
 [info] - apply with two states (0 milliseconds)
-[info] - apply with three states (1 millisecond)
+[info] - apply with three states (0 milliseconds)
 [info] - apply with four states (0 milliseconds)
 [info] - apply resuming through an effect (0 milliseconds)
 [info] - indexed with no state (0 milliseconds)
-[info] - indexed with one state (0 milliseconds)
+[info] - indexed with one state (1 millisecond)
 [info] - indexed with two states (0 milliseconds)
-[info] - indexed with three states (1 millisecond)
+[info] - indexed with three states (0 milliseconds)
 [info] - indexed with four states (0 milliseconds)
 [info] - foreach (0 milliseconds)
 [info] - repeat (0 milliseconds)
@@ -3906,7 +4026,7 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] - a pure function of six arguments (0 milliseconds)
 [info] the collection combinators
 [info] - foreach (1 millisecond)
-[info] - foreachConcat (1 millisecond)
+[info] - foreachConcat (0 milliseconds)
 [info] - foreachIndexed (0 milliseconds)
 [info] - foreachDiscard (0 milliseconds)
 [info] - filter (1 millisecond)
@@ -3914,54 +4034,54 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] - collect (0 milliseconds)
 [info] - collectAll (0 milliseconds)
 [info] - collectAllDiscard (0 milliseconds)
-[info] - findFirst (0 milliseconds)
-[info] - takeWhile (1 millisecond)
+[info] - findFirst (1 millisecond)
+[info] - takeWhile (0 milliseconds)
 [info] - span (0 milliseconds)
 [info] - dropWhile (0 milliseconds)
-[info] - partition (0 milliseconds)
-[info] - partitionMap (1 millisecond)
+[info] - partition (1 millisecond)
+[info] - partitionMap (0 milliseconds)
 [info] - scanLeft (0 milliseconds)
-[info] - groupBy (2 milliseconds)
+[info] - groupBy (0 milliseconds)
 [info] - groupMap (0 milliseconds)
-[info] - filterKeys (0 milliseconds)
-[info] - fill (1 millisecond)
+[info] - filterKeys (1 millisecond)
+[info] - fill (0 milliseconds)
 [info] - zip (0 milliseconds)
 [info] - when with both branches (0 milliseconds)
 [info] - when with one branch (0 milliseconds)
 [info] - unless (0 milliseconds)
 [info] Isolate
-[info] - derive for a context effect and run (1 millisecond)
+[info] - derive for a context effect and run (0 milliseconds)
 [info] - summons implicitly (0 milliseconds)
-[info] - nest and flatten (1 millisecond)
-[info] - use provides the isolate as a given (0 milliseconds)
+[info] - nest and flatten (0 milliseconds)
+[info] - use provides the isolate as a given (1 millisecond)
 [info] - andThen composes (1 millisecond)
 [info] context binding edges
-[info] - a fork strategy is accepted at the handle site (0 milliseconds)
+[info] - a fork strategy is accepted at the handle site (1 millisecond)
 [info] - a join strategy is accepted at the handle site (0 milliseconds)
 [info] ContextEffectTest:
 [info] reads what is bound
-[info] - a binding answers a read under it (0 milliseconds)
+[info] - a binding answers a read under it (1 millisecond)
 [info] - a read transforms in the same step (0 milliseconds)
-[info] - every read under one binding takes the same value (0 milliseconds)
-[info] - bindings of different effects stand together (2 milliseconds)
+[info] - every read under one binding takes the same value (1 millisecond)
+[info] - bindings of different effects stand together (1 millisecond)
 [info] layering
-[info] - nothing bound outside takes ifUndefined (1 millisecond)
-[info] - a binding inside another applies ifDefined to it (0 milliseconds)
-[info] - the innermost binding is what a read takes (1 millisecond)
-[info] - a merging binding keeps what an enclosing one holds (0 milliseconds)
+[info] - nothing bound outside takes ifUndefined (0 milliseconds)
+[info] - a binding inside another applies ifDefined to it (1 millisecond)
+[info] - the innermost binding is what a read takes (0 milliseconds)
+[info] - a merging binding keeps what an enclosing one holds (1 millisecond)
 [info] extent
 [info] - a binding does not reach a read after it (0 milliseconds)
-[info] - a read with a default and nothing bound takes the default (1 millisecond)
-[info] - a read with a default takes a binding over it (0 milliseconds)
+[info] - a read with a default and nothing bound takes the default (0 milliseconds)
+[info] - a read with a default takes a binding over it (1 millisecond)
 [info] - a required read with nothing bound is a bug (0 milliseconds)
 [info] crossing regions
-[info] - a binding stands while an operation is answered outside it (1 millisecond)
-[info] - a region installed inside a binding reads it (0 milliseconds)
-[info] - a clause of a region under a binding reads it (1 millisecond)
+[info] - a binding stands while an operation is answered outside it (0 milliseconds)
+[info] - a region installed inside a binding reads it (1 millisecond)
+[info] - a clause of a region under a binding reads it (0 milliseconds)
 [info] - a continuation captured under a binding carries it (1 millisecond)
 [info] resuming
 [info] - the same bound computation evaluates the same way twice (0 milliseconds)
-[info] - a captured binding resolves against the scope it resumes in (0 milliseconds)
+[info] - a captured binding resolves against the scope it resumes in (1 millisecond)
 [info] release
 [info] - runs when the extent ends (1 millisecond)
 [info] - runs before what follows the extent (0 milliseconds)
@@ -3973,22 +4093,22 @@ WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 [info] - a stop request from another thread is visible once and consumed (0 milliseconds)
 [info] - racing stop requests never lose the slot ownership (5 milliseconds)
 [info] - an evaluation yields to a stop requested from another thread (0 milliseconds)
-[info] - a stop delivered during a fast answer loop ends the slice (6 milliseconds)
+[info] - a stop delivered during a fast answer loop ends the slice (4 milliseconds)
 [info] - a live thread that never evaluated is not stoppable (0 milliseconds)
 [info] - a dead thread is not stoppable (0 milliseconds)
-[info] - a displaced thread keeps its slot and its budget after nearby cells free (273 milliseconds)
-[info] - claims reuse the cells of dead threads (31 milliseconds)
-[info] - the overflowed slot ignores budget operations and misses preemption (245 milliseconds)
+[info] - a displaced thread keeps its slot and its budget after nearby cells free (271 milliseconds)
+[info] - claims reuse the cells of dead threads (28 milliseconds)
+[info] - the overflowed slot ignores budget operations and misses preemption (338 milliseconds)
 [info] - threads claim stable slots under concurrent lookups (2 milliseconds)
 [info] PendingBytecodeTest:
-[info] - map (7 milliseconds)
+[info] - map (5 milliseconds)
 [info] - lift of a primitive is a bare cast (4 milliseconds)
 [info] - lift of a String is a bare cast (4 milliseconds)
 [info] - lift of a concrete class keeps the runtime test (5 milliseconds)
 [info] - lift of a generic value is one runtime test (5 milliseconds)
-[info] Run completed in 3 seconds, 122 milliseconds.
+[info] Run completed in 3 seconds, 361 milliseconds.
 [info] Total number of tests run: 1196
 [info] Suites: completed 32, aborted 0
 [info] Tests: succeeded 1196, failed 0, canceled 0, ignored 0, pending 0
 [info] All tests passed.
-[success] Total time: 55 s, completed Aug 29, 2026, 11:19:21 AM
+[success] Total time: 6 s, completed Aug 29, 2026, 11:23:09 AM
