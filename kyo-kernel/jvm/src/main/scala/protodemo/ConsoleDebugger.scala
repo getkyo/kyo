@@ -65,6 +65,12 @@ object ConsoleDebugger:
 
 end ConsoleDebugger
 
+// TODO move to kyo-core and make the output async to reduce interference, following the
+// Log.Unsafe.AsyncUnsafe pattern: hooks enqueue structured events to the dispatcher and the drain
+// does the rendering, the JOL parse, and the println. The completeness check stays synchronous
+// (it must fail the run at the offending operation), depth and stack size are captured at hook
+// time, each scenario awaits the drain before printing stats, and the JOL dependency travels with
+// the move.
 /** Console tracer for the eval: renders the execution timeline (loop steps, regions, handler answers, context reads, allocations) with
   * region-depth indentation and keeps the per-run allocation tally. One instance per scenario; install before running, read `stats` after.
   */
