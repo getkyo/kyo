@@ -69,7 +69,7 @@ object Drag:
             ,
             structure = Structure.Type.Primitive(
                 Structure.PrimitiveKind.String,
-                Tag[MediaType].asInstanceOf[Tag[Any]]
+                Tag.derive[MediaType].asInstanceOf[Tag[Any]]
             )
         )
 
@@ -187,7 +187,7 @@ object Drag:
             ,
             structure = Structure.Type.Primitive(
                 Structure.PrimitiveKind.String,
-                Tag[MediaTypePattern].asInstanceOf[Tag[Any]]
+                Tag.derive[MediaTypePattern].asInstanceOf[Tag[Any]]
             )
         )
 

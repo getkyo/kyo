@@ -31,7 +31,7 @@ private[kyo] object DragWireByteSize:
             )(using reader.frame),
         structure = Structure.Type.Primitive(
             Structure.PrimitiveKind.Long,
-            Tag[DragWireByteSize].asInstanceOf[Tag[Any]]
+            Tag.derive[DragWireByteSize].asInstanceOf[Tag[Any]]
         )
     )
 end DragWireByteSize
