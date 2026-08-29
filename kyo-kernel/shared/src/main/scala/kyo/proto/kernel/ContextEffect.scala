@@ -125,14 +125,8 @@ object ContextEffect:
                     case _                              => cont2(f(Nested.unnest[A](v)), Arrow.id)
 
     /** Handles a context effect by providing a value for a specific computation scope. Suspend operations within that scope receive the
-      * provided value; the scope ends where the computation completes.
-      *
-      * The optional parameters say what happens at the edges of the extent, and each defaults to the plainest answer: `onFork` is what a
-      * computation forked from here receives, and `onJoin` is what this holds once a fork ends, given what it held, what the fork
-      * received, and how the fork ended.
-      *
-      * Note: the machine binds the provided value as given; deriving it from an outer binding of the same tag (the reference's layered
-      * `ifDefined`) has no counterpart here.
+      * provided value; the scope ends where the computation completes. Installed inside another binding of the same tag, this one wins for
+      * its extent: the delegation rebinds the given value whatever the enclosing binding holds.
       *
       * @param effectTag
       *   Identifies which context effect to handle
@@ -143,10 +137,37 @@ object ContextEffect:
       * @return
       *   The computation result with the context value provided
       */
+    inline def handle[A, E <: ContextEffect[A], B, S](
+        inline effectTag: Tag[E],
+        inline value: A
+    )(v: B < (E & S))(using inline _frame: Frame): B < S =
+        handle(effectTag, value, (_: A) => value)(v)
+
+    /** Handles a context effect by either providing a new value or transforming an existing one. This allows for layered handling of
+      * context values, where a handler can either establish a new value when none exists or modify a value that was provided by an outer
+      * handler. Because a binding resolves when it is installed, a region captured and re-installed under a different enclosing binding
+      * derives from that one instead.
+      *
+      * The optional parameters say what happens at the edges of the extent, and each defaults to the plainest answer: `onFork` is what a
+      * computation forked from here receives, and `onJoin` is what this holds once a fork ends, given what it held, what the fork
+      * received, and how the fork ended. The reference's `release` slot has no counterpart yet: the machine has no finalizer story.
+      *
+      * @param effectTag
+      *   Identifies which context effect to handle
+      * @param ifUndefined
+      *   The value to use when no existing value is found
+      * @param ifDefined
+      *   The transformation to apply to any existing value
+      * @param v
+      *   The computation requiring the context value
+      * @return
+      *   The computation result with the context value handled
+      */
     @nowarn("msg=anonymous")
     inline def handle[A, E <: ContextEffect[A], B, S](
         inline effectTag: Tag[E],
-        inline value: A,
+        inline ifUndefined: A,
+        inline ifDefined: A => A,
         inline onFork: A => A < S = (current: A) => current,
         inline onJoin: (A, A, Result[Nothing, A]) => Result[Nothing, A] < S =
             (_: A, _: A, result: Result[Nothing, A]) => result
@@ -156,10 +177,11 @@ object ContextEffect:
                 val h =
                     new HandlerContext[A, E, B, B, S]:
                         def tag                                                     = effectTag
+                        def derive(outer: A)                                        = ifDefined(outer)
                         def fork(current: A)                                        = onFork(current)
                         def join(current: A, forked: A, result: Result[Nothing, A]) = onJoin(current, forked, result)
                         def done(state: A, v0: B)                                   = v0
-                val state0 = value
+                val state0 = ifUndefined
                 // the region node is built at the site: the identity continuation is a constant,
                 // not a captured field
                 new Kyo.Handle[E, B, B, B, S, A]:

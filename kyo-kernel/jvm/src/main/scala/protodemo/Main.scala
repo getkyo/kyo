@@ -231,6 +231,11 @@ object Main:
         listed.map(l => l.head.map(_ + 1))
     end dataJoin
 
+    // a binding deriving from the one enclosing it, the layered binding shape
+    def layered: Int < Any =
+        val body: Int < Any = cfg.map(_ + 1)
+        ContextEffect.handle(cfgTag, 41)(ContextEffect.handle(cfgTag, 0, _ * 2)(body))
+
     def scenario(name: String)(v: => Int < Any): Unit =
         println(
             s"""|
@@ -275,5 +280,6 @@ object Main:
         scenario("handler stack")(stacked)
         scenario("deep crossing")(crossing)
         scenario("data join")(dataJoin)
+        scenario("layered binding")(layered)
     end main
 end Main

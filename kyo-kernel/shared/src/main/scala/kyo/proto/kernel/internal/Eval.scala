@@ -166,13 +166,18 @@ object Eval:
                             case res: AX @unchecked =>
                                 kyo.handler.done(st, res)
                     end region
-                    Debugger.onRegionEnter(kyo.handler, kyo.state)
+                    // a context binding resolves at installation: it derives from whatever the
+                    // enclosing scope binds for its tag, and a re-installed region derives again
+                    // from wherever it stands
+                    var st0 = kyo.state
                     val bound = kyo.handler match
                         case h: Handler.HandlerContext[VX, CX, AX, Y, S] @unchecked =>
                             val hc: Handler.HandlerContext[VX, CX, AX, Y, S] = h
-                            ctx.update(hc.tag, kyo.state)
+                            if ctx.contains(hc.tag) then st0 = hc.derive(ctx[VX, CX](hc.tag))
+                            ctx.update(hc.tag, st0)
                         case _ => ctx
-                    val res = region(kyo.state, kyo.value, Arrow.id, bound)
+                    Debugger.onRegionEnter(kyo.handler, st0)
+                    val res = region(st0, kyo.value, Arrow.id, bound)
                     Debugger.onRegionExit(kyo.handler, res)
                     loop(res, kyo.cont, contA.chain(contB), ctx)
                 case res =>
