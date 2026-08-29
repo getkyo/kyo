@@ -34,9 +34,9 @@ object Handler:
 
     abstract class HandlerContext[State, E <: ContextEffect[State], A, B, S] extends Handler[E, A, B, S, State]:
         /** What this binding installs, given what the enclosing scope binds for its tag, Absent when nothing is bound. A binding resolves
-          * at installation, so a re-installed region derives again from wherever it stands.
+          * at installation, so a re-installed region resolves again from wherever it stands.
           */
-        def derive(outer: Maybe[State]): State
+        def resolve(outer: Maybe[State]): State
         def fork(current: State): State < S
         def join(current: State, forked: State, result: Result[Nothing, State]): Result[Nothing, State] < S
     end HandlerContext

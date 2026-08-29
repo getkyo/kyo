@@ -234,7 +234,7 @@ object Main:
     // a binding deriving from the one enclosing it, the layered binding shape
     def layered: Int < Any =
         val body: Int < Any = cfg.map(_ + 1)
-        ContextEffect.handle(cfgTag, 41)(ContextEffect.handle(cfgTag, 0, _ * 2)(body))
+        ContextEffect.handle(cfgTag, 41)(ContextEffect.handle(cfgTag)(_.fold(0)(_ * 2))(body))
 
     def scenario(name: String)(v: => Int < Any): Unit =
         println(

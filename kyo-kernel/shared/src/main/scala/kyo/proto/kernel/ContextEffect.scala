@@ -142,12 +142,11 @@ object ContextEffect:
         inline effectTag: Tag[E],
         inline value: A
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
-        handle(effectTag, value, (_: A) => value)(v)
+        handle(effectTag)((_: Maybe[A]) => value)(v)
 
-    /** Handles a context effect by either providing a new value or transforming an existing one. This allows for layered handling of
-      * context values, where a handler can either establish a new value when none exists or modify a value that was provided by an outer
-      * handler. Because a binding resolves when it is installed, a region captured and re-installed under a different enclosing binding
-      * derives from that one instead.
+    /** Handles a context effect by deriving the bound value from whatever the enclosing scope binds: the derivation receives the enclosing
+      * binding's value, Absent when nothing is bound, so `_.fold(ifUndefined)(ifDefined)` is the layered shape. Because a binding resolves
+      * when it is installed, a region captured and re-installed under a different enclosing binding derives from that one instead.
       *
       * The optional parameters say what happens at the edges of the extent, and each defaults to the plainest answer: `onFork` is what a
       * computation forked from here receives, and `onJoin` is what this holds once a fork ends, given what it held, what the fork
@@ -155,10 +154,8 @@ object ContextEffect:
       *
       * @param effectTag
       *   Identifies which context effect to handle
-      * @param ifUndefined
-      *   The value to use when no existing value is found
-      * @param ifDefined
-      *   The transformation to apply to any existing value
+      * @param derive
+      *   The bound value as a function of what the enclosing scope binds
       * @param v
       *   The computation requiring the context value
       * @return
@@ -166,9 +163,9 @@ object ContextEffect:
       */
     @nowarn("msg=anonymous")
     inline def handle[A, E <: ContextEffect[A], B, S](
-        inline effectTag: Tag[E],
-        inline ifUndefined: A,
-        inline ifDefined: A => A,
+        inline effectTag: Tag[E]
+    )(
+        inline derive: Maybe[A] => A,
         inline onFork: A => A < S = (current: A) => current,
         inline onJoin: (A, A, Result[Nothing, A]) => Result[Nothing, A] < S =
             (_: A, _: A, result: Result[Nothing, A]) => result
@@ -178,7 +175,7 @@ object ContextEffect:
                 val h =
                     new HandlerContext[A, E, B, B, S]:
                         def tag                                                     = effectTag
-                        def derive(outer: Maybe[A])                                 = outer.fold(ifUndefined)(ifDefined)
+                        def resolve(outer: Maybe[A])                                = derive(outer)
                         def fork(current: A)                                        = onFork(current)
                         def join(current: A, forked: A, result: Result[Nothing, A]) = onJoin(current, forked, result)
                         def done(state: A, v0: B)                                   = v0
@@ -189,7 +186,7 @@ object ContextEffect:
                     override def frame = _frame
                     def value          = v
                     def handler        = h
-                    def state          = h.derive(Maybe.empty)
+                    def state          = h.resolve(Maybe.empty)
                     def cont           = Arrow.id
                 end new
             case _ => Nested.unnest[B](v)
