@@ -15,7 +15,42 @@ private[kyo] object HtmlRenderer:
     /** Render a UI tree to HTML with data-kyo-path attributes. */
     def render(ui: UI, path: Seq[String])(using Frame): String < Sync =
         val sb = new StringBuilder
-        renderTo(sb, ui, path).andThen(sb.toString)
+        renderTo(
+            sb,
+            ui,
+            path,
+            ReactiveRegion.RegionIdentity.root(path),
+            ReactiveRegion.Namespace.Html,
+            parentContext = ReactiveRegion.ParentContext.Other,
+            boundaryMode = ReactiveRegion.BoundaryMode.Emit
+        ).andThen(sb.toString)
+    end render
+
+    private[kyo] def renderRegion(ui: UI, path: Seq[String])(using Frame): String < Sync =
+        renderRegion(ui, path, ReactiveRegion.RegionIdentity.root(path))
+
+    private[kyo] def renderRegion(ui: UI, path: Seq[String], context: ReactiveRegion.RegionIdentity)(using Frame): String < Sync =
+        renderRegion(
+            ui,
+            path,
+            context,
+            ReactiveRegion.from(context, svgContext = false),
+            ReactiveRegion.ParentContext.Other,
+            ReactiveRegion.BoundaryMode.Suppress
+        )
+
+    private[kyo] def renderRegion(
+        ui: UI,
+        path: Seq[String],
+        context: ReactiveRegion.RegionIdentity,
+        region: ReactiveRegion,
+        parentContext: ReactiveRegion.ParentContext,
+        boundaryMode: ReactiveRegion.BoundaryMode
+    )(using Frame): String < Sync =
+        val sb   = new StringBuilder
+        val host = ReactiveRegion.renderHost(region, parentContext, ReactiveRegion.tableContent(ui))
+        renderHostedContent(sb, ui, path, context, host, boundaryMode).andThen(sb.toString)
+    end renderRegion
 
     /** Render a UI tree to HTML, additionally collecting the CSS rule(s) for every pseudo-state
       * (hover/focus/active/disabled) [[kyo.Style]] encountered along the way.
@@ -31,28 +66,96 @@ private[kyo] object HtmlRenderer:
     private[kyo] def renderWithCss(ui: UI, path: Seq[String])(using Frame): (String, Chunk[(String, String)]) < Sync =
         val sb  = new StringBuilder
         val css = new CssCollector
-        renderTo(sb, ui, path, cssRules = Present(css)).andThen((sb.toString, Chunk.from(css)))
+        renderTo(
+            sb,
+            ui,
+            path,
+            ReactiveRegion.RegionIdentity.root(path),
+            ReactiveRegion.Namespace.Html,
+            cssRules = Present(css),
+            parentContext = ReactiveRegion.ParentContext.Other,
+            boundaryMode = ReactiveRegion.BoundaryMode.Emit
+        )
+            .andThen((sb.toString, Chunk.from(css)))
     end renderWithCss
 
-    /** Wrap a reactive region's inner HTML in the appropriate placeholder tag.
-      *
-      * Used by the server transport layer when pushing an updated reactive region to the client.
-      * Extracts the tag-choice logic (g in SVG context, span in HTML context) into a shared, testable
-      * function so tests can assert on the real production wrap rather than reconstructing the string
-      * themselves.
-      *
-      * @param path
-      *   the region's path segments (joined with "." for the data-kyo-path attribute)
-      * @param svgContext
-      *   true if the reactive region lives inside SVG (uses "g" tag), false for HTML (uses "span")
-      * @param innerHtml
-      *   the rendered inner content to wrap
-      * @return
-      *   the full placeholder HTML string with data-kyo-path and data-kyo-reactive attributes
-      */
-    private[kyo] def wrapReactiveRegion(path: Seq[String], svgContext: Boolean, innerHtml: String): String =
-        val tag = if svgContext then "g" else "span"
-        s"""<$tag data-kyo-path="${path.mkString(".")}" data-kyo-reactive>$innerHtml</$tag>"""
+    private[kyo] def renderRegionWithCss(ui: UI, path: Seq[String])(using
+        Frame
+    ): (String, Chunk[(String, String)]) < Sync =
+        renderRegionWithCss(ui, path, ReactiveRegion.RegionIdentity.root(path))
+
+    private[kyo] def renderRegionWithCss(
+        ui: UI,
+        path: Seq[String],
+        context: ReactiveRegion.RegionIdentity
+    )(using Frame): (String, Chunk[(String, String)]) < Sync =
+        renderRegionWithCss(
+            ui,
+            path,
+            context,
+            ReactiveRegion.from(context, svgContext = false),
+            ReactiveRegion.ParentContext.Other,
+            ReactiveRegion.BoundaryMode.Suppress
+        )
+
+    private[kyo] def renderRegionWithCss(
+        ui: UI,
+        path: Seq[String],
+        context: ReactiveRegion.RegionIdentity,
+        region: ReactiveRegion,
+        parentContext: ReactiveRegion.ParentContext,
+        boundaryMode: ReactiveRegion.BoundaryMode
+    )(using Frame): (String, Chunk[(String, String)]) < Sync =
+        val sb       = new StringBuilder
+        val css      = new CssCollector
+        val host     = ReactiveRegion.renderHost(region, parentContext, ReactiveRegion.tableContent(ui))
+        val rendered = renderHostedContent(sb, ui, path, context, host, boundaryMode, Present(css))
+        rendered.andThen((sb.toString, Chunk.from(css)))
+    end renderRegionWithCss
+
+    private def renderHostedContent(
+        sb: StringBuilder,
+        ui: UI,
+        path: Seq[String],
+        context: ReactiveRegion.RegionIdentity,
+        host: ReactiveRegion.RenderHost,
+        boundaryMode: ReactiveRegion.BoundaryMode,
+        cssRules: Maybe[CssCollector] = Absent
+    )(using Frame): Unit < Sync =
+        host match
+            case ReactiveRegion.RenderHost.HtmlTableBody(id) =>
+                w(sb, s"<tbody data-kyo-range-host=\"$id\">")
+                renderTo(
+                    sb,
+                    ui,
+                    path,
+                    context,
+                    ReactiveRegion.Namespace.Html,
+                    cssRules,
+                    ReactiveRegion.ParentContext.Other,
+                    boundaryMode
+                ).andThen(w(sb, "</tbody>"))
+            case host =>
+                renderTo(
+                    sb,
+                    ui,
+                    path,
+                    context,
+                    ReactiveRegion.namespace(host),
+                    cssRules,
+                    ReactiveRegion.contentParent(host),
+                    boundaryMode
+                )
+    end renderHostedContent
+
+    private[kyo] def wrapReactiveRegion(region: ReactiveRegion, innerHtml: String): String =
+        region match
+            case ReactiveRegion.HtmlRange(id) => s"<!--kyo-rs:$id-->$innerHtml<!--kyo-re:$id-->"
+            case ReactiveRegion.SvgElement(path) =>
+                s"""<g data-kyo-path="${pathAttr(path)}" data-kyo-reactive>$innerHtml</g>"""
+
+    private def openSvgRegion(path: Seq[String]): String =
+        s"""<g data-kyo-path="${pathAttr(path)}" data-kyo-reactive>"""
 
     /** Wrap body HTML in a full page with inline JS client. */
     def renderPage(title: String, body: String, css: String, basePath: String): String =
@@ -120,52 +223,77 @@ private[kyo] object HtmlRenderer:
 
     // ---- Core rendering ----
 
-    private def renderTo(sb: StringBuilder, ui: UI, path: Seq[String], svg: Boolean = false, cssRules: Maybe[CssCollector] = Absent)(using
+    private def renderTo(
+        sb: StringBuilder,
+        ui: UI,
+        path: Seq[String],
+        context: ReactiveRegion.RegionIdentity,
+        namespace: ReactiveRegion.Namespace,
+        cssRules: Maybe[CssCollector] = Absent,
+        parentContext: ReactiveRegion.ParentContext,
+        boundaryMode: ReactiveRegion.BoundaryMode
+    )(using
         Frame
     ): Unit < Sync =
         ui match
             case dd: Dropdown =>
-                renderDropdown(sb, dd, path, cssRules)
+                renderBoundElementBoundary(sb, dd, context, namespace, parentContext, boundaryMode) {
+                    renderDropdown(sb, dd, path, cssRules)
+                }
             case elem: Element =>
                 val tag  = tagName(elem)
                 val void = elem.isInstanceOf[Void]
-                w(sb, s"""<$tag data-kyo-path="${pathAttr(path)}"""")
-                renderCommonAttrs(sb, elem.attrs, cssRules)
-                renderEventAttr(sb, elem)
-                for _ <- renderElementAttrs(sb, elem)
-                yield
-                    if void then
-                        w(sb, " />")
-                        elem match
-                            case ta: Textarea =>
-                                sb.delete(sb.length - 3, sb.length)
-                                w(sb, ">")
-                                renderTextareaValue(sb, ta).andThen(w(sb, "</textarea>"))
-                            case _: Iframe =>
-                                // iframe is not a void element: it needs an explicit closing tag.
-                                sb.delete(sb.length - 3, sb.length)
-                                w(sb, "></iframe>")
-                            case _ => ()
-                        end match
-                    else
-                        w(sb, ">")
-                        // ForeignObject bridges back to HTML, so reset svg context to false. It MUST be
-                        // matched before SvgElement (ForeignObject IS an SvgElement).
-                        val childSvg = elem match
-                            case _: Svg.ForeignObject => false
-                            case _: Svg.SvgElement    => true
-                            case _                    => svg
-                        val textChild: Unit < Sync = elem match
-                            case t: Svg.Title => w(sb, esc(t.text)); Kyo.unit
-                            case d: Svg.Desc  => w(sb, esc(d.text)); Kyo.unit
-                            case _            => Kyo.unit
-                        textChild.andThen(
-                            Kyo.foreachDiscard(elem.children.toSeq.zipWithIndex) { (child, i) =>
-                                renderTo(sb, child, path :+ i.toString, childSvg, cssRules)
-                            }.andThen(w(sb, s"</$tag>"))
-                        )
-                    end if
-                end for
+                renderBoundElementBoundary(sb, elem, context, namespace, parentContext, boundaryMode) {
+                    w(sb, s"""<$tag data-kyo-path="${pathAttr(path)}"""")
+                    renderCommonAttrs(sb, elem, cssRules)
+                    renderEventAttr(sb, elem)
+                    for _ <- renderElementAttrs(sb, elem)
+                    yield
+                        if void then
+                            w(sb, " />")
+                            elem match
+                                case ta: Textarea =>
+                                    sb.delete(sb.length - 3, sb.length)
+                                    w(sb, ">")
+                                    renderTextareaValue(sb, ta).andThen(w(sb, "</textarea>"))
+                                case _: Iframe =>
+                                    // iframe is not a void element: it needs an explicit closing tag.
+                                    sb.delete(sb.length - 3, sb.length)
+                                    w(sb, "></iframe>")
+                                case _ => ()
+                            end match
+                        else
+                            w(sb, ">")
+                            // ForeignObject bridges back to HTML, so reset svg context to false. It MUST be
+                            // matched before SvgElement (ForeignObject IS an SvgElement).
+                            val childNamespace = elem match
+                                case _: Svg.ForeignObject => ReactiveRegion.Namespace.Html
+                                case _: Svg.SvgElement    => ReactiveRegion.Namespace.Svg
+                                case _                    => namespace
+                            val childParentContext = elem match
+                                case _: Table => ReactiveRegion.ParentContext.HtmlTable
+                                case _        => ReactiveRegion.ParentContext.Other
+                            val textChild: Unit < Sync = elem match
+                                case t: Svg.Title => w(sb, esc(t.text)); Kyo.unit
+                                case d: Svg.Desc  => w(sb, esc(d.text)); Kyo.unit
+                                case _            => Kyo.unit
+                            textChild.andThen(
+                                Kyo.foreachDiscard(elem.children.toSeq.zipWithIndex) { (child, i) =>
+                                    renderTo(
+                                        sb,
+                                        child,
+                                        path :+ i.toString,
+                                        context.child(i.toString),
+                                        childNamespace,
+                                        cssRules,
+                                        childParentContext,
+                                        ReactiveRegion.BoundaryMode.Emit
+                                    )
+                                }.andThen(w(sb, s"</$tag>"))
+                            )
+                        end if
+                    end for
+                }
 
             case UI.Ast.RawHtml(value) =>
                 w(sb, value)
@@ -180,36 +308,99 @@ private[kyo] object HtmlRenderer:
                     val childPath = child match
                         case kc: KeyedChild[?] => path :+ kc.key
                         case _                 => path :+ i.toString
-                    renderTo(sb, child, childPath, svg, cssRules)
+                    val childContext = child match
+                        case kc: KeyedChild[?] => context.child(kc.key)
+                        case _                 => context.child(i.toString)
+                    renderTo(sb, child, childPath, childContext, namespace, cssRules, parentContext, ReactiveRegion.BoundaryMode.Emit)
                 }
 
             case KeyedChild(_, child) =>
-                renderTo(sb, child, path, svg, cssRules)
+                renderTo(sb, child, path, context, namespace, cssRules, parentContext, boundaryMode)
 
             case r: Reactive[?] =>
-                // In SVG context emit a <g> placeholder (a <span> is invalid inside <svg>); the
-                // closing tag matches the opening. Both carry the same data-kyo-reactive anchor.
-                val tag = if svg then "g" else "span"
-                w(sb, s"""<$tag data-kyo-path="${pathAttr(path)}" data-kyo-reactive>""")
+                val region = ReactiveRegion.from(context, namespace)
                 for current <- r.signal.current(using r.frame)
-                yield renderTo(sb, current, path, svg, cssRules).andThen(w(sb, s"</$tag>"))
+                yield
+                    val host = ReactiveRegion.renderHost(region, parentContext, ReactiveRegion.tableContent(current))
+                    openInitialHost(sb, host)
+                    renderTo(
+                        sb,
+                        current,
+                        path,
+                        context.transparent,
+                        ReactiveRegion.namespace(host),
+                        cssRules,
+                        ReactiveRegion.contentParent(host),
+                        ReactiveRegion.BoundaryMode.Emit
+                    ).andThen(closeInitialHost(sb, host))
+                end for
 
             case fe: Foreach[?, ?] @unchecked =>
-                val tag = if svg then "g" else "span"
-                w(sb, s"""<$tag data-kyo-path="${pathAttr(path)}" data-kyo-reactive>""")
+                val region = ReactiveRegion.from(context, namespace)
                 fe.applyTyped {
                     [T] =>
                         (signal, keyFn, renderFn) =>
                             for items <- signal.current(using fe.frame)
-                            yield Kyo.foreachDiscard(items.toSeq.zipWithIndex) { (item, i) =>
-                                val key = keyFn match
-                                    case Present(f) => f(item)
-                                    case Absent     => i.toString
-                                renderTo(sb, renderFn(i, item), path :+ key, svg, cssRules)
-                            }.andThen(w(sb, s"</$tag>"))
+                            yield
+                                val rendered = items.toSeq.zipWithIndex.map { (item, i) =>
+                                    val key = keyFn match
+                                        case Present(f) => f(item)
+                                        case Absent     => i.toString
+                                    (key, renderFn(i, item))
+                                }
+                                val content = ReactiveRegion.tableContent(rendered.iterator.map(_._2))
+                                val host    = ReactiveRegion.renderHost(region, parentContext, content)
+                                openInitialHost(sb, host)
+                                Kyo.foreachDiscard(rendered) { (key, child) =>
+                                    renderTo(
+                                        sb,
+                                        child,
+                                        path :+ key,
+                                        context.child(key),
+                                        ReactiveRegion.namespace(host),
+                                        cssRules,
+                                        ReactiveRegion.contentParent(host),
+                                        ReactiveRegion.BoundaryMode.Emit
+                                    )
+                                }.andThen(closeInitialHost(sb, host))
                             end for
                 }
     end renderTo
+
+    private def renderBoundElementBoundary(
+        sb: StringBuilder,
+        elem: Element,
+        context: ReactiveRegion.RegionIdentity,
+        namespace: ReactiveRegion.Namespace,
+        parentContext: ReactiveRegion.ParentContext,
+        boundaryMode: ReactiveRegion.BoundaryMode
+    )(render: => Unit < Sync)(using Frame): Unit < Sync =
+        val host = (namespace, boundaryMode, ReactiveUI.collectSignalRef(elem)) match
+            case (ReactiveRegion.Namespace.Html, ReactiveRegion.BoundaryMode.Emit, Present(_)) =>
+                Present(
+                    ReactiveRegion.renderHost(
+                        ReactiveRegion.HtmlRange(ReactiveRegion.htmlId(context)),
+                        parentContext,
+                        ReactiveRegion.tableContent(elem)
+                    )
+                )
+            case _ => Absent
+        host.foreach(openInitialHost(sb, _))
+        render.andThen(host.foreach(closeInitialHost(sb, _)))
+    end renderBoundElementBoundary
+
+    private def openInitialHost(sb: StringBuilder, host: ReactiveRegion.RenderHost): Unit =
+        host match
+            case ReactiveRegion.RenderHost.HtmlComments(id, _) => w(sb, s"<!--kyo-rs:$id-->")
+            case ReactiveRegion.RenderHost.HtmlTableBody(id) =>
+                w(sb, s"<tbody data-kyo-range-host=\"$id\"><!--kyo-rs:$id-->")
+            case ReactiveRegion.RenderHost.SvgGroup(path) => w(sb, openSvgRegion(path))
+
+    private def closeInitialHost(sb: StringBuilder, host: ReactiveRegion.RenderHost): Unit =
+        host match
+            case ReactiveRegion.RenderHost.HtmlComments(id, _) => w(sb, s"<!--kyo-re:$id-->")
+            case ReactiveRegion.RenderHost.HtmlTableBody(id)   => w(sb, s"<!--kyo-re:$id--></tbody>")
+            case _: ReactiveRegion.RenderHost.SvgGroup         => w(sb, "</g>")
 
     private def renderTextareaValue(sb: StringBuilder, ta: Textarea)(using Frame): Unit < Sync =
         ta.value match
@@ -378,7 +569,8 @@ private[kyo] object HtmlRenderer:
             }
         }
 
-    private def renderCommonAttrs(sb: StringBuilder, attrs: Attrs, cssRules: Maybe[CssCollector] = Absent): Unit =
+    private def renderCommonAttrs(sb: StringBuilder, elem: Element, cssRules: Maybe[CssCollector] = Absent)(using Frame): Unit =
+        val attrs = elem.attrs
         attrs.identifier.foreach(id => w(sb, s""" id="${esc(id)}""""))
         val pseudoClass = registerPseudoClass(cssRules, attrs.uiStyle)
         val classes = pseudoClass match
@@ -391,6 +583,21 @@ private[kyo] object HtmlRenderer:
         attrs.focusGroup.foreach(id => w(sb, s""" data-kyo-focus-group="${esc(id)}""""))
         attrs.focusAuto.foreach(v => if v then w(sb, """ data-kyo-focus-auto="1""""))
         attrs.focusRestore.foreach(v => if v then w(sb, """ data-kyo-focus-restore="1""""))
+        attrs.dragSource.foreach { source =>
+            w(sb, s""" data-kyo-drag-source="${esc(encodedDragSource(source))}"""")
+            w(sb, s""" data-kyo-drag-source-key="${esc(source.key)}"""")
+            val nativeActivation = source.activation == Drag.Activation.Native || source.activation == Drag.Activation.Both
+            if nativeActivation && !elem.isInstanceOf[Svg.SvgElement] then w(sb, """ draggable="true"""")
+        }
+        attrs.dropTarget.foreach { target =>
+            w(sb, s""" data-kyo-drop-target="${esc(encodedDropTarget(target))}"""")
+            w(sb, s""" data-kyo-drop-target-key="${esc(target.key)}"""")
+        }
+        // A source and target can coexist on one sortable element. The source owns the single DOM
+        // routing key in that case, while the complete target key remains present in its JSON metadata.
+        attrs.dragSource match
+            case Present(source) => w(sb, s""" data-kyo-drag-key="${esc(source.key)}"""")
+            case Absent          => attrs.dropTarget.foreach(target => w(sb, s""" data-kyo-drag-key="${esc(target.key)}""""))
         // Marker only: stop-propagation is decided server-side in ReactiveUI.dispatchToElement; the client never reads this.
         attrs.stopPropagation.foreach(v => if v then w(sb, """ data-kyo-stop="1""""))
         // enter/leave transition class lists (read client-side by the patch-application code).
@@ -412,6 +619,16 @@ private[kyo] object HtmlRenderer:
             w(sb, s""" data-kyo-prop-$name="${esc(value)}"""")
         }
     end renderCommonAttrs
+
+    private def encodedDragSource(source: Drag.Source)(using Frame): String =
+        DragProtocol.encodedSourceConfig(source, DragProtocol.Limits.default) match
+            case Result.Success(encoded) => encoded
+            case failure                 => throw new IllegalArgumentException(s"Invalid drag source metadata: $failure")
+
+    private def encodedDropTarget(target: Drag.Target)(using Frame): String =
+        DragProtocol.encodedTargetConfig(target, DragProtocol.Limits.default) match
+            case Result.Success(encoded) => encoded
+            case failure                 => throw new IllegalArgumentException(s"Invalid drop target metadata: $failure")
 
     // ---- Element-specific attributes ----
 
@@ -617,7 +834,7 @@ private[kyo] object HtmlRenderer:
       * A mask is a display format, so a masked field has to show a masked value whoever set it. Client-side
       * enforcement only ever sees typing: a value bound to a [[SignalRef]], a server-side transform of what was
       * typed, and the initial render all reach the field without a `beforeinput` event. Formatting here covers
-      * every one of them at once, in both transports and on both the morph and the replace path, which no amount
+      * every one of them at once, in both transports and on initial and reactive-range renders, which no amount
       * of client-side patching would.
       *
       * A value the mask already formatted comes back unchanged, so the keystroke echo of a two-way binding still
@@ -659,6 +876,13 @@ private[kyo] object HtmlRenderer:
         if attrs.onHover.nonEmpty || attrs.onHoverEvt.nonEmpty then events += "mouseover"
         if attrs.onUnhover.nonEmpty || attrs.onUnhoverEvt.nonEmpty then events += "mouseout"
         if attrs.onScroll.nonEmpty || attrs.onScrollEvt.nonEmpty then events += "wheel"
+        if attrs.onDragStart.nonEmpty || attrs.onDragStartEvt.nonEmpty then events += "dragstart"
+        if attrs.onDragEnd.nonEmpty || attrs.onDragEndEvt.nonEmpty then events += "dragend"
+        if attrs.onDragEnter.nonEmpty || attrs.onDragEnterEvt.nonEmpty then events += "dragenter"
+        if attrs.onDragLeave.nonEmpty || attrs.onDragLeaveEvt.nonEmpty then events += "dragleave"
+        if attrs.onDragOver.nonEmpty || attrs.onDragOverEvt.nonEmpty then events += "dragover"
+        if attrs.onDrop.nonEmpty || attrs.onDropEvt.nonEmpty then events += "drop"
+        if attrs.onSortMove.nonEmpty || attrs.onSortMoveEvt.nonEmpty then events += "sortmove"
         // "input" event: when handler is set OR when .value(SignalRef) auto-binding is in use
         elem match
             case ti: TextInput if ti.onInput.nonEmpty || hasSignalRefValue(ti.value) => events += "input"
@@ -812,6 +1036,125 @@ private[kyo] object HtmlRenderer:
           |// Mirrors kyo.internal.InputMasking.maskNormalize.
           |function kyoMaskNormalize(mask,val){var ts=kyoMaskParse(mask);return kyoMaskFormat(ts,kyoMaskRaw(ts,val));}""".stripMargin
 
+    private[kyo] val reactiveRangesJs: String =
+        """function kyoRangeId(id){
+          |  if(typeof id!=="string"||!/^r[0-9a-f]*(?:n[0-9a-f]{8})?$/.test(id))return false;
+          |  var suffix=id.indexOf("n",1),end=suffix<0?id.length:suffix;
+          |  if(suffix>=0&&id.slice(suffix+1)==="00000000")return false;
+          |  var i=1;while(i<end){if(i+8>end)return false;var n=parseInt(id.slice(i,i+8),16);i+=8;
+          |    if(!isFinite(n)||i+n*4>end)return false;i+=n*4;}
+          |  return i===end;
+          |}
+          |function kyoRangeFail(message){throw new Error("kyo-ui reactive range: "+message);}
+          |function kyoRangeMarker(comment,prefix){
+          |  var value=comment.data;if(value.indexOf(prefix)!==0)return null;
+          |  var id=value.slice(prefix.length);if(!kyoRangeId(id))kyoRangeFail("malformed id: "+id);return id;
+          |}
+          |function kyoRangeScan(root){
+          |  var found=new Map(),seen=new Map(),open=[];
+          |  var walker=document.createTreeWalker(root,128,null,false),comment;
+          |  while((comment=walker.nextNode())){
+          |    var start=kyoRangeMarker(comment,"kyo-rs:");
+          |    if(start!==null){if(seen.has(start))kyoRangeFail("duplicate id: "+start);seen.set(start,true);open.push({id:start,node:comment});continue;}
+          |    var end=kyoRangeMarker(comment,"kyo-re:");
+          |    if(end!==null){if(open.length===0)kyoRangeFail("end marker has no start: "+end);
+          |      var top=open[open.length-1];if(top.id!==end)kyoRangeFail("crossed ranges: expected "+top.id+", found "+end);
+          |      open.pop();if(top.node.parentNode!==comment.parentNode)kyoRangeFail("anchors are not siblings: "+end);
+          |      found.set(end,{start:top.node,end:comment});}
+          |  }
+          |  if(open.length)kyoRangeFail("start marker has no end: "+open[open.length-1].id);
+          |  return found;
+          |}
+          |function kyoRangeRoots(start,end){
+          |  var roots=[],node=start.nextSibling;while(node&&node!==end){if(node.nodeType===1)roots.push(node);node=node.nextSibling;}return roots;
+          |}
+          |function kyoRangeFragmentRoots(fragment){
+          |  var roots=[],node=fragment.firstChild;while(node){if(node.nodeType===1)roots.push(node);node=node.nextSibling;}return roots;
+          |}
+          |function kyoRangeSemanticRoots(roots,id){
+          |  if(roots.length!==1||roots[0].tagName!=="TBODY"||roots[0].getAttribute("data-kyo-range-host")!==id)return roots;
+          |  var semantic=[],node=roots[0].firstChild;while(node){if(node.nodeType===1)semantic.push(node);node=node.nextSibling;}return semantic;
+          |}
+          |function kyoRangeSyncHost(host,incoming,id){for(var i=host.attributes.length-1;i>=0;i--){var name=host.attributes[i].name;if(name!=="data-kyo-range-host")host.removeAttribute(name);}
+          |  for(var i=0;i<incoming.attributes.length;i++){var a=incoming.attributes[i];if(a.name!=="data-kyo-range-host")host.setAttribute(a.name,a.value);}
+          |  host.setAttribute("data-kyo-range-host",id);
+          |}
+          |function kyoRangeContains(roots,node){for(var i=0;i<roots.length;i++)if(roots[i]===node||roots[i].contains(node))return true;return false;}
+          |function kyoRangeFocusLocator(roots,active){for(var r=0;r<roots.length;r++){if(roots[r]===active||roots[r].contains(active)){
+          |    var route=[],node=active;while(node!==roots[r]){var parent=node.parentElement,index=0;
+          |      while(index<parent.children.length&&parent.children[index]!==node)index++;route.unshift(index);node=parent;}
+          |    return {path:active.getAttribute("data-kyo-path"),root:r,route:route};}}return null;
+          |}
+          |function kyoRangeResolveFocus(roots,locator){if(!locator)return null;if(locator.path!==null){for(var r=0;r<roots.length;r++){
+          |    if(roots[r].getAttribute("data-kyo-path")===locator.path)return roots[r];var all=roots[r].querySelectorAll("[data-kyo-path]");
+          |    for(var i=0;i<all.length;i++)if(all[i].getAttribute("data-kyo-path")===locator.path)return all[i];}}
+          |  var node=roots[locator.root];if(!node)return null;for(var i=0;i<locator.route.length;i++){
+          |    node=node.children[locator.route[i]];if(!node)return null;}return node;
+          |}
+          |function kyoMergeSets(into,from){for(var key in from)if(Object.prototype.hasOwnProperty.call(from,key))into[key]=true;return into;}
+          |function kyoEnterPathsRoots(roots){var set={};for(var i=0;i<roots.length;i++)kyoMergeSets(set,faEnterPaths(roots[i]));return set;}
+          |function kyoFocusPathsRoots(roots){var set={};for(var i=0;i<roots.length;i++)kyoMergeSets(set,focusAutoPaths(roots[i]));return set;}
+          |function kyoLeavePathsRoots(roots){var set={};for(var i=0;i<roots.length;i++){var root=roots[i],els=[];
+          |  if(root.hasAttribute("data-kyo-leave"))els.push(root);var ds=root.querySelectorAll("[data-kyo-leave]");
+          |  for(var j=0;j<ds.length;j++)els.push(ds[j]);for(var j=0;j<els.length;j++){var p=els[j].getAttribute("data-kyo-path");if(p!==null)set[p]=true;}}
+          |  return set;
+          |}
+          |function kyoLeavePrepareRoots(roots,surv){var ghosts=[];for(var i=0;i<roots.length;i++)ghosts=ghosts.concat(kyoLeavePrepare(roots[i],surv));return ghosts;}
+          |function kyoSeedEnterRoots(roots,oldSet){for(var i=0;i<roots.length;i++)kyoEnterSeed(roots[i],oldSet);}
+          |function kyoSeedFocusRoots(roots,oldSet){
+          |  var cand=[];for(var i=0;i<roots.length;i++){var root=roots[i];if(root.hasAttribute("data-kyo-focus-auto"))cand.push(root);
+          |    var ds=root.querySelectorAll("[data-kyo-focus-auto]");for(var j=0;j<ds.length;j++)cand.push(ds[j]);}
+          |  for(var i=0;i<cand.length;i++){var fa=cand[i].getAttribute("data-kyo-path");if(fa!==null&&!oldSet[fa]){
+          |    var ae=document.activeElement,ret=(ae&&ae!==document.body&&ae.getAttribute)?ae.getAttribute("data-kyo-path"):null;
+          |    __focusReturnStack.push({fa:fa,ret:ret,restore:cand[i].hasAttribute("data-kyo-focus-restore")});
+          |    if(typeof cand[i].focus==="function")cand[i].focus();return;}}
+          |}
+          |function kyoRangeMorph(active,oldRoots,newRoots,incoming){
+          |  if(!active||oldRoots.length!==1||newRoots.length!==1||active!==oldRoots[0]||incoming.size!==0)return false;
+          |  if((active.tagName!=="INPUT"&&active.tagName!=="TEXTAREA")||active.tagName!==newRoots[0].tagName)return false;
+          |  var fresh=newRoots[0];for(var i=0;i<fresh.attributes.length;i++){var a=fresh.attributes[i];if(active.getAttribute(a.name)!==a.value)active.setAttribute(a.name,a.value);}
+          |  for(var i=active.attributes.length-1;i>=0;i--){var name=active.attributes[i].name;if(!fresh.hasAttribute(name))active.removeAttribute(name);}
+          |  var value=active.tagName==="TEXTAREA"?fresh.textContent:(fresh.getAttribute("value")||"");if(value!==active.value)active.value=value;
+          |  applyJsProps(active);return true;
+          |}
+          |function kyoRangeReplace(id,html){
+          |  if(!kyoRangeId(id))kyoRangeFail("malformed replacement id: "+id);
+          |  if(!__kyoRanges)kyoRangeFail("registry is closed");var endpoints=__kyoRanges.get(id);
+          |  if(!endpoints)kyoRangeFail("unknown id: "+id);
+          |  if(endpoints.start.data!=="kyo-rs:"+id||endpoints.end.data!=="kyo-re:"+id)kyoRangeFail("markers are corrupted: "+id);
+          |  if(!endpoints.start.parentNode||endpoints.start.parentNode!==endpoints.end.parentNode)kyoRangeFail("anchors are no longer siblings: "+id);
+          |  var ordered=endpoints.start.nextSibling;while(ordered&&ordered!==endpoints.end)ordered=ordered.nextSibling;
+          |  if(!ordered)kyoRangeFail("end is not after start: "+id);
+          |  var range=document.createRange();range.setStartAfter(endpoints.start);range.setEndBefore(endpoints.end);
+          |  var parent=endpoints.start.parentNode,synthetic=parent.tagName==="TBODY"&&parent.getAttribute("data-kyo-range-host")===id;
+          |  var parser=range;if(synthetic){parser=document.createRange();parser.selectNode(parent);}
+          |  var fragment=parser.createContextualFragment(html),incoming=kyoRangeScan(fragment),removed=[];
+          |  __kyoRanges.forEach(function(pair,key){if(key!==id&&range.intersectsNode(pair.start))removed.push(key);});
+          |  incoming.forEach(function(pair,key){if(__kyoRanges.has(key)&&removed.indexOf(key)<0)kyoRangeFail("duplicate id: "+key);});
+          |  var oldRoots=kyoRangeRoots(endpoints.start,endpoints.end),newRoots=kyoRangeFragmentRoots(fragment),newSemanticRoots=kyoRangeSemanticRoots(newRoots,id),active=document.activeElement;
+          |  if(kyoRangeMorph(active,oldRoots,newSemanticRoots,incoming))return;
+          |  var inside=active&&active!==document.body&&kyoRangeContains(oldRoots,active);
+          |  var activeLocator=inside?kyoRangeFocusLocator(oldRoots,active):null;
+          |  var ss=inside&&typeof active.selectionStart==="number"?active.selectionStart:null;
+          |  var se=inside&&typeof active.selectionEnd==="number"?active.selectionEnd:null;
+          |  var oldEnter=kyoEnterPathsRoots(oldRoots),ghosts=kyoLeavePrepareRoots(oldRoots,kyoLeavePathsRoots(newSemanticRoots));
+          |  var oldFocus=kyoFocusPathsRoots(oldRoots);
+          |  range.deleteContents();for(var i=0;i<removed.length;i++)__kyoRanges.delete(removed[i]);
+          |  var finalRoots=newSemanticRoots;if(synthetic&&newRoots.length===1&&newRoots[0].tagName==="TBODY"&&newRoots[0].getAttribute("data-kyo-range-host")===id){
+          |    var incomingHost=newRoots[0];kyoRangeSyncHost(parent,incomingHost,id);while(incomingHost.firstChild)parent.insertBefore(incomingHost.firstChild,endpoints.end);finalRoots=kyoRangeRoots(endpoints.start,endpoints.end);
+          |  }else if(synthetic){var table=parent.parentNode;if(!table)kyoRangeFail("table range host is detached: "+id);
+          |    table.insertBefore(endpoints.start,parent);table.insertBefore(fragment,parent);table.insertBefore(endpoints.end,parent);table.removeChild(parent);
+          |  }else{endpoints.end.parentNode.insertBefore(fragment,endpoints.end);if(newRoots.length&&newRoots[0].tagName==="TBODY"&&newRoots[0].getAttribute("data-kyo-range-host")===id){
+          |    newRoots[0].insertBefore(endpoints.start,newRoots[0].firstChild);newRoots[0].appendChild(endpoints.end);finalRoots=kyoRangeRoots(endpoints.start,endpoints.end);}}
+          |  incoming.forEach(function(pair,key){__kyoRanges.set(key,pair);});
+          |  for(var i=0;i<finalRoots.length;i++){applyJsProps(finalRoots[i]);ba(finalRoots[i]);}
+          |  var restored=kyoRangeResolveFocus(finalRoots,activeLocator);if(restored){restored.focus();if(ss!==null)kyoSetCaret(restored,ss,se);}
+          |  kyoSeedEnterRoots(finalRoots,oldEnter);kyoSeedFocusRoots(finalRoots,oldFocus);kyoSpawnGhosts(ghosts);sweepFocusAuto();
+          |}
+          |var __kyoRanges=kyoRangeScan(document.body);
+          |window.addEventListener("pagehide",function(){if(__kyoRanges){__kyoRanges.clear();__kyoRanges=null;}});
+          |function kyoClientError(error){if(window.console&&console.error)console.error(error);}""".stripMargin
+
     private def clientJs(basePath: String): String =
         s"""(function(){
            |var base="$basePath";
@@ -822,40 +1165,26 @@ private[kyo] object HtmlRenderer:
            |// the value is set and only the caret stays put. Every other exception is a real failure and propagates.
            |function kyoSetCaret(t,s,e){if(typeof t.setSelectionRange!=="function")return;
            |  try{t.setSelectionRange(s,e);}catch(er){if(er.name!=="InvalidStateError")throw er;}}
+           |$reactiveRangesJs
            |var ws=new WebSocket((location.protocol===\"https:\"?\"wss:\":\"ws:\")+"//"+location.host+base+"/_kyo/ws");
            |ws.onopen=function(){__q.forEach(function(m){ws.send(m);});__q=[];};
+           |${DragClientJs.script(basePath)}
+           |var __dragRt=installDragRuntime(function(m){post(m);},{onClose:function(c){__dragCleanup=c;}});
+           |var __dragCleanup=__dragRt.cleanup;
+           |ws.onclose=function(){if(__dragCleanup){__dragCleanup();__dragCleanup=null;}};
            |ws.onmessage=function(e){
            |  var op=JSON.parse(e.data);
-           |  if(op.Replace){
+           |  if(op.ResolveDrag){
+           |    try{__dragRt.resolve(op.ResolveDrag.sessionId,op.ResolveDrag.decision);}catch(error){kyoClientError(error);}
+           |  }else if(op.ReadDropFile||op.ReadDropDirectory||op.CancelDropRead){
+           |    try{__dragRt.serveDropRead(op);}catch(error){kyoClientError(error);}
+           |  }else if(op.ReplaceRange){
+           |    try{kyoRangeReplace(op.ReplaceRange.regionId,op.ReplaceRange.html);}catch(error){kyoClientError(error);}
+           |  }else if(op.Replace){
            |    var p=op.Replace.path.join(".");
            |    var el=document.querySelector('[data-kyo-path="'+p+'"]');
-           |    // Two-way binding echoes each keystroke back as a Replace. An outerHTML replace of the focused field
-           |    // resets its caret (email/number inputs do not support selectionStart, so it cannot be restored),
-           |    // reversing typed text. So when the focused editable element is inside this Replace, MORPH it in place
-           |    // instead: sync attributes (the value attribute keeps mirroring the signal) but assign the live .value
-           |    // only on a genuine change. The user's own keystroke echo carries the value the field already holds, so
-           |    // .value is left alone and the caret is preserved; a submit-clear or external update carries a different
-           |    // value and is applied. The re-render is wrapped in <span data-kyo-reactive>, so the field is inside `el`.
-           |    // Only morph the field's OWN value echo: its data-kyo-path equals this Replace's path (the bound input
-           |    // and its wrapper span share the path). A larger subtree re-render (a foreach reorder, a `when` swap)
-           |    // has a shorter path and merely CONTAINS the focused field; that must fall through to the normal
-           |    // replace so focus-follows-item and structural changes still work.
-           |    var __ae=document.activeElement;
-           |    var __morphed=false;
-           |    if(el&&__ae&&(__ae.tagName==="INPUT"||__ae.tagName==="TEXTAREA")&&__ae.getAttribute("data-kyo-path")===p&&el.contains(__ae)){
-           |      var __t=document.createElement("template");__t.innerHTML=op.Replace.html.trim();
-           |      var __ni=__t.content.querySelector(__ae.tagName.toLowerCase());
-           |      if(__ni){
-           |        for(var __i=0;__i<__ni.attributes.length;__i++){var __a=__ni.attributes[__i];if(__ae.getAttribute(__a.name)!==__a.value)__ae.setAttribute(__a.name,__a.value);}
-           |        var __names=[];for(var __j=0;__j<__ae.attributes.length;__j++)__names.push(__ae.attributes[__j].name);
-           |        for(var __k=0;__k<__names.length;__k++){if(!__ni.hasAttribute(__names[__k]))__ae.removeAttribute(__names[__k]);}
-           |        var __nv=(__ae.tagName==="TEXTAREA")?__ni.textContent:(__ni.getAttribute("value")||"");
-           |        if(__nv!==__ae.value)__ae.value=__nv;
-           |        applyJsProps(__ae);
-           |        __morphed=true;
-           |      }
-           |    }
-           |    if(el&&!__morphed&&el.outerHTML!==op.Replace.html){
+           |    // Replace is the SVG-only, path-addressed operation. HTML boundaries use ReplaceRange above.
+           |    if(el&&el.outerHTML!==op.Replace.html){
            |      var ae=document.activeElement;
            |      var ap=ae&&ae!==document.body&&ae.getAttribute?ae.getAttribute("data-kyo-path"):null;
            |      var ss=(ae&&typeof ae.selectionStart==='number')?ae.selectionStart:null;
@@ -865,8 +1194,8 @@ private[kyo] object HtmlRenderer:
            |      var __fa=focusAutoPaths(el);
            |      el.outerHTML=op.Replace.html;
            |      var nel=document.querySelector('[data-kyo-path="'+p+'"]');if(nel){applyJsProps(nel);ba(nel);}
-           |      if(ap){var rf=document.querySelector('[data-kyo-path="'+ap+'"]');if(rf&&rf.hasAttribute&&rf.hasAttribute('data-kyo-reactive')){var inner=rf.querySelector('input,textarea,select,[contenteditable]');if(inner)rf=inner;}if(rf){rf.focus();if(ss!==null)kyoSetCaret(rf,ss,se);}}
-           |      // Seed AFTER focus/caret restore so a newly-appeared focus-auto element wins restore-to-trigger (the morph path never seeds).
+           |      if(ap){var rf=document.querySelector('[data-kyo-path="'+ap+'"]');if(rf){rf.focus();if(ss!==null)kyoSetCaret(rf,ss,se);}}
+           |      // Seed after focus/caret restore so a newly appeared focus-auto element wins restore-to-trigger.
            |      if(nel){kyoEnterSeed(nel,__en);seedFocusAuto(nel,__fa);}
            |      kyoSpawnGhosts(__gh);
            |    }
@@ -923,25 +1252,12 @@ private[kyo] object HtmlRenderer:
            |}
            |// Apply data-kyo-prop-* HTML attributes as JS DOM properties then remove the attr.
            |// Mirrors DomBackend.applyJsPropsSync for the HTTP/JVM rendering path.
+           |function applyJsPropsElement(el,pfx){for(var i=el.attributes.length-1;i>=0;i--){var n=el.attributes[i].name;
+           |  if(n.indexOf(pfx)===0){el[n.slice(pfx.length)]=el.getAttribute(n);el.removeAttribute(n);}}
+           |}
            |function applyJsProps(root){
-           |  var pfx="data-kyo-prop-";
-           |  var els=root.querySelectorAll("[data-kyo-prop-indeterminate],[data-kyo-prop-checked]");
-           |  var list=[];
-           |  if(root.hasAttribute&&root.getAttribute){
-           |    var an=root.getAttributeNames?root.getAttributeNames():[];
-           |    for(var i=0;i<an.length;i++){if(an[i].indexOf(pfx)===0){list.push(root);break;}}
-           |  }
-           |  for(var i=0;i<els.length;i++)list.push(els[i]);
-           |  for(var j=0;j<list.length;j++){
-           |    var el=list[j];
-           |    var names=el.getAttributeNames?el.getAttributeNames():[];
-           |    var rem=[];
-           |    for(var k=0;k<names.length;k++){
-           |      var n=names[k];
-           |      if(n.indexOf(pfx)===0){el[n.slice(pfx.length)]=el.getAttribute(n);rem.push(n);}
-           |    }
-           |    for(var k=0;k<rem.length;k++)el.removeAttribute(rem[k]);
-           |  }
+           |  var pfx="data-kyo-prop-";applyJsPropsElement(root,pfx);var els=root.querySelectorAll("*");
+           |  for(var i=0;i<els.length;i++)applyJsPropsElement(els[i],pfx);
            |}
            |// Start freshly-inserted SMIL animations. Chart transition <animate> elements use
            |// begin="indefinite" so they do not auto-play against the shared document timeline (which would
@@ -980,8 +1296,7 @@ private[kyo] object HtmlRenderer:
            |  }
            |}
            |// Set of paths of data-kyo-LEAVE elements in an HTML fragment (which leave-elements SURVIVE a Replace).
-           |// Keyed on leave-carrying elements, NOT all data-kyo-path: a reactive wrapper span shares its path with
-           |// the (leaving) element it wraps, so an all-path set would wrongly report the element as surviving.
+           |// Keyed on leave-carrying elements, NOT every data-kyo-path.
            |function kyoLeaveSurv(html){
            |  var s={};var t=document.createElement("template");t.innerHTML=html;
            |  var els=t.content.querySelectorAll("[data-kyo-leave]");

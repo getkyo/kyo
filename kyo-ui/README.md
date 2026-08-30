@@ -209,15 +209,15 @@ One value (`loggedIn`) drives four things at once: button click writes it, `when
 
 A reader coming from React or another VDOM library is likely to ask: when a signal updates, what re-runs? The answer is: only the closure attached to that signal's boundary.
 
-kyo-ui builds the `UI` value once. The value is an AST of plain case classes. Wherever a signal appears (as a child, as a setter argument, as a `when` condition), the framework registers a subscription on that signal at construction time, anchored to a path in the AST. When the signal emits, the framework re-evaluates only that boundary's closure (producing a new subtree), then patches the DOM (or pushes a diff over the WebSocket for `runHandlers`) at the corresponding path. Nothing above or beside the boundary is touched.
+kyo-ui builds the `UI` value once. The value is an AST of plain case classes. Wherever a signal appears (as a child, as a setter argument, as a `when` condition), the framework registers a subscription on that signal at construction time. HTML boundaries are represented by paired comments with an encoded logical region identity. SVG boundaries retain path-addressed `<g>` elements. When the signal emits, the framework re-evaluates only that boundary's closure (producing a new subtree), then patches that boundary in the DOM or pushes the same operation over the WebSocket for `runHandlers`. Nothing above or beside the boundary is touched.
 
 Contrast with React: a state setter call inside a component triggers re-execution of the component function and propagates down through its descendants, building a new virtual DOM, diffing against the previous one, and applying minimal DOM updates. Components are functions called over and over; expensive subtrees need `React.memo` or `useMemo` to opt out of re-running.
 
 In kyo-ui:
 
 - The function that constructs the `UI` value runs once. There is no component function that re-runs on every state change.
-- A `signal.render(f)` boundary is a subscription to the signal at the granularity of `f`. Only `f` re-runs when the signal emits, and the framework patches the DOM only at the path where the boundary was anchored.
-- There is no virtual DOM. The boundary holds the previous rendered AST for that subtree and generates a fresh one; the server-push transport compares the two and sends a `Replace` only for the nodes that actually differ, addressed by their own paths, so a chart whose data moved but whose axes, gridlines and legend did not sends its marks and nothing else. An unchanged re-render sends nothing. The comparison walks into an SVG subtree, where a node is exactly its attributes and its children, and replaces the enclosing node whole anywhere it cannot decompose. The browser-side runtime applies each diff via `outerHTML`; in-process it replaces the boundary whole, since there the update is a DOM write rather than bytes on a wire.
+- A `signal.render(f)` boundary is a subscription to the signal at the granularity of `f`. Only `f` re-runs when the signal emits, and the framework patches only that logical region.
+- There is no virtual DOM. The boundary generates a fresh subtree. HTML emits `ReplaceRange`, which preserves the comment anchors and parses the replacement in their actual parent context with a DOM `Range`. SVG retains its `<g>` boundary and emits path-addressed `Replace`: the boundary holds the previous rendered AST, the server-push transport compares it against the fresh one, and sends a `Replace` only for the nodes that actually differ, addressed by their own paths, so a chart whose data moved but whose axes, gridlines and legend did not sends its marks and nothing else. An unchanged re-render sends nothing. The comparison walks a node as exactly its attributes and its children, and replaces the enclosing node whole anywhere it cannot decompose. The browser-side runtime applies each diff via `outerHTML`; in-process it replaces the boundary whole, since there the update is a DOM write rather than bytes on a wire.
 - Subscription granularity is determined at the call site. `div(name: Signal[String])` is a fine-grained subscription on one text node. `when(loggedIn)(bigSubtree)` is a coarse subscription that swaps a whole subtree. Both are explicit choices in the code, not framework defaults to argue with.
 - There is no `useMemo`, `useCallback`, or `React.memo` equivalent because nothing gets re-executed that you did not opt into. The cost of "rendering" a subtree is the cost of the closure inside its boundary, and you wrote that closure.
 
@@ -1209,6 +1209,63 @@ val pixelForRevenue: Double < Sync =
 
 For a live chart these scales reflect the signal value at call time and do not update on later emissions; call `.lowerWithScales` again to recompute.
 
+## Drag and drop
+
+Any interactive element opts into dragging with `.dragSource` and into receiving drops with `.dropTarget`. A `Drag.Source` names the element with a stable key and declares the typed payload it carries: `Drag.Item.Text` maps media types to representations, and `Drag.Item.Uri`, `Drag.Item.File`, and `Drag.Item.Directory` model native payloads arriving from outside the page. A `Drag.Target` declares what it accepts through `Drag.Accept`, which constrains media types, operations, item counts, and file sizes before your handler ever runs:
+
+```scala doctest:setup
+val textPlain: Drag.MediaType = Drag.MediaType.parse("text/plain").get
+
+val textOnly: Drag.Accept = Drag.Accept.types(Drag.MediaTypePattern.exact(textPlain))
+```
+
+```scala
+val card: UI = li("Anvil").dragSource(
+    Drag.Source("card-1", Chunk(Drag.Item.Text(Map(textPlain -> "Anvil"))), label = Present("Anvil"))
+)
+
+val bin: UI = ul.dropTarget(Drag.Target("bin", textOnly, Present("Bin")))(card)
+    .onDrop((event: Drag.Event) => Drag.Decision.Accept)
+```
+
+Drop and sort handlers return a `Drag.Decision`: `Accept` commits, `Reject` carries a typed `Drag.Rejection` explaining why (`IncompatibleType`, `TooManyItems`, `FileTooLarge`, or an application reason). Constraint failures reject before dispatch, so a handler only sees payloads its target declared acceptable.
+
+**Sortable collections** build on the same wiring, without the payload ceremony: `Drag.Source.sortable(key)` and `Drag.Target.sortable(collection)` carry a reserved internal media type, so pure reordering never invents an application payload. The target's `collection` name is the contract: it is exactly the value sort moves carry in `Drag.Location.collection` for that container.
+
+A reorder arrives as one semantic `Drag.Move`: the moving keys, the source and destination collection names, an optional anchor key, and a `Before`/`After` position. The pure `Sortable` engine applies and validates it (missing keys, duplicate keys, anchors inside the selection, unsupported operations), so state management stays a total function you can also call programmatically. `Sortable.moveBy` works on your typed values directly, `locked` keys can neither move nor anchor a move, and `Drag.Decision.fromResult` turns the reducer result into the handler's decision, committing only on success:
+
+```scala doctest:setup
+case class Task(id: String, title: String)
+```
+
+```scala
+def reorder(items: SignalRef[Chunk[Task]]): UI =
+    ul.onSortMove { (move: Drag.Move) =>
+        items.get.map { current =>
+            Drag.Decision.fromResult(
+                Sortable.moveBy(current, current, move, locked = Set("pinned"))(_.id)
+            )((updated, _) => items.set(updated))
+        }
+    }(span("items render here"))
+```
+
+For multi-collection boards, `Sortable.moveGroups` locates the moving keys across an ordered set of named key collections and lands a selection spanning collections contiguously at the destination anchor, and `Sortable.expandSelection` implements the standard multi-select rule: when every dragged key is selected, the whole selection moves in visible order.
+
+**Dropped files and directories are read lazily.** A dropped `Drag.Item.File` carries metadata only; content stays in the browser until you ask for it. `Drag.DroppedFile.from(item)` gives a scoped handle whose `bytes(chunkSize)` streams the content in bounded requests over the session, `text(charset)` collects and decodes it, and `Drag.DroppedDirectory.from(item).entries(limits)` pages a directory under an explicit `Drag.DirectoryLimits` traversal budget. Reads fail with a typed `Drag.FileError` (`Disconnected`, `PermissionDenied`, `LimitExceeded`, ...), a consumer that stops early cancels its browser read through its `Scope`, and every pending read fails with `Disconnected` when the session closes:
+
+```scala
+def firstFileText(event: Drag.Event): String < (Async & Scope & Abort[Drag.FileError]) =
+    event.items.collectFirst { case file: Drag.Item.File => file } match
+        case Some(file) => Drag.DroppedFile.from(file).text()
+        case None       => Abort.fail(Drag.FileError.NotFound)
+```
+
+**Every sensor reaches the same handler.** Native HTML5 drags, pointer drags with an activation distance, touch drags with a hold delay, and keyboard sessions (Enter or Space to lift, orientation-aware arrows plus Home and End to place, Tab to change target, Enter to confirm, Escape to cancel) all emit the same wire events, so one `onSortMove` or `onDrop` handler covers every input. Sensor sessions announce pickup, placement, rejection, and success through a visually hidden live region, and mark transient state with the reserved `data-kyo-dragging`, `data-kyo-drop-valid`, and `data-kyo-drop-position` attributes. Elements marked `data-kyo-drag-selected="true"` move together with the dragged item in DOM order.
+
+**Local and server-push behave identically.** A locally mounted app runs the drag runtime in-process; a served page embeds the equivalent runtime in the page and exchanges the same wire events over the WebSocket, including lazy file reads. Both are `Scope`-owned: closing the mount scope or the server session removes every listener, timer, frame, preview node, and live region, cancels pending file reads, and revokes browser file tokens; the lifecycle stress suites pin those counts at zero after close.
+
+The [Kanban](shared/src/test/scala/demo/KanbanDemo.scala) and [InventoryGrid](shared/src/test/scala/demo/InventoryGridDemo.scala) demos are the working references: Kanban moves a multi-selection across lanes through one `moveGroups` reducer shared with its fallback arrow buttons, and InventoryGrid reorders rows and columns as two independent collections with a locked column, both proven end to end by `DragScenarioItTest`. Run them with `sbt 'kyo-uiJVM/Test/runMain demo.KanbanDemo'` and `sbt 'kyo-uiJVM/Test/runMain demo.InventoryGridDemo'`.
+
 ## Running a UI
 
 The same `UI` value plugs into different targets. The runner picks the transport; the UI shape is unchanged.
@@ -1247,7 +1304,7 @@ val mountTo: Unit < (Async & Scope) = runMount(ui, "#app")
 
 ### `UI.runHandlers(basePath)(ui)`
 
-Server-push deployment. Returns `Seq[HttpHandler[?, ?, ?]] < Sync`: two handlers in one sequence, a GET that serves the initial server-side-rendered page (pure SSR, no session, no fibers, no cookie), and a WebSocket route at `/_kyo/ws` that carries `HtmlOp.Replace` diffs out to the client and client events back in over the same connection. You wire them into `HttpServer.init` alongside your other routes.
+Server-push deployment. Returns `Seq[HttpHandler[?, ?, ?]] < Sync`: two handlers in one sequence, a GET that serves the initial server-side-rendered page (pure SSR, no session, no fibers, no cookie), and a WebSocket route at `/_kyo/ws` that carries `HtmlOp.Replace` and `HtmlOp.ReplaceRange` diffs out to the client and client events back in over the same connection. You wire them into `HttpServer.init` alongside your other routes.
 
 The session is the WebSocket connection. The WS handler owns the reactive subscription via a `Scope`; closing the socket cascade-tears-down the whole subscription tree (leak-free by construction). Per-connection state resets on a real disconnect: a dropped socket starts a fresh session, so signal state is per-connection. The initial `ui` should be deterministic so the SSR page and the WebSocket's first render agree.
 
@@ -1807,7 +1864,8 @@ This is the same value you would pass to `UI.runHandlers("/todos")(todoApp.map(_
 
 Demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) and cover all three runners. Run any with `sbt 'kyo-uiJVM/Test/runMain demo.<NameDemo>'`; the server-push demos print a `localhost` URL to open.
 
-- [**Kanban**](shared/src/test/scala/demo/KanbanDemo.scala): Trello-style board over server-push: add, move, and delete cards across columns.
+- [**Kanban**](shared/src/test/scala/demo/KanbanDemo.scala): Trello-style board over server-push: [drag](#drag-and-drop) cards across columns, move a multi-selection together, or use the arrow-button fallback, all through one `Sortable.move`-based reducer.
+- [**InventoryGrid**](shared/src/test/scala/demo/InventoryGridDemo.scala): inventory table with independently [sortable](#drag-and-drop) rows and columns over one state ref, a locked SKU column, and multi-row selection.
 - [**Signup**](shared/src/test/scala/demo/SignupDemo.scala): registration form with live reactive validation, inline errors, and a submit gated until valid.
 - [**Dashboard**](shared/src/test/scala/demo/DashboardDemo.scala): live metrics pushed over the WebSocket from a background fiber, with no client code.
 - [**Search**](shared/src/test/scala/demo/SearchDemo.scala): live Wikipedia search via `HttpClient`, with loading and error states.

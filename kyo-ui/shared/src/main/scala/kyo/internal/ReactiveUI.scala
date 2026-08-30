@@ -11,7 +11,10 @@ private[kyo] case class ReactiveUI(
     isConst: Boolean,
     children: Seq[ReactiveUI],
     handle: (Seq[String], UIEvent) => Boolean < Async,
-    svgContext: Boolean = false
+    region: ReactiveRegion,
+    contentContext: ReactiveRegion.RegionIdentity,
+    parentContext: ReactiveRegion.ParentContext,
+    discoverContentRootBound: Boolean
 )
 
 private[kyo] object ReactiveUI:
@@ -23,40 +26,56 @@ private[kyo] object ReactiveUI:
         signal: Signal[UI],
         isConst: Boolean,
         children: Seq[ReactiveUI],
-        svgContext: Boolean = false
+        svgContext: Boolean,
+        regionIdentity: ReactiveRegion.RegionIdentity,
+        contentContext: ReactiveRegion.RegionIdentity,
+        parentContext: ReactiveRegion.ParentContext
     )(
         handle: (Seq[String], UIEvent) => Boolean < Async
     ): ReactiveUI =
-        ReactiveUI(path, signal, isConst, children, handle, svgContext)
-
-    /** Locate the ReactiveUI node at `path` in the resolved tree. Used by the exchanges to look up the
-      * recorded svgContext flag so an empty placeholder uses the correct (<g> vs <span>) tag.
-      */
-    private[kyo] def findNode(root: ReactiveUI, path: Seq[String]): Maybe[ReactiveUI] =
-        if root.path == path then Present(root)
-        else
-            root.children.foldLeft(Absent: Maybe[ReactiveUI]) { (acc, child) =>
-                if acc.nonEmpty then acc else findNode(child, path)
-            }
+        ReactiveUI(
+            path,
+            signal,
+            isConst,
+            children,
+            handle,
+            ReactiveRegion.from(regionIdentity, svgContext),
+            contentContext,
+            parentContext,
+            discoverContentRootBound = true
+        )
 
     def normalize(ui: UI, path: Seq[String], svg: Boolean = false): ReactiveUI < Sync =
+        normalizeAt(ui, path, svg, ReactiveRegion.RegionIdentity.root(path), ReactiveRegion.ParentContext.Other)
+
+    private def normalizeAt(
+        ui: UI,
+        path: Seq[String],
+        svg: Boolean,
+        regionIdentity: ReactiveRegion.RegionIdentity,
+        parentContext: ReactiveRegion.ParentContext
+    ): ReactiveUI < Sync =
         given Frame = ui.frame
         ui match
             case ui: Reactive[?] =>
+                val contentContext = regionIdentity.transparent
                 for
-                    current   <- ui.signal.current
-                    (kids, _) <- walkStatic(current, path, svg)
-                yield init(path, ui.signal, isConst = false, kids, svgContext = svg) {
+                    current <- ui.signal.current
+                    contentParentContext = nestedParentContext(parentContext, current)
+                    (kids, _) <- walkStatic(current, path, svg, contentContext, contentParentContext)
+                yield init(path, ui.signal, isConst = false, kids, svg, regionIdentity, contentContext, parentContext) {
                     (targetPath, event) =>
                         for
-                            currentUI     <- ui.signal.current
-                            (_, freshHdl) <- walkStatic(currentUI, path, svg)
+                            currentUI <- ui.signal.current
+                            contentParentContext = nestedParentContext(parentContext, currentUI)
+                            (_, freshHdl) <- walkStatic(currentUI, path, svg, contentContext, contentParentContext)
                             result        <- freshHdl(targetPath, event)
                         yield result
                 }
                 end for
 
             case ui: Foreach[?, ?] @unchecked =>
+                val contentContext = regionIdentity
                 val sig =
                     ui.signal.map { items =>
                         val arr = items.toSeq.zipWithIndex.map { (item, i) =>
@@ -66,13 +85,15 @@ private[kyo] object ReactiveUI:
                         Fragment[UI](Chunk.from(arr)): UI
                     }
                 for
-                    current   <- sig.current
-                    (kids, _) <- walkStatic(current, path, svg)
-                yield init(path, sig, isConst = false, kids, svgContext = svg) {
+                    current <- sig.current
+                    contentParentContext = nestedParentContext(parentContext, current)
+                    (kids, _) <- walkStatic(current, path, svg, contentContext, contentParentContext)
+                yield init(path, sig, isConst = false, kids, svg, regionIdentity, contentContext, parentContext) {
                     (targetPath, event) =>
                         for
-                            currentUI     <- sig.current
-                            (_, freshHdl) <- walkStatic(currentUI, path, svg)
+                            currentUI <- sig.current
+                            contentParentContext = nestedParentContext(parentContext, currentUI)
+                            (_, freshHdl) <- walkStatic(currentUI, path, svg, contentContext, contentParentContext)
                             result        <- freshHdl(targetPath, event)
                         yield result
                 }
@@ -90,8 +111,18 @@ private[kyo] object ReactiveUI:
                 // re-renders without the value-dedup ever suppressing a real edit. An element with no bound ref is const.
                 val (elementSignal, isConstNode) =
                     collectSignalRef(ui).fold((Signal.initConst(ui: UI), true))(ref => (ref.map(_ => ui: UI), false))
-                for (kids, hdl) <- walkStatic(ui, path, svg)
-                yield ReactiveUI(path, elementSignal, isConst = isConstNode, kids, hdl, svgContext = svg)
+                for (kids, hdl) <- walkStatic(ui, path, svg, regionIdentity, parentContext, discoverRootBound = false)
+                yield ReactiveUI(
+                    path,
+                    elementSignal,
+                    isConst = isConstNode,
+                    kids,
+                    hdl,
+                    ReactiveRegion.from(regionIdentity, svg),
+                    regionIdentity,
+                    parentContext,
+                    discoverContentRootBound = false
+                )
 
             case ui =>
                 // Catch-all for static leaf nodes: Text, Fragment, KeyedChild.
@@ -99,14 +130,24 @@ private[kyo] object ReactiveUI:
                 // Reactive or Foreach (also handled above). If a new UI subtype is added, the
                 // exhaustiveness checker will NOT warn here; any new type that is interactive must
                 // be added as an explicit case above before this catch-all.
-                ReactiveUI(path, Signal.initConst(ui), isConst = true, Seq.empty, (_, _) => true, svgContext = svg)
+                ReactiveUI(
+                    path,
+                    Signal.initConst(ui),
+                    isConst = true,
+                    Seq.empty,
+                    (_, _) => true,
+                    ReactiveRegion.from(regionIdentity, svg),
+                    regionIdentity,
+                    parentContext,
+                    discoverContentRootBound = false
+                )
         end match
-    end normalize
+    end normalizeAt
 
     /** Returns the element's single SignalRef-bound attribute (its `.value` or `.checked`), if any, so the element can be made reactive over
       * it (its HTML re-renders when that signal changes). An element binds at most one such ref.
       */
-    private def collectSignalRef(elem: Element): Maybe[Signal[?]] =
+    private[kyo] def collectSignalRef(elem: Element): Maybe[Signal[?]] =
         def refOf(v: Maybe[Bound[?]]): Maybe[Signal[?]] = v match
             case Present(Bound.Ref(ref)) => Present(ref)
             case _                       => Absent
@@ -120,11 +161,46 @@ private[kyo] object ReactiveUI:
         end match
     end collectSignalRef
 
+    private def nestedParentContext(parentContext: ReactiveRegion.ParentContext, current: UI): ReactiveRegion.ParentContext =
+        (parentContext, ReactiveRegion.tableContent(current)) match
+            case (ReactiveRegion.ParentContext.HtmlTable, ReactiveRegion.TableContent.Rows) => ReactiveRegion.ParentContext.Other
+            case _                                                                          => parentContext
+
     private type Handler = (Seq[String], UIEvent) => Boolean < Async
 
+    private type ValidatedHandler = (Seq[String], DragProtocol.ValidatedEvent) => Boolean < Async
+
+    private type DragResolver = Maybe[(String, Drag.Decision) => Unit < Async]
+
+    final private case class DragSession(
+        event: Drag.Event,
+        terminalResolved: Boolean,
+        expiresAt: Instant,
+        resolver: DragResolver
+    )
+
+    final private[kyo] case class DragSessionLimits(
+        maxSessions: Int = 128,
+        lifetime: Duration = 5.minutes
+    ):
+        require(maxSessions > 0, s"DragSessionLimits.maxSessions must be positive: $maxSessions")
+        require(lifetime > Duration.Zero, s"DragSessionLimits.lifetime must be positive: $lifetime")
+    end DragSessionLimits
+
     /** Walk a static UI tree. Collect reactive children, build handle. */
-    private def walkStatic(ui: UI, basePath: Seq[String], svg: Boolean = false)(using Frame): (Seq[ReactiveUI], Handler) < Sync =
+    private def walkStatic(
+        ui: UI,
+        basePath: Seq[String],
+        svg: Boolean = false,
+        context: ReactiveRegion.RegionIdentity,
+        parentContext: ReactiveRegion.ParentContext,
+        discoverRootBound: Boolean = true
+    )(using Frame): (Seq[ReactiveUI], Handler) < Sync =
         ui match
+            case elem: Element if discoverRootBound && collectSignalRef(elem).nonEmpty =>
+                for rui <- normalizeAt(elem, basePath, svg, context, parentContext)
+                yield (Seq(rui), rui.handle)
+
             case elem: Element =>
                 // ForeignObject bridges back to HTML, so reset svg context to false. It MUST be matched
                 // before SvgElement (ForeignObject IS an SvgElement).
@@ -132,19 +208,23 @@ private[kyo] object ReactiveUI:
                     case _: Svg.ForeignObject => false
                     case _: Svg.SvgElement    => true
                     case _                    => svg
+                val childParentContext = elem match
+                    case _: Table => ReactiveRegion.ParentContext.HtmlTable
+                    case _        => ReactiveRegion.ParentContext.Other
                 for childWalks <- Kyo.foreach(elem.children.toSeq.zipWithIndex) { (child, i) =>
-                        val childPath = basePath :+ i.toString
+                        val childPath    = basePath :+ i.toString
+                        val childContext = context.child(i.toString)
                         child match
                             case _: Reactive[?] | _: Foreach[?, ?] =>
-                                for rui <- normalize(child, childPath, childSvg)
+                                for rui <- normalizeAt(child, childPath, childSvg, childContext, childParentContext)
                                 yield (Seq(rui), Seq.empty[(Int, Handler)])
                             case childElem: Element if collectSignalRef(childElem).nonEmpty =>
                                 // Element with SignalRef-bound attributes is reactive over those signals;
                                 // normalize it so subscribeNode wires updates.
-                                for rui <- normalize(childElem, childPath, childSvg)
+                                for rui <- normalizeAt(childElem, childPath, childSvg, childContext, childParentContext)
                                 yield (Seq(rui), Seq.empty[(Int, Handler)])
                             case _ =>
-                                for (innerKids, innerHandle) <- walkStatic(child, childPath, childSvg)
+                                for (innerKids, innerHandle) <- walkStatic(child, childPath, childSvg, childContext, childParentContext)
                                 yield (innerKids, Seq((i, innerHandle)))
                         end match
                     }
@@ -161,10 +241,13 @@ private[kyo] object ReactiveUI:
                         val childPath = child match
                             case kc: KeyedChild[?] => basePath :+ kc.key
                             case _                 => basePath :+ i.toString
+                        val childContext = child match
+                            case kc: KeyedChild[?] => context.child(kc.key)
+                            case _                 => context.child(i.toString)
                         val inner = child match
                             case kc: KeyedChild[?] => kc.child
                             case _                 => child
-                        walkStatic(inner, childPath, svg)
+                        walkStatic(inner, childPath, svg, childContext, parentContext)
                     }
                 yield
                     val allKids    = childWalks.flatMap(_._1)
@@ -186,7 +269,7 @@ private[kyo] object ReactiveUI:
                 // (not as a child of an Element), normalize it at basePath so subscribeNode
                 // sets up a subscription for it. This handles the case where an outer reactive's
                 // signal value is itself a Reactive or Foreach (e.g. outer.map { _ => inner.map(UI.span(_)) }).
-                for rui <- normalize(ui, basePath, svg)
+                for rui <- normalizeAt(ui, basePath, svg, context, parentContext)
                 yield (Seq(rui), rui.handle)
 
             case _ =>
@@ -260,14 +343,27 @@ private[kyo] object ReactiveUI:
     private def safeDispatch(handle: (Seq[String], UIEvent) => Boolean < Async, path: Seq[String], event: UIEvent)(using
         Frame
     ): Boolean < Async =
-        Abort.recover[Throwable](
-            onFail = err =>
-                Log.error(s"Handler error during ${event.getClass.getSimpleName} at ${path.mkString(".")}: ${err.getMessage}")
-                    .andThen(true), // continue bubbling
-            onPanic = thr =>
-                Log.error(s"Handler panic during ${event.getClass.getSimpleName} at ${path.mkString(".")}: ${thr.getMessage}")
-                    .andThen(true) // continue bubbling
-        )(handle(path, event))
+        DragCommands.current.use { context =>
+            val decisions = context.flatMap(_.decisions)
+            Abort.recover[Throwable](
+                onFail = err =>
+                    Log.error(s"Handler error during ${event.getClass.getSimpleName} at ${path.mkString(".")}: ${err.getMessage}")
+                        .andThen(markDecisionFailure(event, decisions))
+                        .andThen(true), // continue bubbling
+                onPanic = thr =>
+                    Log.error(s"Handler panic during ${event.getClass.getSimpleName} at ${path.mkString(".")}: ${thr.getMessage}")
+                        .andThen(markDecisionFailure(event, decisions))
+                        .andThen(true) // continue bubbling
+            )(handle(path, event))
+        }
+
+    private def markDecisionFailure(event: UIEvent, decisions: Maybe[AtomicRef[DragCommands.DecisionState]])(using
+        Frame
+    ): Unit < Async =
+        event match
+            case _: UIEvent.Drop     => failDecision(decisions, "The drop handler failed.")
+            case _: UIEvent.SortMove => failDecision(decisions, "The sort handler failed.")
+            case _                   => ()
 
     /** Read current checked value from Maybe[Bound[Boolean]]. */
     private def readChecked(checked: Maybe[Bound[Boolean]])(using Frame): Boolean < Sync =
@@ -578,9 +674,104 @@ private[kyo] object ReactiveUI:
                 val wheel = UI.WheelEvent(ev.deltaX, ev.deltaY, ev.targetId, ev.modifiers)
                 invoke(attrs.onScroll).andThen(invokeWith(attrs.onScrollEvt, wheel))
                     .andThen(keepBubbling(elem, attrs.onScroll.nonEmpty || attrs.onScrollEvt.nonEmpty))
+            case _: UIEvent.DragStart =>
+                if !isTarget then true
+                else
+                    DragCommands.current.use {
+                        case Present(DragCommands.Dispatch(DragCommands.Payload.Event(value), _)) =>
+                            invokeDrag(attrs.onDragStart, attrs.onDragStartEvt.map(_(value)), "drag start")
+                                .andThen(keepBubbling(elem, attrs.onDragStart.nonEmpty || attrs.onDragStartEvt.nonEmpty))
+                        case _ => true
+                    }
+            case _: UIEvent.DragEnd =>
+                if !isTarget then true
+                else
+                    DragCommands.current.use {
+                        case Present(DragCommands.Dispatch(DragCommands.Payload.End(value), _)) =>
+                            invokeDrag(attrs.onDragEnd, attrs.onDragEndEvt.map(_(value)), "drag end")
+                                .andThen(keepBubbling(elem, attrs.onDragEnd.nonEmpty || attrs.onDragEndEvt.nonEmpty))
+                        case _ => true
+                    }
+            case _: UIEvent.DragEnter => dispatchDragEvent(elem, attrs.onDragEnter, attrs.onDragEnterEvt, "drag enter")
+            case _: UIEvent.DragLeave => dispatchDragEvent(elem, attrs.onDragLeave, attrs.onDragLeaveEvt, "drag leave")
+            case _: UIEvent.DragOver  => dispatchDragEvent(elem, attrs.onDragOver, attrs.onDragOverEvt, "drag over")
+            case _: UIEvent.Drop =>
+                DragCommands.current.use {
+                    case Present(DragCommands.Dispatch(DragCommands.Payload.Event(value), decisions)) =>
+                        invokeDecision(attrs.onDrop, decisions, "The drop handler failed.")
+                            .andThen(invokeDecision(attrs.onDropEvt.map(_(value)), decisions, "The drop handler failed."))
+                            .andThen(keepBubbling(elem, attrs.onDrop.nonEmpty || attrs.onDropEvt.nonEmpty))
+                    case _ => true
+                }
+            case _: UIEvent.SortMove =>
+                DragCommands.current.use {
+                    case Present(DragCommands.Dispatch(DragCommands.Payload.Move(value), decisions)) =>
+                        invokeDecision(attrs.onSortMove, decisions, "The sort handler failed.")
+                            .andThen(invokeDecision(attrs.onSortMoveEvt.map(_(value)), decisions, "The sort handler failed."))
+                            .andThen(keepBubbling(elem, attrs.onSortMove.nonEmpty || attrs.onSortMoveEvt.nonEmpty))
+                    case _ => true
+                }
             case _ => true
         end match
     end dispatchToElement
+
+    private def invokeDrag(action: Maybe[Any < Async], typed: Maybe[Any < Async], label: String)(using Frame): Unit < Async =
+        def safe(handler: Maybe[Any < Async]): Unit < Async =
+            handler.fold((): Unit < Async) { effect =>
+                Abort.recover[Throwable](
+                    err => Log.error(s"Handler error during $label: ${err.getMessage}"),
+                    panic => Log.error(s"Handler panic during $label: ${panic.getMessage}")
+                )(effect.unit)
+            }
+        safe(action).andThen(safe(typed))
+    end invokeDrag
+
+    private def dispatchDragEvent(
+        elem: Element,
+        action: Maybe[Any < Async],
+        typed: Maybe[Drag.Event => Any < Async],
+        label: String
+    )(using Frame): Boolean < Async =
+        DragCommands.current.use {
+            case Present(DragCommands.Dispatch(DragCommands.Payload.Event(value), _)) =>
+                invokeDrag(action, typed.map(_(value)), label)
+                    .andThen(keepBubbling(elem, action.nonEmpty || typed.nonEmpty))
+            case _ => true
+        }
+
+    private def invokeDecision(
+        handler: Maybe[Drag.Decision < Async],
+        decisions: Maybe[AtomicRef[DragCommands.DecisionState]],
+        failure: String
+    )(using Frame): Unit < Async =
+        handler.fold((): Unit < Async) { effect =>
+            for
+                result <- Abort.run[Any](effect)
+                _ <- result match
+                    case Result.Success(decision) => recordDecision(decisions, decision)
+                    case Result.Failure(err) =>
+                        Log.error(s"Drag decision handler error: $err").andThen(failDecision(decisions, failure))
+                    case Result.Panic(panic) =>
+                        Log.error(s"Drag decision handler panic: ${panic.getMessage}").andThen(failDecision(decisions, failure))
+            yield ()
+        }
+
+    private def recordDecision(ref: Maybe[AtomicRef[DragCommands.DecisionState]], decision: Drag.Decision)(using
+        Frame
+    ): Unit < Sync =
+        ref.fold((): Unit < Sync)(_.getAndUpdate {
+            case failed: DragCommands.DecisionState.Failed     => failed
+            case rejected: DragCommands.DecisionState.Rejected => rejected
+            case _ =>
+                decision match
+                    case Drag.Decision.Accept         => DragCommands.DecisionState.Accepted
+                    case reject: Drag.Decision.Reject => DragCommands.DecisionState.Rejected(reject)
+        }.unit)
+
+    private def failDecision(ref: Maybe[AtomicRef[DragCommands.DecisionState]], reason: String)(using Frame): Unit < Sync =
+        ref.fold((): Unit < Sync)(_.getAndUpdate(_ =>
+            DragCommands.DecisionState.Failed(Drag.Decision.Reject(Drag.Rejection.Application(reason)))
+        ).unit)
 
     // ---- Subscribe ----
 
@@ -588,24 +779,332 @@ private[kyo] object ReactiveUI:
       * region fiber's lifecycle; the per-value Scope (opened by observe) owns each region's children,
       * so closing the root scope cascade-tears-down the tree.
       */
-    case class Subscription(handle: Handler, lastSignalChangeTime: AtomicRef[Instant])
+    case class Subscription(
+        handle: Handler,
+        private[kyo] val handleValidated: ValidatedHandler,
+        lastSignalChangeTime: AtomicRef[Instant],
+        private val dragSessionCountFn: () => Int < Sync = () => 0,
+        private val dragExpiryWorkerCountFn: () => Int < Sync = () => 0
+    ):
+        private[kyo] def dragSessionCount(using Frame): Int < Sync      = dragSessionCountFn()
+        private[kyo] def dragExpiryWorkerCount(using Frame): Int < Sync = dragExpiryWorkerCountFn()
+    end Subscription
+
+    private enum OwnedFiberState derives CanEqual:
+        case Waiting
+        case Running(fiber: Fiber[Unit, Any])
+        case Closed
+    end OwnedFiberState
+
+    private def startOwnedFiber(task: => Unit < Async)(using Frame): Unit < (Async & Scope) =
+        for
+            state <- AtomicRef.init[OwnedFiberState](OwnedFiberState.Waiting)
+            start <- Promise.init[Unit, Any]
+            _     <- Scope.ensure(closeOwnedFiber(state))
+            fiber <- Fiber.initUnscoped(start.get.andThen(task))
+            _     <- installOwnedFiber(state, start, fiber)
+        yield ()
+    end startOwnedFiber
+
+    private def installOwnedFiber(
+        state: AtomicRef[OwnedFiberState],
+        start: Promise[Unit, Any],
+        fiber: Fiber[Unit, Any]
+    )(using Frame): Unit < Async =
+        state.get.flatMap {
+            case OwnedFiberState.Waiting =>
+                state.compareAndSet(OwnedFiberState.Waiting, OwnedFiberState.Running(fiber)).flatMap { installed =>
+                    if installed then start.completeUnitDiscard
+                    else installOwnedFiber(state, start, fiber)
+                }
+            case _: OwnedFiberState.Running =>
+                Abort.panic(IllegalStateException("Reactive observer fiber was installed twice"))
+            case OwnedFiberState.Closed =>
+                fiber.interrupt.andThen(fiber.getResult.unit)
+        }
+    end installOwnedFiber
+
+    private def closeOwnedFiber(state: AtomicRef[OwnedFiberState])(using Frame): Unit < Async =
+        state.getAndSet(OwnedFiberState.Closed).flatMap {
+            case OwnedFiberState.Running(fiber) => fiber.interrupt.andThen(fiber.getResult.unit)
+            case OwnedFiberState.Waiting        => ()
+            case OwnedFiberState.Closed         => ()
+        }
+    end closeOwnedFiber
 
     /** Subscribe all reactive boundaries under the caller's Scope. Returns the dispatch handle + change
-      * time; lifecycle is owned by the enclosing Scope (closing it interrupts every region fiber).
+      * time; lifecycle is owned by the enclosing Scope (closing it interrupts every region fiber and awaits its unwind).
       */
-    def subscribe(rui: ReactiveUI, exchange: UIExchange)(using Frame): Subscription < (Async & Scope) =
+    def subscribe(
+        rui: ReactiveUI,
+        exchange: UIExchange,
+        dragLimits: DragSessionLimits = DragSessionLimits()
+    )(using Frame): Subscription < (Async & Scope) =
         for
             signalChangeTime <- AtomicRef.init(Instant.Epoch)
-            _                <- subscribeScoped(rui, exchange, signalChangeTime)
-        yield Subscription(rui.handle, signalChangeTime)
+            dragSessions     <- AtomicRef.init(Map.empty[String, DragSession])
+            dragMutex        <- Meter.initMutex
+            expiryWake       <- Channel.init[Unit](1)
+            expiryWorkers    <- AtomicInt.init(0)
+            _                <- Scope.ensure(dragSessions.set(Map.empty))
+            _ <- startOwnedFiber(
+                Abort.run[Any] {
+                    Sync.ensure(expiryWorkers.set(0)) {
+                        expiryWorkers.set(1).andThen(expiryScheduler(dragSessions, dragMutex, expiryWake))
+                    }
+                }.unit
+            )
+            _ <- subscribeScoped(rui, exchange, signalChangeTime)
+            validatedHandle = dragHandle(rui.handle, dragSessions, dragMutex, expiryWake, dragLimits)
+        yield Subscription(
+            (path, event) =>
+                DragProtocol.validateEventAndDomain(event, DragProtocol.Limits.default) match
+                    case Result.Success(validated) => validatedHandle(path, validated)
+                    case _                         => true,
+            validatedHandle,
+            signalChangeTime,
+            () => dragSessions.get.map(_.size),
+            () => expiryWorkers.get
+        )
 
-    // Each reactive region forks a Fiber.init (scoped to the enclosing Scope) running observe. Each
-    // value opens a fresh per-value Scope; the region renders, re-walks, and forks its children INTO that
-    // per-value Scope via the recursive subscribeScoped, so the next value (or an interrupt) closes them by
-    // cascade. A const node has no signal: it subscribes its children in the enclosing scope. The prior manual
-    // interrupt-old bookkeeping (a ref of live child fibers, interrupted one level per change) is gone; the
-    // per-value Scope does interrupt-old transitively (every descendant), fixing the climbing-waiters leak the
-    // one-level interrupt left.
+    private def dragHandle(
+        handle: Handler,
+        sessions: AtomicRef[Map[String, DragSession]],
+        mutex: Meter,
+        expiryWake: Channel[Unit],
+        limits: DragSessionLimits
+    )(using Frame): ValidatedHandler =
+        (path, event) =>
+            event match
+                case event: DragProtocol.ValidatedEvent.Click         => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.ClickSelf     => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.Input         => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.Change        => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.ChangeChecked => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.ChangeNumeric => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.Submit        => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.KeyDown       => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.KeyUp         => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.Focus         => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.Blur          => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.Scroll        => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.Hover         => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.Unhover       => safeDispatch(handle, path, event.wire)
+                case _: DragProtocol.ValidatedEvent.Start | _: DragProtocol.ValidatedEvent.End |
+                    _: DragProtocol.ValidatedEvent.Enter | _: DragProtocol.ValidatedEvent.Leave |
+                    _: DragProtocol.ValidatedEvent.Over | _: DragProtocol.ValidatedEvent.Drop |
+                    _: DragProtocol.ValidatedEvent.SortMove =>
+                    Abort.runPartial[Closed](
+                        mutex.run(dragDispatch(handle, sessions, expiryWake, limits, path, event))
+                    ).map {
+                        case Result.Success(value) => value
+                        case Result.Failure(_)     => true
+                    }
+
+    private def dragDispatch(
+        handle: Handler,
+        sessions: AtomicRef[Map[String, DragSession]],
+        expiryWake: Channel[Unit],
+        limits: DragSessionLimits,
+        path: Seq[String],
+        event: DragProtocol.ValidatedEvent
+    )(using Frame): Boolean < Async =
+        event match
+            case DragProtocol.ValidatedEvent.Start(wire @ UIEvent.DragStart(_, data), domainItems) =>
+                DragCommands.resolveSink.use { resolver =>
+                    sessions.get.map { current =>
+                        if current.contains(data.sessionId) then
+                            DragCommands.resolve(
+                                data.sessionId,
+                                Drag.Decision.Reject(
+                                    Drag.Rejection.Application("A drag session with this identifier is already active.")
+                                )
+                            ).andThen(true)
+                        else if current.size >= limits.maxSessions then
+                            DragCommands.resolve(
+                                data.sessionId,
+                                Drag.Decision.Reject(Drag.Rejection.Application("Too many active drag sessions."))
+                            ).andThen(true)
+                        else
+                            val domain = Drag.Event(
+                                data.sessionId,
+                                domainItems,
+                                data.operation,
+                                data.sourceKey,
+                                Absent,
+                                Present(data.point),
+                                data.modifiers,
+                                Absent
+                            )
+                            Clock.now.map { now =>
+                                sessions.set(current + (data.sessionId -> DragSession(
+                                    domain,
+                                    terminalResolved = false,
+                                    now + limits.lifetime,
+                                    resolver
+                                )))
+                                    .andThen(wakeExpiryScheduler(expiryWake))
+                                    .andThen(DragCommands.current.let(Present(DragCommands.Dispatch(
+                                        DragCommands.Payload.Event(domain),
+                                        Absent
+                                    ))) {
+                                        safeDispatch(handle, path, event.wire)
+                                    })
+                            }
+                    }
+                }
+            case DragProtocol.ValidatedEvent.End(wire @ UIEvent.DragEnd(_, data)) =>
+                sessions.get.map(_.get(data.sessionId)).map {
+                    case Some(session) =>
+                        val finalEvent = session.event.copy(operation = data.operation)
+                        sessions.getAndUpdate(_ - data.sessionId).unit
+                            .andThen(DragCommands.current.let(Present(DragCommands.Dispatch(
+                                DragCommands.Payload.End(Drag.End(finalEvent, canceled = data.cancelled)),
+                                Absent
+                            ))) {
+                                safeDispatch(handle, path, wire)
+                            })
+                    case None => true
+                }
+            case DragProtocol.ValidatedEvent.Enter(wire) =>
+                dispatchTarget(handle, path, wire, wire.event, sessions, terminal = false)
+            case DragProtocol.ValidatedEvent.Leave(wire) =>
+                dispatchTarget(handle, path, wire, wire.event, sessions, terminal = false)
+            case DragProtocol.ValidatedEvent.Over(wire) =>
+                dispatchTarget(handle, path, wire, wire.event, sessions, terminal = false)
+            case DragProtocol.ValidatedEvent.Drop(wire) =>
+                dispatchTarget(handle, path, wire, wire.event, sessions, terminal = true)
+            case DragProtocol.ValidatedEvent.SortMove(wire @ UIEvent.SortMove(_, sessionId, move)) =>
+                sessions.get.map(_.get(sessionId)).map {
+                    case Some(session) if !session.terminalResolved =>
+                        for
+                            decisions <- AtomicRef.init[DragCommands.DecisionState](DragCommands.DecisionState.None)
+                            _ <- DragCommands.current.let(Present(DragCommands.Dispatch(
+                                DragCommands.Payload.Move(move),
+                                Present(decisions)
+                            ))) {
+                                safeDispatch(handle, path, wire)
+                            }
+                            decision <- finalDecision(decisions, "No sort handler accepted the move.")
+                            _        <- sessions.getAndUpdate(_ + (sessionId -> session.copy(terminalResolved = true)))
+                            _        <- DragCommands.resolve(sessionId, decision)
+                        yield true
+                    case None =>
+                        DragCommands.resolve(
+                            sessionId,
+                            Drag.Decision.Reject(Drag.Rejection.Application("No sort handler accepted the move."))
+                        ).andThen(true)
+                    case _ => true
+                }
+            case _: DragProtocol.ValidatedEvent.Click | _: DragProtocol.ValidatedEvent.ClickSelf |
+                _: DragProtocol.ValidatedEvent.Input | _: DragProtocol.ValidatedEvent.Change |
+                _: DragProtocol.ValidatedEvent.ChangeChecked | _: DragProtocol.ValidatedEvent.ChangeNumeric |
+                _: DragProtocol.ValidatedEvent.Submit | _: DragProtocol.ValidatedEvent.KeyDown |
+                _: DragProtocol.ValidatedEvent.KeyUp | _: DragProtocol.ValidatedEvent.Focus |
+                _: DragProtocol.ValidatedEvent.Blur | _: DragProtocol.ValidatedEvent.Scroll |
+                _: DragProtocol.ValidatedEvent.Hover | _: DragProtocol.ValidatedEvent.Unhover =>
+                safeDispatch(handle, path, event.wire)
+
+    private def wakeExpiryScheduler(expiryWake: Channel[Unit])(using Frame): Unit < Sync =
+        Abort.runPartial[Closed](expiryWake.offer(())).unit
+
+    private def expiryScheduler(
+        sessions: AtomicRef[Map[String, DragSession]],
+        mutex: Meter,
+        expiryWake: Channel[Unit]
+    )(using Frame): Unit < (Async & Abort[Closed]) =
+        Loop.foreach {
+            sessions.get.map { current =>
+                current.valuesIterator.map(_.expiresAt).minOption match
+                    case None =>
+                        Abort.runPartial[Closed](expiryWake.take).map {
+                            case Result.Success(_) => Loop.continue
+                            case Result.Failure(_) => Loop.done
+                        }
+                    case Some(expiresAt) =>
+                        Clock.now.map { now =>
+                            val wait                = expiresAt - now
+                            val sleep: Unit < Async = if wait > Duration.Zero then Clock.sleep(wait).map(_.get) else ()
+                            Abort.runPartial[Closed](Async.race(sleep, expiryWake.take.unit)).map {
+                                case Result.Success(_) =>
+                                    Clock.now.map(expireNow => mutex.run(expireSessions(expireNow, sessions)))
+                                        .andThen(Loop.continue)
+                                case Result.Failure(_) => Loop.done
+                            }
+                        }
+            }
+        }
+
+    private def expireSessions(now: Instant, sessions: AtomicRef[Map[String, DragSession]])(using Frame): Unit < Async =
+        sessions.get.map { current =>
+            val (expired, retained) = current.partition((_, session) => session.expiresAt <= now)
+            sessions.set(retained).andThen(Kyo.foreach(expired.toSeq) { case (sessionId, session) =>
+                if session.terminalResolved then ()
+                else
+                    session.resolver.fold((): Unit < Async)(_(
+                        sessionId,
+                        Drag.Decision.Reject(Drag.Rejection.Application("The drag session expired."))
+                    ))
+            }.unit)
+        }
+
+    private def dispatchTarget(
+        handle: Handler,
+        path: Seq[String],
+        wire: UIEvent,
+        data: DragProtocol.TargetData,
+        sessions: AtomicRef[Map[String, DragSession]],
+        terminal: Boolean
+    )(using Frame): Boolean < Async =
+        sessions.get.map(_.get(data.sessionId)).map {
+            case Some(session) if !session.terminalResolved =>
+                val domain = session.event.copy(
+                    operation = data.operation,
+                    targetKey = data.targetKey,
+                    point = Present(data.point),
+                    modifiers = data.modifiers,
+                    position = data.position
+                )
+                if terminal then
+                    for
+                        decisions <- AtomicRef.init[DragCommands.DecisionState](DragCommands.DecisionState.None)
+                        _         <- sessions.getAndUpdate(_ + (data.sessionId -> session.copy(event = domain)))
+                        _ <- DragCommands.current.let(Present(DragCommands.Dispatch(
+                            DragCommands.Payload.Event(domain),
+                            Present(decisions)
+                        ))) {
+                            safeDispatch(handle, path, wire)
+                        }
+                        decision <- finalDecision(decisions, "No drop handler accepted the operation.")
+                        _        <- sessions.getAndUpdate(_ + (data.sessionId -> session.copy(event = domain, terminalResolved = true)))
+                        _        <- DragCommands.resolve(data.sessionId, decision)
+                    yield true
+                else
+                    sessions.getAndUpdate(_ + (data.sessionId -> session.copy(event = domain))).unit
+                        .andThen(DragCommands.current.let(Present(DragCommands.Dispatch(DragCommands.Payload.Event(domain), Absent))) {
+                            safeDispatch(handle, path, wire)
+                        })
+                end if
+            case None if terminal =>
+                DragCommands.resolve(
+                    data.sessionId,
+                    Drag.Decision.Reject(Drag.Rejection.Application("No drop handler accepted the operation."))
+                ).andThen(true)
+            case _ => true
+        }
+
+    private def finalDecision(ref: AtomicRef[DragCommands.DecisionState], emptyReason: String)(using Frame): Drag.Decision < Sync =
+        ref.get.map {
+            case DragCommands.DecisionState.None            => Drag.Decision.Reject(Drag.Rejection.Application(emptyReason))
+            case DragCommands.DecisionState.Accepted        => Drag.Decision.Accept
+            case DragCommands.DecisionState.Rejected(value) => value
+            case DragCommands.DecisionState.Failed(value)   => value
+        }
+
+    // Each reactive region starts an observer fiber as one scoped resource. Its finalizer interrupts the observer and
+    // awaits the fiber's terminal result. Signal.observe runs each value in a fresh Scope; each value renders, re-walks,
+    // and starts its children in that Scope, so the next value or an interrupt closes them transitively. A const node
+    // has no signal: it subscribes its children in the enclosing scope.
     private def subscribeScoped(rui: ReactiveUI, exchange: UIExchange, signalChangeTime: AtomicRef[Instant])(using
         Frame
     ): Unit < (Async & Scope) =
@@ -621,19 +1120,26 @@ private[kyo] object ReactiveUI:
             // that scope, so the next value (or an interrupt) tears them down by cascade.
             def renderValue(current: UI): Unit < (Async & Scope) =
                 for
-                    now          <- Clock.now
-                    _            <- signalChangeTime.set(now)
-                    previous     <- Sync.Unsafe.defer(rendered.getAndSet(Present(current)))
-                    _            <- exchange.onChange(rui.path, previous, current)
-                    (newKids, _) <- walkStatic(current, rui.path, rui.svgContext)
-                    _            <- Kyo.foreachDiscard(newKids)(subscribeScoped(_, exchange, signalChangeTime))
+                    now      <- Clock.now
+                    _        <- signalChangeTime.set(now)
+                    previous <- Sync.Unsafe.defer(rendered.getAndSet(Present(current)))
+                    _        <- exchange.onChange(rui.region, rui.path, rui.contentContext, rui.parentContext, previous, current)
+                    svgContext = rui.region match
+                        case _: ReactiveRegion.HtmlRange  => false
+                        case _: ReactiveRegion.SvgElement => true
+                    contentParentContext = nestedParentContext(rui.parentContext, current)
+                    (newKids, _) <- walkStatic(
+                        current,
+                        rui.path,
+                        svgContext,
+                        rui.contentContext,
+                        contentParentContext,
+                        discoverRootBound = rui.discoverContentRootBound
+                    )
+                    _ <- Kyo.foreachDiscard(newKids)(subscribeScoped(_, exchange, signalChangeTime))
                 yield ()
-            // Every region observes with observe: each value owns a fresh per-value Scope (renderValue forks its
-            // children into it), held open until the next change, then closed by cascade. SignalRef-bound element
-            // regions (normalize maps the bound leaf to the constant `ui`) ride the SignalRef's exact register-before-
-            // read observe: each ref edit is a distinct ref value that re-renders the region, with no deferred
-            // next-capture, no repair timer, and no idle re-render churn (an unchanged input never re-emits).
-            Fiber.init {
+
+            startOwnedFiber {
                 Abort.run[Throwable] {
                     rui.signal.observe(renderValue)
                 }.map { result =>
@@ -645,7 +1151,7 @@ private[kyo] object ReactiveUI:
                             else Log.error(s"Reactive subscription fiber failed at path=${rui.path.mkString(".")}", panic)
                     )
                 }
-            }.unit
+            }
         end if
     end subscribeScoped
 

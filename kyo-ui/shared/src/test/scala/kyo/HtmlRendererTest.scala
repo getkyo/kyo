@@ -851,6 +851,70 @@ class HtmlRendererTest extends UITest:
             assert(page.contains("__q.push"))
             assert(page.contains("ws.readyState===1"))
         }
+
+        "rendered page boots one live range registry and parses replacements in parent context" in {
+            val page = kyo.internal.HtmlRenderer.renderPage(
+                "t",
+                "<!--kyo-rs:r--><!--kyo-re:r-->",
+                "",
+                "/app"
+            )
+            assert(page.contains("var __kyoRanges=kyoRangeScan(document.body)"))
+            assert(page.contains("parser.createContextualFragment(html)"))
+            assert(page.contains("if(op.ReplaceRange)"))
+            assert(page.contains("range.deleteContents()"))
+            assert(page.contains("__kyoRanges.clear()"))
+        }
+    }
+
+    "embedded drag runtime" - {
+
+        def page: String = kyo.internal.HtmlRenderer.renderPage("t", "<div></div>", "", "/app")
+
+        "the rendered page installs exactly one drag runtime" in {
+            val rendered = page
+            assert("function installDragRuntime".r.findAllIn(rendered).size == 1)
+            assert("installDragRuntime\\(function".r.findAllIn(rendered).size == 1)
+        }
+
+        "client drag messages use the ClientMessage.Event envelope" in {
+            assert(page.contains("post({Event:{value:o}})"))
+        }
+
+        "the runtime covers native lifecycle, sensors, collision, auto-scroll, announcements, and teardown" in {
+            val rendered = page
+            assert(rendered.contains("\"dragstart\""))
+            assert(rendered.contains("\"pointerdown\""))
+            assert(rendered.contains("\"touchstart\""))
+            assert(rendered.contains("\"keydown\""))
+            assert(rendered.contains("elementsFromPoint"))
+            assert(rendered.contains("scrollTop"))
+            assert(rendered.contains("data-kyo-drag-live"))
+            assert(rendered.contains("data-kyo-dragging"))
+            assert(rendered.contains("data-kyo-drop-valid"))
+            assert(rendered.contains("data-kyo-drop-position"))
+            assert(rendered.contains("function cleanup()"))
+            assert(rendered.contains("pagehide"))
+        }
+
+        "ResolveDrag routes to the runtime and socket close tears it down" in {
+            val rendered = page
+            assert(rendered.contains("op.ResolveDrag"))
+            assert(rendered.contains("__dragRt.resolve(op.ResolveDrag.sessionId,op.ResolveDrag.decision)"))
+            assert(rendered.contains("ws.onclose"))
+            assert(rendered.contains("__dragCleanup()"))
+        }
+
+        "no per-element drag listeners are emitted" in {
+            for html <- kyo.internal.HtmlRenderer.render(
+                    UI.div.dragSource(Drag.Source.sortable("k", Present("K")))(UI.span("x")),
+                    Seq.empty
+                )
+            yield
+                assert(!html.contains("addEventListener"))
+                assert(!html.contains("onpointerdown"))
+                assert(!html.contains("ondragstart="))
+        }
     }
 
 end HtmlRendererTest
