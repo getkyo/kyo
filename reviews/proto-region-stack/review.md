@@ -3,7 +3,7 @@
 Two changes, in dependency order. Each is applied one edit at a time with the Edit tool, in the
 sequence below, with the sentence beside each edit said as it goes in.
 
-Worktree `kyo-root-impl`, five commits off `31a7b4bde9`, tip `d197133298`.
+Worktree `kyo-root-impl`, seven commits off `31a7b4bde9`, tip `b58e2fbc4e`.
 
 ## What this fixes
 
@@ -84,24 +84,28 @@ result type is the more specific one, so it is asserted nowhere.
 
 **6. The guard, replacing `run`: the extent guard, once for the eval.**
 
+```scala
+@tailrec def recovered(ex: Throwable): (A < S, Context)
+@tailrec def guarded(curr: A < S, ctx: Context): A < S
+```
+
 > The regions a throw unwinds are the ones the stack holds, each consulted with the state it holds
-> there, and it is a loop rather than a recursion so that recovering costs no more stack than
-> declining does.
+> there, and both resuming and declining are tail calls, so neither costs stack.
 
-The loop is the point. The first shape had the recovery resume by calling back into the guard from
-inside its own catch, which cost a frame per *recovered* region: the dependency this change exists to
-remove, reintroduced one level over. Two review lenses caught it independently.
-
-This edit deletes `run` and `recovered`, so the budget's save and restore, which lived on `run`,
-move with it; edits 7 and 8 place them.
+This edit deletes `run` and `region`. Two shapes came before this one and both were wrong: the first
+had `recovered` call `run` from inside `run`'s catch, which is **mutual** recursion and cost a frame
+per recovered region, the dependency this change exists to remove; the second over-corrected into
+four locals and two `while` loops on a belief, never tested, that a call in a `catch` cannot be
+eliminated. A probe recursing two million times through a catch path returns without overflowing, so
+it can. `recovered` does not call `guarded`, so every recursive call here is a self call and
+`@tailrec` proves it. The only allocation is the pair `recovered` returns, on the failure path.
 
 Two behavioural consequences, both pinned:
 
-- `recover` reads the state the region has reached, not the one it was installed with, per your
-  ruling that it and `release` should both see the current state.
+- `recover` reads the state the region has reached, not the one it was installed with, per your ruling
+  that it and `release` should both see the current state;
 - an answered operation resumes with the loop's **current** context, where the baseline used the
-  install-time one. `ContextEffect` says a read rebinds the value "for the rest of that region's
-  extent", and an answered operation is inside that extent.
+  install-time one, which is what `ContextEffect` says should happen.
 
 **7. `Eval.apply`, entry and exit: the eval's own budget.**
 
@@ -159,7 +163,7 @@ Full detail in `evidence.md`, all of it measured on the shipped tip `d197133298`
 |---|---|---|
 | `ArrowEffectTest` | aborted after 17 of 88 | **88 of 88** at the default stack |
 | `PendingTest` | 63 of 63 | 63 of 63 |
-| `EvalTest` | 51 of 54 | 53 of 56, the two added being pins |
+| `EvalTest` | 51 of 54 | 53 of 56, the two added being pins; 3 red are the open boundary |
 | the three proto suites in one JVM | hung | **207 tests, 204 passing** |
 | `kyo-kernelJVM/test` | 1 suite aborted | **35 suites, 0 aborted, 1400 passing** |
 | demo, 28 scenarios | recorded values | identical, 4221 / -9 / 991 included |
@@ -173,7 +177,7 @@ rows. The one row outside the drift band on `-f 1`, `trailingMapsStayLinear` at 
 at `-f 3` and reads **-3.8%** there (735.974 ± 31.941 against 707.966 ± 13.356), so it is not a
 regression in either direction that the errors support. **No row regressed.**
 
-Adjudication: `flags.md`, 99 rows, every one with a verdict, generated from the script's output in
+Adjudication: `flags.md`, 90 rows, every one with a verdict, generated from the script's output in
 one pass over both the main and test trees.
 
 ## What I want you to push on
