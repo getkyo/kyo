@@ -13,7 +13,9 @@ call stack, so nesting depth was the Java stack's depth: about 700 bytes per ope
 regions at 1 MB where the reference is flat past 400000. Iteration inside a region was already flat.
 
 **Two.** Fixing that revealed a second defect it had been hiding: the three suites hang when run in
-one JVM. Pre-existing, and proven so.
+one JVM, pre-existing and proven so. An eval inherited whatever safepoint budget the thread had left,
+and a spent budget is a fixed point. Fixing *that* exposed a third: a throw leaks a budget entry, so
+an extent that recovers a few hundred times drains its own and reaches the same fixed point.
 
 ## The equation, in one paragraph
 
@@ -36,8 +38,9 @@ memoization rather than a new piece, is in `derivation.md` beside this file.
 > per region, so the columns are erased and read back at the storage boundary, which is the cast the
 > ladder names with this carrier.
 
-`pop` drops the entry without clearing its slots, because the whole stack is garbage when the eval
-ends and clearing would put four stores on the path every region exit takes.
+`pop` drops the entry without clearing its slots, so a stack that reached depth n holds up to n
+entries' worth for the rest of that eval. Clearing is the alternative and costs four stores on the
+path every region exit takes; neither has been measured, and the retention is bounded by peak depth.
 
 **2. `Eval.apply`, the loop's signature.**
 
@@ -73,9 +76,11 @@ loop(kyo.value, Arrow.id, Arrow.id, bound)
 > the suspension's continuation through the existing rebuild and ends, and re-entering with what that
 > produced asks the next region out the same question.
 
-The rebuild block and `reenter` are the baseline's code, relocated. They read the handler and state
-from the entry instead of from a closure, and `git diff -w` over those ranges shows only that and
-the loop's renamed type parameters.
+The rebuild block and `reenter` are the baseline's code, relocated, but not byte-identical, and
+`flags.md` names all five differences. The one worth your attention is a signature: `reenter`'s rows
+narrow from `Arrow[P, AX, EX & S]` to `Arrow[P, AX, EX]` and its result from `D < (S & S2)` to
+`D < S3`, because the handler is read at row `Any` so the region's `S` is no longer in scope. The new
+result type is the more specific one, so it is asserted nowhere.
 
 **6. The guard, replacing `run`: the extent guard, once for the eval.**
 
