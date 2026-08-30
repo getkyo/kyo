@@ -84,7 +84,7 @@ An ascription, a helper, or a widened type that makes the site compile is a work
 ## Applying a live review
 
 **2026-08-30**, on reaching for a bulk replace mid-walk:
-> and you were about to a batch edit!? where's the live review preparation?
+> and you were about to do a batch edit!? where's the live review preparation?
 
 Standing consequence: the walk is applied one edit at a time with the Edit tool, and the sequence
 must exist as data before the walk starts. A described sequence is not a sequence: `sequence.json`
