@@ -75,6 +75,29 @@ final private[kyo] class Stack:
         size = 0
     end clear
 
+    /** Moves every entry into a packed array, outermost first, leaving the stack empty.
+      *
+      * Three slots per region: handler, state, continuation. Contexts stay behind: a re-installed region derives its context from where it
+      * stands, so captured install-time contexts would be wrong to keep. A move rather than a copy for the reason `clear` nulls its slots:
+      * the pooled arrays outlive the eval, and the packed array is the entries' one owner from here on.
+      */
+    def snapshot(): Array[AnyRef] =
+        val out = new Array[AnyRef](size * 3)
+        var i   = 0
+        while i < size do
+            out(i * 3) = handlers(i)
+            out(i * 3 + 1) = states(i).asInstanceOf[AnyRef]
+            out(i * 3 + 2) = continuations(i)
+            handlers(i) = null
+            states(i) = null
+            contexts(i) = Context.empty
+            continuations(i) = null
+            i += 1
+        end while
+        size = 0
+        out
+    end snapshot
+
     // the innermost region, which is the only one an eval step can be inside. Every call site reaches these
     // behind its own `isEmpty` test, so an empty stack has no reads rather than a defined answer for them
     def handler: Handler[?, ?, ?, ?, ?] = handlers(size - 1)

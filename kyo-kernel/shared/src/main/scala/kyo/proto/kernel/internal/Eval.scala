@@ -5,6 +5,7 @@ import kyo.Maybe
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
 import kyo.bug
+import kyo.discard
 import kyo.proto.Arrow
 import kyo.proto.Loop
 import kyo.proto.Loop.Outcome2
@@ -28,7 +29,34 @@ object Eval:
             case p: Pending[?, ?] => p.release(Discarded)
             case _                => ()
 
-    def apply[A, S](v: A < S): A < S =
+    def apply[A, S](v: A < S): A < S = apply(v, armed = false)
+
+    /** Evaluates until the computation parks, handing back a value that resumes on a later slice.
+      *
+      * A slice ends on a preemption stop, and the value returned carries the regions above the park intact, with their state. Stops are
+      * Safepoint's alone: the scheduler delivers one through the slot, and the poll reads the slot, so there is no caller-supplied stop
+      * function and nothing to allocate per slice.
+      *
+      * The row is `Any`, the same as a full evaluation: every effect must already be handled. An operation with no handler is a bug here
+      * too, not something a slice can park on and have answered later.
+      *
+      * A stop already delivered before the slice begins ends it before it starts: the input comes straight back, and the sentinel is taken
+      * so the slice after this one runs.
+      */
+    private[kyo] def partial[A](v: A < Any): A < Any =
+        val slot = Safepoint.get()
+        if Safepoint.consumeStopped(slot) then v
+        else
+            // the poll only reads: the sentinel stays in the slot, so the park check sees it however
+            // many times it asks. It is consumed once, at the slice boundary in the finally: park,
+            // completion, and failure all satisfy the stop there, so no stale sentinel survives to
+            // short-circuit the next slice
+            try apply(v, armed = true)
+            finally discard(Safepoint.consumeStopped(slot))
+        end if
+    end partial
+
+    private def apply[A, S](v: A < S, armed: Boolean): A < S =
         // the regions this eval installs. A nested eval borrows its own, so it answers for the
         // regions it installed and for none of the enclosing ones. Borrowed rather than allocated
         // because most evals install nothing and gave one away for free; returned in the finally
@@ -41,13 +69,27 @@ object Eval:
         // continuation is the application that just deferred.
         //
         // Restored in the finally below so a nested eval hands the enclosing one back what it had,
-        // its part-spent depth and its armed bit included. That restore has no test: a nested eval's
-        // own exits return most of what it spent, so the enclosing eval survives losing it, and the
-        // armed bit is unobservable while nothing in the proto arms. It is kept because discarding a
-        // caller's state is wrong whether or not this tree can currently see it, and because the
-        // reference kernel's eval does the same at the same place
+        // its part-spent depth and its armed bit included. `save` installs a fresh budget and clears
+        // the armed bit as it reads, and arming after it makes the polls live for this eval alone: a
+        // plain eval nested inside a slice runs unarmed and cannot park, and the restore hands the
+        // slice its armed state back when the nested eval ends
         val slot  = Safepoint.get()
         val saved = Safepoint.save(slot)
+        if armed then Safepoint.arm(slot)
+
+        // The parked slice, as a value that resumes it: the current position reified through the
+        // deferral laws, and the open regions moved into one Park node. Semantically the value
+        // wrapped in one Handle per entry; the node and its packed array stand in for the wrappers,
+        // and the resume arm below must stay observationally equivalent to that reading. The row
+        // widens to Any the way the settled exits narrow from it: the parked value's effects are
+        // answered by the regions it carries, and those travel with it
+        def park[T, B, C, S2](curr: T < S2, contA: Arrow[T, B, S2], contB: Arrow[B, C, S2]): A < S =
+            val v: Any < Any =
+                if contA.isInstanceOf[Arrow.Id[?]] && contB.isInstanceOf[Arrow.Id[?]] then curr.asInstanceOf[Any < Any]
+                else Effect.defer(curr, contA, contB).asInstanceOf[Any < Any]
+            if stack.isEmpty then v.asInstanceOf[A < S]
+            else new Kyo.Park[A, S](v, stack.snapshot())
+        end park
 
         // `loop` runs the machine to its answer, which is why it returns the eval's result rather
         // than the composition of its arguments: once a region's continuation waits on the stack,
@@ -56,7 +98,12 @@ object Eval:
             Debugger.onLoop(v, contA, contB)
             v match
                 case kyo: Kyo.Defer[AX, Y, T, S2] @unchecked =>
-                    loop(kyo.value, kyo.contA, kyo.contB.chain(contA.chain(contB)), ctx)
+                    // the preemption poll, on this arm because the budget makes it inevitable: every
+                    // strict application gates on `Safepoint.enter`, a drained budget turns
+                    // applications into deferrals, and every by-name suspension builds one outright,
+                    // so a pending stop is observed within one budget period of pure strict work
+                    if armed && Safepoint.stopped(slot) then park(v, contA, contB)
+                    else loop(kyo.value, kyo.contA, kyo.contB.chain(contA.chain(contB)), ctx)
                 case kyo: Kyo.SuspendContext[VX, CX, T, S2] @unchecked if ctx.contains(kyo.tag) =>
                     val nv = kyo.update(ctx.apply[VX, CX](kyo.tag))
                     Debugger.onContext(kyo, nv)
@@ -268,6 +315,33 @@ object Eval:
                     // so its interior is evaluated by this same loop instead of by a nested one
                     stack.push(kyo.handler, st0, ctx, kyo.cont.chain(contA.chain(contB)))
                     loop(kyo.value, Arrow.id, Arrow.id, bound)
+                case kyo: Kyo.Park[?, ?] =>
+                    // re-installation, not restoration: each entry is pushed the way the Handle arm
+                    // just above pushes one, against the ambient context, so a binding re-resolves
+                    // from where the resume stands and region exits restore resume-time contexts,
+                    // never park-time ones. Mirrors that arm's installation; a change there lands
+                    // here too
+                    val entries = kyo.entries
+                    var c       = ctx
+                    var i       = 0
+                    while i < entries.length do
+                        val handler = entries(i).asInstanceOf[Handler[EX, AX, Y, Any, VX]]
+                        var st      = entries(i + 1).asInstanceOf[VX]
+                        val cont    = entries(i + 2).asInstanceOf[Arrow[Y, Any, Any]]
+                        val bound = handler match
+                            case h: Handler.HandlerContext[VX, CX, AX, Y, Any] @unchecked =>
+                                val hc: Handler.HandlerContext[VX, CX, AX, Y, Any] = h
+                                st = hc.resolve(Maybe.when(c.contains(hc.tag))(c[VX, CX](hc.tag)))
+                                c.update(hc.tag, st)
+                            case _ => c
+                        Debugger.onRegionEnter(handler, st)
+                        // the pending continuation follows the outermost region
+                        if i == 0 then stack.push(handler, st, c, cont.chain(contA.chain(contB).asInstanceOf[Arrow[Any, Any, Any]]))
+                        else stack.push(handler, st, c, cont)
+                        c = bound
+                        i += 3
+                    end while
+                    loop(kyo.value, Arrow.id, Arrow.id, c)
                 case res =>
                     if contA.isInstanceOf[Arrow.Id[?]] && contB.isInstanceOf[Arrow.Id[?]] then
                         if stack.isEmpty then res.asInstanceOf[A < S]

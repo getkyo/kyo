@@ -216,4 +216,41 @@ object Kyo:
                 def state   = st
                 def cont    = c
     end Handle
+
+    /** A parked slice: the regions an eval had open, standing around the value they were installed around.
+      *
+      * Semantically this is the value wrapped in one Handle per entry, and every observable behavior must match that reading; one node and
+      * one packed array stand in for the N wrappers. Three slots per region, outermost first: handler, state, continuation. Contexts are
+      * deliberately not captured, because a re-installed region derives its context from where it stands, which is what the Handle arm's
+      * installation does and what lets a resume under new bindings see them.
+      *
+      * Built in one place, the eval's preemption poll, and consumed in one place, the eval's re-installation arm. The array is written once
+      * at park time and only read at resume, so the parked value is immutable data referencing immutable data: resumable anywhere, on any
+      * thread, any number of times.
+      */
+    final class Park[+A, -S](
+        val value: Any < Any,
+        val entries: Array[AnyRef]
+    ) extends Pending[A, S]:
+        Debugger.onAlloc(this)
+
+        def release(ex: Throwable): Any < Any =
+            // the equation's order: the value's own releases first, then each captured region's, innermost first
+            var acc: Any < Any = value match
+                case p: Pending[?, ?] => p.release(ex)
+                case _                => ()
+            var i = entries.length - 3
+            while i >= 0 do
+                val handler = entries(i).asInstanceOf[Handler[Nothing, Any, Any, Any, Any]]
+                val state   = entries(i + 1)
+                Debugger.onRelease(handler, ex)
+                acc = acc.andThen(handler.release(state, ex))(using Frame.internal)
+                i -= 3
+            end while
+            acc
+        end release
+
+        override def toString =
+            s"Park(${short(value)}, regions = ${entries.length / 3})"
+    end Park
 end Kyo
