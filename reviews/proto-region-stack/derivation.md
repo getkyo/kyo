@@ -91,48 +91,53 @@ carrier type instead is the failure `rulings.md` records under Types and safety.
 Changes:
 
 - `kyo/proto/kernel/internal/Stack.scala`, new. Four arrays and a size.
-- `kyo/proto/kernel/internal/Eval.scala`, inside `apply` only:
-  - `loop`'s signature, per the section above;
+- `kyo/proto/kernel/internal/Eval.scala`, inside `apply`:
+  - `loop`'s signature, per the section above, and `@tailrec` on it so the tail-call property the
+    change rests on is checked rather than claimed;
   - the `Handle` arm: install and continue, replacing `region`;
   - the settled arm: complete the innermost region and continue;
   - the `Suspend` arm: after the registers absorb, ask the regions;
-  - `run`: carries the extent guard, because the per-region `try` dies with `region`. The guard is
-    region machinery, so this is inside "regions handling" and not scope creep. `run`'s existing
-    job, answering a context read that no region answered, is unchanged.
+  - **the guard, replacing `run`**. The per-region `try` dies with `region`, so the extent guard moves
+    to the eval. It is a loop rather than a recursion, because a recovery that resumed by evaluating
+    the rest of the eval from inside its own catch would cost a frame per recovered region, which is
+    the dependency this change exists to remove, reintroduced one level over. `run`'s existing job,
+    answering a context read that no region answered, folds into the same loop because both are "the
+    eval continues after the loop returned or threw". This is a change to `run` and is declared as one.
+  - three file-level imports: `Maybe.Absent`, `Maybe.Present`, `scala.annotation.tailrec`.
+- `kyo/proto/kernel/internal/Handler.scala`, `recover`'s scaladoc only. It states the install-time
+  state as the contract, and after this change no path honours it, so the sentence changes with the
+  behaviour. Declared here because a contract in a doc comment is still a contract, and the first
+  version of this derivation wrongly listed `Handler` as untouched.
 
-Does **not** change: `KyoInternal` node classes, the `Handler` protocol, `ArrowEffect`,
-`ContextEffect`, `Pending`, `Loop`, `Arrow`, `Effect`, `Eval.release`. The foreign-crossing rebuild
-moves out of `region` verbatim and reads its handler and state from the entry rather than a
-closure.
+Does **not** change: `KyoInternal` node classes, the `Handler` protocol's signatures, `ArrowEffect`,
+`ContextEffect`, `Pending`, `Loop`, `Arrow`, `Effect`, `Eval.release`, `answerLoop`.
 
 ## New type
 
-`Stack` is a new type, against the standing preference. It is the carrier the user specified
-("let's add a mutable Stack with multiple arrays basically a flattened regions collection"), and
-no existing type holds a growable heterogeneous sequence of open regions. Its entries stay
-columnar rather than becoming a typed entry object: re-typing an array element at the storage
-boundary is the sanctioned erasure-forced cast, the cast ladder names `Stack` as its example, and a
-typed entry would allocate per region to buy what the ladder already permits.
+`Stack` is a new type, against the standing preference, so it needs an argument that an existing one
+cannot serve. No existing type holds a growable heterogeneous sequence of open regions, and the
+entries have to be reachable by the eval while a region is open, which a value in the pending union
+is not. Its entries stay columnar rather than becoming a typed entry object: re-typing an array
+element at the storage boundary is the sanctioned erasure-forced cast, the cast ladder names `Stack`
+as its example, and a typed entry would allocate per region to buy what the ladder already permits.
 
 ## Concession: mutability
 
-Justification: the region chain is the eval's engine room, and a heap chain is the only
-representation whose depth is not the Java stack's.
+Two of them, and each carries the four parts.
 
-Minimal scope: one instance per `Eval.apply`, reachable from nothing that leaves the eval.
+**The region stack.** Justified because the region chain is the only thing whose depth was the Java
+stack's. Scoped to one instance per `Eval.apply`, reachable from nothing that leaves the eval.
+Protected because entries are written only by the eval's own arms and hold complete values, and a
+nested eval builds its own. Pinned by `ArrowEffectTest` "handles nested per recursion step in bounded
+stack" (the defect), `EvalTest` "a nested eval shares the thread's stack and sees none of the outer
+regions" (per-eval scoping), and `EvalTest` "the captured continuation is multi-shot" with "each shot
+of a multi-shot capture resumes from capture-time state" (a resumed shot re-installs from the node,
+not from a stack an earlier shot mutated).
 
-Protective measure: entries are written only by the eval's own arms; the values put into them are
-complete values, so the entries hand back exactly what the equation says they hold.
-
-Pinning tests, all existing:
-
-- `ArrowEffectTest` "handles nested per recursion step in bounded stack", the defect itself;
-- `EvalTest` "a nested eval shares the thread's stack and sees none of the outer regions", which
-  pins that an eval answers for its own regions and none of an enclosing eval's;
-- `EvalTest` "the captured continuation is multi-shot" and "each shot of a multi-shot capture
-  resumes from capture-time state", which pin that a resumed shot re-installs from the node rather
-  than from a stack an earlier shot mutated;
-- `PendingTest` region-crossing cases, which pin the foreign rebuild after its relocation.
+**The guard's loop.** Justified because the alternative costs a frame per recovered region. Scoped to
+five locals in `apply`, none escaping. Protected because `out` is initialised from `v` so there is no
+sentinel and no `Null`, and `settled` is the only exit. Pinned by `EvalTest` "regions that fail and
+recover in sequence cost no stack", 10000 cycles, which fails on the recursive shape.
 
 ## Ruled, not open
 
