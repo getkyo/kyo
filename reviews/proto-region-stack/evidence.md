@@ -99,18 +99,15 @@ uses `NarrowDepth = 1000`, so it does ten times the work. What is real is a cons
 trailing map costs about 3.4x per step against the same recursion without one, 0.070 against 0.020
 us. Linear, not free.
 
-## Known and pre-existing, not caused here
+## The hang this surfaced, now fixed separately
 
-The three suites run together hang at `ArrowEffectTest:969`, the double-boxed-value test. Evidence
-that it predates this change:
+Running the three suites in one JVM used to hang at `ArrowEffectTest:969`. That was pre-existing:
+the baseline hangs at the identical test when given `-Xss1g` so that it reaches it, where normally
+the StackOverflowError ends the suite at test 17 and nothing ever gets there. It is fixed by
+`ffc1819ecc`, which gives an eval its own safepoint budget, and it has its own derivation under
+`reviews/proto-eval-budget/`.
 
-- the baseline hangs at the identical test when given `-Xss1g` so that it reaches it, where normally
-  the StackOverflowError ends the suite at test 17 and it never does;
-- `parallelExecution := false` hangs identically, so it is not a race between suites;
-- each suite alone passes that test, so it needs a preceding suite in the same JVM.
-
-Hypothesis, supported but not proven: the safepoint budget is per thread and the proto never resets
-it at an eval boundary, so once drained a `map` over a settled value always defers, the eval applies
-the deferral, and that rebuilds another one. The reference kernel does `Safepoint.save` and
-`Safepoint.restore` around its eval; the proto does not. Fixing that is outside this change's
-declared surface.
+With both changes in, `kyo-kernelJVM/test` is 35 suites, 0 aborted, 1398 passing, 3 failing, and the
+three suites run together for the first time: 205 tests, 202 passing. The 3 failures are the
+pre-existing eval-boundary item in `EvalTest`, which is untouched here and still holds two open
+questions of its own.
