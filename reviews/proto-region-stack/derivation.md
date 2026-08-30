@@ -104,10 +104,15 @@ Changes:
     answering a context read that no region answered, folds into the same loop because both are "the
     eval continues after the loop returned or threw". This is a change to `run` and is declared as one.
   - three file-level imports: `Maybe.Absent`, `Maybe.Present`, `scala.annotation.tailrec`.
-- `kyo/proto/kernel/internal/Handler.scala`, `recover`'s scaladoc only. It states the install-time
-  state as the contract, and after this change no path honours it, so the sentence changes with the
-  behaviour. Declared here because a contract in a doc comment is still a contract, and the first
-  version of this derivation wrongly listed `Handler` as untouched.
+- `kyo/proto/kernel/internal/EvalTest.scala`, two tests: the recovery-depth pin and the
+  context-persistence pin, both named in the concession sections below.
+- `kyo/proto/kernel/internal/Handler.scala`, the scaladoc of **both** `recover` and `release`, no
+  signature. `recover`'s stated the install-time state as its contract and no path honours it after
+  this change. `release`'s stated the same and was already wrong before it: a region only becomes
+  abandonable by being reified into a node, and the reification writes the live state into it, so
+  `release` has always read the live one. Correcting a sentence that was false is still a change
+  outside the first surface this derivation declared, which listed `recover` alone; it is declared
+  rather than allowed to pass as an improvement.
 
 Does **not** change: `KyoInternal` node classes, the `Handler` protocol's signatures, `ArrowEffect`,
 `ContextEffect`, `Pending`, `Loop`, `Arrow`, `Effect`, `Eval.release`, `answerLoop`.
@@ -135,7 +140,7 @@ of a multi-shot capture resumes from capture-time state" (a resumed shot re-inst
 not from a stack an earlier shot mutated).
 
 **The guard's loop.** Justified because the alternative costs a frame per recovered region. Scoped to
-five locals in `apply`, none escaping. Protected because `out` is initialised from `v` so there is no
+six locals in `apply` (`curr`, `ctx`, `out`, `settled`, `ex`, `unwinding`), none escaping. Protected because `out` is initialised from `v` so there is no
 sentinel and no `Null`, and `settled` is the only exit. Pinned by `EvalTest` "regions that fail and
 recover in sequence cost no stack", 10000 cycles, which fails on the recursive shape.
 

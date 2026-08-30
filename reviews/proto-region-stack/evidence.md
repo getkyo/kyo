@@ -13,7 +13,7 @@ could summon the lift in a kernel file and incremental green is not clean green.
 |---|---|---|
 | `ArrowEffectTest` | aborted after 17 of 88, `StackOverflowError` | **88 of 88** |
 | `PendingTest` | 63 of 63 | 63 of 63 |
-| `EvalTest` | 51 of 54 | 51 of 54 |
+| `EvalTest` | 51 of 54 | 53 of 56, the two added being pins |
 
 `EvalTest`'s three failures are the pre-existing eval-boundary item (`Eval.apply` returns an
 unanswered suspension instead of rejecting it), untouched by this change and recorded as its own
@@ -32,7 +32,7 @@ separate probe.
 ## Benchmarks
 
 Full class, both legs back to back in one session on the same machine, `-f 1 -wi 5 -i 5`, JDK 25,
-macOS arm64. Control `31a7b4bde9`, variant `7a7cd22ad8`, **the shipped tip**. Twenty declared, twenty
+macOS arm64. Control `31a7b4bde9`, variant `d197133298`, **the shipped tip**. Twenty declared, twenty
 measured (the twenty-first `@Benchmark` match is the class-level `@BenchmarkMode`). **Drift band on
 this machine is 3 to 4%**, so a delta inside it is not a result, and neither is one smaller than the
 combined error.
@@ -64,7 +64,9 @@ rather than reused across sessions.
 | handleLoopAnswersInPlace | 83.631 ± 1.414 | 80.427 ± 1.519 | -3.8% | faster, at the band's edge |
 | deepRecursionPaysRescuesOnly | 52.117 ± 0.436 | 49.556 ± 3.734 | -4.9% | error exceeds delta |
 
-**No row regressed beyond the drift band, and none regressed beyond its own error.** The two nominally
+`trailingMapsStayLinear`'s +4.9% is outside the stated band, so it was confirmed at `-f 3`, where it
+reads **-3.8%** (735.974 ± 31.941 control against 707.966 ± 13.356 variant). The `-f 1` figure was
+noise in the other direction. **No row regressed.** The two nominally
 faster rows are at or inside the band and are not claimed as wins. Moving the open regions from the
 Java stack to four heap arrays, and the guard from per-region tries to one loop, costs nothing
 measurable on any row the change reaches, the region-heavy ones included.
@@ -91,7 +93,7 @@ the StackOverflowError ends the suite at test 17 and nothing ever gets there. It
 `ffc1819ecc`, which gives an eval its own safepoint budget, and it has its own derivation under
 `reviews/proto-eval-budget/`.
 
-With all three commits in, `kyo-kernelJVM/test` is 35 suites, 0 aborted, **1399 passing**, 3 failing,
-and the three proto suites run together for the first time. The 3 failures are the
+With all five commits in, `kyo-kernelJVM/test` is 35 suites, 0 aborted, **1400 passing**, 3 failing,
+and the three proto suites run together for the first time: 207 tests, 204 passing. The 3 failures are the
 pre-existing eval-boundary item in `EvalTest`, which is untouched here and still holds two open
 questions of its own.

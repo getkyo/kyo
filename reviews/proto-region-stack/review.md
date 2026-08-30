@@ -3,7 +3,7 @@
 Two changes, in dependency order. Each is applied one edit at a time with the Edit tool, in the
 sequence below, with the sentence beside each edit said as it goes in.
 
-Worktree `kyo-root-impl`, four commits off `31a7b4bde9`, tip `7a7cd22ad8`.
+Worktree `kyo-root-impl`, five commits off `31a7b4bde9`, tip `d197133298`.
 
 ## What this fixes
 
@@ -88,79 +88,93 @@ result type is the more specific one, so it is asserted nowhere.
 > there, and it is a loop rather than a recursion so that recovering costs no more stack than
 > declining does.
 
-The loop is the point. The first shape of this had the recovery resume by calling back into the
-guard from inside its own catch, which cost a frame per *recovered* region: the dependency this
-change exists to remove, reintroduced one level over. Two review lenses caught it independently.
+The loop is the point. The first shape had the recovery resume by calling back into the guard from
+inside its own catch, which cost a frame per *recovered* region: the dependency this change exists to
+remove, reintroduced one level over. Two review lenses caught it independently.
 
-Consequence, and the one behavioural change in the set: `recover` now reads the state the region has
-reached rather than the one it was installed with. That follows your ruling that both `recover` and
-`release` should see the current state. `release` already did, structurally, since a region only
-becomes releasable by being reified into a node and the reification writes the live state into it.
-`Handler.recover`'s scaladoc stated the old contract and changes with it. A second, smaller
-behavioural change: a `recover` that fails is now the failure the regions outside it see, which is
-what nesting the per-region tries used to do implicitly.
+This edit deletes `run` and `recovered`, so the budget's save and restore, which lived on `run`,
+move with it; edits 7 and 8 place them.
 
-### Change two: an eval's own safepoint budget
+Two behavioural consequences, both pinned:
 
-**7. `Eval.apply`, entry and exit.**
+- `recover` reads the state the region has reached, not the one it was installed with, per your
+  ruling that it and `release` should both see the current state.
+- an answered operation resumes with the loop's **current** context, where the baseline used the
+  install-time one. `ContextEffect` says a read rebinds the value "for the rest of that region's
+  extent", and an answered operation is inside that extent.
+
+**7. `Eval.apply`, entry and exit: the eval's own budget.**
 
 ```scala
 val slot  = Safepoint.get()
 val saved = Safepoint.save(slot)
 ...
-try run(v, Context.empty)
+try  <the guard loop from edit 6>
 finally Safepoint.restore(slot, saved)
 ```
 
 > The depth guard bounds strict recursion within one eval, so the budget is the eval's and not
-> whatever the thread had left.
+> whatever the thread had left, and the caller gets back what it had.
 
-Inheriting a spent budget is a fixed point rather than a slow path: every application defers, the
-settled arm applies the deferral, and its continuation is the application that just deferred. The
-reference kernel's eval already does exactly this; the proto had both operations and called neither.
+Inheriting a spent budget is a fixed point, not a slow path: every application defers, the settled arm
+applies the deferral, and its continuation is the application that just deferred. The reference
+kernel's eval does exactly this; the proto had both operations and called neither.
 
-**8. `Eval.apply`, the exit: `finally Safepoint.restore(slot, saved)`.**
+The `restore` has no pinning test, and that is stated in the code beside it rather than left to be
+inferred. A first attempt passed with the fix reverted, so it pinned nothing and was deleted.
 
-> The caller gets back what it had, its part-spent depth and its armed bit included.
-
-This has no pinning test, and the reason is in the code beside it rather than left to be inferred: a
-first attempt passed with the fix reverted, so it pinned nothing and was deleted rather than kept for
-the look of it. A nested eval's own exits return most of what it spent, so the enclosing eval survives
-losing the depth, and the armed bit is unobservable while nothing in the proto arms. It stays because
-discarding a caller's state is wrong whether or not this tree can see it, and because the reference
-does the same at the same place.
-
-**9. The same guard, one line: `Safepoint.reset(slot)` on catching.**
+**8. The same guard, one line: `Safepoint.reset(slot)` on catching.**
 
 > A throw leaves every strict application between it and the guard without its matching exit, and the
 > guard is where the true depth is known to be zero.
 
-Saving at entry fixes the leak across evals; it does not fix it within one. An extent that recovers a
-few hundred times drains its own budget and reaches the same fixed point. Measured flat from 200 to
-12800 recoveries with the reset, livelocking past 800 without it.
+Saving at entry fixes the leak across evals, not within one. An extent recovering a few hundred times
+drains its own budget and reaches the same fixed point. Flat from 200 to 12800 recoveries with the
+reset; livelocks past 800 without it.
+
+**9. `Handler.scala`, the scaladoc of `recover` and `release`.**
+
+> Both state the state they are consulted with, and both are now the live one.
+
+`recover`'s was made false by edit 6. `release`'s was false before it: a region only becomes
+abandonable by being reified into a node, and the reification writes the live state in. Correcting a
+sentence that was already wrong is still outside the surface this change first declared, so it is
+declared rather than passed off as an improvement.
+
+**10. `EvalTest.scala`, two tests.**
+
+> "regions that fail and recover in sequence cost no stack", 10000 cycles, which livelocks without
+> edit 8. And "a context update outlives an operation answered after it", which fails at the baseline
+> and passes here, pinning edit 6's second consequence.
+
+The second builds a `SuspendContext` with a non-identity update directly, because the public surface
+cannot: every `ContextEffect.suspend` carries `update(v) = v`. An earlier draft called that change
+unobservable and shipped it unpinned, which was true of the surface and false of the tree.
 
 ## Evidence
 
-Full detail in `evidence.md`. Summary:
+Full detail in `evidence.md`, all of it measured on the shipped tip `d197133298`.
 
 | | before | after |
 |---|---|---|
 | `ArrowEffectTest` | aborted after 17 of 88 | **88 of 88** at the default stack |
 | `PendingTest` | 63 of 63 | 63 of 63 |
-| `EvalTest` | 51 of 54 | 51 of 54 |
-| three suites in one JVM | hung | **205 tests, 202 passing** |
+| `EvalTest` | 51 of 54 | 53 of 56, the two added being pins |
+| the three proto suites in one JVM | hung | **207 tests, 204 passing** |
 | `kyo-kernelJVM/test` | 1 suite aborted | **35 suites, 0 aborted, 1400 passing** |
 | demo, 28 scenarios | recorded values | identical, 4221 / -9 / 991 included |
 | clean batch build | green | green |
 | 12800 throw/recover cycles | livelocks past 400 | flat, 0.89 us each |
 
-Benchmarks: the full class on both legs back to back in one session, measured on the shipped tip,
-20 of 20 rows. **No row regressed beyond the drift band or beyond its own error.** An earlier pair
-measured a commit that is not what ships and is discarded rather than carried forward.
+The three remaining failures are the pre-existing eval-boundary item, untouched here.
 
-Adjudication: `flags.md`, 88 rows, every one with a verdict, rebuilt after `kernel-discipline`
-blocked the first version and recording what that version got wrong. No verdict is `REMOVE`; the constructs
-`rulings.md` names are absent from the diff rather than justified in it.
+Benchmarks: the full class on both legs back to back in one session on the shipped tip, 20 of 20
+rows. The one row outside the drift band on `-f 1`, `trailingMapsStayLinear` at +4.9%, was confirmed
+at `-f 3` and reads **-3.8%** there (735.974 ± 31.941 against 707.966 ± 13.356), so it is not a
+regression in either direction that the errors support. **No row regressed.**
+
+Adjudication: `flags.md`, 99 rows, every one with a verdict, generated from the script's output in
+one pass over both the main and test trees.
 
 ## What I want you to push on
 
