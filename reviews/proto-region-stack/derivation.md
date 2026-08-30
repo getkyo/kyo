@@ -98,14 +98,21 @@ Changes:
   - the settled arm: complete the innermost region and continue;
   - the `Suspend` arm: after the registers absorb, ask the regions;
   - **the guard, replacing `run`**. The per-region `try` dies with `region`, so the extent guard moves
-    to the eval. It is a loop rather than a recursion, because a recovery that resumed by evaluating
-    the rest of the eval from inside its own catch would cost a frame per recovered region, which is
-    the dependency this change exists to remove, reintroduced one level over. `run`'s existing job,
-    answering a context read that no region answered, folds into the same loop because both are "the
-    eval continues after the loop returned or threw". This is a change to `run` and is declared as one.
+    to the eval. It is two `@tailrec` methods, `recovered` walking the regions a throw unwinds and
+    `guarded` running the eval and catching. Both resume by a **self** tail call, which Scala does
+    eliminate from inside a `catch`, verified by a probe recursing two million times through one.
+    Mutual recursion is not eliminated, and an earlier shape had `recovered` call `guarded`'s
+    predecessor from inside its catch, which cost a frame per recovered region: the dependency this
+    change exists to remove, reintroduced one level over. `run`'s existing job, answering a context
+    read that no region answered, folds into `guarded` because both are "the eval continues once the
+    loop returned or threw". This is a change to `run` and is declared as one.
+  - **the eval's boundary**: a suspension reaching `guarded` with no region left is rejected rather
+    than handed back, and the `Loop.done` arm asserts its payload's representation rather than
+    stripping it. The two go together and are derived in their own section below.
   - three file-level imports: `Maybe.Absent`, `Maybe.Present`, `scala.annotation.tailrec`.
-- `kyo/proto/kernel/internal/EvalTest.scala`, two tests: the recovery-depth pin and the
-  context-persistence pin, both named in the concession sections below.
+- `kyo/proto/kernel/internal/EvalTest.scala`, four tests: the recovery-depth pin, the
+  context-persistence pin, the foreign-crossing budget pin, and the pin on a `recover` that fails
+  itself. Each is named where the thing it pins is derived.
 - `kyo/proto/kernel/internal/Handler.scala`, the scaladoc of **both** `recover` and `release`, no
   signature. `recover`'s stated the install-time state as its contract and no path honours it after
   this change. `release`'s stated the same and was already wrong before it: a region only becomes
@@ -139,10 +146,18 @@ regions" (per-eval scoping), and `EvalTest` "the captured continuation is multi-
 of a multi-shot capture resumes from capture-time state" (a resumed shot re-installs from the node,
 not from a stack an earlier shot mutated).
 
-**The guard's loop.** Justified because the alternative costs a frame per recovered region. Scoped to
-six locals in `apply` (`curr`, `ctx`, `out`, `settled`, `ex`, `unwinding`), none escaping. Protected because `out` is initialised from `v` so there is no
-sentinel and no `Null`, and `settled` is the only exit. Pinned by `EvalTest` "regions that fail and
-recover in sequence cost no stack", 10000 cycles, which fails on the recursive shape.
+**The guard.** No longer a concession of this kind: the shipped guard has no locals at all. It was
+written twice with them, first as a `while` loop over six vars and then as four, on an untested
+belief that a call inside a `catch` cannot be a tail call. It can, so what ships is two `@tailrec`
+methods and the concession is gone. Recorded here rather than deleted because the two wrong shapes
+were mine and the second was worse than the first, and because the pin stands either way: `EvalTest`
+"regions that fail and recover in sequence cost no stack", 10000 cycles, which fails on the mutually
+recursive shape.
+
+The state the guard still threads is the `Stack` above, and the one entry it leans on is deliberate:
+a region that recovers is left on the stack so the resume can take its context and pop it. That is
+what lets `recovered` return one value rather than a value paired with the context to resume at,
+which would be a tuple allocated on the path `Abort` runs through.
 
 ## Declared: the context an answered operation resumes with
 
@@ -159,6 +174,62 @@ the stated contract rather than away from it. Pinned by `EvalTest` "a context up
 internal package where the tests live, so the test builds one with a non-identity update. An earlier
 draft called the change unobservable and left it unpinned; that was true of the surface and false of
 the tree.
+
+## Derived: a foreign crossing resumes inside its region
+
+The rebuilt node's `reenter` ran the resumed application itself and wrapped the result in the
+region: `Kyo.handle(k0.head(x, k0.tail), handler, state)`. The application therefore ran with
+nothing installed to answer for it, so the region's guard had to be carried on that path by hand, as
+a second `try` with its own `recover` call and its own `getOrElse(throw ex)`.
+
+Two things follow from that shape, and both are defects rather than costs.
+
+The first is a leak. The budget counts the strict applications standing on the Java stack, and a
+throw unwinds them without their matching exits. The eval's guard repairs it by resetting, which is
+sound exactly because the guard sits at the eval's own frame where the true depth is zero.
+`reenter`'s catch sits wherever the rebuilt node is applied, which can be another eval on another
+thread, so no reset is available to it and none of its recoveries repaired anything. Measured: one
+budget entry lost per recovered crossing, and a drained budget is a fixed point.
+
+The second is that the region's `done` ran outside the region on that path too, since
+`Kyo.handle` of a settled value calls `done` directly. The loop's settled arm deliberately does the
+opposite, so the two paths disagreed about whether a throw from `done` reaches the region's own
+recover.
+
+The equation says what to do instead. "Resume the continuation inside the region" is
+`Handle(Defer(x, k0), handler, state)`: defer the application rather than running it, and the loop
+that installs the region evaluates it there. Both pieces already exist, neither is a new node kind,
+and the hand-carried guard disappears with its `recover` call. What it costs is one `Defer` per
+foreign resume, which is the measured price of the path having one guard rather than two.
+
+Pinned by `EvalTest` "a region recovering across a foreign crossing leaves the budget where it found
+it": 100 crossings that each throw and recover, sampling the budget every cycle. Before, the samples
+fall by exactly one per crossing; after, they are flat. A hundred rather than the budget's full 512,
+so that a leaking tree still terminates and the pin fails rather than hangs.
+
+## Derived: the eval's boundary rejects what nobody answered
+
+`Eval.apply` handed back a suspension nobody answered as though it were the result, so `<.eval`
+returned a node typed as a value and the cast that discovered it fired arbitrarily far from the
+operation. Three `EvalTest` cases assert the rejection and had been red since the corpus was ported;
+they are not a consequence of this change and they are in its scope.
+
+Rejecting is one arm in `guarded`, placed directly below the arm that answers a context read from
+its default: that is the one suspension which legitimately reaches the same place, and putting the
+two side by side is what says so.
+
+Rejecting alone breaks `PendingTest` "a loop can end its region with a computation result", and the
+reason is the second half. A region completing with `Loop.done` of a computation held as data
+carries two wrappers: the payload's own union representation, and the one `Loop.done` adds so the
+outcome is distinguishable. `answerLoop` strips the outcome's. The loop's done arm stripped a second
+one, which left the payload bare, and a bare payload is work for the loop rather than a value to
+deliver. It had never shown, because evaluating that payload suspends and the suspension is what the
+caller wanted; adding the rejection is what made it visible.
+
+So the arm asserts the representation instead of stripping it. Exactly one wrap, exactly one strip,
+which is the representation contract this kernel rests on. The assertion is a cast of the
+`representation` category, the one the ladder describes as load-bearing: it is what stops a
+delivered value being mistaken for work.
 
 ## Ruled, not open
 
