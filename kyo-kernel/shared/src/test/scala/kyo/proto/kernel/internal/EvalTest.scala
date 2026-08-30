@@ -3,6 +3,7 @@ package kyo.proto.kernel.internal
 import kyo.Const
 import kyo.Maybe
 import kyo.Tag
+import kyo.discard
 import kyo.proto.Arrow
 import kyo.proto.Loop
 import kyo.proto.kernel.<
@@ -575,6 +576,172 @@ class EvalTest extends AnyFreeSpec:
                 a => a
             )
             assert(eval(r) == 101)
+        }
+    }
+
+    // Makes a preemption stop pending for the current thread, from inside a running slice. The jvm
+    // and native deliver through the slot's stop sentinel, js and wasm through the slice deadline,
+    // and each platform's other call is inert there, so one helper serves the shared suite. The
+    // `get` claims the slot when no eval ran on this thread yet, which delivery needs to find.
+    private def requestStop(): Unit =
+        discard(Safepoint.get())
+        discard(Safepoint.stop(Thread.currentThread()))
+        Safepoint.deadline(java.lang.System.currentTimeMillis() - 1)
+    end requestStop
+
+    "partial evaluation and parking" - {
+        "parks on a pending stop and the parked value resumes to the same answer" in {
+            var afterRan = false
+            val body: Int < Ask =
+                ask.map { a =>
+                    requestStop()
+                    Effect.defer {
+                        afterRan = true
+                        ask.map(b => a + b)
+                    }
+                }
+            val parked = Eval.partial(answerAsk(21)(body))
+            assert(parked.isInstanceOf[Kyo.Park[?, ?]])
+            assert(!afterRan)
+            assert(parked.asInstanceOf[Kyo.Park[?, ?]].entries.length == 3)
+            assert(eval(parked) == 42)
+            assert(afterRan)
+            // multi-shot: the entries are immutable data, so a second resume re-installs and answers again
+            assert(eval(parked) == 42)
+        }
+
+        "a stop already pending returns the input before the slice starts" in {
+            var ran = false
+            val input: Int < Any = Effect.defer {
+                ran = true
+                42
+            }
+            requestStop()
+            val back = Eval.partial(input)
+            assert(!ran)
+            assert(back.asInstanceOf[AnyRef] eq input.asInstanceOf[AnyRef])
+            // the sentinel was taken at that boundary, so the slice after it runs
+            assert(Nested.unnest[Int](Eval.partial(back)) == 42)
+            assert(ran)
+        }
+
+        "a stateful region parked mid-loop resumes at the parked state" in {
+            val body: Int < Ask =
+                ask.map { a =>
+                    requestStop()
+                    Effect.defer(ask.map(b => a * 10 + b))
+                }
+            val handled: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 1, body)(
+                [C] => (s, _) => Loop.continue(s + 1, s: Int < Any),
+                (_, a) => a
+            )
+            val parked = Eval.partial(handled)
+            assert(parked.isInstanceOf[Kyo.Park[?, ?]])
+            // the captured state is the advanced one, not the initial one
+            assert(parked.asInstanceOf[Kyo.Park[?, ?]].entries(1).asInstanceOf[Int] == 2)
+            // the first operation answered 1 at state 1; the second answers the parked state 2
+            assert(eval(parked) == 12)
+        }
+
+        "a resumed region re-derives its binding from where the resume stands" in {
+            sealed trait Cfg extends kyo.proto.kernel.ContextEffect[Int]
+            def read: Int < Cfg = kyo.proto.kernel.ContextEffect.suspend(Tag[Cfg])
+            val body: (Int, Int) < Cfg =
+                read.map { r1 =>
+                    requestStop()
+                    Effect.defer(read.map(r2 => (r1, r2)))
+                }
+            val handled: (Int, Int) < Any =
+                kyo.proto.kernel.ContextEffect.handle(Tag[Cfg])(outer => outer.map(_ + 1).getOrElse(11))(body)
+            val parked = Eval.partial(handled)
+            assert(parked.isInstanceOf[Kyo.Park[?, ?]])
+            // parked with nothing bound outside: the region derived 11. Resumed under a binding of
+            // 100, the same region derives 101: re-installation resolves from where it stands, and
+            // a restore of the park-time context would answer 11 twice instead
+            val resumed = kyo.proto.kernel.ContextEffect.handle(Tag[Cfg], 100)(parked)
+            assert(eval(resumed) == (11, 101))
+        }
+
+        "a nested eval inside a slice runs unarmed and completes despite the pending stop" in {
+            var nested = 0
+            val body: Int < Any =
+                Effect.defer {
+                    requestStop()
+                    nested = Nested.unnest[Int](Eval(Effect.defer(Effect.defer(41)): Int < Any))
+                    Effect.defer(nested + 1)
+                }
+            val parked = Eval.partial(body)
+            // the nested eval crossed its own deferrals with the stop pending and still finished;
+            // the slice parked at the first deferral after it, with no region open, so the parked
+            // value is the deferral itself rather than a Park node
+            assert(nested == 41)
+            assert(parked.isInstanceOf[Pending[?, ?]])
+            assert(!parked.isInstanceOf[Kyo.Park[?, ?]])
+            assert(eval(parked) == 42)
+        }
+
+        "a throw during a slice still consumes the stop at the boundary" in {
+            val body: Int < Any = Effect.defer {
+                requestStop()
+                Effect.defer((throw Boom): Int)
+            }
+            val parked = Eval.partial(body)
+            // the park wins over the throw: the stop was pending when the deferral carrying the
+            // throw reached the loop, so the slice ends before the body runs
+            assert(parked.isInstanceOf[Pending[?, ?]])
+            val ex = intercept[RuntimeException](eval(parked))
+            assert(ex eq Boom)
+            // the boundary consumed the sentinel either way: the next slice runs
+            var ran = false
+            val next: Int < Any = Effect.defer {
+                ran = true
+                3
+            }
+            assert(Nested.unnest[Int](Eval.partial(next)) == 3)
+            assert(ran)
+        }
+
+        "a parked value owes its regions' releases innermost first" in {
+            val log = collection.mutable.ListBuffer[String]()
+            val innerHandler = new Handler.HandlerCont[Const[Unit], Const[Int], Ask, Int, Int, Say]:
+                def tag = Tag[Ask]
+                override def release(state: Unit, ex: Throwable) =
+                    log += "inner"
+                    ()
+                def done(state: Unit, v: Int) = v
+                def answer[X](input: Unit, next: Arrow[Int, Int, Ask & Say]): Int < (Ask & Say) =
+                    next(1, Arrow.id)
+            val outerHandler = new Handler.HandlerCont[Const[String], Const[Unit], Say, Int, Int, Any]:
+                def tag = Tag[Say]
+                override def release(state: Unit, ex: Throwable) =
+                    log += "outer"
+                    ()
+                def done(state: Unit, v: Int) = v
+                def answer[X](input: String, next: Arrow[Unit, Int, Say]): Int < Say =
+                    next((), Arrow.id)
+            val body: Int < (Ask & Say) =
+                ask.map { a =>
+                    requestStop()
+                    Effect.defer(ask.map(_ + a))
+                }
+            val inner: Int < Say = Kyo.handle[Ask, Int, Int, Say, Unit](body, innerHandler, ())
+            val outer: Int < Any = Kyo.handle[Say, Int, Int, Any, Unit](inner, outerHandler, ())
+            val parked           = Eval.partial(outer)
+            assert(parked.isInstanceOf[Kyo.Park[?, ?]])
+            assert(parked.asInstanceOf[Kyo.Park[?, ?]].entries.length == 6)
+            discard(eval(Eval.release(parked)))
+            assert(log.toList == List("inner", "outer"))
+        }
+
+        "chain onto a parked value composes" in {
+            val body: Int < Ask =
+                ask.map { a =>
+                    requestStop()
+                    Effect.defer(ask.map(b => a + b))
+                }
+            val parked = Eval.partial(answerAsk(21)(body))
+            assert(parked.isInstanceOf[Kyo.Park[?, ?]])
+            assert(eval(parked.map(_ * 10)) == 420)
         }
     }
 
