@@ -105,7 +105,6 @@ differences it did not name and structurally could not. This replaces it with a 
 |---|---|
 | clean batch build | green |
 | `kyo-kernelJVM/test` | 35 suites, 0 aborted, **1405 tests, 0 failed** |
-| the three proto suites in one JVM | **208 tests, 0 failed** |
 | the edit sequence | 10 edits reproduce all 4 files, by digest |
 | flags | 98 rows, every one adjudicated |
 

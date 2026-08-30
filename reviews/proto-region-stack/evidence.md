@@ -15,8 +15,7 @@ rather than as differences.
 |---|---|
 | clean batch build (`kyo-kernelJVM/clean`, `compile`, `test`) | green, exit 0 |
 | `kyo-kernelJVM/test` | **35 suites, 0 aborted, 1405 tests, 0 failed** |
-| the three proto suites in one JVM | **208 tests, 0 failed** |
-| `EvalTest` | 57 of 57 |
+| the three proto suites in one JVM | pending a re-run at the tip; the 208 recorded earlier predates the fourth pin |
 | the edit sequence against the baseline | 10 edits reproduce all 4 files, by digest |
 | flags | 98 rows, every one with a verdict |
 
