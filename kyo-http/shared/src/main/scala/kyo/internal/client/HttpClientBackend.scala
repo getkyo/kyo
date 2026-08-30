@@ -940,7 +940,7 @@ final private[kyo] class HttpClientBackend private (
                     Fiber.Promise.init[Unit, Any].map { peerClosedPromise =>
                         val closeFn: (Int, String) => Unit < Async = (code, reason) =>
                             closeReasonRef.set(Present((code, reason))).andThen {
-                                outbound.close.unit
+                                outbound.closeDiscard
                             }
                         val ws = new HttpWebSocket(inbound, outbound, closeReasonRef, peerClosedPromise, closeFn)
 
@@ -967,7 +967,7 @@ final private[kyo] class HttpClientBackend private (
                                         case Result.Failure(_) => Kyo.unit
                                         case Result.Panic(t)   => Log.warn("HttpWebSocket client reader panicked", t)
                                         case Result.Success(_) => Kyo.unit
-                                    log.andThen(inbound.close.unit).andThen(peerClosedPromise.completeUnit.unit)
+                                    log.andThen(inbound.closeDiscard).andThen(peerClosedPromise.completeUnit.unit)
                                 }
                             }.map { monitorFiber =>
                                 Fiber.initUnscoped {
@@ -997,8 +997,8 @@ final private[kyo] class HttpClientBackend private (
                                         readFiber.interrupt.unit
                                             .andThen(writeFiber.interrupt.unit)
                                             .andThen(monitorFiber.interrupt.unit)
-                                            .andThen(inbound.close.unit)
-                                            .andThen(outbound.close.unit)
+                                            .andThen(inbound.closeDiscard)
+                                            .andThen(outbound.closeDiscard)
                                     ) {
                                         f(ws)
                                     }

@@ -86,19 +86,32 @@ private[kyo] object LogDaemon:
         // Drain-on-exit: close the channel and dispatch the remainder before the process exits.
         // A hard kill (SIGKILL) can still lose the tail; this is inherent to async logging.
         java.lang.Runtime.getRuntime.addShutdownHook(new Thread(() =>
-            channel.close() match
-                case Present(remaining) =>
-                    // Unsafe: shutdown hook runs in a raw JVM Thread outside the kyo effect system;
-                    // AllowUnsafe cannot be propagated from any kyo caller at this boundary.
-                    given AllowUnsafe = AllowUnsafe.embrace.danger
-                    given Frame       = Frame.internal
-                    remaining.foreach { e =>
+            // Unsafe: shutdown hook runs in a raw JVM Thread outside the kyo effect system;
+            // AllowUnsafe cannot be propagated from any kyo caller at this boundary.
+            given AllowUnsafe = AllowUnsafe.embrace.danger
+            given Frame       = Frame.internal
+            // The channel reports its remaining events through a handover rather than a return value, because a log call already
+            // committing when this runs would otherwise be missed. With nothing in flight that handover settles inside close() and the
+            // dispatch below runs inline on this thread; with a log call in flight it settles on that logging thread instead.
+            //
+            // Unsafe: this thread then WAITS on the handover, the one place in the module that blocks. A shutdown hook exists precisely
+            // to finish work before the process exits, and the JVM keeps running only while its hooks do: returning early would let the
+            // process exit mid-handover and lose every buffered event, not merely the tail. No effect-level suspension is reachable from
+            // a raw hook thread, so the wait is a latch. It is bounded so a wedged producer delays exit by at most that budget rather
+            // than hanging it, which is the same trade the runtime already makes for hooks generally.
+            val handedOver = new java.util.concurrent.CountDownLatch(1)
+            channel.close().onComplete { backlog =>
+                try
+                    backlog.foreach(_.eval.foreach(_.foreach { e =>
                         if e ne LogShared.fence then
                             // Contain ANY throw (not just NonFatal): shutdown hook must not propagate.
                             try LogShared.dispatch(e)
                             catch case t: Throwable => reportDrainFailure(e, t)
-                    }
-                case Absent => ()
+                    }))
+                finally discard(handedOver.countDown())
+                end try
+            }
+            discard(handedOver.await(Log.asyncLogging.shutdownDrainBudget().toMillis, java.util.concurrent.TimeUnit.MILLISECONDS))
         ))
         discard(initCount.incrementAndGet())
         new Daemon(channel, flushWaiters, overflow)

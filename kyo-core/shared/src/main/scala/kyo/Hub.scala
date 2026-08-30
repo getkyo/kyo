@@ -95,15 +95,27 @@ final class Hub[A] private[kyo] (
       *   a Maybe containing any messages that were in the Hub's buffer at the time of closing. Returns Absent if the close operation fails
       *   (e.g., if the Hub was already closed).
       */
-    def close(using frame: Frame): Maybe[Seq[A]] < Sync =
+    def close(using frame: Frame): Maybe[Seq[A]] < Async =
         fiber.interruptDiscard(Result.Failure(Closed("Hub", initFrame))).andThen {
             ch.close.map { r =>
-                Sync.defer {
-                    val l = Chunk.fromNoCopy(listeners.toArray()).asInstanceOf[Chunk[Listener[A]]]
-                    discard(listeners.removeIf(_ => true)) // clear is not available in Scala Native
-                    Kyo.foreachDiscard(l)(_.child.close.unit).andThen(r)
-                }
+                detachListeners.andThen(r)
             }
+        }
+
+    /** Closes the Hub, discarding any messages left in its buffer.
+      *
+      * The `Sync`-only counterpart to `close`, for callers that do not read the remaining messages.
+      */
+    def closeDiscard(using frame: Frame): Unit < Sync =
+        fiber.interruptDiscard(Result.Failure(Closed("Hub", initFrame))).andThen {
+            ch.closeDiscard.andThen(detachListeners)
+        }
+
+    private def detachListeners(using Frame): Unit < Sync =
+        Sync.defer {
+            val l = Chunk.fromNoCopy(listeners.toArray()).asInstanceOf[Chunk[Listener[A]]]
+            discard(listeners.removeIf(_ => true)) // clear is not available in Scala Native
+            Kyo.foreachDiscard(l)(_.child.closeDiscard)
         }
 
     /** Creates a new listener for this Hub with the default buffer size.
@@ -230,7 +242,7 @@ object Hub:
 
     def use[A](capacity: Int)[B, S](f: Hub[A] => B < S)(using Frame): B < (S & Sync) =
         initUnscopedWith[A](capacity): hub =>
-            Sync.ensure(hub.close)(f(hub))
+            Sync.ensure(hub.closeDiscard)(f(hub))
 
     def initUnscoped[A](capacity: Int)(using Frame): Hub[A] < Sync =
         initUnscopedWith[A](capacity)(identity)
@@ -344,7 +356,7 @@ object Hub:
           * @return
           *   a Maybe containing any remaining elements in the Listener's buffer
           */
-        def close(using Frame): Maybe[Seq[A]] < Sync =
+        def close(using Frame): Maybe[Seq[A]] < Async =
             hub.remove(this).andThen(child.close)
 
         /** Stream elements from listener, optionally specifying a maximum chunk size.

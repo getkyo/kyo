@@ -937,176 +937,193 @@ final private[kyo] class JsTransport private (
 
         // Detach closes channels and pauses+cancels the socket without destroying it.
         // Any bytes the ReadPump had already staged but caller had not consumed are returned.
-        val preRead = jsConn.detachForUpgrade()
-        if preRead.isEmpty then
-            // The claim was won but the connection reached a terminal state before the detach (a close raced or preceded this call):
-            // nothing was detached and the close path owns the socket. Fail typed; the owner hook above releases through its
-            // destroyed-guarded destroy, a no-op for a socket the close already destroyed.
-            promise.completeDiscard(Result.fail(NetAlreadyDetachedException()))
-            return promise.asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
-        end if
-
-        // Push pre-read bytes and any peer-close-probe-staged leftover back into the socket (unshift) so the TLS engine sees them first. Order:
-        // channel-drained preRead is older than the listener-stashed leftover, so preRead precedes it; draining leftover here also fixes its pre-existing silent drop at upgrade.
-        var replay: Chunk[Array[Byte]] = preRead match
-            case Present(chunks) => chunks.map(_.toArray)
-            case Absent          => Chunk.empty
-        var draining = true
-        while draining do
-            handle.dequeueLeftover() match
-                case Present(JsHandle.Leftover(buf, off, len)) =>
-                    replay = replay.append(if off == 0 && len == buf.length then buf else java.util.Arrays.copyOfRange(buf, off, off + len))
-                case Absent => draining = false
-            end match
-        end while
-        if replay.nonEmpty then
-            val totalLen = replay.foldLeft(0)(_ + _.length)
-            val buf      = new Array[Byte](totalLen)
-            var off      = 0
-            replay.foreach { arr =>
-                // System.arraycopy: no kyo equivalent for a bulk primitive-array copy; fully qualified so kyo.System does not shadow it.
-                java.lang.System.arraycopy(arr, 0, buf, off, arr.length)
-                off += arr.length
-            }
-            val nodeBuffer = js.Dynamic.global.Buffer.from(
-                js.typedarray.byteArray2Int8Array(buf).buffer
-            )
-            discard(socket.unshift(nodeBuffer))
-        end if
-
-        // Remove the JsHandle's permanent listeners from the plaintext socket. They were registered
-        // by JsHandle.init and would intercept TLS handshake bytes if left in place after the
-        // TLSSocket takes ownership of the underlying socket's data stream.
-        discard(socket.removeAllListeners())
-
-        // The underlying socket was paused by detachForUpgrade. Resume it so the TLS layer can
-        // read the handshake bytes (ClientHello / ServerHello). The TLS layer manages its own
-        // internal flow; we will pause the TLSSocket's application-data stream after handshake.
-        discard(socket.resume())
-
-        val tlsModule = NodeTls.asInstanceOf[js.Dynamic]
-        val fsModule  = NodeFs.asInstanceOf[js.Dynamic]
-
-        // The TLS role follows the connection's TCP origin: an accepted connection (isServerOrigin) upgrades as the TLS server, a connected one
-        // as the client (STARTTLS initiate). The origin is authoritative: a config heuristic ("has a cert+key therefore server") would
-        // misclassify a mutual-TLS client that presents its own client certificate, upgrading it in the server role.
-        val isServerSide = jsConn.isServerOrigin
-
-        val tlsSocket =
-            if isServerSide then
-                // Server-side STARTTLS: wrap the existing socket as a TLS server socket.
-                // Node.js requires tls.TLSSocket constructor with isServer=true.
-                val opts = js.Dynamic.literal()
-                opts.isServer = true
-                // Constrain the negotiated TLS version on the upgraded server socket (CWE-326).
-                applyVersionBounds(opts, tls)
-                tls.certChainPath match
-                    case Present(p) => opts.cert = fsModule.readFileSync(p, "utf8")
-                    case Absent     => ()
-                tls.privateKeyPath match
-                    case Present(p) => opts.key = fsModule.readFileSync(p, "utf8")
-                    case Absent     => ()
-                // Mutual TLS: honor clientAuth on the upgraded server socket, matching listen(tls) and the posix/NIO server STARTTLS path.
-                applyServerClientAuth(opts, tls)
-                // Construct TLSSocket directly with the existing socket and server opts
-                js.Dynamic.newInstance(tlsModule.selectDynamic("TLSSocket"))(socket, opts)
-            else
-                // Client-side STARTTLS: use tls.connect({ socket }) which drives the TLS handshake.
-                val opts = js.Dynamic.literal()
-                opts.socket = socket
-                val sni = tls.sniHostname.getOrElse("localhost")
-                opts.servername = sni
-                opts.host = sni
-                // Constrain the negotiated TLS version on the upgraded client socket (CWE-326).
-                applyVersionBounds(opts, tls)
-                // rejectUnauthorized drives certificate-chain validation only; hostname check is
-                // a separate concern routed through checkServerIdentity.
-                opts.rejectUnauthorized = !tls.trustAll
-                if !tls.hostnameVerification then
-                    // No-op identity check: cert chain still validated when rejectUnauthorized=true,
-                    // but SAN/CN vs servername mismatch is ignored (verify-ca semantics).
-                    opts.checkServerIdentity = ({ (_: js.Any, _: js.Any) => js.undefined }: js.Function2[js.Any, js.Any, js.Any])
-                end if
-                tls.caCertPath match
-                    case Present(path) =>
-                        opts.ca = fsModule.readFileSync(path, "utf8")
-                    case Absent => ()
-                end match
-                // Client certificate for mutual TLS: present it when the server requests one. A no-op for the common (no client cert) client.
-                (tls.certChainPath, tls.privateKeyPath) match
-                    case (Present(certPath), Present(keyPath)) =>
-                        opts.cert = fsModule.readFileSync(certPath, "utf8")
-                        opts.key = fsModule.readFileSync(keyPath, "utf8")
-                    case _ => ()
-                end match
-                tlsModule.connect(opts)
+        // The detach reports the staged bytes through a handover rather than a return value, matching the other transports. On this
+        // platform the handover always settles inside the call itself (nothing else runs concurrently to hold an offer open), so the
+        // continuation below runs inline and the sequence is unchanged; it is written this way so the transport does not depend on that.
+        def afterDetach(preRead: Maybe[Chunk[Span[Byte]]]): Unit =
+            if preRead.isEmpty then
+                // The claim was won but the connection reached a terminal state before the detach (a close raced or preceded this call):
+                // nothing was detached and the close path owns the socket. Fail typed; the owner hook above releases through its
+                // destroyed-guarded destroy, a no-op for a socket the close already destroyed.
+                promise.completeDiscard(Result.fail(NetAlreadyDetachedException()))
+                return ()
             end if
-        end tlsSocket
 
-        // Server-side tls.TLSSocket (created via new tls.TLSSocket(..., {isServer:true}))
-        // emits 'secure' once the handshake completes.
-        // Client-side tls.TLSSocket (created via tls.connect({socket})) emits 'secureConnect'.
-        val handshakeEvent = if isServerSide then "secure" else "secureConnect"
-
-        val driver = pool.next()
-
-        // Bound the upgrade handshake. The plaintext connection was already detached above, so `promise` is the sole owner of the socket for
-        // the duration; a peer that never completes its side of the STARTTLS handshake would otherwise leave it parked forever with nothing to
-        // reclaim it, and the process-shared transport is never closed. Settling `promise` runs the same release a handshake failure takes, so
-        // the deadline reuses that path rather than adding a second teardown. There is no fresh connect port for an upgrade, so the leaf carries
-        // -1, matching the other backends. `Duration.Infinity` arms no timer.
-        if tls.handshakeTimeout.isFinite then
-            val deadline = Clock.live.unsafe.sleep(tls.handshakeTimeout)
-            deadline.onComplete { _ =>
-                val host = tls.sniHostname.getOrElse("")
-                if promise.complete(Result.fail(NetTlsHandshakeTimeoutException(host, -1, tls.handshakeTimeout))) then
-                    discard(tlsSocket.destroy())
-            }
-            promise.onComplete { _ =>
-                deadline.interruptDiscard(Result.Panic(Interrupted(frame, "upgrade settled before deadline")))
-            }
-        end if
-
-        discard(tlsSocket.once(
-            handshakeEvent,
-            { () =>
-                // Pause the TLS socket now that the handshake is done: kyo controls data flow.
-                // (We cannot pause before the handshake as that blocks TLS record delivery.)
-                discard(tlsSocket.pause())
-                val newHandle = JsHandle.init(tlsSocket, driver, frame)
-                newHandle.peerCloseGrace = handle.peerCloseGrace // the upgraded connection inherits the original connection's reclaim grace
-                val newConn = Connection.init(newHandle, driver, channelCapacity, handle.peerCloseGrace)
-                // Preserve the upgrade role on the new TLS connection so a further upgrade does not silently flip client/server.
-                newConn.isServerOrigin = isServerSide
-                // Wire upgrade function on the new TLS connection so further upgrade attempts
-                // are routed back through this transport (which will then fail with a TLS-on-TLS error).
-                newConn.upgradeFn = Present { (tls2, frame2) =>
-                    given Frame = frame2
-                    upgradeToTls(newConn, tls2, channelCapacity)
+            // Push pre-read bytes and any peer-close-probe-staged leftover back into the socket (unshift) so the TLS engine sees them first. Order:
+            // channel-drained preRead is older than the listener-stashed leftover, so preRead precedes it; draining leftover here also fixes its pre-existing silent drop at upgrade.
+            var replay: Chunk[Array[Byte]] = preRead match
+                case Present(chunks) => chunks.map(_.toArray)
+                case Absent          => Chunk.empty
+            var draining = true
+            while draining do
+                handle.dequeueLeftover() match
+                    case Present(JsHandle.Leftover(buf, off, len)) =>
+                        replay =
+                            replay.append(if off == 0 && len == buf.length then buf else java.util.Arrays.copyOfRange(buf, off, off + len))
+                    case Absent => draining = false
+                end match
+            end while
+            if replay.nonEmpty then
+                val totalLen = replay.foldLeft(0)(_ + _.length)
+                val buf      = new Array[Byte](totalLen)
+                var off      = 0
+                replay.foreach { arr =>
+                    // System.arraycopy: no kyo equivalent for a bulk primitive-array copy; fully qualified so kyo.System does not shadow it.
+                    java.lang.System.arraycopy(arr, 0, buf, off, arr.length)
+                    off += arr.length
                 }
-                // Install certHashFn so SCRAM-PLUS channel binding (RFC 5929
-                // tls-server-end-point) can read the peer-cert SHA-256.
-                installCertHashFn(newConn, tlsSocket)
-                if newConn.start() then
-                    // Checked complete, mirroring the NIO completeConnect: the abandon path can settle `promise` (and destroy the raw
-                    // socket) while this handshake-completion event was already queued on the Node event loop. Discarding the lost
-                    // completion would leave this freshly built connection's pumps parked forever on a socket nobody references; close
-                    // the orphan instead. The caller sees the settlement it already observed.
-                    if !promise.complete(Result.succeed(newConn)) then
-                        newConn.close()
-                else
-                    // The upgraded connection raced to a terminal/Upgrading state before start (a close won); it must not be handed out as open.
-                    promise.completeDiscard(Result.fail(NetConnectionClosedException(Operation.Start)))
-                end if
-            }: js.Function0[Unit]
-        ))
+                val nodeBuffer = js.Dynamic.global.Buffer.from(
+                    js.typedarray.byteArray2Int8Array(buf).buffer
+                )
+                discard(socket.unshift(nodeBuffer))
+            end if
 
-        discard(tlsSocket.once(
-            "error",
-            { (err: js.Dynamic) =>
-                promise.completeDiscard(Result.fail(NetTlsHandshakeException(upgradeHost, -1, errMessage(err))))
-            }: js.Function1[js.Dynamic, Unit]
-        ))
+            // Remove the JsHandle's permanent listeners from the plaintext socket. They were registered
+            // by JsHandle.init and would intercept TLS handshake bytes if left in place after the
+            // TLSSocket takes ownership of the underlying socket's data stream.
+            discard(socket.removeAllListeners())
+
+            // The underlying socket was paused by detachForUpgrade. Resume it so the TLS layer can
+            // read the handshake bytes (ClientHello / ServerHello). The TLS layer manages its own
+            // internal flow; we will pause the TLSSocket's application-data stream after handshake.
+            discard(socket.resume())
+
+            val tlsModule = NodeTls.asInstanceOf[js.Dynamic]
+            val fsModule  = NodeFs.asInstanceOf[js.Dynamic]
+
+            // The TLS role follows the connection's TCP origin: an accepted connection (isServerOrigin) upgrades as the TLS server, a connected one
+            // as the client (STARTTLS initiate). The origin is authoritative: a config heuristic ("has a cert+key therefore server") would
+            // misclassify a mutual-TLS client that presents its own client certificate, upgrading it in the server role.
+            val isServerSide = jsConn.isServerOrigin
+
+            val tlsSocket =
+                if isServerSide then
+                    // Server-side STARTTLS: wrap the existing socket as a TLS server socket.
+                    // Node.js requires tls.TLSSocket constructor with isServer=true.
+                    val opts = js.Dynamic.literal()
+                    opts.isServer = true
+                    // Constrain the negotiated TLS version on the upgraded server socket (CWE-326).
+                    applyVersionBounds(opts, tls)
+                    tls.certChainPath match
+                        case Present(p) => opts.cert = fsModule.readFileSync(p, "utf8")
+                        case Absent     => ()
+                    tls.privateKeyPath match
+                        case Present(p) => opts.key = fsModule.readFileSync(p, "utf8")
+                        case Absent     => ()
+                    // Mutual TLS: honor clientAuth on the upgraded server socket, matching listen(tls) and the posix/NIO server STARTTLS path.
+                    applyServerClientAuth(opts, tls)
+                    // Construct TLSSocket directly with the existing socket and server opts
+                    js.Dynamic.newInstance(tlsModule.selectDynamic("TLSSocket"))(socket, opts)
+                else
+                    // Client-side STARTTLS: use tls.connect({ socket }) which drives the TLS handshake.
+                    val opts = js.Dynamic.literal()
+                    opts.socket = socket
+                    val sni = tls.sniHostname.getOrElse("localhost")
+                    opts.servername = sni
+                    opts.host = sni
+                    // Constrain the negotiated TLS version on the upgraded client socket (CWE-326).
+                    applyVersionBounds(opts, tls)
+                    // rejectUnauthorized drives certificate-chain validation only; hostname check is
+                    // a separate concern routed through checkServerIdentity.
+                    opts.rejectUnauthorized = !tls.trustAll
+                    if !tls.hostnameVerification then
+                        // No-op identity check: cert chain still validated when rejectUnauthorized=true,
+                        // but SAN/CN vs servername mismatch is ignored (verify-ca semantics).
+                        opts.checkServerIdentity = ({ (_: js.Any, _: js.Any) => js.undefined }: js.Function2[js.Any, js.Any, js.Any])
+                    end if
+                    tls.caCertPath match
+                        case Present(path) =>
+                            opts.ca = fsModule.readFileSync(path, "utf8")
+                        case Absent => ()
+                    end match
+                    // Client certificate for mutual TLS: present it when the server requests one. A no-op for the common (no client cert) client.
+                    (tls.certChainPath, tls.privateKeyPath) match
+                        case (Present(certPath), Present(keyPath)) =>
+                            opts.cert = fsModule.readFileSync(certPath, "utf8")
+                            opts.key = fsModule.readFileSync(keyPath, "utf8")
+                        case _ => ()
+                    end match
+                    tlsModule.connect(opts)
+                end if
+            end tlsSocket
+
+            // Server-side tls.TLSSocket (created via new tls.TLSSocket(..., {isServer:true}))
+            // emits 'secure' once the handshake completes.
+            // Client-side tls.TLSSocket (created via tls.connect({socket})) emits 'secureConnect'.
+            val handshakeEvent = if isServerSide then "secure" else "secureConnect"
+
+            val driver = pool.next()
+
+            // Bound the upgrade handshake. The plaintext connection was already detached above, so `promise` is the sole owner of the socket for
+            // the duration; a peer that never completes its side of the STARTTLS handshake would otherwise leave it parked forever with nothing to
+            // reclaim it, and the process-shared transport is never closed. Settling `promise` runs the same release a handshake failure takes, so
+            // the deadline reuses that path rather than adding a second teardown. There is no fresh connect port for an upgrade, so the leaf carries
+            // -1, matching the other backends. `Duration.Infinity` arms no timer.
+            if tls.handshakeTimeout.isFinite then
+                val deadline = Clock.live.unsafe.sleep(tls.handshakeTimeout)
+                deadline.onComplete { _ =>
+                    val host = tls.sniHostname.getOrElse("")
+                    if promise.complete(Result.fail(NetTlsHandshakeTimeoutException(host, -1, tls.handshakeTimeout))) then
+                        discard(tlsSocket.destroy())
+                }
+                promise.onComplete { _ =>
+                    deadline.interruptDiscard(Result.Panic(Interrupted(frame, "upgrade settled before deadline")))
+                }
+            end if
+
+            discard(tlsSocket.once(
+                handshakeEvent,
+                { () =>
+                    // Pause the TLS socket now that the handshake is done: kyo controls data flow.
+                    // (We cannot pause before the handshake as that blocks TLS record delivery.)
+                    discard(tlsSocket.pause())
+                    val newHandle = JsHandle.init(tlsSocket, driver, frame)
+                    newHandle.peerCloseGrace =
+                        handle.peerCloseGrace // the upgraded connection inherits the original connection's reclaim grace
+                    val newConn = Connection.init(newHandle, driver, channelCapacity, handle.peerCloseGrace)
+                    // Preserve the upgrade role on the new TLS connection so a further upgrade does not silently flip client/server.
+                    newConn.isServerOrigin = isServerSide
+                    // Wire upgrade function on the new TLS connection so further upgrade attempts
+                    // are routed back through this transport (which will then fail with a TLS-on-TLS error).
+                    newConn.upgradeFn = Present { (tls2, frame2) =>
+                        given Frame = frame2
+                        upgradeToTls(newConn, tls2, channelCapacity)
+                    }
+                    // Install certHashFn so SCRAM-PLUS channel binding (RFC 5929
+                    // tls-server-end-point) can read the peer-cert SHA-256.
+                    installCertHashFn(newConn, tlsSocket)
+                    if newConn.start() then
+                        // Checked complete, mirroring the NIO completeConnect: the abandon path can settle `promise` (and destroy the raw
+                        // socket) while this handshake-completion event was already queued on the Node event loop. Discarding the lost
+                        // completion would leave this freshly built connection's pumps parked forever on a socket nobody references; close
+                        // the orphan instead. The caller sees the settlement it already observed.
+                        if !promise.complete(Result.succeed(newConn)) then
+                            newConn.close()
+                    else
+                        // The upgraded connection raced to a terminal/Upgrading state before start (a close won); it must not be handed out as open.
+                        promise.completeDiscard(Result.fail(NetConnectionClosedException(Operation.Start)))
+                    end if
+                }: js.Function0[Unit]
+            ))
+
+            discard(tlsSocket.once(
+                "error",
+                { (err: js.Dynamic) =>
+                    promise.completeDiscard(Result.fail(NetTlsHandshakeException(upgradeHost, -1, errMessage(err))))
+                }: js.Function1[js.Dynamic, Unit]
+            ))
+
+        end afterDetach
+        // Contain ANY throw out of the body above. Completion callbacks run under a catch-all that logs rather than propagates
+        // (IOPromise.eval), so an escaping throw would settle nothing: the caller would park on an upgrade that can never finish while the
+        // detached socket stayed open until the peer FINs it into CLOSE_WAIT. While the detach reported its staging by return value this
+        // body ran on the caller's own stack, where such a throw reached the caller as a panic, and callers classify on that (kyo-sql's
+        // TlsUpgrade maps it to a connect failure). Reproduce that; the owner hook armed on `promise` above then performs the release,
+        // which is why nothing is destroyed here.
+        jsConn.detachForUpgrade().onComplete { r =>
+            try afterDetach(r.foldError(_.eval, _ => Absent))
+            catch case t: Throwable => promise.completeDiscard(Result.panic(t))
+        }
 
         // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
         // plainly-constructed, invariant IOPromise[NetException, Connection[JsHandle]], even though both erase to the same runtime object;

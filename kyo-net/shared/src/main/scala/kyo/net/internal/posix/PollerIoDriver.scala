@@ -536,8 +536,8 @@ final private[net] class PollerIoDriver private[posix] (
                 diagPollCycles += 1L
                 wakePending.set(false)
                 drainChanges()
-                // Pass the kqueue changelist (changelistBuf + nChanges) so kevent can submit pending changes (e.g. EV_DISABLE from
-                // dispatchWritable) atomically with the wait. On epoll the changelist / nChanges arguments are ignored by
+                // Pass the kqueue changelist (changelistBuf + nChanges) so kevent submits the interest changes this drain staged atomically
+                // with the wait. On epoll the changelist / nChanges arguments are ignored by
                 // EpollPollerBackend.poll. Read into locals rather than a tuple: this runs on every cycle, and Maybe is opaque and
                 // null-backed, so isDefined/get allocate nothing.
                 val kq    = pollScratch.kqueueData
@@ -2619,13 +2619,57 @@ final private[net] class PollerIoDriver private[posix] (
       * so the registration's map puts are applied between the prior command and this one (an intervening OpDeregister therefore cannot clear a
       * registration whose register command has not yet run). A command offered after this returns empty is drained on the next poll cycle.
       */
-    @scala.annotation.tailrec
     private def drainChanges()(using AllowUnsafe, Frame): Unit =
+        drainChangeQueue()
+        // A batching backend answers "did this registration take" only once the batch reaches the kernel, which happens after the registering
+        // command has already returned. Collect the rejections it discovered during this drain and fail their operations here; left unclaimed,
+        // each one is a read or write waiting on interest the kernel never registered.
+        backend.drainFailedRegistrations(pollScratch, failRejectedRegistration)
+    end drainChanges
+
+    @scala.annotation.tailrec
+    private def drainChangeQueue()(using AllowUnsafe, Frame): Unit =
         val cmd = changeQueue.poll()
         if cmd != MpscLongQueue.Empty then
             dispatchCmd(cmd)
-            drainChanges()
-    end drainChanges
+            drainChangeQueue()
+    end drainChangeQueue
+
+    /** Fails the pending operation whose interest registration the backend reported rejected. Mirrors the `rc < 0` branches in [[dispatchCmd]],
+      * which handle the same failure when the backend can report it synchronously; the only difference is that the errno is known here.
+      *
+      * Read-side rejections check accepts and reads, since both register read interest.
+      *
+      * A rejection is dropped when `ownerId` no longer matches the fd's current owner: the fd was closed and recycled between staging the change
+      * and reading the receipt, so the pending operation now on that fd number belongs to a different handle and is not the one that failed.
+      * This is the same discriminator `drainReady` applies to a stale readiness event, compared over the low 32 bits for the same reason.
+      *
+      * Held as one long-lived instance rather than built per drain: the poll loop allocates nothing per cycle, and a fresh handler on every
+      * `drainChanges` would be exactly such an allocation.
+      */
+    private val failRejectedRegistration: RegistrationFailureHandler = new RegistrationFailureHandler:
+        def onRejected(fd: Int, isWrite: Boolean, errno: Int, ownerId: Long)(using AllowUnsafe, Frame): Unit =
+            if (activeFds.getOrElse(fd, -1L) & 0xffffffffL) != (ownerId & 0xffffffffL) then ()
+            else if isWrite then
+                Maybe(pendingWritables.remove(fd)).foreach { entry =>
+                    entry.promise.completeDiscard(Result.fail(
+                        Closed(s"connection ${handleLabel(entry.handle)}", entry.handle.createdAt, s"register failed errno=$errno")
+                    ))
+                }
+            else
+                Maybe(pendingAccepts.remove(fd)).foreach { h =>
+                    h.pendingAcceptPromise.foreach(_.completeDiscard(Result.fail(
+                        Closed(s"listener ${handleLabel(h)}", h.createdAt, s"register failed errno=$errno")
+                    )))
+                    h.pendingAcceptPromise = Absent
+                }
+                Maybe(pendingReads.remove(fd)).foreach { h =>
+                    h.pendingReadPromise.getAndSet(Absent).foreach(_.completeDiscard(Result.fail(
+                        Closed(s"connection ${handleLabel(h)}", h.createdAt, s"register failed errno=$errno")
+                    )))
+                }
+            end if
+        end onRejected
 
     // No read re-arm path exists: edge-triggered registration (EPOLLET / EV_CLEAR) keeps the fd persistently armed, so
     // re-arming after a readiness event is neither necessary nor correct under ET (opcode value 2 is a reserved gap; see the opcode constant comment).

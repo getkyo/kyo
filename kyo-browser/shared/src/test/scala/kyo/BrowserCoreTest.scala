@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.BrowserElementNotActionableException.Reason
+import kyo.internal.Actionability
 import kyo.internal.BrowserEval
 import kyo.internal.CdpBackend
 import kyo.internal.CdpNoParams
@@ -637,13 +638,20 @@ class BrowserCoreTest extends BrowserTest:
             </body>""")
             for
                 _       <- Browser.goto(p)
+                gate    <- Actionability.check(Browser.Selector.id("b"), requireFillable = false, requireEnabled = true)
                 urlPre  <- Browser.url
                 _       <- Browser.click(Browser.Selector.id("b"))
                 urlPost <- Browser.url
                 clicked <- Browser.eval("String(window.__kyoClicked === true)")
             yield
-                // A no-nav-intent click leaves the URL unchanged (NavigationWatcher saw no nav frame) AND the JS handler
-                // ran (`__kyoClicked === true`). Together these prove armAround's short-circuit fired, with no wall clock.
+                // `navigatesOnClick` IS the branch condition in Browser.click: false routes the click through mutation
+                // settlement and never arms the NavigationWatcher. Asserting it directly is what separates a
+                // short-circuit from a nav path that waited out its grace window and returned the same state, which the
+                // two checks below cannot distinguish on their own; both hold either way.
+                val nonNav = gate match
+                    case Result.Success(ref) => !ref.navigatesOnClick
+                    case _                   => false
+                assert(nonNav, s"the gate must classify a plain button as non-navigating, so click takes the short-circuit; got $gate")
                 assert(
                     urlPost == urlPre,
                     s"expected URL unchanged after no-nav-intent click but pre='$urlPre' post='$urlPost' (nav frame observed)"

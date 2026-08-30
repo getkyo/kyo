@@ -176,9 +176,13 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield
             assert(elderRes.isSuccess, s"the elder did not commit within the hang-guard (starvation/deadlock); attempts=$attempts")
             assert(youngRes.isSuccess, "the young transactions did not complete within the hang-guard")
-            // The property is no-starvation: the elder EVENTUALLY commits under contention. How many retries it took is contention-dependent, not
-            // a correctness bound, so it is reported for diagnostics but never asserted.
+            // The property is no-starvation: the elder eventually commits under contention. The retry count is contention-dependent, so it is
+            // bounded only catastrophically, never tightly: measured at 2 across repeated local runs, so 2000 is three orders of magnitude of
+            // headroom and can only trip on a scheduler or STM regression that starves the elder pathologically, not on a slow machine.
+            // Without any bound an elder that retried ten thousand times would still pass, which is the fairness failure this leaf exists to
+            // catch.
             assert(done, s"the elder must eventually commit under contention; done=$done attempts=$attempts")
+            assert(attempts < 2000, s"the elder was starved pathologically before committing: attempts=$attempts")
     }
 
     "nested transaction rollback under concurrent contention does not leak inner writes".notJs in {

@@ -300,6 +300,14 @@ class QueueTest extends kyo.test.Test[Any]:
         def withQueue[A](f: Queue.Unsafe[Int] => A): A =
             f(Queue.Unsafe.init[Int](2))
 
+        // close hands its backlog over through a fiber, because an offer still committing could not be reported synchronously. These
+        // leaves drive the queue from one thread with nothing in flight, so the handover always settles inside close itself; anything
+        // else is a defect in the handover rather than a slow test, which is why this refuses to wait.
+        def closeNow[A](queue: Queue.Unsafe[A]): Maybe[Seq[A]] =
+            queue.close().poll() match
+                case Present(Result.Success(backlog)) => backlog.eval
+                case other                            => throw AssertionError(s"close did not settle synchronously: $other")
+
         "should offer and poll correctly" in withQueue { testUnsafe =>
             assert(testUnsafe.offer(1).contains(true))
             assert(testUnsafe.poll().contains(Maybe(1)))
@@ -341,16 +349,16 @@ class QueueTest extends kyo.test.Test[Any]:
 
         "should close correctly" in withQueue { testUnsafe =>
             testUnsafe.offer(5)
-            val closed = testUnsafe.close()
+            val closed = closeNow(testUnsafe)
             assert(closed == Maybe(Seq(5)))
-            assert(testUnsafe.close().isEmpty)
+            assert(closeNow(testUnsafe).isEmpty)
         }
 
         "a hard close aborts a pending closeAwaitEmpty and returns the backlog" in withQueue { testUnsafe =>
             discard(testUnsafe.offer(1))
             discard(testUnsafe.offer(2))
-            val await   = testUnsafe.closeAwaitEmpty() // HalfOpen: queue non-empty, so the await parks
-            val backlog = testUnsafe.close()           // escalate HalfOpen -> FullyClosed: abort the await, return the backlog
+            val await = testUnsafe.closeAwaitEmpty() // HalfOpen: queue non-empty, so the await parks
+            val backlog = closeNow(testUnsafe) // escalate HalfOpen -> Draining -> FullyClosed: abort the await, hand over the backlog
             val ar      = await.poll()
             assert(backlog.contains(Seq(1, 2)), s"close must return the undrained backlog=$backlog")
             assert(ar.exists { case Result.Success(b) => !b.eval; case _ => false }, s"the aborted await must settle false=$ar")
@@ -501,6 +509,235 @@ class QueueTest extends kyo.test.Test[Any]:
             )
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
                 .unit
+        }
+    }
+
+    "close versus in-flight offers" - {
+
+        // Fewer repeats than the plain concurrency group above, because each scenario here drains thousands of elements. Both defects
+        // these guard showed up within the first repeat when they were live, so the count is margin rather than the mechanism.
+        val repeats = 25
+
+        // A close consumes the queue itself, so the closer has to be the only consumer for the whole close. These scenarios put dense
+        // offers against a long drain on every access pattern: each element an offer accepted must reach the closer's backlog exactly
+        // once, with nothing duplicated by a second consumer and nothing stranded in the queue after it is closed.
+        // A hang is caught by the suite's per-leaf cap; there is deliberately no in-test deadline racing the work.
+
+        def producerCount(access: Access) =
+            access match
+                case Access.MultiProducerMultiConsumer | Access.MultiProducerSingleConsumer   => 8
+                case Access.SingleProducerMultiConsumer | Access.SingleProducerSingleConsumer => 1
+
+        def preloadCount(capacity: Int) =
+            if capacity == Int.MaxValue then 4096 else capacity / 2
+
+        // Distinct ids per producer, all above the preloaded range, so the backlog identifies where every element came from. The producer
+        // reports itself running before its first offer, which is what lets the closer land while offers are genuinely in flight; the
+        // iteration cap is only a runaway guard, since the loop ends on the first refusal.
+        def offerUntilClosed(queue: Queue[Int], running: Latch, producer: Int)(using Frame): Chunk[Int] < Async =
+            running.release.andThen {
+                Loop.indexed(Chunk.empty[Int]) { (i, accepted) =>
+                    if i == 20000 then Loop.done(accepted)
+                    else
+                        val id = producer * 1000000 + i
+                        Abort.run(queue.offer(id)).map {
+                            case Result.Success(true)  => Loop.continue(accepted.append(id))
+                            case Result.Success(false) => Loop.continue(accepted)
+                            case _                     => Loop.done(accepted)
+                        }
+                    end if
+                }
+            }
+
+        // Drains rather than polls one at a time: each drain leaves the queue empty, which is the state in which a closing transition
+        // decides it has seen everything, so this is what puts that decision against the offers still in flight.
+        def drainUntilClosed(queue: Queue[Int])(using Frame): Chunk[Int] < Sync =
+            Loop(Chunk.empty[Int]) { polled =>
+                Abort.run(queue.drain).map {
+                    case Result.Success(batch) => Loop.continue(polled.concat(batch))
+                    case _                     => Loop.done(polled)
+                }
+            }
+
+        def closeRace(capacity: Int, access: Access)(using Frame, kyo.test.AssertScope) =
+            val producers = producerCount(access)
+            val preload   = preloadCount(capacity)
+            for
+                queue   <- Queue.initUnscoped[Int](capacity, access)
+                _       <- Kyo.foreachDiscard(1 to preload)(i => Abort.run(queue.offer(i)))
+                running <- Latch.init(producers)
+                producerFiber <- Fiber.initUnscoped(
+                    Async.foreach(1 to producers, producers)(offerUntilClosed(queue, running, _))
+                )
+                closeFiber <- Fiber.initUnscoped(running.await.andThen(queue.close))
+                accepted   <- producerFiber.get
+                backlog    <- closeFiber.get
+            yield
+                val acceptedIds = accepted.flatten.toSet
+                val expected    = (1 to preload).toSet ++ acceptedIds
+                val drained     = backlog.getOrElse(Seq.empty)
+                val duplicated  = drained.diff(drained.distinct)
+                assert(
+                    duplicated.isEmpty,
+                    s"the backlog repeated ${duplicated.size} element(s) for capacity=$capacity access=$access: ${duplicated.take(5)}"
+                )
+                assert(
+                    drained.toSet == expected,
+                    s"for capacity=$capacity access=$access the backlog stranded ${(expected -- drained.toSet).take(5)} " +
+                        s"and invented ${(drained.toSet -- expected).take(5)}"
+                )
+            end for
+        end closeRace
+
+        def awaitEmptyRace(capacity: Int, access: Access)(using Frame, kyo.test.AssertScope) =
+            val producers = producerCount(access)
+            for
+                queue   <- Queue.initUnscoped[Int](capacity, access)
+                running <- Latch.init(producers)
+                producerFiber <- Fiber.initUnscoped(
+                    Async.foreach(1 to producers, producers)(offerUntilClosed(queue, running, _))
+                )
+                drainFiber <- Fiber.initUnscoped(drainUntilClosed(queue))
+                closeFiber <- Fiber.initUnscoped(running.await.andThen(queue.closeAwaitEmpty))
+                accepted   <- producerFiber.get
+                reported   <- closeFiber.get
+                polled     <- drainFiber.get
+            yield
+                val acceptedIds = accepted.flatten.toSet
+                assert(reported, s"closeAwaitEmpty must report the queue drained for capacity=$capacity access=$access")
+                assert(
+                    polled.toSet == acceptedIds,
+                    s"for capacity=$capacity access=$access closeAwaitEmpty reported drained while " +
+                        s"${(acceptedIds -- polled.toSet).take(5)} was still in flight"
+                )
+            end for
+        end awaitEmptyRace
+
+        "a close never leaves an accepted element behind and never hands one out twice" - {
+            access.foreach { access =>
+                access.toString in {
+                    (for
+                        capacity <- Choice.eval(4096, Int.MaxValue)
+                        _        <- closeRace(capacity, access)
+                    yield ())
+                        .handle(Choice.run, _.unit, Loop.repeat(repeats))
+                        .unit
+                }
+            }
+        }
+
+        // Small capacities on purpose: the backlog a drain has to clear before the queue looks empty stays near zero, which is what puts
+        // the "everything has been consumed" decision inside the window of an offer that is still in flight.
+        "closeAwaitEmpty never reports drained while an offer is in flight" - {
+            access.foreach { access =>
+                access.toString in {
+                    (for
+                        capacity <- Choice.eval(2, 64)
+                        _        <- awaitEmptyRace(capacity, access)
+                    yield ())
+                        .handle(Choice.run, _.unit, Loop.repeat(repeats))
+                        .unit
+                }
+            }
+        }
+    }
+
+    "sliding while a consumer polls" - {
+
+        val repeats           = 25
+        val offersPerProducer = 2000
+
+        // A sliding queue makes room by removing its oldest element, and that removal runs on whichever thread offered. These scenarios
+        // start the queue full so every offer slides, and keep a consumer polling for the whole run: the offering thread and the consumer
+        // are then removing elements at the same time. No offer may hang, no element may reach the consumer twice, and sliding must stay
+        // sliding, meaning every offer is accepted.
+
+        def producerCount(access: Access) =
+            access match
+                case Access.MultiProducerMultiConsumer | Access.MultiProducerSingleConsumer   => 8
+                case Access.SingleProducerMultiConsumer | Access.SingleProducerSingleConsumer => 1
+
+        def slideUntilDone(queue: Queue.Unbounded[Int], running: Latch, producer: Int)(
+            using Frame
+        ): Chunk[Result[Closed, Boolean]] < Async =
+            running.release.andThen {
+                Loop.indexed(Chunk.empty[Result[Closed, Boolean]]) { (i, results) =>
+                    if i == offersPerProducer then Loop.done(results)
+                    else Abort.run(queue.offer(producer * 1000000 + i)).map(r => Loop.continue(results.append(r)))
+                }
+            }
+
+        // The producers set `finished` only after their last offer has returned, so reading it after a poll came back empty is what tells
+        // the consumer no element can still arrive. Anything offered in between is left in the queue, which the assertions allow: a
+        // sliding queue drops elements by design, so completeness is not one of its invariants.
+        def pollUntilDone(queue: Queue.Unbounded[Int], finished: AtomicBoolean)(using Frame): Chunk[Int] < Sync =
+            Loop(Chunk.empty[Int]) { polled =>
+                Abort.run(queue.poll).map { attempt =>
+                    finished.get.map { done =>
+                        attempt match
+                            case Result.Success(Maybe.Present(v)) => Loop.continue(polled.append(v))
+                            case Result.Success(_) if !done       => Loop.continue(polled)
+                            case _                                => Loop.done(polled)
+                    }
+                }
+            }
+
+        def slideRace(capacity: Int, access: Access)(using Frame, kyo.test.AssertScope) =
+            val producers = producerCount(access)
+            for
+                queue    <- Queue.Unbounded.initSlidingUnscoped[Int](capacity, access)
+                _        <- Kyo.foreachDiscard(1 to capacity)(i => Abort.run(queue.offer(i)))
+                finished <- AtomicBoolean.init(false)
+                running  <- Latch.init(producers)
+                producerFiber <- Fiber.initUnscoped(
+                    Async.foreach(1 to producers, producers)(slideUntilDone(queue, running, _))
+                        .map(results => finished.set(true).andThen(results))
+                )
+                consumerFiber <- Fiber.initUnscoped(running.await.andThen(pollUntilDone(queue, finished)))
+                offered       <- producerFiber.get
+                polled        <- consumerFiber.get
+            yield
+                val offeredIds = (1 to producers).flatMap(p => (0 until offersPerProducer).map(i => p * 1000000 + i)).toSet
+                val duplicated = polled.diff(polled.distinct)
+                assert(
+                    offered.flatten.forall(_.contains(true)),
+                    s"for capacity=$capacity access=$access a sliding offer was refused: " +
+                        s"${offered.flatten.filterNot(_.contains(true)).take(5)}"
+                )
+                assert(
+                    duplicated.isEmpty,
+                    s"for capacity=$capacity access=$access the consumer received ${duplicated.size} element(s) twice: " +
+                        s"${duplicated.take(5)}"
+                )
+                assert(
+                    polled.toSet.subsetOf((1 to capacity).toSet ++ offeredIds),
+                    s"for capacity=$capacity access=$access the consumer received elements nobody offered: " +
+                        s"${(polled.toSet -- ((1 to capacity).toSet ++ offeredIds)).take(5)}"
+                )
+            end for
+        end slideRace
+
+        // How to read one of these per-access results. Only MultiProducerSingleConsumer turns this leaf red on a queue built without the
+        // access mapping; the two multi-consumer values are sound to begin with, so nothing there is expected to fail.
+        // SingleProducerSingleConsumer breaks the same contract and the mapping is what fixes it, but a green on that leg is not evidence
+        // the mapping is unnecessary. With one producer, the thread taking the illegal second poll is the only producer, so nothing
+        // refills the queue underneath the real consumer while that poll runs, and the interleavings left over are mostly harmless: both
+        // pollers return the same element and the sliding wrapper discards its copy. The damaging one needs the producer descheduled
+        // inside a window of a few instructions, so that its stale consumer-index write lands after the consumer has moved past that slot;
+        // the consumer is then left reading a slot nobody will fill, and the sliding loop alternates forever between an offer that reports
+        // full and a poll that reports empty. The single-consumer half of the mapping is pinned by the contract, not by a red run.
+        // A hang is caught by the suite's per-leaf cap; there is deliberately no in-test deadline racing the work.
+        "a sliding offer never hangs and never hands the consumer the same element twice" - {
+            access.foreach { access =>
+                access.toString in {
+                    (for
+                        capacity <- Choice.eval(4, 64)
+                        _        <- slideRace(capacity, access)
+                    yield ())
+                        .handle(Choice.run, _.unit, Loop.repeat(repeats))
+                        .unit
+                }
+            }
         }
     }
 

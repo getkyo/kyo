@@ -202,7 +202,7 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                     // Unsafe: channel.close and the final connection closes require AllowUnsafe.
                     Sync.Unsafe.defer {
                         slotChans.forEach { (_, ch) =>
-                            discard(Sync.Unsafe.evalOrThrow(Abort.run[Closed](ch.close)))
+                            discard(Sync.Unsafe.evalOrThrow(ch.closeDiscard))
                         }
                         slotChans.clear()
                         idleConns.foreach(_.closeNow)

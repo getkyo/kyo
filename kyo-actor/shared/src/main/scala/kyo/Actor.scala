@@ -138,10 +138,19 @@ sealed abstract class Actor[+E, A, B](
       *   - Returns any messages that were queued but not yet processed
       *   - Does not interrupt the processing of the current message if one is being handled
       *
+      * The returned messages are complete: a send that was accepted is among them, and one that was refused never reached the mailbox.
+      * Delivering that guarantee costs a suspension, because a send that began before this close can still be committing when it runs.
+      *
       * @return
       *   A Maybe containing a sequence of any messages that were in the mailbox if the close is successful
       */
-    def close(using Frame): Maybe[Seq[A]] < Sync
+    def close(using Frame): Maybe[Seq[A]] < Async
+
+    /** Closes the actor's mailbox, discarding any messages that were queued but not yet processed.
+      *
+      * The `Sync`-only counterpart to `close`, for callers that do not read the unprocessed messages.
+      */
+    def closeDiscard(using Frame): Unit < Sync
 
 end Actor
 
@@ -762,17 +771,18 @@ object Actor:
                             }
                     }
                 }.handle(
-                    Sync.ensure(mailbox.close), // Ensure mailbox cleanup by closing it when the actor completes or fails
-                    Env.run(_subject),          // Provide the actor's Subject to the environment so it can be accessed via Actor.self
-                    Scope.run,                  // Close used resources
-                    Fiber.init                  // Start the actor's processing loop in an async context
+                    Sync.ensure(mailbox.closeDiscard), // Ensure mailbox cleanup by closing it when the actor completes or fails
+                    Env.run(_subject), // Provide the actor's Subject to the environment so it can be accessed via Actor.self
+                    Scope.run,         // Close used resources
+                    Fiber.init         // Start the actor's processing loop in an async context
                 )
             _ <-
                 // Single termination hook (installed once, not per ask): sweep the pending registry so every
                 // outstanding ask completes when the actor's consumer fiber ends.
                 _consumer.onComplete(_ => Sync.Unsafe.defer(pending.terminate))
         yield new Actor[E, A, B](_subject, _consumer, pending):
-            def close(using Frame) = mailbox.close
+            def close(using Frame)        = mailbox.close
+            def closeDiscard(using Frame) = mailbox.closeDiscard
 
     /** Interface for sending messages to a recipient.
       *

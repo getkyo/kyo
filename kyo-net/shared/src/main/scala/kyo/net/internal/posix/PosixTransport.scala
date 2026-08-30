@@ -1612,239 +1612,275 @@ final private[net] class PosixTransport private[posix] (
                 handle.upgradeActive = true
                 handle.upgrading =
                     true // durable across the whole window, cleared with upgradeActive at onFinished; io_uring read-routing reads it
-                posixConn.detachForUpgrade() match
-                    case Absent =>
-                        // The claim above was won, so no other upgrade can be in flight: losing the detach CAS here means the connection
-                        // reached a terminal state first (a close raced or preceded this call). Undo this call's own pre-detach arm; the
-                        // close path owns the fd.
-                        handle.upgradeActive = false
-                        handle.upgrading = false
-                        out.completeDiscard(Result.fail(NetAlreadyDetachedException()))
-                    case Present(staged) =>
-                        // Committed to the upgrade: mark it durably (see PosixHandle.isUpgraded) before any handshakeOwned recv can be armed, so
-                        // the io_uring reap can recognize one that outlives onFinished's flag-clear even after upgradeActive/upgrading go false.
-                        handle.isUpgraded = true
-                        // buildEngine can throw a NetTlsException here (an unavailable pinned provider, an unreadable PEM, or an SSL
-                        // context/engine init failure; and on the JDK floor provider, a verifying STARTTLS client with no reference identity,
-                        // i.e. no sniHostname), so a build failure must release the detached-but-open fd and fail the upgrade promise rather
-                        // than escaping. No engine exists yet on this path, so only the fd is released (releaseFailedUpgrade also frees
-                        // the engine, which is absent here). The release routes through closeUnwiredHandle, never a bare PosixHandle.close:
-                        // driver.closeHandle runs first, so on io_uring the read-buffer free is deferred until every kernel-owned SQE for
-                        // this handle reaps. The stale plaintext recv the upgrade window leaves in flight is kernel-owned by construction
-                        // here, with the buffer's address already captured; an inline free would return that off-heap memory to the
-                        // process-wide allocator while the kernel can still complete the recv into it. The real close(fd) is deferred to
-                        // freeResources via the fdCloseSink credit closeUnwiredHandle installs.
-                        val engine =
-                            try buildEngine(tls, upgradeHost(tls, isServer), isServer)
-                            catch
-                                case e: NetTlsException =>
-                                    closeUnwiredHandle(handle, handle.driver, connectPhase = false)
-                                    out.completeDiscard(Result.fail(e))
-                                    // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala),
-                                    // structurally different from this plainly-constructed, invariant IOPromise[NetException, Connection],
-                                    // even though both erase to the same runtime object; the alias is transparent only inside kyo.Fiber's
-                                    // own defining scope, so returning this promise as the locked Transport.upgradeToTls result needs this
-                                    // erased-boundary cast. Safe: the promise is completed only with the NetException/Connection values above.
-                                    return out.asInstanceOf[Fiber.Unsafe[Connection, Abort[NetException]]]
-                        // Feed every staged ciphertext byte into the engine before the first post-upgrade read.
-                        feedStaged(engine, staged)
-                        // Recover the peer's first handshake flight when it arrived coalesced with the upgrade signal. A STARTTLS
-                        // client writes its signal byte and its ClientHello back to back, so on a loopback the kernel can hand both
-                        // to one `recv`; the consumer takes the whole chunk as "the signal" and discards the ClientHello bytes riding
-                        // behind it. feedCoalescedHandshake re-feeds those bytes (everything from the chunk's first TLS record on) so
-                        // the engine sees the ClientHello the handshake would otherwise wait for forever. A no-op when the last read
-                        // was the bare signal or ordinary plaintext (no TLS record found). The last read is skipped when it is itself
-                        // one of the staged spans (the ClientHello arrived in its own read and `feedStaged` already fed it), so it is
-                        // never fed twice. It also cannot be fed twice against `PosixHandle.onInboundClosedDuringRead`'s salvage, which
-                        // aliases the SAME chunk when the plaintext pump's channel-offer failed instead of landing it in `staged`:
-                        // `feedCoalescedHandshake` claims `handle.lastPlaintextRead` before feeding, so exactly one of the two ever delivers it.
-                        feedCoalescedHandshake(handle, engine, staged)
-                        // upgradeActive stays set (it was armed before detach) all the way into driveHandshake. While it is set, awaitRead's
-                        // single-recv gate drops every recv arm requested for this fd, so no NEW recv can register during the upgrade: the only recv
-                        // that can be in flight is the genuine stale one the plaintext ReadPump armed before detach (kernel-owned, uncancellable). The
-                        // no-stale-recv decision is therefore made later, ON THE REAP CARRIER, by the handshake's first read (driveUpgradeRead), whose
-                        // hasInFlightRead scans both `pending` AND `stalledSubmits` authoritatively: the genuine stale recv is registered before
-                        // driveUpgradeRead runs (FIFO on the reap carrier), in `pending` if its SQE went out or in `stalledSubmits` if it parked on a
-                        // full SQ, and a stray ReadPump re-arm racing the upgrade was gated away and reached neither. Making the decision here on the
-                        // upgrade carrier instead would be a TOCTOU (a hasInFlightRead snapshot could miss a not-yet-registered stale recv).
-                        // On a poller the poll carrier is the standing producer for every upgrade read (driveUpgradeRead parks a waiter it fulfils via
-                        // armUpgradeProducerRead), so upgradeActive stays set across the whole handshake; it is cleared at completion (onFinished below).
-                        // Register this in-flight STARTTLS handshake so a transport `close()` racing it (no deadline exists on the upgrade path
-                        // either) reclaims the fd/engine and fails `out` instead of leaking them / stranding the upgrade fiber past shutdown.
-                        // `driveHandshake` guarantees exactly one of onFinished/onFailed/onPanic ever fires, so `handshakeDisarm` builds its own
-                        // fresh gate, same as the connect-side registration above. See [[pendingHandshakes]].
-                        //
-                        // `reaped` mirrors the accept-side reap guard and the connect-side registration above: the sweep below can free the
-                        // engine while the handshake machine is still actively chaining (a `close()` racing a mid-flight upgrade wins
-                        // `handshakeDisarm` and offers its free op into the engine FIFO; the machine's own next step thunk, already in flight,
-                        // enqueues AFTER it). A FIFO honors submission order, so it cannot protect an op enqueued after the free: `reaped` is
-                        // the guard `isReaped` reads inside driveHandshake's handshakeStep/feedCiphertext/awaitReadCiphertext thunks, set as the
-                        // FIRST statement of every path here that frees the engine, so a step thunk that runs AFTER the free skips instead of
-                        // touching freed native memory.
-                        val reaped = AtomicBoolean.Unsafe.init(false)
-                        val (handshakeToken, handshakeDisarm) = registerHandshake(() =>
-                            handle.driver.submitEngineOp { () =>
-                                reaped.set(true)
-                                releaseFailedUpgrade(handle, engine)
-                                out.completeDiscard(Result.fail(NetConnectionClosedException(Operation.Handshake)))
+                // The detach reports the staged ciphertext through a handover rather than a return value: the driver is detached after the
+                // inbound channel closes, so a ReadPump offer carrying the peer's first TLS flight can still be committing then, and those
+                // bytes are already off the socket where the engine will never see them again. Everything below therefore runs once the
+                // handover settles, which is inline whenever no offer is in flight.
+                //
+                // What an escaping throw has to release, updated as the body below takes ownership: nothing at entry (the close path still
+                // owns the fd), the detached-but-engineless fd once the detach commits, fd and engine once the engine is built, and nothing
+                // again once the discharge hook is installed, since settling `out` then performs the release itself. Read only by the
+                // containment at the call site, which is the one place that can observe a throw from this body.
+                var releaseOnEscape: () => Unit = () => ()
+                def afterDetach(detached: Maybe[Chunk[Span[Byte]]]): Unit =
+                    detached match
+                        case Absent =>
+                            // The claim above was won, so no other upgrade can be in flight: losing the detach CAS here means the connection
+                            // reached a terminal state first (a close raced or preceded this call). Undo this call's own pre-detach arm; the
+                            // close path owns the fd.
+                            handle.upgradeActive = false
+                            handle.upgrading = false
+                            out.completeDiscard(Result.fail(NetAlreadyDetachedException()))
+                        case Present(staged) =>
+                            // Committed to the upgrade: mark it durably (see PosixHandle.isUpgraded) before any handshakeOwned recv can be armed, so
+                            // the io_uring reap can recognize one that outlives onFinished's flag-clear even after upgradeActive/upgrading go false.
+                            handle.isUpgraded = true
+                            // The fd is detached and open from here on, with no engine yet, so an escaping throw releases exactly what the
+                            // NetTlsException arm just below releases.
+                            releaseOnEscape = () => closeUnwiredHandle(handle, handle.driver, connectPhase = false)
+                            // buildEngine can throw a NetTlsException here (an unavailable pinned provider, an unreadable PEM, or an SSL
+                            // context/engine init failure; and on the JDK floor provider, a verifying STARTTLS client with no reference identity,
+                            // i.e. no sniHostname), so a build failure must release the detached-but-open fd and fail the upgrade promise rather
+                            // than escaping. No engine exists yet on this path, so only the fd is released (releaseFailedUpgrade also frees
+                            // the engine, which is absent here). The release routes through closeUnwiredHandle, never a bare PosixHandle.close:
+                            // driver.closeHandle runs first, so on io_uring the read-buffer free is deferred until every kernel-owned SQE for
+                            // this handle reaps. The stale plaintext recv the upgrade window leaves in flight is kernel-owned by construction
+                            // here, with the buffer's address already captured; an inline free would return that off-heap memory to the
+                            // process-wide allocator while the kernel can still complete the recv into it. The real close(fd) is deferred to
+                            // freeResources via the fdCloseSink credit closeUnwiredHandle installs.
+                            val engine =
+                                try buildEngine(tls, upgradeHost(tls, isServer), isServer)
+                                catch
+                                    case e: NetTlsException =>
+                                        closeUnwiredHandle(handle, handle.driver, connectPhase = false)
+                                        out.completeDiscard(Result.fail(e))
+                                        // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala),
+                                        // structurally different from this plainly-constructed, invariant IOPromise[NetException, Connection],
+                                        // even though both erase to the same runtime object; the alias is transparent only inside kyo.Fiber's
+                                        // own defining scope, so returning this promise as the locked Transport.upgradeToTls result needs this
+                                        // erased-boundary cast. Safe: the promise is completed only with the NetException/Connection values above.
+                                        return ()
+                            // The engine now exists and is known only to this upgrade, so an escaping throw has to free it along with the
+                            // fd. Direct rather than through submitEngineOp: driveHandshake has not run yet, so no other op can be queued
+                            // against this engine and there is nothing for a FIFO ordering to protect.
+                            releaseOnEscape = () => releaseFailedUpgrade(handle, engine)
+                            // Feed every staged ciphertext byte into the engine before the first post-upgrade read.
+                            feedStaged(engine, staged)
+                            // Recover the peer's first handshake flight when it arrived coalesced with the upgrade signal. A STARTTLS
+                            // client writes its signal byte and its ClientHello back to back, so on a loopback the kernel can hand both
+                            // to one `recv`; the consumer takes the whole chunk as "the signal" and discards the ClientHello bytes riding
+                            // behind it. feedCoalescedHandshake re-feeds those bytes (everything from the chunk's first TLS record on) so
+                            // the engine sees the ClientHello the handshake would otherwise wait for forever. A no-op when the last read
+                            // was the bare signal or ordinary plaintext (no TLS record found). The last read is skipped when it is itself
+                            // one of the staged spans (the ClientHello arrived in its own read and `feedStaged` already fed it), so it is
+                            // never fed twice. It also cannot be fed twice against `PosixHandle.onInboundClosedDuringRead`'s salvage, which
+                            // aliases the SAME chunk when the plaintext pump's channel-offer failed instead of landing it in `staged`:
+                            // `feedCoalescedHandshake` claims `handle.lastPlaintextRead` before feeding, so exactly one of the two ever delivers it.
+                            feedCoalescedHandshake(handle, engine, staged)
+                            // upgradeActive stays set (it was armed before detach) all the way into driveHandshake. While it is set, awaitRead's
+                            // single-recv gate drops every recv arm requested for this fd, so no NEW recv can register during the upgrade: the only recv
+                            // that can be in flight is the genuine stale one the plaintext ReadPump armed before detach (kernel-owned, uncancellable). The
+                            // no-stale-recv decision is therefore made later, ON THE REAP CARRIER, by the handshake's first read (driveUpgradeRead), whose
+                            // hasInFlightRead scans both `pending` AND `stalledSubmits` authoritatively: the genuine stale recv is registered before
+                            // driveUpgradeRead runs (FIFO on the reap carrier), in `pending` if its SQE went out or in `stalledSubmits` if it parked on a
+                            // full SQ, and a stray ReadPump re-arm racing the upgrade was gated away and reached neither. Making the decision here on the
+                            // upgrade carrier instead would be a TOCTOU (a hasInFlightRead snapshot could miss a not-yet-registered stale recv).
+                            // On a poller the poll carrier is the standing producer for every upgrade read (driveUpgradeRead parks a waiter it fulfils via
+                            // armUpgradeProducerRead), so upgradeActive stays set across the whole handshake; it is cleared at completion (onFinished below).
+                            // Register this in-flight STARTTLS handshake so a transport `close()` racing it (no deadline exists on the upgrade path
+                            // either) reclaims the fd/engine and fails `out` instead of leaking them / stranding the upgrade fiber past shutdown.
+                            // `driveHandshake` guarantees exactly one of onFinished/onFailed/onPanic ever fires, so `handshakeDisarm` builds its own
+                            // fresh gate, same as the connect-side registration above. See [[pendingHandshakes]].
+                            //
+                            // `reaped` mirrors the accept-side reap guard and the connect-side registration above: the sweep below can free the
+                            // engine while the handshake machine is still actively chaining (a `close()` racing a mid-flight upgrade wins
+                            // `handshakeDisarm` and offers its free op into the engine FIFO; the machine's own next step thunk, already in flight,
+                            // enqueues AFTER it). A FIFO honors submission order, so it cannot protect an op enqueued after the free: `reaped` is
+                            // the guard `isReaped` reads inside driveHandshake's handshakeStep/feedCiphertext/awaitReadCiphertext thunks, set as the
+                            // FIRST statement of every path here that frees the engine, so a step thunk that runs AFTER the free skips instead of
+                            // touching freed native memory.
+                            val reaped = AtomicBoolean.Unsafe.init(false)
+                            val (handshakeToken, handshakeDisarm) = registerHandshake(() =>
+                                handle.driver.submitEngineOp { () =>
+                                    reaped.set(true)
+                                    releaseFailedUpgrade(handle, engine)
+                                    out.completeDiscard(Result.fail(NetConnectionClosedException(Operation.Handshake)))
+                                }
+                            )
+                            // `out` is this upgrade's fd-and-engine owner. driveHandshake's three outcomes below each discharge the obligation
+                            // themselves (they win `handshakeDisarm` and unregister), so this hook bites for exactly the settlements they do NOT
+                            // cover: the caller's fiber interrupting the upgrade it was awaiting (Async.useResult links the awaiting task to `out`,
+                            // so a timeout, a losing race arm, or an enclosing abort settles it), and the plaintext connection's close() routing
+                            // through the `upgradeAbandon` thunk armed above. Both leave the handshake parked on a read nothing will ever complete,
+                            // holding a detached fd that no other closer can reach: the connection's own closeFn cannot take an Upgrading fd, and
+                            // a transport-wide sweep no longer exists, and this transport is process-lifetime anyway. So the fd would stay
+                            // open forever and, once the peer FINs, sit in CLOSE_WAIT with no shutdown. Discharging the registered obligation runs the
+                            // identical release the shutdown sweep would.
+                            //
+                            // Installed AFTER registerHandshake so the obligation exists to discharge, and BEFORE driveHandshake so an `out` already
+                            // settled by this point (an interrupt landing during the engine build above) fires the hook immediately: `reaped` is then
+                            // set and driveHandshake's steps skip rather than touching a freed engine.
+                            out.onComplete {
+                                case Result.Success(_) => ()
+                                case _                 => dischargePendingHandshake(handshakeToken)
                             }
-                        )
-                        // `out` is this upgrade's fd-and-engine owner. driveHandshake's three outcomes below each discharge the obligation
-                        // themselves (they win `handshakeDisarm` and unregister), so this hook bites for exactly the settlements they do NOT
-                        // cover: the caller's fiber interrupting the upgrade it was awaiting (Async.useResult links the awaiting task to `out`,
-                        // so a timeout, a losing race arm, or an enclosing abort settles it), and the plaintext connection's close() routing
-                        // through the `upgradeAbandon` thunk armed above. Both leave the handshake parked on a read nothing will ever complete,
-                        // holding a detached fd that no other closer can reach: the connection's own closeFn cannot take an Upgrading fd, and
-                        // a transport-wide sweep no longer exists, and this transport is process-lifetime anyway. So the fd would stay
-                        // open forever and, once the peer FINs, sit in CLOSE_WAIT with no shutdown. Discharging the registered obligation runs the
-                        // identical release the shutdown sweep would.
-                        //
-                        // Installed AFTER registerHandshake so the obligation exists to discharge, and BEFORE driveHandshake so an `out` already
-                        // settled by this point (an interrupt landing during the engine build above) fires the hook immediately: `reaped` is then
-                        // set and driveHandshake's steps skip rather than touching a freed engine.
-                        out.onComplete {
-                            case Result.Success(_) => ()
-                            case _                 => dischargePendingHandshake(handshakeToken)
-                        }
-                        // Bound the upgrade handshake, the third handshake role. A peer that never sends its side of the STARTTLS handshake
-                        // leaves this parked on a read forever; the plaintext connection has already been detached by now, so nothing else owns
-                        // the fd or the engine, and on the process-shared transport no later close() sweeps them. `handshakeDisarm` is the same
-                        // exactly-once gate driveHandshake's three outcomes use, so the deadline and the real outcome are mutually exclusive.
-                        // The teardown rides submitEngineOp for the same UAF reason the registered obligation above does. There is no fresh
-                        // connect port for an upgrade, so the leaf carries -1, matching the convention the handshake-failure leaf uses here.
-                        // `Duration.Infinity` arms no timer.
-                        if tls.handshakeTimeout.isFinite then
-                            val deadline = Clock.live.unsafe.sleep(tls.handshakeTimeout)
-                            deadline.onComplete { _ =>
-                                if handshakeDisarm() then
-                                    unregisterHandshake(handshakeToken)
-                                    handle.driver.submitEngineOp { () =>
+                            // From here the hook above IS the release: any non-success settlement of `out`, including the panic an escaping
+                            // throw produces, discharges the registered obligation. Releasing again here would free the engine twice.
+                            releaseOnEscape = () => ()
+                            // Bound the upgrade handshake, the third handshake role. A peer that never sends its side of the STARTTLS handshake
+                            // leaves this parked on a read forever; the plaintext connection has already been detached by now, so nothing else owns
+                            // the fd or the engine, and on the process-shared transport no later close() sweeps them. `handshakeDisarm` is the same
+                            // exactly-once gate driveHandshake's three outcomes use, so the deadline and the real outcome are mutually exclusive.
+                            // The teardown rides submitEngineOp for the same UAF reason the registered obligation above does. There is no fresh
+                            // connect port for an upgrade, so the leaf carries -1, matching the convention the handshake-failure leaf uses here.
+                            // `Duration.Infinity` arms no timer.
+                            if tls.handshakeTimeout.isFinite then
+                                val deadline = Clock.live.unsafe.sleep(tls.handshakeTimeout)
+                                deadline.onComplete { _ =>
+                                    if handshakeDisarm() then
+                                        unregisterHandshake(handshakeToken)
+                                        handle.driver.submitEngineOp { () =>
+                                            reaped.set(true)
+                                            releaseFailedUpgrade(handle, engine)
+                                            out.completeDiscard(Result.fail(
+                                                NetTlsHandshakeTimeoutException(upgradeHost(tls, isServer), -1, tls.handshakeTimeout)
+                                            ))
+                                        }
+                                }
+                                out.onComplete { _ =>
+                                    deadline.interruptDiscard(
+                                        Result.Panic(Interrupted(frame, "upgrade settled before deadline"))
+                                    )
+                                }
+                            end if
+                            // driveUpgradeRead's parked waiter fails with the transport's own typed leaf (a close raced the in-flight read): surface
+                            // it directly rather than re-wrapping a transport failure as a handshake one. Any other cause is a genuine handshake
+                            // failure (protocol error, engine throw), wrapped as NetTlsHandshakeException as before.
+                            def completeUpgradeFailure(cause: HandshakeFailure | String | Throwable): Unit =
+                                cause match
+                                    case netEx: NetException => out.completeDiscard(Result.fail(netEx))
+                                    case other =>
+                                        val causeMsg: String | Throwable = other match
+                                            case hf: HandshakeFailure.EngineThrew => hf.cause
+                                            case hf: HandshakeFailure             => hf.toString
+                                            case st: (String | Throwable)         => st
+                                        out.completeDiscard(Result.fail(NetTlsHandshakeException(upgradeHost(tls, isServer), -1, causeMsg)))
+                            driveHandshake(
+                                handle,
+                                engine,
+                                onFinished = () =>
+                                    if handshakeDisarm() then
+                                        unregisterHandshake(handshakeToken)
+                                        // Clear the upgrade flags before attaching the engine and starting the pumps. upgradeActive/upgrading stay set for
+                                        // the WHOLE upgrade on every backend (driveUpgradeRead never clears them itself; see its scaladoc), and a handshake
+                                        // that completes purely from staged ciphertext (feedStaged / feedCoalescedHandshake) never reaches driveUpgradeRead
+                                        // at all, so onFinished is the single clear point that covers every path. It runs on the I/O carrier, so this clear
+                                        // happens-before the new ReadPump's recv is armed by upgraded.start(). handshakeReading is cleared here too so the
+                                        // poller admits the upgraded connection's ReadPump read arm (the failure paths clear both via PosixHandle.close).
+                                        // PosixHandle.isUpgraded is NOT cleared here (and never is): it must outlive this clear so the io_uring reap can
+                                        // still recognize an orphaned handshakeOwned recv and route it correctly (see IoUringDriver.complete), and so
+                                        // IoUringDriver.submitRecv can recognize the upgraded connection's first post-upgrade recv and queue it behind
+                                        // any such orphan still in flight (see PosixHandle.queuedRecv) instead of racing it for the same staging buffer.
+                                        // lastPlaintextRead is also cleared here (re-upgrade hygiene): a stale claim left over from THIS upgrade's
+                                        // feedCoalescedHandshake/salvage race must not alias a future upgrade's own coalesced flight.
+                                        handle.lastPlaintextRead.set(Absent)
+                                        handle.upgradeActive = false
+                                        handle.handshakeReading = false
+                                        handle.tls = Present(engine)
+                                        // Clear the durable upgrade-window marker AFTER tls becomes Present, so the io_uring reap never observes
+                                        // upgrading=false while tls is still Absent (which would route a reaping recv to the raw plainReadComplete path).
+                                        // Volatile-write ordering: a reaper that sees upgrading=false also sees tls=Present, so it takes the TLS branch.
+                                        handle.upgrading = false
+                                        val upgraded =
+                                            InternalConnection.init(handle, handle.driver, channelCapacity, handle.peerCloseGrace)
+                                        // Wire the cert-hash and re-upgrade functions on the upgraded connection, exactly as completeConnect /
+                                        // spawnHandler do for a directly-connected or accepted connection. Without this the TLS connection
+                                        // produced by STARTTLS could not report its RFC 5929 channel-binding hash (certHashFn stays null ->
+                                        // serverCertificateHash returns Absent). The re-upgrade function keeps the same role this upgrade ran in.
+                                        wireUpgraded(upgraded, isServer, channelCapacity)
+                                        // Re-point the handle's inboundSink at the UPGRADED connection now (see PosixHandle.inboundSink), before anything
+                                        // below can reap a late-arriving orphan recv that uses it: onFinished runs synchronously on the same carrier that
+                                        // drains every completion for this handle (the reap carrier, for io_uring), so this write happens-before any
+                                        // later completion on that same carrier observes it -- no separate synchronization needed.
+                                        handle.inboundSink = bytes => discard(upgraded.inbound.offer(bytes))
+                                        // Post-FINISHED slot drain: a peer flight (a TLS 1.3 NewSessionTicket, or any post-handshake record) can land in the
+                                        // upgradeHandoff slot during the FINISHED transition with no parked waiter to consume it (the handshake stopped parking).
+                                        // Feed it to the engine BEFORE deliverHandshakePlaintext so the engine's record sequence stays intact (an un-fed
+                                        // post-FINISHED record desyncs the sequence and the next record fails to decrypt) and deliverHandshakePlaintext then
+                                        // flushes any application bytes it produced. The posix analog of nio's drainUpgradeLeftover; a no-op when the slot is Idle.
+                                        handle.upgradeHandoff.get() match
+                                            case staged: PosixHandle.UpgradeHandoff.Carryover =>
+                                                discard(handle.upgradeHandoff.compareAndSet(staged, PosixHandle.UpgradeHandoff.Idle))
+                                                val drainBuf = Buffer.fromArray[Byte](staged.bytes)
+                                                try discard(engine.feedCiphertext(drainBuf, staged.bytes.length))
+                                                finally drainBuf.close()
+                                            case _ => ()
+                                        end match
+                                        // Deliver any application plaintext the handshake already decrypted before the pumps start, so a record
+                                        // that arrived with the handshake's final flight is not stranded in the engine (see completeConnect).
+                                        deliverHandshakePlaintext(handle, upgraded.inbound)
+                                        // Force the first ReadPump read to re-evaluate socket readiness: the peer's first application flight (e.g. the
+                                        // STARTTLS echo) can arrive in the socket BEFORE upgraded.start() arms the read, and on epoll the register-once
+                                        // re-arm skips the MOD so that buffered flight gets no new edge and the read strands. A no-op on every other backend.
+                                        handle.driver.forceReadRecovery(handle)
+                                        // Open the kqueue post-upgrade read window: a TLS 1.3 NewSessionTicket (or any post-handshake record) lands between
+                                        // here and the echo, reads as 0 plaintext, and the bare re-arm trusts an EV_CLEAR edge for the echo that kqueue can
+                                        // lose. While set, dispatchReadTls re-issues the kqueue read registration (EV_ADD re-evaluates) on a 0-plaintext
+                                        // drained re-arm; it clears on the first application read. A no-op on epoll/io_uring (gated at the use site).
+                                        handle.postUpgradeReadWindow = true
+                                        // upgraded.start() arms the new ReadPump's first recv immediately: it does NOT wait for any handshake-window recv
+                                        // still in flight for this handle (the orphaned-producer TOCTOU, see PosixHandle.isUpgraded) to drain first.
+                                        // Blocking here instead (parking a waiter and deferring start()) would deadlock, since
+                                        // BOTH peers of an upgrade can symmetrically be waiting on their own orphan to drain while that orphan's bytes are
+                                        // exactly the OTHER peer's first post-upgrade write, which peer's own (symmetrically blocked) upgrade fiber never
+                                        // reaches (IoUringMutualTlsStressTest exercises this io_uring-only stress path). The ordering invariant instead
+                                        // lives entirely in IoUringDriver.awaitRead/submitRecv: the
+                                        // new ReadPump's first recv arm QUEUES behind a still-in-flight orphan (PosixHandle.queuedRecv) rather than racing
+                                        // it for the same staging buffer, and fires the moment that orphan's CQE reaps -- non-blocking, no fiber parked.
+                                        if upgraded.start() then
+                                            // Checked complete, mirroring completeConnect: a caller interrupt or the plaintext connection's
+                                            // close() can settle `out` after onFinished won `handshakeDisarm` above (the discharge hook then
+                                            // loses the gate and releases nothing) and before this success delivery. Discarding the lost
+                                            // completion would leave this fully started connection live but unreferenced on the never-swept
+                                            // process-shared transport while the caller believes the fd was released; close the orphan.
+                                            if !out.complete(Result.succeed(upgraded: Connection)) then
+                                                upgraded.close()
+                                        else
+                                            // The upgraded connection raced to a terminal/Upgrading state before start (a close won); it must not be
+                                            // handed out as open.
+                                            out.completeDiscard(Result.fail(NetConnectionClosedException(Operation.Start)))
+                                        end if
+                                    end if
+                                ,
+                                onFailed = cause =>
+                                    if handshakeDisarm() then
+                                        unregisterHandshake(handshakeToken)
                                         reaped.set(true)
                                         releaseFailedUpgrade(handle, engine)
-                                        out.completeDiscard(Result.fail(
-                                            NetTlsHandshakeTimeoutException(upgradeHost(tls, isServer), -1, tls.handshakeTimeout)
-                                        ))
-                                    }
-                            }
-                            out.onComplete { _ =>
-                                deadline.interruptDiscard(
-                                    Result.Panic(Interrupted(frame, "upgrade settled before deadline"))
-                                )
-                            }
-                        end if
-                        // driveUpgradeRead's parked waiter fails with the transport's own typed leaf (a close raced the in-flight read): surface
-                        // it directly rather than re-wrapping a transport failure as a handshake one. Any other cause is a genuine handshake
-                        // failure (protocol error, engine throw), wrapped as NetTlsHandshakeException as before.
-                        def completeUpgradeFailure(cause: HandshakeFailure | String | Throwable): Unit =
-                            cause match
-                                case netEx: NetException => out.completeDiscard(Result.fail(netEx))
-                                case other =>
-                                    val causeMsg: String | Throwable = other match
-                                        case hf: HandshakeFailure.EngineThrew => hf.cause
-                                        case hf: HandshakeFailure             => hf.toString
-                                        case st: (String | Throwable)         => st
-                                    out.completeDiscard(Result.fail(NetTlsHandshakeException(upgradeHost(tls, isServer), -1, causeMsg)))
-                        driveHandshake(
-                            handle,
-                            engine,
-                            onFinished = () =>
-                                if handshakeDisarm() then
-                                    unregisterHandshake(handshakeToken)
-                                    // Clear the upgrade flags before attaching the engine and starting the pumps. upgradeActive/upgrading stay set for
-                                    // the WHOLE upgrade on every backend (driveUpgradeRead never clears them itself; see its scaladoc), and a handshake
-                                    // that completes purely from staged ciphertext (feedStaged / feedCoalescedHandshake) never reaches driveUpgradeRead
-                                    // at all, so onFinished is the single clear point that covers every path. It runs on the I/O carrier, so this clear
-                                    // happens-before the new ReadPump's recv is armed by upgraded.start(). handshakeReading is cleared here too so the
-                                    // poller admits the upgraded connection's ReadPump read arm (the failure paths clear both via PosixHandle.close).
-                                    // PosixHandle.isUpgraded is NOT cleared here (and never is): it must outlive this clear so the io_uring reap can
-                                    // still recognize an orphaned handshakeOwned recv and route it correctly (see IoUringDriver.complete), and so
-                                    // IoUringDriver.submitRecv can recognize the upgraded connection's first post-upgrade recv and queue it behind
-                                    // any such orphan still in flight (see PosixHandle.queuedRecv) instead of racing it for the same staging buffer.
-                                    // lastPlaintextRead is also cleared here (re-upgrade hygiene): a stale claim left over from THIS upgrade's
-                                    // feedCoalescedHandshake/salvage race must not alias a future upgrade's own coalesced flight.
-                                    handle.lastPlaintextRead.set(Absent)
-                                    handle.upgradeActive = false
-                                    handle.handshakeReading = false
-                                    handle.tls = Present(engine)
-                                    // Clear the durable upgrade-window marker AFTER tls becomes Present, so the io_uring reap never observes
-                                    // upgrading=false while tls is still Absent (which would route a reaping recv to the raw plainReadComplete path).
-                                    // Volatile-write ordering: a reaper that sees upgrading=false also sees tls=Present, so it takes the TLS branch.
-                                    handle.upgrading = false
-                                    val upgraded = InternalConnection.init(handle, handle.driver, channelCapacity, handle.peerCloseGrace)
-                                    // Wire the cert-hash and re-upgrade functions on the upgraded connection, exactly as completeConnect /
-                                    // spawnHandler do for a directly-connected or accepted connection. Without this the TLS connection
-                                    // produced by STARTTLS could not report its RFC 5929 channel-binding hash (certHashFn stays null ->
-                                    // serverCertificateHash returns Absent). The re-upgrade function keeps the same role this upgrade ran in.
-                                    wireUpgraded(upgraded, isServer, channelCapacity)
-                                    // Re-point the handle's inboundSink at the UPGRADED connection now (see PosixHandle.inboundSink), before anything
-                                    // below can reap a late-arriving orphan recv that uses it: onFinished runs synchronously on the same carrier that
-                                    // drains every completion for this handle (the reap carrier, for io_uring), so this write happens-before any
-                                    // later completion on that same carrier observes it -- no separate synchronization needed.
-                                    handle.inboundSink = bytes => discard(upgraded.inbound.offer(bytes))
-                                    // Post-FINISHED slot drain: a peer flight (a TLS 1.3 NewSessionTicket, or any post-handshake record) can land in the
-                                    // upgradeHandoff slot during the FINISHED transition with no parked waiter to consume it (the handshake stopped parking).
-                                    // Feed it to the engine BEFORE deliverHandshakePlaintext so the engine's record sequence stays intact (an un-fed
-                                    // post-FINISHED record desyncs the sequence and the next record fails to decrypt) and deliverHandshakePlaintext then
-                                    // flushes any application bytes it produced. The posix analog of nio's drainUpgradeLeftover; a no-op when the slot is Idle.
-                                    handle.upgradeHandoff.get() match
-                                        case staged: PosixHandle.UpgradeHandoff.Carryover =>
-                                            discard(handle.upgradeHandoff.compareAndSet(staged, PosixHandle.UpgradeHandoff.Idle))
-                                            val drainBuf = Buffer.fromArray[Byte](staged.bytes)
-                                            try discard(engine.feedCiphertext(drainBuf, staged.bytes.length))
-                                            finally drainBuf.close()
-                                        case _ => ()
-                                    end match
-                                    // Deliver any application plaintext the handshake already decrypted before the pumps start, so a record
-                                    // that arrived with the handshake's final flight is not stranded in the engine (see completeConnect).
-                                    deliverHandshakePlaintext(handle, upgraded.inbound)
-                                    // Force the first ReadPump read to re-evaluate socket readiness: the peer's first application flight (e.g. the
-                                    // STARTTLS echo) can arrive in the socket BEFORE upgraded.start() arms the read, and on epoll the register-once
-                                    // re-arm skips the MOD so that buffered flight gets no new edge and the read strands. A no-op on every other backend.
-                                    handle.driver.forceReadRecovery(handle)
-                                    // Open the kqueue post-upgrade read window: a TLS 1.3 NewSessionTicket (or any post-handshake record) lands between
-                                    // here and the echo, reads as 0 plaintext, and the bare re-arm trusts an EV_CLEAR edge for the echo that kqueue can
-                                    // lose. While set, dispatchReadTls re-issues the kqueue read registration (EV_ADD re-evaluates) on a 0-plaintext
-                                    // drained re-arm; it clears on the first application read. A no-op on epoll/io_uring (gated at the use site).
-                                    handle.postUpgradeReadWindow = true
-                                    // upgraded.start() arms the new ReadPump's first recv immediately: it does NOT wait for any handshake-window recv
-                                    // still in flight for this handle (the orphaned-producer TOCTOU, see PosixHandle.isUpgraded) to drain first.
-                                    // Blocking here instead (parking a waiter and deferring start()) would deadlock, since
-                                    // BOTH peers of an upgrade can symmetrically be waiting on their own orphan to drain while that orphan's bytes are
-                                    // exactly the OTHER peer's first post-upgrade write, which peer's own (symmetrically blocked) upgrade fiber never
-                                    // reaches (IoUringMutualTlsStressTest exercises this io_uring-only stress path). The ordering invariant instead
-                                    // lives entirely in IoUringDriver.awaitRead/submitRecv: the
-                                    // new ReadPump's first recv arm QUEUES behind a still-in-flight orphan (PosixHandle.queuedRecv) rather than racing
-                                    // it for the same staging buffer, and fires the moment that orphan's CQE reaps -- non-blocking, no fiber parked.
-                                    if upgraded.start() then
-                                        // Checked complete, mirroring completeConnect: a caller interrupt or the plaintext connection's
-                                        // close() can settle `out` after onFinished won `handshakeDisarm` above (the discharge hook then
-                                        // loses the gate and releases nothing) and before this success delivery. Discarding the lost
-                                        // completion would leave this fully started connection live but unreferenced on the never-swept
-                                        // process-shared transport while the caller believes the fd was released; close the orphan.
-                                        if !out.complete(Result.succeed(upgraded: Connection)) then
-                                            upgraded.close()
-                                    else
-                                        // The upgraded connection raced to a terminal/Upgrading state before start (a close won); it must not be
-                                        // handed out as open.
-                                        out.completeDiscard(Result.fail(NetConnectionClosedException(Operation.Start)))
-                                    end if
-                                end if
-                            ,
-                            onFailed = cause =>
-                                if handshakeDisarm() then
-                                    unregisterHandshake(handshakeToken)
-                                    reaped.set(true)
-                                    releaseFailedUpgrade(handle, engine)
-                                    completeUpgradeFailure(cause),
-                            onPanic = e =>
-                                if handshakeDisarm() then
-                                    unregisterHandshake(handshakeToken)
-                                    reaped.set(true)
-                                    releaseFailedUpgrade(handle, engine)
-                                    out.completeDiscard(Result.panic(e)),
-                            isReaped = () => reaped.get()
-                        )
-                end match
+                                        completeUpgradeFailure(cause),
+                                onPanic = e =>
+                                    if handshakeDisarm() then
+                                        unregisterHandshake(handshakeToken)
+                                        reaped.set(true)
+                                        releaseFailedUpgrade(handle, engine)
+                                        out.completeDiscard(Result.panic(e)),
+                                isReaped = () => reaped.get()
+                            )
+                    end match
+                end afterDetach
+                // Contain ANY throw out of the body above. Completion callbacks run under a catch-all that logs rather than propagates
+                // (IOPromise.eval), so an escaping throw would settle nothing: the caller would park on an upgrade that can never finish
+                // while the detached fd stayed open until the peer FINs it into CLOSE_WAIT. While the detach reported its staging by
+                // return value this body ran on the caller's own stack, where such a throw reached the caller as a panic, and callers
+                // classify on that (kyo-sql's TlsUpgrade maps it to a connect failure). Reproduce that: release whatever the body owned
+                // at the point it threw, then hand the throwable back as the same panic.
+                posixConn.detachForUpgrade().onComplete { r =>
+                    try afterDetach(r.foldError(_.eval, _ => Absent))
+                    catch
+                        case t: Throwable =>
+                            releaseOnEscape()
+                            out.completeDiscard(Result.panic(t))
+                }
                 // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different
                 // from this plainly-constructed, invariant IOPromise[NetException, Connection], even though both erase to the same runtime
                 // object; the alias is transparent only inside kyo.Fiber's own defining scope, so returning this promise as the locked

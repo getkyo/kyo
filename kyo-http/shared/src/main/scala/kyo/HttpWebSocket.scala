@@ -137,12 +137,12 @@ object HttpWebSocket:
                                         .andThen(closeRef2.set(Present((code, reason))))
                                         .andThen(peerClosed1.completeUnit.unit)
                                         .andThen(peerClosed2.completeUnit.unit)
-                                        .andThen(ch1to2.close.unit)
-                                        .andThen(ch2to1.close.unit)
+                                        .andThen(ch1to2.closeDiscard)
+                                        .andThen(ch2to1.closeDiscard)
                                 val ws1 = new HttpWebSocket(ch2to1, ch1to2, closeRef1, peerClosed1, doClose)
                                 val ws2 = new HttpWebSocket(ch1to2, ch2to1, closeRef2, peerClosed2, doClose)
                                 Sync.ensure {
-                                    ch1to2.close.unit.andThen(ch2to1.close.unit)
+                                    ch1to2.closeDiscard.andThen(ch2to1.closeDiscard)
                                 } {
                                     // Race: when either party completes, close channels to unblock the other
                                     Async.raceFirst(

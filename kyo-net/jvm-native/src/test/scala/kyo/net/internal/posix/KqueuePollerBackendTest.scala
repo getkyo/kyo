@@ -81,6 +81,55 @@ class KqueuePollerBackendTest extends Test:
             }
         }
 
+        "an entry the kernel rejects does not stop the rest of a flushed batch from being armed" in {
+            assumeKqueue()
+            val backend  = PollerBackend.default()
+            val pollerFd = backend.create()
+            assert(pollerFd >= 0, s"kqueue create failed: $pollerFd")
+            val scratch = backend.newPollScratch()
+            PosixTestSockets.loopbackPair().map { case (client, accepted) =>
+                PosixTestSockets.loopbackPair().map { case (filler, fillerAccepted) =>
+                    PosixTestSockets.loopbackPair().map { case (doomedClient, doomed) =>
+                        // A closed fd is what the kernel rejects, and it is the realistic case: an fd closed between staging its interest
+                        // change and submitting the batch comes back EBADF. Close it before anything is staged so the rejection is certain.
+                        discard(sock.close(doomedClient))
+                        discard(sock.close(doomed))
+
+                        // Fill exactly one batch with the rejected entry FIRST and the fd under test behind it. The kernel stops at the first
+                        // rejected entry when it has nowhere to report the error, so everything staged after `doomed` is what goes missing.
+                        discard(backend.registerRead(pollerFd, doomed, doomed.toLong, scratch))
+                        discard(backend.registerRead(pollerFd, accepted, accepted.toLong, scratch))
+                        val filling = backend.MaxEvents - 2
+                        (0 until filling).foreach(_ =>
+                            discard(backend.registerRead(pollerFd, fillerAccepted, fillerAccepted.toLong, scratch))
+                        )
+                        val kq = scratch.kqueueData.get
+                        assert(kq.nChanges == backend.MaxEvents, s"expected a full batch staged, got ${kq.nChanges}")
+
+                        // One more change tips the batch over capacity and flushes it. It must not be for `accepted`: a later re-arm would
+                        // register the fd through the poll call's own submission and hide whether the flush applied it.
+                        discard(backend.registerRead(pollerFd, fillerAccepted, fillerAccepted.toLong, scratch))
+                        assert(kq.nChanges == 1, s"expected the batch to have flushed and restarted, got ${kq.nChanges}")
+
+                        assert(sock.sendNow(client, Buffer.fromArray[Byte](Array[Byte](7)), 1L, 0).value == 1L)
+                        backend.poll(pollerFd, 1000, kq.changelistBuf, kq.nChanges, scratch).safe.get.map { n =>
+                            val firedFds = (0 until n).map(scratch.fds(_)).toList
+                            scratch.close()
+                            discard(sock.close(client))
+                            discard(sock.close(accepted))
+                            discard(sock.close(filler))
+                            discard(sock.close(fillerAccepted))
+                            backend.close(pollerFd)
+                            assert(
+                                firedFds.contains(accepted),
+                                s"the read interest staged behind a rejected entry was never armed: expected $accepted to fire, got $firedFds"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         "a registered read interest does not fire while the fd has nothing to read" in {
             assumeKqueue()
             val backend  = PollerBackend.default()

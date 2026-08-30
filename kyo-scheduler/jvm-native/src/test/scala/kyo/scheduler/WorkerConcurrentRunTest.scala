@@ -123,11 +123,15 @@ class WorkerConcurrentRunTest extends AnyFreeSpec with NonImplicitAssertions {
             i += 1
         }
         // Catastrophic-only watchdog: nothing at the effect level can preempt this raw busy-spin, so the deadline exists solely to break out of a
-        // genuine hang, never as a throughput gate. How many tasks drain within it is machine-dependent and not asserted; the invariant is that
-        // the witness never sees two task bodies of this worker run at once.
+        // genuine hang, never as a throughput gate. Every task is enqueued up front, so ran == total is the strand invariant, not a measure of
+        // throughput, and the budget sits three orders of magnitude above a healthy drain. Falling short means a task was stranded.
         val end = deadlineMs(300000)
         while (ran.get() < total && System.currentTimeMillis() < end) {}
         h.stop.set(true)
+        assert(
+            ran.get() == total,
+            s"probe1 STRANDED ${total - ran.get()} task(s): ran=${ran.get()}/$total queueLoad=${h.worker.load()}"
+        )
         assert(
             h.maxConcurrentRun == 1,
             s"probe1 maxConcurrentRun=${h.maxConcurrentRun} maxRunOverlap=${h.maxRunOverlap} ran=${ran.get()}/$total (expected 1)"
@@ -145,8 +149,9 @@ class WorkerConcurrentRunTest extends AnyFreeSpec with NonImplicitAssertions {
         val rounds = 200000
         val ran    = new AtomicInteger(0)
 
-        // Catastrophic-only watchdogs on every raw spin below: they break a genuine hang, never gate throughput. How many boundary rounds the
-        // machine completes is not asserted; the invariants are that no round overlaps two run()s and no enqueued task is stranded.
+        // Catastrophic-only watchdogs on every raw spin below: they break a genuine hang, never gate throughput. The budget sits orders of
+        // magnitude above a healthy run, so reaching it means the loop wedged rather than ran slowly, and a probe that stopped short of its
+        // round count exercised the boundary too few times to guard anything. Both are asserted below, ahead of the invariants they validate.
         var round = 0
         val end   = deadlineMs(600000)
         while (round < rounds && System.currentTimeMillis() < end) {
@@ -161,6 +166,10 @@ class WorkerConcurrentRunTest extends AnyFreeSpec with NonImplicitAssertions {
         while (ran.get() < round && System.currentTimeMillis() < tailEnd) {}
         h.stop.set(true)
 
+        assert(
+            round == rounds,
+            s"probe2 WATCHDOG fired at round=$round/$rounds: the boundary loop wedged, so this run guards nothing"
+        )
         assert(ran.get() == round, s"probe2 STRANDED ${round - ran.get()} task(s): ran=${ran.get()}/$round")
         assert(
             !h.concurrentSeen,
@@ -187,8 +196,9 @@ class WorkerConcurrentRunTest extends AnyFreeSpec with NonImplicitAssertions {
         val enq       = new AtomicInteger(0)
         val started   = new CountDownLatch(injectors)
         val go        = new CountDownLatch(1)
-        // Catastrophic-only watchdogs throughout: they break a genuine hang, never gate throughput. How many tasks the injectors enqueue and drain
-        // is machine-dependent and not asserted; the invariants are no concurrent run() and no stranded task.
+        // Catastrophic-only watchdogs throughout: they break a genuine hang, never gate throughput. The budget sits orders of magnitude above a
+        // healthy run, so an injector that stopped short of perInj wedged rather than ran slowly, and the probe then exercised the boundary too
+        // few times to guard anything. That is asserted below, ahead of the invariants it validates.
         val end = deadlineMs(600000)
 
         val threads =
@@ -215,6 +225,10 @@ class WorkerConcurrentRunTest extends AnyFreeSpec with NonImplicitAssertions {
         threads.foreach(_.join(610000)) // above the injector deadline so a slow-but-progressing injector is joined, not abandoned
 
         val totalEnq = enq.get()
+        assert(
+            totalEnq == total,
+            s"probe3 WATCHDOG fired at enqueued=$totalEnq/$total: the injectors wedged, so this run guards nothing"
+        )
         // Wait for every enqueued task to run. A strand is ran < totalEnq that never advances after all
         // injectors have stopped producing: no live run() and no pending wakeup to recover it.
         val tailEnd = deadlineMs(300000)

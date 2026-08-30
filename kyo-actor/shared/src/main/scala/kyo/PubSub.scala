@@ -213,7 +213,7 @@ object PubSub:
                     actor.ask(Command.Count(_))
 
                 def close(using Frame): Unit < Sync =
-                    actor.close.unit
+                    actor.closeDiscard
         }
     end linearized
 

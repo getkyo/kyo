@@ -167,6 +167,14 @@ private[net] object KEvent:
         putLongLe(buf, base + 24, udata)    // udata (owning handle id; the stale-event discriminator)
     end encodeChange
 
+    /** OR `extra` into the `flags` of the already-encoded entry at element `slot`, leaving every other field untouched. Used by the changelist
+      * flush to add `EV_RECEIPT` to a batch whose entries were encoded one at a time as they were staged, without re-encoding them.
+      */
+    def addFlags(buf: Buffer[Byte], slot: Int, extra: Short)(using AllowUnsafe): Unit =
+        val offset = slot * size + 10
+        putShortLe(buf, offset, (getShortLe(buf, offset) | extra).toShort)
+    end addFlags
+
     /** Write a one-element `EVFILT_USER` changelist at element 0 of `buf` with explicit `fflags`. Used by the kqueue poll-loop wakeup: the
       * register call passes `flags = EV_ADD | EV_CLEAR` and `fflags = 0`; the trigger call passes `flags = 0` and `fflags = NOTE_TRIGGER`. The
       * `ident` is a fixed wakeup key (not an fd), distinct from any socket fd so its delivered event is recognized and consumed by the poll loop

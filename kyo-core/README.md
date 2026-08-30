@@ -374,7 +374,7 @@ case class Order(id: Long, customerId: Long, items: Chunk[Item], total: BigDecim
 case class Item(sku: String, qty: Int, price: BigDecimal)
 val channel: Channel[Order] = ???
 
-val remaining: Maybe[Seq[Order]] < Sync = channel.close
+val remaining: Maybe[Seq[Order]] < Async = channel.close
 ```
 
 `closeAwaitEmpty` closes the channel to new producers and waits until all buffered elements have been consumed:
