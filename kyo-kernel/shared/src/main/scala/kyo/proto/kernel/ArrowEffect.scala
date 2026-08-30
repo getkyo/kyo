@@ -15,6 +15,7 @@ import kyo.proto.kernel.internal.Kyo
 import kyo.proto.kernel.internal.Nested
 import kyo.proto.kernel.internal.Pending
 import scala.annotation.nowarn
+import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
 /** Represents abstract functions whose implementations are provided later by a handler.
@@ -241,6 +242,86 @@ object ArrowEffect:
         inline handle: [X] => (X < E, Arrow[X, A, E & S & S2]) => A < (E & S & S2)
     )(using inline _frame: Frame): A < (S & S2) =
         handleContOperation(effectTag, v)(handle, a => a)
+
+    /** The one-shot region's exit token: the clause stores the operation and the raw remainder, and returning it settled is what completes
+      * the region at the first operation. It never escapes [[handleFirst]]'s expansion: the done lane unwraps it before anything else sees
+      * the value. Abstract so each expansion implements it anonymously, and carrying the operation's index as a type member, so both fields
+      * keep their real types.
+      */
+    abstract private[kyo] class FirstSuspended[I[_], O[_], E <: ArrowEffect[I, O], A, S]:
+        type C
+        def input: I[C]
+        def cont: Arrow[O[C], A, E & S]
+    end FirstSuspended
+
+    /** Answers only the first operation of the region, handing the clause the raw remainder.
+      *
+      * The clause receives the operation's input and the continuation with the effect still in its row: nothing has been decided about the
+      * rest of the computation, and a consumer re-handles the remainder with a fresh region round after round. A body that completes
+      * without performing the effect takes `done` instead. Both lanes run outside the region.
+      *
+      * Built on [[handleCont]] at the union of the region's two completion currencies: the clause completes the region at once by returning
+      * the settled token, and the done lane tells the arms apart. The body enters the region unchanged, so the remainder is the body's own
+      * continuation, raw.
+      */
+    @nowarn("msg=anonymous")
+    private[kyo] inline def handleFirst[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
+        inline effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        inline handle: [C] => (I[C], Arrow[O[C], A, E & S]) => B < (S & S2),
+        inline done: A => B < (S & S2)
+    )(using inline _frame: Frame): B < (S & S2) =
+        handleCont[I, O, E, A | FirstSuspended[I, O, E, A, E & S], B, S, S2](effectTag, v)(
+            [C0] =>
+                (input0, cont0) =>
+                    new FirstSuspended[I, O, E, A, E & S]:
+                        type C = C0
+                        def input = input0
+                        // Representation assertion: the region settles the moment this token is
+                        // returned, so no application of the continuation can observe the token arm
+                        // of its answer type, and the remainder is body code whose row never
+                        // carried S2
+                        def cont = cont0.asInstanceOf[Arrow[O[C0], A, E & S]]
+            ,
+            r =>
+                r match
+                    case first: FirstSuspended[I, O, E, A, E & S] @unchecked =>
+                        handle[first.C](first.input, first.cont)
+                    case a =>
+                        // the union's other arm; erasure and the abstract A keep the narrowing from
+                        // being inferred once the token case took its own
+                        done(a.asInstanceOf[A])
+        )
+
+    /** Whether an operation this tag's own region would answer stands first, delivered to `f` without disturbing anything.
+      *
+      * Sees through what stands in front of an operation without being one: installed regions, a parked slice, and deferrals whose payload
+      * was handed in. It stops at a settled value, which stands at nothing, and at a deferral whose payload is a by-name body, which cannot
+      * be read without running it, so the answer is advisory: a miss never means the operation is absent, only that it is not visible, and
+      * every caller must tolerate that.
+      *
+      * The check runs in the dispatch direction: would a region tagged `effectTag` answer this operation. An intersection query therefore
+      * sees each member's operations, the way one region over the intersection answers them.
+      */
+    private[kyo] def dispatchFirst[I[_], O[_], E <: ArrowEffect[I, O], A, S](
+        effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        f: [C] => I[C] => Unit
+    ): Unit =
+        @tailrec def loop(x: Any): Unit =
+            x match
+                case kyo: Kyo.SuspendArrow[I, O, E, c, ?, ?] @unchecked =>
+                    // the type claim is erased and the tag check is the semantic guard: a foreign
+                    // operation matches the pattern and fails the check, which is the answer
+                    if effectTag.erased <:< kyo.tag.erased then f[c](kyo.input)
+                case kyo: Kyo.Handle[?, ?, ?, ?, ?, ?] => loop(kyo.value)
+                case kyo: Kyo.Park[?, ?]               => loop(kyo.value)
+                case kyo: Kyo.Defer[?, ?, ?, ?]        => loop(kyo.value)
+                case _                                 => ()
+        loop(v)
+    end dispatchFirst
 
     /** Handles an arrow effect with a loop-based approach, without state between occurrences.
       *

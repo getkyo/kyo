@@ -967,6 +967,92 @@ class ArrowEffectTest extends AnyFreeSpec:
         }
     }
 
+    "handleFirst" - {
+        "answers the first operation and hands the raw remainder" in {
+            val v = ask.map(a => ask.map(b => a * 10 + b))
+            val r: Int < Any = ArrowEffect.handleFirst(Tag[Ask], v)(
+                [C] => (_, cont) => ArrowEffect.handleCont(Tag[Ask], cont(4))([C2] => (_, k) => k(2), a => a),
+                a => a
+            )
+            assert(eval(r) == 42)
+        }
+
+        "a body that completes without the effect takes done" in {
+            val r: Int < Any = ArrowEffect.handleFirst(Tag[Ask], 5: Int < Ask)([C] => (_, _) => -1, a => a * 2)
+            assert(eval(r) == 10)
+        }
+
+        "the clause may end the computation without resuming" in {
+            var reached = false
+            val v = ask.map { a =>
+                reached = true
+                a
+            }
+            val r: Int < Any = ArrowEffect.handleFirst(Tag[Ask], v)([C] => (_, _) => -1, a => a)
+            assert(eval(r) == -1)
+            assert(!reached)
+        }
+
+        "re-handling the remainder round by round sees every operation" in {
+            def collect(v: Int < Ask, acc: List[Int]): List[Int] < Any =
+                ArrowEffect.handleFirst(Tag[Ask], v)(
+                    [C] => (_, cont) => collect(cont(acc.size + 1), acc :+ (acc.size + 1)),
+                    a => acc :+ a
+                )
+            val v = ask.map(a => ask.map(b => a * 10 + b))
+            assert(eval(collect(v, Nil)) == List(1, 2, 12))
+        }
+    }
+
+    "dispatchFirst" - {
+        "reports the first operation through a region and a handed-in deferral" in {
+            val inner: Int < (Ask & Say) = ask.map(a => a)
+            val idle: Int < Ask          = ArrowEffect.handleCont(Tag[Say], inner)([C] => (_, k) => k(()), a => a)
+            val deferred: Int < Ask      = Effect.defer(idle, Arrow.id)
+            var seen                     = 0
+            ArrowEffect.dispatchFirst(Tag[Ask], deferred)([C] => _ => seen += 1)
+            assert(seen == 1)
+            // undisturbed: the same value still evaluates
+            assert(eval(ArrowEffect.handleCont(Tag[Ask], deferred)([C] => (_, k) => k(42), a => a)) == 42)
+        }
+
+        "a foreign operation standing first is not reported" in {
+            var seen = 0
+            ArrowEffect.dispatchFirst(Tag[Say], ask.map(_ + 1))([C] => _ => seen += 1)
+            assert(seen == 0)
+        }
+
+        "queries in the dispatch direction" in {
+            var seen = 0
+            // a region at the subtype answers the supertype-tagged operation, so the query reports it
+            ArrowEffect.dispatchFirst(Tag[AskSub], ask)([C] => _ => seen += 1)
+            // the supertype region does not answer the sub-tagged operation, so the query does not
+            ArrowEffect.dispatchFirst(Tag[Ask], askSub)([C] => _ => seen += 10)
+            assert(seen == 1)
+        }
+
+        "a settled value reports nothing" in {
+            var seen = 0
+            ArrowEffect.dispatchFirst(Tag[Ask], 42: Int < Ask)([C] => _ => seen += 1)
+            assert(seen == 0)
+        }
+
+        "sees through a parked slice" in {
+            val body: Int < Ask =
+                ask.map { a =>
+                    kyo.discard(Safepoint.stop(Thread.currentThread()))
+                    Safepoint.deadline(java.lang.System.currentTimeMillis() - 1)
+                    Effect.defer(ask.map(b => a + b), Arrow.id)
+                }
+            val handled = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, k) => k(21), a => a)
+            val parked  = Eval.partial(handled)
+            var seen    = 0
+            ArrowEffect.dispatchFirst(Tag[Ask], parked)([C] => _ => seen += 1)
+            assert(seen == 1)
+            assert(eval(parked) == 42)
+        }
+    }
+
     "contracts" - {
         "a clause raising a foreign effect is answered by the outer handler across the region" in {
             val v: Int < (Ask & Say) = ask.map(a => say("x").map(_ => ask.map(b => a + b)))
