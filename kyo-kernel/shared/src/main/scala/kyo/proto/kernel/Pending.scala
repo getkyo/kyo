@@ -396,6 +396,10 @@ object `<` extends Implicits:
         // its result born in the caller's own map expansion, and delivering it through the non-inline
         // interpreter boundary makes that box a real allocation. Unnesting here instead lets escape
         // analysis finish the job, and only a node graph pays the eval.
+        //
+        // Stays private to kyo, matching the reference. Within kyo it may be used, and `.eval` is
+        // preferred wherever the point is the result rather than the settledness: the legitimate
+        // callers are the ones asking "is this settled now", never a shortcut around evaluation.
         private[kyo] inline def evalNow: Maybe[A] =
             val v = self
             v match
