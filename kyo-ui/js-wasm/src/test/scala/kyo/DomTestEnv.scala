@@ -56,4 +56,21 @@ private[kyo] object DomTestEnv:
         end if
     end install
 
+    /** Mount diagnostics whose [[MountReady.installed]] flips once a `DomBackend` mount has finished wiring itself up.
+      *
+      * `DomBackend.mountInto` writes the container's HTML early, then subscribes the reactive tree, opens the event
+      * channel, forks the drain fiber, and only then installs event delegation and the drag runtime. Waiting for a
+      * rendered node therefore does NOT mean a dispatched event will be seen: a click sent in that window reaches no
+      * listener and is lost, and a test waiting for its effect waits forever. `dragRuntimeInstalled` is the last hook
+      * `mountInto` calls before it parks, so it is the barrier a test must clear before dispatching anything.
+      */
+    final class MountReady extends kyo.internal.DomBackend.MountDiagnostics:
+        private var ready                                                                    = false
+        def installed: Boolean                                                               = ready
+        def channelClosed(): Unit                                                            = ()
+        def drainInterrupting(): Unit                                                        = ()
+        def drainJoined(): Unit                                                              = ()
+        override def dragRuntimeInstalled(runtime: kyo.internal.DomDragRuntime.Handle): Unit = ready = true
+    end MountReady
+
 end DomTestEnv

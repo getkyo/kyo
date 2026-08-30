@@ -383,4 +383,32 @@ class DomBackendDelegationTest extends kyo.test.Test[Any]:
         }
     }
 
+    "suppresses a scroll key on a target whose isContentEditable the DOM does not define" in {
+        // `scrollKeyPrevented` consults `isContentEditable`, which is an HTMLElement member: an SVG target does not
+        // carry it, and jsdom implements contentEditable on no element at all, so it reads as undefined. Reading it
+        // as a plain Boolean threw a ClassCastException out of the keydown listener, which lost both the
+        // preventDefault below and every other event the listener would have delegated.
+        for
+            ready <- Sync.defer(new DomTestEnv.MountReady)
+            fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(
+                UI.div(UI.button("nav").id("scroll-key-target").tabIndex(0).preventScrollKeys),
+                ready
+            )))
+            _ <- assertEventually(Sync.defer(ready.installed && dom.document.getElementById("scroll-key-target") != null))
+            prevented <- Sync.defer {
+                val target = dom.document.getElementById("scroll-key-target")
+                assert(scalajs.isUndefined(target.asInstanceOf[scalajs.Dynamic].isContentEditable))
+                val event = scalajs.Dynamic.newInstance(dom.window.asInstanceOf[scalajs.Dynamic].KeyboardEvent)(
+                    "keydown",
+                    scalajs.Dynamic.literal(key = "ArrowDown", bubbles = true, cancelable = true)
+                )
+                discard(target.asInstanceOf[scalajs.Dynamic].dispatchEvent(event))
+                event.defaultPrevented.asInstanceOf[Boolean]
+            }
+            _ <- fiber.interrupt
+            _ <- fiber.getResult
+        yield assert(prevented)
+        end for
+    }
+
 end DomBackendDelegationTest

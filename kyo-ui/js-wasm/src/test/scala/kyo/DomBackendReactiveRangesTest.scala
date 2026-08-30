@@ -33,8 +33,9 @@ class DomBackendReactiveRangesTest extends kyo.test.Test[Any]:
                 UI.button("add").id("add").onClick(rows.getAndUpdate(_ :+ "B").unit),
                 UI.button("clear").id("clear").onClick(rows.set(Chunk.empty))
             )
-            fiber   <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui)))
-            _       <- assertEventually(Sync.defer(dom.document.getElementById("row-A") != null))
+            ready = new DomTestEnv.MountReady
+            fiber   <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui, ready)))
+            _       <- assertEventually(Sync.defer(ready.installed && dom.document.getElementById("row-A") != null))
             initial <- Sync.defer(topology)
             _       <- click("add")
             _       <- assertEventually(Sync.defer(dom.document.getElementById("row-B") != null))
@@ -78,8 +79,9 @@ class DomBackendReactiveRangesTest extends kyo.test.Test[Any]:
                 UI.button("section").id("local-section").onClick(sectioned.set(true)),
                 UI.button("row").id("local-return-row").onClick(sectioned.set(false))
             )
-            fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui)))
-            _     <- assertEventually(Sync.defer(dom.document.getElementById("local-row") != null))
+            ready = new DomTestEnv.MountReady
+            fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui, ready)))
+            _     <- assertEventually(Sync.defer(ready.installed && dom.document.getElementById("local-row") != null))
             _     <- click("local-section")
             _     <- assertEventually(Sync.defer(dom.document.getElementById("local-authored") != null))
             authored <- Sync.defer {
@@ -113,8 +115,9 @@ class DomBackendReactiveRangesTest extends kyo.test.Test[Any]:
                     )
                 ).id("local-mixed-table")
             )
-            fiber    <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui)))
-            _        <- assertEventually(Sync.defer(dom.document.getElementById("local-mixed-A") != null))
+            ready = new DomTestEnv.MountReady
+            fiber    <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui, ready)))
+            _        <- assertEventually(Sync.defer(ready.installed && dom.document.getElementById("local-mixed-A") != null))
             initial  <- Sync.defer(mixedTableTopology("local-mixed-table"))
             _        <- rows.set(Chunk("A", "B"))
             _        <- assertEventually(Sync.defer(dom.document.getElementById("local-mixed-B") != null))
@@ -144,8 +147,9 @@ class DomBackendReactiveRangesTest extends kyo.test.Test[Any]:
                 UI.div(rows.foreachKeyed(identity)(value => UI.button(value).id(s"local-keyed-$value"))).id("local-keyed"),
                 nestedProp.map(value => UI.div(UI.checkbox.id("local-nested-property").indeterminate(value)))
             )
-            fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui)))
-            _     <- assertEventually(Sync.defer(dom.document.getElementById("local-option-A") != null))
+            ready = new DomTestEnv.MountReady
+            fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui, ready)))
+            _     <- assertEventually(Sync.defer(ready.installed && dom.document.getElementById("local-option-A") != null))
             _     <- rows.set(Chunk("A", "B"))
             _     <- nestedProp.set(true)
             _     <- assertEventually(Sync.defer(dom.document.getElementById("local-option-B") != null))
@@ -182,10 +186,11 @@ class DomBackendReactiveRangesTest extends kyo.test.Test[Any]:
                 outer.map(_ => (middle.map(_ => (value.map(v => UI.span(v).id("value")): UI)): UI)),
                 UI.button("update").id("update").onClick(value.set("two"))
             )
-            fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui)))
+            ready = new DomTestEnv.MountReady
+            fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui, ready)))
             _ <- assertEventually(Sync.defer {
                 val element = dom.document.getElementById("value")
-                element != null && element.textContent == "one"
+                ready.installed && element != null && element.textContent == "one"
             })
             _ <- click("update")
             _ <- assertEventually(Sync.defer {
@@ -211,8 +216,9 @@ class DomBackendReactiveRangesTest extends kyo.test.Test[Any]:
                 outer.map(_ => (UI.input.id("field").value(value): UI)),
                 UI.button("external").id("external").onClick(value.set("updated"))
             )
-            fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui)))
-            _     <- assertEventually(Sync.defer(dom.document.getElementById("field") != null))
+            ready = new DomTestEnv.MountReady
+            fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui, ready)))
+            _     <- assertEventually(Sync.defer(ready.installed && dom.document.getElementById("field") != null))
             _     <- click("external")
             _ <- assertEventually(Sync.defer {
                 val field = dom.document.getElementById("field")
@@ -233,8 +239,9 @@ class DomBackendReactiveRangesTest extends kyo.test.Test[Any]:
                 UI.emailInput.id("morph-email").value(email),
                 UI.numberInput.id("morph-number").value(number)
             )
-            fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui)))
-            _     <- assertEventually(Sync.defer(dom.document.getElementById("morph-number") != null))
+            ready = new DomTestEnv.MountReady
+            fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui, ready)))
+            _     <- assertEventually(Sync.defer(ready.installed && dom.document.getElementById("morph-number") != null))
             original <- Sync.defer(
                 (
                     dom.document.getElementById("morph-text"),
@@ -279,9 +286,10 @@ class DomBackendReactiveRangesTest extends kyo.test.Test[Any]:
     "bound Dropdown updates repeatedly inside its initial logical range" in {
         for
             selected <- Signal.initRef("a")
-            ui = UI.div(UI.dropdown("Alpha" -> "a", "Beta" -> "b").id("local-dropdown").value(selected))
-            fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui)))
-            _     <- assertEventually(Sync.defer(dom.document.getElementById("local-dropdown-trigger") != null))
+            ui    = UI.div(UI.dropdown("Alpha" -> "a", "Beta" -> "b").id("local-dropdown").value(selected))
+            ready = new DomTestEnv.MountReady
+            fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui, ready)))
+            _     <- assertEventually(Sync.defer(ready.installed && dom.document.getElementById("local-dropdown-trigger") != null))
             _     <- selected.set("b")
             _ <- assertEventually(Sync.defer {
                 val trigger = dom.document.getElementById("local-dropdown-trigger")
@@ -307,8 +315,9 @@ class DomBackendReactiveRangesTest extends kyo.test.Test[Any]:
             outerNode   = UI.Ast.Reactive[Svg.G](outerSignal)
             svg         = Svg.Root(children = Chunk(outerNode))
             ui          = UI.div(svg, UI.button("show").id("show").onClick(show.set(true)))
-            fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui)))
-            _     <- assertEventually(Sync.defer(dom.document.querySelector("svg g[data-kyo-reactive]") != null))
+            ready       = new DomTestEnv.MountReady
+            fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui, ready)))
+            _     <- assertEventually(Sync.defer(ready.installed && dom.document.querySelector("svg g[data-kyo-reactive]") != null))
             _     <- click("show")
             _     <- assertEventually(Sync.defer(dom.document.getElementById("circle") != null))
             comments <- Sync.defer {
@@ -323,9 +332,10 @@ class DomBackendReactiveRangesTest extends kyo.test.Test[Any]:
     "range replacement restores focus and caret for raw HTML without a path" in {
         for
             value <- Signal.initRef("one")
-            ui = UI.div(value.map(v => UI.rawHtml(s"<input id='raw' value='$v'>")))
-            fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui)))
-            _     <- assertEventually(Sync.defer(dom.document.getElementById("raw") != null))
+            ui    = UI.div(value.map(v => UI.rawHtml(s"<input id='raw' value='$v'>")))
+            ready = new DomTestEnv.MountReady
+            fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui, ready)))
+            _     <- assertEventually(Sync.defer(ready.installed && dom.document.getElementById("raw") != null))
             _ <- Sync.defer {
                 val raw = dom.document.getElementById("raw").asInstanceOf[scalajs.Dynamic]
                 discard(raw.focus())
@@ -351,8 +361,9 @@ class DomBackendReactiveRangesTest extends kyo.test.Test[Any]:
             ui = UI.table(
                 value.map(v => UI.tr(UI.td(UI.rawHtml(s"<input id='raw-table' value='$v'>"))))
             )
-            fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui)))
-            _     <- assertEventually(Sync.defer(dom.document.getElementById("raw-table") != null))
+            ready = new DomTestEnv.MountReady
+            fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui, ready)))
+            _     <- assertEventually(Sync.defer(ready.installed && dom.document.getElementById("raw-table") != null))
             _ <- Sync.defer {
                 val raw = dom.document.getElementById("raw-table").asInstanceOf[scalajs.Dynamic]
                 discard(raw.focus())
@@ -379,11 +390,17 @@ class DomBackendReactiveRangesTest extends kyo.test.Test[Any]:
             _ <- Sync.defer {
                 dom.document.body.innerHTML = "<div id='left-mount'></div><div id='right-mount'></div>"
             }
-            leftFiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(left.map(v => UI.input.id("left-field").value(v)), "#left-mount")))
-            rightFiber <- Fiber.initUnscoped(
-                Scope.run(DomBackend.mount(right.map(v => UI.input.id("right-field").value(v)), "#right-mount"))
+            leftReady  = new DomTestEnv.MountReady
+            rightReady = new DomTestEnv.MountReady
+            leftFiber <- Fiber.initUnscoped(
+                Scope.run(DomBackend.mount(left.map(v => UI.input.id("left-field").value(v)), "#left-mount", leftReady))
             )
-            _       <- assertEventually(Sync.defer(dom.document.getElementById("right-field") != null))
+            rightFiber <- Fiber.initUnscoped(
+                Scope.run(DomBackend.mount(right.map(v => UI.input.id("right-field").value(v)), "#right-mount", rightReady))
+            )
+            _ <- assertEventually(Sync.defer(
+                leftReady.installed && rightReady.installed && dom.document.getElementById("right-field") != null
+            ))
             _       <- Sync.defer(discard(dom.document.getElementById("right-field").asInstanceOf[scalajs.Dynamic].focus()))
             _       <- right.set("updated")
             _       <- assertEventually(Sync.defer(dom.document.getElementById("right-field").getAttribute("value") == "updated"))
@@ -402,8 +419,9 @@ class DomBackendReactiveRangesTest extends kyo.test.Test[Any]:
                 UI.checkbox.id("property-checkbox").indeterminate(state),
                 UI.button("indeterminate").id("set-property").onClick(state.set(true))
             )
-            fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui)))
-            _     <- assertEventually(Sync.defer(dom.document.getElementById("property-checkbox") != null))
+            ready = new DomTestEnv.MountReady
+            fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui, ready)))
+            _     <- assertEventually(Sync.defer(ready.installed && dom.document.getElementById("property-checkbox") != null))
             _     <- click("set-property")
             _ <- assertEventually(Sync.defer {
                 val checkbox = dom.document.getElementById("property-checkbox")
@@ -434,8 +452,9 @@ class DomBackendReactiveRangesTest extends kyo.test.Test[Any]:
                 UI.button("section").id("local-show-section").onClick(section.set(true)),
                 UI.button("row").id("local-show-row").onClick(section.set(false))
             )
-            fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui)))
-            _     <- assertEventually(Sync.defer(dom.document.getElementById("local-semantic-row") != null))
+            ready = new DomTestEnv.MountReady
+            fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui, ready)))
+            _     <- assertEventually(Sync.defer(ready.installed && dom.document.getElementById("local-semantic-row") != null))
             _     <- click("local-show-section")
             _     <- assertEventually(Sync.defer(dom.document.getElementById("local-semantic-host") != null))
             authoredState <- Sync.defer {

@@ -51,10 +51,13 @@ private[kyo] object DomBackend:
 
     /** Mount a UI into a specific DOM element selected by CSS selector. */
     def mount(ui: UI, selector: String)(using Frame): Unit < (Async & Scope) =
+        mount(ui, selector, NoMountDiagnostics)
+
+    private[kyo] def mount(ui: UI, selector: String, diagnostics: MountDiagnostics)(using Frame): Unit < (Async & Scope) =
         Sync.defer {
             val target = document.querySelector(selector)
             if target == null then Abort.panic(UIException(s"Element not found: $selector"))
-            else mountInto(ui, target.asInstanceOf[dom.Element], NoMountDiagnostics)
+            else mountInto(ui, target.asInstanceOf[dom.Element], diagnostics)
         }
     end mount
 
@@ -1044,8 +1047,15 @@ private[kyo] object DomBackend:
       * Horizontal/edge keys are exempt for any text-editable target, so a filter input keeps caret movement.
       */
     private def scrollKeyPrevented(key: String, target: dom.Element): Boolean =
-        val tag              = target.tagName
-        def contentEditable  = target.asInstanceOf[scalajs.js.Dynamic].isContentEditable.asInstanceOf[Boolean]
+        val tag = target.tagName
+        // `isContentEditable` is an HTMLElement member: an SVG target does not carry it, and jsdom implements
+        // contentEditable on no element at all, so the property reads as undefined. Casting undefined straight to
+        // Boolean throws a ClassCastException out of the keydown listener, which takes the whole delegation path
+        // down with it. Read the property defensively and treat an absent one as "not editable".
+        def contentEditable =
+            val value = target.asInstanceOf[scalajs.js.Dynamic].isContentEditable
+            !scalajs.js.isUndefined(value) && value != null && value.asInstanceOf[Boolean]
+        end contentEditable
         def editable         = tag == "INPUT" || tag == "TEXTAREA" || tag == "SELECT" || contentEditable
         def verticalConsumer = tag == "TEXTAREA" || tag == "SELECT" || contentEditable
         key match
