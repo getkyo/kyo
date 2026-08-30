@@ -598,4 +598,124 @@ class EvalTest extends AnyFreeSpec:
         assert(eval(answerAsk(41)(ask.map(_ + 1))) == 42)
     }
 
+    // stackless and shared: the test is about the eval's stack, and filling a trace ten thousand
+    // times measures the JVM's exception construction instead
+    private object Boom extends RuntimeException("boom", null, false, false)
+
+    // A context read rebinds "the updated value for the rest of that region's extent", and an
+    // answered operation is inside that extent. The public surface cannot show this: every
+    // ContextEffect.suspend carries an identity update, so the node is built here directly.
+    "a context update outlives an operation answered after it" in {
+        sealed trait Count extends kyo.proto.kernel.ContextEffect[Int]
+        def bump: Int < Count =
+            new Kyo.SuspendContext[Int, Count, Int, Count]:
+                def tag            = Tag[Count]
+                def update(v: Int) = v + 1
+                def cont           = Arrow.id
+        // bound at 10: the first read rebinds 11, the Ask region answers, the second read sees 11
+        // and rebinds 12. Resuming an answered operation with the context the region was installed
+        // with instead would lose the first update and give 11
+        val body: Int < (Count & Ask) = bump.map(_ => ask.map(_ => bump))
+        val r: Int < Count            = answerAsk(0)(body)
+        assert(eval(kyo.proto.kernel.ContextEffect.handle(Tag[Count], 10)(r)) == 12)
+    }
+
+    // the eval holds no frame per open region, and it must hold none per recovered one either: a
+    // recovery that resumed by evaluating the rest of the eval from inside its own guard would make
+    // this grow with the number of throws rather than stay flat
+    "regions that fail and recover in sequence cost no stack" in {
+        def recovering(to: Int): Int < Any =
+            val h = new Handler.HandlerCont[Const[Unit], Const[Int], Ask, Int, Int, Any]:
+                def tag                                          = Tag[Ask]
+                override def recover(state: Unit, ex: Throwable) = Maybe(to)
+                def done(state: Unit, v: Int)                    = v
+                def run[X, C, S2](input: Unit, cont: Arrow[Int, Int, Ask], k: Arrow[Int, C, S2]): C < (Ask & S2) =
+                    k(cont(0, Arrow.id), Arrow.id)
+            val body: Int < Ask = ask.map(_ => (throw Boom): Int)
+            Kyo.handle[Ask, Int, Int, Any, Unit](body, h, ())
+        end recovering
+        def go(i: Int): Int < Any =
+            if i == 0 then 0
+            else recovering(i).map(_ => go(i - 1))
+        assert(eval(go(10000)) == 0)
+    }
+
+    // The budget counts the strict applications standing on the Java stack, and a throw unwinds them
+    // without their matching exits. The eval's guard repairs that where it catches, but a foreign
+    // crossing carries its own recover, and a throw recovered there left the count short by every
+    // application it unwound. A drained count is a fixed point rather than a slow path, so enough of
+    // these livelock; the count is sampled directly here, which fails while the scenario still ends.
+    "a region recovering across a foreign crossing leaves the budget where it found it" in {
+        val samples = collection.mutable.ListBuffer.empty[Safepoint.State]
+        def sample(): Unit =
+            val slot = Safepoint.get()
+            // `save` installs a fresh budget as it reads, so reading it back is a save/restore pair
+            val d = Safepoint.save(slot)
+            Safepoint.restore(slot, d)
+            samples += d
+        end sample
+
+        // the Say region is foreign to the Ask its body suspends, so answering that Ask resumes
+        // through the rebuilt node, and the throw that follows lands in the crossing's own recover
+        def crossing(to: Int): Int < Ask =
+            val h = new Handler.HandlerCont[Const[String], Const[Unit], Say, Int, Int, Ask]:
+                def tag                                          = Tag[Say]
+                override def recover(state: Unit, ex: Throwable) = Maybe(to)
+                def done(state: Unit, v: Int)                    = v
+                def run[X, C, S2](input: String, cont: Arrow[Unit, Int, Say & Ask], k: Arrow[Int, C, S2]): C < (Say & Ask & S2) =
+                    k(cont((), Arrow.id), Arrow.id)
+            val body: Int < (Say & Ask) = ask.map(_ => (throw Boom): Int)
+            Kyo.handle[Say, Int, Int, Ask, Unit](body, h, ())
+        end crossing
+
+        // fewer cycles than the budget has entries, so a leaking eval still terminates and the
+        // samples say so, rather than the suite hanging on the fixed point
+        def go(i: Int): Int < Ask =
+            if i == 0 then (0: Int < Ask)
+            else
+                crossing(i).map { _ =>
+                    sample()
+                    go(i - 1)
+                }
+        assert(eval(answerAsk(0)(go(100))) == 0)
+        assert(samples.size == 100)
+        // `equals` rather than `==`: `State` is opaque and carries no `CanEqual`, and a cast to its
+        // underlying Int would be a new cast for a test's convenience
+        assert(samples.forall(_.equals(samples.head)))
+    }
+
+    // `recover` is consulted with its region still installed, and one that fails itself is the
+    // failure the regions outside it then see. The baseline got that free from nested tries; the
+    // unwind is its own control flow now, and has been rewritten twice, so it is pinned rather than
+    // stated. No test threw from a `recover` before this one.
+    "a recover that fails itself is the failure the enclosing region sees" in {
+        object Inner extends RuntimeException("inner", null, false, false)
+        var seen = Maybe.empty[Throwable]
+
+        val innerHandler = new Handler.HandlerCont[Const[String], Const[Unit], Say, Int, Int, Ask]:
+            def tag                                          = Tag[Say]
+            override def recover(state: Unit, ex: Throwable) = throw Inner
+            def done(state: Unit, v: Int)                    = v
+            def run[X, C, S2](input: String, cont: Arrow[Unit, Int, Say & Ask], k: Arrow[Int, C, S2]): C < (Say & Ask & S2) =
+                k(cont((), Arrow.id), Arrow.id)
+
+        val outerHandler = new Handler.HandlerCont[Const[Unit], Const[Int], Ask, Int, Int, Any]:
+            def tag = Tag[Ask]
+            override def recover(state: Unit, ex: Throwable) =
+                seen = Maybe(ex)
+                Maybe(7)
+            def done(state: Unit, v: Int) = v
+            def run[X, C, S2](input: Unit, cont: Arrow[Int, Int, Ask], k: Arrow[Int, C, S2]): C < (Ask & S2) =
+                k(cont(0, Arrow.id), Arrow.id)
+
+        // deferred, so the throw lands while the loop is inside the region rather than while the
+        // computation is being built
+        val body: Int < (Say & Ask) = Effect.defer((throw Boom): Int < (Say & Ask))
+        val inner: Int < Ask        = Kyo.handle[Say, Int, Int, Ask, Unit](body, innerHandler, ())
+        val outer: Int < Any        = Kyo.handle[Ask, Int, Int, Any, Unit](inner, outerHandler, ())
+        assert(eval(outer) == 7)
+        // the second failure, not the one the inner region declined by throwing
+        assert(seen.exists(_ eq Inner))
+    }
+
 end EvalTest

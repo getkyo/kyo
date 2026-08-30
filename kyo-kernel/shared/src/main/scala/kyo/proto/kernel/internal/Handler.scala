@@ -14,14 +14,20 @@ import kyo.proto.kernel.Effect
 abstract class Handler[E <: Effect, A, B, -S, State]:
     def tag: Tag[E]
 
-    /** Consulted when a NonFatal throw unwinds the region's extent, with the state the region was installed with. A Present computation
-      * replaces the region's outcome, and what follows the extent still follows; Absent declines, and the failure keeps unwinding through
-      * the enclosing regions.
+    /** Consulted when a NonFatal throw unwinds the region's extent, with the state the region has reached, which is what its clauses have
+      * threaded rather than what it was installed with. A Present computation replaces the region's outcome, and what follows the extent
+      * still follows; Absent declines, and the failure keeps unwinding through the enclosing regions. A recover that fails itself is the
+      * failure those enclosing regions then see.
+      *
+      * The state is the live one for the same reason [[release]]'s is: a region's state is single-sourced, held by the eval while the region
+      * runs and by the node once it is a value, and every consumer reads whichever copy is live when it runs.
       */
     def recover(state: State, ex: Throwable): Maybe[B < S] = Absent
 
-    /** The abandonment notification: consulted when a holder gives up on an extent's continuation, with the state the region was installed
-      * with. It runs where nothing is installed to answer for it, so it takes no effects; the default owes nothing.
+    /** The abandonment notification: consulted when a holder gives up on an extent's continuation, with the state the region has reached. A
+      * region only becomes abandonable by being reified into a node, and the reification writes the live state into it, so the node's state
+      * is that state rather than a stale copy. It runs where nothing is installed to answer for it, so it takes no effects; the default owes
+      * nothing.
       */
     def release(state: State, ex: Throwable): Any < Any = ()
     def done(state: State, v: A): B < S

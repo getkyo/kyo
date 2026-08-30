@@ -2,6 +2,8 @@ package kyo.proto.kernel.internal
 
 import kyo.Frame
 import kyo.Maybe
+import kyo.Maybe.Absent
+import kyo.Maybe.Present
 import kyo.bug
 import kyo.proto.Arrow
 import kyo.proto.Loop
@@ -11,6 +13,7 @@ import kyo.proto.kernel.ArrowEffect
 import kyo.proto.kernel.ContextEffect
 import kyo.proto.kernel.Effect
 import language.implicitConversions
+import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
 object Eval:
@@ -26,210 +29,257 @@ object Eval:
             case _                => ()
 
     def apply[A, S](v: A < S): A < S =
-        def loop[A, B, C, S](v: A < S, contA: Arrow[A, B, S], contB: Arrow[B, C, S], ctx: Context): C < S =
+        // the regions this eval installs. A nested eval builds its own, so it answers for the
+        // regions it installed and for none of the enclosing ones
+        val stack = Stack()
+
+        // the depth guard bounds strict recursion within one eval, so the budget is this eval's and
+        // not whatever the thread had left. Inheriting a spent one is a fixed point rather than a
+        // slow path: every application defers, the settled arm applies the deferral, and its
+        // continuation is the application that just deferred.
+        //
+        // Restored in the finally below so a nested eval hands the enclosing one back what it had,
+        // its part-spent depth and its armed bit included. That restore has no test: a nested eval's
+        // own exits return most of what it spent, so the enclosing eval survives losing it, and the
+        // armed bit is unobservable while nothing in the proto arms. It is kept because discarding a
+        // caller's state is wrong whether or not this tree can currently see it, and because the
+        // reference kernel's eval does the same at the same place
+        val slot  = Safepoint.get()
+        val saved = Safepoint.save(slot)
+
+        // `loop` runs the machine to its answer, which is why it returns the eval's result rather
+        // than the composition of its arguments: once a region's continuation waits on the stack,
+        // "v with contA then contB applied" stops describing what the call produces
+        @tailrec def loop[T, B, C, S2](v: T < S2, contA: Arrow[T, B, S2], contB: Arrow[B, C, S2], ctx: Context): A < S =
             Debugger.onLoop(v, contA, contB)
             v match
-                case kyo: Kyo.Defer[AX, Y, A, S] @unchecked =>
+                case kyo: Kyo.Defer[AX, Y, T, S2] @unchecked =>
                     loop(kyo.value, kyo.contA, kyo.contB.chain(contA.chain(contB)), ctx)
-                case kyo: Kyo.SuspendContext[VX, CX, A, S] @unchecked if ctx.contains(kyo.tag) =>
+                case kyo: Kyo.SuspendContext[VX, CX, T, S2] @unchecked if ctx.contains(kyo.tag) =>
                     val nv = kyo.update(ctx.apply[VX, CX](kyo.tag))
                     Debugger.onContext(kyo, nv)
                     val k = kyo.cont
                     loop(k.head(nv, k.tail), contA, contB, ctx.update[VX, CX](kyo.tag, nv))
-                case kyo: Kyo.SuspendContextDefault[VX, CX, A, S] @unchecked if ctx.contains(kyo.tag) =>
+                case kyo: Kyo.SuspendContextDefault[VX, CX, T, S2] @unchecked if ctx.contains(kyo.tag) =>
                     val nv = kyo.update(ctx.apply[VX, CX](kyo.tag))
                     Debugger.onContext(kyo, nv)
                     val k = kyo.cont
                     loop(k.head(nv, k.tail), contA, contB, ctx.update[VX, CX](kyo.tag, nv))
-                case kyo: Kyo.Suspend[EX, A, S] @unchecked =>
-                    if contA.isInstanceOf[Arrow.Id[?]] && contB.isInstanceOf[Arrow.Id[?]] then kyo.asInstanceOf[C < S]
-                    else if kyo.cont.isInstanceOf[Arrow.Id[?]] && (contA.isInstanceOf[Arrow.Id[?]] || contB.isInstanceOf[Arrow.Id[?]]) then
-                        // a single live register absorbs into the free slot: only the copy allocates
-                        kyo.withCont(kyo.cont.chain(contA.chain(contB)))
+                case kyo: Kyo.Suspend[EX, T, S2] @unchecked =>
+                    // the registers absorb into the node first, so the regions are asked about one
+                    // suspension carrying its whole continuation
+                    val susp: Kyo.Suspend[?, ?, ?] =
+                        if contA.isInstanceOf[Arrow.Id[?]] && contB.isInstanceOf[Arrow.Id[?]] then kyo
+                        else if kyo.cont.isInstanceOf[Arrow.Id[?]] && (contA.isInstanceOf[Arrow.Id[?]] || contB.isInstanceOf[Arrow.Id[?]])
+                        then
+                            // a single live register absorbs into the free slot: only the copy allocates
+                            // TODO I can't see why this is better than just letting the else execute. This will allocate two objects no?
+                            kyo.withCont(kyo.cont.chain(contA.chain(contB)))
+                        else
+                            // two or more live continuations: reifying through chains would allocate a copy
+                            // plus a Chain per composition. One allocation fulfills every role instead: the
+                            // reified suspension captures its continuation and the registers, and delivery
+                            // composes by nested application; arriving through head and tail with an identity
+                            // continuation, the chain law composes without allocating
+                            kyo match
+                                case sa: Kyo.SuspendArrow[IX, OX, EX, VX, T, S2] @unchecked =>
+                                    val sax: Kyo.SuspendArrow[IX, OX, EX, VX, T, S2] = sa
+                                    val k0                                           = sax.cont
+                                    val cA                                           = contA
+                                    val cB                                           = contB
+                                    new Kyo.SuspendArrow[IX, OX, EX, VX, C, S2] with Arrow.Transform[OX[VX], C, S2]:
+                                        def tag   = sax.tag
+                                        def input = sax.input
+                                        def cont  = this
+                                        override def apply[D, S3](x: OX[VX] < S3, c2: Arrow[C, D, S3]) =
+                                            x match
+                                                case p: Pending[OX[VX], S3] @unchecked => Effect.defer(p, this, c2)
+                                                case _                                 => cA(k0(x, Arrow.id), cB.chain(c2))
+                                    end new
+                                case sc: Kyo.SuspendContext[VX, CX, T, S2] @unchecked =>
+                                    val scx: Kyo.SuspendContext[VX, CX, T, S2] = sc
+                                    val k0                                     = scx.cont
+                                    val cA                                     = contA
+                                    val cB                                     = contB
+                                    new Kyo.SuspendContext[VX, CX, C, S2] with Arrow.Transform[VX, C, S2]:
+                                        def tag           = scx.tag
+                                        def update(v: VX) = scx.update(v)
+                                        def cont          = this
+                                        override def apply[D, S3](x: VX < S3, c2: Arrow[C, D, S3]) =
+                                            x match
+                                                case p: Pending[VX, S3] @unchecked => Effect.defer(p, this, c2)
+                                                case _                             => cA(k0(x, Arrow.id), cB.chain(c2))
+                                    end new
+                                case sd: Kyo.SuspendContextDefault[VX, CX, T, S2] @unchecked =>
+                                    val sdx: Kyo.SuspendContextDefault[VX, CX, T, S2] = sd
+                                    val k0                                            = sdx.cont
+                                    val cA                                            = contA
+                                    val cB                                            = contB
+                                    new Kyo.SuspendContextDefault[VX, CX, C, S2] with Arrow.Transform[VX, C, S2]:
+                                        def tag           = sdx.tag
+                                        def default       = sdx.default
+                                        def update(v: VX) = sdx.update(v)
+                                        def cont          = this
+                                        override def apply[D, S3](x: VX < S3, c2: Arrow[C, D, S3]) =
+                                            x match
+                                                case p: Pending[VX, S3] @unchecked => Effect.defer(p, this, c2)
+                                                case _                             => cA(k0(x, Arrow.id), cB.chain(c2))
+                                    end new
+                            end match
+                    if stack.isEmpty then susp.asInstanceOf[A < S]
                     else
-                        // two or more live continuations: reifying through chains would allocate a copy
-                        // plus a Chain per composition. One allocation fulfills every role instead: the
-                        // reified suspension captures its continuation and the registers, and delivery
-                        // composes by nested application; arriving through head and tail with an identity
-                        // continuation, the chain law composes without allocating
-                        kyo match
-                            case sa: Kyo.SuspendArrow[IX, OX, EX, VX, A, S] @unchecked =>
-                                val sax: Kyo.SuspendArrow[IX, OX, EX, VX, A, S] = sa
-                                val k0                                          = sax.cont
-                                val cA                                          = contA
-                                val cB                                          = contB
-                                new Kyo.SuspendArrow[IX, OX, EX, VX, C, S] with Arrow.Transform[OX[VX], C, S]:
-                                    def tag   = sax.tag
-                                    def input = sax.input
-                                    def cont  = this
-                                    override def apply[D, S2](x: OX[VX] < S2, c2: Arrow[C, D, S2]) =
-                                        x match
-                                            case p: Pending[OX[VX], S2] @unchecked => Effect.defer(p, this, c2)
-                                            case _                                 => cA(k0(x, Arrow.id), cB.chain(c2))
-                                end new
-                            case sc: Kyo.SuspendContext[VX, CX, A, S] @unchecked =>
-                                val scx: Kyo.SuspendContext[VX, CX, A, S] = sc
-                                val k0                                    = scx.cont
-                                val cA                                    = contA
-                                val cB                                    = contB
-                                new Kyo.SuspendContext[VX, CX, C, S] with Arrow.Transform[VX, C, S]:
-                                    def tag           = scx.tag
-                                    def update(v: VX) = scx.update(v)
-                                    def cont          = this
-                                    override def apply[D, S2](x: VX < S2, c2: Arrow[C, D, S2]) =
-                                        x match
-                                            case p: Pending[VX, S2] @unchecked => Effect.defer(p, this, c2)
-                                            case _                             => cA(k0(x, Arrow.id), cB.chain(c2))
-                                end new
-                            case sd: Kyo.SuspendContextDefault[VX, CX, A, S] @unchecked =>
-                                val sdx: Kyo.SuspendContextDefault[VX, CX, A, S] = sd
-                                val k0                                           = sdx.cont
-                                val cA                                           = contA
-                                val cB                                           = contB
-                                new Kyo.SuspendContextDefault[VX, CX, C, S] with Arrow.Transform[VX, C, S]:
-                                    def tag           = sdx.tag
-                                    def default       = sdx.default
-                                    def update(v: VX) = sdx.update(v)
-                                    def cont          = this
-                                    override def apply[D, S2](x: VX < S2, c2: Arrow[C, D, S2]) =
-                                        x match
-                                            case p: Pending[VX, S2] @unchecked => Effect.defer(p, this, c2)
-                                            case _                             => cA(k0(x, Arrow.id), cB.chain(c2))
-                                end new
-                    end if
-                case kyo: Kyo.Handle[EX, AX, Y, A, S, VX] @unchecked =>
-                    // TODO let's move to a separate method, not nested
-                    def region[T](st: VX, v: T < (EX & S), cont: Arrow[T, AX, EX & S], ctx: Context): Y < S =
-                        loop(v, cont, Arrow.id, ctx) match
-                            case res: Kyo.Suspend[EX, AX, EX & S] @unchecked if !(res.tag.erased <:< kyo.handler.tag.erased) =>
-                                Debugger.onForeign(res, kyo.handler)
-                                // parameterized over the suspension's payload so each arm calls it with its own
-                                // refined continuation, keeping the rebuilt applies typed at the true input
-                                def reenter[P, D, S2](k0: Arrow[P, AX, EX & S], x: P < S2, cont2: Arrow[Y, D, S2]): D < (S & S2) =
-                                    // the resumed application runs before the region re-installs, so the
-                                    // extent's guard is carried here: a throw consults the same recover the
-                                    // entry guard would, and the recovered outcome replaces the region
-                                    // instead of re-entering it. Nothing inside the try is driven, so a
-                                    // throw consults at most once
-                                    try Kyo.handle[EX, AX, Y, S & S2, VX](k0.head(x, k0.tail), kyo.handler, st).chain(cont2)
-                                    catch
-                                        case ex if NonFatal(ex) =>
-                                            val r = kyo.handler.recover(st, ex).getOrElse(throw ex)
-                                            Debugger.onRecover(kyo.handler, ex)
-                                            r.chain(cont2)
-                                res match
-                                    case sa: Kyo.SuspendArrow[IY, OY, EY, VY, AX, EX & S] @unchecked =>
-                                        val sax: Kyo.SuspendArrow[IY, OY, EY, VY, AX, EX & S] = sa
+                        val handler = stack.handler.asInstanceOf[Handler[EX, AX, Y, Any, VX]]
+                        val state   = stack.state.asInstanceOf[VX]
+                        if !(susp.tag.erased <:< handler.tag.erased) then
+                            Debugger.onForeign(susp, handler)
+                            // parameterized over the suspension's payload so each arm calls it with its own
+                            // refined continuation, keeping the rebuilt applies typed at the true input
+                            def reenter[P, D, S3](k0: Arrow[P, AX, EX], x: P < S3, cont2: Arrow[Y, D, S3]): D < S3 =
+                                // the application is deferred rather than run here, so the region is
+                                // installed around the application instead of around what it already
+                                // produced. That is what makes this path ordinary: a throw reaches the
+                                // eval's guard with this region on the stack, so it consults the one
+                                // recover, repairs the budget where the depth is known, and completes
+                                // through the same `done` the settled arm runs
+                                Kyo.handle[EX, AX, Y, S3, VX](Effect.defer(x, k0), handler, state).chain(cont2)
+                            // this region is foreign to the suspension, so it becomes part of the
+                            // suspension's continuation and ends. Re-entering with what that produced asks
+                            // the next region out the same question
+                            val rebuilt: Y < Any =
+                                susp match
+                                    case sa: Kyo.SuspendArrow[IY, OY, EY, VY, AX, EX] @unchecked =>
+                                        val sax: Kyo.SuspendArrow[IY, OY, EY, VY, AX, EX] = sa
                                         // one allocation fulfilling both roles: the rebuilt suspension and its re-handling transform
-                                        new Kyo.SuspendArrow[IY, OY, EY, VY, Y, S] with Arrow.Transform[OY[VY], Y, S]:
+                                        new Kyo.SuspendArrow[IY, OY, EY, VY, Y, Any] with Arrow.Transform[OY[VY], Y, Any]:
                                             def tag   = sax.tag
                                             def input = sax.input
                                             def cont  = this
                                             override def release(ex: Throwable): Any < Any =
-                                                Debugger.onRelease(kyo.handler, ex)
-                                                sax.release(ex).andThen(kyo.handler.release(st, ex))(using Frame.internal)
-                                            override def apply[D, S2](x: OY[VY] < S2, cont2: Arrow[Y, D, S2]) =
+                                                Debugger.onRelease(handler, ex)
+                                                sax.release(ex).andThen(handler.release(state, ex))(using Frame.internal)
+                                            override def apply[D, S3](x: OY[VY] < S3, cont2: Arrow[Y, D, S3]) =
                                                 x match
-                                                    case kyo: Pending[OY[VY], S2] @unchecked =>
-                                                        Effect.defer(kyo, this, cont2)
+                                                    case p: Pending[OY[VY], S3] @unchecked =>
+                                                        Effect.defer(p, this, cont2)
                                                     case _ =>
                                                         reenter(sax.cont, Nested.unnest[OY[VY]](x), cont2)
                                         end new
-                                    case sc: Kyo.SuspendContext[VX, CX, AX, EX & S] @unchecked =>
-                                        val scx: Kyo.SuspendContext[VX, CX, AX, EX & S] = sc
+                                    case sc: Kyo.SuspendContext[VX, CX, AX, EX] @unchecked =>
+                                        val scx: Kyo.SuspendContext[VX, CX, AX, EX] = sc
                                         // one allocation fulfilling both roles: the rebuilt suspension and its re-handling transform
-                                        new Kyo.SuspendContext[VX, CX, Y, S] with Arrow.Transform[VX, Y, S]:
+                                        new Kyo.SuspendContext[VX, CX, Y, Any] with Arrow.Transform[VX, Y, Any]:
                                             def tag           = scx.tag
                                             def update(v: VX) = scx.update(v)
                                             def cont          = this
                                             override def release(ex: Throwable): Any < Any =
-                                                Debugger.onRelease(kyo.handler, ex)
-                                                scx.release(ex).andThen(kyo.handler.release(st, ex))(using Frame.internal)
-                                            override def apply[D, S2](x: VX < S2, cont2: Arrow[Y, D, S2]) =
+                                                Debugger.onRelease(handler, ex)
+                                                scx.release(ex).andThen(handler.release(state, ex))(using Frame.internal)
+                                            override def apply[D, S3](x: VX < S3, cont2: Arrow[Y, D, S3]) =
                                                 x match
-                                                    case kyo: Pending[VX, S2] @unchecked =>
-                                                        Effect.defer(kyo, this, cont2)
+                                                    case p: Pending[VX, S3] @unchecked =>
+                                                        Effect.defer(p, this, cont2)
                                                     case _ =>
                                                         reenter(scx.cont, Nested.unnest[VX](x), cont2)
                                         end new
-                                    case sd: Kyo.SuspendContextDefault[VX, CX, AX, EX & S] @unchecked =>
-                                        val sdx: Kyo.SuspendContextDefault[VX, CX, AX, EX & S] = sd
+                                    case sd: Kyo.SuspendContextDefault[VX, CX, AX, EX] @unchecked =>
+                                        val sdx: Kyo.SuspendContextDefault[VX, CX, AX, EX] = sd
                                         // one allocation fulfilling both roles: the rebuilt suspension and its re-handling transform
-                                        new Kyo.SuspendContextDefault[VX, CX, Y, S] with Arrow.Transform[VX, Y, S]:
+                                        new Kyo.SuspendContextDefault[VX, CX, Y, Any] with Arrow.Transform[VX, Y, Any]:
                                             def tag           = sdx.tag
                                             def default       = sdx.default
                                             def update(v: VX) = sdx.update(v)
                                             def cont          = this
                                             override def release(ex: Throwable): Any < Any =
-                                                Debugger.onRelease(kyo.handler, ex)
-                                                sdx.release(ex).andThen(kyo.handler.release(st, ex))(using Frame.internal)
-                                            override def apply[D, S2](x: VX < S2, cont2: Arrow[Y, D, S2]) =
+                                                Debugger.onRelease(handler, ex)
+                                                sdx.release(ex).andThen(handler.release(state, ex))(using Frame.internal)
+                                            override def apply[D, S3](x: VX < S3, cont2: Arrow[Y, D, S3]) =
                                                 x match
-                                                    case kyo: Pending[VX, S2] @unchecked =>
-                                                        Effect.defer(kyo, this, cont2)
+                                                    case p: Pending[VX, S3] @unchecked =>
+                                                        Effect.defer(p, this, cont2)
                                                     case _ =>
                                                         reenter(sdx.cont, Nested.unnest[VX](x), cont2)
                                         end new
                                 end match
-                            case suspend: Kyo.SuspendArrow[IX, OX, EX, VX, AX, EX & S] @unchecked =>
-                                Debugger.onHandle(suspend, kyo.handler, st)
-                                val next = suspend.cont
-                                kyo.handler match
-                                    case handler: Handler.HandlerCont[IX, OX, EX, AX, Y, S] @unchecked =>
-                                        val r = handler.answer(suspend.input, next)
-                                        Debugger.onResult(r)
-                                        region(st, r, Arrow.id, ctx)
-                                    case handler: Handler.HandlerLoop[IX, OX, EX, AX, Y, S, VX] @unchecked =>
-                                        val o = handler.answer(st, suspend.input, next)
-                                        Debugger.onResult(o)
-                                        o match
-                                            case o: Loop.Continue2[VX, OX[VX] < (EX & S)] @unchecked =>
-                                                region(o._1, o._2, next, ctx)
-                                            case o =>
-                                                // a done outcome is its payload in the union representation
-                                                Nested.unnest[Y < S](o)
-                                        end match
-                                    case _ =>
-                                        bug(s"unhandled: ${kyo.handler}")
-                                end match
-                            case res: Pending[AX, S] @unchecked =>
-                                bug(s"unhandled: $res")
-                            case res: AX @unchecked =>
-                                // a completion delivers the raw payload: `done` speaks values, not the
-                                // union, so the representation is stripped exactly once here
-                                kyo.handler.done(st, Nested.unnest[AX](res))
-                    end region
+                            end rebuilt
+                            Debugger.onRegionExit(handler, rebuilt)
+                            val cont  = stack.cont.asInstanceOf[Arrow[Y, Any, Any]]
+                            val outer = stack.ctx
+                            stack.pop()
+                            loop(rebuilt, cont, Arrow.id, outer)
+                        else
+                            susp match
+                                case suspend: Kyo.SuspendArrow[IX, OX, EX, VX, AX, EX] @unchecked =>
+                                    Debugger.onHandle(suspend, handler, state)
+                                    val next = suspend.cont
+                                    handler match
+                                        case handler: Handler.HandlerCont[IX, OX, EX, AX, Y, Any] @unchecked =>
+                                            val r = handler.answer(suspend.input, next)
+                                            Debugger.onResult(r)
+                                            // the region stays installed: its clause answered in place
+                                            loop(r, Arrow.id, Arrow.id, ctx)
+                                        case handler: Handler.HandlerLoop[IX, OX, EX, AX, Y, Any, VX] @unchecked =>
+                                            val o = handler.answer(state, suspend.input, next)
+                                            Debugger.onResult(o)
+                                            o match
+                                                case o: Loop.Continue2[VX, OX[VX] < EX] @unchecked =>
+                                                    // the region stays installed at its successor state
+                                                    stack.state = o._1
+                                                    loop(o._2, next, Arrow.id, ctx)
+                                                case o =>
+                                                    // a done outcome is its payload, and `answerLoop` already
+                                                    // took the outcome out of the union, so what stands here is
+                                                    // the payload in its own union representation. Asserted
+                                                    // rather than unnested: a payload that is itself a
+                                                    // computation carries the wrapper that says so, and
+                                                    // stripping it hands the loop work to evaluate where the
+                                                    // region meant to deliver a value
+                                                    val r = o.asInstanceOf[Y < Any]
+                                                    Debugger.onRegionExit(handler, r)
+                                                    val cont  = stack.cont.asInstanceOf[Arrow[Y, Any, Any]]
+                                                    val outer = stack.ctx
+                                                    stack.pop()
+                                                    loop(r, cont, Arrow.id, outer)
+                                            end match
+                                        case _ =>
+                                            bug(s"unhandled: $handler")
+                                    end match
+                                case _ =>
+                                    bug(s"unhandled: $susp")
+                            end match
+                        end if
+                    end if
+                case kyo: Kyo.Handle[EX, AX, Y, T, S2, VX] @unchecked =>
                     // a context binding resolves at installation: it derives from whatever the
                     // enclosing scope binds for its tag, and a re-installed region derives again
                     // from wherever it stands
                     var st0 = kyo.state
                     val bound = kyo.handler match
-                        case h: Handler.HandlerContext[VX, CX, AX, Y, S] @unchecked =>
-                            val hc: Handler.HandlerContext[VX, CX, AX, Y, S] = h
+                        case h: Handler.HandlerContext[VX, CX, AX, Y, S2] @unchecked =>
+                            val hc: Handler.HandlerContext[VX, CX, AX, Y, S2] = h
                             st0 = hc.resolve(Maybe.when(ctx.contains(hc.tag))(ctx[VX, CX](hc.tag)))
                             ctx.update(hc.tag, st0)
                         case _ => ctx
                     Debugger.onRegionEnter(kyo.handler, st0)
-                    // the extent's guard: a NonFatal throw anywhere under the region consults the
-                    // handler once, with the state the region was installed with. A recovered
-                    // computation replaces the region's outcome and takes the same continuation a
-                    // normal result would; a decline keeps the failure unwinding through the
-                    // enclosing regions' own guards
-                    val res =
-                        try region(st0, kyo.value, Arrow.id, bound)
-                        catch
-                            case ex if NonFatal(ex) =>
-                                val r = kyo.handler.recover(st0, ex).getOrElse(throw ex)
-                                Debugger.onRecover(kyo.handler, ex)
-                                r
-                    Debugger.onRegionExit(kyo.handler, res)
-                    loop(res, kyo.cont, contA.chain(contB), ctx)
+                    // the region is installed rather than entered: what follows it waits on the stack,
+                    // so its interior is evaluated by this same loop instead of by a nested one
+                    stack.push(kyo.handler, st0, ctx, kyo.cont.chain(contA.chain(contB)))
+                    loop(kyo.value, Arrow.id, Arrow.id, bound)
                 case res =>
                     if contA.isInstanceOf[Arrow.Id[?]] && contB.isInstanceOf[Arrow.Id[?]] then
-                        res.asInstanceOf[C < S]
+                        if stack.isEmpty then res.asInstanceOf[A < S]
+                        else
+                            // the innermost region completes. `done` runs with the region still
+                            // installed, so a throw in it reaches the same recover its interior would
+                            val handler = stack.handler.asInstanceOf[Handler[EX, AX, Y, Any, VX]]
+                            val r       = handler.done(stack.state.asInstanceOf[VX], Nested.unnest[AX](res))
+                            Debugger.onRegionExit(handler, r)
+                            val cont  = stack.cont.asInstanceOf[Arrow[Y, Any, Any]]
+                            val outer = stack.ctx
+                            stack.pop()
+                            loop(r, cont, Arrow.id, outer)
                     else
                         contA match
-                            case contA: Arrow.Chain[A, Any, B, S] @unchecked =>
+                            case contA: Arrow.Chain[T, Any, B, S2] @unchecked =>
                                 loop(res, contA.a, contA.b.chain(contB), ctx)
                             case _ =>
                                 // the value is already union currency and arrows take it as such: casting
@@ -239,16 +289,77 @@ object Eval:
                                 loop(contA(res, contB), Arrow.id, Arrow.id, ctx)
             end match
         end loop
-        def run(v: A < S): A < S =
-            loop(v, Arrow.id, Arrow.id, Context.empty) match
+
+        // The regions a throw unwinds, innermost first, ending in the value the region that recovered
+        // resumes with. A region that declines is popped and the failure keeps unwinding through the
+        // ones outside it; with none left the eval fails as its caller's does. A recover that fails
+        // itself is the failure those outer regions see, which is what the per-region guards did by
+        // nesting.
+        //
+        // The region that recovers is left on the stack, and the resume below pops it. That is what
+        // lets this return one value rather than the value and the context to resume it at, which
+        // would be a pair allocated on the path `Abort` runs through.
+        @tailrec def recovered(ex: Throwable): A < S =
+            if stack.isEmpty then throw ex
+            else
+                val handler = stack.handler.asInstanceOf[Handler[EX, AX, Y, Any, VX]]
+                val state   = stack.state.asInstanceOf[VX]
+                val outcome =
+                    try handler.recover(state, ex)
+                    catch
+                        case ex2 if NonFatal(ex2) =>
+                            stack.pop()
+                            return recovered(ex2)
+                outcome match
+                    case Present(r) =>
+                        Debugger.onRecover(handler, ex)
+                        Debugger.onRegionExit(handler, r)
+                        r.chain(stack.cont.asInstanceOf[Arrow[Y, A, S]])
+                    case Absent =>
+                        stack.pop()
+                        recovered(ex)
+                end match
+
+        // The eval and its guard. Recovering resumes here and reading a default that no region
+        // answered resumes here, and both are self tail calls, so the eval that removed the frame per
+        // open region reintroduces none per recovered region or per default answered.
+        @tailrec def guarded(curr: A < S, ctx: Context): A < S =
+            val res =
+                try loop(curr, Arrow.id, Arrow.id, ctx)
+                catch
+                    case failure if NonFatal(failure) =>
+                        // the budget counts strict applications still on the Java stack, and a throw
+                        // that reaches here left every one of them without its matching exit. The eval
+                        // is back at its own frame, so the true depth is zero and the counter says
+                        // otherwise; left uncorrected the leak accumulates over an extent's recoveries
+                        // until the budget drains, and a drained budget is a fixed point rather than a
+                        // slow path
+                        Safepoint.reset(slot)
+                        val resumed = recovered(failure)
+                        // the region that recovered is still on the stack, holding the context to
+                        // resume at; taking it here is what keeps the unwind allocation free
+                        val outer = stack.ctx
+                        stack.pop()
+                        return guarded(resumed, outer)
+            res match
                 case suspend: Kyo.SuspendContextDefault[VX, CX, A, S] @unchecked =>
                     val nv = suspend.update(suspend.default)
                     Debugger.onContextDefault(suspend, nv)
                     val k = suspend.cont
-                    run(k.head(nv, k.tail))
-                case res =>
-                    res
-        run(v)
+                    guarded(k.head(nv, k.tail), Context.empty)
+                case susp: Kyo.Suspend[?, ?, ?] =>
+                    // an operation with no region left to answer it. Rejecting here keeps the failure
+                    // at the operation that caused it: handed back, it is a node typed as a value, and
+                    // the cast that discovers it fires arbitrarily far away. The arm below this one is
+                    // the reason this is not the loop's business: a context read whose default nobody
+                    // answered leaves the loop the same way and is answered, not rejected
+                    bug(s"unhandled suspension: $susp")
+                case res => res
+            end match
+        end guarded
+
+        try guarded(v, Context.empty)
+        finally Safepoint.restore(slot, saved)
     end apply
 
     def answerLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State, W](
