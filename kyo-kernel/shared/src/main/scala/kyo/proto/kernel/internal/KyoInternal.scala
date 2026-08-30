@@ -9,6 +9,7 @@ import kyo.proto.kernel.ContextEffect
 import kyo.proto.kernel.Effect
 import language.implicitConversions
 import scala.annotation.publicInBinary
+import scala.annotation.tailrec
 
 private[proto] def short(v: Any): String =
     v match
@@ -236,18 +237,17 @@ object Kyo:
 
         def release(ex: Throwable): Any < Any =
             // the equation's order: the value's own releases first, then each captured region's, innermost first
-            var acc: Any < Any = value match
+            @tailrec def loop(i: Int, acc: Any < Any): Any < Any =
+                if i < 0 then acc
+                else
+                    val handler = entries(i).asInstanceOf[Handler[Nothing, Any, Any, Any, Any]]
+                    val state   = entries(i + 1)
+                    Debugger.onRelease(handler, ex)
+                    loop(i - 3, acc.andThen(handler.release(state, ex))(using Frame.internal))
+            val owed: Any < Any = value match
                 case p: Pending[?, ?] => p.release(ex)
                 case _                => ()
-            var i = entries.length - 3
-            while i >= 0 do
-                val handler = entries(i).asInstanceOf[Handler[Nothing, Any, Any, Any, Any]]
-                val state   = entries(i + 1)
-                Debugger.onRelease(handler, ex)
-                acc = acc.andThen(handler.release(state, ex))(using Frame.internal)
-                i -= 3
-            end while
-            acc
+            loop(entries.length - 3, owed)
         end release
 
         override def toString =

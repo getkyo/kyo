@@ -2,6 +2,7 @@ package kyo.proto.kernel.internal
 
 import kyo.proto.Arrow
 import kyo.proto.kernel.Effect
+import scala.annotation.tailrec
 
 /** The regions an eval has open, outermost first.
   *
@@ -62,16 +63,16 @@ final private[kyo] class Stack:
       * Called on every release, including one leaving on an exception, where the stack still holds every region the throw unwound past.
       */
     def clear(): Unit =
-        var i = 0
-        while i < size do
-            handlers(i) = null
-            states(i) = null
-            // `Context` is opaque over a TypeMap and admits no null; the shared empty one drops the
-            // reference without allocating, which is all this needs
-            contexts(i) = Context.empty
-            continuations(i) = null
-            i += 1
-        end while
+        @tailrec def loop(i: Int): Unit =
+            if i < size then
+                handlers(i) = null
+                states(i) = null
+                // `Context` is opaque over a TypeMap and admits no null; the shared empty one drops the
+                // reference without allocating, which is all this needs
+                contexts(i) = Context.empty
+                continuations(i) = null
+                loop(i + 1)
+        loop(0)
         size = 0
     end clear
 
@@ -83,17 +84,17 @@ final private[kyo] class Stack:
       */
     def snapshot(): Array[AnyRef] =
         val out = new Array[AnyRef](size * 3)
-        var i   = 0
-        while i < size do
-            out(i * 3) = handlers(i)
-            out(i * 3 + 1) = states(i).asInstanceOf[AnyRef]
-            out(i * 3 + 2) = continuations(i)
-            handlers(i) = null
-            states(i) = null
-            contexts(i) = Context.empty
-            continuations(i) = null
-            i += 1
-        end while
+        @tailrec def loop(i: Int): Unit =
+            if i < size then
+                out(i * 3) = handlers(i)
+                out(i * 3 + 1) = states(i).asInstanceOf[AnyRef]
+                out(i * 3 + 2) = continuations(i)
+                handlers(i) = null
+                states(i) = null
+                contexts(i) = Context.empty
+                continuations(i) = null
+                loop(i + 1)
+        loop(0)
         size = 0
         out
     end snapshot

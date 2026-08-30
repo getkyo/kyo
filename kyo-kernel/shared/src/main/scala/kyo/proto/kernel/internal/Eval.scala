@@ -322,26 +322,29 @@ object Eval:
                     // never park-time ones. Mirrors that arm's installation; a change there lands
                     // here too
                     val entries = kyo.entries
-                    var c       = ctx
-                    var i       = 0
-                    while i < entries.length do
-                        val handler = entries(i).asInstanceOf[Handler[EX, AX, Y, Any, VX]]
-                        var st      = entries(i + 1).asInstanceOf[VX]
-                        val cont    = entries(i + 2).asInstanceOf[Arrow[Y, Any, Any]]
-                        val bound = handler match
-                            case h: Handler.HandlerContext[VX, CX, AX, Y, Any] @unchecked =>
-                                val hc: Handler.HandlerContext[VX, CX, AX, Y, Any] = h
-                                st = hc.resolve(Maybe.when(c.contains(hc.tag))(c[VX, CX](hc.tag)))
-                                c.update(hc.tag, st)
-                            case _ => c
-                        Debugger.onRegionEnter(handler, st)
-                        // the pending continuation follows the outermost region
-                        if i == 0 then stack.push(handler, st, c, cont.chain(contA.chain(contB).asInstanceOf[Arrow[Any, Any, Any]]))
-                        else stack.push(handler, st, c, cont)
-                        c = bound
-                        i += 3
-                    end while
-                    loop(kyo.value, Arrow.id, Arrow.id, c)
+                    @tailrec def install(i: Int, c: Context): Context =
+                        if i == entries.length then c
+                        else
+                            val handler = entries(i).asInstanceOf[Handler[EX, AX, Y, Any, VX]]
+                            val stored  = entries(i + 2).asInstanceOf[Arrow[Y, Any, Any]]
+                            // the pending continuation follows the outermost region
+                            val cont =
+                                if i == 0 then stored.chain(contA.chain(contB).asInstanceOf[Arrow[Any, Any, Any]])
+                                else stored
+                            handler match
+                                case h: Handler.HandlerContext[VX, CX, AX, Y, Any] @unchecked =>
+                                    val hc: Handler.HandlerContext[VX, CX, AX, Y, Any] = h
+                                    val st = hc.resolve(Maybe.when(c.contains(hc.tag))(c[VX, CX](hc.tag)))
+                                    Debugger.onRegionEnter(handler, st)
+                                    stack.push(handler, st, c, cont)
+                                    install(i + 3, c.update(hc.tag, st))
+                                case _ =>
+                                    val st = entries(i + 1).asInstanceOf[VX]
+                                    Debugger.onRegionEnter(handler, st)
+                                    stack.push(handler, st, c, cont)
+                                    install(i + 3, c)
+                            end match
+                    loop(kyo.value, Arrow.id, Arrow.id, install(0, ctx))
                 case res =>
                     if contA.isInstanceOf[Arrow.Id[?]] && contB.isInstanceOf[Arrow.Id[?]] then
                         if stack.isEmpty then res.asInstanceOf[A < S]
