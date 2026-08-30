@@ -3,7 +3,7 @@
 Two changes, in dependency order. Each is applied one edit at a time with the Edit tool, in the
 sequence below, with the sentence beside each edit said as it goes in.
 
-Worktree `kyo-root-impl`, commits `a10624dfa4`, `ffc1819ecc` and `1f47d6f590` off `31a7b4bde9`.
+Worktree `kyo-root-impl`, four commits off `31a7b4bde9`, tip `7a7cd22ad8`.
 
 ## What this fixes
 
@@ -119,7 +119,18 @@ Inheriting a spent budget is a fixed point rather than a slow path: every applic
 settled arm applies the deferral, and its continuation is the application that just deferred. The
 reference kernel's eval already does exactly this; the proto had both operations and called neither.
 
-**8. The same guard, one line: `Safepoint.reset(slot)` on catching.**
+**8. `Eval.apply`, the exit: `finally Safepoint.restore(slot, saved)`.**
+
+> The caller gets back what it had, its part-spent depth and its armed bit included.
+
+This has no pinning test, and the reason is in the code beside it rather than left to be inferred: a
+first attempt passed with the fix reverted, so it pinned nothing and was deleted rather than kept for
+the look of it. A nested eval's own exits return most of what it spent, so the enclosing eval survives
+losing the depth, and the armed bit is unobservable while nothing in the proto arms. It stays because
+discarding a caller's state is wrong whether or not this tree can see it, and because the reference
+does the same at the same place.
+
+**9. The same guard, one line: `Safepoint.reset(slot)` on catching.**
 
 > A throw leaves every strict application between it and the guard without its matching exit, and the
 > guard is where the true depth is known to be zero.
@@ -143,10 +154,9 @@ Full detail in `evidence.md`. Summary:
 | clean batch build | green | green |
 | 12800 throw/recover cycles | livelocks past 400 | flat, 0.89 us each |
 
-Benchmarks: the full class on both legs back to back, 20 of 20 rows. Nothing regressed. The one
-delta outside its errors, `deepRecursionPaysRescuesOnly` at +5.4% on `-f 1`, does not reproduce at
-`-f 3`, where it reads -0.7%. So moving the open regions from the Java stack to four heap arrays
-costs nothing measurable, including on the region-heavy rows.
+Benchmarks: the full class on both legs back to back in one session, measured on the shipped tip,
+20 of 20 rows. **No row regressed beyond the drift band or beyond its own error.** An earlier pair
+measured a commit that is not what ships and is discarded rather than carried forward.
 
 Adjudication: `flags.md`, 88 rows, every one with a verdict, rebuilt after `kernel-discipline`
 blocked the first version and recording what that version got wrong. No verdict is `REMOVE`; the constructs
@@ -161,6 +171,9 @@ blocked the first version and recording what that version got wrong. No verdict 
 - **The four columns versus a typed entry.** I kept the columns and the storage-boundary cast rather
   than a typed entry object that would allocate per region. The ladder permits the cast; you may
   still not want it here.
+- **The context an answered operation resumes with.** It is now the loop's current one, where the
+  baseline used the install-time one. It matches what `ContextEffect`'s own documentation says, and it
+  is unobservable while every `update` in the tree is identity, so nothing pins it.
 
 ## Open, and not mine to decide
 
