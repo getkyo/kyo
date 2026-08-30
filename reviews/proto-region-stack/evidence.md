@@ -151,6 +151,36 @@ stack reads just as often and does not pay. `PrintInlining` on the two rows, loo
 absorb merge point does to the receiver profile of `susp.tag`, `susp.input` and `susp.cont`, is
 where I would go next.
 
+### The hypotheses tested, and what each measured
+
+Recorded so the next attempt starts from the fifth, not the first.
+
+| # | hypothesis | verdict | evidence |
+|---|---|---|---|
+| 1 | allocation | **refuted** | the tip allocates 480,346 B/op against the baseline's 720,145 on both `suspensionBaseline` and `handleLoopAnswersInPlace`, while running 2.6x slower. `gc.alloc.rate.norm` is exact |
+| 2 | `loop`'s bytecode size, from absorbing `region` | **refuted** | extracting the foreign-crossing rebuild took `loop$1` from 1874 to 1747 bytes and moved nothing: 342.2 against 346.4, 393.8 against 391.4. Probe reverted |
+| 3 | the per-eval `Safepoint.save`/`restore` | **refuted** | removing only that pair leaves 341.6 against 346.4 and allocation byte-identical. Probe reverted |
+| 4 | the two legs execute different steps | **refuted** | with a debugger installed, both legs report identical traces at depth 3 and depth 600: 1804 allocations, `SuspendArrow` x1202, `Defer` x601, `Handle` x1, 601 unfused applies. The semantics are the same |
+| 5 | the absorb's middle branch | **confirmed, partially** | removing it takes `handleLoopAnswersInPlace` from 391.4 to 237.3 us, recovering about half that row's regression, at the cost of 67% more allocation. It moves no other row |
+
+A caveat that matters for reading row 4: an installed debugger makes `Safepoint.enterPark` allow every
+strict application, so a traced run never defers and does not follow the benchmark's path. The trace
+proves the two legs agree step for step; it cannot speak for what the budget does in the benchmark.
+
+### What the shape costs, which is a separate finding
+
+Same handler, same depth, same region; only the call shape differs:
+
+| shape | allocations per 600 operations | per operation |
+|---|---|---|
+| `ask.map(f)` | 1804: `SuspendArrow` x1202, `Defer` x601, `Handle` x1 | **3** |
+| `askWith(f)` | 602: `SuspendArrow` x601, `Handle` x1 | **1** |
+
+That 3:1 is the 7.1x between `suspensionBaseline` and `suspensionFusesContinuation` inside the proto,
+and it holds on both legs, so it is not the regression. It is why every regressed row is a `.map`
+row and the one parity row is a `suspendWith` row, which had looked like a clue about the change and
+is really a fact about the shape.
+
 ### The one cost that is diagnosed and fixed
 
 `evalFixedOverhead` installs no region at all, and it regressed 180%. The `Stack` constructor built
