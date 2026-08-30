@@ -26,26 +26,17 @@ object Eval:
             case _                => ()
 
     def apply[A, S](v: A < S): A < S =
-        // the regions this eval installs. A nested eval builds its own, so it answers for the regions
-        // it installed and for none of the enclosing ones
-        val stack = Stack()
-
-        // `loop` runs the machine to its answer, which is why it returns the eval's result rather than
-        // the composition of its arguments: once a region's continuation waits on the stack, "v with
-        // contA then contB applied" stops describing what the call produces. Typing it as the caller's
-        // `C` instead puts a cast between a region and its own tail call, and a call under a cast is
-        // not a tail call. The step's own types are `T` and `S2`, since `A` and `S` are the eval's.
-        @tailrec def loop[T, B, C, S2](v: T < S2, contA: Arrow[T, B, S2], contB: Arrow[B, C, S2], ctx: Context): A < S =
+        def loop[A, B, C, S](v: A < S, contA: Arrow[A, B, S], contB: Arrow[B, C, S], ctx: Context): C < S =
             Debugger.onLoop(v, contA, contB)
             v match
-                case kyo: Kyo.Defer[AX, Y, T, S2] @unchecked =>
+                case kyo: Kyo.Defer[AX, Y, A, S] @unchecked =>
                     loop(kyo.value, kyo.contA, kyo.contB.chain(contA.chain(contB)), ctx)
-                case kyo: Kyo.SuspendContext[VX, CX, T, S2] @unchecked if ctx.contains(kyo.tag) =>
+                case kyo: Kyo.SuspendContext[VX, CX, A, S] @unchecked if ctx.contains(kyo.tag) =>
                     val nv = kyo.update(ctx.apply[VX, CX](kyo.tag))
                     Debugger.onContext(kyo, nv)
                     val k = kyo.cont
                     loop(k.head(nv, k.tail), contA, contB, ctx.update[VX, CX](kyo.tag, nv))
-                case kyo: Kyo.SuspendContextDefault[VX, CX, T, S2] @unchecked if ctx.contains(kyo.tag) =>
+                case kyo: Kyo.SuspendContextDefault[VX, CX, A, S] @unchecked if ctx.contains(kyo.tag) =>
                     val nv = kyo.update(ctx.apply[VX, CX](kyo.tag))
                     Debugger.onContext(kyo, nv)
                     val k = kyo.cont
