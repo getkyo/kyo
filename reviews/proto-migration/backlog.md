@@ -45,8 +45,10 @@ final private[kyo] class Park[+A, -S](
 and resuming is `stack.restore(entries, states, marks, finalizers)`.
 
 The proto does not have that problem. A region there is already a value: `Kyo.Handle` *is* the region
-installed around a computation, and `Eval.crossing` already turns an open region back into one when a
-suspension is foreign to it. So parking is "walk the region stack outermost-in and rebuild each entry
+installed around a computation, and the eval's foreign-suspension rebuild already turns an open region
+back into one when a suspension is foreign to it (`Eval.scala:136-212`, whose `reenter` at `:140-147`
+is the re-installation itself). There is no `Eval.crossing`: an earlier draft of this document named
+one, and the name was invented. So parking is "walk the region stack outermost-in and rebuild each entry
 into a `Handle`", which yields an ordinary computation value resumable anywhere, on any thread, with
 no new node kind and no snapshot arrays.
 
