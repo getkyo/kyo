@@ -5,7 +5,7 @@
 Running the three proto suites in one JVM hangs at `ArrowEffectTest:969`, the double-boxed-value
 test, spinning at 100% CPU in the `Defer` arm of the eval loop.
 
-Pre-existing, three ways:
+It had never been seen, for three reasons, none of which makes it any less this prototype's defect:
 
 - the baseline hangs at the identical test when given `-Xss1g` so that it reaches it; normally the
   `StackOverflowError` ends the suite at test 17 and nothing ever gets there;

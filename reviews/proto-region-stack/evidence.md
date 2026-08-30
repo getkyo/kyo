@@ -15,9 +15,9 @@ could summon the lift in a kernel file and incremental green is not clean green.
 | `PendingTest` | 63 of 63 | 63 of 63 |
 | `EvalTest` | 51 of 54 | 53 of 56, the two added being pins |
 
-`EvalTest`'s three failures are the pre-existing eval-boundary item (`Eval.apply` returns an
-unanswered suspension instead of rejecting it), untouched by this change and recorded as its own
-open question.
+`EvalTest`'s three failures are the eval boundary returning an unanswered suspension instead of
+rejecting it. In scope, attempted, open; the attempt and its two dead ends are recorded in the
+package.
 
 **Demo**: every one of the 28 scenarios returns its recorded value, the bracket guarantees included:
 83, -1, -1, 4221, -9, 991. This was the check most at risk, because `recover` now reads the state the
@@ -87,13 +87,12 @@ pops at every size. Without the reset the same probe livelocks past 800; the bas
 
 ## The hang this surfaced, now fixed separately
 
-Running the three suites in one JVM used to hang at `ArrowEffectTest:969`. That was pre-existing:
-the baseline hangs at the identical test when given `-Xss1g` so that it reaches it, where normally
-the StackOverflowError ends the suite at test 17 and nothing ever gets there. It is fixed by
+Running the three suites in one JVM used to hang at `ArrowEffectTest:969`. The baseline hangs at
+the identical test when given `-Xss1g` so that it reaches it; normally the StackOverflowError ends
+the suite at test 17 and nothing ever gets there, which is why it had never been seen. Fixed by
 `ffc1819ecc`, which gives an eval its own safepoint budget, and it has its own derivation under
 `reviews/proto-eval-budget/`.
 
 With all five commits in, `kyo-kernelJVM/test` is 35 suites, 0 aborted, **1400 passing**, 3 failing,
-and the three proto suites run together for the first time: 207 tests, 204 passing. The 3 failures are the
-pre-existing eval-boundary item in `EvalTest`, which is untouched here and still holds two open
-questions of its own.
+and the three proto suites run together for the first time: 207 tests, 204 passing. The 3 failures
+are the eval boundary in `EvalTest`, which is in scope, attempted, and open.

@@ -13,7 +13,7 @@ call stack, so nesting depth was the Java stack's depth: about 700 bytes per ope
 regions at 1 MB where the reference is flat past 400000. Iteration inside a region was already flat.
 
 **Two.** Fixing that revealed a second defect it had been hiding: the three suites hang when run in
-one JVM, pre-existing and proven so. An eval inherited whatever safepoint budget the thread had left,
+one JVM. An eval inherited whatever safepoint budget the thread had left,
 and a spent budget is a fixed point. Fixing *that* exposed a third: a throw leaks a budget entry, so
 an extent that recovers a few hundred times drains its own and reaches the same fixed point.
 
@@ -166,7 +166,7 @@ Full detail in `evidence.md`, all of it measured on the shipped tip `d197133298`
 | clean batch build | green | green |
 | 12800 throw/recover cycles | livelocks past 400 | flat, 0.89 us each |
 
-The three remaining failures are the pre-existing eval-boundary item, untouched here.
+Three failures remain, all the eval boundary; it is in scope, attempted, and open. See the section at the end.
 
 Benchmarks: the full class on both legs back to back in one session on the shipped tip, 20 of 20
 rows. The one row outside the drift band on `-f 1`, `trailingMapsStayLinear` at +4.9%, was confirmed
@@ -189,12 +189,22 @@ one pass over both the main and test trees.
   baseline used the install-time one, which matches what `ContextEffect`'s own documentation says.
   Pinned by a test that fails at the baseline.
 
-## Open, and not mine to decide
+## Open, and in scope: the eval boundary returns an unanswered suspension
 
-**The eval boundary returns an unanswered suspension** instead of rejecting it, which is the three
-`EvalTest` failures and predates all of this. It carries two decisions: whether `Eval.apply` narrows
-to returning a raw `A` as the reference does, and what the message says. The ported tests assert
-"unhandled suspension"; the reference says "Unexpected pending effect".
+`Eval.apply` hands back a suspension nobody answered instead of rejecting it, so `<.eval` gives the
+caller a `Pending` node typed as a value, and it fails as a `ClassCastException` arbitrarily far from
+the operation that caused it. Three `EvalTest` cases assert the rejection and fail.
+
+Attempted, not landed. Rejecting at the guard, where the loop returns with the stack empty, breaks
+`PendingTest` "a loop can end its region with a computation result", which requires the eval to hand
+back a computation held as data. Two hypotheses were tested and both were wrong: `Kyo.lift` does nest
+a pending payload, verified by probing the runtime class, so the payload is not arriving bare for
+that reason; and the cause is not the done arm's unnest as I first read it. The placement that
+separates a suspension being *driven* from one being *delivered as a payload* is not yet identified,
+and I am not guessing at a third.
+
+Recorded unfixed rather than deferred, with both dead ends named so the next attempt starts from the
+third hypothesis.
 
 ## Deviation, recorded
 
