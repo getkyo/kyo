@@ -5,9 +5,9 @@ import kyo.TypeMap
 import kyo.internal.NotIntersection
 import kyo.proto.kernel.ContextEffect
 
-opaque type Context = TypeMap[Any]
+private[kernel] opaque type Context = TypeMap[Any]
 
-object Context:
+private[kernel] object Context:
 
     val empty: Context = TypeMap.empty
 

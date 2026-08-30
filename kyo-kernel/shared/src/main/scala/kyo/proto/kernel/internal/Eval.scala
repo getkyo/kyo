@@ -17,7 +17,10 @@ import language.implicitConversions
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
-object Eval:
+// Private to kyo wholesale: nothing here is user surface. The public entry is the `.eval`
+// extension, and the inline bodies that reach members here (`answerLoop`, the extension's
+// `Eval(v)`) do so through generated accessors
+private[kyo] object Eval:
 
     /** The releases a computation still owes, for a holder giving up on resuming it: every region the machine already installed speaks,
       * innermost first, and a settled value owes nothing. A computation rather than a run: the holder sequences the result into its own
@@ -43,7 +46,7 @@ object Eval:
       * A stop already delivered before the slice begins ends it before it starts: the input comes straight back, and the sentinel is taken
       * so the slice after this one runs.
       */
-    private[kyo] def partial[A](v: A < Any): A < Any =
+    def partial[A](v: A < Any): A < Any =
         val slot = Safepoint.get()
         if Safepoint.consumeStopped(slot) then v
         else

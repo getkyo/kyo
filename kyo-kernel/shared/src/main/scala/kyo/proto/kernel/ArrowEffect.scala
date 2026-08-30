@@ -1,6 +1,8 @@
 package kyo.proto.kernel
 
 import kyo.Frame
+import kyo.Id
+import kyo.Maybe
 import kyo.Tag
 import kyo.proto.Arrow
 import kyo.proto.Arrow.Transform
@@ -13,6 +15,7 @@ import kyo.proto.kernel.internal.Kyo
 import kyo.proto.kernel.internal.Nested
 import kyo.proto.kernel.internal.Pending
 import scala.annotation.nowarn
+import scala.util.control.NonFatal
 
 /** Represents abstract functions whose implementations are provided later by a handler.
   *
@@ -138,6 +141,51 @@ object ArrowEffect:
         end match
     end handleCont
 
+    /** [[handleCont]] with a recovery clause.
+      *
+      * `recover` is consulted when a NonFatal throw unwinds the region's extent, the done clause included: a Present computation replaces
+      * the region's outcome, and Absent declines so the failure keeps unwinding through the enclosing regions. A recover that fails itself
+      * is the failure those enclosing regions then see.
+      */
+    @nowarn("msg=anonymous")
+    inline def handleCont[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
+        inline effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        inline handle: [C] => (I[C], Arrow[O[C], A, E & S & S2]) => A < (E & S & S2),
+        inline done: A => B < (S & S2),
+        inline recover: Throwable => Maybe[B < (S & S2)]
+    )(using inline _frame: Frame): B < (S & S2) =
+        def onDone(v0: A): B < (S & S2)                   = done(v0)
+        def onRecover(ex: Throwable): Maybe[B < (S & S2)] = recover(ex)
+        v match
+            case _: Pending[?, ?] =>
+                val h =
+                    new HandlerCont[I, O, E, A, B, S & S2]:
+                        def tag = effectTag
+                        def answer[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
+                            handle[X](input, next)
+                        def done(state: Unit, v0: A)                     = onDone(v0)
+                        override def recover(state: Unit, ex: Throwable) = onRecover(ex)
+                // the region node is built at the site: the unit state and the identity continuation
+                // are constants, not captured fields
+                new Kyo.Handle[E, A, B, B, S & S2, Unit]:
+                    override def frame = _frame
+                    def value          = v
+                    def handler        = h
+                    def state          = ()
+                    def cont           = Arrow.id
+                end new
+            case _ =>
+                // the settled fast path specializes the region's law, recover included: `done` runs
+                // with the region installed there, so a throw in it reaches the region's recover,
+                // and it must reach this one too
+                try onDone(Nested.unnest(v))
+                catch
+                    case ex if NonFatal(ex) => onRecover(ex).getOrElse(throw ex)
+        end match
+    end handleCont
+
     /** [[handleCont]] with the region's value as the result. */
     inline def handleCont[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
         inline effectTag: Tag[E],
@@ -222,6 +270,21 @@ object ArrowEffect:
             (st, v0) => done(v0)
         )
 
+    /** [[handleLoop]] with a recovery clause, see the recovering [[handleCont]]. */
+    inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
+        inline effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        inline handle: [C] => I[C] => Loop.Outcome2[Unit, O[C] < (E & S & S2), B < (S & S2)] < (S & S2),
+        inline done: A => B < (S & S2),
+        inline recover: Throwable => Maybe[B < (S & S2)]
+    )(using inline _frame: Frame): B < (S & S2) =
+        handleLoopState[I, O, E, A, B, S, S2, Unit](effectTag, (), v)(
+            [C] => (st: Unit, input: I[C]) => handle[C](input),
+            (st, v0) => done(v0),
+            (st, ex) => recover(ex)
+        )
+
     /** [[handleLoop]] with the region's value as the result. */
     inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
         inline effectTag: Tag[E],
@@ -277,6 +340,52 @@ object ArrowEffect:
                     def cont           = Arrow.id
                 end new
             case _ => onDone(state, Nested.unnest(v))
+        end match
+    end handleLoopState
+
+    /** [[handleLoopState]] with a recovery clause, see the recovering [[handleCont]].
+      *
+      * `recover` receives the live state, the one the clauses have threaded rather than the one the region was installed with, which is
+      * what lets a registry carried in the loop state drain on failure.
+      */
+    @nowarn("msg=anonymous")
+    inline def handleLoopState[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2, State](
+        inline effectTag: Tag[E],
+        state: State,
+        v: A < (E & S)
+    )(
+        inline handle: [C] => (State, I[C]) => Loop.Outcome2[State, O[C] < (E & S & S2), B < (S & S2)] < (S & S2),
+        inline done: (State, A) => B < (S & S2),
+        inline recover: (State, Throwable) => Maybe[B < (S & S2)]
+    )(using inline _frame: Frame): B < (S & S2) =
+        def onDone(st: State, v0: A): B < (S & S2)                   = done(st, v0)
+        def onRecover(st: State, ex: Throwable): Maybe[B < (S & S2)] = recover(st, ex)
+        v match
+            case _: Pending[?, ?] =>
+                val h =
+                    new HandlerLoop[I, O, E, A, B, S & S2, State]:
+                        def tag = effectTag
+                        def answer[X](st: State, input: I[X], next: Arrow[O[X], A, E & S & S2]) =
+                            Eval.answerLoop(this, handle[X](st, input), next)
+                        def done(st: State, v0: A)                     = onDone(st, v0)
+                        override def recover(st: State, ex: Throwable) = onRecover(st, ex)
+                val state0 = state
+                // the region node is built at the site: the identity continuation is a constant,
+                // not a captured field
+                new Kyo.Handle[E, A, B, B, S & S2, State]:
+                    override def frame = _frame
+                    def value          = v
+                    def handler        = h
+                    def state          = state0
+                    def cont           = Arrow.id
+                end new
+            case _ =>
+                // the settled fast path specializes the region's law, recover included: `done` runs
+                // with the region installed there, so a throw in it reaches the region's recover,
+                // and it must reach this one too
+                try onDone(state, Nested.unnest(v))
+                catch
+                    case ex if NonFatal(ex) => onRecover(state, ex).getOrElse(throw ex)
         end match
     end handleLoopState
 
@@ -385,5 +494,50 @@ object ArrowEffect:
             case _ => onDone(state0, Nested.unnest(v)).map(onF)
         end match
     end handleLoopStateWith
+
+    /** Hides an effect's operations from the handlers between the mask and its [[Mask.run]] boundary.
+      *
+      * `Mask[E](v)` translates each operation of `E` in `v` into a `Mask[E]` operation carrying the original as an unevaluated payload. The
+      * computation keeps evaluating in place, and every other effect in its row stays visible to local handlers; only `E`'s operations
+      * tunnel out to the enclosing [[Mask.run]], where each payload re-raises `E` for the handlers outside that boundary and its answer
+      * flows back into the masked computation.
+      *
+      * This masks effect operations, never interruptions, which is what the nesting under `ArrowEffect` says: libraries in this space
+      * commonly name interruption masking `mask`, and a top-level `kyo.Mask` would read as that.
+      */
+    sealed abstract class Mask[S] extends ArrowEffect[[A] =>> A < S, Id]
+
+    object Mask:
+
+        /** Masks the effect `E` in `v`, where `E` may be one effect or an intersection of several.
+          *
+          * Handlers for `E` between this call and [[run]] see none of `v`'s `E` operations; handlers for every other effect in the row are
+          * unaffected. The effect to mask is named explicitly, `Mask[Ask](v)` or `Mask[Ask & Say](v)`: an intersection-tagged region
+          * answers each member's operations, so one mask covers them all.
+          *
+          * The mask's own suspension is tagged at the named `E` on both ends, so [[run]] named the same way lands the tunnel by
+          * construction. Each payload is re-raised at the caught operation's own tag, so an `Ask` operation re-emerges at [[run]] as an
+          * `Ask` operation and the specific effect's handler outside answers it.
+          */
+        def apply[E](using
+            Frame
+        )[E2 >: E <: ArrowEffect[?, ?], A, S](v: A < (E2 & S))(
+            using
+            tag: Tag[E2],
+            maskTag: Tag[Mask[E]]
+        ): A < (Mask[E] & S) =
+            handleContOperation(tag, v) {
+                // the payload is the operation itself, carrying its own tag, and it conforms to the
+                // mask's `A < E` input by row contravariance: `E2 >: E`, and the `E` row is honest
+                // because a handler at `E` answers `E2`-tagged operations under the dispatch direction
+                [X] => (operation, cont) => suspend[X](maskTag, operation).map(cont(_))
+            }
+
+        /** Unmasks: evaluates each masked operation at this boundary, re-exposing `S` to the handlers outside it. */
+        def run[S](using Frame)[A, S2](v: A < (Mask[S] & S2))(using tag: Tag[Mask[S]]): A < (S & S2) =
+            handleCont(tag, v) {
+                [C] => (input, cont) => input.map(cont(_))
+            }
+    end Mask
 
 end ArrowEffect

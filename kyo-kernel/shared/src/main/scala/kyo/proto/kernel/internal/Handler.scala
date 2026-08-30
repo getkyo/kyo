@@ -11,7 +11,7 @@ import kyo.proto.kernel.ArrowEffect
 import kyo.proto.kernel.ContextEffect
 import kyo.proto.kernel.Effect
 
-abstract class Handler[E <: Effect, A, B, -S, State]:
+abstract private[kernel] class Handler[E <: Effect, A, B, -S, State]:
     def tag: Tag[E]
 
     /** Consulted when a NonFatal throw unwinds the region's extent, with the state the region has reached, which is what its clauses have
@@ -29,12 +29,15 @@ abstract class Handler[E <: Effect, A, B, -S, State]:
       * is that state rather than a stale copy. It runs where nothing is installed to answer for it, so it takes no effects; the default owes
       * nothing.
       */
-    def release(state: State, ex: Throwable): Any < Any = ()
+    // Private to kyo by design: the only release-owing region is Sync's, handled last by
+    // construction, and the public handle* surfaces take no release, so users cannot mint a
+    // release-owing region and releases never ride in continuations
+    private[kyo] def release(state: State, ex: Throwable): Any < Any = ()
     def done(state: State, v: A): B < S
     override def toString = s"Handler(${tag.show})"
 end Handler
 
-object Handler:
+private[kernel] object Handler:
 
     /** `answer` is abstract, and the handling site implements it with its clause inlined.
       *

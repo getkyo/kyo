@@ -1,26 +1,23 @@
-package kyo.proto
+package kyo.proto.kernel
 
 import kyo.Const
 import kyo.Maybe
 import kyo.Tag
-import kyo.proto.kernel.ArrowEffect
+import kyo.proto.Arrow
+import kyo.proto.Loop
+import kyo.proto.kernel.ArrowEffect.Mask
 import kyo.proto.kernel.internal.Eval
-import kyo.proto.kernel.internal.Handler
-import kyo.proto.kernel.internal.Kyo
-import kyo.proto.kernel.internal.Nested
 import org.scalatest.freespec.AnyFreeSpec
 
-/** The kernel's `MaskTest` corpus pointed at this package. The two bracket interaction cases are not transcribed: `Effect.bracket` is
-  * finalizer machinery this kernel does not carry (backlog R3, `Sync` becomes the bracketing layer, handled last by construction, so
-  * releases never ride in continuations and abandonment orphans nothing). Both cases return at the Sync layer when it lands, pinning that
-  * its state releases resources even when an inner handler drops a continuation. The catching case is transcribed onto `Handler.recover`,
-  * which is this kernel's spelling of the same behavior.
+/** The mask aspect of the `ArrowEffect` corpus, the kernel `MaskTest` pointed at `ArrowEffect.Mask`. The two bracket interaction cases are
+  * not transcribed: `Effect.bracket` is finalizer machinery this kernel does not carry (backlog R3, `Sync` becomes the bracketing layer,
+  * handled last by construction, so releases never ride in continuations and abandonment orphans nothing). Both cases return at the Sync
+  * layer when it lands, pinning that its state releases resources even when an inner handler drops a continuation. The catching case is
+  * transcribed onto the recovering `handleCont`, this kernel's spelling of the same behavior.
   */
-class MaskTest extends AnyFreeSpec:
-    // the eval's result as a raw value: unnesting delivers a payload as the computation it holds,
-    // and an unanswered suspension surfaces through the failing assertion that compares it
-    private def eval[A, S](v: A < S): A =
-        Nested.unnest[A](Eval(v))
+class ArrowEffectMaskTest extends AnyFreeSpec:
+    // evaluation through the public entry, so every case closes its row to Any the way a user must
+    private def eval[A](v: A < Any): A = v.eval
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
@@ -97,15 +94,13 @@ class MaskTest extends AnyFreeSpec:
     "interactions" - {
 
         "a recovering region inside the mask catches a failure raised after the tunneled answer returns" in {
-            val recovering = new Handler.HandlerCont[Const[String], Const[Unit], Say, Int, Int, Ask]:
-                def tag                                          = Tag[Say]
-                override def recover(state: Unit, ex: Throwable) = Maybe(-1)
-                def done(state: Unit, v: Int)                    = v
-                def answer[X](input: String, next: Arrow[Unit, Int, Say & Ask]): Int < (Say & Ask) =
-                    next((), Arrow.id)
             val body: Int < (Say & Ask) = ask.map(a => (throw Boom): Int)
-            val v: Int < Ask            = Kyo.handle[Say, Int, Int, Ask, Unit](body, recovering, ())
-            val out                     = Mask.run[Ask](runAsk(Mask[Ask](v))(1))
+            val v: Int < Ask = ArrowEffect.handleCont[Const[String], Const[Unit], Say, Int, Int, Ask, Any](Tag[Say], body)(
+                [C] => (_, cont) => cont(()),
+                a => a,
+                _ => Maybe(-1)
+            )
+            val out = Mask.run[Ask](runAsk(Mask[Ask](v))(1))
             assert(eval(runAsk(out)(42)) == -1)
         }
 
@@ -237,7 +232,9 @@ class MaskTest extends AnyFreeSpec:
         val v: Int < Ask = askSub.map(_ + 1)
         val local        = runAskSub(Mask[Ask](v))(41)
         val out          = Mask.run[Ask](local)
-        assert(eval(out) == 42)
+        // the vacuous Ask row is closed by a handler whose answer must go unused: the operation
+        // was already answered inside, so anything else is a routing failure
+        assert(eval(runAsk(out)(999)) == 42)
     }
 
     "a mask at a subtype effect captures supertype-tagged operations" in {
@@ -246,7 +243,8 @@ class MaskTest extends AnyFreeSpec:
         // handler answering instead would produce 2
         val v: Int < Ask = ask.map(_ + 1)
         val out          = Mask.run[AskSub](runAsk(Mask[AskSub](v))(1))
-        assert(eval(runAsk(out)(42)) == 43)
+        // the vacuous AskSub row left by run is closed by a handler whose answer must go unused
+        assert(eval(runAskSub(runAsk(out)(42))(998)) == 43)
     }
 
     "a settled computation passes through mask and run untouched" in {

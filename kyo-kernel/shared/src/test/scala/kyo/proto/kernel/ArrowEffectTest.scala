@@ -21,8 +21,8 @@ import scala.annotation.tailrec
 class ArrowEffectTest extends AnyFreeSpec:
     // the eval's result as a raw value: unnesting delivers a payload as the computation it holds,
     // and an unanswered suspension surfaces through the failing assertion that compares it
-    private def eval[A, S](v: A < S): A =
-        Nested.unnest[A](Eval(v))
+    // evaluation through the public entry, so every case closes its row to Any the way a user must
+    private def eval[A](v: A < Any): A = v.eval
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
@@ -922,6 +922,48 @@ class ArrowEffectTest extends AnyFreeSpec:
             assert(Tag[Say].erased <:< Tag[Ask | Say].erased)
             assert(!(Tag[Ask | Say].erased <:< Tag[Ask].erased))
             assert(!(Tag[Say].erased <:< Tag[Ask].erased))
+        }
+    }
+
+    "recover" - {
+        // stackless and shared: the pins are about control flow, not exception construction
+        object Boom extends RuntimeException("boom", null, false, false)
+
+        "a region's recovery clause answers a throw raised in its extent" in {
+            val body: Int < Ask = ask.map(_ => (throw Boom): Int)
+            val r: Int < Any    = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, cont) => cont(1), a => a, _ => Maybe(-1))
+            assert(eval(r) == -1)
+        }
+
+        "a stateful region's recovery clause receives the live state, not the install-time state" in {
+            val body: Int < Ask = ask.map(_ => ask.map(_ => (throw Boom): Int))
+            val r: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 0, body)(
+                [C] => (s, _) => Loop.continue(s + 1, 1: Int < Any),
+                (_, a) => a,
+                (s, _) => Maybe(-100 - s)
+            )
+            // two operations answered before the throw, so the live state is 2
+            assert(eval(r) == -102)
+        }
+
+        "Absent declines and the failure unwinds to the enclosing region" in {
+            val body: Int < (Ask & Say) = ask.map(_ => (throw Boom): Int)
+            val inner: Int < Say        = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, cont) => cont(1), a => a)
+            val r: Int < Any = ArrowEffect.handleCont(Tag[Say], inner)(
+                [C] => (_, cont) => cont(()),
+                a => a,
+                _ => Maybe(-7)
+            )
+            assert(eval(r) == -7)
+        }
+
+        "a settled input's done throw reaches the recovery clause" in {
+            val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], 42: Int < Ask)(
+                [C] => (_, cont) => cont(1),
+                _ => (throw Boom): Int,
+                _ => Maybe(-1)
+            )
+            assert(eval(r) == -1)
         }
     }
 

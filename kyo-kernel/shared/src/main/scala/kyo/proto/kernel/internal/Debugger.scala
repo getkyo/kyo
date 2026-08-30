@@ -9,7 +9,7 @@ package kyo.proto.kernel.internal
   * installed instance; real implementations live outside the kernel (the demo installs a console tracer). Hooks receive structured
   * operands, never strings, so no formatting or stack capture happens unless an installed implementation asks for it.
   */
-abstract class Debugger:
+abstract private[kyo] class Debugger:
 
     /** Whether a strict application may run inline; false routes it through the eval. The strict-path gate consulted by
       * `Safepoint.enterPark`: a session drains its eval's slot so every strict application lands on that cold path, keeping the hot
@@ -56,7 +56,7 @@ abstract class Debugger:
     def onResult(value: Any): Unit = ()
 end Debugger
 
-object Debugger:
+private[kyo] object Debugger:
 
     /** The compile-time gate. The forwarders below splice their dispatch only when this constant is true; false folds every call site to
       * nothing at the typer, so a production build carries no bytecode at the sites and no `this` escapes the node constructors.

@@ -13,7 +13,7 @@ private[kyo] class Nested[+A](val value: A)
 // `bringForward` in a downstream module's suspended-unit retry run (a StaleSymbolException on that
 // module's clean build whenever it defines its own macros), while a module method survives it. The cost
 // is the module load at expansion sites.
-object Nested:
+private[kyo] object Nested:
 
     /** The settled value, one nesting level stripped. Only valid where the pending case is already excluded.
       *

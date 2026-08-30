@@ -16,7 +16,7 @@ import scala.annotation.tailrec
   * The arrays hold every region's values, so their element types are the erasure and each read is asserted at the type the matching push
   * established. The entries are strictly heterogeneous, which is why the assertion cannot be carried in a signature.
   */
-final private[kyo] class Stack:
+final private[kernel] class Stack:
 
     // shared and empty until the first region is installed. Every eval builds a stack and most never install
     // anything, so allocating four arrays in the constructor put 224 B/op on evals with no region in them at
@@ -126,7 +126,7 @@ final private[kyo] class Stack:
     end grow
 end Stack
 
-private[kyo] object Stack:
+private[kernel] object Stack:
     // one set for the whole process. They are never written, because a write needs room and having none is
     // what sends the first push through `grow`
     private val noHandlers      = new Array[Handler[?, ?, ?, ?, ?]](0)

@@ -251,10 +251,10 @@ object ProtoBench:
     inline def NarrowDepth = 1000
     inline def FusedDepth  = 32
 
-    /** The eval plus the strip its counterpart's eval performs internally, so a row measures the same work on both sides rather than one
-      * side's missing step.
+    /** The public entry, which strips the representation the way its counterpart's eval does internally, so a row measures the same work
+      * on both sides rather than one side's missing step.
       */
-    def run(v: Int < Any): Int = Nested.unnest[Int](Eval(v))
+    def run(v: Int < Any): Int = v.eval
 
     sealed trait Ask extends ArrowEffect[[B] =>> Unit, [B] =>> Int]
 

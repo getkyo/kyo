@@ -50,7 +50,7 @@ object CanLift:
 
 end CanLift
 
-object CanLiftMacro:
+private[kernel] object CanLiftMacro:
 
     inline def checkSingleton[A]: CanLift[A] = ${ checkImpl[A] }
 
@@ -70,7 +70,8 @@ object CanLiftMacro:
 
 end CanLiftMacro
 
-object LiftMacro:
+// TODO can we move this to CanLiftMacro?
+private[kernel] object LiftMacro:
 
     def abortCastUnitMacro[S1: Type, S2: Type](v: Expr[Unit < S1])(using Quotes): Expr[Unit < S2] =
         import quotes.reflect.*

@@ -792,15 +792,8 @@ class EvalTest extends AnyFreeSpec:
     // this grow with the number of throws rather than stay flat
     "regions that fail and recover in sequence cost no stack" in {
         def recovering(to: Int): Int < Any =
-            val h = new Handler.HandlerCont[Const[Unit], Const[Int], Ask, Int, Int, Any]:
-                def tag                                          = Tag[Ask]
-                override def recover(state: Unit, ex: Throwable) = Maybe(to)
-                def done(state: Unit, v: Int)                    = v
-                def answer[X](input: Unit, next: Arrow[Int, Int, Ask]): Int < Ask =
-                    next(0, Arrow.id)
             val body: Int < Ask = ask.map(_ => (throw Boom): Int)
-            Kyo.handle[Ask, Int, Int, Any, Unit](body, h, ())
-        end recovering
+            ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, cont) => cont(0), a => a, _ => Maybe(to))
         def go(i: Int): Int < Any =
             if i == 0 then 0
             else recovering(i).map(_ => go(i - 1))
@@ -825,14 +818,12 @@ class EvalTest extends AnyFreeSpec:
         // the Say region is foreign to the Ask its body suspends, so answering that Ask resumes
         // through the rebuilt node, and the throw that follows lands in the crossing's own recover
         def crossing(to: Int): Int < Ask =
-            val h = new Handler.HandlerCont[Const[String], Const[Unit], Say, Int, Int, Ask]:
-                def tag                                          = Tag[Say]
-                override def recover(state: Unit, ex: Throwable) = Maybe(to)
-                def done(state: Unit, v: Int)                    = v
-                def answer[X](input: String, next: Arrow[Unit, Int, Say & Ask]): Int < (Say & Ask) =
-                    next((), Arrow.id)
             val body: Int < (Say & Ask) = ask.map(_ => (throw Boom): Int)
-            Kyo.handle[Say, Int, Int, Ask, Unit](body, h, ())
+            ArrowEffect.handleCont[Const[String], Const[Unit], Say, Int, Int, Ask, Any](Tag[Say], body)(
+                [C] => (_, cont) => cont(()),
+                a => a,
+                _ => Maybe(to)
+            )
         end crossing
 
         // fewer cycles than the budget has entries, so a leaking eval still terminates and the
@@ -859,27 +850,21 @@ class EvalTest extends AnyFreeSpec:
         object Inner extends RuntimeException("inner", null, false, false)
         var seen = Maybe.empty[Throwable]
 
-        val innerHandler = new Handler.HandlerCont[Const[String], Const[Unit], Say, Int, Int, Ask]:
-            def tag                                          = Tag[Say]
-            override def recover(state: Unit, ex: Throwable) = throw Inner
-            def done(state: Unit, v: Int)                    = v
-            def answer[X](input: String, next: Arrow[Unit, Int, Say & Ask]): Int < (Say & Ask) =
-                next((), Arrow.id)
-
-        val outerHandler = new Handler.HandlerCont[Const[Unit], Const[Int], Ask, Int, Int, Any]:
-            def tag = Tag[Ask]
-            override def recover(state: Unit, ex: Throwable) =
-                seen = Maybe(ex)
-                Maybe(7)
-            def done(state: Unit, v: Int) = v
-            def answer[X](input: Unit, next: Arrow[Int, Int, Ask]): Int < Ask =
-                next(0, Arrow.id)
-
         // deferred, so the throw lands while the loop is inside the region rather than while the
         // computation is being built
         val body: Int < (Say & Ask) = Effect.defer((throw Boom): Int < (Say & Ask))
-        val inner: Int < Ask        = Kyo.handle[Say, Int, Int, Ask, Unit](body, innerHandler, ())
-        val outer: Int < Any        = Kyo.handle[Ask, Int, Int, Any, Unit](inner, outerHandler, ())
+        val inner: Int < Ask = ArrowEffect.handleCont[Const[String], Const[Unit], Say, Int, Int, Ask, Any](Tag[Say], body)(
+            [C] => (_, cont) => cont(()),
+            a => a,
+            _ => throw Inner
+        )
+        val outer: Int < Any = ArrowEffect.handleCont(Tag[Ask], inner)(
+            [C] => (_, cont) => cont(0),
+            a => a,
+            ex =>
+                seen = Maybe(ex)
+                Maybe(7)
+        )
         assert(eval(outer) == 7)
         // the second failure, not the one the inner region declined by throwing
         assert(seen.exists(_ eq Inner))

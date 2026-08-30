@@ -11,6 +11,7 @@ import language.implicitConversions
 import scala.annotation.publicInBinary
 import scala.annotation.tailrec
 
+// TODO a source file is a type and its companion, do not put stuff like this
 private[proto] def short(v: Any): String =
     v match
         case v: Pending[?, ?]            => v.toString
@@ -47,9 +48,10 @@ sealed trait Pending[+A, -S] extends kyo.proto.Kyo[A, S]:
       * ambient context reach them; running it detached loses that. Only an open region owes anything, so only the region carriers compose:
       * a rotation speaks its wrapped suspension then its rotated handler, and a Handle its interior then its own extent, so nesting
       * releases innermost first. Everything else states that it owes nothing. Abstract on purpose: every node class must declare its
-      * stance, so a new carrier cannot silently miss its override.
+      * stance, so a new carrier cannot silently miss its override. Private to kyo, like `Handler.release`: the only release-owing
+      * region is Sync's and the only holders that abandon values are kyo's own, so no user surface speaks releases.
       */
-    def release(ex: Throwable): Any < Any
+    private[kyo] def release(ex: Throwable): Any < Any
 end Pending
 
 // Public object, private-free members for the same reason as before: the combinators' inline
@@ -59,7 +61,7 @@ object Kyo:
     abstract class Defer[A, B, C, -S] @publicInBinary private[kyo] () extends Pending[C, S]:
         Debugger.onAlloc(this)
 
-        def release(ex: Throwable): Any < Any =
+        private[kyo] def release(ex: Throwable): Any < Any =
             value match
                 case p: Pending[?, ?] => p.release(ex)
                 case _                => ()
@@ -108,7 +110,7 @@ object Kyo:
     sealed abstract class Suspend[E <: Effect, A, S] extends Pending[A, S]:
         Debugger.onAlloc(this)
 
-        def release(ex: Throwable): Any < Any = ()
+        private[kyo] def release(ex: Throwable): Any < Any = ()
 
         type Op
         def tag: Tag[E]
@@ -187,7 +189,7 @@ object Kyo:
     abstract class Handle[E <: Effect, A, B, C, -S, State] extends Pending[C, S]:
         Debugger.onAlloc(this)
 
-        def release(ex: Throwable): Any < Any =
+        private[kyo] def release(ex: Throwable): Any < Any =
             Debugger.onRelease(handler, ex)
             value match
                 case p: Pending[?, ?] => p.release(ex).andThen(handler.release(state, ex))(using Frame.internal)
@@ -235,7 +237,7 @@ object Kyo:
     ) extends Pending[A, S]:
         Debugger.onAlloc(this)
 
-        def release(ex: Throwable): Any < Any =
+        private[kyo] def release(ex: Throwable): Any < Any =
             // the equation's order: the value's own releases first, then each captured region's, innermost first
             @tailrec def loop(i: Int, acc: Any < Any): Any < Any =
                 if i < 0 then acc

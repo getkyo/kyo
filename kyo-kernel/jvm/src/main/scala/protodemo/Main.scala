@@ -8,10 +8,6 @@ import kyo.proto.*
 import kyo.proto.kernel.ArrowEffect
 import kyo.proto.kernel.ContextEffect
 import kyo.proto.kernel.Effect
-import kyo.proto.kernel.internal.Debugger
-import kyo.proto.kernel.internal.Eval
-import kyo.proto.kernel.internal.Handler
-import kyo.proto.kernel.internal.Kyo
 
 object Main:
 
@@ -237,29 +233,26 @@ object Main:
         val body: Int < Any = cfg.map(_ + 1)
         ContextEffect.handle(cfgTag, 41)(ContextEffect.handle(cfgTag)(_.fold(0)(_ * 2))(body))
 
-    // a throw inside the extent answered by the region's recover, the failure recovery shape
+    // a throw inside the extent answered by the region's recovery clause, the failure recovery shape
     def recovering: Int < Any =
-        val h = new Handler.HandlerCont[CInt, CInt, Add, Int, Int, Any]:
-            def tag                                          = addTag
-            override def recover(state: Unit, ex: Throwable) = Maybe(-1)
-            def done(state: Unit, v: Int)                    = v
-            def answer[X](input: Int, next: Arrow[Int, Int, Add]): Int < Add =
-                next(input + 1, Arrow.id)
         val body: Int < Add = add(1).map(a => (throw new Exception("boom")): Int)
-        Kyo.handle[Add, Int, Int, Any, Unit](body, h, ())
+        ArrowEffect.handleCont[CInt, CInt, Add, Int, Int, Any, Any](addTag, body)(
+            [C] => (input, cont) => cont(input + 1, Arrow.id),
+            a => a,
+            _ => Maybe(-1)
+        )
     end recovering
 
     // a throw after a resumption crossing a foreign region, the resumed recovery shape: the
-    // crossed region's recover answers a throw raised while its continuation is being reapplied
+    // crossed region's recovery clause answers a throw raised while its continuation is being
+    // reapplied
     def crossingRecovery: Int < Any =
-        val h = new Handler.HandlerCont[CInt, CInt, Tick, Int, Int, Any]:
-            def tag                                          = tickTag
-            override def recover(state: Unit, ex: Throwable) = Maybe(-1)
-            def done(state: Unit, v: Int)                    = v
-            def answer[X](input: Int, next: Arrow[Int, Int, Tick]): Int < Tick =
-                next(input + 1, Arrow.id)
         val body: Int < Add = add(1).map(v => (throw new Exception("boom")): Int)
-        runAdd(Kyo.handle[Tick, Int, Int, Add, Unit](body, h, ()))
+        runAdd(ArrowEffect.handleCont[CInt, CInt, Tick, Int, Int, Add, Any](tickTag, body)(
+            [C] => (input, cont) => cont(input + 1, Arrow.id),
+            a => a,
+            _ => Maybe(-1)
+        ))
     end crossingRecovery
 
     type CUnit[X] = Unit
@@ -274,25 +267,20 @@ object Main:
 
     // the encoded bracket effect, the shape Sync will take: the run accepts the bare row, so it is
     // the last handler by type and no inner handler's continuation can ever contain this region.
-    // Registrations live in the handler's own registry, outside every produced continuation; done
-    // drains at completion and recover drains before answering a throw, last registered first
+    // Registrations live in the last handler's loop state, outside every produced continuation;
+    // done drains at completion and the recovery clause drains before answering a throw, last
+    // registered first. The recovery clause receives the live state, the registrations the loop
+    // has threaded, which is what lets the registry ride the loop state at all. Each finalizer
+    // drains as a deferred computation, and the result encodes the drain order one digit per
+    // release, so the value witnesses last-registered-first
     def runRes(v: Int < Res): Int < Any =
-        val h = new Handler.HandlerLoop[CInt, CUnit, Res, Int, Int, Any, Unit]:
-            // the registry is handler-owned mutable state, the shape the real Scope uses: recover
-            // receives install-time state by contract, so an evolving loop state would hand the
-            // throw path an empty registry, while the mutable cell is what every edge sees. Each
-            // finalizer drains as a deferred computation, and the result encodes the drain order
-            // one digit per release, so the trace and the value both witness last-registered-first
-            private var fins = List.empty[Int]
-            def tag          = resTag
-            def answer[X](state: Unit, id: Int, next: Arrow[Unit, Int, Res]) =
-                fins = id :: fins
-                Eval.answerLoop(this, Loop.continue((), ()), next)
-            private def drain(base: Int < Any): Int < Any =
-                fins.foldLeft(base)((acc, id) => acc.flatMap(r => lazily(id).map(_ => r * 10 + id)))
-            def done(state: Unit, v0: Int)                   = drain(v0)
-            override def recover(state: Unit, ex: Throwable) = Maybe(drain(-1))
-        Kyo.handle[Res, Int, Int, Any, Unit](v, h, ())
+        def drain(fins: List[Int], base: Int < Any): Int < Any =
+            fins.foldLeft(base)((acc, id) => acc.flatMap(r => lazily(id).map(_ => r * 10 + id)))
+        ArrowEffect.handleLoopState[CInt, CUnit, Res, Int, Int, Any, Any, List[Int]](resTag, List.empty[Int], v)(
+            [C] => (fins, id) => Loop.continue(id :: fins, (): Unit < Any),
+            (fins, v0) => drain(fins, v0),
+            (fins, ex) => Maybe(drain(fins, -1))
+        )
     end runRes
 
     // finalizers drain at completion, last registered first
@@ -320,18 +308,7 @@ object Main:
                 |🧪 $name
                 |${"=" * 80}""".stripMargin
         )
-        val debugger = ConsoleDebugger()
-        Debugger.install(debugger)
-        try
-            val result = Eval(v)
-            println(
-                s"""|${"-" * 80}
-                    |📊 ${debugger.stats}""".stripMargin
-            )
-            println(s"✅ result: $result")
-        finally
-            Debugger.uninstall()
-        end try
+        println(s"✅ result: ${v.eval}")
     end scenario
 
     def main(args: Array[String]): Unit =

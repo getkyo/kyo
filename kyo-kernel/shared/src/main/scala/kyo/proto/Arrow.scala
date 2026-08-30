@@ -17,6 +17,7 @@ import scala.annotation.nowarn
   * node extends both at the same instantiation, which is what lets one allocation be a computation and its own continuation with the input
   * typed exactly.
   */
+// TODO Shouldn't this be in KyoInternal.scala!? A source file is a type and its companion!
 trait Kyo[+A, -S]:
     /** The source position this value was built at, [[Frame.internal]] for values the kernel mints itself. */
     def frame: Frame
@@ -75,7 +76,7 @@ end Arrow
 
 object Arrow:
 
-    class Id[A] extends Step[A, A, Any]:
+    class Id[A] private[Arrow] () extends Step[A, A, Any]:
         def frame                         = Frame.internal
         override def apply(v: A): A < Any = v
         def apply[C, S2](v: A < S2, cont: Arrow[A, C, S2]) =
@@ -86,7 +87,7 @@ object Arrow:
         override def toString = "Id"
     end Id
 
-    private val identity = Id[Any]
+    private val identity = Id[Any]()
     def id[A]: Id[A]     = identity.asInstanceOf[Id[A]]
 
     @nowarn("msg=anonymous")
@@ -114,7 +115,7 @@ object Arrow:
       * and this at its true input for the arrow role. It carries no toString so a node's own rendering survives the mixin; standalone sites
       * extend [[Step]], which carries the arrow rendering.
       */
-    trait Transform[-A, B, -S] extends Arrow[A, B, S]:
+    private[kyo] trait Transform[-A, B, -S] extends Arrow[A, B, S]:
         type X = B
         def head = this
         def tail = Arrow.id
@@ -132,12 +133,12 @@ object Arrow:
       * Transform stays a trait because fusion sites mix it onto a node class, and those cannot take a second superclass; the nodes report
       * from their own constructors instead.
       */
-    abstract class Step[-A, B, -S] extends Transform[A, B, S]:
+    abstract private[kyo] class Step[-A, B, -S] extends Transform[A, B, S]:
         Debugger.onAlloc(this)
         override def toString = s"Step(${site(frame)})"
     end Step
 
-    final class Chain[A, B, C, S] private[proto] (
+    final private[kyo] class Chain[A, B, C, S] private[proto] (
         val a: Arrow[A, B, S],
         val b: Arrow[B, C, S]
     ) extends Arrow[A, C, S]:

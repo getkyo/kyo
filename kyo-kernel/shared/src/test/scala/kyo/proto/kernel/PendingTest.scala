@@ -18,10 +18,8 @@ import scala.compiletime.testing.typeCheckErrors
   * function, the module lint) are kept with their code commented, so the corpus is complete and the gap is visible.
   */
 class PendingTest extends AnyFreeSpec:
-    // the eval's result as a raw value: unnesting delivers a payload as the computation it holds,
-    // and an unanswered suspension surfaces through the failing assertion that compares it
-    private def eval[A, S](v: A < S): A =
-        Nested.unnest[A](Eval(v))
+    // evaluation through the public entry, so every case closes its row to Any the way a user must
+    private def eval[A](v: A < Any): A = v.eval
 
     private val Period = Safepoint.period()
 
