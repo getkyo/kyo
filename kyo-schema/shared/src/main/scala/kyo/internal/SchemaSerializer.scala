@@ -960,7 +960,7 @@ private[kyo] object SchemaSerializer:
                 else writer.long(l)
             case Structure.Value.Decimal(d)  => writer.double(d)
             case Structure.Value.Bool(b)     => writer.boolean(b)
-            case Structure.Value.BigNum(bd)  => writer.bigDecimal(bd)
+            case Structure.Value.BigNum(bd)  => writer.bigNumber(bd)
             case Structure.Value.Bytes(b)    => writer.bytes(b)
             case Structure.Value.Instant(i)  => writer.instant(i)
             case Structure.Value.Duration(d) => writer.duration(d)
