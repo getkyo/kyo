@@ -1,0 +1,125 @@
+# Migrating `kyo-kernel` to the proto: the pending backlog
+
+What `kyo.kernel` has that `kyo.proto.kernel` does not, after adjudication. Derived from a file and
+signature diff of the two packages plus a read of the reference's eval dispatch, then ruled on item
+by item. Items ruled out are kept with their reasoning, because "we decided not to" is information
+the next reader needs as much as the list of work.
+
+Everything here is about the kernel itself. Callers above it (`kyo-prelude`, `kyo-core`) are out of
+scope for this document.
+
+## Ruled in
+
+### B1. `Isolate`
+
+No proto counterpart at all. `kyo/kernel/Isolate.scala` in the reference.
+
+What it does: carries effect state across a fork, so an effect can say how its state splits into a
+forked computation and how the results rejoin. `Async` and `Fiber` are built on it, so nothing above
+the kernel that forks can migrate until it exists.
+
+The proto has adjacent machinery in `Handler.HandlerContext`: `fork(current: State): State < S`,
+`join(current, forked, result): Result[Nothing, State] < S`, and `resolve(outer: Maybe[State]):
+State`. Whether those are the isolation surface in a different shape, or only the context-effect half
+of it, is the first thing to establish.
+
+### B2. Partial evaluation and preemption, without a `Park` node
+
+`Eval.partial`, parking and resumption are absent from the proto. The `Safepoint` substrate is
+already there and unused: `arm`, `stopped`, `consumeStopped`, `beginSlice`/`endSlice`, and
+`deadline` all exist on both platform variants with no caller.
+
+**`Park` as a node kind is not wanted.** The reference needs one because its region stack is external
+to the computation, so parking must snapshot it:
+
+```scala
+final private[kyo] class Park[+A, -S](
+    val value: A < S,
+    val entries: Span[Arrow[?, ?, ?]],
+    val states: Span[Maybe[Any]],
+    val marks: Span[Int],
+    val finalizers: Span[Maybe[Finalizer[?, ?]]]
+) extends Kyo[A, S]
+```
+
+and resuming is `stack.restore(entries, states, marks, finalizers)`.
+
+The proto does not have that problem. A region there is already a value: `Kyo.Handle` *is* the region
+installed around a computation, and `Eval.crossing` already turns an open region back into one when a
+suspension is foreign to it. So parking is "walk the region stack outermost-in and rebuild each entry
+into a `Handle`", which yields an ordinary computation value resumable anywhere, on any thread, with
+no new node kind and no snapshot arrays.
+
+The cost to weigh: rebuilding N regions allocates N nodes per park, where the reference copies into
+spans. Which is cheaper depends on park frequency against region depth, and that is a measurement,
+not a decision.
+
+### B3. `EffectTrace`
+
+`kyo/kernel/internal/EffectTrace.scala`. Splices effect frames into an exception's stack trace so a
+failure points at the operation that caused it rather than at kernel internals. The proto throws raw.
+
+Note the proto's `Frame` is already threaded through the surface (`ask(using Frame)`), so the
+information is present; what is missing is capture and splicing.
+
+### B4. `Mask`
+
+`kyo/Mask.scala`. Absent from the proto. Needs a read before it can be scoped; it is the smallest
+item on the list and the least understood.
+
+### B5. `handleFirst` / `dispatchFirst`
+
+`ArrowEffect.handleFirst` answers only the first operation of a region and hands the clause the raw
+remainder, with the effect still in its row.
+
+Its carrier, `FirstSuspended`, is **already internal** in the reference (`abstract private[kyo] class`
+with `def input: Any` and `def cont: Arrow[Any, Any, Any]`), and should stay internal in the proto,
+under `kernel/internal/`. It escapes `handleCont`'s expansion through the completion lane and
+`handleFirst`'s done lane unwraps it before anything else observes it. It is abstract so each
+expansion implements it anonymously, which keeps a primitive input unboxed.
+
+Its second role in the reference does **not** carry over: the completion path checks
+`!r.isInstanceOf[FirstSuspended]` before draining orphaned finalizers, and the proto has no finalizer
+registry (see R3). So in the proto it is purely `handleFirst`'s protocol token.
+
+## Ruled out, with the reasoning
+
+### R1. `Catching` node kind and `Effect.catching` / `ArrowEffect.handleCatching`
+
+Not needed. Handlers have `recover` now, which is consulted with the region still installed and its
+live state. The scoped `catching` form has no proto equivalent and is not wanted.
+
+### R2. `Binding` / `Bindings` node kinds
+
+Not needed. Contextual values already exist in the proto as `ContextEffect` with `Context` threaded
+through the eval loop, plus `HandlerContext` for the binding's own resolution.
+
+### R3. `Finalizer`
+
+Not needed at the kernel level. The kernel's support is `Handler.release`, the abandonment signal
+consulted when a holder gives up on an extent's continuation. `Sync` becomes the bracketing layer
+above it.
+
+Consequence to carry forward: the reference's orphan machinery (`pushFinalizer`, `drainFinalizers`,
+`drainOrphans`, `orphanOutcome`) has no proto counterpart by design, which is what makes B5's second
+role moot.
+
+### R4. Platform splits, `DebuggerPlatformSpecific` and `StackPlatformSpecific`
+
+Judged not needed. Recording what they buy so the decision is revisitable: the reference uses them to
+put the debugger cell and the stack pool behind `@static` on jvm-native and a plain module var on
+js-wasm, where a single thread makes a thread local pointless indirection. The proto's stack pool
+currently uses a plain `java.lang.ThreadLocal` in shared code, which compiles and runs on all three
+platforms. So this is a per-platform optimization, not a correctness requirement.
+
+## Open question the backlog does not settle
+
+### Q1. The debugger gate
+
+`Debugger.enabled` is an `inline val` and instrumenting a build is a source edit. Measured cost with
+it on: `suspensionBaseline` 256.9 us/op against 126.0 with it off, and `statefulAnswersPaySuccessor`
+387.9 against 194.0, because five node and arrow constructors carry `Debugger.onAlloc(this)` and the
+reference has no per-allocation hook at all.
+
+That is a build-configuration problem rather than a missing capability, but it touches every item
+here: any of this work measured on a build with the gate on will be measuring the gate.
