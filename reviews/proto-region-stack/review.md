@@ -30,130 +30,42 @@ memoization rather than a new piece, is in `derivation.md` beside this file.
 
 ## Edit sequence
 
-### Change one: the region stack
+Nine edits. `Eval.scala`'s eight are a **verified decomposition**, not a description: the baseline and
+the shipped file differ in 26 regions, every one is assigned to exactly one edit below, and every
+one's text was checked to land in the final file. An earlier version of this section described the
+edits in prose without ever building the sequence, so the walk could not be performed from it. That
+is what this replaces.
 
-**1. New file, `kyo/proto/kernel/internal/Stack.scala`.**
+Intermediate states do not compile, which is expected: the reviewer sees each change in the order it
+is reasoned about, and the tree is green again at the end.
 
-> The open regions, in four arrays and a size. Entries are strictly heterogeneous, one set of types
-> per region, so the columns are erased and read back at the storage boundary, which is the cast the
-> ladder names with this carrier.
+| # | edit | file | hunks | the sentence |
+|---|---|---|---|---|
+| 1 | the region stack | `Stack.scala`, new | file | four arrays and a size; `push` typed because the pushing site knows all five, the reads asserted because the reader knows none |
+| 2 | the loop's signature, the stack it closes over, and two imports | `Eval.scala` | 3 | the loop returns the eval's answer, because once a region's continuation waits on the stack the composition of the arguments stops describing what the call produces |
+| 3 | the step's type parameters become `T` and `S2` | `Eval.scala` | 13 | mechanical, and forced by edit 2: `A` and `S` are the eval's now, and were shadowing it |
+| 4 | the Suspend arm absorbs the registers, then asks the regions | `Eval.scala` | 2 | the innermost region answers if the tag is its own; if it is foreign the region joins the suspension's continuation and ends, and re-entering asks the next region out the same question |
+| 5 | the rebuild reads the handler and state from the entry | `Eval.scala` | 3 | the same block, reading two values from the stack instead of from `region`'s closure |
+| 6 | the own-tag answer advances in place, or completes and pops | `Eval.scala` | 1 | a continue writes the successor state into the entry; a done outcome pops and carries the payload out |
+| 7 | the Handle arm installs and continues | `Eval.scala` | 1 | a region is installed rather than entered, so its interior is evaluated by this same loop instead of a nested one; `region` is deleted here |
+| 8 | the settled arm completes the innermost region and pops | `Eval.scala` | 1 | `done` runs with the region still installed, so a throw in it reaches the same recover its interior would |
+| 9 | the guard becomes two tail-recursive methods, replacing `run` | `Eval.scala` | 2 | the regions a throw unwinds are the ones the stack holds, and both recovering and declining are self tail calls, so neither costs stack |
 
-`pop` drops the entry without clearing its slots, so a stack that reached depth n holds up to n
-entries' worth for the rest of that eval. Clearing is the alternative and costs four stores on the
-path every region exit takes; neither has been measured, and the retention is bounded by peak depth.
+Then two edits outside `Eval.scala`:
 
-**2. `Eval.apply`, the loop's signature.**
+| # | edit | file | the sentence |
+|---|---|---|---|
+| 10 | the scaladoc of `recover` and `release` | `Handler.scala` | both state the state they are consulted with, and both are the live one |
+| 11 | two pinning tests | `EvalTest.scala` | 10000 throw-and-recover cycles, which livelocks without edit 9's budget reset; and a context update surviving an answered operation, which fails at the baseline |
 
-```scala
-def loop[T, B, C, S2](v: T < S2, contA: Arrow[T, B, S2], contB: Arrow[B, C, S2], ctx: Context): A < S
-```
+### What edit 9 replaced, twice
 
-> The loop returns the eval's answer rather than the composition of its arguments, because once a
-> region's continuation waits on the stack, "v with contA then contB applied" stops describing what
-> the call produces.
-
-This is the load-bearing line of the change. It is what makes entering a region a tail call with no
-cast between it and the result, and it is why no carrier type appears anywhere below.
-
-**3. The `Handle` arm: install and continue, replacing the nested `region` method.**
-
-```scala
-stack.push(kyo.handler, st0, ctx, kyo.cont.chain(contA.chain(contB)))
-loop(kyo.value, Arrow.id, Arrow.id, bound)
-```
-
-> A region is installed rather than entered: what follows it waits on the stack, so its interior is
-> evaluated by this same loop instead of by a nested one.
-
-**4. The settled arm: complete the innermost region and pop.**
-
-> `done` runs with the region still installed, so a throw in it reaches the same recover its interior
-> would, which is where the old per-region `try` had it.
-
-**5. The `Suspend` arm: after the registers absorb, ask the regions.**
-
-> The innermost region answers if the tag is its own; if it is foreign, the region becomes part of
-> the suspension's continuation through the existing rebuild and ends, and re-entering with what that
-> produced asks the next region out the same question.
-
-The rebuild block and `reenter` are the baseline's code, relocated, but not byte-identical, and
-`flags.md` names all five differences. The one worth your attention is a signature: `reenter`'s rows
-narrow from `Arrow[P, AX, EX & S]` to `Arrow[P, AX, EX]` and its result from `D < (S & S2)` to
-`D < S3`, because the handler is read at row `Any` so the region's `S` is no longer in scope. The new
-result type is the more specific one, so it is asserted nowhere.
-
-**6. The guard, replacing `run`: the extent guard, once for the eval.**
-
-```scala
-@tailrec def recovered(ex: Throwable): (A < S, Context)
-@tailrec def guarded(curr: A < S, ctx: Context): A < S
-```
-
-> The regions a throw unwinds are the ones the stack holds, each consulted with the state it holds
-> there, and both resuming and declining are tail calls, so neither costs stack.
-
-This edit deletes `run` and `region`. Two shapes came before this one and both were wrong: the first
-had `recovered` call `run` from inside `run`'s catch, which is **mutual** recursion and cost a frame
-per recovered region, the dependency this change exists to remove; the second over-corrected into
-four locals and two `while` loops on a belief, never tested, that a call in a `catch` cannot be
-eliminated. A probe recursing two million times through a catch path returns without overflowing, so
-it can. `recovered` does not call `guarded`, so every recursive call here is a self call and
-`@tailrec` proves it. The only allocation is the pair `recovered` returns, on the failure path.
-
-Two behavioural consequences, both pinned:
-
-- `recover` reads the state the region has reached, not the one it was installed with, per your ruling
-  that it and `release` should both see the current state;
-- an answered operation resumes with the loop's **current** context, where the baseline used the
-  install-time one, which is what `ContextEffect` says should happen.
-
-**7. `Eval.apply`, entry and exit: the eval's own budget.**
-
-```scala
-val slot  = Safepoint.get()
-val saved = Safepoint.save(slot)
-...
-try  <the guard loop from edit 6>
-finally Safepoint.restore(slot, saved)
-```
-
-> The depth guard bounds strict recursion within one eval, so the budget is the eval's and not
-> whatever the thread had left, and the caller gets back what it had.
-
-Inheriting a spent budget is a fixed point, not a slow path: every application defers, the settled arm
-applies the deferral, and its continuation is the application that just deferred. The reference
-kernel's eval does exactly this; the proto had both operations and called neither.
-
-The `restore` has no pinning test, and that is stated in the code beside it rather than left to be
-inferred. A first attempt passed with the fix reverted, so it pinned nothing and was deleted.
-
-**8. The same guard, one line: `Safepoint.reset(slot)` on catching.**
-
-> A throw leaves every strict application between it and the guard without its matching exit, and the
-> guard is where the true depth is known to be zero.
-
-Saving at entry fixes the leak across evals, not within one. An extent recovering a few hundred times
-drains its own budget and reaches the same fixed point. Flat from 200 to 12800 recoveries with the
-reset; livelocks past 800 without it.
-
-**9. `Handler.scala`, the scaladoc of `recover` and `release`.**
-
-> Both state the state they are consulted with, and both are now the live one.
-
-`recover`'s was made false by edit 6. `release`'s was false before it: a region only becomes
-abandonable by being reified into a node, and the reification writes the live state in. Correcting a
-sentence that was already wrong is still outside the surface this change first declared, so it is
-declared rather than passed off as an improvement.
-
-**10. `EvalTest.scala`, two tests.**
-
-> "regions that fail and recover in sequence cost no stack", 10000 cycles, which livelocks without
-> edit 8. And "a context update outlives an operation answered after it", which fails at the baseline
-> and passes here, pinning edit 6's second consequence.
-
-The second builds a `SuspendContext` with a non-identity update directly, because the public surface
-cannot: every `ContextEffect.suspend` carries `update(v) = v`. An earlier draft called that change
-unobservable and shipped it unpinned, which was true of the surface and false of the tree.
+Worth saying while it is in front of you, because both wrong shapes were mine and the second was worse
+than the first. The first had `recovered` call `run` from inside `run`'s catch: **mutual** recursion,
+which is not eliminated, so every recovered region cost a frame, reintroducing exactly the dependency
+this change removes. The second over-corrected into four locals and two `while` loops, on an untested
+belief that a call in a `catch` cannot be eliminated. A probe recursing two million times through a
+catch path returns without overflowing, so it can. What ships is the recursion, with no locals.
 
 ## Evidence
 
