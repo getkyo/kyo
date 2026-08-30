@@ -69,22 +69,28 @@ else.
 
 ```scala
 def park(curr: T < S2, contA: Arrow[T, B, S2], contB: Arrow[B, C, S2]): A < S =
-    var acc: Any < Any = Effect.defer(curr, contA, contB).asInstanceOf[Any < Any]
+    var acc: Any < Any = Effect.defer(curr, contA, contB)     // shape; erasure casts elided
     while !stack.isEmpty do
-        val h  = stack.handler
-        val st = stack.state
-        val k  = stack.cont
-        acc = new Kyo.Handle[Effect, Any, Any, Any, Any, Any]:
-            def value   = acc'   // the acc read before this wrap
-            def handler = h.asInstanceOf[...]
-            def state   = st
-            def cont    = k.asInstanceOf[...]
+        acc = Kyo.Handle(acc, stack.handler, stack.state, stack.cont)
         stack.pop()
     acc.asInstanceOf[A < S]
 ```
 
-(Shape, not final code: the builder reads through the same erasure-forced casts the eval's
-own stack reads use, and the acc capture is a local, not a recursive reference.)
+`Kyo.Handle(value, handler, state, cont)` is the existing factory (`KyoInternal.scala:206`),
+the same one the `<.chain` free-slot law calls; a stack entry is its argument list. No new
+builder, no hand-rolled class: the park is the factory applied once per entry.
+
+Why fresh nodes rather than the Handles that already existed: the eval consumes a Handle at
+installation, reading its four fields into the stack and looping on the interior, so by park
+time the original node is the install-time snapshot. Its `value` points at where the region
+started, and a `handleLoop`'s state has advanced past it. The stack entries are the live
+region; the park mints from them, which is what the foreign-crossing rebuild does too.
+
+Why plain Handles rather than the crossing's automatic rebuild: the crossing builds rotated
+transforms because a foreign suspension must travel out, be answered beyond this eval, and
+only then have the region re-install around the answer. A park has nothing to answer, so the
+region wraps the remainder directly: correct shape, and one object per region instead of a
+rotated transform routing through a deferral.
 
 Points that make this smaller than the reference's park (`:472-484`):
 
