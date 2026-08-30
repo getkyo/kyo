@@ -1,168 +1,267 @@
 # Adjudication
 
-`flags.sh 31a7b4bde9 -- kyo-kernel/shared/src/main/scala/kyo/proto` against `1f47d6f590` emits **88
-rows**. Every id from F1 to F88 appears in exactly one group below, and the groups' ids union to all
-88 with no id in two groups.
+`flags.sh 31a7b4bde9 -- kyo-kernel/shared/src/main/scala/kyo/proto` against the shipped tip emits
+**89 rows**. Every row appears below exactly once, with the line the id actually carries.
+
+This table is **generated from the script's own output**, not written from memory. Two earlier
+versions were blocked for filing verdicts against lines their ids did not name, twice, so the id,
+the line and the verdict now come from one pass over `flags.sh` and cannot drift. A `moved` verdict
+is decided by comparing the line, with the declared renames applied and whitespace stripped, against
+the baseline file; it is a test rather than a recollection.
 
 Verdict vocabulary is the skill's: a category from the cast ladder's closed set, a measurement, a
-`moved` provenance naming where the code came from, or `REMOVE`.
+`moved` provenance, or `REMOVE`.
 
-This table replaces an earlier one that `kernel-discipline` blocked. What it got wrong is recorded at
-the end, because a table that quietly improves teaches nothing.
+## justified: concession, the guard's loop
 
-## Relocated, with the changes named (`moved`)
+Contract in full below.
 
-**F1 to F43** (Eval.scala 50 to 229): the `Defer` and context arms, the three register-absorbing
-branches, the foreign-crossing rebuild with its three node shapes, `reenter`, and the own-tag answer
-path.
+| id | site | line | class |
+|----|------|------|-------|
+| F55 | kernel/internal/Eval.scala:295 | `var curr    = v` | mutability |
+| F56 | kernel/internal/Eval.scala:296 | `var ctx     = Context.empty` | mutability |
+| F57 | kernel/internal/Eval.scala:297 | `var out     = v` | mutability |
+| F58 | kernel/internal/Eval.scala:298 | `var settled = false` | mutability |
+| F59 | kernel/internal/Eval.scala:300 | `while !settled do` | mutability |
+| F61 | kernel/internal/Eval.scala:321 | `var ex        = failure` | mutability |
+| F62 | kernel/internal/Eval.scala:322 | `var unwinding = true` | mutability |
+| F63 | kernel/internal/Eval.scala:323 | `while unwinding do` | mutability |
+| F68 | kernel/internal/Eval.scala:351 | `end while` | mutability |
+| F69 | kernel/internal/Eval.scala:353 | `end while` | mutability |
 
-`moved`: this is the baseline's code for these arms. It is **not byte-identical**, and the five
-differences are:
+## moved
 
-1. the loop's type parameters are `T, B, C, S2` where they were `A, B, C, S`, because the loop now
-   returns the eval's answer `A < S` and those names shadowed it. Inner scopes shift `S2` to `S3` for
-   the same reason. Every `@unchecked` pattern in the range is retyped by that rename and by nothing
-   else.
-2. the rebuild reads `handler` and `state` from the stack entry where it read `kyo.handler` and `st`
-   from `region`'s closure.
-3. `reenter`'s rows narrow: `Arrow[P, AX, EX & S]` becomes `Arrow[P, AX, EX]` and its result
-   `D < (S & S2)` becomes `D < S3`. This follows from (2): the handler is read at row `Any`, so the
-   region's `S` is no longer in scope and `EX & Any` is `EX`. The new result type is the more specific
-   one, so every use site still typechecks, and it is asserted nowhere.
-4. the three rebuilt nodes are typed at row `Any` rather than `S`, same cause as (3).
-5. the arm's entry changes shape: the baseline's `case res: Kyo.Suspend[...] if !(tag <:< tag)` guard
-   becomes an `if` over the absorbed `susp`, and the three shapes bind to a `val rebuilt` because the
-   arm now reports the region's exit and pops before continuing. Comments are rewritten to describe
-   the entry rather than the region frame.
+Present verbatim at 31a7b4bde9 under the declared renames.
 
-The earlier table claimed a `git diff -w` showed only (1) and (2). That was false: it showed all five.
-The claim now names them, and (3) is the one worth a reviewer's attention because it is a signature.
+| id | site | line | class |
+|----|------|------|-------|
+| F2 | kernel/internal/Eval.scala:56 | `case kyo: Kyo.Defer[AX, Y, T, S2] @unchecked =>` | cast |
+| F3 | kernel/internal/Eval.scala:58 | `case kyo: Kyo.SuspendContext[VX, CX, T, S2] @unchecked if ctx.contains(kyo.tag) =>` | cast |
+| F4 | kernel/internal/Eval.scala:63 | `case kyo: Kyo.SuspendContextDefault[VX, CX, T, S2] @unchecked if ctx.contains(kyo...` | cast |
+| F5 | kernel/internal/Eval.scala:68 | `case kyo: Kyo.Suspend[EX, T, S2] @unchecked =>` | cast |
+| F6 | kernel/internal/Eval.scala:84 | `case sa: Kyo.SuspendArrow[IX, OX, EX, VX, T, S2] @unchecked =>` | cast |
+| F7 | kernel/internal/Eval.scala:89 | `new Kyo.SuspendArrow[IX, OX, EX, VX, C, S2] with Arrow.Transform[OX[VX], C, S2]:` | allocation |
+| F8 | kernel/internal/Eval.scala:95 | `case p: Pending[OX[VX], S3] @unchecked => Effect.defer(p, this, c2)` | cast |
+| F9 | kernel/internal/Eval.scala:98 | `case sc: Kyo.SuspendContext[VX, CX, T, S2] @unchecked =>` | cast |
+| F10 | kernel/internal/Eval.scala:103 | `new Kyo.SuspendContext[VX, CX, C, S2] with Arrow.Transform[VX, C, S2]:` | allocation |
+| F11 | kernel/internal/Eval.scala:109 | `case p: Pending[VX, S3] @unchecked => Effect.defer(p, this, c2)` | cast |
+| F12 | kernel/internal/Eval.scala:112 | `case sd: Kyo.SuspendContextDefault[VX, CX, T, S2] @unchecked =>` | cast |
+| F13 | kernel/internal/Eval.scala:117 | `new Kyo.SuspendContextDefault[VX, CX, C, S2] with Arrow.Transform[VX, C, S2]:` | allocation |
+| F14 | kernel/internal/Eval.scala:124 | `case p: Pending[VX, S3] @unchecked => Effect.defer(p, this, c2)` | cast |
+| F45 | kernel/internal/Eval.scala:248 | `case kyo: Kyo.Handle[EX, AX, Y, T, S2, VX] @unchecked =>` | cast |
+| F46 | kernel/internal/Eval.scala:254 | `case h: Handler.HandlerContext[VX, CX, AX, Y, S2] @unchecked =>` | cast |
+| F53 | kernel/internal/Eval.scala:279 | `case contA: Arrow.Chain[T, Any, B, S2] @unchecked =>` | cast |
+| F54 | kernel/internal/Eval.scala:279 | `case contA: Arrow.Chain[T, Any, B, S2] @unchecked =>` | carrier |
+| F60 | kernel/internal/Eval.scala:303 | `case suspend: Kyo.SuspendContextDefault[VX, CX, A, S] @unchecked =>` | cast |
 
-**F6, F9, F12, F23, F27, F31** (the six `new Kyo.Suspend…` allocations inside that range) are counted
-in F1 to F43 and are `moved` with no change beyond the retyping: six sites before, six after.
+## justified: representation assertion
 
-## New: reading the innermost region (`cast`, `carrier`)
+The machine finished with no region left, so what it holds is the eval's answer.
 
-**F44, F45** (Eval.scala 242, 248), **F46 to F53** (260 to 273), **F63 to F66** (318 to 320).
+| id | site | line | class |
+|----|------|------|-------|
+| F15 | kernel/internal/Eval.scala:128 | `if stack.isEmpty then susp.asInstanceOf[A < S]` | cast |
+| F47 | kernel/internal/Eval.scala:266 | `if stack.isEmpty then res.asInstanceOf[A < S]` | cast |
 
-```scala
-val handler = stack.handler.asInstanceOf[Handler[EX, AX, Y, Any, VX]]
-val state   = stack.state.asInstanceOf[VX]
-val cont    = stack.cont.asInstanceOf[Arrow[Y, Any, Any]]
-```
+## justified: erasure-forced
 
-`justified: erasure-forced`, the closed set's "array element re-typing at the storage boundary
-(`Stack`)", which the cast ladder names with this carrier. Entries are strictly heterogeneous, one set
-of types per open region, so the assertion cannot be carried in a signature.
+Array element re-typing at the storage boundary (Stack), which the ladder names with this carrier. The row is asserted at Any, the subtype end, so it is widened out of the way rather than claimed.
 
-Two of the three are narrower than they look. `Handler[E, A, B, -S, State]` and `Arrow[-A, +B, -S]`
-are contravariant in the row, so asserting them at `Any` is the **subtype** end and conforms wherever
-a row is required; the row is not claimed, it is widened out of the way. Row `Any` rather than
-`Nothing` was a compile error first: at `Nothing` these are the supertype end and cannot be passed.
-The genuine erasure assertion is `state`, `Any` to `VX`, the same shape as `Nested.unnest`'s.
+| id | site | line | class |
+|----|------|------|-------|
+| F16 | kernel/internal/Eval.scala:130 | `val handler = stack.handler.asInstanceOf[Handler[EX, AX, Y, Any, VX]]` | cast |
+| F17 | kernel/internal/Eval.scala:130 | `val handler = stack.handler.asInstanceOf[Handler[EX, AX, Y, Any, VX]]` | carrier |
+| F18 | kernel/internal/Eval.scala:131 | `val state   = stack.state.asInstanceOf[VX]` | cast |
+| F34 | kernel/internal/Eval.scala:208 | `val cont  = stack.cont.asInstanceOf[Arrow[Y, Any, Any]]` | cast |
+| F35 | kernel/internal/Eval.scala:208 | `val cont  = stack.cont.asInstanceOf[Arrow[Y, Any, Any]]` | carrier |
+| F43 | kernel/internal/Eval.scala:235 | `val cont  = stack.cont.asInstanceOf[Arrow[Y, Any, Any]]` | cast |
+| F44 | kernel/internal/Eval.scala:235 | `val cont  = stack.cont.asInstanceOf[Arrow[Y, Any, Any]]` | carrier |
+| F48 | kernel/internal/Eval.scala:270 | `val handler = stack.handler.asInstanceOf[Handler[EX, AX, Y, Any, VX]]` | cast |
+| F49 | kernel/internal/Eval.scala:270 | `val handler = stack.handler.asInstanceOf[Handler[EX, AX, Y, Any, VX]]` | carrier |
+| F50 | kernel/internal/Eval.scala:271 | `val r       = handler.done(stack.state.asInstanceOf[VX], Nested.unnest[AX](res))` | cast |
+| F51 | kernel/internal/Eval.scala:273 | `val cont  = stack.cont.asInstanceOf[Arrow[Y, Any, Any]]` | cast |
+| F52 | kernel/internal/Eval.scala:273 | `val cont  = stack.cont.asInstanceOf[Arrow[Y, Any, Any]]` | carrier |
+| F64 | kernel/internal/Eval.scala:325 | `val handler = stack.handler.asInstanceOf[Handler[EX, AX, Y, Any, VX]]` | cast |
+| F65 | kernel/internal/Eval.scala:325 | `val handler = stack.handler.asInstanceOf[Handler[EX, AX, Y, Any, VX]]` | carrier |
+| F66 | kernel/internal/Eval.scala:326 | `val state   = stack.state.asInstanceOf[VX]` | cast |
+| F67 | kernel/internal/Eval.scala:327 | `val cont    = stack.cont.asInstanceOf[Arrow[Y, A, S]]` | cast |
 
-The `carrier` rows in this set (F48, F51, F53, F64) are the `Any` **inside** those types, not a value.
-**No value in this change is typed `Any`, `Any < Nothing`, or `Null`.**
+## justified: erasure-forced
 
-**F16, F19, F20, F22, F26, F30, F34, F37, F39, F41, F43** are the same widening inside the relocated
-range, counted in F1 to F43 above and repeated here only so the `carrier` class reconciles.
+Tag storage outside its opaque scope, an approved category. The test is the baseline's own, restructured from a pattern guard to an if because the arm now binds the rebuilt node before popping.
 
-## New: the eval's answer at the boundary (`cast`)
+| id | site | line | class |
+|----|------|------|-------|
+| F19 | kernel/internal/Eval.scala:132 | `if !(susp.tag.erased <:< handler.tag.erased) then` | cast |
 
-**F13** (`if stack.isEmpty then susp.asInstanceOf[A < S]`), **F42** (`res.asInstanceOf[A < S]`).
+## false positive
 
-`justified: representation assertion`. The machine has finished with no region left to complete, so
-what it holds is the eval's answer. Both replace the baseline's `asInstanceOf[C < S]` at the same two
-sites. They are the only two places the eval's own type is asserted, which is the payoff of the
-signature change: the old shape needed one at every region boundary.
+The flagged word appears in a comment, not in code. The script is recall-tuned and tolerates these
+by design; they are rows that need a verdict, not defects.
 
-**F59** (`case suspend: Kyo.SuspendContextDefault[VX, CX, A, S] @unchecked`) is the baseline's own
-boundary pattern, unmoved.
+| id | site | line | class |
+|----|------|------|-------|
+| F1 | kernel/internal/Eval.scala:44 | `// armed bit is unobservable while nothing in the proto arms. It is kept because ...` | mutability |
+| F20 | kernel/internal/Eval.scala:140 | `// instead of re-entering it. Nothing inside the try is evaluated, so a` | carrier |
 
-## New: the guard (`mutability`, `cast`)
+## justified: erasure-forced
 
-**F54 to F58** (`var curr`, `var ctx`, `var out`, `var settled`, `while !settled`), **F60 to F62**
-(`var ex`, `var unwinding`, `while unwinding`), **F67, F68** (`end while`, two false positives on the
-keyword).
+The row half of the storage-boundary read: the handler is asserted at Any, so what it produces is typed at Any too. Not a value carrier.
 
-`justified`: interpreter mutability, the concession the skill calls "the accelerator's engine room",
-and here it is what buys the property. Contract, all four parts:
+| id | site | line | class |
+|----|------|------|-------|
+| F21 | kernel/internal/Eval.scala:151 | `val rebuilt: Y < Any =` | carrier |
+| F42 | kernel/internal/Eval.scala:233 | `val r = Nested.unnest[Y < Any](o)` | carrier |
 
-- justification: the first shape of this guard had `recovered` call `run` from inside `run`'s catch,
-  so every recovered region held frames until the eval settled and N throw-and-recover cycles cost
-  O(N) stack. A loop is what makes declining and recovering both cost nothing.
-- minimal scope: five locals in `apply`, none escaping, none read after the loop but `out`.
-- protective measure: `out` is initialised from `v`, so no sentinel and no `Null`; `settled` is the
-  only exit; the unwind's `ex` only ever moves forward to the failure a recover itself raised, which
-  is what the nested per-region tries did.
-- pinning test: `EvalTest` "regions that fail and recover in sequence cost no stack", 10000 cycles.
+## justified: typed pattern
 
-**F63 to F66** are the storage-boundary reads inside the unwind, adjudicated with that group above.
+Ladder step 2: bound at the needed type rather than rebound and cast, so the runtime test is identical and the claim is visible.
 
-## New: the eval's own budget (`cast`)
+| id | site | line | class |
+|----|------|------|-------|
+| F22 | kernel/internal/Eval.scala:153 | `case sa: Kyo.SuspendArrow[IY, OY, EY, VY, AX, EX] @unchecked =>` | cast |
+| F25 | kernel/internal/Eval.scala:165 | `case p: Pending[OY[VY], S3] @unchecked =>` | cast |
+| F26 | kernel/internal/Eval.scala:170 | `case sc: Kyo.SuspendContext[VX, CX, AX, EX] @unchecked =>` | cast |
+| F29 | kernel/internal/Eval.scala:182 | `case p: Pending[VX, S3] @unchecked =>` | cast |
+| F30 | kernel/internal/Eval.scala:187 | `case sd: Kyo.SuspendContextDefault[VX, CX, AX, EX] @unchecked =>` | cast |
+| F33 | kernel/internal/Eval.scala:200 | `case p: Pending[VX, S3] @unchecked =>` | cast |
+| F36 | kernel/internal/Eval.scala:214 | `case suspend: Kyo.SuspendArrow[IX, OX, EX, VX, AX, EX] @unchecked =>` | cast |
+| F37 | kernel/internal/Eval.scala:218 | `case handler: Handler.HandlerCont[IX, OX, EX, AX, Y, Any] @unchecked =>` | cast |
+| F38 | kernel/internal/Eval.scala:218 | `case handler: Handler.HandlerCont[IX, OX, EX, AX, Y, Any] @unchecked =>` | carrier |
+| F39 | kernel/internal/Eval.scala:223 | `case handler: Handler.HandlerLoop[IX, OX, EX, AX, Y, Any, VX] @unchecked =>` | cast |
+| F40 | kernel/internal/Eval.scala:223 | `case handler: Handler.HandlerLoop[IX, OX, EX, AX, Y, Any, VX] @unchecked =>` | carrier |
+| F41 | kernel/internal/Eval.scala:227 | `case o: Loop.Continue2[VX, OX[VX] < EX] @unchecked =>` | cast |
 
-Not flagged by the script, and recorded because `kernel-discipline`'s catalog covers what the script
-cannot see. `ffc1819ecc` adds `Safepoint.get`, `save` and a `finally restore`; `1f47d6f590` adds
-`Safepoint.reset(slot)` in the guard.
+## moved
 
-`justified: measurement`. A throw leaves every strict application between it and the guard without its
-matching `exit`, so the budget leaks once per recovery. Measured over 200 to 12800 recoveries: flat
-per-recovery cost with the reset, livelock past 800 without it, and the baseline livelocks past 400.
-The guard is where the true recursion depth is known to be zero.
+One of the baseline's own allocations, retyped by the declared renames.
 
-## New: the region stack (`new-type`, `mutability`, `allocation`, `carrier`)
+| id | site | line | class |
+|----|------|------|-------|
+| F23 | kernel/internal/Eval.scala:156 | `new Kyo.SuspendArrow[IY, OY, EY, VY, Y, Any] with Arrow.Transform[OY[VY], Y, Any]:` | carrier |
+| F24 | kernel/internal/Eval.scala:156 | `new Kyo.SuspendArrow[IY, OY, EY, VY, Y, Any] with Arrow.Transform[OY[VY], Y, Any]:` | allocation |
+| F27 | kernel/internal/Eval.scala:173 | `new Kyo.SuspendContext[VX, CX, Y, Any] with Arrow.Transform[VX, Y, Any]:` | carrier |
+| F28 | kernel/internal/Eval.scala:173 | `new Kyo.SuspendContext[VX, CX, Y, Any] with Arrow.Transform[VX, Y, Any]:` | allocation |
+| F31 | kernel/internal/Eval.scala:190 | `new Kyo.SuspendContextDefault[VX, CX, Y, Any] with Arrow.Transform[VX, Y, Any]:` | carrier |
+| F32 | kernel/internal/Eval.scala:190 | `new Kyo.SuspendContextDefault[VX, CX, Y, Any] with Arrow.Transform[VX, Y, Any]:` | allocation |
 
-**F70** (`final private[kyo] class Stack`)
+## false positive
 
-`justified`: no existing type holds a growable heterogeneous sequence of open regions, and the entries
-must be reachable by the eval while a region is open, which a value in the pending union is not. Its
-columns stay erased rather than becoming a typed entry object because the cast ladder already permits
-the storage-boundary read and a typed entry would allocate per region to buy what the ladder permits
-for free. (The earlier table justified this as "the carrier the reviewer specified", which is who
-asked rather than why.)
+The word appears in a scaladoc sentence, not in code.
 
-**F71, F74, F76, F78, F80** (the four column `var`s and `size`)
+| id | site | line | class |
+|----|------|------|-------|
+| F70 | kernel/internal/Handler.scala:22 | `* The state is the live one for the same reason [[release]]'s is: a region's stat...` | mutability |
 
-`justified`: interpreter mutability. Contract: the region chain is the only representation whose depth
-is not the Java stack's; one instance per `Eval.apply`, reachable from nothing that leaves it; entries
-written only by the eval's own arms and holding complete values; pinned by `ArrowEffectTest` "handles
-nested per recursion step in bounded stack", `EvalTest` "a nested eval shares the thread's stack and
-sees none of the outer regions", and the two multi-shot cases.
+## justified
 
-**F72, F75, F77, F79** (the four `new Array` in the constructor), **F84, F86, F87, F88** (the four in
-`grow`)
+No existing type holds a growable heterogeneous sequence of open regions, and the entries must be reachable by the eval while a region is open, which a value in the pending union is not.
 
-`justified: measurement`. Four arrays per eval and a doubling copy on growth. The full benchmark class
-on both legs shows no confirmed regression on any of 20 rows, the region-heavy ones included; the one
-`-f 1` outlier does not reproduce at `-f 3` (49.346 ± 0.558 against 48.985 ± 0.416). See
-`evidence.md`.
+| id | site | line | class |
+|----|------|------|-------|
+| F71 | kernel/internal/Stack.scala:18 | `final private[kyo] class Stack:` | new-type |
 
-**F73, F81, F82, F83, F85** (`Array[Any]`, `state: Any`, the accessor rows)
+## justified: concession
 
-`justified: erasure-forced`, the storage boundary itself. This is the column whose type genuinely
-cannot be written, and it is why the reads above are asserted rather than checked.
+Interpreter mutability, contract in full below.
 
-## False positives, adjudicated as such
+| id | site | line | class |
+|----|------|------|-------|
+| F72 | kernel/internal/Stack.scala:20 | `private var handlers = new Array[Handler[?, ?, ?, ?, ?]](8)` | mutability |
+| F75 | kernel/internal/Stack.scala:21 | `private var states   = new Array[Any](8)` | mutability |
+| F77 | kernel/internal/Stack.scala:22 | `private var ctxs     = new Array[Context](8)` | mutability |
+| F79 | kernel/internal/Stack.scala:23 | `private var conts    = new Array[Arrow[?, ?, ?]](8)` | mutability |
+| F81 | kernel/internal/Stack.scala:24 | `private var size     = 0` | mutability |
 
-**F67, F68** (`end while`) and **F69** (`Handler.scala:22`, the word "while" inside a scaladoc
-sentence). The script is recall-tuned and tolerates these by design; they are rows that must be given
-a verdict, not defects.
+## justified: measurement
+
+Four arrays per eval and a doubling copy; the full class shows no confirmed regression, evidence.md.
+
+| id | site | line | class |
+|----|------|------|-------|
+| F73 | kernel/internal/Stack.scala:20 | `private var handlers = new Array[Handler[?, ?, ?, ?, ?]](8)` | allocation |
+| F76 | kernel/internal/Stack.scala:21 | `private var states   = new Array[Any](8)` | allocation |
+| F78 | kernel/internal/Stack.scala:22 | `private var ctxs     = new Array[Context](8)` | allocation |
+| F80 | kernel/internal/Stack.scala:23 | `private var conts    = new Array[Arrow[?, ?, ?]](8)` | allocation |
+| F85 | kernel/internal/Stack.scala:55 | `val hs = new Array[Handler[?, ?, ?, ?, ?]](n)` | allocation |
+| F87 | kernel/internal/Stack.scala:56 | `val ss = new Array[Any](n)` | allocation |
+| F88 | kernel/internal/Stack.scala:57 | `val xs = new Array[Context](n)` | allocation |
+| F89 | kernel/internal/Stack.scala:58 | `val cs = new Array[Arrow[?, ?, ?]](n)` | allocation |
+
+## justified: erasure-forced
+
+The state column's type genuinely cannot be written; this is the storage boundary the ladder names with this carrier.
+
+| id | site | line | class |
+|----|------|------|-------|
+| F74 | kernel/internal/Stack.scala:21 | `private var states   = new Array[Any](8)` | carrier |
+| F82 | kernel/internal/Stack.scala:28 | `def push(handler: Handler[?, ?, ?, ?, ?], state: Any, ctx: Context, cont: Arrow[?...` | carrier |
+| F83 | kernel/internal/Stack.scala:47 | `def state: Any                      = states(size - 1)` | carrier |
+| F84 | kernel/internal/Stack.scala:48 | `def state_=(v: Any): Unit           = states(size - 1) = v` | carrier |
+| F86 | kernel/internal/Stack.scala:56 | `val ss = new Array[Any](n)` | carrier |
+
+## The concession contracts in full
+
+**The region stack** (`Stack`'s five `var`s). Justified: the region chain is the only thing whose
+depth was the Java stack's, and a heap chain is what removes that. Scope: one instance per
+`Eval.apply`, reachable from nothing that leaves the eval. Protection: entries are written only by
+the eval's own arms and hold complete values, and a nested eval builds its own. Pinned by
+`ArrowEffectTest` "handles nested per recursion step in bounded stack" (the defect itself),
+`EvalTest` "a nested eval shares the thread's stack and sees none of the outer regions",
+`EvalTest` "the captured continuation is multi-shot" and "each shot of a multi-shot capture resumes
+from capture-time state".
+
+**The guard's loop** (`curr`, `ctx`, `out`, `settled`, `ex`, `unwinding`, and the two `while`s; six
+locals, not the five an earlier version claimed). Justified: the alternative resumed a recovery by
+calling back into the guard from inside its own catch, costing a frame per recovered region, which is
+the dependency this change exists to remove. Scope: six locals in `apply`, none escaping. Protection:
+`out` is initialised from `v`, so there is no sentinel and no `Null`; `settled` is the only exit; `ex`
+only ever moves forward to the failure a recover itself raised. Pinned by `EvalTest` "regions that
+fail and recover in sequence cost no stack", 10000 cycles, which livelocks without the budget reset.
+
+## One thing with no pinning test, stated rather than implied
+
+`finally Safepoint.restore(slot, saved)` has no test. A first attempt passed with the fix reverted,
+so it pinned nothing and was removed rather than kept for the look of it. The reason it is hard to
+pin: a nested eval's own `exit` calls return most of what it spent, so the enclosing eval survives
+losing the depth, and the armed bit the restore also returns is unobservable while nothing in the
+proto arms. It is kept because discarding a caller's state is wrong whether or not this tree can
+currently see it, and because the reference kernel does the same at the same place.
+
+## One semantic change the classes above do not name
+
+The own-tag answer paths resume with the loop's **current** context where the baseline resumed with
+the context the region was installed with (baseline `region(st, r, Arrow.id, ctx)`, whose `ctx` never
+advanced, against `loop(r, Arrow.id, Arrow.id, ctx)` here). The proto's own documentation says a
+context read rebinds "the updated value for the rest of that region's extent", which the baseline
+dropped at every answered operation and this does not, so the change is toward the stated contract.
+
+It is unobservable in this tree and therefore unpinned: every `SuspendContext` the public surface can
+build carries `update(v) = v`, so no update is ever non-identity, and a test would have to construct
+a node the surface cannot produce. Raised here rather than left for the reviewer to find.
 
 ## Nothing removed
 
-No row's verdict is `REMOVE`. The constructs `rulings.md` names, an `Any` or `Null` value carrier, a
-`var` outside the engine room, a new type without an argument, a placeholder body, banned vocabulary,
-are absent from the diff rather than justified in it.
+No row's verdict is `REMOVE`. The constructs `rulings.md` names, an `Any` or `Null` **value** carrier,
+a `var` outside the engine room, a new type without an argument, a placeholder body, banned
+vocabulary, are absent from the diff rather than justified in it. The `Any` that does appear is
+always a row inside a type, never the type of a value, except the state column, whose type cannot be
+written and which is adjudicated as the storage boundary.
 
-## What the earlier table got wrong
+## What the two earlier versions got wrong
 
-Recorded because the escape matters more than the correction:
+Recorded because the escape matters more than the correction, and because both escapes were the same
+one:
 
-- it claimed every row had a verdict and one (the state column's `var`) had none;
-- eight allocation rows carried `measurement pending`, which is not an accepted verdict, and stayed
-  that way after the benchmarks closed the question because only `evidence.md` was updated;
-- two rows were verdicted `moved` against code that does not exist at the control commit;
-- its `moved` verification sentence was false, and narrower than the claim it licensed: a grep for the
-  `handler`/`state` reads cannot see a signature change;
-- two entries adjudicated a different line than their id named;
-- `Stack`'s verdict appealed to who asked for it rather than to a category.
+- version one claimed every row had a verdict while one had none; carried eight rows at
+  `measurement pending`, which is not an accepted verdict; verdicted two rows `moved` against code
+  absent from the control; and justified `Stack` by who asked for it.
+- versions one and two both **filed verdicts against lines their ids did not name**. Version two's
+  own footer confessed the defect and then repeated it at larger scale, and it inverted the central
+  category: `erasure-forced` was spent on relocated typed patterns while the four real
+  storage-boundary casts carried only `moved`.
+- both asserted a completeness for the `moved` group that neither had established.
+
+This version is generated from `flags.sh`'s output in one pass, and `moved` is decided by comparing
+each line against the baseline file under the declared renames. The failure mode was writing the
+table from memory; the fix is not writing it by hand.

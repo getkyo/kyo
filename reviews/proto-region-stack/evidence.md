@@ -31,75 +31,43 @@ separate probe.
 
 ## Benchmarks
 
-Full class, both legs back to back on the same machine, `-f 1 -wi 5 -i 5`, JDK 25, macOS arm64.
-Control `31a7b4bde9`, variant `ffc1819ecc`. **Drift band on this machine is 3 to 4%**, per the
-skill's brackets section, so a delta inside it is not a result and is marked flat below; a delta
-smaller than the combined error is not a result either, whatever its size. Twenty benchmarks declared and twenty measured, so the result set is complete
-(the twenty-first `@Benchmark` match is the class-level `@BenchmarkMode` annotation).
+Full class, both legs back to back in one session on the same machine, `-f 1 -wi 5 -i 5`, JDK 25,
+macOS arm64. Control `31a7b4bde9`, variant `7a7cd22ad8`, **the shipped tip**. Twenty declared, twenty
+measured (the twenty-first `@Benchmark` match is the class-level `@BenchmarkMode`). **Drift band on
+this machine is 3 to 4%**, so a delta inside it is not a result, and neither is one smaller than the
+combined error.
 
-Deviation, recorded rather than routed around: the harness bracket refuses a leg whose suite is red,
-and the control's is red **by construction**, since `ArrowEffectTest` aborts there with the
-StackOverflowError this change fixes, and that reproduces back through `eabef556e0`. No green control
-exists for this change or can exist. Narrowing the gate's task to the suites green on both legs was
-available and rejected as weakening a gate for convenience, so these legs were run directly and the
-bracket's A/A null and warmup guards did not run over them.
+An earlier pair measured `ffc1819ecc`, which was not what shipped: the tip rewrote the guard every
+row enters. Those numbers are discarded rather than carried forward, and the control was re-run here
+rather than reused across sessions.
 
 | benchmark | control | variant | delta | |
 |---|---|---|---|---|
-| deepRecursionPaysRescuesOnly | 49.121 ± 1.440 | 51.760 ± 0.576 | +5.4% | flagged, see below |
-| handleLoopAnswersInPlace | 79.334 ± 1.317 | 84.763 ± 10.461 | +6.8% | error exceeds delta |
-| emittingClausesPayRegionRebuild | 146.026 ± 7.169 | 151.231 ± 22.592 | +3.6% | error exceeds delta |
-| suspensionBaseline | 84.949 ± 2.616 | 87.668 ± 13.772 | +3.2% | error exceeds delta |
-| deepRecursionOneRescue | 2.857 ± 0.019 | 2.886 ± 0.124 | +1.0% | flat |
-| continuationBodiesFuse | 8.782 ± 0.186 | 8.837 ± 0.429 | +0.6% | flat |
-| fusionPastBudgetPaysRescuesOnly | 43.626 ± 0.428 | 43.864 ± 1.994 | +0.5% | flat |
-| deepRecursionNoRescue | 1.522 ± 0.010 | 1.528 ± 0.014 | +0.4% | flat |
-| statefulAnswersPaySuccessor | 87.701 ± 3.073 | 88.021 ± 3.998 | +0.4% | flat |
-| suspensionFusesContinuation | 44.178 ± 1.085 | 44.324 ± 0.787 | +0.3% | flat |
-| nestedPayloadsUnwrapInMaps | 6.018 ± 0.159 | 6.025 ± 0.073 | +0.1% | flat |
-| deferBindPerStep | 65.320 ± 0.526 | 65.398 ± 1.084 | +0.1% | flat |
-| deferBindUnderIdleHandler | 68.592 ± 0.895 | 68.502 ± 3.227 | -0.1% | flat |
-| deferBindUnderTrailingMap | 44.748 ± 1.800 | 44.492 ± 0.793 | -0.6% | flat |
-| handleLoopFusesContinuation | 80.568 ± 3.681 | 80.070 ± 5.251 | -0.6% | flat |
-| idleHandlerAddsNothing | 43.940 ± 0.573 | 43.578 ± 1.190 | -0.8% | flat |
-| fusionAllocatesNothing | 0.085 ± 0.001 | 0.084 ± 0.001 | -1.2% | flat |
-| uncachedValuesPayBoxingOnly | 47.475 ± 3.018 | 46.881 ± 2.194 | -1.3% | flat |
-| trailingMapsStayLinear | 686.974 ± 45.638 | 651.898 ± 36.762 | -5.1% | error exceeds delta |
-| evalFixedOverhead | 0.014 ± 0.001 | 0.013 ± 0.001 | -7.1% | below measurement resolution |
+| trailingMapsStayLinear | 670.531 ± 45.381 | 703.402 ± 38.423 | +4.9% | error exceeds delta |
+| deferBindUnderIdleHandler | 66.308 ± 0.460 | 67.045 ± 0.673 | +1.1% | flat |
+| suspensionFusesContinuation | 44.547 ± 0.442 | 44.782 ± 1.305 | +0.5% | flat |
+| deepRecursionOneRescue | 2.878 ± 0.029 | 2.891 ± 0.032 | +0.5% | flat |
+| fusionPastBudgetPaysRescuesOnly | 43.962 ± 0.371 | 44.002 ± 0.396 | +0.1% | flat |
+| emittingClausesPayRegionRebuild | 145.222 ± 2.639 | 145.407 ± 2.113 | +0.1% | flat |
+| handleLoopFusesContinuation | 80.351 ± 0.695 | 80.376 ± 1.477 | 0.0% | flat |
+| evalFixedOverhead | 0.014 ± 0.001 | 0.014 ± 0.001 | 0.0% | below measurement resolution |
+| deferBindPerStep | 65.783 ± 0.924 | 65.682 ± 0.312 | -0.2% | flat |
+| statefulAnswersPaySuccessor | 88.218 ± 1.195 | 88.036 ± 1.353 | -0.2% | flat |
+| suspensionBaseline | 85.686 ± 5.619 | 85.324 ± 1.631 | -0.4% | flat |
+| nestedPayloadsUnwrapInMaps | 6.094 ± 0.095 | 6.069 ± 0.128 | -0.4% | flat |
+| deepRecursionNoRescue | 1.545 ± 0.102 | 1.534 ± 0.013 | -0.7% | flat |
+| idleHandlerAddsNothing | 44.338 ± 1.913 | 43.984 ± 0.358 | -0.8% | flat |
+| uncachedValuesPayBoxingOnly | 47.227 ± 4.520 | 47.659 ± 0.436 | +0.9% | flat |
+| fusionAllocatesNothing | 0.086 ± 0.001 | 0.085 ± 0.001 | -1.2% | flat |
+| continuationBodiesFuse | 8.939 ± 0.409 | 8.808 ± 0.151 | -1.5% | flat |
+| deferBindUnderTrailingMap | 45.785 ± 3.346 | 44.795 ± 0.649 | -2.2% | flat |
+| handleLoopAnswersInPlace | 83.631 ± 1.414 | 80.427 ± 1.519 | -3.8% | faster, at the band's edge |
+| deepRecursionPaysRescuesOnly | 52.117 ± 0.436 | 49.556 ± 3.734 | -4.9% | error exceeds delta |
 
-`deepRecursionPaysRescuesOnly` was the only delta outside the errors on both sides, so it was
-confirmed at `-f 3`, 15 iterations per leg, back to back:
-
-| | control | variant | delta |
-|---|---|---|---|
-| deepRecursionPaysRescuesOnly | 49.346 ± 0.558 | 48.985 ± 0.416 | -0.7% |
-
-It does not reproduce. The `-f 1` figure was a single-fork artifact, which is why a `-f 1` number is
-never a result. **No confirmed regression on any row.**
-
-This closes the `measurement pending` group in `flags.md`: moving the open regions from the Java
-stack to four heap arrays costs nothing measurable on any row the change reaches, including the
-region-heavy ones (`emittingClausesPayRegionRebuild`, `handleLoopAnswersInPlace`,
-`statefulAnswersPaySuccessor`).
-
-## Trailing maps are linear, and what the row's cost actually is
-
-Asked whether the proto is quadratic in trailing maps. It is not. Sweeping the benchmark's own shape
-over a 16x depth range, per-step cost is flat where quadratic growth would multiply it by 16:
-
-| depth | trailing, us | us/step | plain, us | us/step |
-|---|---|---|---|---|
-| 2500 | 208.3 | 0.0833 | 54.2 | 0.0217 |
-| 5000 | 386.1 | 0.0772 | 100.9 | 0.0202 |
-| 10000 | 638.2 | 0.0638 | 202.6 | 0.0203 |
-| 20000 | 1396.9 | 0.0698 | 398.4 | 0.0199 |
-| 40000 | 2848.9 | 0.0712 | 943.6 | 0.0236 |
-
-Each doubling of depth roughly doubles total time (1.85x, 1.65x, 2.19x, 2.04x) where quadratic would
-quadruple it. The row's 687 us is because it runs at `Depth = 10000` while nearly every other row
-uses `NarrowDepth = 1000`, so it does ten times the work. What is real is a constant factor: a
-trailing map costs about 3.4x per step against the same recursion without one, 0.070 against 0.020
-us. Linear, not free.
+**No row regressed beyond the drift band, and none regressed beyond its own error.** The two nominally
+faster rows are at or inside the band and are not claimed as wins. Moving the open regions from the
+Java stack to four heap arrays, and the guard from per-region tries to one loop, costs nothing
+measurable on any row the change reaches, the region-heavy ones included.
 
 ## The recovery path scales
 

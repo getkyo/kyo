@@ -139,6 +139,21 @@ five locals in `apply`, none escaping. Protected because `out` is initialised fr
 sentinel and no `Null`, and `settled` is the only exit. Pinned by `EvalTest` "regions that fail and
 recover in sequence cost no stack", 10000 cycles, which fails on the recursive shape.
 
+## Declared: the context an answered operation resumes with
+
+The own-tag answer paths resume with the loop's **current** context where the baseline resumed with
+the one the region was installed with. The baseline's `region` held `ctx` as a parameter that never
+advanced, so a context read inside a region rebound the value for the interior and then lost it at
+the next answered operation; here the loop's `ctx` carries the update forward.
+
+The proto's own `ContextEffect` documentation says a read rebinds "the updated value for the rest of
+that region's extent", which is what this does and what the baseline did not, so the change is toward
+the stated contract rather than away from it. It is unobservable in this tree and therefore unpinned:
+every `SuspendContext` the public surface can build carries `update(v) = v`, so no update is ever
+non-identity, and a test would have to construct a node the surface cannot produce.
+
+Raised as a declared change rather than left to be discovered.
+
 ## Ruled, not open
 
 **Recover reads the working state.** Today `recover` is consulted with the state the extent was
