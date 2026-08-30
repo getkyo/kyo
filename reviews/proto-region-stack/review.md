@@ -1,14 +1,17 @@
 # Live review: nested regions on a stack, and four defects behind it
 
-Worktree `kyo-root-impl`, branch `proto-lift-fix`, 14 commits off `31a7b4bde9`, tip `6a40f9de4b`.
+Worktree `kyo-root-impl`, branch `proto-lift-fix`, 15 commits off `31a7b4bde9`, tip `2e070d7d21`.
 
 Ten edits, applied one at a time with the Edit tool, each with the sentence beside it. The sequence
 is `sequence.json`; `sequence.py --verify` applies it to the baseline and compares digests, so the
 claim that it produces the shipped files is checked rather than made.
 
-## Read this first
+## Read this first: the change is not ready to accept
 
-**The performance evidence in the first four rounds of this package was about a different kernel.**
+Two things, and the second is why.
+
+**One. The performance evidence in the first four rounds of this package was about a different
+kernel.**
 `kyo.kernel.bench.ProtoKernelBench` contains no reference to `proto` and measures `kyo.kernel`; it
 was named when the proto was `kyo-kernel2` and the rename left the name behind. Nothing under
 `src/jmh` referenced `kyo.proto` at all, so no benchmark had ever executed the file this change
@@ -20,6 +23,26 @@ review, so this cannot recur silently.
 
 The stale name is left alone. Renaming it changes what every historical number in this repository
 refers to, which is your call and not a drive-by.
+
+**Two. With the benchmark that does measure the proto, the change regresses it, badly.** An
+operation suspended and answered by a region costs between 2x and 2.6x what it cost at the baseline:
+`suspensionBaseline` 134.8 to 346.4 us, `handleLoopAnswersInPlace` 173.8 to 391.4, confirmed at
+`-f 3` on both legs with the two legs checked to compute identical answers.
+
+I am presenting it because you asked me to prepare the review and because the walk, the correctness
+fixes and the artifacts are ready. I am not presenting it as something to accept. A regression is an
+open defect, and this one is open.
+
+What the diagnosis has established, in `evidence.md`: it is entirely the first of the fifteen
+commits, the region stack itself, and every commit after it is neutral; it is **not** allocation,
+since the tip allocates 33% less on those rows while running 2.6x slower; it is **not** the size of
+`loop`, since moving the cold rebuild path back out changed nothing; and it has a sharp boundary,
+in that the one row whose continuation is fused into the suspension node is 8.7% *faster* while the
+same row with the continuation standing beside it is 157% slower. A second, separate cost was found
+and fixed: every eval allocated four region arrays whether or not it installed a region.
+
+The mechanism for the main one is not identified, and I am not going to dress a suspicion as a
+finding. The next experiment is named at the end of `evidence.md`.
 
 ## What this fixes
 
@@ -65,7 +88,7 @@ the order it is reasoned about, and the tree is green again at the end.
 
 | # | edit | file | lines | the sentence |
 |---|---|---|---|---|
-| 1 | the region stack | `Stack.scala`, new | 78 | four arrays and a size; `push` typed because the pushing site knows all five, the reads asserted because the reader knows none |
+| 1 | the region stack | `Stack.scala`, new | 91 | four arrays and a size; `push` typed because the pushing site knows all five, the reads asserted because the reader knows none |
 | 2 | two imports | `Eval.scala` | 11 → 14 | two names for the unwind's `Maybe`, and the annotation that makes the loop's self calls jumps |
 | 3 | the loop's signature, the stack, the budget | `Eval.scala` | 1 → 22 | the loop returns the eval's answer, because once a region's continuation waits on the stack the composition of the arguments stops describing what the call produces |
 | 4 | the three context arms retyped | `Eval.scala` | 12 → 12 | mechanical, and forced by the edit above: `A` and `S` are the eval's now, and were shadowing it |
@@ -99,14 +122,14 @@ differences it did not name and structurally could not. This replaces it with a 
 
 ## Evidence
 
-`evidence.md`, all of it at the tip `6a40f9de4b`.
+`evidence.md`, all of it at the tip `2e070d7d21`.
 
 | | result |
 |---|---|
 | clean batch build | green |
 | `kyo-kernelJVM/test` | 35 suites, 0 aborted, **1405 tests, 0 failed** |
 | the edit sequence | 10 edits reproduce all 4 files, by digest |
-| flags | 98 rows, every one adjudicated |
+| flags | 99 rows, every one adjudicated |
 
 At the baseline the module aborts a suite and cannot be run green.
 

@@ -45,10 +45,15 @@ echo "CHECK  range $range  base $base_sha  tip $tip_sha  commits $commits"
 #    is how four rounds of numbers came to describe a tree that was not shipping.
 #
 #    `findings-*.md` and `escapes.md` are exempt: their subject IS what earlier rounds measured, so
-#    naming a superseded commit there is the point rather than the defect.
+#    naming a superseded commit there is the point rather than the defect. A package that must cite
+#    an in-range commit for a real reason (a bisect result, say) declares it in `provenance.md`, one
+#    sha per line with the reason beside it, which is a written justification rather than a silence.
+declared=""
+[ -f "$dir/provenance.md" ] && declared=$(grep -oE '\b[0-9a-f]{8,40}\b' "$dir/provenance.md" | sort -u | tr '\n' ' ')
 while IFS=: read -r file sha; do
     [ -z "${sha:-}" ] && continue
-    case "$(basename "$file")" in findings-*.md | escapes.md) continue ;; esac
+    case "$(basename "$file")" in findings-*.md | escapes.md | provenance.md) continue ;; esac
+    case " $declared " in *" $sha "*) continue ;; esac
     if git cat-file -e "${sha}^{commit}" 2>/dev/null; then
         full=$(git rev-parse --short=10 "$sha")
         [ "$full" = "$base_sha" ] || [ "$full" = "$tip_sha" ] && continue
@@ -95,12 +100,16 @@ fi
 # 5. Benchmark coverage. The one that matters most: a benchmark class named in the package must
 #    actually exercise the package under review. A class named for what it used to measure will
 #    otherwise supply numbers about code the change does not touch, and they will read as evidence.
+#    A class the package names in order to say it is NOT evidence is declared in `provenance.md`
+#    beside the commits, which keeps the finding sayable without the gate going permanently red.
 for cls in $(grep -rhoE '\b[A-Z][A-Za-z0-9]*Bench\b' "$dir" --include='*.md' 2>/dev/null | sort -u); do
     src=$(git ls-files "*/$cls.scala")
     if [ -z "$src" ]; then
         stale "the package names benchmark class $cls, which no source file defines"
     elif grep -qE "(^|[^A-Za-z0-9.])${pkg//\//\\.}" $src; then
         echo "OK     $cls exercises $pkg"
+    elif [ -f "$dir/provenance.md" ] && grep -q "\b$cls\b" "$dir/provenance.md"; then
+        echo "CHECK  $cls does not reference $pkg; provenance.md declares why it is named anyway"
     else
         stale "$cls does not reference $pkg, so its rows are not evidence about this change"
     fi

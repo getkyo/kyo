@@ -1,6 +1,6 @@
 # Evidence
 
-Everything below was measured on the tip `6a40f9de4b`, on a working tree clean against it, on
+Everything below was measured on the tip `2e070d7d21`, on a working tree clean against it, on
 2026-08-30. `package-check.sh` re-derives the tip, the surface, the tree's cleanliness, the flag
 count, the edit sequence and the benchmark coverage, so these are checkable rather than asserted.
 
@@ -15,9 +15,9 @@ rather than as differences.
 |---|---|
 | clean batch build (`kyo-kernelJVM/clean`, `compile`, `test`) | green, exit 0 |
 | `kyo-kernelJVM/test` | **35 suites, 0 aborted, 1405 tests, 0 failed** |
-| the three proto suites in one JVM | pending a re-run at the tip; the 208 recorded earlier predates the fourth pin |
+| the three proto suites in one JVM | **209 tests, 0 failed** |
 | the edit sequence against the baseline | 10 edits reproduce all 4 files, by digest |
-| flags | 98 rows, every one with a verdict |
+| flags | 99 rows, every one with a verdict |
 
 At the baseline `31a7b4bde9` the same module aborts a suite with a `StackOverflowError` and cannot
 be run green, which is the defect this change exists to fix. The three `EvalTest` cases about the
@@ -93,6 +93,81 @@ These twenty rows are the proto against the kernel, which is a question about th
 They are **not** a statement about this change: for that, the same benchmark has to run on the proto
 before and after, which is the section below.
 
-## The change against the proto baseline
+## The change against the proto baseline: it regresses, and the change is not ready
 
-*(pending: the control leg is `ProtoBench` on the four kernel files at `31a7b4bde9`, running now)*
+This is the comparison that says whether the change costs anything, and it does. Both legs are
+`ProtoBench` on the same benchmark, the control being the four kernel files restored to
+`31a7b4bde9`. **Both legs were checked to compute the same twenty answers**, so the comparison is
+of two evaluators doing the same work rather than of two different programs.
+
+Screened at `-f 1` over all twenty rows, then confirmed at `-f 3` on the nine outside the noise.
+Both legs at `-f 3`, the variant re-run at the tip after the lazy-allocation fix so that nothing here
+is dated to a commit the tip supersedes.
+
+| row | baseline us/op | tip us/op | delta |
+|---|---|---|---|
+| `suspensionFusesContinuation` | 53.682 ± 0.332 | 48.823 ± 0.751 | **-9.1%** |
+| `fusionAllocatesNothing` | 0.080 ± 0.001 | 0.085 ± 0.001 | +6.3% |
+| `evalFixedOverhead` | 0.005 ± 0.001 | 0.008 ± 0.001 | +60%, on a row at the harness's floor |
+| `emittingClausesPayRegionRebuild` | 123.253 ± 1.762 | 144.270 ± 1.144 | +17.1% |
+| `statefulAnswersPaySuccessor` | 181.685 ± 3.118 | 375.965 ± 11.730 | **+106.9%** |
+| `handleLoopFusesContinuation` | 182.415 ± 6.860 | 392.590 ± 3.286 | **+115.2%** |
+| `continuationBodiesFuse` | 16.073 ± 0.252 | 35.318 ± 0.299 | **+119.7%** |
+| `handleLoopAnswersInPlace` | 173.801 ± 9.543 | 391.118 ± 6.286 | **+125.0%** |
+| `suspensionBaseline` | 134.829 ± 1.968 | 337.562 ± 29.245 | **+150.4%** |
+
+The other eleven rows are inside the combined error at `-f 1`.
+
+### What the diagnosis established
+
+**It is one commit.** Restoring only `Eval.scala` and `Stack.scala` to `a10624dfa4`, the first of the
+fifteen, reproduces the whole thing: `suspensionBaseline` 347.3, `handleLoopAnswersInPlace` 392.9.
+Every commit after the region stack is neutral on these rows. The budget fixes, the guard rewrite,
+the crossing and the boundary cost nothing.
+
+**It is not allocation.** The tip allocates *less*: 480346 B/op against the baseline's 720145 on both
+`suspensionBaseline` and `handleLoopAnswersInPlace`, 24 bytes less per kernel operation, while
+running 2.6x slower. `gc.alloc.rate.norm` is exact and nearly noise-free, so this rules allocation
+out and forces the search into path length or code shape.
+
+**It is not the size of `loop`.** `loop$1` grew from about 1500 bytes to 1874 when it absorbed
+`region`. Moving the foreign-crossing rebuild back out into a private method took it to 1747 and
+changed nothing measurable: 342.2 against 346.4 on `suspensionBaseline`, 393.8 against 391.4 on
+`handleLoopAnswersInPlace`. The probe was reverted, since a change with no measured benefit is not a
+change.
+
+**It is per answered operation, and it has a sharp boundary.** Every regressed row suspends an
+operation that a region answers. Every row at parity or faster either installs no region, or
+installs one that never answers. And the boundary inside that set is sharp:
+`suspensionFusesContinuation` suspends ten thousand times under the same handler and is **8.7%
+faster**, while `suspensionBaseline` does the same work with the continuation standing beside the
+node instead of fused into it and is **157% slower**. The two differ only in `askWith` against
+`ask.map`, which is exactly the difference between the absorb path returning the node untouched and
+the absorb path copying it.
+
+**The mechanism is not identified.** That is the honest state. The next experiment is the one that
+distinguishes the two absorb paths rather than the stack reads, since the fused row exercises the
+stack reads just as often and does not pay. `PrintInlining` on the two rows, looking at what the
+absorb merge point does to the receiver profile of `susp.tag`, `susp.input` and `susp.cont`, is
+where I would go next.
+
+### The one cost that is diagnosed and fixed
+
+`evalFixedOverhead` installs no region at all, and it regressed 180%. The `Stack` constructor built
+four arrays of eight, so every eval paid for them whether or not it ever installed anything: 224
+B/op against the baseline's nothing.
+
+The arrays now start shared and empty and the first `push` grows into real ones (`2e070d7d21`).
+Measured after: `evalFixedOverhead` 32 B/op and 0.008 us, `fusionAllocatesNothing` 0.085 us against
+the baseline's 0.080, inside error. `suspensionBaseline` is 346.3, unchanged, which is the control:
+the fix is per eval and the other regression is per operation.
+
+The 32 B/op that remain are the `Stack` object itself, one per eval. The reference kernel pools its
+stacks for exactly this reason, and that is the next step on this cost.
+
+### What this means for the review
+
+The change fixes five correctness defects and makes a red module green. It also makes answered
+operations under a region between 2x and 2.6x slower, and that is an open defect, not a trade I get
+to make. It is localized to one commit, three explanations are ruled out, and the mechanism is not
+yet named.
