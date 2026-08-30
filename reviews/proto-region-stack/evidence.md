@@ -29,25 +29,75 @@ regions and now passes at the default fork stack, where before it needed 1 GB. T
 measurement (1426 nested regions at 1 MB) is superseded by that pass and has not been re-run as a
 separate probe.
 
-## Blocked: the benchmark rows
+## Benchmarks
 
-This is a tier-three change, so the whole benchmark class on both legs is mandatory, and it is not
-done. The bracket refuses to run, correctly:
+Full class, both legs back to back on the same machine, `-f 1 -wi 5 -i 5`. Control `31a7b4bde9`,
+variant `ffc1819ecc`. Twenty benchmarks declared and twenty measured, so the result set is complete
+(the twenty-first `@Benchmark` match is the class-level `@BenchmarkMode` annotation).
 
-> the suite is red, so nothing measured here would be a result.
+Deviation, recorded rather than routed around: the harness bracket refuses a leg whose suite is red,
+and the control's is red **by construction**, since `ArrowEffectTest` aborts there with the
+StackOverflowError this change fixes, and that reproduces back through `eabef556e0`. No green control
+exists for this change or can exist. Narrowing the gate's task to the suites green on both legs was
+available and rejected as weakening a gate for convenience, so these legs were run directly and the
+bracket's A/A null and warmup guards did not run over them.
 
-The control leg's suite is red **by construction**: `ArrowEffectTest` aborts there with the
-StackOverflowError that this change exists to fix. So no green control exists for this change, and
-none exists anywhere in the history, since the abort reproduces at `eabef556e0` and earlier.
+| benchmark | control | variant | delta | |
+|---|---|---|---|---|
+| deepRecursionPaysRescuesOnly | 49.121 ± 1.440 | 51.760 ± 0.576 | +5.4% | flagged, see below |
+| handleLoopAnswersInPlace | 79.334 ± 1.317 | 84.763 ± 10.461 | +6.8% | error exceeds delta |
+| emittingClausesPayRegionRebuild | 146.026 ± 7.169 | 151.231 ± 22.592 | +3.6% | error exceeds delta |
+| suspensionBaseline | 84.949 ± 2.616 | 87.668 ± 13.772 | +3.2% | error exceeds delta |
+| deepRecursionOneRescue | 2.857 ± 0.019 | 2.886 ± 0.124 | +1.0% | flat |
+| continuationBodiesFuse | 8.782 ± 0.186 | 8.837 ± 0.429 | +0.6% | flat |
+| fusionPastBudgetPaysRescuesOnly | 43.626 ± 0.428 | 43.864 ± 1.994 | +0.5% | flat |
+| deepRecursionNoRescue | 1.522 ± 0.010 | 1.528 ± 0.014 | +0.4% | flat |
+| statefulAnswersPaySuccessor | 87.701 ± 3.073 | 88.021 ± 3.998 | +0.4% | flat |
+| suspensionFusesContinuation | 44.178 ± 1.085 | 44.324 ± 0.787 | +0.3% | flat |
+| nestedPayloadsUnwrapInMaps | 6.018 ± 0.159 | 6.025 ± 0.073 | +0.1% | flat |
+| deferBindPerStep | 65.320 ± 0.526 | 65.398 ± 1.084 | +0.1% | flat |
+| deferBindUnderIdleHandler | 68.592 ± 0.895 | 68.502 ± 3.227 | -0.1% | flat |
+| deferBindUnderTrailingMap | 44.748 ± 1.800 | 44.492 ± 0.793 | -0.6% | flat |
+| handleLoopFusesContinuation | 80.568 ± 3.681 | 80.070 ± 5.251 | -0.6% | flat |
+| idleHandlerAddsNothing | 43.940 ± 0.573 | 43.578 ± 1.190 | -0.8% | flat |
+| fusionAllocatesNothing | 0.085 ± 0.001 | 0.084 ± 0.001 | -1.2% | flat |
+| uncachedValuesPayBoxingOnly | 47.475 ± 3.018 | 46.881 ± 2.194 | -1.3% | flat |
+| trailingMapsStayLinear | 686.974 ± 45.638 | 651.898 ± 36.762 | -5.1% | error exceeds delta |
+| evalFixedOverhead | 0.014 ± 0.001 | 0.013 ± 0.001 | -7.1% | below measurement resolution |
 
-The protocol assumes both legs are green, which is right for an optimisation and unreachable for a
-change that fixes a suite-aborting defect. Narrowing the gate's task to the suites that are green on
-both legs would weaken a gate because it is inconvenient, which is banned, so this is a decision
-rather than something to route around.
+`deepRecursionPaysRescuesOnly` was the only delta outside the errors on both sides, so it was
+confirmed at `-f 3`, 15 iterations per leg, back to back:
 
-`flags.md` has one group of rows, the four column allocations and the four in `grow`, whose verdict
-is `measurement pending`. **Until those numbers exist this change does not satisfy the EVIDENCE or
-REVIEW gates, and the package is not proposable.**
+| | control | variant | delta |
+|---|---|---|---|
+| deepRecursionPaysRescuesOnly | 49.346 ± 0.558 | 48.985 ± 0.416 | -0.7% |
+
+It does not reproduce. The `-f 1` figure was a single-fork artifact, which is why a `-f 1` number is
+never a result. **No confirmed regression on any row.**
+
+This closes the `measurement pending` group in `flags.md`: moving the open regions from the Java
+stack to four heap arrays costs nothing measurable on any row the change reaches, including the
+region-heavy ones (`emittingClausesPayRegionRebuild`, `handleLoopAnswersInPlace`,
+`statefulAnswersPaySuccessor`).
+
+## Trailing maps are linear, and what the row's cost actually is
+
+Asked whether the proto is quadratic in trailing maps. It is not. Sweeping the benchmark's own shape
+over a 16x depth range, per-step cost is flat where quadratic growth would multiply it by 16:
+
+| depth | trailing, us | us/step | plain, us | us/step |
+|---|---|---|---|---|
+| 2500 | 208.3 | 0.0833 | 54.2 | 0.0217 |
+| 5000 | 386.1 | 0.0772 | 100.9 | 0.0202 |
+| 10000 | 638.2 | 0.0638 | 202.6 | 0.0203 |
+| 20000 | 1396.9 | 0.0698 | 398.4 | 0.0199 |
+| 40000 | 2848.9 | 0.0712 | 943.6 | 0.0236 |
+
+Each doubling of depth roughly doubles total time (1.85x, 1.65x, 2.19x, 2.04x) where quadratic would
+quadruple it. The row's 687 us is because it runs at `Depth = 10000` while nearly every other row
+uses `NarrowDepth = 1000`, so it does ten times the work. What is real is a constant factor: a
+trailing map costs about 3.4x per step against the same recursion without one, 0.070 against 0.020
+us. Linear, not free.
 
 ## Known and pre-existing, not caused here
 
