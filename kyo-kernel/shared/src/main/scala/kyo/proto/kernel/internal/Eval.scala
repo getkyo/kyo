@@ -14,13 +14,16 @@ import kyo.proto.kernel.ArrowEffect
 import kyo.proto.kernel.ContextEffect
 import kyo.proto.kernel.Effect
 import language.implicitConversions
+import scala.annotation.publicInBinary
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
-// Private to kyo wholesale: nothing here is user surface. The public entry is the `.eval`
-// extension, and the inline bodies that reach members here (`answerLoop`, the extension's
-// `Eval(v)`) do so through generated accessors
-private[kyo] object Eval:
+// Private to kyo in the type system and public in the binary: inline bodies name this object
+// (`.eval` reaches `apply`, the handleLoop expansions reach `answerLoop`), and a plain private[kyo]
+// top-level object makes dotty emit an accessor whose receiver is the package itself, which the
+// backend loads as `getstatic kyo/proto/kernel/internal.MODULE$` and no such class exists. The
+// annotation makes the direct reference binary-legal, so no accessor is emitted at all
+@publicInBinary private[kyo] object Eval:
 
     /** The releases a computation still owes, for a holder giving up on resuming it: every region the machine already installed speaks,
       * innermost first, and a settled value owes nothing. A computation rather than a run: the holder sequences the result into its own

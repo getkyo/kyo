@@ -2,18 +2,20 @@ package kyo.proto.kernel.internal
 
 import kyo.proto.Arrow
 import kyo.proto.kernel.<
+import scala.annotation.publicInBinary
 
 private[kyo] class Nested[+A](val value: A)
 
-// public for the same reason as Safepoint's depth guard: the implicit lift is inline and names it, and an
-// accessor here costs the hottest expansion in the kernel. The class stays private[kyo], so the wrapper
-// itself is still unnameable outside kyo.
+// private[kyo] in the type system and public in the binary: the implicit lift is inline and names it,
+// and an accessor here both costs the hottest expansion in the kernel and, for a top-level object,
+// is emitted against the package itself, a class that does not exist. The annotation makes the direct
+// reference binary-legal, so no accessor is emitted at all.
 //
 // Plain module methods rather than `@static`: an `@static` symbol named in inline-expanded code fails
 // `bringForward` in a downstream module's suspended-unit retry run (a StaleSymbolException on that
 // module's clean build whenever it defines its own macros), while a module method survives it. The cost
 // is the module load at expansion sites.
-private[kyo] object Nested:
+@publicInBinary private[kyo] object Nested:
 
     /** The settled value, one nesting level stripped. Only valid where the pending case is already excluded.
       *

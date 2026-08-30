@@ -250,7 +250,8 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
     "a settled computation passes through mask and run untouched" in {
         val masked = Mask[Ask](42: Int < Ask)
         assert(!masked.isInstanceOf[kyo.proto.kernel.internal.Pending[?, ?]])
-        assert(eval(Mask.run[Ask](masked)) == 42)
+        // the vacuous Ask row is closed by a handler whose answer must go unused
+        assert(eval(runAsk(Mask.run[Ask](masked))(997)) == 42)
     }
 
     "interleaved operations of both masked effects keep program order" in {
@@ -307,4 +308,4 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
         assert(innerBuf.isEmpty)
         assert(outerBuf.toList == List("crossed"))
     }
-end MaskTest
+end ArrowEffectMaskTest

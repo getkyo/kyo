@@ -3,12 +3,9 @@ package protodemo
 import kyo.Const
 import kyo.Frame
 import kyo.Tag
-import kyo.proto.Arrow
 import kyo.proto.Loop
+import kyo.proto.debug.DebugSession
 import kyo.proto.kernel.*
-import kyo.proto.kernel.internal.Debugger
-import kyo.proto.kernel.internal.Eval
-import kyo.proto.kernel.internal.Nested
 
 /** The three `ProtoBench` shapes, traceable.
   *
@@ -26,6 +23,9 @@ import kyo.proto.kernel.internal.Nested
   * `quiet` swaps the console tracer for one that only counts, which is what you want past a handful of iterations: the step log is a few
   * lines per hook.
   *
+  * The shapes here stand on the public surface only; the tracer session that runs them lives inside kyo (`kyo.proto.debug`), because
+  * exercising the kernel's private Debugger seam is what that package is for.
+  *
   * One caveat on what a trace can and cannot say. An installed debugger answers `enter()` with the inherited `true`, and
   * `Safepoint.enterPark` takes that as "run this application inline" without draining, so a traced run stops deferring at the budget
   * boundary. Production defers there and replenishes on the unwind. So a trace shows the step sequence faithfully and does not show the
@@ -37,33 +37,14 @@ object SuspensionDebug:
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask(using Frame): Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
-    /** Counts hooks without printing them, for depths where the step log is unreadable. */
-    final class Counting(guardsLikeProduction: Boolean) extends Debugger:
-        private var counts                = Map.empty[String, Int]
-        private def bump(k: String): Unit = counts = counts.updated(k, counts.getOrElse(k, 0) + 1)
-
-        override def enter(): Boolean = !guardsLikeProduction
-
-        override def onAlloc(value: Any): Unit                              = bump("alloc " + value.getClass.getSimpleName)
-        override def onUnfused(arrow: Any): Unit                            = bump("unfused " + arrow.getClass.getSimpleName)
-        override def onLoop(value: Any, contA: Any, contB: Any): Unit       = bump("loop")
-        override def onRegionEnter(handler: Any, state: Any): Unit          = bump("regionEnter")
-        override def onRegionExit(handler: Any, result: Any): Unit          = bump("regionExit")
-        override def onForeign(suspend: Any, handler: Any): Unit            = bump("foreign")
-        override def onHandle(suspend: Any, handler: Any, state: Any): Unit = bump("handle")
-        override def onResult(value: Any): Unit                             = bump("result")
-
-        def report: String = counts.toList.sortBy(-_._2).map((k, n) => f"$n%7d  $k").mkString("\n")
-    end Counting
-
     def main(args: Array[String]): Unit =
         val shape = if args.length > 0 then args(0) else "map"
         val depth = if args.length > 1 then args(1).toInt else 3
         val quiet = args.contains("quiet")
         val prod  = args.contains("guarded")
 
-        // built inside the installed window on purpose: nodes report their own allocation from their
-        // constructors, and ConsoleDebugger refuses an operand it never saw born
+        // handed to the session as a thunk: nodes report their own allocation from their
+        // constructors, so construction has to happen inside the installed window
         def build(): Int < Any =
             def mapped(i: Int): Int < Ask =
                 if i > depth then i else ask.map(a => mapped(i + a))
@@ -77,16 +58,7 @@ object SuspensionDebug:
         end build
 
         println(s"shape=$shape depth=$depth quiet=$quiet guarded=$prod")
-        val counting = Counting(prod)
-        val debugger = if quiet then counting else ConsoleDebugger()
-        Debugger.install(debugger)
-        try
-            val out = Nested.unnest[Int](Eval(build()))
-            println(s"RESULT $out   (expected ${depth + 1})")
-            debugger match
-                case c: ConsoleDebugger => println(s"STATS ${c.stats}")
-                case _                  => println("COUNTS\n" + counting.report)
-        finally Debugger.uninstall()
-        end try
+        val out = DebugSession.run(quiet, prod)(build)
+        println(s"RESULT $out   (expected ${depth + 1})")
     end main
 end SuspensionDebug

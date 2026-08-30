@@ -1,4 +1,7 @@
-package protodemo
+// inside kyo on purpose: this tooling exercises the kernel's private Debugger seam, which is the
+// sanctioned reason to stand on private surface. The computations it traces are built outside kyo,
+// on the public surface, so their frames derive at real positions
+package kyo.proto.debug
 
 import kyo.proto.Arrow
 import kyo.proto.Loop
