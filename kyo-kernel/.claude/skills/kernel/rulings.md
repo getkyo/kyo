@@ -80,3 +80,32 @@ outside it is still a finding, because nobody agreed to it.
 
 Standing consequence: an inference failure is diagnosed to its root in the kernel and fixed there.
 An ascription, a helper, or a widened type that makes the site compile is a workaround.
+
+## Applying a live review
+
+**2026-08-30**, on reaching for a bulk replace mid-walk:
+> and you were about to a batch edit!? where's the live review preparation?
+
+Standing consequence: the walk is applied one edit at a time with the Edit tool, and the sequence
+must exist as data before the walk starts. A described sequence is not a sequence: `sequence.json`
+holds the exact text pairs and `sequence.py --verify` proves they reproduce the tip. If applying
+ever needs improvisation, PACKAGE did not finish.
+
+**2026-08-30**, on the tree the walk starts from. A half-applied walk was committed and left
+`kyo-kernel` red, which is not a state to restart from and not a tree to build in. Standing
+consequence: the walk is atomic in the sense that matters. If it stops part way, the sources go back
+to the baseline byte for byte before anything else happens, and the target state stays in the
+isolated worktree where it already lives.
+
+## Evidence
+
+**2026-08-30**, discovered rather than ruled, and the worst escape this pipeline has had. Four rounds
+of review argued over benchmark tables produced by `ProtoKernelBench`, a class that measures
+`kyo.kernel` and contains no reference to `proto`; its name is left over from the rename that made
+kernel2 the kernel. No benchmark under `src/jmh` referenced `kyo.proto` at all, so nothing had ever
+measured the file under review.
+
+Standing consequence: before a number is evidence, verify that the thing measured is the thing
+changed, mechanically. `package-check.sh` resolves every benchmark class a package names and reports
+one that does not reference the package under review. A plausible name answers the question by
+looking right, which is why judgment kept passing it.

@@ -64,7 +64,9 @@ than on catching drift. A phase that does not reduce what the reviewer has to lo
 DERIVE    equation -> surface -> forks                [STOP only on a surviving fork]
 BUILD     isolated worktree; flags.sh as you go; kernel-pulse at the first compile
 EVIDENCE  clean batch build, proto suites, pinning tests, benchmark rows
+          [gate: each benchmark class must reference the package under review]
 REVIEW    flags.sh -> flags.md, every row adjudicated [gate: zero unadjudicated rows]
+          package-check.sh -> every mechanical claim re-derived [gate: no STALE]
 REHEARSE  kernel-conformance | kernel-discipline | kernel-rehearsal, in parallel
 PACKAGE   reviews/<change>/review.md                  [STOP: propose the live review]
 LIVE      the user opens it; edits applied one at a time with the Edit tool
@@ -158,6 +160,18 @@ while it is still cheap to delete. Gate: zero unadjudicated rows.
 Classes the script cannot emit, because they need reading rather than a pattern: work outside the declared
 **surface**, a **claim** with no number behind it, and a **tail call** asserted in a comment that is not one
 (a call under a cast, inside a `try`, or crossing into another method). Those are `kernel-discipline`'s to apply.
+
+`package-check.sh` runs beside it and re-derives every claim that is mechanical: the tip, the commit count, the
+surface the range touches, whether the tree is clean, the flag count against the table's, whether the recorded
+edit sequence still reproduces the tip, and **whether each benchmark class the package names actually
+references the package under review**. Each line is OK, CHECK or STALE, and a STALE line is a defect.
+
+The last of those is there because of the worst escape this pipeline has had. A campaign ran four rounds of
+review over benchmark tables measured by a class named `ProtoKernelBench`, sitting beside a proto kernel,
+which contained no reference to `proto` and measured a different package entirely; the name was left over from
+a rename. Four rounds of lenses read those tables and argued about drift bands inside them. **Before a number
+is evidence, check that the thing measured is the thing changed**, and check it with a script, because a
+plausible name answers the question by looking right.
 
 ### The lenses, and what they are denied
 

@@ -9,9 +9,13 @@
 # benchmark class that does not exercise the package under review at all.
 #
 # Usage:
-#   package-check.sh <base>..<tip> <review-dir> <package-path>
+#   package-check.sh <base>..<tip> <review-dir> <package-path> [-- <paths>...]
 #
-#   package-check.sh 31a7b4bde9..HEAD reviews/proto-region-stack kyo/proto/kernel
+#   package-check.sh 31a7b4bde9..HEAD reviews/proto-region-stack kyo/proto/kernel \
+#       -- kyo-kernel/shared/src/main/scala/kyo/proto
+#
+# The trailing paths narrow the flag count to the same surface `flags.md` was generated for, so the
+# two are compared like for like.
 #
 # Every line is CHECK (informational), OK, or STALE. A STALE line is a defect in the package, not
 # a suggestion. Judgment-bearing claims (what a number means, whether a concession is justified)
@@ -19,9 +23,12 @@
 
 set -euo pipefail
 
-range="${1:?usage: package-check.sh <base>..<tip> <review-dir> <package-path>}"
-dir="${2:?usage: package-check.sh <base>..<tip> <review-dir> <package-path>}"
-pkg="${3:?usage: package-check.sh <base>..<tip> <review-dir> <package-path>}"
+range="${1:?usage: package-check.sh <base>..<tip> <review-dir> <package-path> [-- <paths>...]}"
+dir="${2:?usage: package-check.sh <base>..<tip> <review-dir> <package-path> [-- <paths>...]}"
+pkg="${3:?usage: package-check.sh <base>..<tip> <review-dir> <package-path> [-- <paths>...]}"
+shift 3
+paths=()
+[ "${1:-}" = "--" ] && { shift; paths=("$@"); }
 
 base="${range%%..*}"
 tip="${range##*..}"
@@ -35,17 +42,26 @@ stale() { echo "STALE  $*"; status=1; }
 echo "CHECK  range $range  base $base_sha  tip $tip_sha  commits $commits"
 
 # 1. Shas named in the package that are neither the base nor the tip. A superseded sha in the prose
-#    is how three rounds of numbers came to describe a tree that was not shipping.
-while read -r sha file; do
-    [ -z "$sha" ] && continue
-    if git cat-file -e "$sha^{commit}" 2>/dev/null; then
+#    is how four rounds of numbers came to describe a tree that was not shipping.
+#
+#    `findings-*.md` and `escapes.md` are exempt: their subject IS what earlier rounds measured, so
+#    naming a superseded commit there is the point rather than the defect.
+while IFS=: read -r file sha; do
+    [ -z "${sha:-}" ] && continue
+    case "$(basename "$file")" in findings-*.md | escapes.md) continue ;; esac
+    if git cat-file -e "${sha}^{commit}" 2>/dev/null; then
         full=$(git rev-parse --short=10 "$sha")
-        if [ "$full" != "$base_sha" ] && [ "$full" != "$tip_sha" ]; then
-            stale "$file names commit $sha, which is neither the base nor the tip"
+        [ "$full" = "$base_sha" ] || [ "$full" = "$tip_sha" ] && continue
+        if git merge-base --is-ancestor "$sha" "$tip" 2>/dev/null &&
+            ! git merge-base --is-ancestor "$sha" "$base" 2>/dev/null; then
+            # inside the range and not the tip: the shape that dated three rounds of numbers to a
+            # commit the change had already superseded
+            stale "$(basename "$file") dates something to $sha, a commit inside the range that the tip supersedes"
+        else
+            echo "CHECK  $(basename "$file") names $sha, outside the range; confirm it is history and not a date"
         fi
     fi
-done < <(grep -rhoE '\b[0-9a-f]{8,40}\b' "$dir" --include='*.md' -H 2>/dev/null |
-    sed 's/^\([^:]*\):\(.*\)$/\2 \1/' | sort -u)
+done < <(grep -roE '\b[0-9a-f]{8,40}\b' "$dir" --include='*.md' 2>/dev/null | sort -u)
 
 # 2. The surface: what the range actually touches, so a file changed but never presented, or
 #    presented but never changed, is visible rather than argued about.
@@ -63,7 +79,11 @@ fi
 # 4. The flag table: the script's row count against the table's, both re-derived now.
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -x "$here/flags.sh" ] && [ -f "$dir/flags.md" ]; then
-    emitted=$("$here/flags.sh" "$range" | grep -c . || true)
+    if [ ${#paths[@]} -gt 0 ]; then
+        emitted=$("$here/flags.sh" "$range" -- "${paths[@]}" | grep -cE '^\| F[0-9]+ \|' || true)
+    else
+        emitted=$("$here/flags.sh" "$range" | grep -cE '^\| F[0-9]+ \|' || true)
+    fi
     tabled=$(grep -cE '^\| F[0-9]+ \|' "$dir/flags.md" || true)
     if [ "$emitted" = "$tabled" ]; then
         echo "OK     flags: $emitted emitted, $tabled adjudicated"

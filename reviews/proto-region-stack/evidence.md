@@ -1,98 +1,99 @@
 # Evidence
 
-Change: `a10624dfa4` in the isolated worktree. Control: `31a7b4bde9`.
+Everything below was measured on the tip `6a40f9de4b`, on a working tree clean against it, on
+2026-08-30. `package-check.sh` re-derives the tip, the surface, the tree's cleanliness, the flag
+count, the edit sequence and the benchmark coverage, so these are checkable rather than asserted.
 
-## Green
+Machine note, because it bears on the benchmark errors and not on the suites: the host was running
+the user's IDE and its Bloop server throughout, at a load average between 5 and 8. Ratios of 3x and
+up are far outside anything that explains, and the rows inside 15% are reported as inside the noise
+rather than as differences.
 
-**Clean batch build**: `kyo-kernelJVM/clean` then `compile`, zero errors. Run because the change
-could summon the lift in a kernel file and incremental green is not clean green.
+## Correctness
 
-**Proto suites**, each in its own JVM (see the blocked section for why not together):
+| | result |
+|---|---|
+| clean batch build (`kyo-kernelJVM/clean`, `compile`, `test`) | green, exit 0 |
+| `kyo-kernelJVM/test` | **35 suites, 0 aborted, 1405 tests, 0 failed** |
+| the three proto suites in one JVM | **208 tests, 0 failed** |
+| `EvalTest` | 57 of 57 |
+| the edit sequence against the baseline | 10 edits reproduce all 4 files, by digest |
+| flags | 98 rows, every one with a verdict |
 
-| suite | before | after |
-|---|---|---|
-| `ArrowEffectTest` | aborted after 17 of 88, `StackOverflowError` | **88 of 88** |
-| `PendingTest` | 63 of 63 | 63 of 63 |
-| `EvalTest` | 51 of 54 | 53 of 56, the two added being pins |
+At the baseline `31a7b4bde9` the same module aborts a suite with a `StackOverflowError` and cannot
+be run green, which is the defect this change exists to fix. The three `EvalTest` cases about the
+eval's boundary were red there too, and are green here.
 
-`EvalTest`'s three failures are the eval boundary returning an unanswered suspension instead of
-rejecting it. In scope, attempted, open; the attempt and its two dead ends are recorded in the
-package.
+## The four pins, and what each fails against
 
-**Demo**: every one of the 28 scenarios returns its recorded value, the bracket guarantees included:
-83, -1, -1, 4221, -9, 991. This was the check most at risk, because `recover` now reads the state the
-region has reached rather than the one it was installed with. The values holding is consistent with
-the encoded bracket keeping its finalizers in a handler-owned registry rather than in loop state.
+A pin that passes without its fix pins nothing, so each is stated with the thing it was run against.
 
-**Depth**: `ArrowEffectTest` "handles nested per recursion step in bounded stack" nests 100000
-regions and now passes at the default fork stack, where before it needed 1 GB. The standalone
-measurement (1426 nested regions at 1 MB) is superseded by that pass and has not been re-run as a
-separate probe.
+| pin | fails against |
+|---|---|
+| `ArrowEffectTest` "handles nested per recursion step in bounded stack" | the baseline, with `StackOverflowError` after 17 of 88 |
+| `EvalTest` "regions that fail and recover in sequence cost no stack" | the mutually recursive guard, at 10000 cycles |
+| `EvalTest` "a context update outlives an operation answered after it" | the baseline, which resumes with the install-time context |
+| `EvalTest` "a region recovering across a foreign crossing leaves the budget where it found it" | the tip before the crossing fix: the sampled budget falls by exactly one per crossing, 33278 down to 33179 over 100 |
+| `EvalTest` "a recover that fails itself is the failure the enclosing region sees" | a mutation of the shipped unwind (`recovered(ex)` for `recovered(ex2)`); the baseline gave this behaviour free from nested tries, so the baseline is not the control |
 
-## Benchmarks
+## Proto against the kernel, on identical work
 
-Full class, both legs back to back in one session on the same machine, `-f 1 -wi 5 -i 5`, JDK 25,
-macOS arm64. Control `31a7b4bde9`, variant `d197133298`, **the shipped tip**. Twenty declared, twenty
-measured (the twenty-first `@Benchmark` match is the class-level `@BenchmarkMode`). **Drift band on
-this machine is 3 to 4%**, so a delta inside it is not a result, and neither is one smaller than the
-combined error.
+This is the comparison that did not exist before today, and the reason it did not is recorded in
+`escapes.md`: `kyo.kernel.bench.ProtoKernelBench` measures `kyo.kernel`, not the proto, and nothing
+under `src/jmh` referenced `kyo.proto` at all. `ProtoBench` now runs the same twenty workloads
+against the proto, body for body.
 
-An earlier pair measured `ffc1819ecc`, which was not what shipped: the tip rewrote the guard every
-row enters. Those numbers are discarded rather than carried forward, and the control was re-run here
-rather than reused across sessions.
+Both classes, 40 rows, one JMH session, `-f 1`, back to back. All 40 rows returned.
 
-| benchmark | control | variant | delta | |
-|---|---|---|---|---|
-| trailingMapsStayLinear | 670.531 ± 45.381 | 703.402 ± 38.423 | +4.9% | error exceeds delta |
-| deferBindUnderIdleHandler | 66.308 ± 0.460 | 67.045 ± 0.673 | +1.1% | flat |
-| suspensionFusesContinuation | 44.547 ± 0.442 | 44.782 ± 1.305 | +0.5% | flat |
-| deepRecursionOneRescue | 2.878 ± 0.029 | 2.891 ± 0.032 | +0.5% | flat |
-| fusionPastBudgetPaysRescuesOnly | 43.962 ± 0.371 | 44.002 ± 0.396 | +0.1% | flat |
-| emittingClausesPayRegionRebuild | 145.222 ± 2.639 | 145.407 ± 2.113 | +0.1% | flat |
-| handleLoopFusesContinuation | 80.351 ± 0.695 | 80.376 ± 1.477 | 0.0% | flat |
-| evalFixedOverhead | 0.014 ± 0.001 | 0.014 ± 0.001 | 0.0% | below measurement resolution |
-| deferBindPerStep | 65.783 ± 0.924 | 65.682 ± 0.312 | -0.2% | flat |
-| statefulAnswersPaySuccessor | 88.218 ± 1.195 | 88.036 ± 1.353 | -0.2% | flat |
-| suspensionBaseline | 85.686 ± 5.619 | 85.324 ± 1.631 | -0.4% | flat |
-| nestedPayloadsUnwrapInMaps | 6.094 ± 0.095 | 6.069 ± 0.128 | -0.4% | flat |
-| deepRecursionNoRescue | 1.545 ± 0.102 | 1.534 ± 0.013 | -0.7% | flat |
-| idleHandlerAddsNothing | 44.338 ± 1.913 | 43.984 ± 0.358 | -0.8% | flat |
-| uncachedValuesPayBoxingOnly | 47.227 ± 4.520 | 47.659 ± 0.436 | +0.9% | flat |
-| fusionAllocatesNothing | 0.086 ± 0.001 | 0.085 ± 0.001 | -1.2% | flat |
-| continuationBodiesFuse | 8.939 ± 0.409 | 8.808 ± 0.151 | -1.5% | flat |
-| deferBindUnderTrailingMap | 45.785 ± 3.346 | 44.795 ± 0.649 | -2.2% | flat |
-| handleLoopAnswersInPlace | 83.631 ± 1.414 | 80.427 ± 1.519 | -3.8% | faster, at the band's edge |
-| deepRecursionPaysRescuesOnly | 52.117 ± 0.436 | 49.556 ± 3.734 | -4.9% | error exceeds delta |
+| row | kernel us/op | proto us/op | proto / kernel |
+|---|---|---|---|
+| `deferBindPerStep` | 65.807 ± 1.155 | 18.570 ± 1.110 | **3.54x faster** |
+| `deferBindUnderIdleHandler` | 67.264 ± 2.039 | 23.287 ± 1.265 | **2.89x faster** |
+| `trailingMapsStayLinear` | 677.094 ± 72.226 | 352.619 ± 15.152 | **1.92x faster** |
+| `emittingClausesPayRegionRebuild` | 146.141 ± 5.019 | 144.478 ± 3.028 | parity |
+| `evalFixedOverhead` | 0.014 ± 0.001 | 0.014 ± 0.001 | parity |
+| `deepRecursionNoRescue` | 1.523 ± 0.061 | 1.533 ± 0.059 | parity |
+| `deepRecursionOneRescue` | 2.875 ± 0.066 | 2.877 ± 0.088 | parity |
+| `deepRecursionPaysRescuesOnly` | 48.784 ± 0.664 | 50.014 ± 1.872 | parity |
+| `nestedPayloadsUnwrapInMaps` | 6.027 ± 0.083 | 6.272 ± 0.184 | parity |
+| `fusionAllocatesNothing` | 0.085 ± 0.001 | 0.092 ± 0.004 | parity |
+| `suspensionFusesContinuation` | 44.848 ± 2.429 | 48.815 ± 0.466 | parity |
+| `fusionPastBudgetPaysRescuesOnly` | 43.651 ± 1.082 | 48.282 ± 0.912 | 1.11x slower |
+| `uncachedValuesPayBoxingOnly` | 46.278 ± 2.322 | 52.166 ± 0.761 | 1.13x slower |
+| `idleHandlerAddsNothing` | 43.623 ± 0.999 | 50.516 ± 14.489 | 1.16x slower |
+| `deferBindUnderTrailingMap` | 44.617 ± 0.787 | 56.609 ± 1.247 | 1.27x slower |
+| `continuationBodiesFuse` | 8.876 ± 0.197 | 35.219 ± 0.156 | 3.97x slower |
+| `suspensionBaseline` | 85.228 ± 1.378 | 346.515 ± 5.259 | 4.07x slower |
+| `statefulAnswersPaySuccessor` | 87.676 ± 2.080 | 363.465 ± 14.074 | 4.15x slower |
+| `handleLoopAnswersInPlace` | 83.378 ± 1.043 | 392.386 ± 2.735 | 4.71x slower |
+| `handleLoopFusesContinuation` | 80.176 ± 1.269 | 392.305 ± 20.466 | 4.89x slower |
 
-`trailingMapsStayLinear`'s +4.9% is outside the stated band, so it was confirmed at `-f 3`, where it
-reads **-3.8%** (735.974 ± 31.941 control against 707.966 ± 13.356 variant). The `-f 1` figure was
-noise in the other direction. **No row regressed.** The two nominally
-faster rows are at or inside the band and are not claimed as wins. Moving the open regions from the
-Java stack to four heap arrays, and the guard from per-region tries to one loop, costs nothing
-measurable on any row the change reaches, the region-heavy ones included.
+Three faster, eight at parity, nine slower, of twenty.
 
-## The recovery path scales
+### The shape of it, which is not a spread
 
-The guard's first shape recursed, which cost a frame per recovered region, and under the fix for
-that the path still stalled because a throw leaks a safepoint `enter`. Both are fixed; this is the
-measurement that shows it, since a single depth cannot show a scaling defect.
+The slow rows are not scattered. **Every row where an operation suspends and a handler answers it is
+between 4x and 4.9x slower**, and every row that does not suspend is at parity or faster. The
+exception proves where the cost lives: `suspensionFusesContinuation` suspends 10000 times and is at
+**parity**, and it is the one row whose continuation is fused into the suspension node by
+`suspendWith` rather than standing beside it as a register.
 
-| recoveries | 200 | 400 | 800 | 1600 | 3200 | 6400 | 12800 |
-|---|---|---|---|---|---|---|---|
-| us per recovery | 5.68 | 3.05 | 1.51 | 1.14 | 1.09 | 0.96 | 0.89 |
+Within the proto, that pair is `suspensionBaseline` 346.5 against `suspensionFusesContinuation`
+48.8, a factor of 7.1. Within the kernel it is 85.2 against 44.8, a factor of 1.9. So the proto pays
+roughly 30ns per answered operation whose continuation is not already fused, where the kernel pays
+about 4ns.
 
-Flat, with the early figures reflecting JIT warmup rather than growth, and `Stack` pushes equal to
-pops at every size. Without the reset the same probe livelocks past 800; the baseline livelocks past
-400. Pinned by `EvalTest` "regions that fail and recover in sequence cost no stack" at 10000 cycles.
+That is a specific, named place rather than a general slowness, and it points at the register
+absorption in the `Suspend` arm and the answer path beside it. **It is not diagnosed.** Naming a
+suspect from a wall-clock table is the first rung of the evidence ladder, and the mechanism needs
+`gc.alloc.rate.norm` and an inlining log before anything is claimed about it.
 
-## The hang this surfaced, now fixed separately
+### What this is not
 
-Running the three suites in one JVM used to hang at `ArrowEffectTest:969`. The baseline hangs at
-the identical test when given `-Xss1g` so that it reaches it; normally the StackOverflowError ends
-the suite at test 17 and nothing ever gets there, which is why it had never been seen. Fixed by
-`ffc1819ecc`, which gives an eval its own safepoint budget, and it has its own derivation under
-`reviews/proto-eval-budget/`.
+These twenty rows are the proto against the kernel, which is a question about the proto as a whole.
+They are **not** a statement about this change: for that, the same benchmark has to run on the proto
+before and after, which is the section below.
 
-With all five commits in, `kyo-kernelJVM/test` is 35 suites, 0 aborted, **1400 passing**, 3 failing,
-and the three proto suites run together for the first time: 207 tests, 204 passing. The 3 failures
-are the eval boundary in `EvalTest`, which is in scope, attempted, and open.
+## The change against the proto baseline
+
+*(pending: the control leg is `ProtoBench` on the four kernel files at `31a7b4bde9`, running now)*
