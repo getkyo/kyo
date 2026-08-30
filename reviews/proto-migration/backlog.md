@@ -106,6 +106,16 @@ Consequence to carry forward: the reference's orphan machinery (`pushFinalizer`,
 `drainOrphans`, `orphanOutcome`) has no proto counterpart by design, which is what makes B5's second
 role moot.
 
+Ruled, closing the abandonment-lane question the held-out analysis raised: releases never ride in
+continuations, by construction. `Sync` is handled last, so its region is the outermost and no
+handler ever stands outside it to be crossed toward; and `Handler.release` stays private to kyo
+(the public `handle*` surface takes no release), so users cannot mint a release-owing region.
+A clause dropping its continuation or a `Loop.done` dropping `next` therefore only ever discards
+regions whose release is the default no-op. The crossing machinery that composes releases into
+rotated transforms serves the one legal direction: the outward escape past everything, where the
+release lands in a value held by kyo's own fiber machinery, which speaks it through `Eval.release`
+on cancellation. Park inherits the same property.
+
 ### R4. Platform splits, `DebuggerPlatformSpecific` and `StackPlatformSpecific`
 
 Judged not needed. Recording what they buy so the decision is revisitable: the reference uses them to

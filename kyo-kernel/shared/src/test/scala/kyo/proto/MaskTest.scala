@@ -11,9 +11,10 @@ import kyo.proto.kernel.internal.Nested
 import org.scalatest.freespec.AnyFreeSpec
 
 /** The kernel's `MaskTest` corpus pointed at this package. The two bracket interaction cases are not transcribed: `Effect.bracket` is
-  * finalizer machinery this kernel does not carry (backlog R3, `Sync` becomes the bracketing layer), and the discarded-continuation case is
-  * exactly R3's open abandonment lane; both return in this kernel's spelling when that ruling lands. The catching case is transcribed onto
-  * `Handler.recover`, which is this kernel's spelling of the same behavior.
+  * finalizer machinery this kernel does not carry (backlog R3, `Sync` becomes the bracketing layer, handled last by construction, so
+  * releases never ride in continuations and abandonment orphans nothing). Both cases return at the Sync layer when it lands, pinning that
+  * its state releases resources even when an inner handler drops a continuation. The catching case is transcribed onto `Handler.recover`,
+  * which is this kernel's spelling of the same behavior.
   */
 class MaskTest extends AnyFreeSpec:
     // the eval's result as a raw value: unnesting delivers a payload as the computation it holds,
