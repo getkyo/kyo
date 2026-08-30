@@ -47,13 +47,23 @@ end Kyo
 // site uses (the reference measured it), and its toString would shadow a merged node's rendering
 // through the mixin linearization
 sealed trait Arrow[-A, +B, -S] extends Kyo[B, S]:
+
     def apply(v: A): B < S =
         Debugger.onUnfused(this)
-        this(v, Arrow.id)
+        this.head(v, this.tail)
+
     def apply[C, S2](v: A < S2, cont: Arrow[B, C, S2]): C < (S & S2)
 
+    // One implementation, and both identity cases tested here rather than one of them overridden in
+    // `Id`. An override would make two, which is enough to stop the JIT binding this by hierarchy
+    // analysis, and the fallback is the receiver profile, which is megamorphic at every site the
+    // eval composes at: every fusion site, every map expansion and every rebuild mints its own
+    // anonymous arrow class, so the site sees dozens of types that all inherit this same body.
+    // With one implementation the binding is unique and the type test costs what the dispatch did.
     def chain[C, S2](a: Arrow[B, C, S2]): Arrow[A, C, S & S2] =
-        if a.isInstanceOf[Arrow.Id[?]] then
+        if this.isInstanceOf[Arrow.Id[?]] then
+            a.asInstanceOf[Arrow[A, C, S & S2]]
+        else if a.isInstanceOf[Arrow.Id[?]] then
             this.asInstanceOf[Arrow[A, C, S & S2]]
         else
             Arrow.Chain(this, a)
@@ -73,8 +83,7 @@ object Arrow:
                 v.asInstanceOf[C < S2]
             else
                 cont(v, Arrow.id)
-        override def chain[C, S2](a: Arrow[A, C, S2]) = a
-        override def toString                         = "Id"
+        override def toString = "Id"
     end Id
 
     private val identity = Id[Any]

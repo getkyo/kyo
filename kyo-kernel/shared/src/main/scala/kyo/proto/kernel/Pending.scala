@@ -41,7 +41,7 @@ object `<` extends Implicits:
                 if shouldDefer then
                     // one allocation fulfilling both roles: the rescue record and its own transform,
                     // with the continuation in the closure, composed by the apply
-                    new Kyo.Defer[A, C, C, S2 & S3] with Transform[A, C, S2 & S3]:
+                    new Kyo.DeferTransform[A, C, S2 & S3]:
                         override def frame = _frame
                         def value          = v
                         def contA          = this
@@ -75,7 +75,7 @@ object `<` extends Implicits:
                 if shouldDefer then
                     // one allocation fulfilling both roles: the rescue record and its own transform,
                     // with the continuation in the closure, composed by the apply
-                    new Kyo.Defer[A, C, C, S2 & S3] with Transform[A, C, S2 & S3]:
+                    new Kyo.DeferTransform[A, C, S2 & S3]:
                         override def frame = _frame
                         def value          = v
                         def contA          = this
@@ -106,7 +106,7 @@ object `<` extends Implicits:
                 if shouldDefer then
                     // one allocation fulfilling both roles: the rescue record and its own transform,
                     // with the continuation in the closure, composed by the apply
-                    new Kyo.Defer[A, C, C, S2 & S3] with Transform[A, C, S2 & S3]:
+                    new Kyo.DeferTransform[A, C, S2 & S3]:
                         override def frame = _frame
                         def value          = v
                         def contA          = this
@@ -135,7 +135,7 @@ object `<` extends Implicits:
                 if shouldDefer then
                     // one allocation fulfilling both roles: the rescue record and its own transform,
                     // with the continuation in the closure, composed by the apply
-                    new Kyo.Defer[A, C, C, S3] with Transform[A, C, S3]:
+                    new Kyo.DeferTransform[A, C, S3]:
                         override def frame = _frame
                         def value          = v
                         def contA          = this

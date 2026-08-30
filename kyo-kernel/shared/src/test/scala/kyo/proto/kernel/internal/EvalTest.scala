@@ -629,8 +629,8 @@ class EvalTest extends AnyFreeSpec:
                 def tag                                          = Tag[Ask]
                 override def recover(state: Unit, ex: Throwable) = Maybe(to)
                 def done(state: Unit, v: Int)                    = v
-                def run[X, C, S2](input: Unit, cont: Arrow[Int, Int, Ask], k: Arrow[Int, C, S2]): C < (Ask & S2) =
-                    k(cont(0, Arrow.id), Arrow.id)
+                def answer[X](input: Unit, next: Arrow[Int, Int, Ask]): Int < Ask =
+                    next(0, Arrow.id)
             val body: Int < Ask = ask.map(_ => (throw Boom): Int)
             Kyo.handle[Ask, Int, Int, Any, Unit](body, h, ())
         end recovering
@@ -662,8 +662,8 @@ class EvalTest extends AnyFreeSpec:
                 def tag                                          = Tag[Say]
                 override def recover(state: Unit, ex: Throwable) = Maybe(to)
                 def done(state: Unit, v: Int)                    = v
-                def run[X, C, S2](input: String, cont: Arrow[Unit, Int, Say & Ask], k: Arrow[Int, C, S2]): C < (Say & Ask & S2) =
-                    k(cont((), Arrow.id), Arrow.id)
+                def answer[X](input: String, next: Arrow[Unit, Int, Say & Ask]): Int < (Say & Ask) =
+                    next((), Arrow.id)
             val body: Int < (Say & Ask) = ask.map(_ => (throw Boom): Int)
             Kyo.handle[Say, Int, Int, Ask, Unit](body, h, ())
         end crossing
@@ -696,8 +696,8 @@ class EvalTest extends AnyFreeSpec:
             def tag                                          = Tag[Say]
             override def recover(state: Unit, ex: Throwable) = throw Inner
             def done(state: Unit, v: Int)                    = v
-            def run[X, C, S2](input: String, cont: Arrow[Unit, Int, Say & Ask], k: Arrow[Int, C, S2]): C < (Say & Ask & S2) =
-                k(cont((), Arrow.id), Arrow.id)
+            def answer[X](input: String, next: Arrow[Unit, Int, Say & Ask]): Int < (Say & Ask) =
+                next((), Arrow.id)
 
         val outerHandler = new Handler.HandlerCont[Const[Unit], Const[Int], Ask, Int, Int, Any]:
             def tag = Tag[Ask]
@@ -705,8 +705,8 @@ class EvalTest extends AnyFreeSpec:
                 seen = Maybe(ex)
                 Maybe(7)
             def done(state: Unit, v: Int) = v
-            def run[X, C, S2](input: Unit, cont: Arrow[Int, Int, Ask], k: Arrow[Int, C, S2]): C < (Ask & S2) =
-                k(cont(0, Arrow.id), Arrow.id)
+            def answer[X](input: Unit, next: Arrow[Int, Int, Ask]): Int < Ask =
+                next(0, Arrow.id)
 
         // deferred, so the throw lands while the loop is inside the region rather than while the
         // computation is being built

@@ -63,7 +63,7 @@ object ContextEffect:
         inline f: A => B < S
     )(using inline _frame: Frame): B < (E & S) =
         // one allocation fulfilling both roles: the node is the read and its own continuation
-        new Kyo.SuspendContext[A, E, B, E & S] with Transform[A, B, E & S]:
+        new Kyo.SuspendContextTransform[A, E, B, E & S]:
             override def frame = _frame
             def tag            = effectTag
             def update(v: A)   = v
@@ -114,7 +114,7 @@ object ContextEffect:
         inline f: A => B < S
     )(using inline _frame: Frame): B < S =
         // one allocation fulfilling both roles: the node is the read and its own continuation
-        new Kyo.SuspendContextDefault[A, E, B, S] with Transform[A, B, S]:
+        new Kyo.SuspendContextDefaultTransform[A, E, B, S]:
             override def frame = _frame
             def tag            = effectTag
             def default        = defaultValue

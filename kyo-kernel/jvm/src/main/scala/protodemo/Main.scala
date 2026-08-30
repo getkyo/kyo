@@ -243,8 +243,8 @@ object Main:
             def tag                                          = addTag
             override def recover(state: Unit, ex: Throwable) = Maybe(-1)
             def done(state: Unit, v: Int)                    = v
-            def run[X, C, S2](input: Int, cont: Arrow[Int, Int, Add], k: Arrow[Int, C, S2]): C < (Add & S2) =
-                k(cont(input + 1, Arrow.id), Arrow.id)
+            def answer[X](input: Int, next: Arrow[Int, Int, Add]): Int < Add =
+                next(input + 1, Arrow.id)
         val body: Int < Add = add(1).map(a => (throw new Exception("boom")): Int)
         Kyo.handle[Add, Int, Int, Any, Unit](body, h, ())
     end recovering
@@ -256,8 +256,8 @@ object Main:
             def tag                                          = tickTag
             override def recover(state: Unit, ex: Throwable) = Maybe(-1)
             def done(state: Unit, v: Int)                    = v
-            def run[X, C, S2](input: Int, cont: Arrow[Int, Int, Tick], k: Arrow[Int, C, S2]): C < (Tick & S2) =
-                k(cont(input + 1, Arrow.id), Arrow.id)
+            def answer[X](input: Int, next: Arrow[Int, Int, Tick]): Int < Tick =
+                next(input + 1, Arrow.id)
         val body: Int < Add = add(1).map(v => (throw new Exception("boom")): Int)
         runAdd(Kyo.handle[Tick, Int, Int, Add, Unit](body, h, ()))
     end crossingRecovery
@@ -285,9 +285,9 @@ object Main:
             // one digit per release, so the trace and the value both witness last-registered-first
             private var fins = List.empty[Int]
             def tag          = resTag
-            def run[X](state: Unit, id: Int) =
+            def answer[X](state: Unit, id: Int, next: Arrow[Unit, Int, Res]) =
                 fins = id :: fins
-                Loop.continue((), ())
+                Eval.answerLoop(this, Loop.continue((), ()), next)
             private def drain(base: Int < Any): Int < Any =
                 fins.foldLeft(base)((acc, id) => acc.flatMap(r => lazily(id).map(_ => r * 10 + id)))
             def done(state: Unit, v0: Int)                   = drain(v0)

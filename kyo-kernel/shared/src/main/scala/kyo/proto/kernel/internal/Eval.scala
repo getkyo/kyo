@@ -29,9 +29,11 @@ object Eval:
             case _                => ()
 
     def apply[A, S](v: A < S): A < S =
-        // the regions this eval installs. A nested eval builds its own, so it answers for the
-        // regions it installed and for none of the enclosing ones
-        val stack = Stack()
+        // the regions this eval installs. A nested eval borrows its own, so it answers for the
+        // regions it installed and for none of the enclosing ones. Borrowed rather than allocated
+        // because most evals install nothing and gave one away for free; returned in the finally
+        // below, emptied, including when the eval leaves on an exception with regions still on it
+        val stack = Stack.borrow()
 
         // the depth guard bounds strict recursion within one eval, so the budget is this eval's and
         // not whatever the thread had left. Inheriting a spent one is a fixed point rather than a
@@ -82,12 +84,13 @@ object Eval:
                             // composes by nested application; arriving through head and tail with an identity
                             // continuation, the chain law composes without allocating
                             kyo match
+                                // TODO could we have a method `rotate` in Suspend so these impls move out of the eval?
                                 case sa: Kyo.SuspendArrow[IX, OX, EX, VX, T, S2] @unchecked =>
                                     val sax: Kyo.SuspendArrow[IX, OX, EX, VX, T, S2] = sa
                                     val k0                                           = sax.cont
                                     val cA                                           = contA
                                     val cB                                           = contB
-                                    new Kyo.SuspendArrow[IX, OX, EX, VX, C, S2] with Arrow.Transform[OX[VX], C, S2]:
+                                    new Kyo.SuspendArrowTransform[IX, OX, EX, VX, C, S2]:
                                         def tag   = sax.tag
                                         def input = sax.input
                                         def cont  = this
@@ -101,7 +104,7 @@ object Eval:
                                     val k0                                     = scx.cont
                                     val cA                                     = contA
                                     val cB                                     = contB
-                                    new Kyo.SuspendContext[VX, CX, C, S2] with Arrow.Transform[VX, C, S2]:
+                                    new Kyo.SuspendContextTransform[VX, CX, C, S2]:
                                         def tag           = scx.tag
                                         def update(v: VX) = scx.update(v)
                                         def cont          = this
@@ -115,7 +118,7 @@ object Eval:
                                     val k0                                            = sdx.cont
                                     val cA                                            = contA
                                     val cB                                            = contB
-                                    new Kyo.SuspendContextDefault[VX, CX, C, S2] with Arrow.Transform[VX, C, S2]:
+                                    new Kyo.SuspendContextDefaultTransform[VX, CX, C, S2]:
                                         def tag           = sdx.tag
                                         def default       = sdx.default
                                         def update(v: VX) = sdx.update(v)
@@ -148,9 +151,10 @@ object Eval:
                             val rebuilt: Y < Any =
                                 susp match
                                     case sa: Kyo.SuspendArrow[IY, OY, EY, VY, AX, EX] @unchecked =>
+                                        // TODO method in Suspend to simplify code here?
                                         val sax: Kyo.SuspendArrow[IY, OY, EY, VY, AX, EX] = sa
                                         // one allocation fulfilling both roles: the rebuilt suspension and its re-handling transform
-                                        new Kyo.SuspendArrow[IY, OY, EY, VY, Y, Any] with Arrow.Transform[OY[VY], Y, Any]:
+                                        new Kyo.SuspendArrowTransform[IY, OY, EY, VY, Y, Any]:
                                             def tag   = sax.tag
                                             def input = sax.input
                                             def cont  = this
@@ -167,7 +171,7 @@ object Eval:
                                     case sc: Kyo.SuspendContext[VX, CX, AX, EX] @unchecked =>
                                         val scx: Kyo.SuspendContext[VX, CX, AX, EX] = sc
                                         // one allocation fulfilling both roles: the rebuilt suspension and its re-handling transform
-                                        new Kyo.SuspendContext[VX, CX, Y, Any] with Arrow.Transform[VX, Y, Any]:
+                                        new Kyo.SuspendContextTransform[VX, CX, Y, Any]:
                                             def tag           = scx.tag
                                             def update(v: VX) = scx.update(v)
                                             def cont          = this
@@ -184,7 +188,7 @@ object Eval:
                                     case sd: Kyo.SuspendContextDefault[VX, CX, AX, EX] @unchecked =>
                                         val sdx: Kyo.SuspendContextDefault[VX, CX, AX, EX] = sd
                                         // one allocation fulfilling both roles: the rebuilt suspension and its re-handling transform
-                                        new Kyo.SuspendContextDefault[VX, CX, Y, Any] with Arrow.Transform[VX, Y, Any]:
+                                        new Kyo.SuspendContextDefaultTransform[VX, CX, Y, Any]:
                                             def tag           = sdx.tag
                                             def default       = sdx.default
                                             def update(v: VX) = sdx.update(v)
@@ -359,7 +363,10 @@ object Eval:
         end guarded
 
         try guarded(v, Context.empty)
-        finally Safepoint.restore(slot, saved)
+        finally
+            Safepoint.restore(slot, saved)
+            Stack.release(stack)
+        end try
     end apply
 
     def answerLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State, W](
@@ -393,7 +400,7 @@ object Eval:
                             if rs.cont.isInstanceOf[Arrow.Id[?]] =>
                             val rsx: Kyo.SuspendArrow[IY, OY, EY, VY, Out, S] = rs
                             // one allocation fulfilling both roles: the rebuilt suspension and its outcome dispatch
-                            new Kyo.SuspendArrow[IY, OY, EY, VY, B, S] with Arrow.Transform[OY[VY], B, S]:
+                            new Kyo.SuspendArrowTransform[IY, OY, EY, VY, B, S]:
                                 def tag   = rsx.tag
                                 def input = rsx.input
                                 def cont  = this
@@ -407,7 +414,7 @@ object Eval:
                             // one allocation fulfilling both roles: the dispatch record and its own transform,
                             // the rescue shape: the whole outcome computation is the value and the record is
                             // the arrow that settles it
-                            new Kyo.Defer[Out, B, B, S] with Arrow.Transform[Out, B, S]:
+                            new Kyo.DeferTransform[Out, B, S]:
                                 def value = r
                                 def contA = this
                                 def contB = Arrow.id

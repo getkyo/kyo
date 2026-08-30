@@ -62,7 +62,7 @@ object Debugger:
       * nothing at the typer, so a production build carries no bytecode at the sites and no `this` escapes the node constructors.
       * Instrumenting a build is a source edit here.
       */
-    inline val enabled = true
+    inline val enabled = false
 
     // a plain module cell: the proto runs single-threaded demos
     private var current: Debugger = Noop

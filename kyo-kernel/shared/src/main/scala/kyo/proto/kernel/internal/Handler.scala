@@ -36,17 +36,19 @@ end Handler
 
 object Handler:
 
+    /** `answer` is abstract, and the handling site implements it with its clause inlined.
+      *
+      * The eval reaches a clause through exactly one call, and that call lands on one implementation per handling site, so it is
+      * megamorphic whatever the shape. What the shape decides is which side of it the site's constants sit on. Behind a further abstract
+      * `run(input, cont, k)`, the eval passed `Arrow.id` for `k` across that boundary, and the callee received a parameter it had to compose
+      * with at runtime. Implemented at the site, `k` is not a parameter at all: the composition it fed is gone, and what remains folds as
+      * the site inlines. Same principle as `Arrow.apply`'s one-argument entry going through `head`/`tail`.
+      */
     abstract class HandlerCont[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Handler[E, A, B, S, Unit]:
-        def run[X, C, S2](input: I[X], cont: Arrow[O[X], A, E & S], k: Arrow[A, C, S2]): C < (E & S & S2)
-        def answer[X](input: I[X], next: Arrow[O[X], A, E & S]): A < (E & S) =
-            run(input, next, Arrow.id)
-    end HandlerCont
+        def answer[X](input: I[X], next: Arrow[O[X], A, E & S]): A < (E & S)
 
     abstract class HandlerLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State] extends Handler[E, A, B, S, State]:
-        def run[X](state: State, input: I[X]): Outcome2[State, O[X] < (E & S), B < S] < S
-        def answer[X](state: State, input: I[X], next: Arrow[O[X], A, E & S]): Outcome2[State, O[X] < (E & S), B < S] =
-            Eval.answerLoop(this, run(state, input), next)
-    end HandlerLoop
+        def answer[X](state: State, input: I[X], next: Arrow[O[X], A, E & S]): Outcome2[State, O[X] < (E & S), B < S]
 
     abstract class HandlerContext[State, E <: ContextEffect[State], A, B, S] extends Handler[E, A, B, S, State]:
         /** What this binding installs, given what the enclosing scope binds for its tag, Absent when nothing is bound. A binding resolves

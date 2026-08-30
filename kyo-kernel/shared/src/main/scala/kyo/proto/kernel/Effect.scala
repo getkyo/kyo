@@ -56,7 +56,7 @@ object Effect:
     // one object.
     @nowarn("msg=anonymous")
     private[kyo] inline def deferInline[A, S](inline f: => A < S)(using inline _frame: Frame): A < S =
-        new Defer[Unit, A, A, S] with Arrow.Transform[Unit, A, S]:
+        new Kyo.DeferTransform[Unit, A, S]:
             override def frame          = _frame
             def value                   = unitValue
             def contA                   = this

@@ -72,6 +72,38 @@ object Kyo:
             s"Defer(${short(value)}, ${slot(contA)}, ${slot(contB)})"
     end Defer
 
+    /** A deferral that is also the arrow it defers to, as a class rather than a mixin at each site.
+      *
+      * The fusion the proto is built on puts a node and an arrow in one object, and every site that did so wrote
+      * `new Defer[...] with Arrow.Transform[...]`. `Arrow` and `Transform` are traits and `Defer` implements none of their members, so each
+      * such anonymous class is the first class in its chain and Scala emits mixin forwarders for `head`, `tail`, `chain` and `apply` into
+      * every one of them. Dozens of classes, one per fusion site, each with its own copy of the same four bodies: the JIT then has no unique
+      * target to bind and no small receiver profile either, so those calls never inline. Measured on `handleLoopAnswersInPlace`, that is 35
+      * of the megamorphic sites on the hot path.
+      *
+      * Extending one class instead moves the emission here, once. This is what `kyo.kernel` does with `Arrow.TransformBase`, whose fusion
+      * sites carry no forwarders at all.
+      */
+    abstract class DeferTransform[A, B, -S] extends Defer[A, B, B, S] with Arrow.Transform[A, B, S]
+
+    /** The rotations: a suspension that is also the arrow its answer flows into.
+      *
+      * Absorbing registers into a node and rebuilding a region across a foreign crossing both produce one object playing both roles, and
+      * both wrote the mixin at the site. Same emission as [[DeferTransform]] and same cost, so the same fix: the mixin happens once, here,
+      * and the sites extend a class.
+      */
+    abstract class SuspendArrowTransform[I[_], O[_], E <: ArrowEffect[I, O], State, A, S]
+        extends SuspendArrow[I, O, E, State, A, S] with Arrow.Transform[O[State], A, S]
+
+    abstract class SuspendContextTransform[State, E <: ContextEffect[State], A, S]
+        extends SuspendContext[State, E, A, S] with Arrow.Transform[State, A, S]
+
+    abstract class SuspendContextDefaultTransform[State, E <: ContextEffect[State], A, S]
+        extends SuspendContextDefault[State, E, A, S] with Arrow.Transform[State, A, S]
+
+    abstract class HandleTransform[E <: Effect, A, B, C, -S, State]
+        extends Handle[E, A, B, C, S, State] with Arrow.Transform[B, C, S]
+
     sealed abstract class Suspend[E <: Effect, A, S] extends Pending[A, S]:
         Debugger.onAlloc(this)
 

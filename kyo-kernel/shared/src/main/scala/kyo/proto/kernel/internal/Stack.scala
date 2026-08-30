@@ -53,6 +53,28 @@ final private[kyo] class Stack:
       */
     def pop(): Unit = size -= 1
 
+    /** Empties the stack for the next borrower.
+      *
+      * The entries are dropped rather than merely forgotten, which `pop` does not do: a pooled stack outlives the eval that used it, so a
+      * slot the size no longer covers would hold that eval's handler, state, context and continuation alive for as long as the pool does.
+      * Bounded by the peak depth one eval reached, which is exactly the retention `pop` is allowed to leave and a pool is not.
+      *
+      * Called on every release, including one leaving on an exception, where the stack still holds every region the throw unwound past.
+      */
+    def clear(): Unit =
+        var i = 0
+        while i < size do
+            handlers(i) = null
+            states(i) = null
+            // `Context` is opaque over a TypeMap and admits no null; the shared empty one drops the
+            // reference without allocating, which is all this needs
+            contexts(i) = Context.empty
+            continuations(i) = null
+            i += 1
+        end while
+        size = 0
+    end clear
+
     // the innermost region, which is the only one an eval step can be inside. Every call site reaches these
     // behind its own `isEmpty` test, so an empty stack has no reads rather than a defined answer for them
     def handler: Handler[?, ?, ?, ?, ?] = handlers(size - 1)
@@ -87,4 +109,40 @@ private[kyo] object Stack:
     private val noStates        = new Array[Any](0)
     private val noContexts      = new Array[Context](0)
     private val noContinuations = new Array[Arrow[?, ?, ?]](0)
+
+    /** The stacks one thread is not currently using.
+      *
+      * Every eval needs a stack and most give it back untouched, so allocating one per eval put 32 B/op on evals that install no region at
+      * all. Pooling is what the reference kernel does at the same place, and it is sound here for the reason the stack is safe to be mutable
+      * at all: it is scoped to a single `Eval.apply`, nothing it holds leaves the eval, and a nested eval borrows its own.
+      *
+      * Plain fields behind a thread local, so a pool is only ever touched by its own thread and needs no synchronization.
+      */
+    final private class Pool:
+        private var free = new Array[Stack](4)
+        private var size = 0
+
+        def borrow(): Stack =
+            if size == 0 then new Stack
+            else
+                size -= 1
+                val stack = free(size)
+                free(size) = null
+                stack
+
+        def release(stack: Stack): Unit =
+            stack.clear()
+            if size == free.length then free = Array.copyOf(free, size * 2)
+            free(size) = stack
+            size += 1
+        end release
+    end Pool
+
+    private val pool =
+        new ThreadLocal[Pool]:
+            override def initialValue() = new Pool
+
+    def borrow(): Stack = pool.get().borrow()
+
+    def release(stack: Stack): Unit = pool.get().release(stack)
 end Stack
