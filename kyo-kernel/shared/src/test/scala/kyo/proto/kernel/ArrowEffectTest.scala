@@ -28,7 +28,9 @@ class ArrowEffectTest extends AnyFreeSpec:
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
     sealed trait AskSub extends Ask
-    def askSub: Int < AskSub = ArrowEffect.suspend[Any](Tag[AskSub], ())
+    // the operation is tagged at the subtype and the row names the supertype, which the row's
+    // contravariance permits: the pairing the sub-tag dispatch pins exercise
+    def askSub: Int < Ask = ArrowEffect.suspend[Any](Tag[AskSub].asInstanceOf[Tag[Ask]], ())
 
     sealed trait Say extends ArrowEffect[Const[String], Const[Unit]]
     def say(s: String): Unit < Say = ArrowEffect.suspend[Any](Tag[Say], s)
@@ -448,10 +450,43 @@ class ArrowEffectTest extends AnyFreeSpec:
             assert(eval(r) == 42)
         }
 
-        "answers operations of a subtype effect" in {
-            val v: Int < AskSub = askSub.map(_ + 1)
-            val r: Int < AskSub = ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, cont) => cont(41), a => a)
+        // a handler for the supertype leaves the subtype in the row rather than claiming to have discharged
+        // it, so the obligation is a compile error and never a suspension nothing answers at runtime
+        "a supertype handler leaves a subtype effect in the row" in {
+            val v: Int < AskSub = ArrowEffect.suspend[Any](Tag[AskSub], ()).map(_ + 1)
+            val r               = ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, cont) => cont(41), a => a)
+            assertTypeError("val fullyHandled: Int < Any = r")
+            val stillOwed: Int < AskSub = r
+            assert(eval(ArrowEffect.handleCont(Tag[AskSub], stillOwed)([C] => (_, cont) => cont(41), a => a)) == 42)
+        }
+
+        // the handler is installed at the subtype and the computation names the supertype, which is the
+        // pairing the row itself asks for: `v: A < (E & S)` accepts a row of `Ask` for an `E` of `AskSub`
+        // because the row is contravariant
+        "a handler at a subtype effect answers a computation typed at the supertype" in {
+            val v: Int < Ask = askSub.map(_ + 1)
+            val r: Int < Any = ArrowEffect.handleCont(Tag[AskSub], v)([C] => (_, cont) => cont(41), a => a)
             assert(eval(r) == 42)
+        }
+
+        "the operation clause receives the operation reified at its own tag" in {
+            var seen         = List.empty[String]
+            val v: Int < Ask = ask.map(_ + 1)
+            // the region is installed at the subtype and answers the supertype-tagged operation;
+            // the reified value carries the operation's own tag, which only the node knows. The
+            // clause ends the region without resuming: an answer type it could fabricate would
+            // need the operation's shape, which reification deliberately does not leak
+            val r: Int < Any = ArrowEffect.handleContOperation(Tag[AskSub], v)(
+                [X] =>
+                    (operation, _) =>
+                        val suspend = operation.asInstanceOf[kyo.proto.kernel.internal.Kyo.Suspend[?, ?, ?]]
+                        seen = suspend.tag.show :: seen
+                        -1
+                ,
+                a => a
+            )
+            assert(eval(r) == -1)
+            assert(seen == List(Tag[Ask].show))
         }
 
         // Eval.partial is not in this package yet

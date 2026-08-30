@@ -180,7 +180,13 @@ object Eval:
                     else
                         val handler = stack.handler.asInstanceOf[Handler[EX, AX, Y, Any, VX]]
                         val state   = stack.state.asInstanceOf[VX]
-                        if !(susp.tag.erased <:< handler.tag.erased) then
+                        // the handler's tag on the left, as the reference kernel and main dispatch: a
+                        // region answers an operation when the region's tag is a subtype of the
+                        // operation's. Effect variance is designed around this direction (a handler
+                        // for the supertype error catches sub-error operations through
+                        // contravariance), and an intersection-tagged region answers each member's
+                        // operations, which is what makes one region a multi-effect handler
+                        if !(handler.tag.erased <:< susp.tag.erased) then
                             Debugger.onForeign(susp, handler)
                             // parameterized over the suspension's payload so each arm calls it with its own
                             // refined continuation, keeping the rebuilt applies typed at the true input
@@ -265,6 +271,17 @@ object Eval:
                                     handler match
                                         case handler: Handler.HandlerCont[IX, OX, EX, AX, Y, Any] @unchecked =>
                                             val r = handler.answer(suspend.input, next)
+                                            Debugger.onResult(r)
+                                            // the region stays installed: its clause answered in place
+                                            loop(r, Arrow.id, Arrow.id, ctx)
+                                        case handler: Handler.HandlerContOperation[EX, AX, Y, Any] @unchecked =>
+                                            // the operation rebuilt as a value, continuation-free: its own
+                                            // tag rides inside, and the region's tag is a subtype of every
+                                            // tag it answers, so only the node knows which effect this
+                                            // operation belongs to
+                                            val operation: OX[VX] < EX =
+                                                Kyo.SuspendArrow(suspend.tag, suspend.input, Arrow.id[OX[VX]])
+                                            val r = handler.answer(operation, next)
                                             Debugger.onResult(r)
                                             // the region stays installed: its clause answered in place
                                             loop(r, Arrow.id, Arrow.id, ctx)

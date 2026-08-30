@@ -16,20 +16,28 @@ sealed abstract class Mask[S] extends ArrowEffect[[A] =>> A < S, Id]
 
 object Mask:
 
-    /** Masks the effect `E` in `v`.
+    /** Masks the effect `E` in `v`, where `E` may be one effect or an intersection of several.
       *
       * Handlers for `E` between this call and [[run]] see none of `v`'s `E` operations; handlers for every other effect in the row are
-      * unaffected. The effect to mask is named explicitly: `Mask[Ask](v)`.
+      * unaffected. The effect to mask is named explicitly, `Mask[Ask](v)` or `Mask[Ask & Say](v)`: an intersection-tagged region answers
+      * each member's operations, so one mask covers them all.
+      *
+      * The mask's own suspension is tagged at the named `E` on both ends, so [[run]] named the same way lands the tunnel by construction.
+      * Each payload is re-raised at the caught operation's own tag, so an `Ask` operation re-emerges at [[run]] as an `Ask` operation and
+      * the specific effect's handler outside answers it.
       */
     def apply[E](using
         Frame
-    )[I[_], O[_], E2 >: E <: ArrowEffect[I, O], A, S](v: A < (E2 & S))(
+    )[E2 >: E <: ArrowEffect[?, ?], A, S](v: A < (E2 & S))(
         using
         tag: Tag[E2],
-        maskTag: Tag[Mask[E2]]
-    ): A < (Mask[E2] & S) =
-        ArrowEffect.handleCont(tag, v) {
-            [C] => (input, cont) => ArrowEffect.suspend[O[C]](maskTag, ArrowEffect.suspend[C](tag, input)).map(cont(_))
+        maskTag: Tag[Mask[E]]
+    ): A < (Mask[E] & S) =
+        ArrowEffect.handleContOperation(tag, v) {
+            // the payload is the operation itself, carrying its own tag, and it conforms to the
+            // mask's `A < E` input by row contravariance: `E2 >: E`, and the `E` row is honest
+            // because a handler at `E` answers `E2`-tagged operations under the dispatch direction
+            [X] => (operation, cont) => ArrowEffect.suspend[X](maskTag, operation).map(cont(_))
         }
 
     /** Unmasks: evaluates each masked operation at this boundary, re-exposing `S` to the handlers outside it. */

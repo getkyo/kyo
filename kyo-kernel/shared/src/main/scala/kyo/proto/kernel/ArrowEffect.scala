@@ -7,6 +7,7 @@ import kyo.proto.Arrow.Transform
 import kyo.proto.Loop
 import kyo.proto.kernel.internal.Eval
 import kyo.proto.kernel.internal.Handler.HandlerCont
+import kyo.proto.kernel.internal.Handler.HandlerContOperation
 import kyo.proto.kernel.internal.Handler.HandlerLoop
 import kyo.proto.kernel.internal.Kyo
 import kyo.proto.kernel.internal.Nested
@@ -145,6 +146,53 @@ object ArrowEffect:
         inline handle: [C] => (I[C], Arrow[O[C], A, E & S & S2]) => A < (E & S & S2)
     )(using inline _frame: Frame): A < (S & S2) =
         handleCont(effectTag, v)(handle, a => a)
+
+    /** [[handleCont]] whose clause receives the answered operation reified as a value.
+      *
+      * A region answers an operation when the region's tag is a subtype of the operation's, so a region over an intersection answers
+      * several effects with one clause and the clause alone cannot tell which effect an operation belongs to. The reified value carries
+      * the operation's own tag, so evaluating it elsewhere re-raises the operation at its true identity, answerable by that effect's own
+      * handler. `X` is the operation's answer type and nothing else about its shape leaks, which is what lets `E` range over
+      * intersections: no input or output structure is named, so none has to be common.
+      */
+    @nowarn("msg=anonymous")
+    inline def handleContOperation[E <: ArrowEffect[?, ?], A, B, S, S2](
+        inline effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        inline handle: [X] => (X < E, Arrow[X, A, E & S & S2]) => A < (E & S & S2),
+        inline done: A => B < (S & S2)
+    )(using inline _frame: Frame): B < (S & S2) =
+        def onDone(v0: A): B < (S & S2) = done(v0)
+        v match
+            case _: Pending[?, ?] =>
+                val h =
+                    new HandlerContOperation[E, A, B, S & S2]:
+                        def tag = effectTag
+                        def answer[X](operation: X < E, next: Arrow[X, A, E & S & S2]) =
+                            handle[X](operation, next)
+                        def done(state: Unit, v0: A) = onDone(v0)
+                // the region node is built at the site: the unit state and the identity continuation
+                // are constants, not captured fields
+                new Kyo.Handle[E, A, B, B, S & S2, Unit]:
+                    override def frame = _frame
+                    def value          = v
+                    def handler        = h
+                    def state          = ()
+                    def cont           = Arrow.id
+                end new
+            case _ => onDone(Nested.unnest(v))
+        end match
+    end handleContOperation
+
+    /** [[handleContOperation]] with the region's value as the result. */
+    inline def handleContOperation[E <: ArrowEffect[?, ?], A, S, S2](
+        inline effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        inline handle: [X] => (X < E, Arrow[X, A, E & S & S2]) => A < (E & S & S2)
+    )(using inline _frame: Frame): A < (S & S2) =
+        handleContOperation(effectTag, v)(handle, a => a)
 
     /** Handles an arrow effect with a loop-based approach, without state between occurrences.
       *

@@ -138,6 +138,22 @@ class MaskTest extends AnyFreeSpec:
         }
     }
 
+    "one mask over an intersection masks both effects and each re-emerges at its own handler" in {
+        val innerBuf = scala.collection.mutable.ListBuffer[String]()
+        val outerBuf = scala.collection.mutable.ListBuffer[String]()
+        val v: Int < (Ask & Say) =
+            ask.map(a => say(s"got $a").map(_ => ask.map(b => a + b)))
+        val masked       = Mask[Ask & Say](v)
+        val innerHandled = runSay(runAsk(masked)(1))(innerBuf)
+        val out          = Mask.run[Ask & Say](innerHandled)
+        // the payloads carry each operation's own tag, so the Ask operations land at the Ask
+        // handler and the Say operation at the Say handler, with nothing needing a joint handler
+        val r = runSay(runAsk(out)(42))(outerBuf)
+        assert(eval(r) == 84)
+        assert(innerBuf.isEmpty)
+        assert(outerBuf.toList == List("got 42"))
+    }
+
     "masks of different effects stack independently" in {
         val innerBuf = scala.collection.mutable.ListBuffer[String]()
         val outerBuf = scala.collection.mutable.ListBuffer[String]()

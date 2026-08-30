@@ -47,6 +47,17 @@ object Handler:
     abstract class HandlerCont[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Handler[E, A, B, S, Unit]:
         def answer[X](input: I[X], next: Arrow[O[X], A, E & S]): A < (E & S)
 
+    /** [[HandlerCont]] whose clause receives the answered operation reified as a value.
+      *
+      * A region's tag is a subtype of every operation tag it answers, so a region over an intersection answers several effects and the
+      * clause alone cannot tell which one an operation belongs to. The eval holds the operation's node and rebuilds it here,
+      * continuation-free: the node's own tag rides inside the value, so evaluating it elsewhere re-raises the operation at its true
+      * identity, answerable by that effect's own handler (`Mask` tunnels on exactly this). Reifying the value is also what frees the
+      * clause of the operation's input and output structure: `X` is the operation's answer type and nothing else about its shape leaks.
+      */
+    abstract class HandlerContOperation[E <: Effect, A, B, S] extends Handler[E, A, B, S, Unit]:
+        def answer[X](operation: X < E, next: Arrow[X, A, E & S]): A < (E & S)
+
     abstract class HandlerLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State] extends Handler[E, A, B, S, State]:
         def answer[X](state: State, input: I[X], next: Arrow[O[X], A, E & S]): Outcome2[State, O[X] < (E & S), B < S]
 
