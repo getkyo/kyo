@@ -113,6 +113,117 @@ class AnthropicCompletionTest extends kyo.test.Test[Any]:
         }
     }
 
+    "an entry accepting mid-conversation system messages sends a later instruction with its own role" in {
+        TestCompletionServer.run { server =>
+            val config = keyedConfig(server.baseUrl)
+                .midConversationSystem(Config.MidConversationSystem.AcceptedAfterOpeningTurn)
+            val ctx = Context.empty
+                .systemMessage("you are X")
+                .userMessage("hello from user")
+                .systemMessage("from now on, be brief")
+            server.enqueueBody(minimalAnthropicBody("ok")).andThen {
+                LLM.run(config) {
+                    Abort.run[HttpException] {
+                        Abort.run[AIException] {
+                            AnthropicCompletion(config, ctx, Chunk.empty)
+                        }
+                    }
+                }.andThen {
+                    server.captured.map { caps =>
+                        val body = caps.head.body
+                        assert(
+                            body.contains("\"role\":\"system\"") || body.contains("\"role\": \"system\""),
+                            s"the later instruction should ride with its own role: $body"
+                        )
+                        assert(
+                            !body.contains("<system-reminder>"),
+                            s"an accepting entry should not wrap the instruction as a user turn: $body"
+                        )
+                        // The leading instruction still takes the out-of-band slot: a system message can
+                        // never be the first entry in the history.
+                        assert(body.contains("\"system\""), s"top-level system field lost: $body")
+                        assert(body.contains("you are X"), s"leading instruction lost: $body")
+                        assert(body.contains("from now on, be brief"), s"later instruction lost: $body")
+                    }
+                }
+            }
+        }
+    }
+
+    "an entry that does not accept them keeps wrapping a later instruction as a user turn" in {
+        TestCompletionServer.run { server =>
+            val config = Config.Anthropic.sonnet_5.apiKey("test-key").apiUrl(server.baseUrl)
+            val ctx = Context.empty
+                .systemMessage("you are X")
+                .userMessage("hello from user")
+                .systemMessage("from now on, be brief")
+            server.enqueueBody(minimalAnthropicBody("ok")).andThen {
+                LLM.run(config) {
+                    Abort.run[HttpException] {
+                        Abort.run[AIException] {
+                            AnthropicCompletion(config, ctx, Chunk.empty)
+                        }
+                    }
+                }.andThen {
+                    server.captured.map { caps =>
+                        val body = caps.head.body
+                        assert(body.contains("<system-reminder>"), s"the wrapper is the fallback: $body")
+                        assert(
+                            !body.contains("\"role\":\"system\"") && !body.contains("\"role\": \"system\""),
+                            s"an entry that refuses the role must not send it: $body"
+                        )
+                        assert(body.contains("from now on, be brief"), s"later instruction lost: $body")
+                    }
+                }
+            }
+        }
+    }
+
+    "a system message is never the first entry in the history, whatever the entry declares" in {
+        TestCompletionServer.run { server =>
+            // AllDelivered keeps every leading instruction as its own message: the head is lifted into the
+            // out-of-band slot and the SECOND one would open `messages`, which the wire refuses.
+            val config = Config.Anthropic.default
+                .model(
+                    Config.Anthropic,
+                    "claude-opus-4-8",
+                    contextWindow = 1000000,
+                    outputMaximum = Config.OutputMaximum.Verified(128000),
+                    reasoning = Config.ReasoningEncoding.Adaptive,
+                    acceptsTemperature = false,
+                    acceptsImages = true,
+                    systemInstructions = Present(Config.SystemMessages.AllDelivered),
+                    midConversationSystem = Present(Config.MidConversationSystem.AcceptedAfterOpeningTurn)
+                )
+                .apiKey("test-key")
+                .apiUrl(server.baseUrl)
+            val ctx = Context.empty
+                .systemMessage("you are X")
+                .systemMessage("and you are brief")
+                .userMessage("hello from user")
+            server.enqueueBody(minimalAnthropicBody("ok")).andThen {
+                LLM.run(config) {
+                    Abort.run[HttpException] {
+                        Abort.run[AIException] {
+                            AnthropicCompletion(config, ctx, Chunk.empty)
+                        }
+                    }
+                }.andThen {
+                    server.captured.map { caps =>
+                        val body       = caps.head.body
+                        val messagesAt = body.indexOf("\"messages\":[")
+                        val firstRole  = body.indexOf("\"role\":", messagesAt)
+                        val opening    = body.substring(firstRole, firstRole + 20)
+                        assert(
+                            !opening.contains("system"),
+                            s"a system message must never open the history: $opening in $body"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     "a conversation with no leading system message keeps the opening user turn (regression: head was dropped)" in {
         TestCompletionServer.run { server =>
             val config = keyedConfig(server.baseUrl)
@@ -359,11 +470,14 @@ class AnthropicCompletionTest extends kyo.test.Test[Any]:
 
     "a non-head system message serializes as a system-reminder user message" in {
         TestCompletionServer.run { server =>
-            val config = keyedConfig(server.baseUrl)
+            // Pinned on an entry that does not declare Config.MidConversationSystem.Accepted. The wrapper
+            // is the behaviour wherever the endpoint cannot carry a later instruction with system
+            // authority, which is every entry except the two that document accepting one.
+            val config = Config.Anthropic.sonnet_5.apiKey("test-key").apiUrl(server.baseUrl)
             val ctx = Context.empty
                 .systemMessage("primary") // head -> top-level system
                 .userMessage("hi")
-                .systemMessage("a reminder") // non-head -> system-reminder user turn (Anthropic has no system tail)
+                .systemMessage("a reminder") // non-head -> system-reminder user turn on this entry
             server.enqueueBody(minimalAnthropicBody("ok")).andThen {
                 LLM.run(config) {
                     Abort.run[HttpException](Abort.run[AIException](AnthropicCompletion(config, ctx, Chunk.empty)))
