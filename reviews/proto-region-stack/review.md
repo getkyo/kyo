@@ -3,7 +3,7 @@
 Two changes, in dependency order. Each is applied one edit at a time with the Edit tool, in the
 sequence below, with the sentence beside each edit said as it goes in.
 
-Worktree `kyo-root-impl`, commits `a10624dfa4` and `ffc1819ecc` off `31a7b4bde9`.
+Worktree `kyo-root-impl`, commits `a10624dfa4`, `ffc1819ecc` and `1f47d6f590` off `31a7b4bde9`.
 
 ## What this fixes
 
@@ -77,15 +77,23 @@ The rebuild block and `reenter` are the baseline's code, relocated. They read th
 from the entry instead of from a closure, and `git diff -w` over those ranges shows only that and
 the loop's renamed type parameters.
 
-**6. `run` and `recovered`: the extent guard, once for the eval.**
+**6. The guard, replacing `run`: the extent guard, once for the eval.**
 
 > The regions a throw unwinds are the ones the stack holds, each consulted with the state it holds
-> there, so a region that declines costs no frame and neither does one that recovers.
+> there, and it is a loop rather than a recursion so that recovering costs no more stack than
+> declining does.
+
+The loop is the point. The first shape of this had the recovery resume by calling back into the
+guard from inside its own catch, which cost a frame per *recovered* region: the dependency this
+change exists to remove, reintroduced one level over. Two review lenses caught it independently.
 
 Consequence, and the one behavioural change in the set: `recover` now reads the state the region has
 reached rather than the one it was installed with. That follows your ruling that both `recover` and
 `release` should see the current state. `release` already did, structurally, since a region only
 becomes releasable by being reified into a node and the reification writes the live state into it.
+`Handler.recover`'s scaladoc stated the old contract and changes with it. A second, smaller
+behavioural change: a `recover` that fails is now the failure the regions outside it see, which is
+what nesting the per-region tries used to do implicitly.
 
 ### Change two: an eval's own safepoint budget
 
@@ -103,9 +111,17 @@ finally Safepoint.restore(slot, saved)
 > whatever the thread had left.
 
 Inheriting a spent budget is a fixed point rather than a slow path: every application defers, the
-settled arm applies the deferral, and its continuation is the application that just deferred. Neither
-side is wrong alone. The reference kernel's eval already does exactly this; the proto had both
-operations and called neither. Its own derivation is in `reviews/proto-eval-budget/`.
+settled arm applies the deferral, and its continuation is the application that just deferred. The
+reference kernel's eval already does exactly this; the proto had both operations and called neither.
+
+**8. The same guard, one line: `Safepoint.reset(slot)` on catching.**
+
+> A throw leaves every strict application between it and the guard without its matching exit, and the
+> guard is where the true depth is known to be zero.
+
+Saving at entry fixes the leak across evals; it does not fix it within one. An extent that recovers a
+few hundred times drains its own budget and reaches the same fixed point. Measured flat from 200 to
+12800 recoveries with the reset, livelocking past 800 without it.
 
 ## Evidence
 
@@ -117,16 +133,18 @@ Full detail in `evidence.md`. Summary:
 | `PendingTest` | 63 of 63 | 63 of 63 |
 | `EvalTest` | 51 of 54 | 51 of 54 |
 | three suites in one JVM | hung | **205 tests, 202 passing** |
-| `kyo-kernelJVM/test` | 1 suite aborted | **35 suites, 0 aborted, 1398 passing** |
+| `kyo-kernelJVM/test` | 1 suite aborted | **35 suites, 0 aborted, 1399 passing** |
 | demo, 28 scenarios | recorded values | identical, 4221 / -9 / 991 included |
 | clean batch build | green | green |
+| 12800 throw/recover cycles | livelocks past 400 | flat, 0.89 us each |
 
 Benchmarks: the full class on both legs back to back, 20 of 20 rows. Nothing regressed. The one
 delta outside its errors, `deepRecursionPaysRescuesOnly` at +5.4% on `-f 1`, does not reproduce at
 `-f 3`, where it reads -0.7%. So moving the open regions from the Java stack to four heap arrays
 costs nothing measurable, including on the region-heavy rows.
 
-Adjudication: `flags.md`, 76 rows, every one with a verdict. No verdict is `REMOVE`; the constructs
+Adjudication: `flags.md`, 88 rows, every one with a verdict, rebuilt after `kernel-discipline`
+blocked the first version and recording what that version got wrong. No verdict is `REMOVE`; the constructs
 `rulings.md` names are absent from the diff rather than justified in it.
 
 ## What I want you to push on

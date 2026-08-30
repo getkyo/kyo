@@ -31,8 +31,10 @@ separate probe.
 
 ## Benchmarks
 
-Full class, both legs back to back on the same machine, `-f 1 -wi 5 -i 5`. Control `31a7b4bde9`,
-variant `ffc1819ecc`. Twenty benchmarks declared and twenty measured, so the result set is complete
+Full class, both legs back to back on the same machine, `-f 1 -wi 5 -i 5`, JDK 25, macOS arm64.
+Control `31a7b4bde9`, variant `ffc1819ecc`. **Drift band on this machine is 3 to 4%**, per the
+skill's brackets section, so a delta inside it is not a result and is marked flat below; a delta
+smaller than the combined error is not a result either, whatever its size. Twenty benchmarks declared and twenty measured, so the result set is complete
 (the twenty-first `@Benchmark` match is the class-level `@BenchmarkMode` annotation).
 
 Deviation, recorded rather than routed around: the harness bracket refuses a leg whose suite is red,
@@ -99,6 +101,20 @@ uses `NarrowDepth = 1000`, so it does ten times the work. What is real is a cons
 trailing map costs about 3.4x per step against the same recursion without one, 0.070 against 0.020
 us. Linear, not free.
 
+## The recovery path scales
+
+The guard's first shape recursed, which cost a frame per recovered region, and under the fix for
+that the path still stalled because a throw leaks a safepoint `enter`. Both are fixed; this is the
+measurement that shows it, since a single depth cannot show a scaling defect.
+
+| recoveries | 200 | 400 | 800 | 1600 | 3200 | 6400 | 12800 |
+|---|---|---|---|---|---|---|---|
+| us per recovery | 5.68 | 3.05 | 1.51 | 1.14 | 1.09 | 0.96 | 0.89 |
+
+Flat, with the early figures reflecting JIT warmup rather than growth, and `Stack` pushes equal to
+pops at every size. Without the reset the same probe livelocks past 800; the baseline livelocks past
+400. Pinned by `EvalTest` "regions that fail and recover in sequence cost no stack" at 10000 cycles.
+
 ## The hang this surfaced, now fixed separately
 
 Running the three suites in one JVM used to hang at `ArrowEffectTest:969`. That was pre-existing:
@@ -107,7 +123,7 @@ the StackOverflowError ends the suite at test 17 and nothing ever gets there. It
 `ffc1819ecc`, which gives an eval its own safepoint budget, and it has its own derivation under
 `reviews/proto-eval-budget/`.
 
-With both changes in, `kyo-kernelJVM/test` is 35 suites, 0 aborted, 1398 passing, 3 failing, and the
-three suites run together for the first time: 205 tests, 202 passing. The 3 failures are the
+With all three commits in, `kyo-kernelJVM/test` is 35 suites, 0 aborted, **1399 passing**, 3 failing,
+and the three proto suites run together for the first time. The 3 failures are the
 pre-existing eval-boundary item in `EvalTest`, which is untouched here and still holds two open
 questions of its own.
