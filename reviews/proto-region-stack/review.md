@@ -149,7 +149,7 @@ Full detail in `evidence.md`. Summary:
 | `PendingTest` | 63 of 63 | 63 of 63 |
 | `EvalTest` | 51 of 54 | 51 of 54 |
 | three suites in one JVM | hung | **205 tests, 202 passing** |
-| `kyo-kernelJVM/test` | 1 suite aborted | **35 suites, 0 aborted, 1399 passing** |
+| `kyo-kernelJVM/test` | 1 suite aborted | **35 suites, 0 aborted, 1400 passing** |
 | demo, 28 scenarios | recorded values | identical, 4221 / -9 / 991 included |
 | clean batch build | green | green |
 | 12800 throw/recover cycles | livelocks past 400 | flat, 0.89 us each |
@@ -172,8 +172,8 @@ blocked the first version and recording what that version got wrong. No verdict 
   than a typed entry object that would allocate per region. The ladder permits the cast; you may
   still not want it here.
 - **The context an answered operation resumes with.** It is now the loop's current one, where the
-  baseline used the install-time one. It matches what `ContextEffect`'s own documentation says, and it
-  is unobservable while every `update` in the tree is identity, so nothing pins it.
+  baseline used the install-time one, which matches what `ContextEffect`'s own documentation says.
+  Pinned by a test that fails at the baseline.
 
 ## Open, and not mine to decide
 

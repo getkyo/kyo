@@ -148,11 +148,12 @@ the next answered operation; here the loop's `ctx` carries the update forward.
 
 The proto's own `ContextEffect` documentation says a read rebinds "the updated value for the rest of
 that region's extent", which is what this does and what the baseline did not, so the change is toward
-the stated contract rather than away from it. It is unobservable in this tree and therefore unpinned:
-every `SuspendContext` the public surface can build carries `update(v) = v`, so no update is ever
-non-identity, and a test would have to construct a node the surface cannot produce.
-
-Raised as a declared change rather than left to be discovered.
+the stated contract rather than away from it. Pinned by `EvalTest` "a context update outlives an operation answered after it", which fails at
+`31a7b4bde9` and passes here. The public surface cannot show this, since every
+`ContextEffect.suspend` carries `update(v) = v`, but `SuspendContext` is constructible from the
+internal package where the tests live, so the test builds one with a non-identity update. An earlier
+draft called the change unobservable and left it unpinned; that was true of the surface and false of
+the tree.
 
 ## Ruled, not open
 

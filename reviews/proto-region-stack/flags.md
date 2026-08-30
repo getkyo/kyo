@@ -236,9 +236,11 @@ advanced, against `loop(r, Arrow.id, Arrow.id, ctx)` here). The proto's own docu
 context read rebinds "the updated value for the rest of that region's extent", which the baseline
 dropped at every answered operation and this does not, so the change is toward the stated contract.
 
-It is unobservable in this tree and therefore unpinned: every `SuspendContext` the public surface can
-build carries `update(v) = v`, so no update is ever non-identity, and a test would have to construct
-a node the surface cannot produce. Raised here rather than left for the reviewer to find.
+Pinned by `EvalTest` "a context update outlives an operation answered after it", which fails at
+`31a7b4bde9` and passes here. The public surface cannot show it, since every `ContextEffect.suspend`
+carries `update(v) = v`, but `SuspendContext` is constructible from the internal package where the
+tests live. An earlier draft called it unobservable and left it unpinned, which was true of the
+surface and false of the tree.
 
 ## Nothing removed
 
