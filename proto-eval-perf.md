@@ -68,11 +68,18 @@ by 5-30% in both directions, per row, reproducibly. Nibbling at the lane trades
 rows against each other. The levers that would move the whole surface rather than
 redistribute it:
 
-1. The HandlerLoop outcome protocol change: return the answer directly (state
-   written through, done and pending via sentinel) so no `Continue2` exists on the
-   hot path. Removes the object the entire pathology orbits, shrinks the lane for
-   real, and is the credible path toward the CPS kernel's 89us on the handleLoop
-   rows (currently 149). Public-surface design decision.
+1. REJECTED after review: a HandlerLoop protocol change replacing the `Continue2`
+   carrier with write-through state. The state must travel inside the captured
+   continuation value: multi-shot replay (the choice shape), Park entries restoring
+   at their carried state, and the pending lane rebuilding the region as a fresh
+   `Handle` all depend on each captured copy owning its state. A mutable cell
+   aliases every copy to one location and breaks replay independence, park/resume,
+   and isolation. Two values leave the clause per operation and any value-semantics
+   encoding of that is a carrier, so `Continue2` is the semantics, not packaging;
+   the correct work was making it cheap (the escape store), not removing it. The
+   CPS kernel pays the same carrier, so the remaining 149 vs 89 gap on the
+   handleLoop rows has no named mechanism yet; closing it starts from a fresh
+   profile, not from this idea.
 2. Threading the Safepoint slot through delivery instead of re-fetching per
    `Step.apply`. Small ceiling (a few loads per op), requires an `Arrow.apply`
    protocol change.
