@@ -152,11 +152,12 @@ class DomBackendReactiveRangesTest extends kyo.test.Test[Any]:
             _     <- assertEventually(Sync.defer(ready.installed && dom.document.getElementById("local-option-A") != null))
             _     <- rows.set(Chunk("A", "B"))
             _     <- nestedProp.set(true)
-            _     <- assertEventually(Sync.defer(dom.document.getElementById("local-option-B") != null))
-            _ <- assertEventually(Sync.defer {
-                dom.document.getElementById("local-nested-property").asInstanceOf[scalajs.Dynamic].indeterminate.asInstanceOf[Boolean]
-            })
-            topology <- Sync.defer {
+            // Each region above subscribes to the signal on its own, so one region having applied the update
+            // says nothing about the other seven. Waiting on a single representative and then reading the
+            // whole topology races the rest, which is why a loaded runner sees a count of 1 where 2 is
+            // expected. Settle on the entire tuple instead. This keeps the assertion's full strength: a
+            // region that never updates still fails, by exhausting the retry budget rather than by racing.
+            readTopology = Sync.defer {
                 def count(selector: String) = dom.document.querySelectorAll(selector).length
                 val property                = dom.document.getElementById("local-nested-property")
                 (
@@ -172,9 +173,12 @@ class DomBackendReactiveRangesTest extends kyo.test.Test[Any]:
                     count("span[data-kyo-reactive]")
                 )
             }
-            _ <- fiber.interrupt
-            _ <- fiber.getResult
-        yield assert(topology == (2, 2, 2, 2, 2, 2, 2, true, null, 0))
+            expected: (Int, Int, Int, Int, Int, Int, Int, Boolean, String, Int) = (2, 2, 2, 2, 2, 2, 2, true, null, 0)
+            _        <- assertEventually(readTopology.map(_ == expected))
+            topology <- readTopology
+            _        <- fiber.interrupt
+            _        <- fiber.getResult
+        yield assert(topology == expected)
     }
 
     "local mount updates directly nested logical ranges" in {

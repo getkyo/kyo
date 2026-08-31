@@ -465,9 +465,18 @@ object Browser:
             // after dispatch would race the event loop and manufacture the very false negative described above.
             if !confirmDelivery then Kyo.unit
             else
-                BrowserEval.clickWasReceived.map { received =>
-                    if received then Kyo.unit
-                    else
+                BrowserEval.clickDelivery.map {
+                    case BrowserEval.ClickDelivery.Received        => Kyo.unit
+                    case BrowserEval.ClickDelivery.Unsubstantiated =>
+                        // The probe is gone, so the document it lived on was replaced between dispatch and read. That refutes nothing,
+                        // and failing a caller on a lost-click claim we cannot make would be worse than letting the click stand. What it
+                        // must not do is look identical to a confirmed delivery: when a later assertion fails on the state this click was
+                        // supposed to produce, whether the click was ever confirmed is the first thing worth knowing.
+                        Log.warn(
+                            s"click: delivery to ${Browser.selectorNodeDescription(Selector.toNode(selector))} is unconfirmed because " +
+                                "the click probe is gone, which a navigation between dispatch and read does"
+                        )
+                    case BrowserEval.ClickDelivery.Missed =>
                         Abort.fail(
                             BrowserElementNotActionableException(
                                 Browser.selectorNodeDescription(Selector.toNode(selector)),

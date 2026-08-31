@@ -111,6 +111,7 @@ for
     start <- Locale.preferred(supported, Locale("en"))
     i18n  <- I18n.init(supported, start)(Path("resources") / "i18n")
 yield i18n
+end for
 // reads resources/i18n/en.ftl and resources/i18n/de.ftl
 ```
 

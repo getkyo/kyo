@@ -28,6 +28,15 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
     private def dripReq    = HttpRequest.getRaw(HttpUrl.fromUri("/drip"))
     private def plainReq   = HttpRequest.getRaw(HttpUrl.fromUri("/plain"))
 
+    /** Body chunks to feed when a leaf needs the decoder blocked in `put` rather than waiting on input.
+      *
+      * The decoded channel `HttpClientBackend.buildBodyStream` allocates is small and fixed; feeding comfortably more than it can hold,
+      * while the consumer holds after its first chunk, leaves the decoder parked mid-put. Interrupting the consumer then closes that
+      * channel under a parked put, which fails immediately, so the taint is deterministic instead of depending on whether the
+      * finalizer beats the next delivery. Sized well above the channel rather than to it, so it does not encode the capacity.
+      */
+    private val backlogChunks = 16
+
     private val streamHeaders = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
     private val chunk1        = "6\r\nchunk1\r\n"
     private val chunk2AndEnd  = "6\r\nchunk2\r\n0\r\n\r\n"
@@ -88,21 +97,25 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
             val respFiber                = backend.sendStreaming(conn, dripRoute, dripReq, 1024 * 1024, Absent, Present(bodyOutcome))
             serverConn.inbound.safe.take.map { _ =>
                 discard(serverConn.outbound.offer(spanOf(streamHeaders)))
-                discard(serverConn.outbound.offer(spanOf(chunk1)))
+                // Enough body chunks to fill the decoded channel and leave the decoder blocked in `put`, and deliberately no
+                // terminal chunk, so the body can never drain to a clean finish.
+                (1 to backlogChunks).foreach(_ => discard(serverConn.outbound.offer(spanOf(chunk1))))
                 respFiber.safe.get.map { resp =>
                     Latch.init(1).map { firstChunk =>
-                        Fiber.init(resp.fields.body.foreachChunk(_ => firstChunk.release)).map { consumer =>
-                            firstChunk.await.andThen {
-                                // Consumer got chunk1 and is parked on chunk2. Interrupting it unwinds the stream run, whose
-                                // finalizer closes the decoded channel, so the decoder's next delivery taints the connection.
-                                consumer.interrupt.unit.andThen {
-                                    consumer.getResult.map { _ =>
-                                        discard(serverConn.outbound.offer(spanOf(chunk2AndEnd)))
-                                        bodyOutcome.safe.get.map { reusable =>
-                                            assert(!reusable, "an interrupted streaming body must mark the connection non-reusable")
+                        Latch.init(1).map { holdConsumer =>
+                            // The consumer takes one chunk and then stops draining, which is what lets the decoded channel fill.
+                            Fiber.init(resp.fields.body.foreachChunk(_ => firstChunk.release.andThen(holdConsumer.await))).map {
+                                consumer =>
+                                    firstChunk.await.andThen {
+                                        // The decoder is parked on a put against a full channel, so the interrupt's finalizer closing
+                                        // that channel fails the put outright. The taint is forced by construction rather than by the
+                                        // finalizer winning a race against the next delivery, which is what made this leaf flaky.
+                                        consumer.interrupt.unit.andThen {
+                                            bodyOutcome.safe.get.map { reusable =>
+                                                assert(!reusable, "an interrupted streaming body must mark the connection non-reusable")
+                                            }
                                         }
                                     }
-                                }
                             }
                         }
                     }
@@ -212,16 +225,17 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
             val backend                    = HttpClientBackend.init(transport, 2, 60.seconds)
             val config                     = HttpClientConfig(timeout = 60.seconds)
             Fiber.init(backend.sendWithConfig(dripRoute, dripReq, config)(r => r)).map { f1 =>
-                serveOnce(serverConn1, Seq(streamHeaders, chunk1)).andThen {
+                serveOnce(serverConn1, streamHeaders +: Seq.fill(backlogChunks)(chunk1)).andThen {
                     f1.get.map { resp1 =>
                         Latch.init(1).map { firstChunk =>
-                            Fiber.init(resp1.fields.body.foreachChunk(_ => firstChunk.release)).map { consumer =>
-                                firstChunk.await.andThen {
-                                    // chunk1 reached the consumer, which is now parked awaiting chunk2.
-                                    consumer.interrupt.unit.andThen {
-                                        consumer.getResult.map { _ =>
-                                            // Finalizers ran; the next body fragment makes the decoder observe the closed channel -> discard.
-                                            Sync.Unsafe.defer(discard(serverConn1.outbound.offer(spanOf(chunk2AndEnd)))).andThen {
+                            Latch.init(1).map { holdConsumer =>
+                                Fiber.init(resp1.fields.body.foreachChunk(_ => firstChunk.release.andThen(holdConsumer.await))).map {
+                                    consumer =>
+                                        firstChunk.await.andThen {
+                                            // The consumer holds after its first chunk, so the decoder is parked on a put against a full
+                                            // channel and no terminal chunk is coming. Interrupting closes that channel under the parked
+                                            // put, so the discard is forced rather than racing the finalizer against the next delivery.
+                                            consumer.interrupt.unit.andThen {
                                                 clientConn1.onClosing.safe.get.andThen {
                                                     Sync.Unsafe.defer(clientConn1.isOpen).map { open =>
                                                         assert(!open, "a tainted streaming connection must be closed, not pooled")
@@ -238,7 +252,6 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
                                                 }
                                             }
                                         }
-                                    }
                                 }
                             }
                         }

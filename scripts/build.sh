@@ -134,8 +134,16 @@ if [ "$ARCH" != "native" ]; then
     hostarch=$(host_arch)
     if [ "$ARCH" != "$hostarch" ]; then
         echo "build.sh: emulated $ARCH run; expect substantial slowdown"
-        if [ -z "${BUILD_SKIP_BINFMT:-}" ] && [ ! -d /proc/sys/fs/binfmt_misc ]; then
-            echo "build.sh: binfmt_misc is not registered; install qemu-user-static and binfmt support, then retry" >&2
+        # Ask the container runtime to execute one binary of the target platform. The capability has to be
+        # checked where the containers run, which is not always where this script runs: with `podman machine`
+        # the binfmt_misc handlers live in the VM's kernel, and a macOS host has no /proc at all, so reading
+        # the host's own /proc/sys/fs/binfmt_misc answers "not registered" on every mac and refuses every
+        # cross-arch run on the machines most likely to need one. Running the thing is the only probe that
+        # cannot be wrong about which kernel it is asking. It costs an image pull the run is about to do
+        # anyway, since it uses the same image.
+        if [ -z "${BUILD_SKIP_BINFMT:-}" ] &&
+            ! podman run --rm --platform "$(podman_platform)" "$CONTAINER_IMAGE" true >/dev/null 2>&1; then
+            echo "build.sh: cannot execute $(podman_platform) binaries; register qemu-user-static binfmt handlers, then retry" >&2
             exit 1
         fi
     fi
@@ -178,6 +186,25 @@ container_provision() {
         # openssl-linked modules need -lssl -lcrypto).
         Native|all) native_pkgs="clang build-essential libssl-dev libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3 libgc-dev" ;;
     esac
+    # Node 24, matching the workflow's setup-node pin. noble's apt `nodejs` is 18, and jsdom@30 declares
+    # engines >= 22, so a DOM-backed suite installs and then fails to load it, reporting "jsdom is not
+    # resolvable" no matter what the code under test does. Beyond jsdom, running JS/Wasm on a different V8
+    # major than CI makes any local result unfaithful. The apt packages stay as the source of npm and a
+    # fallback; /usr/local/bin precedes /usr/bin, so the tarball wins when present.
+    local node_setup=""
+    if [ -n "$node_pkgs" ]; then
+        node_setup='
+node_ok=0
+if command -v node >/dev/null 2>&1; then
+    node_major=$(node --version | tr -d "v" | cut -d. -f1)
+    if [ "${node_major:-0}" -ge 24 ] 2>/dev/null; then node_ok=1; fi
+fi
+if [ "$node_ok" != 1 ]; then
+    case $(uname -m) in aarch64) node_arch=linux-arm64 ;; *) node_arch=linux-x64 ;; esac
+    curl -fsSL "https://nodejs.org/dist/v24.16.0/node-v24.16.0-${node_arch}.tar.gz" \
+        | tar xz -C /usr/local --strip-components=1
+fi'
+    fi
     # BoringSSL build toolchain (cmake + Go + a C toolchain), only when STAGE_BORINGSSL=1 builds the vendored BoringSSL so kyo-net's
     # TLS tests run against real libssl/libcrypto instead of cancelling. Heavy, so off by default.
     [ "${STAGE_BORINGSSL:-}" = 1 ] && bssl_pkgs="cmake golang-go build-essential git clang libunwind-dev"
@@ -213,6 +240,7 @@ if command -v apt-get >/dev/null 2>&1; then
     apt-get update -qq >/dev/null
     apt-get install -y -qq -o Acquire::Retries=3 $apt_pkgs $node_pkgs $native_pkgs $bssl_pkgs $aeron_pkgs >/dev/null
 fi
+$node_setup
 export COURSIER_CACHE=/root/.cache/coursier
 if ! command -v cs >/dev/null 2>&1; then
     # Linux aarch64 launchers are published by VirtusLab's coursier-m1 releases, not
@@ -315,6 +343,20 @@ run_in_container() {
     else
         inner="./scripts/ci-test.sh '$platform' '$ACTION'"
     fi
+    # jsdom, on the same JS/Wasm condition the workflow's setup action applies. The DOM-backed kyo-ui suites
+    # resolve it lazily from the repository root and abort in their constructor when it is missing, and the
+    # container starts from a git archive, which never carries node_modules. Without this a DOM suite cannot
+    # run in a container at all: it fails identically whether or not the code under test is broken, which
+    # reads like a real failure. Gated rather than unconditional so a JVM or Native run keeps no dependency
+    # on the npm registry being reachable. Raw mode has no platform, so the sbt command itself is what says
+    # whether a JS or Wasm project is involved.
+    local stage_jsdom=0
+    if [ "$RAW_MODE" = yes ]; then
+        case "$RAW_SBT" in *JS*|*Wasm*) stage_jsdom=1 ;; esac
+    elif [ "$platform" = JS ] || [ "$platform" = Wasm ]; then
+        stage_jsdom=1
+    fi
+    envs+=(-e "STAGE_JSDOM=$stage_jsdom")
     local provision; provision=$(container_provision "$platform")
     podman "${args[@]}" "${envs[@]}" "$CONTAINER_IMAGE" \
         bash -c "set -e
@@ -322,7 +364,8 @@ $provision
 mkdir -p /work && cd /work && tar xf /build-input/src.tar \
     && if [ -s /build-input/changes.patch ]; then patch -p1 < /build-input/changes.patch; fi \
     && if [ \"\${STAGE_BORINGSSL:-}\" = 1 ]; then bash kyo-net/build/boringssl/build-boringssl.sh; fi \
-    && if [ \"\${STAGE_AERON:-}\" = 1 ]; then bash kyo-aeron/scripts/build-aeron.sh \"linux-\$(uname -m)\"; fi
+    && if [ \"\${STAGE_AERON:-}\" = 1 ]; then bash kyo-aeron/scripts/build-aeron.sh \"linux-\$(uname -m)\"; fi \
+    && if [ \"\${STAGE_JSDOM:-}\" = 1 ]; then npm install --no-save --no-fund --no-audit jsdom@^30; fi
 if $inner; then __rc=0; else __rc=\$?; fi
 if [ -d /output ]; then find . -type d \\( -name scoverage-report -o -name scoverage-data \\) -exec cp -r --parents {} /output/ \\; 2>/dev/null || true; fi
 exit \${__rc:-1}"

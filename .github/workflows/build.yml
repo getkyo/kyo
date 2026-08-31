@@ -143,3 +143,28 @@ jobs:
         run: |
           action="${{ inputs.mode == 'diff' && 'testDiff' || 'test' }}"
           ./scripts/ci-test.sh "${{ matrix.target }}" "$action"
+
+      # A JVM that dies in native code writes its diagnosis next to the forked test process and the runner
+      # discards it with the workspace, so the only trace left in the log is a task failure carrying no test
+      # name. That shape is indistinguishable from an ordinary failure at a glance and has already cost one
+      # investigation that began by looking for a broken test that had in fact passed. Failure-only, so a
+      # passing leg is unaffected.
+      #
+      # The line budget is sized for the THREAD LIST, not the header. The header names the faulting frame,
+      # which is the cheap half; the question that actually decides a native-teardown crash is which threads
+      # were still alive when it faulted, and that section sits several hundred lines in. A budget that stops
+      # at the header buys a report that reproduces what the console already printed.
+      - name: crash reports (${{ inputs.os }})
+        if: failure()
+        shell: bash
+        run: |
+          reports=$(find . -name 'hs_err_pid*.log' -type f 2>/dev/null || true)
+          if [ -z "$reports" ]; then
+            echo "no JVM crash reports in the workspace"
+          else
+            for report in $reports; do
+              echo "::group::$report"
+              head -600 "$report"
+              echo "::endgroup::"
+            done
+          fi
