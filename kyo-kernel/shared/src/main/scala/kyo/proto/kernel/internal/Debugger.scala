@@ -29,7 +29,7 @@ end Debugger
 
 private[kyo] object Debugger:
 
-    inline val enabled = false
+    inline val enabled = true
 
     private var current: Debugger = Noop
 
@@ -38,6 +38,8 @@ private[kyo] object Debugger:
     def uninstall(): Unit = current = Noop
 
     def get: Debugger = current
+
+    inline def whenEnabled(inline f: Unit): Unit = inline if enabled then f
 
     inline def onAlloc(value: Any): Unit                              = inline if enabled then get.onAlloc(value)
     inline def onUnfused(arrow: Any): Unit                            = inline if enabled then get.onUnfused(arrow)

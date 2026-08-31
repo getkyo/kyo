@@ -1,5 +1,7 @@
 package kyo.proto.kernel.internal
 
+import kyo.Frame
+import kyo.Loop
 import kyo.Maybe
 import kyo.Maybe.Absent
 import kyo.Result
@@ -24,17 +26,16 @@ end Handler
 private[kernel] object Handler:
 
     abstract class HandlerCont[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Handler[E, A, B, S, Unit]:
-        def answer[X](input: I[X], next: Arrow[O[X], A, E & S]): A < (E & S)
+        def run[X](input: I[X], cont: Arrow[O[X], A, E & S]): A < (E & S)
 
-    abstract class HandlerContOperation[E <: Effect, A, B, S] extends Handler[E, A, B, S, Unit]:
-        def answer[X](operation: X < E, next: Arrow[X, A, E & S]): A < (E & S)
+    abstract class HandlerContOp[E <: Effect, A, B, S] extends Handler[E, A, B, S, Unit]:
+        def run[X](operation: X < E, next: Arrow[X, A, E & S]): A < (E & S)
 
     abstract class HandlerLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State] extends Handler[E, A, B, S, State]:
-        def answer[X](state: State, input: I[X], next: Arrow[O[X], A, E & S]): Outcome2[State, O[X] < (E & S), B < S]
+        def run[X](state: State, input: I[X]): Outcome2[State, O[X] < (E & S), B < S] < S
 
     abstract class HandlerContext[State, E <: ContextEffect[State], A, B, S] extends Handler[E, A, B, S, State]:
-
-        def resolve(outer: Maybe[State]): State
+        def derive(current: Maybe[State]): State
         def fork(current: State): State < S
         def join(current: State, forked: State, result: Result[Nothing, State]): Result[Nothing, State] < S
     end HandlerContext

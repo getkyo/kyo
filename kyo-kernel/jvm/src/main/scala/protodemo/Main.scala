@@ -308,7 +308,7 @@ object Main:
                 |🧪 $name
                 |${"=" * 80}""".stripMargin
         )
-        println(s"✅ result: ${v.eval}")
+        println(s"✅ result: ${kyo.proto.debug.DebugSession.run(quiet = false, guardsLikeProduction = false)(() => v)}")
     end scenario
 
     def main(args: Array[String]): Unit =

@@ -47,11 +47,9 @@ object Effect:
 
     @nowarn("msg=anonymous")
     private[kyo] inline def deferInline[A, S](inline f: => A < S)(using inline _frame: Frame): A < S =
-        new Kyo.DeferTransform[Unit, A, S]:
+        new Kyo.DeferWith[Unit, A, S]:
             override def frame          = _frame
             def value                   = unitValue
-            def contA                   = this
-            def contB                   = Arrow.id
             override def apply(v: Unit) = f
             override def apply[C, S2](v: Unit < S2, cont: Arrow[A, C, S2]) =
                 v match

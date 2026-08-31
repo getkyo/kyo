@@ -5,8 +5,6 @@ import kyo.Maybe
 import kyo.Result
 import kyo.Tag
 import kyo.proto.Arrow
-import kyo.proto.Arrow.Transform
-import kyo.proto.kernel.internal.Context
 import kyo.proto.kernel.internal.Handler.HandlerContext
 import kyo.proto.kernel.internal.Kyo
 import kyo.proto.kernel.internal.Nested
@@ -19,18 +17,11 @@ object ContextEffect:
 
     @nowarn("msg=anonymous")
     inline def suspend[A, E <: ContextEffect[A]](inline effectTag: Tag[E])(using inline _frame: Frame): A < E =
-
-        new Kyo.SuspendContextTransform[A, E, A, E]:
-            override def frame        = _frame
-            def tag                   = effectTag
-            def answers(ctx: Context) = ctx.contains(effectTag)
-            def update(ctx: Context)  = ctx
-            def cont                  = this
-            override def apply[C, S2](v: Context < S2, cont2: Arrow[A, C, S2]) =
-                v match
-                    case kyo: Pending[Context, S2] @unchecked => Effect.defer(kyo, this, cont2)
-                    case _ =>
-                        cont2(Nested.nest[A, S2](Nested.unnest[Context](v).apply[A, E](effectTag)), Arrow.id)
+        new Kyo.SuspendContext[A, E, A, E]:
+            override def frame = _frame
+            def tag            = effectTag
+            def default        = Maybe.empty
+            def cont           = Arrow.id
 
     @nowarn("msg=anonymous")
     inline def suspendWith[A, E <: ContextEffect[A], B, S](
@@ -38,37 +29,26 @@ object ContextEffect:
     )(
         inline f: A => B < S
     )(using inline _frame: Frame): B < (E & S) =
-
-        new Kyo.SuspendContextTransform[A, E, B, E & S]:
-            override def frame        = _frame
-            def tag                   = effectTag
-            def answers(ctx: Context) = ctx.contains(effectTag)
-            def update(ctx: Context)  = ctx
-            def cont                  = this
-            override def apply[C, S2](v: Context < S2, cont2: Arrow[B, C, S2]) =
+        new Kyo.SuspendContextWith[A, E, B, E & S]:
+            override def frame = _frame
+            def tag            = effectTag
+            def default        = Maybe.empty
+            def cont           = this
+            override def apply[C, S2](v: A < S2, cont2: Arrow[B, C, S2]) =
                 v match
-                    case kyo: Pending[Context, S2] @unchecked => Effect.defer(kyo, this, cont2)
-                    case _                                    => cont2(f(Nested.unnest[Context](v).apply[A, E](effectTag)), Arrow.id)
+                    case kyo: Pending[A, S2] @unchecked => Effect.defer(kyo, this, cont2)
+                    case _                              => cont2(f(Nested.unnest[A](v)), Arrow.id)
 
     @nowarn("msg=anonymous")
     inline def suspend[A, E <: ContextEffect[A]](
         inline effectTag: Tag[E],
         inline defaultValue: => A
     )(using inline _frame: Frame): A < Any =
-
-        new Kyo.SuspendContextTransform[A, E, A, Any]:
-            override def frame        = _frame
-            def tag                   = effectTag
-            def answers(ctx: Context) = true
-            def update(ctx: Context)  = ctx
-            def cont                  = this
-            override def apply[C, S2](v: Context < S2, cont2: Arrow[A, C, S2]) =
-                v match
-                    case kyo: Pending[Context, S2] @unchecked => Effect.defer(kyo, this, cont2)
-                    case _ =>
-                        val ctx = Nested.unnest[Context](v)
-                        val a   = if ctx.contains(effectTag) then ctx.apply[A, E](effectTag) else defaultValue
-                        cont2(Nested.nest[A, S2](a), Arrow.id)
+        new Kyo.SuspendContext[A, E, A, Any]:
+            override def frame = _frame
+            def tag            = effectTag
+            def default        = Maybe(defaultValue)
+            def cont           = Arrow.id
 
     @nowarn("msg=anonymous")
     inline def suspendWith[A, E <: ContextEffect[A], B, S](
@@ -77,39 +57,15 @@ object ContextEffect:
     )(
         inline f: A => B < S
     )(using inline _frame: Frame): B < S =
-
-        new Kyo.SuspendContextTransform[A, E, B, S]:
-            override def frame        = _frame
-            def tag                   = effectTag
-            def answers(ctx: Context) = true
-            def update(ctx: Context)  = ctx
-            def cont                  = this
-            override def apply[C, S2](v: Context < S2, cont2: Arrow[B, C, S2]) =
+        new Kyo.SuspendContextWith[A, E, B, S]:
+            override def frame = _frame
+            def tag            = effectTag
+            def default        = Maybe(defaultValue)
+            def cont           = this
+            override def apply[C, S2](v: A < S2, cont2: Arrow[B, C, S2]) =
                 v match
-                    case kyo: Pending[Context, S2] @unchecked => Effect.defer(kyo, this, cont2)
-                    case _ =>
-                        val ctx = Nested.unnest[Context](v)
-                        val a   = if ctx.contains(effectTag) then ctx.apply[A, E](effectTag) else defaultValue
-                        cont2(f(a), Arrow.id)
-
-    @nowarn("msg=anonymous")
-    inline def update[A, E <: ContextEffect[A]](
-        inline effectTag: Tag[E]
-    )(
-        inline f: A => A
-    )(using inline _frame: Frame): A < E =
-
-        new Kyo.SuspendContextTransform[A, E, A, E]:
-            override def frame        = _frame
-            def tag                   = effectTag
-            def answers(ctx: Context) = ctx.contains(effectTag)
-            def update(ctx: Context)  = ctx.update(effectTag, f(ctx.apply[A, E](effectTag)))
-            def cont                  = this
-            override def apply[C, S2](v: Context < S2, cont2: Arrow[A, C, S2]) =
-                v match
-                    case kyo: Pending[Context, S2] @unchecked => Effect.defer(kyo, this, cont2)
-                    case _ =>
-                        cont2(Nested.nest[A, S2](Nested.unnest[Context](v).apply[A, E](effectTag)), Arrow.id)
+                    case kyo: Pending[A, S2] @unchecked => Effect.defer(kyo, this, cont2)
+                    case _                              => cont2(f(Nested.unnest[A](v)), Arrow.id)
 
     inline def handle[A, E <: ContextEffect[A], B, S](
         inline effectTag: Tag[E],
@@ -128,10 +84,11 @@ object ContextEffect:
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
         v match
             case _: Pending[?, ?] =>
+                def derived(current: Maybe[A]): A = derive(current)
                 val h =
                     new HandlerContext[A, E, B, B, S]:
                         def tag                                                     = effectTag
-                        def resolve(outer: Maybe[A])                                = derive(outer)
+                        def derive(current: Maybe[A])                               = derived(current)
                         def fork(current: A)                                        = onFork(current)
                         def join(current: A, forked: A, result: Result[Nothing, A]) = onJoin(current, forked, result)
                         def done(state: A, v0: B)                                   = v0
@@ -140,7 +97,7 @@ object ContextEffect:
                     override def frame = _frame
                     def value          = v
                     def handler        = h
-                    def state          = h.resolve(Maybe.empty)
+                    def state          = h.derive(Maybe.empty)
                     def cont           = Arrow.id
                 end new
             case _ => Nested.unnest[B](v)

@@ -1,5 +1,3 @@
-
-
 package kyo.proto.debug
 
 import kyo.proto.Arrow

@@ -460,7 +460,7 @@ class ArrowEffectTest extends AnyFreeSpec:
             val r: Int < Any = ArrowEffect.handleContOperation(Tag[AskSub], v)(
                 [X] =>
                     (operation, _) =>
-                        val suspend = operation.asInstanceOf[kyo.proto.kernel.internal.Kyo.Suspend[?, ?, ?]]
+                        val suspend = operation.asInstanceOf[kyo.proto.kernel.internal.Kyo.Suspend[?, ?, ?, ?]]
                         seen = suspend.tag.show :: seen
                         -1
                 ,

@@ -20,7 +20,6 @@ abstract class Isolate[Remove, -Keep, -Restore]:
 
     def nest[A, S](v: A < (Remove & S))(using Frame): A < Restore < (Remove & Keep & S) =
         capture { state =>
-
             isolate(state, v).map(r => Nested.nest[A < Restore, Any](restore(r)))
         }
 

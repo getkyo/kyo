@@ -251,13 +251,13 @@ class IsolateTest extends kyo.Test:
             assert(eval(runFork(cont(0))) == 11)
         }
 
-        "a derived binding derives again from where the resume stands" in {
+        "a crossed binding resumes at its captured value" in {
 
             val body  = forkHere.map(_ => ContextEffect.suspend(Tag[TestEffect1]))
             val bound = ContextEffect.handle(Tag[TestEffect1])(outer => outer.fold(0)(_ + 10))(body)
             val cont  = continuationOf(bound)
             assert(eval(runFork(cont(0))) == 0)
-            assert(eval(ContextEffect.handle(Tag[TestEffect1], 5)(runFork(cont(0)))) == 15)
+            assert(eval(ContextEffect.handle(Tag[TestEffect1], 5)(runFork(cont(0)))) == 0)
         }
     }
 

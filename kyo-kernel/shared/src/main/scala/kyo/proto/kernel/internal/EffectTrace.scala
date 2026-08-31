@@ -167,7 +167,7 @@ private[kernel] object EffectTrace:
                     case r: Region[?] => region(r.tag)
                     case n: Node =>
                         n.kyo match
-                            case s: Kyo.Suspend[?, ?, ?] =>
+                            case s: Kyo.Suspend[?, ?, ?, ?] =>
 
                                 frame(s.frame)
                                 push(s.cont)

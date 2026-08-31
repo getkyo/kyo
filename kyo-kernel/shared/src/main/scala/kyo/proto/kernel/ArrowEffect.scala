@@ -9,7 +9,7 @@ import kyo.proto.Arrow.Transform
 import kyo.proto.Loop
 import kyo.proto.kernel.internal.Eval
 import kyo.proto.kernel.internal.Handler.HandlerCont
-import kyo.proto.kernel.internal.Handler.HandlerContOperation
+import kyo.proto.kernel.internal.Handler.HandlerContOp
 import kyo.proto.kernel.internal.Handler.HandlerLoop
 import kyo.proto.kernel.internal.Kyo
 import kyo.proto.kernel.internal.Nested
@@ -46,7 +46,7 @@ object ArrowEffect:
         inline f: O[C] => B < S
     ): B < (E & S) =
 
-        new Kyo.SuspendArrowTransform[I, O, E, C, B, E & S]:
+        new Kyo.SuspendArrowWith[I, O, E, C, B, E & S]:
             override def frame = _frame
             def tag            = effectTag
             def input          = effectInput
@@ -70,7 +70,7 @@ object ArrowEffect:
                 val h =
                     new HandlerCont[I, O, E, A, B, S & S2]:
                         def tag = effectTag
-                        def answer[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
+                        def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
                             handle[X](input, next)
                         def done(state: Unit, v0: A) = onDone(v0)
 
@@ -101,7 +101,7 @@ object ArrowEffect:
                 val h =
                     new HandlerCont[I, O, E, A, B, S & S2]:
                         def tag = effectTag
-                        def answer[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
+                        def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
                             handle[X](input, next)
                         def done(state: Unit, v0: A)                     = onDone(v0)
                         override def recover(state: Unit, ex: Throwable) = onRecover(ex)
@@ -141,9 +141,9 @@ object ArrowEffect:
         v match
             case _: Pending[?, ?] =>
                 val h =
-                    new HandlerContOperation[E, A, B, S & S2]:
+                    new HandlerContOp[E, A, B, S & S2]:
                         def tag = effectTag
-                        def answer[X](operation: X < E, next: Arrow[X, A, E & S & S2]) =
+                        def run[X](operation: X < E, next: Arrow[X, A, E & S & S2]) =
                             handle[X](operation, next)
                         def done(state: Unit, v0: A) = onDone(v0)
 
@@ -265,8 +265,8 @@ object ArrowEffect:
                 val h =
                     new HandlerLoop[I, O, E, A, B, S & S2, State]:
                         def tag = effectTag
-                        def answer[X](st: State, input: I[X], next: Arrow[O[X], A, E & S & S2]) =
-                            Eval.answerLoop(this, handle[X](st, input), next)
+                        def run[X](st: State, input: I[X]) =
+                            handle[X](st, input)
                         def done(st: State, v0: A) = onDone(st, v0)
                 val state0 = state
 
@@ -298,8 +298,8 @@ object ArrowEffect:
                 val h =
                     new HandlerLoop[I, O, E, A, B, S & S2, State]:
                         def tag = effectTag
-                        def answer[X](st: State, input: I[X], next: Arrow[O[X], A, E & S & S2]) =
-                            Eval.answerLoop(this, handle[X](st, input), next)
+                        def run[X](st: State, input: I[X]) =
+                            handle[X](st, input)
                         def done(st: State, v0: A)                     = onDone(st, v0)
                         override def recover(st: State, ex: Throwable) = onRecover(st, ex)
                 val state0 = state
@@ -347,11 +347,11 @@ object ArrowEffect:
                 val h =
                     new HandlerCont[I, O, E, A, B, S & S2]:
                         def tag = effectTag
-                        def answer[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
+                        def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
                             handle[X](input, next)
                         def done(state: Unit, v0: A) = onDone(v0)
 
-                new Kyo.HandleTransform[E, A, B, C, S & S2 & S3, Unit]:
+                new Kyo.HandleWith[E, A, B, C, S & S2 & S3, Unit]:
                     override def frame = _frame
                     def value          = v
                     def handler        = h
@@ -402,11 +402,11 @@ object ArrowEffect:
                 val h =
                     new HandlerLoop[I, O, E, A, B, S & S2, State]:
                         def tag = effectTag
-                        def answer[X](st: State, input: I[X], next: Arrow[O[X], A, E & S & S2]) =
-                            Eval.answerLoop(this, handle[X](st, input), next)
+                        def run[X](st: State, input: I[X]) =
+                            handle[X](st, input)
                         def done(st: State, v0: A) = onDone(st, v0)
 
-                new Kyo.HandleTransform[E, A, B, C, S & S2 & S3, State]:
+                new Kyo.HandleWith[E, A, B, C, S & S2 & S3, State]:
                     override def frame = _frame
                     def value          = v
                     def handler        = h

@@ -1,6 +1,7 @@
 package kyo.proto.kernel.internal
 
 import kyo.Frame
+import kyo.Maybe
 import kyo.Tag
 import kyo.proto.Arrow
 import kyo.proto.kernel.<
@@ -18,8 +19,6 @@ private[proto] def short(v: Any): String =
         case _: Arrow.Id[?]              => "Id"
         case _: Arrow.Transform[?, ?, ?] => "Transform"
         case v                           => v.toString
-
-private[kyo] object Discarded extends Exception("continuation discarded", null, false, false)
 
 private[proto] def site(frame: Frame): String =
     val callee = frame.calleeName
@@ -52,67 +51,24 @@ object Kyo:
             s"Defer(${short(value)}, ${slot(contA)}, ${slot(contB)})"
     end Defer
 
-    abstract class DeferTransform[A, B, -S] extends Defer[A, B, B, S] with Arrow.Transform[A, B, S]
-
-    abstract class SuspendArrowTransform[I[_], O[_], E <: ArrowEffect[I, O], State, A, S]
-        extends SuspendArrow[I, O, E, State, A, S] with Arrow.Transform[O[State], A, S]
-
-    abstract class SuspendContextTransform[State, E <: ContextEffect[State], A, S]
-        extends SuspendContext[State, E, A, S] with Arrow.Transform[Context, A, S]
-
-    abstract class HandleTransform[E <: Effect, A, B, C, -S, State]
-        extends Handle[E, A, B, C, S, State] with Arrow.Transform[B, C, S]
-
-    sealed abstract class Suspend[E <: Effect, A, S] extends Pending[A, S]:
+    sealed abstract class Suspend[E <: Effect, A, B, S] extends Pending[B, S]:
         Debugger.onAlloc(this)
 
         private[kyo] def release(ex: Throwable): Any < Any = ()
 
-        type Op
         def tag: Tag[E]
-        def cont: Arrow[Op, A, S]
-        def withCont[B, S2](c: Arrow[Op, B, S2]): Suspend[E, B, S2]
+        def cont: Arrow[A, B, S]
     end Suspend
 
-    abstract class SuspendArrow[I[_], O[_], E <: ArrowEffect[I, O], State, A, S] extends Suspend[E, A, S]:
-        type Op = O[State]
-        def input: I[State]
-        def withCont[B, S2](c: Arrow[Op, B, S2]) = SuspendArrow(tag, input, c)
-        override def toString =
-            s"SuspendArrow(${tag.show}, $input, ${if cont eq this then "this" else short(cont)})"
-    end SuspendArrow
+    abstract class SuspendArrow[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Suspend[E, O[A], B, S]:
+        def input: I[A]
 
-    object SuspendArrow:
-        def apply[I[_], O[_], E <: ArrowEffect[I, O], State, A, S](
-            t: Tag[E],
-            in: I[State],
-            c: Arrow[O[State], A, S]
-        ): SuspendArrow[I, O, E, State, A, S] =
-            new SuspendArrow[I, O, E, State, A, S]:
-                def tag   = t
-                def input = in
-                def cont  = c
-    end SuspendArrow
-
-    abstract class SuspendContext[State, E <: ContextEffect[State], A, S] extends Suspend[E, A, S]:
-        type Op = Context
-        def answers(ctx: Context): Boolean
-        def update(ctx: Context): Context
-        def withCont[B, S2](c: Arrow[Op, B, S2]) =
-
-            new SuspendContext[State, E, B, S2]:
-                def tag                   = SuspendContext.this.tag
-                def answers(ctx: Context) = SuspendContext.this.answers(ctx)
-                def update(ctx: Context)  = SuspendContext.this.update(ctx)
-                def cont                  = c
-        override def toString =
-            s"SuspendContext(${tag.show}, ${if cont eq this then "this" else short(cont)})"
-    end SuspendContext
+    abstract class SuspendContext[State, E <: ContextEffect[State], A, S] extends Suspend[E, State, A, S]:
+        def default: Maybe[State]
 
     def handle[E <: Effect, A, B, S, State](v: A < (E & S), handler: Handler[E, A, B, S, State], state: State): B < S =
         v match
             case kyo: Pending[A, E & S] @unchecked =>
-
                 val h  = handler
                 val st = state
                 new Handle[E, A, B, B, S, State]:
@@ -122,7 +78,6 @@ object Kyo:
                     def cont    = Arrow.id
                 end new
             case _ =>
-
                 handler.done(state, Nested.unnest[A](v))
 
     abstract class Handle[E <: Effect, A, B, C, -S, State] extends Pending[C, S]:
@@ -145,19 +100,32 @@ object Kyo:
             else s"Handle(${short(value)}, $handler, $state, ${if cont eq this then "this" else short(cont)})"
     end Handle
 
-    object Handle:
-        def apply[E <: Effect, A, B, C, S, State](
-            v: A < (E & S),
-            h: Handler[E, A, B, S, State],
-            st: State,
-            c: Arrow[B, C, S]
-        ): Handle[E, A, B, C, S, State] =
-            new Handle[E, A, B, C, S, State]:
-                def value   = v
-                def handler = h
-                def state   = st
-                def cont    = c
-    end Handle
+    abstract class DeferWith[A, B, -S] extends Defer[A, B, B, S] with Arrow.Transform[A, B, S]:
+        def contA = this
+        def contB = Arrow.id
+
+    abstract class SuspendArrowWith[I[_], O[_], E <: ArrowEffect[I, O], State, A, S]
+        extends SuspendArrow[I, O, E, State, A, S] with Arrow.Transform[O[State], A, S]
+
+    abstract class SuspendContextWith[State, E <: ContextEffect[State], A, S]
+        extends SuspendContext[State, E, A, S] with Arrow.Transform[State, A, S]
+
+    abstract class HandleWith[E <: Effect, A, B, C, -S, State]
+        extends Handle[E, A, B, C, S, State] with Arrow.Transform[B, C, S]
+
+    // object Handle:
+    //     def apply[E <: Effect, A, B, C, S, State](
+    //         v: A < (E & S),
+    //         h: Handler[E, A, B, S, State],
+    //         st: State,
+    //         c: Arrow[B, C, S]
+    //     ): Handle[E, A, B, C, S, State] =
+    //         new Handle[E, A, B, C, S, State]:
+    //             def value   = v
+    //             def handler = h
+    //             def state   = st
+    //             def cont    = c
+    // end Handle
 
     final class Park[+A, -S](
         val value: Any < Any,

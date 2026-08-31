@@ -23,12 +23,9 @@ object `<` extends Implicits:
                 var slot: Safepoint.Slot = -1
                 val shouldDefer          = v.isInstanceOf[Pending[?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
                 if shouldDefer then
-
-                    new Kyo.DeferTransform[A, C, S2 & S3]:
+                    new Kyo.DeferWith[A, C, S2 & S3]:
                         override def frame = _frame
                         def value          = v
-                        def contA          = this
-                        def contB          = Arrow.id
                         override def apply[C2, S4](v2: A < S4, cont2: Arrow[C, C2, S4]) =
                             run(v2, cont.chain(cont2))
                 else
@@ -46,12 +43,9 @@ object `<` extends Implicits:
                 var slot: Safepoint.Slot = -1
                 val shouldDefer          = v.isInstanceOf[Pending[?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
                 if shouldDefer then
-
-                    new Kyo.DeferTransform[A, C, S2 & S3]:
+                    new Kyo.DeferWith[A, C, S2 & S3]:
                         override def frame = _frame
                         def value          = v
-                        def contA          = this
-                        def contB          = Arrow.id
                         override def apply[C2, S4](v2: A < S4, cont2: Arrow[C, C2, S4]) =
                             run(v2, cont.chain(cont2))
                 else
@@ -69,12 +63,9 @@ object `<` extends Implicits:
                 var slot: Safepoint.Slot = -1
                 val shouldDefer          = v.isInstanceOf[Pending[?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
                 if shouldDefer then
-
-                    new Kyo.DeferTransform[A, C, S2 & S3]:
+                    new Kyo.DeferWith[A, C, S2 & S3]:
                         override def frame = _frame
                         def value          = v
-                        def contA          = this
-                        def contB          = Arrow.id
                         override def apply[C2, S4](v2: A < S4, cont2: Arrow[C, C2, S4]) =
                             run(v2, cont.chain(cont2))
                 else
@@ -92,12 +83,9 @@ object `<` extends Implicits:
                 var slot: Safepoint.Slot = -1
                 val shouldDefer          = v.isInstanceOf[Pending[?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
                 if shouldDefer then
-
-                    new Kyo.DeferTransform[A, C, S3]:
+                    new Kyo.DeferWith[A, C, S3]:
                         override def frame = _frame
                         def value          = v
-                        def contA          = this
-                        def contB          = Arrow.id
                         override def apply[C2, S4](v2: A < S4, cont2: Arrow[C, C2, S4]) =
                             run(v2, cont.chain(cont2))
                 else
@@ -271,34 +259,7 @@ object `<` extends Implicits:
     extension [A, S](self: A < S)
 
         def chain[B, S2](cont: Arrow[A, B, S2]): B < (S & S2) =
-            self match
-                case kyo: Pending[A, S] @unchecked =>
-                    if cont.isInstanceOf[Arrow.Id[?]] then
-
-                        kyo.asInstanceOf[B < (S & S2)]
-                    else
-                        kyo match
-                            case kyo: Kyo.Suspend[?, A, S] @unchecked if kyo.cont.isInstanceOf[Arrow.Id[?]] =>
-
-                                kyo.withCont(cont.asInstanceOf[Arrow[kyo.Op, B, S & S2]])
-                            case kyo: Kyo.Handle[e, x, b, A, S, st] @unchecked if kyo.cont.isInstanceOf[Arrow.Id[?]] =>
-
-                                Kyo.Handle[e, x, b, B, S & S2, st](
-                                    kyo.value,
-                                    kyo.handler,
-                                    kyo.state,
-                                    cont.asInstanceOf[Arrow[b, B, S & S2]]
-                                )
-                            case kyo: Kyo.Defer[a, b, A, S] @unchecked
-                                if kyo.contB.isInstanceOf[Arrow.Id[?]] && !(kyo.contA eq kyo) =>
-
-                                Effect.defer(kyo.value, kyo.contA, cont.asInstanceOf[Arrow[b, B, S & S2]])
-                            case _ =>
-                                Effect.defer(kyo, cont)
-                case _ =>
-                    cont.head(self.asInstanceOf[A], cont.tail)
-            end match
-        end chain
+            cont(self, Arrow.id)
     end extension
 
     extension [A, S, S2](self: A < S < S2)
