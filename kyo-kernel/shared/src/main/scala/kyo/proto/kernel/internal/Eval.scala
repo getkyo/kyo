@@ -97,6 +97,22 @@ import scala.util.control.NonFatal
             else new Kyo.Park[A, S](v, stack.snapshot())
         end park
 
+        // The exit law: an extent that completes hands its context outward, updates included, and
+        // reverts only the exiting region's own binding to what stood before it. Read before the
+        // pop, from the entry that is exiting: the install-time context is immutable and holds the
+        // prior binding for the region's own tag, so nothing separate is cached. A failed extent
+        // takes the other lane: the guard's resume rolls back to the recovering region's
+        // install-time context, because the interior's context is gone with the Java unwind, which
+        // reads as a transaction that did not commit
+        def exitContext(interior: Context): Context =
+            stack.handler match
+                case hc: Handler.HandlerContext[VX, CX, ?, ?, ?] @unchecked =>
+                    val installed = stack.ctx
+                    if installed.contains(hc.tag) then interior.updateErased(hc.tag, installed.apply[VX, CX](hc.tag))
+                    else interior.remove(hc.tag)
+                case _ => interior
+        end exitContext
+
         // `loop` runs the machine to its answer, which is why it returns the eval's result rather
         // than the composition of its arguments: once a region's continuation waits on the stack,
         // "v with contA then contB applied" stops describing what the call produces
@@ -110,16 +126,13 @@ import scala.util.control.NonFatal
                     // so a pending stop is observed within one budget period of pure strict work
                     if armed && Safepoint.stopped(slot) then park(v, contA, contB)
                     else loop(kyo.value, kyo.contA, kyo.contB.chain(contA.chain(contB)), ctx)
-                case kyo: Kyo.SuspendContext[VX, CX, T, S2] @unchecked if ctx.contains(kyo.tag) =>
-                    val nv = kyo.update(ctx.apply[VX, CX](kyo.tag))
-                    Debugger.onContext(kyo, nv)
+                case kyo: Kyo.SuspendContext[VX, CX, T, S2] @unchecked if kyo.answers(ctx) =>
+                    // the node says where it is answered and how the context changes; identity
+                    // updates hand the context back unchanged, so a plain read writes nothing
+                    val nctx = kyo.update(ctx)
+                    Debugger.onContext(kyo, nctx)
                     val k = kyo.cont
-                    loop(k.head(nv, k.tail), contA, contB, ctx.update[VX, CX](kyo.tag, nv))
-                case kyo: Kyo.SuspendContextDefault[VX, CX, T, S2] @unchecked if ctx.contains(kyo.tag) =>
-                    val nv = kyo.update(ctx.apply[VX, CX](kyo.tag))
-                    Debugger.onContext(kyo, nv)
-                    val k = kyo.cont
-                    loop(k.head(nv, k.tail), contA, contB, ctx.update[VX, CX](kyo.tag, nv))
+                    loop(k.head(nctx, k.tail), contA, contB, nctx)
                 case kyo: Kyo.Suspend[EX, T, S2] @unchecked =>
                     // the registers absorb into the node first, so the regions are asked about one
                     // suspension carrying its whole continuation
@@ -158,28 +171,14 @@ import scala.util.control.NonFatal
                                     val cA                                     = contA
                                     val cB                                     = contB
                                     new Kyo.SuspendContextTransform[VX, CX, C, S2]:
-                                        def tag           = scx.tag
-                                        def update(v: VX) = scx.update(v)
-                                        def cont          = this
-                                        override def apply[D, S3](x: VX < S3, c2: Arrow[C, D, S3]) =
+                                        def tag                   = scx.tag
+                                        def answers(ctx: Context) = scx.answers(ctx)
+                                        def update(ctx: Context)  = scx.update(ctx)
+                                        def cont                  = this
+                                        override def apply[D, S3](x: Context < S3, c2: Arrow[C, D, S3]) =
                                             x match
-                                                case p: Pending[VX, S3] @unchecked => Effect.defer(p, this, c2)
-                                                case _                             => cA(k0(x, Arrow.id), cB.chain(c2))
-                                    end new
-                                case sd: Kyo.SuspendContextDefault[VX, CX, T, S2] @unchecked =>
-                                    val sdx: Kyo.SuspendContextDefault[VX, CX, T, S2] = sd
-                                    val k0                                            = sdx.cont
-                                    val cA                                            = contA
-                                    val cB                                            = contB
-                                    new Kyo.SuspendContextDefaultTransform[VX, CX, C, S2]:
-                                        def tag           = sdx.tag
-                                        def default       = sdx.default
-                                        def update(v: VX) = sdx.update(v)
-                                        def cont          = this
-                                        override def apply[D, S3](x: VX < S3, c2: Arrow[C, D, S3]) =
-                                            x match
-                                                case p: Pending[VX, S3] @unchecked => Effect.defer(p, this, c2)
-                                                case _                             => cA(k0(x, Arrow.id), cB.chain(c2))
+                                                case p: Pending[Context, S3] @unchecked => Effect.defer(p, this, c2)
+                                                case _                                  => cA(k0(x, Arrow.id), cB.chain(c2))
                                     end new
                             end match
                     if stack.isEmpty then susp.asInstanceOf[A < S]
@@ -231,42 +230,25 @@ import scala.util.control.NonFatal
                                         val scx: Kyo.SuspendContext[VX, CX, AX, EX] = sc
                                         // one allocation fulfilling both roles: the rebuilt suspension and its re-handling transform
                                         new Kyo.SuspendContextTransform[VX, CX, Y, Any]:
-                                            def tag           = scx.tag
-                                            def update(v: VX) = scx.update(v)
-                                            def cont          = this
+                                            def tag                   = scx.tag
+                                            def answers(ctx: Context) = scx.answers(ctx)
+                                            def update(ctx: Context)  = scx.update(ctx)
+                                            def cont                  = this
                                             override def release(ex: Throwable): Any < Any =
                                                 Debugger.onRelease(handler, ex)
                                                 scx.release(ex).andThen(handler.release(state, ex))(using Frame.internal)
-                                            override def apply[D, S3](x: VX < S3, cont2: Arrow[Y, D, S3]) =
+                                            override def apply[D, S3](x: Context < S3, cont2: Arrow[Y, D, S3]) =
                                                 x match
-                                                    case p: Pending[VX, S3] @unchecked =>
+                                                    case p: Pending[Context, S3] @unchecked =>
                                                         Effect.defer(p, this, cont2)
                                                     case _ =>
-                                                        reenter(scx.cont, Nested.unnest[VX](x), cont2)
-                                        end new
-                                    case sd: Kyo.SuspendContextDefault[VX, CX, AX, EX] @unchecked =>
-                                        val sdx: Kyo.SuspendContextDefault[VX, CX, AX, EX] = sd
-                                        // one allocation fulfilling both roles: the rebuilt suspension and its re-handling transform
-                                        new Kyo.SuspendContextDefaultTransform[VX, CX, Y, Any]:
-                                            def tag           = sdx.tag
-                                            def default       = sdx.default
-                                            def update(v: VX) = sdx.update(v)
-                                            def cont          = this
-                                            override def release(ex: Throwable): Any < Any =
-                                                Debugger.onRelease(handler, ex)
-                                                sdx.release(ex).andThen(handler.release(state, ex))(using Frame.internal)
-                                            override def apply[D, S3](x: VX < S3, cont2: Arrow[Y, D, S3]) =
-                                                x match
-                                                    case p: Pending[VX, S3] @unchecked =>
-                                                        Effect.defer(p, this, cont2)
-                                                    case _ =>
-                                                        reenter(sdx.cont, Nested.unnest[VX](x), cont2)
+                                                        reenter(scx.cont, Nested.unnest[Context](x), cont2)
                                         end new
                                 end match
                             end rebuilt
                             Debugger.onRegionExit(handler, rebuilt)
                             val cont  = stack.cont.asInstanceOf[Arrow[Y, Any, Any]]
-                            val outer = stack.ctx
+                            val outer = exitContext(ctx)
                             stack.pop()
                             loop(rebuilt, cont, Arrow.id, outer)
                         else
@@ -310,7 +292,7 @@ import scala.util.control.NonFatal
                                                     val r = o.asInstanceOf[Y < Any]
                                                     Debugger.onRegionExit(handler, r)
                                                     val cont  = stack.cont.asInstanceOf[Arrow[Y, Any, Any]]
-                                                    val outer = stack.ctx
+                                                    val outer = exitContext(ctx)
                                                     stack.pop()
                                                     loop(r, cont, Arrow.id, outer)
                                             end match
@@ -378,7 +360,7 @@ import scala.util.control.NonFatal
                             val r       = handler.done(stack.state.asInstanceOf[VX], Nested.unnest[AX](res))
                             Debugger.onRegionExit(handler, r)
                             val cont  = stack.cont.asInstanceOf[Arrow[Y, Any, Any]]
-                            val outer = stack.ctx
+                            val outer = exitContext(ctx)
                             stack.pop()
                             loop(r, cont, Arrow.id, outer)
                     else
@@ -404,7 +386,11 @@ import scala.util.control.NonFatal
         // lets this return one value rather than the value and the context to resume it at, which
         // would be a pair allocated on the path `Abort` runs through.
         @tailrec def recovered(ex: Throwable): A < S =
-            if stack.isEmpty then throw ex
+            if stack.isEmpty then
+                // the eval's boundary: the frames attached at the guard's catch are written into the
+                // exception the caller receives
+                EffectTrace.splice(ex)
+                throw ex
             else
                 val handler = stack.handler.asInstanceOf[Handler[EX, AX, Y, Any, VX]]
                 val state   = stack.state.asInstanceOf[VX]
@@ -413,6 +399,10 @@ import scala.util.control.NonFatal
                     catch
                         case ex2 if NonFatal(ex2) =>
                             stack.pop()
+                            // a fresh failure born mid-unwind: described from the regions still
+                            // standing under it, and spliced so the next recover inspects the frames
+                            EffectTrace.attach(ex2, stack)
+                            EffectTrace.splice(ex2)
                             return recovered(ex2)
                 outcome match
                     case Present(r) =>
@@ -424,9 +414,8 @@ import scala.util.control.NonFatal
                         recovered(ex)
                 end match
 
-        // The eval and its guard. Recovering resumes here and reading a default that no region
-        // answered resumes here, and both are self tail calls, so the eval that removed the frame per
-        // open region reintroduces none per recovered region or per default answered.
+        // The eval and its guard. Recovering resumes here as a self tail call, so the eval that
+        // removed the frame per open region reintroduces none per recovered region.
         @tailrec def guarded(curr: A < S, ctx: Context): A < S =
             val res =
                 try loop(curr, Arrow.id, Arrow.id, ctx)
@@ -439,24 +428,31 @@ import scala.util.control.NonFatal
                         // until the budget drains, and a drained budget is a fixed point rather than a
                         // slow path
                         Safepoint.reset(slot)
+                        // the effect-level frames, reconstructed here because this is where the
+                        // failure and the standing regions meet: the loop's own registers are gone
+                        // with the Java unwind, deliberately unrecorded, because parking them cost
+                        // 2.2x on suspensionBaseline through defeated escape analysis. The innermost
+                        // pending frames are the physical trace's job, and the regions and their
+                        // continuations are this one's. Spliced before the unwind so every recover
+                        // inspects the enriched exception
+                        EffectTrace.attach(failure, stack)
+                        EffectTrace.splice(failure)
                         val resumed = recovered(failure)
                         // the region that recovered is still on the stack, holding the context to
-                        // resume at; taking it here is what keeps the unwind allocation free
+                        // resume at; taking it here is what keeps the unwind allocation free. This
+                        // is the failed extent's lane of the exit law: the interior's context is
+                        // gone with the Java unwind, so the resume rolls back to the recovering
+                        // region's install-time context, a transaction that did not commit
                         val outer = stack.ctx
                         stack.pop()
                         return guarded(resumed, outer)
             res match
-                case suspend: Kyo.SuspendContextDefault[VX, CX, A, S] @unchecked =>
-                    val nv = suspend.update(suspend.default)
-                    Debugger.onContextDefault(suspend, nv)
-                    val k = suspend.cont
-                    guarded(k.head(nv, k.tail), Context.empty)
                 case susp: Kyo.Suspend[?, ?, ?] =>
-                    // an operation with no region left to answer it. Rejecting here keeps the failure
-                    // at the operation that caused it: handed back, it is a node typed as a value, and
-                    // the cast that discovers it fires arbitrarily far away. The arm below this one is
-                    // the reason this is not the loop's business: a context read whose default nobody
-                    // answered leaves the loop the same way and is answered, not rejected
+                    // an operation with no region left to answer it, a mandatory context read
+                    // included: a defaulted read never reaches here, because it is answered in
+                    // place wherever it stands. Rejecting here keeps the failure at the operation
+                    // that caused it: handed back, it is a node typed as a value, and the cast
+                    // that discovers it fires arbitrarily far away
                     bug(s"unhandled suspension: $susp")
                 case res => res
             end match

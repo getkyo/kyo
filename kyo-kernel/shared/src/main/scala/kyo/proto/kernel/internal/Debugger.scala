@@ -28,11 +28,8 @@ abstract private[kyo] class Debugger:
     /** The eval loop observing its current value and pending continuations. */
     def onLoop(value: Any, contA: Any, contB: Any): Unit = ()
 
-    /** A context operation answered from the propagated context. */
+    /** A context operation answered from the propagated context, defaulted reads included. */
     def onContext(suspend: Any, state: Any): Unit = ()
-
-    /** A context operation answered by the boundary default. */
-    def onContextDefault(suspend: Any, state: Any): Unit = ()
 
     /** A region opened for a handler. */
     def onRegionEnter(handler: Any, state: Any): Unit = ()
@@ -77,7 +74,6 @@ private[kyo] object Debugger:
     inline def onUnfused(arrow: Any): Unit                            = inline if enabled then get.onUnfused(arrow)
     inline def onLoop(value: Any, contA: Any, contB: Any): Unit       = inline if enabled then get.onLoop(value, contA, contB)
     inline def onContext(suspend: Any, state: Any): Unit              = inline if enabled then get.onContext(suspend, state)
-    inline def onContextDefault(suspend: Any, state: Any): Unit       = inline if enabled then get.onContextDefault(suspend, state)
     inline def onRegionEnter(handler: Any, state: Any): Unit          = inline if enabled then get.onRegionEnter(handler, state)
     inline def onRegionExit(handler: Any, result: Any): Unit          = inline if enabled then get.onRegionExit(handler, result)
     inline def onForeign(suspend: Any, handler: Any): Unit            = inline if enabled then get.onForeign(suspend, handler)

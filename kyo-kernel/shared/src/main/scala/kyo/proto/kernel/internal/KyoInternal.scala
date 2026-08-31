@@ -99,10 +99,7 @@ object Kyo:
         extends SuspendArrow[I, O, E, State, A, S] with Arrow.Transform[O[State], A, S]
 
     abstract class SuspendContextTransform[State, E <: ContextEffect[State], A, S]
-        extends SuspendContext[State, E, A, S] with Arrow.Transform[State, A, S]
-
-    abstract class SuspendContextDefaultTransform[State, E <: ContextEffect[State], A, S]
-        extends SuspendContextDefault[State, E, A, S] with Arrow.Transform[State, A, S]
+        extends SuspendContext[State, E, A, S] with Arrow.Transform[Context, A, S]
 
     abstract class HandleTransform[E <: Effect, A, B, C, -S, State]
         extends Handle[E, A, B, C, S, State] with Arrow.Transform[B, C, S]
@@ -139,35 +136,28 @@ object Kyo:
                 def cont  = c
     end SuspendArrow
 
+    /** The one context suspension: a request against the eval's threaded context, carrying where it is answered and how the context
+      * changes. `answers` is the guard: a per-tag read answers where its tag is bound and travels outward otherwise, and a defaulted
+      * read answers everywhere because its extraction falls back. `update` is the write: identity for reads, a rebind for updates. The
+      * continuation receives the updated context and the glue's transform extracts what its caller asked for, which is what keeps
+      * per-tag behavior out of this node. The mandatory read's row `E` is the glue's claim; a mandatory read nothing binds travels to
+      * the boundary and fails there the way any unhandled operation does.
+      */
     abstract class SuspendContext[State, E <: ContextEffect[State], A, S] extends Suspend[E, A, S]:
-        type Op = State
-        def update(v: State): State
+        type Op = Context
+        def answers(ctx: Context): Boolean
+        def update(ctx: Context): Context
         def withCont[B, S2](c: Arrow[Op, B, S2]) =
             // the copy delegates to the original through the outer reference instead of capturing
             // each member as its own field
             new SuspendContext[State, E, B, S2]:
-                def tag              = SuspendContext.this.tag
-                def update(v: State) = SuspendContext.this.update(v)
-                def cont             = c
+                def tag                   = SuspendContext.this.tag
+                def answers(ctx: Context) = SuspendContext.this.answers(ctx)
+                def update(ctx: Context)  = SuspendContext.this.update(ctx)
+                def cont                  = c
         override def toString =
             s"SuspendContext(${tag.show}, ${if cont eq this then "this" else short(cont)})"
     end SuspendContext
-
-    abstract class SuspendContextDefault[State, E <: ContextEffect[State], A, S] extends Suspend[E, A, S]:
-        type Op = State
-        def default: State
-        def update(v: State): State
-        def withCont[B, S2](c: Arrow[Op, B, S2]) =
-            // the copy delegates to the original through the outer reference instead of capturing
-            // each member as its own field
-            new SuspendContextDefault[State, E, B, S2]:
-                def tag              = SuspendContextDefault.this.tag
-                def default          = SuspendContextDefault.this.default
-                def update(v: State) = SuspendContextDefault.this.update(v)
-                def cont             = c
-        override def toString =
-            s"SuspendContextDefault(${tag.show}, $default, ${if cont eq this then "this" else short(cont)})"
-    end SuspendContextDefault
 
     def handle[E <: Effect, A, B, S, State](v: A < (E & S), handler: Handler[E, A, B, S, State], state: State): B < S =
         v match

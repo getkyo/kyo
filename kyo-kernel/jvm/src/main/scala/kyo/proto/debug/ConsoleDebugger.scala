@@ -107,20 +107,19 @@ final class ConsoleDebugger extends Debugger:
     override def onAlloc(value: Any): Unit =
         reported.add(value)
         val name = value match
-            case _: Kyo.Defer[?, ?, ?, ?]                 => "Defer"
-            case _: Kyo.SuspendArrow[?, ?, ?, ?, ?, ?]    => "SuspendArrow"
-            case _: Kyo.SuspendContext[?, ?, ?, ?]        => "SuspendContext"
-            case _: Kyo.SuspendContextDefault[?, ?, ?, ?] => "SuspendContextDefault"
-            case _: Kyo.Handle[?, ?, ?, ?, ?, ?]          => "Handle"
-            case _: Arrow.Id[?]                           => "Id"
-            case _: Arrow.Chain[?, ?, ?, ?]               => "Chain"
-            case _: Loop.Continue[?]                      => "Continue"
-            case _: Loop.Continue2[?, ?]                  => "Continue2"
-            case _: Loop.Continue3[?, ?, ?]               => "Continue3"
-            case _: Loop.Continue4[?, ?, ?, ?]            => "Continue4"
-            case _: Arrow.Step[?, ?, ?]                   => "Step"
-            case _: Arrow.Transform[?, ?, ?]              => "Transform"
-            case v                                        => v.getClass.getSimpleName
+            case _: Kyo.Defer[?, ?, ?, ?]              => "Defer"
+            case _: Kyo.SuspendArrow[?, ?, ?, ?, ?, ?] => "SuspendArrow"
+            case _: Kyo.SuspendContext[?, ?, ?, ?]     => "SuspendContext"
+            case _: Kyo.Handle[?, ?, ?, ?, ?, ?]       => "Handle"
+            case _: Arrow.Id[?]                        => "Id"
+            case _: Arrow.Chain[?, ?, ?, ?]            => "Chain"
+            case _: Loop.Continue[?]                   => "Continue"
+            case _: Loop.Continue2[?, ?]               => "Continue2"
+            case _: Loop.Continue3[?, ?, ?]            => "Continue3"
+            case _: Loop.Continue4[?, ?, ?, ?]         => "Continue4"
+            case _: Arrow.Step[?, ?, ?]                => "Step"
+            case _: Arrow.Transform[?, ?, ?]           => "Transform"
+            case v                                     => v.getClass.getSimpleName
         counts = counts.updated(name, counts.getOrElse(name, 0) + 1)
         println(s"$pad🧮 alloc: $value")
         println(s"$pad${ConsoleDebugger.layoutLine(value.getClass)}")
@@ -150,15 +149,6 @@ final class ConsoleDebugger extends Debugger:
                 |state: $state""".stripMargin
         )
     end onContext
-
-    override def onContextDefault(suspend: Any, state: Any): Unit =
-        checkReported(suspend, state)
-        log(
-            s"""|📖 context default
-                |suspend: $suspend
-                |state: $state""".stripMargin
-        )
-    end onContextDefault
 
     override def onRegionEnter(handler: Any, state: Any): Unit =
         checkReported(state)

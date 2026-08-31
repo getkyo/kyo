@@ -522,31 +522,8 @@ class EvalTest extends AnyFreeSpec:
             assert(resume() == 1)
         }
 
-        "resumes on another thread" in {
-            var stored: Maybe[Unit => Int < Say] = Maybe.empty
-            val inner: Int < Say                 = stateful(ask.map(a => say("x").map(_ => ask.map(b => a * 10 + b))))
-            val r: Int < Any = ArrowEffect.handleCont(Tag[Say], inner)(
-                [C] =>
-                    (_, cont) =>
-                        stored = Maybe(cont(_))
-                        -1
-                ,
-                a => a
-            )
-            assert(eval(r) == -1)
-            val k             = stored.get
-            def resume(): Int = eval(ArrowEffect.handleCont(Tag[Say], k(()))([C] => (_, cont) => cont(()), a => a))
-            val results       = new java.util.concurrent.ConcurrentLinkedQueue[Int]()
-            val threads = (1 to 4).map(_ =>
-                new Thread(() =>
-                    results.add(resume()); ()
-                )
-            )
-            threads.foreach(_.start())
-            threads.foreach(_.join())
-            assert(List.fill(4)(results.poll()) == List(1, 1, 1, 1))
-            assert(results.isEmpty)
-        }
+        // "resumes on another thread" lives in EvalConcurrencyTest, jvm only: it spawns real
+        // threads, which is the one genuine platform split, the way SafepointConcurrencyTest is
 
         "resumes under a later region of the same tag, which answers the remainder" in {
             var stored: Maybe[Int => Int < Ask] = Maybe.empty
@@ -770,21 +747,90 @@ class EvalTest extends AnyFreeSpec:
     private object Boom extends RuntimeException("boom", null, false, false)
 
     // A context read rebinds "the updated value for the rest of that region's extent", and an
-    // answered operation is inside that extent. The public surface cannot show this: every
-    // ContextEffect.suspend carries an identity update, so the node is built here directly.
+    // answered operation is inside that extent. The update lane's public door is
+    // ContextEffect.update, so the pins mint their non-identity update through it.
     "a context update outlives an operation answered after it" in {
         sealed trait Count extends kyo.proto.kernel.ContextEffect[Int]
-        def bump: Int < Count =
-            new Kyo.SuspendContext[Int, Count, Int, Count]:
-                def tag            = Tag[Count]
-                def update(v: Int) = v + 1
-                def cont           = Arrow.id
+        def bump: Int < Count = kyo.proto.kernel.ContextEffect.update(Tag[Count])(_ + 1)
         // bound at 10: the first read rebinds 11, the Ask region answers, the second read sees 11
         // and rebinds 12. Resuming an answered operation with the context the region was installed
         // with instead would lose the first update and give 11
         val body: Int < (Count & Ask) = bump.map(_ => ask.map(_ => bump))
         val r: Int < Count            = answerAsk(0)(body)
         assert(eval(kyo.proto.kernel.ContextEffect.handle(Tag[Count], 10)(r)) == 12)
+    }
+
+    "the exit law" - {
+        sealed trait Count extends kyo.proto.kernel.ContextEffect[Int]
+        def bump: Int < Count = kyo.proto.kernel.ContextEffect.update(Tag[Count])(_ + 1)
+        def read: Int < Count = kyo.proto.kernel.ContextEffect.suspend(Tag[Count])
+
+        "an update to an outer binding survives an inner region's exit" in {
+            // bound at 10: the bump inside the Ask region rebinds 11, the region exits, and the
+            // bump after it sees 11 and rebinds 12. An exit that restored the region's install-time
+            // context would revert to 10 and give 11; the reference keeps the update by writing it
+            // at the binding's own entry, and this kernel keeps it by handing the interior's
+            // context outward
+            val inside: Int < Count = answerAsk(0)(ask.map(_ => bump))
+            val r: Int < Count      = inside.map(_ => bump)
+            assert(eval(kyo.proto.kernel.ContextEffect.handle(Tag[Count], 10)(r)) == 12)
+        }
+
+        "a context region's exit reverts its own binding to the enclosing one" in {
+            val inner: Int < Count = kyo.proto.kernel.ContextEffect.handle(Tag[Count], 99)(read)
+            val r                  = inner.map(a => read.map(b => (a, b)))
+            assert(eval(kyo.proto.kernel.ContextEffect.handle(Tag[Count], 10)(r)) == (99, 10))
+        }
+
+        "a context region's exit removes a binding that had no enclosing one" in {
+            val inner: Int < Any = kyo.proto.kernel.ContextEffect.handle(Tag[Count], 99)(read)
+            // the read after the region falls to the default, because the exit removed the
+            // binding rather than leaving it dangling
+            val r: Int < Any = inner.map(a => kyo.proto.kernel.ContextEffect.suspend(Tag[Count], -1).map(b => a * 1000 + b))
+            assert(eval(r) == 98999)
+        }
+
+        "a foreign crossing severs the extent: the region re-resolves and its updates do not span it" in {
+            // two ruled behaviors compose here. A region's exit reverts its own binding, and a
+            // foreign suspension crossing the region is an exit: the interior context hands
+            // everything else outward, but the region's own update goes with the reverted binding.
+            // The crossing rebuilds the region around the continuation, and a re-installed region
+            // resolves again from wherever it stands, so the resume reads the resolution, not the
+            // update. This is what a forked body inherits too: resolve-level values, never updates
+            // pending at the fork point
+            val body: Int < (Count & Ask) = bump.map(_ => ask.map(_ => read))
+            val bound: Int < Ask          = kyo.proto.kernel.ContextEffect.handle(Tag[Count], 10)(body)
+            assert(eval(answerAsk(0)(bound)) == 10)
+        }
+
+        "a failed extent rolls its updates back" in {
+            // the interior's context is gone with the Java unwind, so the recovery resumes at the
+            // recovering region's install-time context: the bump inside the failed extent does not
+            // survive it, a transaction that did not commit
+            val body: Int < (Count & Ask) = bump.map(_ => (throw Boom): Int)
+            val region: Int < Count = ArrowEffect.handleCont(Tag[Ask], body)(
+                [C] => (_, cont) => cont(1),
+                a => a,
+                _ => Maybe(-1)
+            )
+            val r = region.map(_ => read)
+            assert(eval(kyo.proto.kernel.ContextEffect.handle(Tag[Count], 10)(r)) == 10)
+        }
+    }
+
+    "an unanswered default is taken exactly once" in {
+        sealed trait Count extends kyo.proto.kernel.ContextEffect[Int]
+        // the default is by-name at the surface, so the extraction must take it exactly once: a
+        // second evaluation would double any effect the caller put in it
+        var evals = 0
+        val r: Int < Any = kyo.proto.kernel.ContextEffect.suspend(
+            Tag[Count], {
+                evals += 1
+                42
+            }
+        )
+        assert(eval(r) == 42)
+        assert(evals == 1)
     }
 
     // the eval holds no frame per open region, and it must hold none per recovered one either: a

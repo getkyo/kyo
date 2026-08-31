@@ -6,9 +6,13 @@ import scala.annotation.tailrec
 
 /** The regions an eval has open, outermost first.
   *
-  * One entry per installed region: the handler that answers for it, the state the loop threads through it, the context to restore when it
-  * ends, and the continuation that follows it. Holding a region here rather than in a Java frame is what lets regions nest to any depth: the
-  * eval stays one self-recursive loop, and an open region costs an entry instead of a frame.
+  * One entry per installed region: the handler that answers for it, the state the loop threads through it, the context that stood when it
+  * installed, and the continuation that follows it. Holding a region here rather than in a Java frame is what lets regions nest to any
+  * depth: the eval stays one self-recursive loop, and an open region costs an entry instead of a frame.
+  *
+  * The install-time context is two laws' operand. A failed extent rolls back to it. A completing exit keeps the interior's context,
+  * updates included, and reverts only the exiting region's own binding to what stood before it, which is exactly what the install-time
+  * context holds for the region's own tag: the context is immutable and the entry is written once, so no separate prior needs caching.
   *
   * Mutable, and scoped to a single `Eval.apply`, which is the only thing that holds one. A nested eval builds its own, so it sees none of the
   * outer eval's regions, and nothing the eval hands out points here.
@@ -31,7 +35,9 @@ final private[kernel] class Stack:
 
     /** Installs a region. Typed, because the pushing site knows all five: the state has to be the one this
       * handler threads, and the continuation has to start where this handler's result ends. Those are the two
-      * ways an entry can be built wrong, and both are checked here rather than asserted on the way out.
+      * ways an entry can be built wrong, and both are checked here rather than asserted on the way out. The
+      * context is the install-time one: the failed extent's rollback target, and the exit law's revert source
+      * for the exiting region's own binding.
       */
     def push[E <: Effect, A, B, S, State](
         handler: Handler[E, A, B, S, State],
@@ -98,6 +104,12 @@ final private[kernel] class Stack:
         size = 0
         out
     end snapshot
+
+    // read access for the failure walk: the reconstruction runs at the guard's catch with the
+    // regions still standing, and reads them without disturbing anything. Index 0 is the outermost
+    def depth: Int                                = size
+    def handlerAt(i: Int): Handler[?, ?, ?, ?, ?] = handlers(i)
+    def continuationAt(i: Int): Arrow[?, ?, ?]    = continuations(i)
 
     // the innermost region, which is the only one an eval step can be inside. Every call site reaches these
     // behind its own `isEmpty` test, so an empty stack has no reads rather than a defined answer for them

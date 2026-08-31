@@ -5,6 +5,17 @@ import kyo.StaticFlag
 // TODO this should be private[kernel]
 private[kyo] class Safepoint
 
+/** The period flag's bounds, top level on purpose: written inline, the validation lambda is lifted
+  * onto the enclosing `Safepoint` module as a super-argument method, so constructing the flag
+  * forces `Safepoint$`, whose own constructor reads `period()` through `State.Initial`. On Scala.js
+  * a nested object is reached directly rather than through its enclosing module, so a first touch
+  * of the flag from outside enters that cycle mid-construction, the flag object is built twice, and
+  * the second registration fails the toucher with a duplicate-name error. A stable top-level
+  * reference is passed as it stands, no lifted method, no edge back into `Safepoint$`, no cycle.
+  */
+private object periodBounds extends (Int => Either[Throwable, Int]):
+    def apply(n: Int): Either[Throwable, Int] = Right(Math.min(Math.max(1, n), 0x7fff))
+
 /** The single-threaded Safepoint: one cell where the JVM has a slot table.
   *
   * JS and wasm run every evaluation on the one thread, so there is no claiming, no liveness
@@ -35,7 +46,8 @@ object Safepoint:
     private inline def DepthGuard = 1 << 15
     private inline def Armed      = 1 << 30
 
-    private[kyo] object period extends StaticFlag[Int](512, n => Right(Math.min(Math.max(1, n), 0x7fff)))
+    // the bounds are a top-level reference, never an inline lambda: see `periodBounds`
+    private[kyo] object period extends StaticFlag[Int](512, periodBounds)
 
     private[kyo] object State:
 
