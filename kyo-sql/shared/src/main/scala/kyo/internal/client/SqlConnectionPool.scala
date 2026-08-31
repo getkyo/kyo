@@ -69,6 +69,23 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
     // drains. Registered here so exactly one resolver claims each via `remove`, so no interrupted connection outlives the client.
     private val quarantined = ConcurrentHashMap.newKeySet[C]()
 
+    /** Reports the interrupt-reclaim counters alongside the transport dumps an end-of-run descriptor finding already prints.
+      *
+      * A leaked socket on its own does not say whether the pool still owed work on it. `decideExit` hands an interrupted lease to a
+      * detached carrier and quarantines the connection until that carrier resolves, so a descriptor still open while `quarantined` holds
+      * it is a state the reclaim design permits, whereas the same descriptor with nothing quarantined and no reclaim running means a
+      * carrier finished without closing it. Those two need different fixes and are indistinguishable from the transport dump alone.
+      * Counts only: this reports state and never a verdict, leaving the classification to whoever reads the finding.
+      */
+    private val diagRegistration =
+        kyo.internal.Diagnostics.register("SqlConnectionPool@" + java.lang.System.identityHashCode(this))(
+            dump = () =>
+                // Unsafe: a diagnostic dump is a bare `() => String` with no capability in scope, and these are read-only views of
+                // already-Unsafe atomics and a concurrent set, so the read cannot alter pool state.
+                import AllowUnsafe.embrace.danger
+                s"cancelsInFlight=${cancelsInFlight.get()} quarantined=${quarantined.size} drainPolls=${drainPolls.get()}"
+        )
+
     // --- Leases ---
 
     /** Runs `op` on a pooled connection under the statement policy: retry, per-statement timeout, and the query instruments.
@@ -211,6 +228,10 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                         quarantined.forEach { conn =>
                             if quarantined.remove(conn) then destroyAndFreeSlot(conn, logger)
                         }
+                        // Dropped last, after the sweep above has resolved every quarantined connection: while any remained the
+                        // counters were still worth reporting, and a pool that outlived its registration would report another pool's
+                        // state under this one's name.
+                        diagRegistration.close()
                     }
                 }(drain(gracePeriod))
             }

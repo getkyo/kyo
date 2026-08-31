@@ -847,6 +847,12 @@ private[kyo] object ReactiveUI:
             expiryWake       <- Channel.init[Unit](1)
             expiryWorkers    <- AtomicInt.init(0)
             _                <- Scope.ensure(dragSessions.set(Map.empty))
+            // The worker clears its own count as it unwinds, which is right when it exits on its own but is not
+            // enough at scope close: interrupting a fiber and awaiting its result does not await the finalizer
+            // that clears the count, so the count can still read 1 after the scope has returned. Scope
+            // finalizers run last-registered-first, so registering this BEFORE the worker is started puts it
+            // after the worker's own teardown and makes "closed scope implies no worker" hold on every exit.
+            _ <- Scope.ensure(expiryWorkers.set(0))
             _ <- startOwnedFiber(
                 Abort.run[Any] {
                     Sync.ensure(expiryWorkers.set(0)) {
