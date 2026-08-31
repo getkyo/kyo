@@ -8,13 +8,6 @@ import kyo.proto.kernel.ArrowEffect
 import org.scalatest.freespec.AnyFreeSpec
 import scala.util.control.NoStackTrace
 
-/** The trace corpus for the central-attach model: the reconstruction runs at the guard's one catch over the standing regions and their
-  * continuations, and the innermost pending frames are the physical trace's job; parking the loop's registers for full fidelity was
-  * measured and rejected, which its own pin below records.
-  *
-  * The failures here are fresh instances with suppression enabled, because the carrier rides `addSuppressed`: an exception constructed
-  * with suppression disabled defeats the mechanism silently, which its own pin below records.
-  */
 class EffectTraceTest extends AnyFreeSpec:
     private def eval[A](v: A < Any): A = v.eval
 
@@ -54,8 +47,7 @@ class EffectTraceTest extends AnyFreeSpec:
     }
 
     "the continuation a region holds contributes its frames" in {
-        // the map after the region is folded into the region's stack entry, so its site is
-        // reconstructable at the catch even though it never ran
+
         val v  = runAsk(ask.map(_ => (throw Boom()): Int))(1).map(_ + 1)
         val ex = intercept[Boom](eval(runSay(v: Int < Say)))
         assert(ex.getStackTrace.exists(e => e.getFileName == "EffectTraceTest.scala"))
@@ -63,8 +55,7 @@ class EffectTraceTest extends AnyFreeSpec:
 
     "nested evals accumulate their regions" in {
         val inner = runAsk(ask.map(_ => (throw Boom()): Int))(1)
-        // the body suspends first, so the inner eval runs inside the outer one rather than at
-        // construction
+
         val outer: Int < Any = runSay(say("x").map { _ =>
             val r: Int = eval(inner)
             r
@@ -73,7 +64,7 @@ class EffectTraceTest extends AnyFreeSpec:
         val trace = ex.getStackTrace
         assert(trace.exists(_.getClassName == Tag[Ask].show))
         assert(trace.exists(_.getClassName == Tag[Say].show))
-        // one carrier however many boundaries were crossed
+
         assert(ex.getSuppressed.count(_.isInstanceOf[EffectTrace]) == 1)
     }
 
@@ -127,8 +118,7 @@ class EffectTraceTest extends AnyFreeSpec:
     }
 
     "a suppression-disabled exception travels untouched" in {
-        // the stackless shared-instance pattern turns addSuppressed into a no-op, so the carrier
-        // cannot ride it: the mechanism degrades to nothing rather than failing
+
         object Shared extends RuntimeException("shared", null, false, false)
         val v  = runAsk(ask.map(_ => (throw Shared): Int))(1)
         val ex = intercept[Shared.type](eval(v))
@@ -149,14 +139,11 @@ class EffectTraceTest extends AnyFreeSpec:
     }
 
     "a throw with no region standing synthesizes nothing and travels on the physical trace" in {
-        // everything pending lives in the loop's registers, which the walk cannot see: parking
-        // them was measured at 2.2x on suspensionBaseline through defeated escape analysis and
-        // rejected. The physical trace carries the throwing site's own frames
+
         val v: Int < Any = runAsk(ask)(1).map(_ => (throw Boom()): Int).map(_ + 1)
         val ex           = intercept[Boom](eval(v))
         assert(carrier(ex).isEmpty || carrier(ex).get.elements.isEmpty)
-        // the physical half of the claim is the platform's, not the kernel's: only the JVM's
-        // trace carries the Scala source file name, so only there can it be pinned
+
         assert(!kyo.internal.Platform.isJVM || ex.getStackTrace.exists(_.getFileName == "EffectTraceTest.scala"))
     }
 

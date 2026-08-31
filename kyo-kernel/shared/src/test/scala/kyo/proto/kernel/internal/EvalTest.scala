@@ -13,16 +13,13 @@ import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
 
 class EvalTest extends AnyFreeSpec:
-    // the eval's result as a raw value: unnesting delivers a payload as the computation it holds,
-    // and an unanswered suspension surfaces through the failing assertion that compares it
+
     private def eval[A, S](v: A < S): A =
         Nested.unnest[A](Eval(v))
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
-    // the operation with its continuation fused into the node: the remainder is the node's own
-    // arrow, not entries on the evaluator's stack
     inline def askWith[B, S](inline f: Int => B < S): B < (Ask & S) = ArrowEffect.suspendWith[Any](Tag[Ask], ())(f)
 
     sealed trait Say extends ArrowEffect[Const[String], Const[Unit]]
@@ -91,9 +88,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "an eval inside a map evaluates its argument rather than nesting it" in {
-            // with an unconditional lift, inference solved the unannotated form as
-            // Eval[Int < Any](lift(ask)) and the suspension itself came back as the map's result;
-            // with the lint on lift the unannotated form does not compile, and the annotated one evaluates
+
             assertTypeError("eval(answerAsk(1)(ask.map(_ => eval(ask.asInstanceOf[Int < Any]))))")
             val ex = intercept[Throwable](eval(answerAsk(1)(ask.map(_ => Eval[Int, Any](ask.asInstanceOf[Int < Any])))))
             assert(ex.getMessage.contains("unhandled suspension"))
@@ -312,9 +307,6 @@ class EvalTest extends AnyFreeSpec:
             assert(log.toList == List("outer"))
         }
 
-        // the operation was raised from inside the interior region, so its remainder belongs inside
-        // that region: an effectful answer runs under this handler with the interior parked, and the
-        // interior comes back around the remainder, not after it
         "an effectful answer's remainder runs inside the interior region" in {
             val log                        = collection.mutable.ListBuffer[String]()
             val program: Int < (Ask & Say) = ask.map(a => say("after").map(_ => a + 1))
@@ -331,7 +323,7 @@ class EvalTest extends AnyFreeSpec:
             val log                        = collection.mutable.ListBuffer[String]()
             val program: Int < (Ask & Say) = ask.map(a => say("after").map(_ => a + 1))
             val sayInner: Int < Ask        = recordSay("inner", log)(program)
-            // a pending answer with nothing left in its row: a handled region is pending currency
+
             val pendingAnswer: Int < Any = answerAsk(0)(ask.map(_ => 41))
             val askScope: Int < Any = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
                 [C] => _ => Loop.continue((), pendingAnswer),
@@ -353,9 +345,6 @@ class EvalTest extends AnyFreeSpec:
             assert(log.toList == List("outer", "outer", "inner"))
         }
 
-        // the same three shapes with the remainder fused into the operation's node: the interior is
-        // parked around the answer either way, and it must come back around the remainder, whether
-        // the remainder lives on the stack or in the node
         "an effectful answer's fused remainder runs inside the interior region" in {
             val log                        = collection.mutable.ListBuffer[String]()
             val program: Int < (Ask & Say) = askWith(a => say("after").map(_ => a + 1))
@@ -497,9 +486,6 @@ class EvalTest extends AnyFreeSpec:
         }
     }
 
-    // a continuation handed to a clause is a value the kernel produced: it carries no live stack, so
-    // it means the same thing wherever and whenever it is applied, and applying it never disturbs
-    // the evaluation that produced it
     "a captured continuation is a value" - {
         def stateful(body: Int < (Ask & Say)): Int < Say =
             ArrowEffect.handleLoopState(Tag[Ask], 0, body)([C] => (s, _) => Loop.continue(s + 1, s: Int < Any), (_, a) => a)
@@ -521,9 +507,6 @@ class EvalTest extends AnyFreeSpec:
             assert(resume() == 1)
             assert(resume() == 1)
         }
-
-        // "resumes on another thread" lives in EvalConcurrencyTest, jvm only: it spawns real
-        // threads, which is the one genuine platform split, the way SafepointConcurrencyTest is
 
         "resumes under a later region of the same tag, which answers the remainder" in {
             var stored: Maybe[Int => Int < Ask] = Maybe.empty
@@ -556,10 +539,6 @@ class EvalTest extends AnyFreeSpec:
         }
     }
 
-    // Makes a preemption stop pending for the current thread, from inside a running slice. The jvm
-    // and native deliver through the slot's stop sentinel, js and wasm through the slice deadline,
-    // and each platform's other call is inert there, so one helper serves the shared suite. The
-    // `get` claims the slot when no eval ran on this thread yet, which delivery needs to find.
     private def requestStop(): Unit =
         discard(Safepoint.get())
         discard(Safepoint.stop(Thread.currentThread()))
@@ -583,7 +562,7 @@ class EvalTest extends AnyFreeSpec:
             assert(parked.asInstanceOf[Kyo.Park[?, ?]].entries.length == 3)
             assert(eval(parked) == 42)
             assert(afterRan)
-            // multi-shot: the entries are immutable data, so a second resume re-installs and answers again
+
             assert(eval(parked) == 42)
         }
 
@@ -597,7 +576,7 @@ class EvalTest extends AnyFreeSpec:
             val back = Eval.partial(input)
             assert(!ran)
             assert(back.asInstanceOf[AnyRef] eq input.asInstanceOf[AnyRef])
-            // the sentinel was taken at that boundary, so the slice after it runs
+
             assert(Nested.unnest[Int](Eval.partial(back)) == 42)
             assert(ran)
         }
@@ -614,9 +593,9 @@ class EvalTest extends AnyFreeSpec:
             )
             val parked = Eval.partial(handled)
             assert(parked.isInstanceOf[Kyo.Park[?, ?]])
-            // the captured state is the advanced one, not the initial one
+
             assert(parked.asInstanceOf[Kyo.Park[?, ?]].entries(1).asInstanceOf[Int] == 2)
-            // the first operation answered 1 at state 1; the second answers the parked state 2
+
             assert(eval(parked) == 12)
         }
 
@@ -632,9 +611,7 @@ class EvalTest extends AnyFreeSpec:
                 kyo.proto.kernel.ContextEffect.handle(Tag[Cfg])(outer => outer.map(_ + 1).getOrElse(11))(body)
             val parked = Eval.partial(handled)
             assert(parked.isInstanceOf[Kyo.Park[?, ?]])
-            // parked with nothing bound outside: the region derived 11. Resumed under a binding of
-            // 100, the same region derives 101: re-installation resolves from where it stands, and
-            // a restore of the park-time context would answer 11 twice instead
+
             val resumed = kyo.proto.kernel.ContextEffect.handle(Tag[Cfg], 100)(parked)
             assert(eval(resumed) == (11, 101))
         }
@@ -648,9 +625,7 @@ class EvalTest extends AnyFreeSpec:
                     Effect.defer(nested + 1)
                 }
             val parked = Eval.partial(body)
-            // the nested eval crossed its own deferrals with the stop pending and still finished;
-            // the slice parked at the first deferral after it, with no region open, so the parked
-            // value is the deferral itself rather than a Park node
+
             assert(nested == 41)
             assert(parked.isInstanceOf[Pending[?, ?]])
             assert(!parked.isInstanceOf[Kyo.Park[?, ?]])
@@ -663,12 +638,11 @@ class EvalTest extends AnyFreeSpec:
                 Effect.defer((throw Boom): Int)
             }
             val parked = Eval.partial(body)
-            // the park wins over the throw: the stop was pending when the deferral carrying the
-            // throw reached the loop, so the slice ends before the body runs
+
             assert(parked.isInstanceOf[Pending[?, ?]])
             val ex = intercept[RuntimeException](eval(parked))
             assert(ex eq Boom)
-            // the boundary consumed the sentinel either way: the next slice runs
+
             var ran = false
             val next: Int < Any = Effect.defer {
                 ran = true
@@ -742,19 +716,12 @@ class EvalTest extends AnyFreeSpec:
         assert(eval(answerAsk(41)(ask.map(_ + 1))) == 42)
     }
 
-    // stackless and shared: the test is about the eval's stack, and filling a trace ten thousand
-    // times measures the JVM's exception construction instead
     private object Boom extends RuntimeException("boom", null, false, false)
 
-    // A context read rebinds "the updated value for the rest of that region's extent", and an
-    // answered operation is inside that extent. The update lane's public door is
-    // ContextEffect.update, so the pins mint their non-identity update through it.
     "a context update outlives an operation answered after it" in {
         sealed trait Count extends kyo.proto.kernel.ContextEffect[Int]
         def bump: Int < Count = kyo.proto.kernel.ContextEffect.update(Tag[Count])(_ + 1)
-        // bound at 10: the first read rebinds 11, the Ask region answers, the second read sees 11
-        // and rebinds 12. Resuming an answered operation with the context the region was installed
-        // with instead would lose the first update and give 11
+
         val body: Int < (Count & Ask) = bump.map(_ => ask.map(_ => bump))
         val r: Int < Count            = answerAsk(0)(body)
         assert(eval(kyo.proto.kernel.ContextEffect.handle(Tag[Count], 10)(r)) == 12)
@@ -766,11 +733,7 @@ class EvalTest extends AnyFreeSpec:
         def read: Int < Count = kyo.proto.kernel.ContextEffect.suspend(Tag[Count])
 
         "an update to an outer binding survives an inner region's exit" in {
-            // bound at 10: the bump inside the Ask region rebinds 11, the region exits, and the
-            // bump after it sees 11 and rebinds 12. An exit that restored the region's install-time
-            // context would revert to 10 and give 11; the reference keeps the update by writing it
-            // at the binding's own entry, and this kernel keeps it by handing the interior's
-            // context outward
+
             val inside: Int < Count = answerAsk(0)(ask.map(_ => bump))
             val r: Int < Count      = inside.map(_ => bump)
             assert(eval(kyo.proto.kernel.ContextEffect.handle(Tag[Count], 10)(r)) == 12)
@@ -784,29 +747,20 @@ class EvalTest extends AnyFreeSpec:
 
         "a context region's exit removes a binding that had no enclosing one" in {
             val inner: Int < Any = kyo.proto.kernel.ContextEffect.handle(Tag[Count], 99)(read)
-            // the read after the region falls to the default, because the exit removed the
-            // binding rather than leaving it dangling
+
             val r: Int < Any = inner.map(a => kyo.proto.kernel.ContextEffect.suspend(Tag[Count], -1).map(b => a * 1000 + b))
             assert(eval(r) == 98999)
         }
 
         "a foreign crossing severs the extent: the region re-resolves and its updates do not span it" in {
-            // two ruled behaviors compose here. A region's exit reverts its own binding, and a
-            // foreign suspension crossing the region is an exit: the interior context hands
-            // everything else outward, but the region's own update goes with the reverted binding.
-            // The crossing rebuilds the region around the continuation, and a re-installed region
-            // resolves again from wherever it stands, so the resume reads the resolution, not the
-            // update. This is what a forked body inherits too: resolve-level values, never updates
-            // pending at the fork point
+
             val body: Int < (Count & Ask) = bump.map(_ => ask.map(_ => read))
             val bound: Int < Ask          = kyo.proto.kernel.ContextEffect.handle(Tag[Count], 10)(body)
             assert(eval(answerAsk(0)(bound)) == 10)
         }
 
         "a failed extent rolls its updates back" in {
-            // the interior's context is gone with the Java unwind, so the recovery resumes at the
-            // recovering region's install-time context: the bump inside the failed extent does not
-            // survive it, a transaction that did not commit
+
             val body: Int < (Count & Ask) = bump.map(_ => (throw Boom): Int)
             val region: Int < Count = ArrowEffect.handleCont(Tag[Ask], body)(
                 [C] => (_, cont) => cont(1),
@@ -820,8 +774,7 @@ class EvalTest extends AnyFreeSpec:
 
     "an unanswered default is taken exactly once" in {
         sealed trait Count extends kyo.proto.kernel.ContextEffect[Int]
-        // the default is by-name at the surface, so the extraction must take it exactly once: a
-        // second evaluation would double any effect the caller put in it
+
         var evals = 0
         val r: Int < Any = kyo.proto.kernel.ContextEffect.suspend(
             Tag[Count], {
@@ -833,9 +786,6 @@ class EvalTest extends AnyFreeSpec:
         assert(evals == 1)
     }
 
-    // the eval holds no frame per open region, and it must hold none per recovered one either: a
-    // recovery that resumed by evaluating the rest of the eval from inside its own guard would make
-    // this grow with the number of throws rather than stay flat
     "regions that fail and recover in sequence cost no stack" in {
         def recovering(to: Int): Int < Any =
             val body: Int < Ask = ask.map(_ => (throw Boom): Int)
@@ -846,23 +796,16 @@ class EvalTest extends AnyFreeSpec:
         assert(eval(go(10000)) == 0)
     }
 
-    // The budget counts the strict applications standing on the Java stack, and a throw unwinds them
-    // without their matching exits. The eval's guard repairs that where it catches, but a foreign
-    // crossing carries its own recover, and a throw recovered there left the count short by every
-    // application it unwound. A drained count is a fixed point rather than a slow path, so enough of
-    // these livelock; the count is sampled directly here, which fails while the scenario still ends.
     "a region recovering across a foreign crossing leaves the budget where it found it" in {
         val samples = collection.mutable.ListBuffer.empty[Safepoint.State]
         def sample(): Unit =
             val slot = Safepoint.get()
-            // `save` installs a fresh budget as it reads, so reading it back is a save/restore pair
+
             val d = Safepoint.save(slot)
             Safepoint.restore(slot, d)
             samples += d
         end sample
 
-        // the Say region is foreign to the Ask its body suspends, so answering that Ask resumes
-        // through the rebuilt node, and the throw that follows lands in the crossing's own recover
         def crossing(to: Int): Int < Ask =
             val body: Int < (Say & Ask) = ask.map(_ => (throw Boom): Int)
             ArrowEffect.handleCont[Const[String], Const[Unit], Say, Int, Int, Ask, Any](Tag[Say], body)(
@@ -872,8 +815,6 @@ class EvalTest extends AnyFreeSpec:
             )
         end crossing
 
-        // fewer cycles than the budget has entries, so a leaking eval still terminates and the
-        // samples say so, rather than the suite hanging on the fixed point
         def go(i: Int): Int < Ask =
             if i == 0 then (0: Int < Ask)
             else
@@ -883,21 +824,14 @@ class EvalTest extends AnyFreeSpec:
                 }
         assert(eval(answerAsk(0)(go(100))) == 0)
         assert(samples.size == 100)
-        // `equals` rather than `==`: `State` is opaque and carries no `CanEqual`, and a cast to its
-        // underlying Int would be a new cast for a test's convenience
+
         assert(samples.forall(_.equals(samples.head)))
     }
 
-    // `recover` is consulted with its region still installed, and one that fails itself is the
-    // failure the regions outside it then see. The baseline got that free from nested tries; the
-    // unwind is its own control flow now, and has been rewritten twice, so it is pinned rather than
-    // stated. No test threw from a `recover` before this one.
     "a recover that fails itself is the failure the enclosing region sees" in {
         object Inner extends RuntimeException("inner", null, false, false)
         var seen = Maybe.empty[Throwable]
 
-        // deferred, so the throw lands while the loop is inside the region rather than while the
-        // computation is being built
         val body: Int < (Say & Ask) = Effect.defer((throw Boom): Int < (Say & Ask))
         val inner: Int < Ask = ArrowEffect.handleCont[Const[String], Const[Unit], Say, Int, Int, Ask, Any](Tag[Say], body)(
             [C] => (_, cont) => cont(()),
@@ -912,7 +846,7 @@ class EvalTest extends AnyFreeSpec:
                 Maybe(7)
         )
         assert(eval(outer) == 7)
-        // the second failure, not the one the inner region declined by throwing
+
         assert(seen.exists(_ eq Inner))
     }
 

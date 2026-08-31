@@ -5,16 +5,6 @@ import scala.annotation.implicitNotFound
 import scala.quoted.*
 import scala.util.NotGiven
 
-/** CanLift is a "soft" constraint that indicates a type should not contain nested effect computations (A < S), or A is not a module from
-  * kyo (like Abort.type).
-  *
-  * This constraint helps:
-  *   - prevent accidental nesting of effects that would require flattening, but cannot be strictly enforced in all generic contexts,
-  *   - prevent calling combinators from (A < S) on modules, like Abort.foldAbort.
-  *
-  * @tparam A
-  *   The type to check for nested effects
-  */
 @implicitNotFound("""
 Type '${A}' may contain a nested effect computation.
 This usually means you have a value of type `X < S1 < S2` (i.e. `(X < S1) < S2`) where a plain value `X < S` is expected.
@@ -26,7 +16,6 @@ To fix this, you can:
 1. Call `.flatten` to merge the nested effects:
     val x: (Int < S1) < S2 = ...
     val y: Int < (S1 & S2) = x.flatten
-
 
    This collapses the nested effect layers into a single computation with a combined effect set.
 
@@ -70,7 +59,6 @@ private[kernel] object CanLiftMacro:
 
 end CanLiftMacro
 
-// TODO can we move this to CanLiftMacro?
 private[kernel] object LiftMacro:
 
     def abortCastUnitMacro[S1: Type, S2: Type](v: Expr[Unit < S1])(using Quotes): Expr[Unit < S2] =

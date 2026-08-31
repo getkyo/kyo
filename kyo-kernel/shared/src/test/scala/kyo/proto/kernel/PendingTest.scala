@@ -14,11 +14,8 @@ import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
 import scala.compiletime.testing.typeCheckErrors
 
-/** The kernel's `PendingTest` corpus pointed at this package. Cases whose surface this package does not have yet (the lift of a bare
-  * function, the module lint) are kept with their code commented, so the corpus is complete and the gap is visible.
-  */
 class PendingTest extends AnyFreeSpec:
-    // evaluation through the public entry, so every case closes its row to Any the way a user must
+
     private def eval[A](v: A < Any): A = v.eval
 
     private val Period = Safepoint.period()
@@ -151,10 +148,6 @@ class PendingTest extends AnyFreeSpec:
         assert(eval(answerSay(payload)) == 6)
     }
 
-    // the same shapes point-free: map takes A => B < S2, and a function returning a bare value is
-    // not one, since the alias is opaque outside its companion and a value conversion does not
-    // reach the result position of a function type. The lambda form above compiles because the lift
-    // applies to the body value
     "a pure function passes to map point-free" in {
         assertCompiles("""
             val f: Int => Int    = _ + 1
@@ -450,8 +443,6 @@ class PendingTest extends AnyFreeSpec:
                 )
         end TestEffect2
 
-        // the kernel corpus writes `Kyo.lift(x)` for a computation held as a value; here that is the
-        // one lift, reached through a generic function
         def lifted[A](v: A): A < Any = v
 
         "basic nesting operations" in {
@@ -469,14 +460,8 @@ class PendingTest extends AnyFreeSpec:
             val result = TestEffect1.run(comp.map(c => TestEffect2.run(c)))
             assert(result.eval == "Effect1:10".length + 10)
 
-            // handle and flatten are not in this package yet
-            // val result2 = comp.flatten.handle(TestEffect2.run).handle(TestEffect1.run)
-            // assert(result2.eval == "Effect1:10".length + 10)
         }
 
-        // A denied safepoint must defer the original boxed value, never the unnested
-        // payload: a deferred computation-as-data would otherwise resume as a
-        // suspension and leak the inner effect. Draining the budget forces the deferral.
         def drainedBudget[A](f: => A): A =
             val slot  = Safepoint.get()
             val saved = Safepoint.save(slot)
@@ -592,58 +577,7 @@ class PendingTest extends AnyFreeSpec:
             val result = TestEffect1.run(nested.map(TestEffect2.run))
             assert(result.eval == 15)
 
-            // flatten is not in this package yet
-            // val result2 = TestEffect1.run(TestEffect2.run(nested.flatten))
-            // assert(result2.eval == 15)
         }
-
-        // the kernel lifts a pure function into a computation-returning one (`liftPureFunction1`);
-        // this package lifts values only, so `map(f)` over a bare `String => B` and the widening in
-        // the second case do not compile here yet. The lambda form, `map(a => f(a))`, lifts the
-        // value and is covered by "a generic function nests its result across effects" above.
-        /*
-        "nested effect suspension lifted function" in {
-            def f(str: String): Int < TestEffect2 = TestEffect2(str)
-
-            def g[B](f: String => B): B < TestEffect1 =
-                TestEffect1(1).map(f)
-
-            val nested: Int < TestEffect2 < TestEffect1 = g(f)
-
-            val result = TestEffect1.run(nested.map(TestEffect2.run))
-            assert(result.eval == 19)
-        }
-
-        "nested effect suspension widened lifted function" in {
-            def f(str: String): Int < TestEffect2 = TestEffect2(str)
-
-            def g[B](f: String => B): B < TestEffect1 =
-                val liftedF: String => B < Any = f
-                TestEffect1(1).map(liftedF)
-
-            val nested: Int < TestEffect2 < TestEffect1 = g(f)
-
-            val result = TestEffect1.run(nested.map(TestEffect2.run))
-            assert(result.eval == 19)
-        }
-         */
-
-        /*
-        "generic lifted functions" in {
-            def f(str: String): Int < TestEffect2 = TestEffect2(str)
-
-            def g[B](f: String => B): B < TestEffect1 =
-                TestEffect1(1).map(f).flatMap(_ => f("a")).andThen(f("b"))
-
-            val nested: Int < TestEffect2 < TestEffect1 = g(f)
-
-            val result = TestEffect1.run(nested.map(TestEffect2.run))
-            assert(result.eval == 11)
-
-            val result2 = TestEffect1.run(TestEffect2.run(nested.flatten))
-            assert(result2.eval == 11)
-        }
-         */
 
         "evalNow accepts nested computations" in {
             sealed trait Bump extends ArrowEffect[Const[Int], Const[Int]]

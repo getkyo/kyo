@@ -9,14 +9,8 @@ import kyo.proto.kernel.ArrowEffect.Mask
 import kyo.proto.kernel.internal.Eval
 import org.scalatest.freespec.AnyFreeSpec
 
-/** The mask aspect of the `ArrowEffect` corpus, the kernel `MaskTest` pointed at `ArrowEffect.Mask`. The two bracket interaction cases are
-  * not transcribed: `Effect.bracket` is finalizer machinery this kernel does not carry (backlog R3, `Sync` becomes the bracketing layer,
-  * handled last by construction, so releases never ride in continuations and abandonment orphans nothing). Both cases return at the Sync
-  * layer when it lands, pinning that its state releases resources even when an inner handler drops a continuation. The catching case is
-  * transcribed onto the recovering `handleCont`, this kernel's spelling of the same behavior.
-  */
 class ArrowEffectMaskTest extends AnyFreeSpec:
-    // evaluation through the public entry, so every case closes its row to Any the way a user must
+
     private def eval[A](v: A < Any): A = v.eval
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
@@ -33,8 +27,7 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
                 cont(()))
 
     sealed trait AskSub extends Ask
-    // the operation is tagged at the subtype and the row names the supertype, the pairing the
-    // sub-tag masking pins exercise
+
     def askSub: Int < Ask = ArrowEffect.suspend[Any](Tag[AskSub].asInstanceOf[Tag[Ask]], ())
     def runAskSub[A, S](v: A < (AskSub & S))(answer: Int): A < S =
         ArrowEffect.handleCont(Tag[AskSub], v)([C] => (_, cont) => cont(answer))
@@ -47,14 +40,10 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
                 buf += input
                 cont(()))
 
-    // makes a preemption stop pending from inside a running slice: the jvm and native deliver
-    // through the slot's stop sentinel, js and wasm through the slice deadline, and each
-    // platform's other call is inert there
     private def requestStop(): Unit =
         kyo.discard(kyo.proto.kernel.internal.Safepoint.stop(Thread.currentThread()))
         kyo.proto.kernel.internal.Safepoint.deadline(java.lang.System.currentTimeMillis() - 1)
 
-    // stackless and shared: the pins are about control flow, not exception construction
     private object Boom extends RuntimeException("boom", null, false, false)
 
     "a masked operation tunnels past an inner handler and is answered outside run" in {
@@ -174,9 +163,7 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
             sealed trait Cfg extends kyo.proto.kernel.ContextEffect[Int]
             def read: Int < Cfg      = kyo.proto.kernel.ContextEffect.suspend(Tag[Cfg])
             val v: Int < (Ask & Cfg) = ask.map(a => read.map(c => a + c))
-            // the region binding 10 stands between the mask and run, so the tunneling operation
-            // crosses it out and the answer re-enters through it: the read after the tunnel must
-            // still see the binding
+
             val bound = kyo.proto.kernel.ContextEffect.handle(Tag[Cfg], 10)(Mask[Ask](v))
             val out   = Mask.run[Ask](bound)
             assert(eval(runAsk(out)(32)) == 42)
@@ -202,7 +189,7 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
         val v: Int < (Ask & Say & Log) =
             ask.map(a => logLine("mid").map(_ => say("s").map(_ => ask.map(b => a + b))))
         val masked = Mask[Ask & Say](v)
-        // Log is not masked: its operation crosses the mask and is answered here, inside the pipeline
+
         val logHandled   = runLog(masked)(logs)
         val innerHandled = runSay(runAsk(logHandled)(1))(innerBuf)
         val out          = Mask.run[Ask & Say](innerHandled)
@@ -225,32 +212,26 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
     }
 
     "a mask at the supertype does not capture sub-tagged operations" in {
-        // the sub-tagged operation is foreign to the mask, whose tag is not a subtype of the
-        // operation's, so it is answered by its own handler standing between the mask and run;
-        // had it tunneled, the payload would reach run with no AskSub handler outside and the
-        // eval would reject it as unhandled
+
         val v: Int < Ask = askSub.map(_ + 1)
         val local        = runAskSub(Mask[Ask](v))(41)
         val out          = Mask.run[Ask](local)
-        // the vacuous Ask row is closed by a handler whose answer must go unused: the operation
-        // was already answered inside, so anything else is a routing failure
+
         assert(eval(runAsk(out)(999)) == 42)
     }
 
     "a mask at a subtype effect captures supertype-tagged operations" in {
-        // the mask's subtype tag answers the supertype-tagged operation, and the payload carries
-        // the operation's own Ask tag, so it lands at the Ask handler outside run. The inner Ask
-        // handler answering instead would produce 2
+
         val v: Int < Ask = ask.map(_ + 1)
         val out          = Mask.run[AskSub](runAsk(Mask[AskSub](v))(1))
-        // the vacuous AskSub row left by run is closed by a handler whose answer must go unused
+
         assert(eval(runAskSub(runAsk(out)(42))(998)) == 43)
     }
 
     "a settled computation passes through mask and run untouched" in {
         val masked = Mask[Ask](42: Int < Ask)
         assert(!masked.isInstanceOf[kyo.proto.kernel.internal.Pending[?, ?]])
-        // the vacuous Ask row is closed by a handler whose answer must go unused
+
         assert(eval(runAsk(Mask.run[Ask](masked))(997)) == 42)
     }
 
@@ -287,8 +268,7 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
         val masked       = Mask[Ask & Say](v)
         val innerHandled = runSay(runAsk(masked)(1))(innerBuf)
         val out          = Mask.run[Ask & Say](innerHandled)
-        // the payloads carry each operation's own tag, so the Ask operations land at the Ask
-        // handler and the Say operation at the Say handler, with nothing needing a joint handler
+
         val r = runSay(runAsk(out)(42))(outerBuf)
         assert(eval(r) == 84)
         assert(innerBuf.isEmpty)

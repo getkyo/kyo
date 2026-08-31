@@ -12,31 +12,20 @@ import kyo.proto.kernel.internal.Safepoint
 import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
 
-/** The kernel's `ArrowEffectTest` corpus pointed at this package: `handleLoop`, `handleCont`, `handleLoopState`, `handleWith`,
-  * `handleLoopWith`, `handleLoopStateWith`, `suspendWith`, the capture cases, park, `contracts`, `nested box`, `coverage`, all live.
-  * The kernel corpus itself keeps `handleFirst`, `dispatchFirst`, `handleCatching` and `handlePartial` parked as commented code
-  * (removed there with the IOTask integration design, to return with it); they are not transcribed here until that surface exists in
-  * either package. `Eval.partial` and the done-less stateful overload are commented in place where a case needs them.
-  */
 class ArrowEffectTest extends AnyFreeSpec:
-    // the eval's result as a raw value: unnesting delivers a payload as the computation it holds,
-    // and an unanswered suspension surfaces through the failing assertion that compares it
-    // evaluation through the public entry, so every case closes its row to Any the way a user must
+
     private def eval[A](v: A < Any): A = v.eval
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
     sealed trait AskSub extends Ask
-    // the operation is tagged at the subtype and the row names the supertype, which the row's
-    // contravariance permits: the pairing the sub-tag dispatch pins exercise
+
     def askSub: Int < Ask = ArrowEffect.suspend[Any](Tag[AskSub].asInstanceOf[Tag[Ask]], ())
 
     sealed trait Say extends ArrowEffect[Const[String], Const[Unit]]
     def say(s: String): Unit < Say = ArrowEffect.suspend[Any](Tag[Say], s)
 
-    // holds a computation as a value: the generic parameter routes through the one lift, which boxes
-    // a pending value; the direct ascription is rejected by the lift's lint
     def box[A](v: A): A < Any = v
 
     private val Period = Safepoint.period()
@@ -450,8 +439,6 @@ class ArrowEffectTest extends AnyFreeSpec:
             assert(eval(r) == 42)
         }
 
-        // a handler for the supertype leaves the subtype in the row rather than claiming to have discharged
-        // it, so the obligation is a compile error and never a suspension nothing answers at runtime
         "a supertype handler leaves a subtype effect in the row" in {
             val v: Int < AskSub = ArrowEffect.suspend[Any](Tag[AskSub], ()).map(_ + 1)
             val r               = ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, cont) => cont(41), a => a)
@@ -460,9 +447,6 @@ class ArrowEffectTest extends AnyFreeSpec:
             assert(eval(ArrowEffect.handleCont(Tag[AskSub], stillOwed)([C] => (_, cont) => cont(41), a => a)) == 42)
         }
 
-        // the handler is installed at the subtype and the computation names the supertype, which is the
-        // pairing the row itself asks for: `v: A < (E & S)` accepts a row of `Ask` for an `E` of `AskSub`
-        // because the row is contravariant
         "a handler at a subtype effect answers a computation typed at the supertype" in {
             val v: Int < Ask = askSub.map(_ + 1)
             val r: Int < Any = ArrowEffect.handleCont(Tag[AskSub], v)([C] => (_, cont) => cont(41), a => a)
@@ -472,10 +456,7 @@ class ArrowEffectTest extends AnyFreeSpec:
         "the operation clause receives the operation reified at its own tag" in {
             var seen         = List.empty[String]
             val v: Int < Ask = ask.map(_ + 1)
-            // the region is installed at the subtype and answers the supertype-tagged operation;
-            // the reified value carries the operation's own tag, which only the node knows. The
-            // clause ends the region without resuming: an answer type it could fabricate would
-            // need the operation's shape, which reification deliberately does not leak
+
             val r: Int < Any = ArrowEffect.handleContOperation(Tag[AskSub], v)(
                 [X] =>
                     (operation, _) =>
@@ -488,16 +469,6 @@ class ArrowEffectTest extends AnyFreeSpec:
             assert(eval(r) == -1)
             assert(seen == List(Tag[Ask].show))
         }
-
-        // Eval.partial is not in this package yet
-        /*
-        "installed after a partial evaluation answers the parked operation" in {
-            val v            = ask.map(_ + 1)
-            val parked       = Eval.partial(v)
-            val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], parked)([C] => (_, cont) => cont(41), a => a)
-            assert(eval(r) == 42)
-        }
-         */
 
         "a map chained after the region applies to the result" in {
             val v            = ask.map(_ + 1)
@@ -627,30 +598,6 @@ class ArrowEffectTest extends AnyFreeSpec:
             assert(eval(out) == 10)
         }
 
-        // the stateful handler always takes a done clause here; the old kernel's overload without
-        // one completed with the result and discarded the state
-        /*
-        "the overload without done completes with the result and discards the state" in {
-            val v = ask.map(a => ask.map(b => a + b))
-            val r = ArrowEffect.handleLoopState(Tag[Ask], 10, v)([C] => (s, _) => Loop.continue(s + 1, s))
-            assert(eval(r) == 21)
-        }
-         */
-
-        // Eval.partial is not in this package yet
-        /*
-        "a parked stateful region resumes with its state and done" in {
-            val v: Int < (Ask & Say) = ask.map(_ => say("x")).map(_ => ask)
-            val handled: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], 10, v)(
-                [C] => (s, _) => Loop.continue(s + 1, s),
-                (_, a) => a * 2
-            )
-            val parked = Eval.partial(handled)
-            assert(parked.evalNow.isEmpty)
-            val out: Int < Any = ArrowEffect.handleCont(Tag[Say], parked)([C] => (_, cont) => cont(()), a => a)
-            assert(eval(out) == 22)
-        }
-         */
     }
 
     "handleWith" - {
@@ -926,7 +873,7 @@ class ArrowEffectTest extends AnyFreeSpec:
     }
 
     "recover" - {
-        // stackless and shared: the pins are about control flow, not exception construction
+
         object Boom extends RuntimeException("boom", null, false, false)
 
         "a region's recovery clause answers a throw raised in its extent" in {
@@ -942,7 +889,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                 (_, a) => a,
                 (s, _) => Maybe(-100 - s)
             )
-            // two operations answered before the throw, so the live state is 2
+
             assert(eval(r) == -102)
         }
 
@@ -1012,7 +959,7 @@ class ArrowEffectTest extends AnyFreeSpec:
             var seen                     = 0
             ArrowEffect.dispatchFirst(Tag[Ask], deferred)([C] => _ => seen += 1)
             assert(seen == 1)
-            // undisturbed: the same value still evaluates
+
             assert(eval(ArrowEffect.handleCont(Tag[Ask], deferred)([C] => (_, k) => k(42), a => a)) == 42)
         }
 
@@ -1024,9 +971,9 @@ class ArrowEffectTest extends AnyFreeSpec:
 
         "queries in the dispatch direction" in {
             var seen = 0
-            // a region at the subtype answers the supertype-tagged operation, so the query reports it
+
             ArrowEffect.dispatchFirst(Tag[AskSub], ask)([C] => _ => seen += 1)
-            // the supertype region does not answer the sub-tagged operation, so the query does not
+
             ArrowEffect.dispatchFirst(Tag[Ask], askSub)([C] => _ => seen += 10)
             assert(seen == 1)
         }

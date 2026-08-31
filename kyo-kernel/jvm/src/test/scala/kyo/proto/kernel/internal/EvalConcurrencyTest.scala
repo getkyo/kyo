@@ -8,10 +8,6 @@ import kyo.proto.kernel.<
 import kyo.proto.kernel.ArrowEffect
 import org.scalatest.freespec.AnyFreeSpec
 
-/** The eval pins that spawn real threads, jvm only for that reason: everything else about the eval is
-  * shared, and this is the one genuine platform split, the way `SafepointConcurrencyTest` is for the
-  * reference kernel.
-  */
 class EvalConcurrencyTest extends AnyFreeSpec:
     private def eval[A, S](v: A < S): A =
         Nested.unnest[A](Eval(v))

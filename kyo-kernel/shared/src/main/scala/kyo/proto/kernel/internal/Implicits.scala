@@ -14,9 +14,6 @@ trait Implicits:
 
     implicit inline def abortCastUnit[S1, S2](inline v: Unit < S1): Unit < S2 = ${ LiftMacro.abortCastUnitMacro[S1, S2]('v) }
 
-    // the value lift cannot reach the result position of a function type, so a function returning a
-    // bare value needs its own conversion to pass where a computation-returning one is expected
-    // TODO let's check if we can remove these liftings for functions
     implicit inline def liftPureFunction1[A1, B](inline f: A1 => B)(
         using inline flat: CanLift[B]
     ): A1 => B < Any =

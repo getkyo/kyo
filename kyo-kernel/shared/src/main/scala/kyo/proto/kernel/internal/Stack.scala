@@ -4,27 +4,8 @@ import kyo.proto.Arrow
 import kyo.proto.kernel.Effect
 import scala.annotation.tailrec
 
-/** The regions an eval has open, outermost first.
-  *
-  * One entry per installed region: the handler that answers for it, the state the loop threads through it, the context that stood when it
-  * installed, and the continuation that follows it. Holding a region here rather than in a Java frame is what lets regions nest to any
-  * depth: the eval stays one self-recursive loop, and an open region costs an entry instead of a frame.
-  *
-  * The install-time context is two laws' operand. A failed extent rolls back to it. A completing exit keeps the interior's context,
-  * updates included, and reverts only the exiting region's own binding to what stood before it, which is exactly what the install-time
-  * context holds for the region's own tag: the context is immutable and the entry is written once, so no separate prior needs caching.
-  *
-  * Mutable, and scoped to a single `Eval.apply`, which is the only thing that holds one. A nested eval builds its own, so it sees none of the
-  * outer eval's regions, and nothing the eval hands out points here.
-  *
-  * The arrays hold every region's values, so their element types are the erasure and each read is asserted at the type the matching push
-  * established. The entries are strictly heterogeneous, which is why the assertion cannot be carried in a signature.
-  */
 final private[kernel] class Stack:
 
-    // shared and empty until the first region is installed. Every eval builds a stack and most never install
-    // anything, so allocating four arrays in the constructor put 224 B/op on evals with no region in them at
-    // all, measured on `evalFixedOverhead`. The first `push` finds no room and grows into real arrays.
     private var handlers      = Stack.noHandlers
     private var states        = Stack.noStates
     private var contexts      = Stack.noContexts
@@ -33,12 +14,6 @@ final private[kernel] class Stack:
 
     def isEmpty: Boolean = size == 0
 
-    /** Installs a region. Typed, because the pushing site knows all five: the state has to be the one this
-      * handler threads, and the continuation has to start where this handler's result ends. Those are the two
-      * ways an entry can be built wrong, and both are checked here rather than asserted on the way out. The
-      * context is the install-time one: the failed extent's rollback target, and the exit law's revert source
-      * for the exiting region's own binding.
-      */
     def push[E <: Effect, A, B, S, State](
         handler: Handler[E, A, B, S, State],
         state: State,
@@ -53,28 +28,14 @@ final private[kernel] class Stack:
         size += 1
     end push
 
-    /** Drops the innermost region. The slots it used keep their references until a deeper push overwrites
-      * them or the eval ends, so a stack that reached depth n holds up to n entries' worth for the rest
-      * of that eval. Clearing them is the alternative and costs four stores on the path every region
-      * exit takes; neither has been measured, and the retention is bounded by the eval's peak depth.
-      */
     def pop(): Unit = size -= 1
 
-    /** Empties the stack for the next borrower.
-      *
-      * The entries are dropped rather than merely forgotten, which `pop` does not do: a pooled stack outlives the eval that used it, so a
-      * slot the size no longer covers would hold that eval's handler, state, context and continuation alive for as long as the pool does.
-      * Bounded by the peak depth one eval reached, which is exactly the retention `pop` is allowed to leave and a pool is not.
-      *
-      * Called on every release, including one leaving on an exception, where the stack still holds every region the throw unwound past.
-      */
     def clear(): Unit =
         @tailrec def loop(i: Int): Unit =
             if i < size then
                 handlers(i) = null
                 states(i) = null
-                // `Context` is opaque over a TypeMap and admits no null; the shared empty one drops the
-                // reference without allocating, which is all this needs
+
                 contexts(i) = Context.empty
                 continuations(i) = null
                 loop(i + 1)
@@ -82,12 +43,6 @@ final private[kernel] class Stack:
         size = 0
     end clear
 
-    /** Moves every entry into a packed array, outermost first, leaving the stack empty.
-      *
-      * Three slots per region: handler, state, continuation. Contexts stay behind: a re-installed region derives its context from where it
-      * stands, so captured install-time contexts would be wrong to keep. A move rather than a copy for the reason `clear` nulls its slots:
-      * the pooled arrays outlive the eval, and the packed array is the entries' one owner from here on.
-      */
     def snapshot(): Array[AnyRef] =
         val out = new Array[AnyRef](size * 3)
         @tailrec def loop(i: Int): Unit =
@@ -105,22 +60,16 @@ final private[kernel] class Stack:
         out
     end snapshot
 
-    // read access for the failure walk: the reconstruction runs at the guard's catch with the
-    // regions still standing, and reads them without disturbing anything. Index 0 is the outermost
     def depth: Int                                = size
     def handlerAt(i: Int): Handler[?, ?, ?, ?, ?] = handlers(i)
     def continuationAt(i: Int): Arrow[?, ?, ?]    = continuations(i)
 
-    // the innermost region, which is the only one an eval step can be inside. Every call site reaches these
-    // behind its own `isEmpty` test, so an empty stack has no reads rather than a defined answer for them
     def handler: Handler[?, ?, ?, ?, ?] = handlers(size - 1)
     def state: Any                      = states(size - 1)
     def state_=(value: Any): Unit       = states(size - 1) = value
     def ctx: Context                    = contexts(size - 1)
     def cont: Arrow[?, ?, ?]            = continuations(size - 1)
 
-    // out of line: growth is cold, and the push it serves is on the region path. The first call finds the
-    // shared empty arrays and lands on the floor rather than doubling nothing
     private def grow(): Unit =
         val capacity           = if size == 0 then 8 else size * 2
         val grownHandlers      = new Array[Handler[?, ?, ?, ?, ?]](capacity)
@@ -139,21 +88,12 @@ final private[kernel] class Stack:
 end Stack
 
 private[kernel] object Stack:
-    // one set for the whole process. They are never written, because a write needs room and having none is
-    // what sends the first push through `grow`
+
     private val noHandlers      = new Array[Handler[?, ?, ?, ?, ?]](0)
     private val noStates        = new Array[Any](0)
     private val noContexts      = new Array[Context](0)
     private val noContinuations = new Array[Arrow[?, ?, ?]](0)
 
-    /** The stacks one thread is not currently using.
-      *
-      * Every eval needs a stack and most give it back untouched, so allocating one per eval put 32 B/op on evals that install no region at
-      * all. Pooling is what the reference kernel does at the same place, and it is sound here for the reason the stack is safe to be mutable
-      * at all: it is scoped to a single `Eval.apply`, nothing it holds leaves the eval, and a nested eval borrows its own.
-      *
-      * Plain fields behind a thread local, so a pool is only ever touched by its own thread and needs no synchronization.
-      */
     final private class Pool:
         private var free = new Array[Stack](4)
         private var size = 0

@@ -6,27 +6,8 @@ import scala.annotation.publicInBinary
 
 private[kyo] class Nested[+A](val value: A)
 
-// private[kyo] in the type system and public in the binary: the implicit lift is inline and names it,
-// and an accessor here both costs the hottest expansion in the kernel and, for a top-level object,
-// is emitted against the package itself, a class that does not exist. The annotation makes the direct
-// reference binary-legal, so no accessor is emitted at all.
-//
-// Plain module methods rather than `@static`: an `@static` symbol named in inline-expanded code fails
-// `bringForward` in a downstream module's suspended-unit retry run (a StaleSymbolException on that
-// module's clean build whenever it defines its own macros), while a module method survives it. The cost
-// is the module load at expansion sites.
 @publicInBinary private[kyo] object Nested:
 
-    /** The settled value, one nesting level stripped. Only valid where the pending case is already excluded.
-      *
-      * This is `unsafeGet`'s test, reachable without going through the extension. An inline body that selects a
-      * member through the opaque type's owner makes the expansion carry a proxy chain for that owner with its
-      * refinement written out longhand, which costs more than the two lines below; a call to a plain object does
-      * not.
-      *
-      * The parameter is `Any` on purpose. Typed `A`, the implicit lift would be in scope at every call site, and
-      * lifting a value that is already union-represented corrupts it.
-      */
     def unnest[A](v: Any): A =
         v match
             case v: Nested[A] @unchecked => v.value
@@ -34,8 +15,7 @@ private[kyo] class Nested[+A](val value: A)
 
     def nest[A, S](v: A): A < S =
         v match
-            // only node payloads are ambiguous in the union now: a bare arrow is not a member, so it
-            // travels as plain settled data and needs no wrapper
+
             case v: (Pending[?, ?] | Nested[?]) => Nested(v).asInstanceOf[A < S]
             case _                              => v.asInstanceOf[A < S]
 

@@ -1,6 +1,5 @@
-// inside kyo on purpose: this tooling exercises the kernel's private Debugger seam, which is the
-// sanctioned reason to stand on private surface. The computations it traces are built outside kyo,
-// on the public surface, so their frames derive at real positions
+
+
 package kyo.proto.debug
 
 import kyo.proto.Arrow
@@ -16,8 +15,6 @@ import scala.jdk.CollectionConverters.*
 
 object ConsoleDebugger:
 
-    // a layout is class-static, so the JOL parse and the rendering are a one-time cost per
-    // class; every allocation prints the cached line
     private var layoutCache = Map.empty[Class[?], String]
 
     private def layoutLine(cls: Class[?]): String =
@@ -29,18 +26,10 @@ object ConsoleDebugger:
             }
         )
 
-    // both header geometries, always: the running VM's mode is measured (marked *), the other is
-    // modeled through JOL's HotSpot layouter (classic = compressed oops and class pointers, 12 B
-    // header; compact = the JEP 450 8 B header)
     private val jdk           = Runtime.version().feature()
     private val classicLayout = new HotSpotLayouter(new Model64(true, true, 8), jdk)
     private val compactLayout = new HotSpotLayouter(new Model64_Lilliput(true, 8, false), jdk)
 
-    /** The class's memory footprint as a segment map in offset order, in both header geometries: header, each field with its size, and
-      * every byte alignment loses, where it loses it. Inline combinators expand an anonymous class per call site, so capture oddities (an
-      * `$outer`, a duplicated capture slot) show up as segments, per site. Compiler suffixes are trimmed from field names; `$`-prefixed
-      * synthetics keep their names.
-      */
     private def layout(cls: Class[?]): String =
         val measured           = ClassLayout.parseClass(cls)
         val runsCompact        = measured.headerSize == 8
@@ -68,26 +57,12 @@ object ConsoleDebugger:
 
 end ConsoleDebugger
 
-// TODO move to kyo-core and make the output async to reduce interference, following the
-// Log.Unsafe.AsyncUnsafe pattern: hooks enqueue structured events to the dispatcher and the drain
-// does the rendering, the JOL parse, and the println. The completeness check stays synchronous
-// (it must fail the run at the offending operation), depth and stack size are captured at hook
-// time, each scenario awaits the drain before printing stats, and the JOL dependency travels with
-// the move.
-/** Console tracer for the eval: renders the execution timeline (loop steps, regions, handler answers, context reads, allocations) with
-  * region-depth indentation and keeps the per-run allocation tally. One instance per scenario; install before running, read `stats` after.
-  */
 final class ConsoleDebugger extends Debugger:
 
     private var depth        = 0
     private var counts       = Map.empty[String, Int]
     private var unfusedCount = 0
 
-    // every allocation reported so far, by identity: the completeness net. Any Pending or Arrow
-    // operand reaching a hook below must have been born through onAlloc; an orphan means an
-    // allocation site lost its hook, and the run fails on the spot instead of silently
-    // under-reporting. Seeded with the identity arrow, which is minted at module initialization
-    // and may predate any installed debugger.
     private val reported = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap[Any, java.lang.Boolean])
     reported.add(Arrow.id)
 

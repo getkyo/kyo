@@ -14,9 +14,6 @@ abstract class Effect private[kernel] ()
 
 object Effect:
 
-    /** Reifies the application of a continuation to a computation as a record. The raw factory: callers know their shapes, so no
-      * normalization happens here; value composition with the free-slot laws is `<.chain`'s job.
-      */
     def defer[A, B, S](v: A < S, cont: Arrow[A, B, S]): B < S =
         cont match
             case cont: Arrow.Chain[A, x, B, S] @unchecked =>
@@ -43,17 +40,11 @@ object Effect:
             end new
     end defer
 
-    /** Holds a computation unevaluated until an eval reaches it. */
     def defer[A, S](f: => A < S)(using Frame): A < S =
         deferInline(f)
 
-    // The payload a deferred body stands on: the lift resolves Unit through its primitive arm, so the
-    // value is carried as it stands and nothing nests.
     private val unitValue: Unit < Any = ()
 
-    // The body lives in the arrow, not the payload: building the record does not run it, and applying
-    // the record's own transform is what runs it. The record is its own step, so the by-name form stays
-    // one object.
     @nowarn("msg=anonymous")
     private[kyo] inline def deferInline[A, S](inline f: => A < S)(using inline _frame: Frame): A < S =
         new Kyo.DeferTransform[Unit, A, S]:

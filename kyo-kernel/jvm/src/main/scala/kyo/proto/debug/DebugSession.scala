@@ -1,6 +1,5 @@
-// inside kyo on purpose: this tooling exercises the kernel's private Debugger seam, which is the
-// sanctioned reason to stand on private surface. The computations it traces are built outside kyo,
-// on the public surface, so their frames derive at real positions
+
+
 package kyo.proto.debug
 
 import kyo.proto.kernel.*
@@ -8,7 +7,6 @@ import kyo.proto.kernel.internal.Debugger
 import kyo.proto.kernel.internal.Eval
 import kyo.proto.kernel.internal.Nested
 
-/** Counts hooks without printing them, for depths where the step log is unreadable. */
 final class Counting(guardsLikeProduction: Boolean) extends Debugger:
     private var counts                = Map.empty[String, Int]
     private def bump(k: String): Unit = counts = counts.updated(k, counts.getOrElse(k, 0) + 1)
@@ -27,10 +25,6 @@ final class Counting(guardsLikeProduction: Boolean) extends Debugger:
     def report: String = counts.toList.sortBy(-_._2).map((k, n) => f"$n%7d  $k").mkString("\n")
 end Counting
 
-/** One traced evaluation: installs a tracer, builds and evaluates inside the installed window, and
-  * prints the tracer's summary. Built inside the window on purpose: nodes report their own
-  * allocation from their constructors, and ConsoleDebugger refuses an operand it never saw born.
-  */
 object DebugSession:
     def run(quiet: Boolean, guardsLikeProduction: Boolean)(build: () => Int < Any): Int =
         val counting = Counting(guardsLikeProduction)
