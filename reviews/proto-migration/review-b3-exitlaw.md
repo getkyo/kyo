@@ -1,4 +1,12 @@
-# Live review: EffectTrace and the exit law
+# Live review: EffectTrace, the exit law, the register slots, and B1
+
+Updated after the autonomous round. Additions on top of the original package below: the
+state-on-failure survey (`state-on-failure-survey.md`) grounds decision point 1 and supports the
+transactional reading; decision point 2 is resolved as directed by the register slots on the
+stack, restoring reference-level trace fidelity, with the whole-bench measurement recorded in
+`bench-review-bundle.log` against `bench-review-baseline.log`; the B1 design is written
+(`isolate-design.md`) and its implementation is in flight in the isolated worktree, with the
+whole-context read node landed and `Isolate`/`Contextual` next.
 
 Built and verified in the isolated worktree (`kyo-root-impl`, branch `proto-lift-fix`), on top of
 your `2100405d49`. Two commits there: `21030bc944` (EffectTrace) and `7705ecfece` (the exit law).
