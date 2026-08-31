@@ -62,7 +62,8 @@ import scala.util.control.NonFatal
                             }
                             Kyo.Park[A, S](parked, stack.snapshot())
                         end if
-                    else loop(kyo.value, kyo.contA, kyo.contB.chain(contA.chain(contB)), ctx)
+                    else
+                        loop(kyo.value, kyo.contA, kyo.contB.chain(contA.chain(contB)), ctx)
 
                 case kyo: Kyo.Suspend[?, ?, T, S2] @unchecked =>
                     kyo match
@@ -76,9 +77,11 @@ import scala.util.control.NonFatal
                             if idx < 0 then bug(s"unhandled suspension: $kyo")
                             else
                                 Debugger.onHandle(kyo, stack.handlerAt(idx), stack.stateAt(idx))
-                                if idx < stack.depth - 1 then Debugger.onForeign(kyo, stack.handler)
+                                if idx < stack.depth - 1 then
+                                    Debugger.onForeign(kyo, stack.handler)
                                 def continuation =
-                                    if idx == stack.depth - 1 then kyo.cont.chain(contA.chain(contB))
+                                    if idx == stack.depth - 1 then
+                                        kyo.cont.chain(contA.chain(contB))
                                     else
                                         val entries = stack.dump(idx + 1)
                                         Debugger.whenEnabled {
@@ -118,6 +121,7 @@ import scala.util.control.NonFatal
                                         loop(result, Arrow.id, Arrow.id, ctx)
                                     case handler: Handler.HandlerLoop[IX, OX, EX, C, Y, S2, VX] @unchecked =>
                                         val outcome0 = handler.run(stack.stateAt(idx).asInstanceOf[VX], kyo.input)
+                                        stack.scratch = outcome0
                                         Debugger.onResult(outcome0)
                                         outcome0 match
                                             case outcome: Loop.Continue2[VX, OX[VX] < (EX & S2)] @unchecked =>

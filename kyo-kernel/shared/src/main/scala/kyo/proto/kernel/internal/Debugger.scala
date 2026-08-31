@@ -29,7 +29,7 @@ end Debugger
 
 private[kyo] object Debugger:
 
-    inline val enabled = true
+    inline val enabled = false
 
     private var current: Debugger = Noop
 

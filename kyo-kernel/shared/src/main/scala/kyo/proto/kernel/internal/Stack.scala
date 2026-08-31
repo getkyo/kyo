@@ -11,6 +11,12 @@ final private[kernel] class Stack:
     private var continuations = new Array[Arrow[?, ?, ?]](0)
     private var size          = 0
 
+    // Written on every HandlerLoop dispatch so the clause outcome escapes and is
+    // never read back: C2's scalar replacement of the outcome inside the eval loop
+    // compiles to code that roughly doubles the settled HandlerLoop benchmark rows,
+    // and a store into the pooled stack is one it cannot elide.
+    var scratch: Any = null
+
     def isEmpty: Boolean = size == 0
 
     def push[E <: Effect, A, B, S, State](
@@ -37,6 +43,7 @@ final private[kernel] class Stack:
                 loop(i + 1)
         loop(0)
         size = 0
+        scratch = null
     end clear
 
     def snapshot(): Array[AnyRef] =
