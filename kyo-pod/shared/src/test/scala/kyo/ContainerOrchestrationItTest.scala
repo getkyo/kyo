@@ -496,18 +496,21 @@ class ContainerOrchestrationItTest extends BasePodTest:
             .stopSignal(Container.Signal.SIGUSR1)
             .stopTimeout(10.seconds)
             .autoRemove(false)
-        for
-            _ <- hostDir.mkDir
-            // Scope.run runs the container and tears it down (stopSignal, then the graceful self-exit). Its completion is the barrier; a cleanup
-            // that hangs is caught by the suite's per-leaf cap.
-            _         <- Scope.run(Container.init(config).unit)
-            delivered <- marker.exists
-            _         <- Abort.run[FileStructureException](hostDir.removeAll)
-        yield assert(
-            delivered,
-            "scope cleanup completed but the stopSignal never reached the container; the trap left no marker on the host"
-        )
-        end for
+        Path.run {
+            for
+                _ <- hostDir.mkDir
+                // Scope.run runs the container and tears it down (stopSignal, then the graceful self-exit). Its completion is the barrier; a cleanup
+                // that hangs is caught by the suite's per-leaf cap.
+                _         <- Scope.run(Container.init(config).unit)
+                delivered <- marker.exists
+                // The cleanup runs its own runner so a removal failure is reported here rather than failing the test.
+                _ <- Abort.run[FileSystemException](Path.run(hostDir.removeAll))
+            yield assert(
+                delivered,
+                "scope cleanup completed but the stopSignal never reached the container; the trap left no marker on the host"
+            )
+            end for
+        }
     }
 
     "runOnce" - {

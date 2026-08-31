@@ -38,15 +38,15 @@ class DigestComputerTest extends kyo.test.Test[Any]:
     // directory root compute is deterministic and sensitive to file-set changes.
     "directory root compute is deterministic and detects added file" in {
         Scope.run {
-            Path.tempDir("kyo-dct").map { dir =>
+            Path.run(Path.tempDir("kyo-dct")).map { dir =>
                 val file = dir / "Foo.tasty"
-                file.writeBytes(Span.from(Array[Byte](1, 2, 3, 4))).map { _ =>
+                Path.run(file.writeBytes(Span.from(Array[Byte](1, 2, 3, 4)))).map { _ =>
                     val root = dir.toString
                     Abort.run[TastyError] {
                         DigestComputer.compute(Seq(root)).map { d1 =>
                             DigestComputer.compute(Seq(root)).map { d2 =>
                                 val file2 = dir / "Bar.tasty"
-                                file2.writeBytes(Span.from(Array[Byte](5, 6, 7, 8))).map { _ =>
+                                Path.run(file2.writeBytes(Span.from(Array[Byte](5, 6, 7, 8)))).map { _ =>
                                     DigestComputer.compute(Seq(root)).map { d3 =>
                                         (d1, d2, d3)
                                     }

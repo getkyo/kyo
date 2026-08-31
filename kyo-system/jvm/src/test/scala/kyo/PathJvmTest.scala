@@ -48,11 +48,13 @@ class PathJvmTest extends kyo.test.Test[Any]:
         JFiles.createFile(target)
         JFiles.createSymbolicLink(link, target)
         val p = Path(link.toString)
-        for
-            result <- p.isSymbolicLink
-            _      <- (Path(tmp.toString)).removeAll
-        yield assert(result)
-        end for
+        Path.run {
+            for
+                result <- p.isSymbolicLink
+                _      <- (Path(tmp.toString)).removeAll
+            yield assert(result)
+            end for
+        }
     }
 
     "realPath follows a symbolic link to its underlying target" in {
@@ -62,11 +64,13 @@ class PathJvmTest extends kyo.test.Test[Any]:
         JFiles.createFile(target)
         JFiles.createSymbolicLink(link, target)
         val linkPath = Path(link.toString)
-        for
-            real <- linkPath.realPath
-            _    <- Path(tmp.toString).removeAll
-        yield assert(real.parts.lastOption.contains("target.txt"))
-        end for
+        Path.run {
+            for
+                real <- linkPath.realPath
+                _    <- Path(tmp.toString).removeAll
+            yield assert(real.parts.lastOption.contains("target.txt"))
+            end for
+        }
     }
 
     "confinedTo rejects a symlink inside root that escapes to outside root" in {
@@ -83,8 +87,8 @@ class PathJvmTest extends kyo.test.Test[Any]:
         val rootP   = Path(root.toString)
         val escapeP = Path(escape.toString)
         for
-            res <- Abort.run[FileReadException](escapeP.confinedTo(rootP))
-            _   <- Path(tmp.toString).removeAll
+            res <- Abort.run[FileSystemException](Path.runReadOnly(escapeP.confinedTo(rootP)))
+            _   <- Path.run(Path(tmp.toString).removeAll)
         yield
             assert(res.isFailure)
             assert(res.failure.exists(_.isInstanceOf[FileAccessDeniedException]))
@@ -97,12 +101,14 @@ class PathJvmTest extends kyo.test.Test[Any]:
         val link   = tmp.resolve("dangling-link.txt")
         JFiles.createSymbolicLink(link, target)
         val p = Path(link.toString)
-        for
-            existsNoFollow <- p.exists(followLinks = false)
-            existsFollow   <- p.exists(followLinks = true)
-            _              <- Path(tmp.toString).removeAll
-        yield assert(existsNoFollow && !existsFollow)
-        end for
+        Path.run {
+            for
+                existsNoFollow <- p.exists(followLinks = false)
+                existsFollow   <- p.exists(followLinks = true)
+                _              <- Path(tmp.toString).removeAll
+            yield assert(existsNoFollow && !existsFollow)
+            end for
+        }
     }
 
     "walk with followLinks=false does not follow symlinks" in {
@@ -114,9 +120,9 @@ class PathJvmTest extends kyo.test.Test[Any]:
         JFiles.createSymbolicLink(link, target)
         val dir = Path(tmp.toString)
         for
-            paths <- Scope.run(dir.walk(followLinks = false).run)
-            _     <- Path(tmp.toString).removeAll
-            _     <- Path(target.toString).removeAll
+            paths <- Scope.run(Path.runReadOnly(dir.walk(followLinks = false).run))
+            _     <- Path.run(Path(tmp.toString).removeAll)
+            _     <- Path.run(Path(target.toString).removeAll)
         yield
             val names = paths.toList.map(_.parts.last)
             assert(names.contains("link-to-target") && !names.contains("inner.txt"))
@@ -129,8 +135,8 @@ class PathJvmTest extends kyo.test.Test[Any]:
         val linkPath = tmp.resolve("cycle-link")
         JFiles.createSymbolicLink(linkPath, tmp)
         for
-            result <- Abort.run[FileSystemException](Scope.run(dir.walk(followLinks = false).run))
-            _      <- dir.removeAll
+            result <- Abort.run[FileSystemException](Scope.run(Path.runReadOnly(dir.walk(followLinks = false).run)))
+            _      <- Path.run(dir.removeAll)
         yield result match
             case Result.Success(paths) =>
                 val names = paths.toList.map(_.parts.last)
@@ -149,9 +155,9 @@ class PathJvmTest extends kyo.test.Test[Any]:
         JFiles.createSymbolicLink(link, dirA)
         val walkRoot = Path(dirB.toString)
         for
-            paths <- Scope.run(walkRoot.walk(maxDepth = Int.MaxValue, followLinks = true).run)
-            _     <- Path(dirA.toString).removeAll
-            _     <- Path(dirB.toString).removeAll
+            paths <- Scope.run(Path.runReadOnly(walkRoot.walk(maxDepth = Int.MaxValue, followLinks = true).run))
+            _     <- Path.run(Path(dirA.toString).removeAll)
+            _     <- Path.run(Path(dirB.toString).removeAll)
         yield
             val names = paths.toList.map(_.parts.last)
             assert(names.contains("inner.txt"))
@@ -166,12 +172,14 @@ class PathJvmTest extends kyo.test.Test[Any]:
         JFiles.createSymbolicLink(link, target)
         val src = Path(link.toString)
         val dst = Path(tmp.resolve("copy-of-link.txt").toString)
-        for
-            _              <- src.copy(dst, Path.CopyOptions(followLinks = false))
-            isSymbolicLink <- dst.isSymbolicLink
-            _              <- Path(tmp.toString).removeAll
-        yield assert(isSymbolicLink)
-        end for
+        Path.run {
+            for
+                _              <- src.copy(dst, Path.CopyOptions(followLinks = false))
+                isSymbolicLink <- dst.isSymbolicLink
+                _              <- Path(tmp.toString).removeAll
+            yield assert(isSymbolicLink)
+            end for
+        }
     }
 
     // =========================================================================
@@ -185,7 +193,7 @@ class PathJvmTest extends kyo.test.Test[Any]:
 
     "steady-state retained-handle read allocates zero bytes per op".onlyJvm in {
         import AllowUnsafe.embrace.danger
-        Scope.run {
+        Scope.run(Path.run {
             for
                 dir <- Path.tempDir("kyo-alloc-steady")
                 file    = dir / "steady.txt"
@@ -223,12 +231,12 @@ class PathJvmTest extends kyo.test.Test[Any]:
                 finally handle.close()
                 end try
             end for
-        }
+        })
     }
 
     "grow-to-fit read: a file larger than the initial buffer allocates only the one grow, then 0 per read".onlyJvm in {
         import AllowUnsafe.embrace.danger
-        Scope.run {
+        Scope.run(Path.run {
             for
                 dir <- Path.tempDir("kyo-alloc-grow")
                 file = dir / "grow.txt"
@@ -284,7 +292,7 @@ class PathJvmTest extends kyo.test.Test[Any]:
                 finally handle.close()
                 end try
             end for
-        }
+        })
     }
 
     // =========================================================================
@@ -296,7 +304,7 @@ class PathJvmTest extends kyo.test.Test[Any]:
 
     "readLong on a present numeric value allocates zero bytes per op".onlyJvm in {
         import AllowUnsafe.embrace.danger
-        Scope.run {
+        Scope.run(Path.run {
             for
                 dir <- Path.tempDir("kyo-readlong-alloc")
                 file = dir / "value"
@@ -312,12 +320,12 @@ class PathJvmTest extends kyo.test.Test[Any]:
                 finally handle.close()
                 end try
             end for
-        }
+        })
     }
 
     "readLong on the AbsentLong path allocates zero bytes per op".onlyJvm in {
         import AllowUnsafe.embrace.danger
-        Scope.run {
+        Scope.run(Path.run {
             for
                 dir <- Path.tempDir("kyo-readlong-absent-alloc")
                 file = dir / "empty"
@@ -334,7 +342,7 @@ class PathJvmTest extends kyo.test.Test[Any]:
                 finally handle.close()
                 end try
             end for
-        }
+        })
     }
 
 end PathJvmTest

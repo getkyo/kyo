@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.kernel.ArrowEffect
 import scala.annotation.tailrec
 
 /** Streaming JSONL (also called NDJSON): one JSON value per line, over effectful sources.
@@ -154,7 +155,7 @@ object Jsonl:
         maxDepth: Int = Json.DefaultMaxDepth,
         maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
         maxLineSize: ByteSize = Json.Lines.DefaultMaxLineSize
-    )(using Json, Schema[A], Tag[Emit[Chunk[A]]], Frame): Stream[A, Scope & Sync & Abort[FileReadException | DecodeException]] =
+    )(using Json, Schema[A], Tag[Emit[Chunk[A]]], Frame): Stream[A, PathRead & Scope & Sync & Abort[DecodeException]] =
         path.readBytesStream.into(pipe[A](maxDepth, maxCollectionSize, maxLineSize))
 
     /** Reads a JSONL file as a stream of per-record `Result`s, surviving undecodable records.
@@ -182,7 +183,7 @@ object Jsonl:
         Schema[A],
         Tag[Emit[Chunk[Result[DecodeException, A]]]],
         Frame
-    ): Stream[Result[DecodeException, A], Scope & Sync & Abort[FileReadException]] =
+    ): Stream[Result[DecodeException, A], PathRead & Scope & Sync] =
         path.readBytesStream.into(pipeResults[A](maxDepth, maxCollectionSize, maxLineSize))
 
     /** Streams a JSONL file's records, continuing to emit as records are appended.
@@ -246,7 +247,7 @@ object Jsonl:
         Tag[Emit[Chunk[Result[DecodeException, A]]]],
         Tag[Emit[Chunk[A]]],
         Frame
-    ): Stream[A, Scope & Async & Abort[FileReadException | DecodeException]] =
+    ): Stream[A, PathRead & Scope & Async & Abort[DecodeException]] =
         watchResults[A](path, from, pollDelay, maxDepth, maxCollectionSize, maxLineSize).flatMapChunk { results =>
             val (values, failure) = splitAtFailure(results)
             failure match
@@ -300,7 +301,7 @@ object Jsonl:
         Schema[A],
         Tag[Emit[Chunk[Result[DecodeException, A]]]],
         Frame
-    ): Stream[Result[DecodeException, A], Scope & Async & Abort[FileReadException]] =
+    ): Stream[Result[DecodeException, A], PathRead & Scope & Async] =
         // The framer is the watch loop's carried state rather than a pipe downstream of it, which is what
         // ties its lifetime to the file's: a rewind restores this initial state, so bytes framed before a
         // truncation cannot reach a record replayed after one.
@@ -372,7 +373,7 @@ object Jsonl:
         Schema[A],
         Tag[Emit[Chunk[A]]],
         Frame
-    ): Unit < (S & Sync & Abort[FileWriteException]) =
+    ): Unit < (S & PathWrite & Sync) =
         writeAll(path, values, appending = false, createFolders)
 
     /** Appends a stream of values to a JSONL file, preserving whatever the file already held.
@@ -401,7 +402,7 @@ object Jsonl:
         Schema[A],
         Tag[Emit[Chunk[A]]],
         Frame
-    ): Unit < (S & Sync & Abort[FileWriteException]) =
+    ): Unit < (S & PathWrite & Sync) =
         writeAll(path, values, appending = true, createFolders)
 
     /** Writes `values` as JSONL to `path`, folding the stream chunk by chunk.
@@ -422,31 +423,56 @@ object Jsonl:
         Schema[A],
         Tag[Emit[Chunk[A]]],
         Frame
-    ): Unit < (S & Sync & Abort[FileWriteException]) =
-        Sync.acquireReleaseWith(
-            // Unsafe: `openWrite` is the only surface that hands back a channel a fold can keep writing to.
-            // The handle never leaves this method, and the bracket below owns its release.
-            Sync.Unsafe.defer(Abort.get(path.unsafe.openWrite(appending, Path.WriteOptions(createFolders = createFolders))))
-        ) { handle =>
-            // Unsafe: finishes and closes the write handle. `close` runs even when `finish` throws,
-            // so a failing fsync reports itself without also leaking the handle it was fsyncing.
-            Sync.Unsafe.defer {
-                try handle.finish()
-                finally handle.close()
-            }
-        } { handle =>
-            Abort.run[Any] {
-                values.foreachChunk { chunk =>
-                    // Unsafe: the same handle, bridged straight back into Sync and Abort on every chunk.
-                    // The Span `encodeAllBytes` just built is shared with nothing, so the Chunk takes its
-                    // backing array rather than copying bytes that are about to be written and dropped.
-                    Sync.Unsafe.defer {
-                        Abort.get(handle.writeBytes(Chunk.fromNoCopy(Json.Lines.encodeAllBytes(chunk).toArrayUnsafe)))
+    ): Unit < (S & PathWrite & Sync) =
+        FileSystem.useErased { service =>
+            Sync.acquireReleaseWith(
+                // `OpenWrite` is the only capability op that hands back a channel a fold can keep writing to.
+                // The handle never leaves this method, and the bracket below owns its release.
+                ArrowEffect.suspend(
+                    Tag[PathWrite],
+                    Path.Op.OpenWrite(path, appending, Path.WriteOptions(createFolders = createFolders))
+                )
+            ) { handle =>
+                // Unsafe: finishes and closes the vended write handle. `close` runs even when `finish` throws,
+                // so a failing fsync reports itself without also leaking the handle it was fsyncing.
+                Sync.Unsafe.defer {
+                    try handle.finish()
+                    finally handle.close()
+                }
+            } { handle =>
+                Abort.run[Any] {
+                    values.foreachChunk { chunk =>
+                        // The Span `encodeAllBytes` just built is shared with nothing, so the Chunk takes its
+                        // backing array rather than copying bytes that are about to be written and dropped.
+                        service.writeChunk(handle, Chunk.fromNoCopy(Json.Lines.encodeAllBytes(chunk).toArrayUnsafe))
                     }
                 }
-            }
-        }.map(outcome => Abort.get(outcome.asInstanceOf[Result[Nothing, Unit]]))
+            }.map(reraise)
+        }
     end writeAll
+
+    /** Re-raises the reified outcome of a [[writeAll]] fold, after its handle has been released.
+      *
+      * A filesystem failure goes back onto the capability through `Path.Op.Raise`, the way `Path.isolateWrite.restore` does, so the caller's
+      * row stays `PathWrite` and the enclosing runner reports the failure exactly as it would have reported a suspended op. Anything else is
+      * the stream's own outcome and is raised back into the caller's `S` unchanged.
+      */
+    private def reraise(outcome: Result[Any, Unit])(using Frame): Unit < (PathWrite & Sync) =
+        outcome match
+            case Result.Success(value) => value
+            case Result.Failure(error: FileSystemException) =>
+                ArrowEffect.suspend(Tag[PathWrite], Path.Op.Raise(Result.Failure(error)))
+            case other => raiseCaller(other)
+
+    /** Raises a reified non-filesystem outcome back into whatever `Abort` the caller's own row carries.
+      *
+      * The error's type was erased by the `Abort.run[Any]` that reified it, and the caller's row is a type parameter here, so there is no
+      * name to raise it under. Casting the error type back to `Nothing` re-raises the value into whichever `Abort` handler encloses the
+      * call, which is the one the stream's own effects came from. `Scope.run` re-raises its own reified outcome the same way. The residual
+      * is `Sync` because `Sync` is `Abort[Nothing]`, the row an untyped raise lands in.
+      */
+    private def raiseCaller(outcome: Result[Any, Unit])(using Frame): Unit < Sync =
+        Abort.get(outcome.asInstanceOf[Result[Nothing, Unit]])
 
     /** Read buffer size for the watch drivers.
       *

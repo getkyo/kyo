@@ -1,16 +1,19 @@
 package kyo
 
 import java.nio.charset.Charset
+import scala.compiletime.testing.typeCheckErrors
 
-/** Tests for the top-level [[FileSystem]] surface: the read and write tiers as types, and a
-  * user-defined backend answering through the same service methods the host backend implements.
+/** Tests for the top-level [[FileSystem]] surface: installation through [[Path.runWith]] and the
+  * negative-capability rejection of a write program at a read-only runner.
   */
 class FileSystemTest extends kyo.test.Test[Any]:
 
-    /** Rebases `write` and `read`, the only two ops this suite exercises, under `root`. Two instances
-      * backed by the real host filesystem then behave as independent stores addressable through the
-      * same literal `Path` value, which is what a backend test needs: the store a read reaches must
-      * depend only on which service it is asked of.
+    private val selectedPath = Path("selected.txt")
+
+    /** Rebases `write` and `read`, the only two ops this suite exercises, under `root`. Two
+      * instances backed by the real host filesystem then behave as independent stores addressable
+      * through the same literal `Path` value, which is what these `FileSystem.let` selection tests
+      * need: the store a read reaches must depend only on which service is ambient.
       */
     final private class IsolatedFileSystem(root: Path) extends FileSystem.Write[Sync]:
         private val delegate = FileSystem.host
@@ -45,6 +48,7 @@ class FileSystemTest extends kyo.test.Test[Any]:
         export delegate.setLastModified
         export delegate.size
         export delegate.stat
+        export delegate.temp
         export delegate.tempDir
         export delegate.truncate
         export delegate.writeBytes
@@ -91,25 +95,92 @@ class FileSystemTest extends kyo.test.Test[Any]:
         )
     }
 
-    "a user-defined backend serves reads and writes through the service methods" in {
+    "runReadOnlyWith accepts Read" in {
+        typeCheck(
+            "def check(fs: kyo.FileSystem.Read[kyo.Sync]) = kyo.Path.runReadOnlyWith(fs)(kyo.Path(\"a\").read)"
+        )
+    }
+
+    private def services: (FileSystem.Write[Sync], FileSystem.Write[Sync]) < (Sync & Scope & Abort[FileSystemException]) =
+        for
+            outer <- isolatedFileSystem("kyo-fs-let-outer")
+            inner <- isolatedFileSystem("kyo-fs-let-inner")
+            _     <- Path.runWith(outer)(selectedPath.write("outer"))
+            _     <- Path.runWith(inner)(selectedPath.write("inner"))
+        yield (outer, inner)
+
+    "top-level FileSystem installs through runWith" in {
         isolatedFileSystem("kyo-fs-top-level").map { service =>
             val p = Path("a")
-            service.write(p, "x", Path.WriteOptions()).andThen {
-                service.read(p).map(v => assert(v == "x"))
+            val program: Unit < (Sync & Abort[FileSystemException]) =
+                Path.runWith(service)(p.write("x"))
+            program.andThen {
+                Path.runWith(service)(p.read).map(v => assert(v == "x"))
             }
         }
     }
 
-    "two backends addressed by the same path reach independent stores" in {
-        for
-            outer <- isolatedFileSystem("kyo-fs-outer")
-            inner <- isolatedFileSystem("kyo-fs-inner")
-            selected = Path("selected.txt")
-            _         <- outer.write(selected, "outer", Path.WriteOptions())
-            _         <- inner.write(selected, "inner", Path.WriteOptions())
-            fromOuter <- outer.read(selected)
-            fromInner <- inner.read(selected)
-        yield assert((fromOuter, fromInner) == ("outer", "inner"))
+    "runReadOnly rejects PathWrite at the call site (compile-negative)" in {
+        val errors = typeCheckErrors("""
+            given kyo.Frame = kyo.Frame.internal
+            val prog: Unit < kyo.PathWrite = kyo.Path("a").write("x")
+            val _: Unit < (kyo.Sync & kyo.Abort[kyo.FileSystemException]) = kyo.Path.runReadOnly(prog)
+            """)
+        assert(errors.nonEmpty, "runReadOnly ascription should fail to compile for a PathWrite program")
+        assert(errors.exists(_.message.contains("PathWrite")))
+    }
+
+    "runWith retains a custom backend effect in its residual" in {
+        val errors = typeCheckErrors("""
+            given kyo.Frame = kyo.Frame.internal
+            sealed trait BackendEffect
+            def check(backend: kyo.FileSystem.Write[BackendEffect]) =
+                val write = kyo.Path.runWith(backend)(kyo.Path("a").write("x"))
+                val _: Unit < kyo.Abort[kyo.FileSystemException] = write
+            """)
+        assert(errors.nonEmpty)
+        assert(errors.exists(_.message.contains("BackendEffect")))
+    }
+
+    "FileSystem.let nests and restores the selected service" in {
+        services.map { (outer, inner) =>
+            FileSystem.let(outer) {
+                for
+                    before <- Path.runReadOnly(selectedPath.read)
+                    during <- FileSystem.let(inner)(Path.runReadOnly(selectedPath.read))
+                    after  <- Path.runReadOnly(selectedPath.read)
+                yield assert((before, during, after) == ("outer", "inner", "outer"))
+            }
+        }
+    }
+
+    "FileSystem.let restores the selected service after failure" in {
+        services.map { (outer, inner) =>
+            FileSystem.let(outer) {
+                Abort.run[String] {
+                    FileSystem.let(inner)(Path.runReadOnly(selectedPath.read).andThen(Abort.fail("stop")))
+                }.map { failed =>
+                    Path.runReadOnly(selectedPath.read).map(after => assert((failed, after) == (Result.fail("stop"), "outer")))
+                }
+            }
+        }
+    }
+
+    "child fibers inherit the selected service" in {
+        services.map { (_, inner) =>
+            FileSystem.let(inner) {
+                Path.runReadOnly(Async.zip(selectedPath.read, selectedPath.read)).map(values => assert(values == ("inner", "inner")))
+            }
+        }
+    }
+
+    "sibling fibers keep independently selected services" in {
+        services.map { (outer, inner) =>
+            Async.zip(
+                FileSystem.let(outer)(Path.runReadOnly(selectedPath.read)),
+                FileSystem.let(inner)(Path.runReadOnly(selectedPath.read))
+            ).map(values => assert(values == ("outer", "inner")))
+        }
     }
 
 end FileSystemTest

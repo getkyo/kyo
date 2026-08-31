@@ -865,13 +865,6 @@ class AsyncTest extends kyo.test.Test[Any]:
         succeed("compile-time subtyping check: Abort[Nothing] <: Async")
     }
 
-    "defaultConcurrency flag key matches the documented -D property" in {
-        // StaticFlag derives its key from the enclosing objects' JVM class name, so renaming or
-        // renesting `async.concurrency.default` would silently change the key and break the
-        // -Dkyo.async.concurrency.default override documented in kyo-core/README.md.
-        assert(async.concurrency.default.name == "kyo.async.concurrency.default")
-    }
-
     "collectAll concurrency" - {
         "empty sequence" in {
             Async.collectAll(Seq(), 2).map { r =>
@@ -1885,6 +1878,17 @@ class AsyncTest extends kyo.test.Test[Any]:
                     Async.timeout(Duration.Zero)(Async.sleep(1.day))
                 }
             yield assert(result.isFailure)
+        }
+    }
+
+    "defaultConcurrency knob" - {
+        val computedDefault = Runtime.getRuntime().availableProcessors() * 2
+
+        "is backed by the kyo.async.concurrency.default StaticFlag" in {
+            val flag: StaticFlag[Int] = kyo.async.concurrency.default
+            assert(flag.name == "kyo.async.concurrency.default")
+            assert(flag.default == computedDefault)
+            assert(Async.defaultConcurrency == flag())
         }
     }
 

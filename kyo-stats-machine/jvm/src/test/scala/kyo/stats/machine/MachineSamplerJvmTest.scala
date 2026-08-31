@@ -138,7 +138,7 @@ class MachineSamplerJvmTest extends kyo.test.Test[Any]:
         // probe trial), and each call writes this fixture's memTotal into the retained LongGaugeCell;
         // against the shared scope that would poison "machine.memory.total" for every other suite's later
         // poll of the same well-known path (a real-host acceptance leaf among them).
-        Scope.run {
+        Scope.run(Path.run {
             for
                 dir <- Path.tempDir("kyo-stats-machine-allocprobe-linux")
                 handles  = MachineHandles.initForTest(Stat.initScope("mstest-alloc-linux"), 8L)
@@ -162,7 +162,7 @@ class MachineSamplerJvmTest extends kyo.test.Test[Any]:
                 _ <- dir.removeAll
             yield ()
             end for
-        }
+        })
     }
 
     "the steady-state disk read on an unchanged mount table allocates exactly 0 bytes per op".onlyJvm in {
@@ -231,7 +231,7 @@ class MachineSamplerJvmTest extends kyo.test.Test[Any]:
                 0
             end statvfs
             def sysconf(name: Int)(using AllowUnsafe): Long = 100L
-        Scope.run {
+        Scope.run(Path.run {
             for
                 dir <- Path.tempDir("kyo-stats-machine-allocprobe-disk-linux")
                 mountsFile = dir / "mounts"
@@ -253,7 +253,7 @@ class MachineSamplerJvmTest extends kyo.test.Test[Any]:
                 _ <- dir.removeAll
             yield ()
             end for
-        }
+        })
     }
 
     "the probe op is the reader's REAL decode+observe, not a degenerate callback, and an unsupported counter fails loud".onlyJvm in {
@@ -270,7 +270,7 @@ class MachineSamplerJvmTest extends kyo.test.Test[Any]:
         }
         assert(failure.diagram.contains("per-thread allocation measurement is unsupported"))
 
-        Scope.run {
+        Scope.run(Path.run {
             for
                 dir <- Path.tempDir("kyo-stats-machine-allocprobe-substance")
                 baselineFile = dir / "stat-baseline"
@@ -298,7 +298,7 @@ class MachineSamplerJvmTest extends kyo.test.Test[Any]:
                 assert(summary.count == (warmupIters + probeTrials * measuredIters).toLong)
                 assert(summary.sum == 333.0)
             end for
-        }
+        })
     }
 
 end MachineSamplerJvmTest

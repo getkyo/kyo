@@ -54,7 +54,7 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
     "SoftFail missing root accumulates FileNotFound in classpath.errors" in {
         // Use a real temp dir with a non-existent sub-path to trigger FileNotFound.
         Scope.run {
-            Path.tempDir("kyo-err-f2-missing").map { tmp =>
+            Path.run(Path.tempDir("kyo-err-f2-missing")).map { tmp =>
                 val missing = (tmp / "no-such-root").toString
                 Scope.run {
                     ClasspathOrchestrator.init(Seq(missing), Tasty.ErrorMode.SoftFail, 1).map { classpath =>
@@ -83,7 +83,7 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
 
     "FailFast missing root still raises FileNotFound" in {
         Scope.run {
-            Path.tempDir("kyo-err-f2-failfast").map { tmp =>
+            Path.run(Path.tempDir("kyo-err-f2-failfast")).map { tmp =>
                 val missing = (tmp / "no-such-root").toString
                 Scope.run {
                     Abort.run[TastyError](ClasspathOrchestrator.init(Seq(missing), Tasty.ErrorMode.FailFast, 1)).map { result =>
