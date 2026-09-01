@@ -1,5 +1,6 @@
 package kyo.proto.kernel.internal
 
+import kyo.Chunk
 import kyo.Span
 import kyo.proto.Arrow
 import kyo.proto.kernel.Effect
@@ -11,6 +12,11 @@ final private[kernel] class Stack:
     private var states        = new Array[Any](0)
     private var continuations = new Array[Arrow[?, ?, ?]](0)
     private var size          = 0
+
+    // What each entry owes: the snapshots its dumps produced, newest last. Every slot
+    // holds a real chunk, empty by default; the sites that null the other arrays reset
+    // these to empty, so no slot is ever null.
+    private var owed = new Array[Chunk[Stack.Snapshot]](0)
 
     // Written on every LoopHandler dispatch so the clause outcome escapes and is
     // never read back: C2's scalar replacement of the outcome inside the eval loop
@@ -32,7 +38,22 @@ final private[kernel] class Stack:
         size += 1
     end push
 
-    def pop(): Unit = size -= 1
+    // Popping hands back what the entry owes, so no exit site can forget to drain it and
+    // no stale list can survive into the slot's next occupant.
+    def pop(): Chunk[Stack.Snapshot] =
+        size -= 1
+        takeOwed(size)
+
+    def owedOf(i: Int): Chunk[Stack.Snapshot] = owed(i)
+
+    def takeOwed(i: Int): Chunk[Stack.Snapshot] =
+        val l = owed(i)
+        if !l.isEmpty then owed(i) = Chunk.empty
+        l
+    end takeOwed
+
+    def oweAll(i: Int, snapshots: Chunk[Stack.Snapshot]): Unit =
+        if !snapshots.isEmpty then owed(i) = owed(i).concat(snapshots)
 
     def clear(): Unit =
         @tailrec def loop(i: Int): Unit =
@@ -41,6 +62,7 @@ final private[kernel] class Stack:
                 states(i) = null
 
                 continuations(i) = null
+                owed(i) = Chunk.empty
                 loop(i + 1)
         loop(0)
         size = 0
@@ -48,12 +70,13 @@ final private[kernel] class Stack:
     end clear
 
     def snapshot(): Stack.Snapshot =
-        val out = new Array[AnyRef](size * 3)
+        val out = new Array[AnyRef](size * 4)
         @tailrec def loop(i: Int): Unit =
             if i < size then
-                out(i * 3) = handlers(i)
-                out(i * 3 + 1) = states(i).asInstanceOf[AnyRef]
-                out(i * 3 + 2) = continuations(i)
+                out(i * 4) = handlers(i)
+                out(i * 4 + 1) = states(i).asInstanceOf[AnyRef]
+                out(i * 4 + 2) = continuations(i)
+                out(i * 4 + 3) = takeOwed(i)
                 handlers(i) = null
                 states(i) = null
                 continuations(i) = null
@@ -64,14 +87,15 @@ final private[kernel] class Stack:
     end snapshot
 
     // Reads the contextual regions in scope as Park currency without consuming the stack:
-    // bindings only, the continuation slot of every entry is identity.
+    // bindings only, the continuation slot of every entry is identity. Owed slots stay
+    // behind: bindings fork, obligations do not.
     def contextual(): Stack.Snapshot =
         var count = 0
         var i     = 0
         while i < size do
             if handlers(i).isInstanceOf[Handler.ContextHandler[?, ?, ?, ?]] then count += 1
             i += 1
-        val out = new Array[AnyRef](count * 3)
+        val out = new Array[AnyRef](count * 4)
         var j   = 0
         i = 0
         while i < size do
@@ -79,7 +103,8 @@ final private[kernel] class Stack:
                 out(j) = handlers(i)
                 out(j + 1) = states(i).asInstanceOf[AnyRef]
                 out(j + 2) = Arrow.id[Any]
-                j += 3
+                out(j + 3) = Chunk.empty
+                j += 4
             end if
             i += 1
         end while
@@ -98,6 +123,7 @@ final private[kernel] class Stack:
                 handlers(i) = null
                 states(i) = null
                 continuations(i) = null
+                owed(i) = Chunk.empty
                 loop(i + 1)
         loop(to)
         size = to
@@ -111,22 +137,28 @@ final private[kernel] class Stack:
         loop(size - 1)
     end find
 
+    // Every dump is owed by the entry directly below the dumped run: the capture is that
+    // entry's currency, so its exit bounds every resumption. The attachment lives here so
+    // no caller can produce an unowed dump.
     def dump(from: Int): Stack.Snapshot =
         val count = size - from
-        val out   = new Array[AnyRef](count * 3)
+        val out   = new Array[AnyRef](count * 4)
         @tailrec def loop(i: Int): Unit =
             if i < count then
                 val j = from + i
-                out(i * 3) = handlers(j)
-                out(i * 3 + 1) = states(j).asInstanceOf[AnyRef]
-                out(i * 3 + 2) = continuations(j)
+                out(i * 4) = handlers(j)
+                out(i * 4 + 1) = states(j).asInstanceOf[AnyRef]
+                out(i * 4 + 2) = continuations(j)
+                out(i * 4 + 3) = takeOwed(j)
                 handlers(j) = null
                 states(j) = null
                 continuations(j) = null
                 loop(i + 1)
         loop(0)
         size = from
-        Stack.wrap(out)
+        val snapshot = Stack.wrap(out)
+        owed(from - 1) = owed(from - 1).append(snapshot)
+        snapshot
     end dump
 
     private def grow(): Unit =
@@ -140,30 +172,42 @@ final private[kernel] class Stack:
         handlers = grownHandlers
         states = grownStates
         continuations = grownContinuations
+        val grownOwed = new Array[Chunk[Stack.Snapshot]](capacity)
+        Array.copy(owed, 0, grownOwed, 0, size)
+        @tailrec def fill(i: Int): Unit =
+            if i < capacity then
+                grownOwed(i) = Chunk.empty
+                fill(i + 1)
+        fill(size)
+        owed = grownOwed
     end grow
 end Stack
 
 private[kernel] object Stack:
 
-    // A reified run of stack regions as [handler, state, continuation] triples, region 0
-    // outermost. Immutable once built; the one home for that layout: producers and
-    // consumers go through the accessors, never the raw representation.
+    // A reified run of stack regions as [handler, state, continuation, owed] quadruples,
+    // region 0 outermost. Immutable once built; the one home for that layout: producers
+    // and consumers go through the accessors, never the raw representation.
     opaque type Snapshot = Span[AnyRef]
 
     private def wrap(entries: Array[AnyRef]): Snapshot = Span.fromUnsafe(entries)
 
     object Snapshot:
+        private[kernel] val empty: Snapshot = Span.fromUnsafe(new Array[AnyRef](0))
+
         // Builds a snapshot region by region, keeping the layout here. Built snapshots
-        // carry bindings, not resumptions: every continuation slot is identity.
+        // carry bindings, not resumptions or obligations: every continuation slot is
+        // identity and every owed slot is empty.
         final private[kernel] class Builder(regions: Int):
-            private val entries = new Array[AnyRef](regions * 3)
+            private val entries = new Array[AnyRef](regions * 4)
             private var count   = 0
 
             def add(handler: Handler[?, ?, ?], state: Any): Unit =
                 entries(count) = handler
                 entries(count + 1) = state.asInstanceOf[AnyRef]
                 entries(count + 2) = Arrow.id[Any]
-                count += 3
+                entries(count + 3) = Chunk.empty
+                count += 4
             end add
 
             def result(): Snapshot =
@@ -173,11 +217,12 @@ private[kernel] object Stack:
     end Snapshot
 
     extension (self: Snapshot)
-        def regions: Int                         = self.size / 3
+        def regions: Int                         = self.size / 4
         def isEmpty: Boolean                     = self.size == 0
-        def handler(i: Int): Handler[?, ?, ?]    = self(i * 3).asInstanceOf[Handler[?, ?, ?]]
-        def state(i: Int): Any                   = self(i * 3 + 1)
-        def continuation(i: Int): Arrow[?, ?, ?] = self(i * 3 + 2).asInstanceOf[Arrow[?, ?, ?]]
+        def handler(i: Int): Handler[?, ?, ?]    = self(i * 4).asInstanceOf[Handler[?, ?, ?]]
+        def state(i: Int): Any                   = self(i * 4 + 1)
+        def continuation(i: Int): Arrow[?, ?, ?] = self(i * 4 + 2).asInstanceOf[Arrow[?, ?, ?]]
+        def owed(i: Int): Chunk[Snapshot]        = self(i * 4 + 3).asInstanceOf[Chunk[Snapshot]]
 
     end extension
 

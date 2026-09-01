@@ -83,8 +83,16 @@ end Handler
         def fork(parent: State): State
         def join(parent: State, forked: State, child: State): State
 
+        // The completion edge: fires strictly in the eval at the region's settled exit, in
+        // the same slice that pops the entry, so nothing can park between the body settling
+        // and the completion. Pure, like fork and join.
+        private[kyo] def done(state: State): Unit = ()
+
         // Pure, like fork and join: runs whenever the region dies without resuming, at
-        // abandonment and when a failure unwinds past it. Arrow handlers have no release:
+        // abandonment, when a failure unwinds past it, and when a dump it rode is discarded.
+        // Both hooks may fire more than once per logical region (a shared dump, a fork's
+        // state, a merged shadow region): the eval guarantees the edge is reached at least
+        // once, and exactly-once belongs to the state. Arrow handlers have no release:
         // their failure hook is recover, and resource safety routes through a binding.
         private[kyo] def release(state: State, ex: Throwable): Unit = ()
     end ContextHandler

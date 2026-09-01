@@ -8,14 +8,15 @@ import kyo.Tag
 import kyo.proto.kernel.<
 import kyo.proto.kernel.ContextEffect
 import kyo.proto.kernel.Effect
+import scala.util.control.NonFatal
 
 /** Pure suspension of side effects, and the bracketing that guards them.
   *
   * A bare suspension is a deferred computation carrying the row marker. A bracket opens a
-  * context region at the instant the acquire settles: the region's state is the obligation,
-  * so every edge the eval owns reaches it, the exit map on completion, the unwind on
-  * failure, and the abandonment walk on a discarded remainder. The claim makes the edges
-  * exclusive.
+  * context region in the same slice the acquire settles: the region's state is the
+  * obligation, so every edge the eval owns reaches it, the done hook on completion, the
+  * unwind on failure, and the abandonment walk on a discarded remainder. The claim makes
+  * the edges exclusive.
   */
 sealed trait Sync extends Effect
 
@@ -59,15 +60,21 @@ object Sync:
             def frame = _frame
             override def apply(a: A) =
                 val cell = new Cell(outcome => release(a, outcome))
+                val body =
+                    // The region does not exist until the handle below wraps the body, so
+                    // a use that throws during application drains here on the way out.
+                    try use(a)
+                    catch
+                        case ex if NonFatal(ex) =>
+                            cell.drain(ex)
+                            throw ex
                 ContextEffect.handle(Tag[Finalize])(
                     (_: Maybe[Cell]) => cell,
                     fork = (_: Cell) => Cell.inert,
                     join = (parent: Cell, _: Cell, _: Cell) => parent,
+                    done = (c: Cell) => c.complete(),
                     release = (c: Cell, ex: Throwable) => c.drain(ex)
-                )(use(a).map { b =>
-                    cell.complete()
-                    b
-                })
+                )(body)
             end apply
         defer(acquire).chain(open)
     end acquireReleaseWith

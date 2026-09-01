@@ -1,5 +1,6 @@
 package kyo.proto.kernel.internal
 
+import kyo.Chunk
 import kyo.Frame
 import kyo.Maybe
 import kyo.Tag
@@ -123,7 +124,8 @@ object Kyo:
 
     final class Park[+A, -S](
         val value: Any < Any,
-        val entries: Stack.Snapshot
+        val entries: Stack.Snapshot,
+        val owed: Chunk[Stack.Snapshot] = Chunk.empty
     ) extends Pending[A, S]:
         Debugger.onAlloc(this)
 

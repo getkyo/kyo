@@ -106,7 +106,7 @@ object ContextEffect:
         inline join: (A, A, A) => A,
         inline release: (A, Throwable) => Unit
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
-        handle(effectTag)((outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined), fork, join, release)(v)
+        handle(effectTag)((outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined), fork, join, release = release)(v)
 
     @nowarn("msg=anonymous")
     inline def handle[A, E <: ContextEffect[A], B, S](
@@ -115,6 +115,7 @@ object ContextEffect:
         inline derive: Maybe[A] => A,
         inline fork: A => A,
         inline join: (A, A, A) => A,
+        inline done: A => Unit = (_: A) => (),
         inline release: (A, Throwable) => Unit = (_: A, _: Throwable) => ()
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
         v match
@@ -122,6 +123,7 @@ object ContextEffect:
                 def derived(outer: Maybe[A]): A             = derive(outer)
                 def forked(parent: A): A                    = fork(parent)
                 def joined(parent: A, fk: A, child: A): A   = join(parent, fk, child)
+                def completed(state: A): Unit               = done(state)
                 def released(state: A, ex: Throwable): Unit = release(state, ex)
                 val h =
                     new ContextHandler[A, E, B, S]:
@@ -129,6 +131,7 @@ object ContextEffect:
                         def derive(outer: Maybe[A])                                = derived(outer)
                         def fork(parent: A)                                        = forked(parent)
                         def join(parent: A, forked: A, child: A)                   = joined(parent, forked, child)
+                        override private[kyo] def done(state: A)                   = completed(state)
                         override private[kyo] def release(state: A, ex: Throwable) = released(state, ex)
 
                 new Kyo.Handle[A, E, B, B, B, S]:
@@ -138,7 +141,11 @@ object ContextEffect:
                     def state          = h.derive(Maybe.empty)
                     def cont           = Arrow.id
                 end new
-            case _ => Nested.unnest[B](v)
+            case _ =>
+                // A settled body opens no region, but the completion edge still fires:
+                // whatever the state carries (a bracket's obligation) completes here.
+                done(derive(Maybe.empty))
+                Nested.unnest[B](v)
         end match
     end handle
 
