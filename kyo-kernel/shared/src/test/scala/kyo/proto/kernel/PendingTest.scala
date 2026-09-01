@@ -149,20 +149,98 @@ class PendingTest extends AnyFreeSpec:
     }
 
     "a pure function passes to map point-free" in {
-        assertCompiles("""
-            val f: Int => Int    = _ + 1
-            val r: Int < Ask     = ask.map(f)
-            ()
-        """)
+        val f: Int => Int = _ + 1
+        val r: Int < Ask  = ask.map(f)
+        assert(eval(answerAsk(41)(r)) == 42)
     }
 
     "a generic function passes to map point-free" in {
-        assertCompiles("""
-            def f(a: Int): Int < Say       = say("x").map(_ => a + 5)
-            def g[B](f: Int => B): B < Ask = ask.map(f)
-            val nested: (Int < Say) < Ask  = g(f)
-            ()
-        """)
+        def f(a: Int): Int < Say       = say("x").map(_ => a + 5)
+        def g[B](f: Int => B): B < Ask = ask.map(f)
+        val nested: (Int < Say) < Ask  = g(f)
+        assert(eval(answerSay(eval(answerAsk(1)(nested)))) == 6)
+    }
+
+    "evalNow builds its receiver once" in {
+        var runs = 0
+        val r = (1: Int < Any).map { a =>
+            runs += 1
+            a + 1
+        }.evalNow
+        assert(r == Maybe(2))
+        assert(runs == 1)
+    }
+
+    "a for-comprehension chains through flatMap and map" in {
+        val result =
+            for
+                x <- 5: Int < Any
+                y <- 3: Int < Any
+            yield x + y
+        assert(result.eval == 8)
+    }
+
+    "lift" - {
+        "a pure value lifts into a computation" in {
+            val x: Int < Any = 5
+            assert(x.eval == 5)
+        }
+
+        "a pure function lifts into a computation-returning one" - {
+            "one param" in {
+                val f: Int => String            = _.toString
+                val lifted: Int => String < Any = f
+                assert(lifted(42).eval == "42")
+            }
+
+            "two params" in {
+                val f: (Int, Int) => String            = (a, b) => (a + b).toString
+                val lifted: (Int, Int) => String < Any = f
+                assert(lifted(20, 22).eval == "42")
+            }
+
+            "three params" in {
+                val f: (Int, Int, Int) => String            = (a, b, c) => (a + b + c).toString
+                val lifted: (Int, Int, Int) => String < Any = f
+                assert(lifted(10, 20, 12).eval == "42")
+            }
+
+            "four params" in {
+                val f: (Int, Int, Int, Int) => String            = (a, b, c, d) => (a + b + c + d).toString
+                val lifted: (Int, Int, Int, Int) => String < Any = f
+                assert(lifted(10, 20, 10, 2).eval == "42")
+            }
+
+            "five params" in {
+                val f: (Int, Int, Int, Int, Int) => String            = (a, b, c, d, e) => (a + b + c + d + e).toString
+                val lifted: (Int, Int, Int, Int, Int) => String < Any = f
+                assert(lifted(10, 20, 10, 1, 1).eval == "42")
+            }
+
+            "six params" in {
+                val f: (Int, Int, Int, Int, Int, Int) => String            = (a, b, c, d, e, g) => (a + b + c + d + e + g).toString
+                val lifted: (Int, Int, Int, Int, Int, Int) => String < Any = f
+                assert(lifted(10, 20, 10, 1, 0, 1).eval == "42")
+            }
+        }
+
+        "a computation-returning function does not lift again" in {
+            val f1: Int => String < Any                  = _ => "test"
+            val f2: (Int, Int) => String < Any           = (_, _) => "test"
+            val f3: (Int, Int, Int) => String < Any      = (_, _, _) => "test"
+            val f4: (Int, Int, Int, Int) => String < Any = (_, _, _, _) => "test"
+            kyo.discard(f1, f2, f3, f4)
+            assert(typeCheckErrors("val _: Int => String < Any < Any = f1").nonEmpty)
+            assert(typeCheckErrors("val _: (Int, Int) => String < Any < Any = f2").nonEmpty)
+            assert(typeCheckErrors("val _: (Int, Int, Int) => String < Any < Any = f3").nonEmpty)
+            assert(typeCheckErrors("val _: (Int, Int, Int, Int) => String < Any < Any = f4").nonEmpty)
+        }
+
+        "a generic method does not accept a wider effect row" in {
+            def widen[A](v: A < Any) = v
+            kyo.discard(widen(1: Int < Any))
+            assert(typeCheckErrors("widen(ask)").nonEmpty)
+        }
     }
 
     "a loop can end its region with a computation result" in {
@@ -331,6 +409,114 @@ class PendingTest extends AnyFreeSpec:
         assert(ten == 9)
     }
 
+    "handle" - {
+        "applies a function to a settled value" in {
+            assert((5: Int < Any).handle(_.map(_ + 1)).eval == 6)
+        }
+
+        "applies a function to an effectful value" in {
+            assert(ask.handle(v => answerAsk(2)(v)).eval == 2)
+        }
+
+        "chains handles" in {
+            assert(ask.handle(v => v.map(_ * 2)).handle(v => answerAsk(3)(v)).eval == 6)
+        }
+
+        "works with the identity function" in {
+            val v: Int < Ask = ask
+            assert(answerAsk(2)(v.handle(identity)).eval == 2)
+        }
+
+        "can produce a value instead of a computation" in {
+            val result: Int = ask.handle(v => answerAsk(2)(v)).handle(v => eval(v))
+            assert(result == 2)
+        }
+
+        "works with three functions" in {
+            val result = (5: Int < Any).handle(
+                _.map(_ + 1),
+                _.map(_ * 2),
+                _.map(_.toString)
+            )
+            assert(result.eval == "12")
+        }
+
+        "works with four functions" in {
+            val result = (5: Int < Any).handle(
+                _.map(_ + 1),
+                _.map(_ * 2),
+                _.map(_.toString),
+                _.map(_.length)
+            )
+            assert(result.eval == 2)
+        }
+
+        "works with five functions" in {
+            val result = (5: Int < Any).handle(
+                _.map(_ + 1),
+                _.map(_ * 2),
+                _.map(_.toString),
+                _.map(_.length),
+                _.map(_ > 1)
+            )
+            assert(result.eval == true)
+        }
+
+        "works with six functions" in {
+            val result = (5: Int < Any).handle(
+                _.map(_ + 1),
+                _.map(_ * 2),
+                _.map(_.toString),
+                _.map(_.length),
+                _.map(_ > 1),
+                _.map(if _ then "Yes" else "No")
+            )
+            assert(result.eval == "Yes")
+        }
+
+        "works with seven functions" in {
+            val result = (5: Int < Any).handle(
+                _.map(_ + 1),
+                _.map(_ * 2),
+                _.map(_.toString),
+                _.map(_.length),
+                _.map(_ > 1),
+                _.map(if _ then "Yes" else "No"),
+                _.map(_.toLowerCase)
+            )
+            assert(result.eval == "yes")
+        }
+
+        "works with eight functions" in {
+            val result = (5: Int < Any).handle(
+                _.map(_ + 1),
+                _.map(_ * 2),
+                _.map(_.toString),
+                _.map(_.length),
+                _.map(_ > 1),
+                _.map(if _ then "Yes" else "No"),
+                _.map(_.toLowerCase),
+                _.map(_.length)
+            )
+            assert(result.eval == 3)
+        }
+
+        "works with nine functions" in {
+            val result = (5: Int < Any).handle(
+                _.map(_ + 1),
+                _.map(_ * 2),
+                _.map(_.toString),
+                _.map(_.length),
+                _.map(_ > 1),
+                _.map(if _ then "Yes" else "No"),
+                _.map(_.toLowerCase),
+                _.map(_.length),
+                _.map(_ * 2)
+            )
+            assert(result.eval == 6)
+        }
+    }
+
     "map on a settled value runs eagerly" in {
         var ran = false
         val v = (1: Int < Any).map { n =>
@@ -443,11 +629,21 @@ class PendingTest extends AnyFreeSpec:
                 )
         end TestEffect2
 
+        sealed trait TestEffect3 extends ContextEffect[Boolean]
+        object TestEffect3:
+            def apply(): Boolean < TestEffect3 =
+                ContextEffect.suspend(Tag[TestEffect3])
+
+            def run[A, S](value: Boolean)(v: A < (TestEffect3 & S)): A < S =
+                ContextEffect.handleInheritable(Tag[TestEffect3], value)(v)
+        end TestEffect3
+
         def lifted[A](v: A): A < Any = v
 
         "basic nesting operations" in {
             val nested: String < TestEffect1 < Any = lifted(TestEffect1(42))
             assert(TestEffect1.run(nested.map(c => c)).eval == "Effect1:42")
+            assert(TestEffect1.run(nested.flatten).eval == "Effect1:42")
 
             val result = lifted(TestEffect1(5)).map(_.map(s => TestEffect1(s.length)))
             assert(TestEffect1.run(result).eval == "Effect1:9")
@@ -460,6 +656,8 @@ class PendingTest extends AnyFreeSpec:
             val result = TestEffect1.run(comp.map(c => TestEffect2.run(c)))
             assert(result.eval == "Effect1:10".length + 10)
 
+            val result2 = comp.flatten.handle(TestEffect2.run).handle(TestEffect1.run)
+            assert(result2.eval == "Effect1:10".length + 10)
         }
 
         def drainedBudget[A](f: => A): A =
@@ -568,6 +766,9 @@ class PendingTest extends AnyFreeSpec:
 
             val result = TestEffect2.run(compute(200).map(c => TestEffect1.run(c)))
             assert(result.eval == "Effect1:13")
+
+            val result2 = TestEffect2.run(TestEffect1.run(compute(200).flatten))
+            assert(result2.eval == "Effect1:13")
         }
 
         "nested effect suspensions" in {
@@ -577,6 +778,72 @@ class PendingTest extends AnyFreeSpec:
             val result = TestEffect1.run(nested.map(TestEffect2.run))
             assert(result.eval == 15)
 
+            val result2 = TestEffect1.run(TestEffect2.run(nested.flatten))
+            assert(result2.eval == 15)
+        }
+
+        "multiple operations" in {
+            def processValue(v: Int): Int < TestEffect2 < TestEffect1 =
+                TestEffect1(v).map(s => Kyo.lift(TestEffect2(s + "!")))
+
+            val input = 100
+            val result = processValue(input).flatten
+                .map(n => n * 2)
+                .flatMap(n => TestEffect3().map(_ => n))
+
+            val finalResult = TestEffect1.run(
+                TestEffect2.run(
+                    TestEffect3.run(true)(result)
+                )
+            )
+
+            assert(finalResult.eval == ("Effect1:100!".length + 10) * 2)
+        }
+
+        "nested effect suspension lifted function" in {
+            def f(str: String): Int < TestEffect2 = TestEffect2(str)
+
+            def g[B](f: String => B): B < TestEffect1 =
+                TestEffect1(1).map(f)
+
+            val nested: Int < TestEffect2 < TestEffect1 = g(f)
+
+            val result = TestEffect1.run(nested.map(TestEffect2.run))
+            assert(result.eval == 19)
+
+            val result2 = TestEffect1.run(TestEffect2.run(nested.flatten))
+            assert(result2.eval == 19)
+        }
+
+        "nested effect suspension widened lifted function" in {
+            def f(str: String): Int < TestEffect2 = TestEffect2(str)
+
+            def g[B](f: String => B): B < TestEffect1 =
+                val liftedF: String => B < Any = f
+                TestEffect1(1).map(liftedF)
+
+            val nested: Int < TestEffect2 < TestEffect1 = g(f)
+
+            val result = TestEffect1.run(nested.map(TestEffect2.run))
+            assert(result.eval == 19)
+
+            val result2 = TestEffect1.run(TestEffect2.run(nested.flatten))
+            assert(result2.eval == 19)
+        }
+
+        "generic lifted functions" in {
+            def f(str: String): Int < TestEffect2 = TestEffect2(str)
+
+            def g[B](f: String => B): B < TestEffect1 =
+                TestEffect1(1).map(f).flatMap(_ => f("a")).andThen(f("b"))
+
+            val nested: Int < TestEffect2 < TestEffect1 = g(f)
+
+            val result = TestEffect1.run(nested.map(TestEffect2.run))
+            assert(result.eval == 11)
+
+            val result2 = TestEffect1.run(TestEffect2.run(nested.flatten))
+            assert(result2.eval == 11)
         }
 
         "evalNow accepts nested computations" in {
