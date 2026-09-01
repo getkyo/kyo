@@ -6,71 +6,74 @@ below is applied there by you, one at a time, when you open this review.
 
 ## What this change fixes
 
-Three defects, each reproduced red before its fix, each pinned green after:
+Four defects, each reproduced red before its fix, each pinned green after:
 
 1. **The dropped capture leak** (the standing red pin): a handler clause discarding its
    continuation stranded the bracket region packed inside it. Fixed by owed dumps: the
    answering entry keeps the snapshot its dump produced and drains it at its own exit.
-2. **The settle-to-install strand** (held-out review, section 3, confirmed live): a stop
+2. **The settle-to-install strand** (held-out review section 3, confirmed live): a stop
    landing as the acquire settles made `map`'s budget gate defer the settled resource
    against its region install; the reproduction's failure message showed the exact shape,
    `Defer(7, this(acquireReleaseWith...), Id)`. Fixed by `Arrow.Bind`: the install step
-   has no gate, so settle-to-open is one slice by construction. No eval change.
-3. **The loop-done discard leak** (held-out review, section 1, confirmed live): a
+   has no gate, so settle-to-open is one slice by construction. No eval change, no guard,
+   no packer; the reviewer's livelock concern cannot arise because no site declines.
+3. **The loop-done discard leak** (held-out review section 1, confirmed live): a
    `Loop.done` answered over live regions truncated them with no release. Fixed by the
    exit drain at the loop-done arms.
+4. **Stale context across crossings** (surfaced by the pin sweep, beyond the held-out
+   review): a crossing dumped the regions above the answering entry but left their
+   bindings in the context map, so a clause reading a `ContextEffect` bound inside the
+   body saw the inner value where its row places it outside. Fixed by the eager dump plus
+   `rebound`, the context downdate mirroring the settled pop's.
 
-Plus one the pin sweep surfaced beyond the review: **stale context across crossings**. A
-crossing dumped the regions above the answering entry but left their bindings in the
-context map, so a clause reading a `ContextEffect` bound inside the body saw the inner
-value where its row places it outside. Confirmed red through the public surface; fixed by
-the eager dump plus a context downdate mirroring the settled pop's.
-
-And one design improvement you called mid-flight: **`ContextHandler.done`**. The
-bracket's completion was an exit map in the region's body; it is now the fourth eval-owned
-edge, fired at the settled context pop in the same slice as the pop, so no safepoint can
-sit between the body settling and the completion. The bracket body is bare `use(a)`; the
-map and its gate are gone from the bracket path.
+Plus the design improvement you called mid-flight: **`ContextHandler.done`**. Completion
+is now the fourth eval-owned edge, fired at the settled context pop in the same slice as
+the pop, so no safepoint can sit between the body settling and the completion. The
+bracket body is bare `use(a)`; the exit map and its gate are gone from the bracket path.
 
 ## The design in one paragraph
 
-Every dump is owed by the entry directly below it (attached inside `Stack.dump`, so no
-caller can produce an unowed dump). The owed chunk is the fourth slot of the entry, on
-the live stack and in every packed snapshot, so it travels wherever the entry travels:
-into parks, into enclosing dumps, back onto a stack at install. It drains at every exit
-the eval owns: the settled pops (after `done`), the recovery pops (with the failure), the
-loop-done truncates, and the abandonment walk. The one entry that dissolves while its
-extent continues (the effectful-clause pop) re-homes its chunk to the enclosing entry, or
-to the eval root at depth 0, which a park transfers into `Kyo.Park.owed`. Reachability is
-the kernel's guarantee, at least once per edge; exactly-once belongs to the state, which
-for `Effect.bracket` is the `Cell`'s CAS.
+Every dump is owed by the entry directly below it, attached inside `Stack.dump` so no
+caller can produce an unowed dump. The owed chunk is the fourth slot of the entry, on the
+live stack and in every packed snapshot, so it travels wherever the entry travels: into
+parks, into enclosing dumps, back onto a stack at install. It drains at every exit the
+eval owns: the settled pops (after `done`), the recovery pops (with the failure), the
+loop-done truncates, and the abandonment walk. An extent that dissolves while its logic
+continues (the effectful-clause pop, a resumed park's remainder) re-homes what it owes
+below itself (`oweBelow`), reaching the eval itself (`evalOwed` on the pooled stack) only
+when nothing is below; a safepoint park transfers that into `Kyo.Park.owed`. Reachability
+is the kernel's guarantee, at least once per edge; exactly-once belongs to the state,
+which for `Effect.bracket` is the `Cell`'s CAS.
 
 ## Rulings applied during the build (verbatim in derivation.md)
 
-- region-exit scoping ("once the handling scope ends we must release")
-- `done` on the handler; owe inside `dump`; `Chunk` over `List`; no `Obligation` carrier
-  (hot code, the sanctioned storage-boundary cast instead); no `Discarded` class (drains
-  take the throwable; discard sites mint a `KyoException` behind their empty-checks);
-  `Effect.bracket` in the kernel with no Sync prototype.
+Region-exit scoping; `done` on the handler; owe inside `dump`; `Chunk` over `List`; no
+`Obligation` carrier (hot code, the sanctioned storage-boundary cast instead); no
+`Discarded` class (drains take the throwable, the discard site mints a `KyoException`
+behind its empty-check); `Effect.bracket` in the kernel with no Sync prototype; the
+naming pass (`evalOwed`, `takeEvalOwed`, `owe`, `oweBelow`, `rebound`) after "takeRoot
+sounds odd to me".
 
 ## Edit sequence for the live review
 
 Bottom-up, one file at a time; the sentence to say when applying each:
 
-1. **`Stack.scala`** — "The stack gains the owed slot: a fourth parallel array and a
-   fourth snapshot slot, maintained by exactly the sites that already maintain the other
-   three, and `dump` attaches its snapshot to the entry below so no dump can be unowed."
-2. **`KyoInternal.scala`** — "A park carries what the eval itself owed, default empty."
+1. **`Stack.scala`** — "The stack gains the owed slot and the eval's own owed: a fourth
+   parallel array, a fourth snapshot slot, and `evalOwed`, maintained by exactly the
+   sites that already maintain the other three; `dump` attaches its snapshot to the entry
+   below, `pop` hands back what the entry owes, and `oweBelow` re-homes a dissolving
+   extent's obligations."
+2. **`KyoInternal.scala`** — "A park carries what its eval owed, default empty."
 3. **`Handler.scala`** — "The context handler gains its completion edge, and both hooks
    state the at-least-once contract."
 4. **`ContextEffect.scala`** — "The handle surface exposes done beside release, the
-   settled fast path still completes, and the pair overload names its release argument
-   so the defaults cannot misbind."
+   settled fast path still completes, and the pair overload names its release argument so
+   the defaults cannot misbind."
 5. **`Arrow.scala`** — "The bind step: an arrow application with no budget gate, so a
    settled value and the region it owes cannot be separated by a park."
-6. **`Eval.scala`** — "The eval drains what exiting entries owe, downdates the context at
-   crossings, and re-homes obligations whose owner dissolves; the loop-done arms unify
-   and dropRegions disappears."
+6. **`Eval.scala`** — "The eval drains what exiting entries owe and rebinds the context
+   at crossings; the crossing arm splits into its lazy top tier and the eager non-top
+   tier, cold bodies live behind one-call helpers, and the loop-done arms unify."
 7. **`Effect.scala`** — "The bracket is kernel machinery: Cell, Finalize, and bracket on
    the companion, built on the bind step and the done edge."
 8. **Delete `Sync.scala`**, **add `EffectBracketTest.scala`**, **extend `EvalTest.scala`**
@@ -78,53 +81,73 @@ Bottom-up, one file at a time; the sentence to say when applying each:
 
 ## Adjudication
 
-`flags.md` beside this file: 48 rows, all adjudicated, zero REMOVE. The two casts worth
-your eyes: F32 (`hc.done(state.asInstanceOf[VX])`, the storage-boundary cast you asked
-about, kept per your 2026-08-29 ruling against carrier types) and F1/F48 (the two
-genuinely new constructs: the Bind class and the owed accessor).
+`flags.md` beside this file: 56 rows, all adjudicated, zero REMOVE. The rows worth your
+eyes: F1 (the Bind class, the one genuinely new arrow shape), F39 (the storage-boundary
+cast you asked about, kept per your 2026-08-29 ruling against carrier types), F42/F44
+(the stack's two new mutable members and their reset protocol), and F34-F36 (the split's
+duplicated arms, measured bytecode-neutral below).
 
 ## Evidence
 
 | check | result |
 |---|---|
-| kernel JVM suite | 1535/1535 |
-| kernel JS suite | 1489/1489 |
-| kernel Native suite | running at package time; reported before the review opens |
-| clean batch build (`clean` then `compile`) | passes; no suspension cascade from Bind in Arrow.scala or bracket in Effect.scala |
+| kernel JVM suite | 1542/1542 at the tip |
+| kernel JS suite | 1489/1489 at 9a9a12ff71; rerun at the tip in flight at package time |
+| kernel Native suite | 1516/1516 at 9a9a12ff71; rerun at the tip in flight at package time |
+| clean batch build | passes; no suspension cascade from Bind in Arrow.scala or bracket in Effect.scala |
 | red-first reproductions | dropped capture, settle strand, loop-done discard, stale context: each observed red with the right failure before its fix |
+| `loop$1` bytecode | base 2197, unsplit eager variant 2508, final tree 2504: the split plus cold extraction is size-neutral against the unsplit shape while the hot top trace runs the pre-change lazy code; the +307 over base is the semantic addition itself. `recovered$1` 235 to 309. Defer and Handle arms untouched. |
 
-**Benches: parked by your standing instruction ("no benchs for now please"), so every
-hot-path delta is disclosed, not measured.** The deltas and the rows that gate them when
-benches resume:
+**Benches: parked by your standing instruction, so the hot-path deltas are disclosed,
+not measured.** The deltas and their gate rows:
 
 | site | delta | rows |
 |---|---|---|
-| Defer arm, Handle arm, `answers` loop, `push` | none | (the hottest paths are untouched) |
-| settled arrow exit | one owed-slot read + branch (`pop` returns the chunk) | suspension, fused handler |
-| settled context exit | same read + one megamorphic no-op `done` call | context binding, handleInheritable |
-| loop-done exits | one owed read + branch, allocation only when owed | handleLoop |
-| `ContextEffect.handle` settled fast path | inline `done(derive(Absent))`, DCE expected for the default | context settled |
-| non-top crossings | dump now eager on the loop-done path; downdate walk per crossing | emitting, crossing |
-| bracket call | Bind replaces the map arrow (net zero); Cell per shot (was already) | bracket rows (new) |
+| Defer arm, Handle arm, `answers` loop, `push`, top-tier crossing | none | (the hottest paths run pre-change code) |
+| settled arrow exit | one owed-slot read + branch (`pop` returns the chunk) plus one call site | suspension, fused handler |
+| settled context exit | the same plus one megamorphic no-op `done` call | context binding, handleInheritable |
+| loop-done exits | one owed read + branch; no allocation when nothing is owed | handleLoop |
+| `ContextEffect.handle` settled fast path | inline `done(derive(Absent))`; DCE expected for the default | context settled |
+| non-top crossings | the dump is eager on the loop-done path too; the rebind walk per crossing | emitting, crossing |
+| bracket call | Bind replaces the map arrow (net zero); Cell per shot | bracket rows (new) |
+
+## The pin suite (28 in EffectBracketTest, plus the EvalTest owed block)
+
+Completion order and payload, the settled fast path, use throwing during application,
+exactly-once, failure payload, abandonment, park-resume, LIFO nesting, the settle strand,
+loop-done discard, unguarded acquire; discard, in-clause resume, park-after-resume,
+effectful-clause resume and done; discard by clause throw, the leaked capture entering
+the spent extent, throwing release on the discard drain; release throwing on completion
+(fails the computation, outer bracket still releases), release failure suppressed onto
+the unwind failure, release failure suppressed onto the abandonment signal; bracket with
+a binding in one dump, multi-shot over a bracket (released at first completion), two
+parks, contextual isolate forking inert. EvalTest: drain promptness at the answering
+region's exit, sibling dumps newest first, the raw-hook at-least-once double fire, the
+clause reading the outer binding.
 
 ## Open questions, deliberately not decided here
 
 1. **`Spent` re-entry refusal** (held-out review section 5): pass-through is pinned as
-   the chosen-until-ruled semantics; the refusal hook remains your call.
-2. **`release`/`done` visibility on `ContextEffect.handle`**: discussed 2026-09-01; the
-   reachability law now supports user-facing, leaning yes, not yet ruled.
-3. **The name `Bind`** (main's `BindingStep`; "install" rejected as the Park arm's verb;
+   the chosen-until-ruled semantics (the leaked-capture pin); the refusal hook remains
+   your call.
+2. **A release failure on the discard drain is swallowed** (suppressed onto the internal
+   discard signal, which the drain then drops). The other three paths surface it: the
+   completion path propagates it, the unwind and abandonment paths suppress it onto a
+   visible throwable. Pinned as-is ("does not starve the ones after it"); whether the
+   discard path should surface finalizer failures somewhere is open.
+3. **`release`/`done` visibility on `ContextEffect.handle`**: the reachability law now
+   supports user-facing; leaning yes, not yet ruled.
+4. **The name `Bind`** (main's `BindingStep`; "install" rejected as the Park arm's verb;
    `Open` recorded as the alternative).
 
 ## Held-out review reconciliation
 
 Section 1 (loop-done leak): fixed and pinned. Section 2 (at-least-once for raw hooks):
 accepted, documented on the handle scaladoc and `ContextHandler`, pinned as the
-double-fire shape. Section 3 (settle strand): fixed by construction; the reviewer's three
-enforcement points collapse to the one gate-skip, and its livelock concern cannot arise
-because no site declines. Section 4/5 (Spent): reopened for you, pass-through pinned.
-Section 6 answers adopted where applicable (eval-local root, LIFO both levels, no
-singleton signal, kernel-internal placement, isolate confirmed untouched); the Park owed
-field landed as the reviewer recommended. Its eval-end drain position was superseded by
-your region-exit ruling, including on the recovery path: recovery ends the region, so its
-obligations drain there.
+double-fire shape. Section 3 (settle strand): fixed by construction; the three
+enforcement points collapse to the one gate-skip. Section 4/5 (Spent): reopened for you,
+pass-through pinned. Section 6 answers adopted where applicable (LIFO both levels, no
+singleton signal, kernel-internal placement, isolate confirmed and now pinned); its
+eval-local-var recommendation was superseded by the pooled-stack `evalOwed` (the nested
+eval functions would have lifted a local into a per-eval box), and its eval-end drain
+position was superseded by your region-exit ruling, including on the recovery path.

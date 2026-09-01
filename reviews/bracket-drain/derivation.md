@@ -30,6 +30,16 @@ mid-flight. Rulings of record, verbatim:
 > "how about we move Sync.acquireReleaseWith to Effect.bracket? so we can keep all these
 > tests in the kernel itself ... without a Sync prototype" (2026-09-01)
 
+> "review the changes for possible simplifications. A main concern I have is the extra
+> code in the eval loop degrading performance ... Note that just increasing the bytecode
+> size of Eval is already risky" (2026-09-01: the hot-path pass; measured in review.md)
+
+> "takeRoot sounds odd to me ... make sure naming of these methods is clear"
+> (2026-09-01: the naming pass; evalOwed, takeEvalOwed, owe, oweBelow, rebound)
+
+> "bracket must be bullet proof" (2026-09-01: the interaction and finalizer-failure pin
+> sweeps)
+
 ## The equations
 
 **Owed dumps.** A crossing into the region at `idx` dumps the regions above it; the dumped
@@ -48,10 +58,12 @@ equation:
 
 - An entry that leaves the stack while its logical extent continues as values (the
   LoopHandler effectful-clause pop, where the region is re-created fresh by the outcome
-  dispatch) re-homes what it owes to the enclosing entry: everything reachable from the
-  dissolved extent is reachable only through the enclosing region's body. At depth 0 the
-  enclosing extent is the eval itself: the owed chunk roots on the eval, drains at its
-  end, and rides a safepoint park to the resuming eval (`Kyo.Park.owed`).
+  dispatch, and a resumed park's remainder) re-homes what it owes below itself
+  (`oweBelow`): everything reachable from the dissolved extent is reachable only through
+  the extent below. Only when nothing is below does the obligation land on the eval
+  itself (`evalOwed`, kept on the pooled stack so the nested eval functions do not lift a
+  local into a per-eval box), draining at the eval's end and riding a safepoint park as
+  `Kyo.Park.owed`.
 - A dump packed by a park or by an enclosing dump travels with its entry, because the
   snapshot layout carries the owed slot beside handler, state, and continuation. The
   abandonment walk drains owed slots wherever it already reaches entries.
@@ -96,11 +108,11 @@ slot), deleting `dropRegions` and the dead topness check.
 | owe at dump | inside `Stack.dump`: the entry below the dumped run keeps the pointer, structurally |
 | drain | `released(handler, state, ex)` walked innermost first, the existing release law |
 | discard signal | a `KyoException` minted per drain at the exit site, behind its empty-check |
-| re-home on pending pop | chunk concat onto the entry below, or the eval-local root at depth 0 |
-| root carriage across parks | `Kyo.Park.owed`, default empty; the park already carries the entries |
+| re-home on a dissolving extent | `oweBelow`: chunk concat onto the entry below, or `evalOwed` when nothing is below |
+| eval-owed carriage across parks | `Kyo.Park.owed`, default empty; the park already carries the entries |
 | bind | `Arrow.Step` minus the budget gate; the settled arm's strictness as an arrow |
 | completion | `ContextHandler.done`, the settled context pop's edge, like release on the death edges |
-| context downdate at the crossing | the settled pop's downdate, applied to the dumped run |
+| context rebind at the crossing | `rebound`: the settled pop's rebind, applied to the dumped run |
 
 No new node kind. No eval arm added (one deleted, net). No registry: the owed chunks live
 in the stack and the snapshots the dump already builds, and uniqueness stays in the
@@ -112,17 +124,18 @@ in the stack and the snapshots the dump already builds, and uniqueness stays in 
 - `Effect.scala`: `Cell`, `Finalize`, `bracket` on the companion; the `Sync` prototype
   deleted.
 - `KyoInternal.scala`: `Kyo.Park` gains `owed: Chunk[Stack.Snapshot] = Chunk.empty`.
-- `Stack.scala`: always-present `owed` parallel array (chunks, empty-filled, no nulls);
-  `pop` hands back what the entry owes; `takeOwed`, `oweAll`, `owedOf`; `dump` attaches
-  its snapshot to the entry below; snapshot stride 4 with an `owed` accessor and an
-  `empty` constant; `contextual()` and the Builder emit empty owed slots (bindings fork,
-  obligations do not).
-- `Eval.scala`: eager dump plus context downdate at non-top crossings; drains at every
-  entry exit (settled pops, the recovered pops, the post-recover pop, both loop-done
-  arms, the pending-pop re-home); the eval-local root chunk, transferred by `park()`,
-  drained at completion and at the unrecovered throw; both Park arms re-root and install
-  owed slots; `Eval.release` expands owed slots and the park's root chunk; shared
-  collect/expand helpers keep the in-eval drains and the abandonment walk on one order.
+- `Stack.scala`: always-present `owed` parallel array (chunks, empty-filled, no nulls)
+  and `evalOwed`; `pop` hands back what the entry owes; `takeOwed`, `owe`, `oweBelow`,
+  `takeEvalOwed`, `owedOf`; `dump` attaches its snapshot to the entry below; snapshot
+  stride 4 with an `owed` accessor and an `empty` constant; `contextual()` and the
+  Builder emit empty owed slots (bindings fork, obligations do not).
+- `Eval.scala`: the crossing arm split into its lazy top tier and the eager non-top tier
+  (dump via `dumped`, context via `rebound`); drains at every entry exit through
+  `drainDiscarded` and `drainOwed`; `oweBelow` at the pending pops and the Park arms
+  (a resumed park's owed re-homes below the installed run); `takeEvalOwed` at the park
+  transfer, the completion, and the unrecovered throw; `Eval.release` expands owed slots
+  and the park's owed; shared expand helpers keep the in-eval drains and the abandonment
+  walk on one order.
 - `Handler.scala`: `ContextHandler.done`; the at-least-once wording on both hooks.
 - `ContextEffect.scala`: `done` parameter (defaulted, beside `release`); the settled arm
   fires `done(derive(Absent))`; the contract scaladoc.

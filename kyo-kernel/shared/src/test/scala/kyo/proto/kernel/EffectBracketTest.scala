@@ -276,6 +276,45 @@ class EffectBracketTest extends AnyFreeSpec:
         }
     }
 
+    "finalizer failures" - {
+        "a release that throws on completion fails the computation and releases the outer bracket" in {
+            object Bad extends RuntimeException("bad", null, false, false)
+            var outerSeen = Maybe.empty[Maybe[Throwable]]
+            val v = Effect.bracket(Effect.defer(1))((_, outcome) => outerSeen = Maybe(outcome)) { _ =>
+                Effect.bracket(Effect.defer(2))((_, _) => throw Bad)(b => Effect.defer(b))
+            }
+            val ex = intercept[RuntimeException](eval(v))
+            assert(ex eq Bad)
+            assert(outerSeen.exists(_.exists(_ eq Bad)))
+        }
+
+        "a release failure on the unwind is suppressed onto the failure" in {
+            val failure = new RuntimeException("failure")
+            object Bad extends RuntimeException("bad", null, false, false)
+            val v = Effect.bracket(Effect.defer(1))((_, _) => throw Bad) { _ =>
+                Effect.defer((throw failure): Int)
+            }
+            val ex = intercept[RuntimeException](eval(v))
+            assert(ex eq failure)
+            assert(ex.getSuppressed.exists(_ eq Bad))
+        }
+
+        "a release failure on abandonment is suppressed onto the holder's signal" in {
+            val signal = new RuntimeException("signal")
+            object Bad extends RuntimeException("bad", null, false, false)
+            val v = Effect.bracket(Effect.defer(1))((_, _) => throw Bad) { a =>
+                Effect.defer {
+                    requestStop()
+                    Effect.defer(a + 1)
+                }
+            }
+            val parked = Eval.partial(v)
+            assert(parked.isInstanceOf[Kyo.Park[?, ?]])
+            Eval.release(parked, signal)
+            assert(signal.getSuppressed.exists(_ eq Bad))
+        }
+    }
+
     "mixed with other kernel features" - {
         "a bracket and a binding dumped together release inner first on discard" in {
             val log = collection.mutable.ListBuffer[String]()
