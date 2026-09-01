@@ -82,6 +82,41 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
 
     "interactions" - {
 
+        "a bracket inside the mask releases after the tunneled answer flows back" in {
+            var order = List.empty[String]
+            val v: Int < Ask =
+                Effect.bracket(Effect.defer {
+                    order ::= "acquire"
+                    0
+                })((_, _) => order ::= "release") { _ =>
+                    ask.map { a =>
+                        order ::= s"use $a"
+                        a
+                    }
+                }
+            val out = Mask.run[Ask](runAsk(Mask[Ask](v))(1))
+            assert(eval(runAsk(out)(42)) == 42)
+            assert(order.reverse == List("acquire", "use 42", "release"))
+        }
+
+        "a bracket inside the mask releases when the outer handler discards the continuation" in {
+            var order = List.empty[String]
+            val v: Int < Ask =
+                Effect.bracket(Effect.defer {
+                    order ::= "acquire"
+                    0
+                })((_, _) => order ::= "release") { _ =>
+                    ask
+                }
+            val unmasked: Int < Ask = Mask.run[Ask](Mask[Ask](v))
+            val out: Int < Any = ArrowEffect.handleCont(Tag[Ask], unmasked)(
+                [C] => (_, _) => -1,
+                a => a
+            )
+            assert(eval(out) == -1)
+            assert(order.reverse == List("acquire", "release"))
+        }
+
         "a recovering region inside the mask catches a failure raised after the tunneled answer returns" in {
             val body: Int < (Say & Ask) = ask.map(a => (throw Boom): Int)
             val v: Int < Ask = ArrowEffect.handleCont[Const[String], Const[Unit], Say, Int, Int, Ask, Any](Tag[Say], body)(
