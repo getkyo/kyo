@@ -3,6 +3,7 @@ package kyo.proto
 import kyo.Frame
 import kyo.proto.kernel.Effect
 import kyo.proto.kernel.internal.Debugger
+import kyo.proto.kernel.internal.Kyo
 import kyo.proto.kernel.internal.Nested
 import kyo.proto.kernel.internal.Pending
 import kyo.proto.kernel.internal.Safepoint
@@ -10,16 +11,6 @@ import kyo.proto.kernel.internal.short
 import kyo.proto.kernel.internal.site
 import scala.annotation.nowarn
 import scala.annotation.tailrec
-
-trait Kyo[+A, -S]:
-
-    def frame: Frame
-end Kyo
-
-object Kyo:
-
-    inline def lift[A, S](inline v: A): A < S = v
-end Kyo
 
 sealed trait Arrow[-A, +B, -S] extends Kyo[B, S]:
 

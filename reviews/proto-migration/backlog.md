@@ -132,14 +132,13 @@ platforms. So this is a per-platform optimization, not a correctness requirement
 
 Each holds a known-red pin set in the proto suite until ruled; the pins are the reproduction.
 
-- **Q3. Park resume and binding re-resolution** (4 pins: ContextEffectThreadingTest x2,
-  IsolateTest "a join never reaches a scope that did not own the crossing", and the
-  kernel's resume-scope law generally). The kernel re-resolves a parked binding against
-  the scope of the thread that resumes it; the proto's `installed()` pushes captured
-  states verbatim. Re-deriving at install is safe for the bracket (its derive closes
-  over the cell) but breaks the isolate's deliberately forked entries, so a fix needs a
-  park-kind distinction or a `ContextHandler` resume hook. Verbatim is what fiber-carried
-  `Local` values want; the old law serves resume-under-enclosure.
+- **Q3. Park resume and binding re-resolution: RULED, the proto is the correct scoping**
+  (2026-09-01, "the proto behavior seems the correct scoping"). A binding scopes the
+  reads inside its body; a park is a snapshot of that body, so the captured state is what
+  resumes, wherever it resumes. The kernel's re-resolution let a binding enclosing the
+  resume site rewrite a lexically inner one. The four pins now pin the proto's law
+  (ContextEffectThreadingTest x2, IsolateTest "a restored crossing reads the binding it
+  captured").
 - **Q4. `handleFirst` and brackets** (1 pin: "a multi-shot handleFirst clause is refused
   at its second branch"). A region settling with its `FirstSuspended` token drains the
   dumps the handed-out remainder still needs, so the remainder arrives spent. The old
@@ -151,10 +150,11 @@ Each holds a known-red pin set in the proto suite until ruled; the pins are the 
   stack held the trailing maps as entries; the proto fuses continuations into loop
   locals, so at the catch only region labels survive. Frame-rich traces would mean
   stashing the in-flight continuation per iteration, a hot-path store to be measured.
-- **Q6. The `Kyo` combinator companion.** KyoTest and the two KyoForeach suites test
-  `kyo/Kyo.scala` (zip, when, foreach, foldLeft, fill, ...), 2694 lines the proto lacks.
-  Port it into `kyo.proto` now, or leave those suites for the swap, when the file lands
-  on the proto directly.
+- **Q6. The `Kyo` combinator companion: DONE** (2026-09-01, "let's port Kyo.scala from
+  the old kernel"). `kyo/proto/Kyo.scala` carries the companion, comments stripped; the
+  internal node base `trait Kyo` moved into KyoInternal.scala beside the internal object,
+  so `kyo.proto.Kyo` is only the user-facing companion. KyoTest, KyoForeachTest, and
+  KyoForeachCollTest port with the toString pin adapted to the proto's rendering.
 
 Divergent by design, not ported: HandlerTest (handler-as-arrow, `Handler.Out`),
 DebuggerTest (the session protocol, see Q1), StackTest (the flattened arrow stack), the

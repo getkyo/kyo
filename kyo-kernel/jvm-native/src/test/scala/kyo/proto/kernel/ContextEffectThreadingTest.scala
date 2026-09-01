@@ -26,7 +26,7 @@ class ContextEffectThreadingTest extends AnyFreeSpec:
         assert(eval(parked) == 42)
     }
 
-    "a park holding a binding resumes on another thread against that thread's enclosing scope" in {
+    "a park holding a binding resumes on another thread with the binding it captured" in {
         val body: Int < Count =
             Effect.defer {
                 discard(Safepoint.stop(Thread.currentThread()))
@@ -46,10 +46,10 @@ class ContextEffectThreadingTest extends AnyFreeSpec:
         t.start()
         t.join(10000)
         assert(!t.isAlive)
-        assert(enclosed == 111)
+        assert(enclosed == 11)
     }
 
-    "concurrent resumes under different enclosures do not observe each other's resolution" in {
+    "concurrent resumes under different enclosures each keep the captured binding" in {
         var run = 0
         while run < 50 do
             val body: Int < Count =
@@ -68,8 +68,8 @@ class ContextEffectThreadingTest extends AnyFreeSpec:
             ta.join(10000)
             tb.join(10000)
             assert(!ta.isAlive && !tb.isAlive)
-            assert(a == 111, s"a=$a")
-            assert(b == 1011, s"b=$b")
+            assert(a == 11, s"a=$a")
+            assert(b == 11, s"b=$b")
             run += 1
         end while
     }

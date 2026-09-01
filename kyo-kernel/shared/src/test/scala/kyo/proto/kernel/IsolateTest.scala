@@ -553,7 +553,7 @@ class IsolateTest extends kyo.Test:
             assert(v.eval == 10)
         }
 
-        "a join never reaches a scope that did not own the crossing" in {
+        "a restored crossing reads the binding it captured, not the scope it restores in" in {
             val v =
                 ContextEffect.handle(Tag[TestEffect1])(1, (_: Int) => 1, (s: Int) => s, (p: Int, f: Int, _: Int) => p + f) {
                     ContextEffect.handle(Tag[TestEffect1])(2, (_: Int) => 2, (s: Int) => s, (p: Int, f: Int, _: Int) => p + f) {
@@ -564,7 +564,7 @@ class IsolateTest extends kyo.Test:
                         }
                     }
                 }
-            assert(v.eval == 10)
+            assert(v.eval == 2)
         }
 
         "every binding in scope is asked" in {
