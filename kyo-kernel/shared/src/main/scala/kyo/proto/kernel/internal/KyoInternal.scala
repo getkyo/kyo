@@ -51,6 +51,9 @@ object Kyo:
 
         def tag: Tag[E]
         def cont: Arrow[A, B, S]
+
+        override def toString: String =
+            s"Kyo(${tag.show}, ${site(frame)})"
     end Suspend
 
     abstract class SuspendArrow[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Suspend[E, O[A], B, S]:
