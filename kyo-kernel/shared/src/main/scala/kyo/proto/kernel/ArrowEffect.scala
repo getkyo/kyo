@@ -8,12 +8,14 @@ import kyo.proto.Arrow
 import kyo.proto.Arrow.Transform
 import kyo.proto.Loop
 import kyo.proto.kernel.internal.Eval
+import kyo.proto.kernel.internal.Handler
 import kyo.proto.kernel.internal.Handler.HandlerCont
 import kyo.proto.kernel.internal.Handler.HandlerContOp
 import kyo.proto.kernel.internal.Handler.HandlerLoop
 import kyo.proto.kernel.internal.Kyo
 import kyo.proto.kernel.internal.Nested
 import kyo.proto.kernel.internal.Pending
+import kyo.proto.kernel.internal.Safepoint
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
@@ -267,6 +269,23 @@ object ArrowEffect:
                         def tag = effectTag
                         def run[X](st: State, input: I[X]) =
                             handle[X](st, input)
+                        override def answers[X](
+                            state0: State,
+                            input0: I[X],
+                            k0: Arrow[Any, Any, Any],
+                            armed: Boolean,
+                            slot: Safepoint.Slot
+                        ): Loop.Outcome2[State, Any, B < (S & S2)] < (S & S2) =
+                            Handler.answersLoopState[I, O, E, A, B, S & S2, State, X](
+                                effectTag,
+                                [C] => (st: State, in: I[C]) => handle[C](st, in),
+                                _frame,
+                                state0,
+                                input0,
+                                k0,
+                                armed,
+                                slot
+                            )
                         def done(st: State, v0: A) = onDone(st, v0)
                 val state0 = state
 
@@ -300,6 +319,23 @@ object ArrowEffect:
                         def tag = effectTag
                         def run[X](st: State, input: I[X]) =
                             handle[X](st, input)
+                        override def answers[X](
+                            state0: State,
+                            input0: I[X],
+                            k0: Arrow[Any, Any, Any],
+                            armed: Boolean,
+                            slot: Safepoint.Slot
+                        ): Loop.Outcome2[State, Any, B < (S & S2)] < (S & S2) =
+                            Handler.answersLoopState[I, O, E, A, B, S & S2, State, X](
+                                effectTag,
+                                [C] => (st: State, in: I[C]) => handle[C](st, in),
+                                _frame,
+                                state0,
+                                input0,
+                                k0,
+                                armed,
+                                slot
+                            )
                         def done(st: State, v0: A)                     = onDone(st, v0)
                         override def recover(st: State, ex: Throwable) = onRecover(st, ex)
                 val state0 = state
@@ -404,6 +440,23 @@ object ArrowEffect:
                         def tag = effectTag
                         def run[X](st: State, input: I[X]) =
                             handle[X](st, input)
+                        override def answers[X](
+                            state0: State,
+                            input0: I[X],
+                            k0: Arrow[Any, Any, Any],
+                            armed: Boolean,
+                            slot: Safepoint.Slot
+                        ): Loop.Outcome2[State, Any, B < (S & S2)] < (S & S2) =
+                            Handler.answersLoopState[I, O, E, A, B, S & S2, State, X](
+                                effectTag,
+                                [C] => (st: State, in: I[C]) => handle[C](st, in),
+                                _frame,
+                                state0,
+                                input0,
+                                k0,
+                                armed,
+                                slot
+                            )
                         def done(st: State, v0: A) = onDone(st, v0)
 
                 new Kyo.HandleWith[E, A, B, C, S & S2 & S3, State]:

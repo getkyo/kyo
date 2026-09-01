@@ -122,6 +122,43 @@ import scala.util.control.NonFatal
                                         val result = handler.run(operation, continuation)
                                         Debugger.onResult(result)
                                         loop(result, Arrow.id, Arrow.id, ctx)
+                                    case handler: Handler.HandlerLoop[IX, OX, EX, C, Y, S2, VX] @unchecked if idx == stack.depth - 1 =>
+                                        val k    = kyo.cont.chain(contA.chain(contB)).asInstanceOf[Arrow[Any, Any, Any]]
+                                        val exit = handler.answers(stack.stateAt(idx).asInstanceOf[VX], kyo.input, k, armed, slot)
+                                        Debugger.onResult(exit)
+                                        exit match
+                                            case e: Loop.Continue2[VX, Any] @unchecked =>
+                                                stack.updateState(idx, e._1)
+                                                loop(e._2.asInstanceOf[Any < S2], Arrow.id, Arrow.id, ctx)
+                                            case pending: Pending[Outcome2[VX, OX[VX] < (EX & S2), Y < S2], S2] @unchecked =>
+                                                type OutT = Outcome2[VX, OX[VX] < (EX & S2), Y < S2]
+                                                val reentry = k.asInstanceOf[Arrow[OX[VX], C, EX & S2]]
+                                                val dispatch =
+                                                    new Arrow.Step[OutT, Y, S2]:
+                                                        def frame = Frame.internal
+                                                        override def apply[D, S3](out: OutT < S3, cont2: Arrow[Y, D, S3]) =
+                                                            out match
+                                                                case p: Pending[OutT, S3] @unchecked =>
+                                                                    Effect.defer(p, this, cont2)
+                                                                case out: Loop.Continue2[VX, OX[VX] < (EX & S2)] @unchecked =>
+                                                                    Kyo.handle[EX, C, Y, S2, VX](
+                                                                        out._2.chain(reentry),
+                                                                        handler,
+                                                                        out._1
+                                                                    ).chain(cont2)
+                                                                case out =>
+                                                                    Nested.unnest[Y < S2](out).chain(cont2)
+                                                val next = stack.continuationAt(idx).asInstanceOf[Arrow[Y, Any, S2]]
+                                                Debugger.onRegionExit(handler, pending)
+                                                stack.pop()
+                                                loop[OutT, Y, Any, S2](pending, dispatch, next, ctx)
+                                            case done =>
+                                                val result = Nested.unnest[Y < S2](done.asInstanceOf[Y < S2])
+                                                Debugger.onRegionExit(handler, result)
+                                                val next = stack.continuationAt(idx).asInstanceOf[Arrow[Y, Any, Any]]
+                                                stack.truncate(idx)
+                                                loop(result, next, Arrow.id, ctx)
+                                        end match
                                     case handler: Handler.HandlerLoop[IX, OX, EX, C, Y, S2, VX] @unchecked =>
                                         val outcome0 = handler.run(stack.stateAt(idx).asInstanceOf[VX], kyo.input)
                                         stack.scratch = outcome0
