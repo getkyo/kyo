@@ -1,11 +1,11 @@
 package kyo.proto.kernel.internal
 
 import kyo.Frame
-import kyo.Loop
 import kyo.Maybe
 import kyo.Maybe.Absent
 import kyo.Tag
 import kyo.proto.Arrow
+import kyo.proto.Loop
 import kyo.proto.Loop.Continue2
 import kyo.proto.Loop.Outcome2
 import kyo.proto.kernel.<
@@ -54,7 +54,7 @@ end Handler
                                 out._1
                             ).chain(cont2)
                         case out =>
-                            Nested.unnest[B < S](kyo.proto.Loop.unnest(out.asInstanceOf[OutT])).chain(cont2)
+                            Nested.unnest[B < S](Loop.unnest(out.asInstanceOf[OutT])).chain(cont2)
             end new
         end clauseDispatch
 
@@ -73,9 +73,9 @@ end Handler
                         val ans = c._2
                         ans match
                             case _: Pending[?, ?] =>
-                                kyo.proto.Loop.continue(st, ans.map(a => k(a))(using Frame.internal))
+                                Loop.continue(st, ans.map(a => k(a))(using Frame.internal))
                             case _ =>
-                                kyo.proto.Loop.continue(st, k(Nested.unnest[Any](ans)))
+                                Loop.continue(st, k(Nested.unnest[Any](ans)))
                         end match
                     case o2 =>
                         o2.asInstanceOf[Outcome2[State, Any, B < S] < S]
@@ -83,7 +83,7 @@ end Handler
             catch
                 case ex: Throwable =>
                     val at = st
-                    kyo.proto.Loop.continue(at, Effect.deferInline(throw ex)(using Frame.internal))
+                    Loop.continue(at, Effect.deferInline(throw ex)(using Frame.internal))
             end try
         end answers
     end LoopHandler
@@ -123,12 +123,12 @@ end Handler
                         val ans = c._2
                         ans match
                             case _: Pending[?, ?] =>
-                                result = kyo.proto.Loop.continue(st, ans.map(a => k(a))(using _frame))
+                                result = Loop.continue(st, ans.map(a => k(a))(using _frame))
                                 running = false
                             case _ =>
                                 val next = k(Nested.unnest[Any](ans))
                                 if armed && Safepoint.stopped(slot) then
-                                    result = kyo.proto.Loop.continue(st, Effect.defer(next, Arrow.id[Any]))
+                                    result = Loop.continue(st, Effect.defer(next, Arrow.id[Any]))
                                     running = false
                                 else
                                     next match
@@ -156,10 +156,10 @@ end Handler
                                                 case _ => ()
                                             end match
                                             if !matched then
-                                                result = kyo.proto.Loop.continue(st, Effect.defer(v0, dN.contA, dN.contB))
+                                                result = Loop.continue(st, Effect.defer(v0, dN.contA, dN.contB))
                                                 running = false
                                         case _ =>
-                                            result = kyo.proto.Loop.continue(st, next)
+                                            result = Loop.continue(st, next)
                                             running = false
                                     end match
                                 end if
@@ -171,7 +171,7 @@ end Handler
             catch
                 case ex: Throwable =>
                     val at = st
-                    result = kyo.proto.Loop.continue(at, Effect.deferInline(throw ex)(using _frame))
+                    result = Loop.continue(at, Effect.deferInline(throw ex)(using _frame))
                     running = false
         end while
         result

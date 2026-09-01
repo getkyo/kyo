@@ -2,6 +2,7 @@ package kyo.proto.kernel.internal
 
 import kyo.Chunk
 import kyo.Frame
+import kyo.KyoException
 import kyo.Maybe
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
@@ -17,12 +18,13 @@ import kyo.proto.kernel.Effect
 import language.implicitConversions
 import scala.annotation.publicInBinary
 import scala.annotation.tailrec
+import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
 @publicInBinary private[kyo] object Eval:
 
     def release[A, S](v: A < S, ex: Throwable): Unit =
-        val collected = scala.collection.mutable.ArrayBuffer.empty[AnyRef]
+        val collected = ArrayBuffer.empty[AnyRef]
         @tailrec def collect(v: Any): Unit =
             v match
                 case p: Pending[?, ?] =>
@@ -59,7 +61,7 @@ import scala.util.control.NonFatal
         releaseCollected(collected, ex)
     end release
 
-    private def expandOwed(collected: scala.collection.mutable.ArrayBuffer[AnyRef], owed: Chunk[Stack.Snapshot]): Unit =
+    private def expandOwed(collected: ArrayBuffer[AnyRef], owed: Chunk[Stack.Snapshot]): Unit =
         if !owed.isEmpty then
             val snapshots = owed.toIndexed
             var j         = 0
@@ -80,7 +82,7 @@ import scala.util.control.NonFatal
             end while
     end expandOwed
 
-    private def releaseCollected(collected: scala.collection.mutable.ArrayBuffer[AnyRef], ex: Throwable): Unit =
+    private def releaseCollected(collected: ArrayBuffer[AnyRef], ex: Throwable): Unit =
         var i = collected.length - 2
         while i >= 0 do
             released(collected(i).asInstanceOf[Handler.ContextHandler[?, ?, ?, ?]], collected(i + 1), ex)
@@ -89,7 +91,7 @@ import scala.util.control.NonFatal
     end releaseCollected
 
     private def drainOwed(owed: Chunk[Stack.Snapshot], ex: Throwable): Unit =
-        val collected = scala.collection.mutable.ArrayBuffer.empty[AnyRef]
+        val collected = ArrayBuffer.empty[AnyRef]
         expandOwed(collected, owed)
         releaseCollected(collected, ex)
     end drainOwed
@@ -111,7 +113,7 @@ import scala.util.control.NonFatal
 
     private def drainDiscarded(owed: Chunk[Stack.Snapshot]): Unit =
         if !owed.isEmpty then
-            val signal = new kyo.KyoException("remainder discarded")(using Frame.internal)
+            val signal = new KyoException("remainder discarded")(using Frame.internal)
             drainOwed(owed, signal)
             if signal.getSuppressed.length != 0 then Report.unhandled(signal)
 

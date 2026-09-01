@@ -1,6 +1,7 @@
 package kyo.proto.kernel
 
 import java.util.concurrent.atomic.AtomicBoolean
+import kyo.Closed
 import kyo.Frame
 import kyo.Maybe
 import kyo.Result
@@ -53,7 +54,7 @@ object Effect:
                     override private[kyo] def release(state: Cell, ex: Throwable): Unit = state.drain(ex)
                     override private[kyo] def reenter(state: Cell): Unit =
                         if (state ne Cell.inert) && state.get() then
-                            throw new kyo.Closed("Bracket resource", _frame)(using _frame)
+                            throw new Closed("Bracket resource", _frame)(using _frame)
                 new Kyo.Handle[Cell, Finalize, B, B, B, S1 & S2]:
                     override def frame = _frame
                     def value          = body
