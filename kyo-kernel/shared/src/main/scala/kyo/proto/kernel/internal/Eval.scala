@@ -20,10 +20,46 @@ import scala.util.control.NonFatal
 
 @publicInBinary private[kyo] object Eval:
 
+    /** Runs the releases a computation still owes, for a holder giving up on resuming it: the abandonment signal reaches every open
+      * region, innermost first, both in when each release is invoked and in how the returned computation sequences them. Open regions
+      * are found by inspecting the value spine; arrows are never traversed. Anything that never acquired, or is not a computation at
+      * all, owes nothing.
+      */
     def release[A, S](v: A < S, ex: Throwable): Any < Any =
-        v match
-            case p: Pending[?, ?] => p.release(ex)
-            case _                => ()
+        val collected = scala.collection.mutable.ArrayBuffer.empty[AnyRef]
+        @tailrec def collect(v: Any): Unit =
+            v match
+                case p: Pending[?, ?] =>
+                    p match
+                        case kyo: Kyo.Defer[?, ?, ?, ?] =>
+                            collect(kyo.value)
+                        case kyo: Kyo.Handle[?, ?, ?, ?, ?, ?] =>
+                            collected += kyo.handler
+                            collected += kyo.state.asInstanceOf[AnyRef]
+                            collect(kyo.value)
+                        case kyo: Kyo.Park[?, ?] =>
+                            val entries = kyo.entries
+                            var i       = 0
+                            while i < entries.regions do
+                                collected += entries.handler(i)
+                                collected += entries.state(i).asInstanceOf[AnyRef]
+                                i += 1
+                            end while
+                            collect(kyo.value)
+                        case _: Kyo.Suspend[?, ?, ?, ?] => ()
+                        case _: Kyo.Snapshot[?, ?]      => ()
+                case _ => ()
+        collect(v)
+        var owed: Any < Any = ()
+        var i               = collected.length - 2
+        while i >= 0 do
+            val handler = collected(i).asInstanceOf[Handler[Nothing, Any, Any, Any, Any]]
+            Debugger.onRelease(handler, ex)
+            owed = owed.andThen(handler.release(collected(i + 1), ex))(using Frame.internal)
+            i -= 2
+        end while
+        owed
+    end release
 
     def apply[A, S](v: A < S): A < S = apply(v, armed = false)
 
@@ -88,10 +124,10 @@ import scala.util.control.NonFatal
                                     else
                                         val entries = stack.dump(idx + 1)
                                         Debugger.whenEnabled {
-                                            var i = entries.length - 3
+                                            var i = entries.regions - 1
                                             while i >= 0 do
-                                                Debugger.onRegionExit(entries(i), kyo)
-                                                i -= 3
+                                                Debugger.onRegionExit(entries.handler(i), kyo)
+                                                i -= 1
                                         }
                                         val kc = kyo.cont
                                         val ca = contA
@@ -111,11 +147,11 @@ import scala.util.control.NonFatal
                                                         )
                                         end new
                                 stack.handler(idx) match
-                                    case handler: Handler.HandlerCont[IX, OX, EX, C, Y, S2] @unchecked =>
+                                    case handler: Handler.ContHandler[IX, OX, EX, C, Y, S2] @unchecked =>
                                         val result = handler.run(kyo.input, continuation)
                                         Debugger.onResult(result)
                                         loop(result, Arrow.id, Arrow.id, ctx)
-                                    case handler: Handler.HandlerContOp[EX, C, Y, S2] @unchecked =>
+                                    case handler: Handler.ContOpHandler[EX, C, Y, S2] @unchecked =>
                                         val operation: OX[VX] < EX =
                                             new Kyo.SuspendArrow[IX, OX, EX, VX, OX[VX], EX]:
                                                 def tag   = kyo.tag
@@ -124,7 +160,7 @@ import scala.util.control.NonFatal
                                         val result = handler.run(operation, continuation)
                                         Debugger.onResult(result)
                                         loop(result, Arrow.id, Arrow.id, ctx)
-                                    case handler: Handler.HandlerLoop[IX, OX, EX, C, Y, S2, VX] @unchecked if idx == stack.depth - 1 =>
+                                    case handler: Handler.LoopHandler[IX, OX, EX, C, Y, S2, VX] @unchecked if idx == stack.depth - 1 =>
                                         val k    = kyo.cont.chain(contA.chain(contB)).asInstanceOf[Arrow[Any, Any, Any]]
                                         val exit = handler.answers(stack.state(idx).asInstanceOf[VX], kyo.input, k, armed, slot)
                                         Debugger.onResult(exit)
@@ -161,7 +197,7 @@ import scala.util.control.NonFatal
                                                 stack.truncate(idx)
                                                 loop(result, next, Arrow.id, ctx)
                                         end match
-                                    case handler: Handler.HandlerLoop[IX, OX, EX, C, Y, S2, VX] @unchecked =>
+                                    case handler: Handler.LoopHandler[IX, OX, EX, C, Y, S2, VX] @unchecked =>
                                         val outcome0 = handler.run(stack.state(idx).asInstanceOf[VX], kyo.input)
                                         stack.scratch = outcome0
                                         Debugger.onResult(outcome0)
@@ -212,7 +248,7 @@ import scala.util.control.NonFatal
 
                 case kyo: Kyo.Handle[CX, ?, ?, T, S2, ?] @unchecked =>
                     kyo.handler match
-                        case handler: Handler.HandlerContext[VX, CX, Any, T, S2] @unchecked =>
+                        case handler: Handler.ContextHandler[VX, CX, Any, T, S2] @unchecked =>
                             val newState   = handler.derive(ctx.get(handler.tag))
                             val newContext = ctx.update(handler.tag, newState)
                             Debugger.onContext(kyo, newContext)
@@ -225,49 +261,60 @@ import scala.util.control.NonFatal
                             loop(kyo.value, Arrow.id, Arrow.id, ctx)
                     end match
 
+                case kyo: Kyo.Park[?, ?] if kyo.entries.isEmpty =>
+                    loop(kyo.value.asInstanceOf[T < S2], contA, contB, ctx)
+
                 case kyo: Kyo.Park[?, ?] =>
                     val entries = kyo.entries
                     @tailrec def install(i: Int, c: Context): Context =
-                        if i == entries.length then c
+                        if i == entries.regions then c
                         else
-                            val stored = entries(i + 2).asInstanceOf[Arrow[Y, Any, Any]]
+                            val stored = entries.continuation(i).asInstanceOf[Arrow[Y, Any, Any]]
                             val cont =
                                 if i == 0 then stored.chain(contA.chain(contB).asInstanceOf[Arrow[Any, Any, Any]])
                                 else stored
-                            entries(i) match
-                                case hc: Handler.HandlerContext[VX, CX, AX, Y, Any] @unchecked =>
-                                    val st = entries(i + 1).asInstanceOf[VX]
+                            entries.handler(i) match
+                                case hc: Handler.ContextHandler[VX, CX, AX, Y, Any] @unchecked =>
+                                    val st = entries.state(i).asInstanceOf[VX]
                                     Debugger.onRegionEnter(hc, st)
                                     stack.push(hc, st, cont)
-                                    install(i + 3, c.update(hc.tag, st))
-                                case _ =>
-                                    val handler = entries(i).asInstanceOf[Handler[EX, AX, Y, Any, VX]]
-                                    val st      = entries(i + 1).asInstanceOf[VX]
+                                    install(i + 1, c.update(hc.tag, st))
+                                case handler0 =>
+                                    val handler = handler0.asInstanceOf[Handler[EX, AX, Y, Any, VX]]
+                                    val st      = entries.state(i).asInstanceOf[VX]
                                     Debugger.onRegionEnter(handler, st)
                                     stack.push(handler, st, cont)
-                                    install(i + 3, c)
+                                    install(i + 1, c)
                             end match
                     loop(kyo.value, Arrow.id, Arrow.id, install(0, ctx))
+
+                case kyo: Kyo.Snapshot[T, S2] @unchecked =>
+                    loop(kyo.cont(stack.contextual(), contA.chain(contB)), Arrow.id, Arrow.id, ctx)
 
                 case res =>
                     if contA.isInstanceOf[Arrow.Id[?]] && contB.isInstanceOf[Arrow.Id[?]] then
                         if stack.isEmpty then res.asInstanceOf[A < S]
                         else
-                            val top     = stack.depth - 1
-                            val exiting = stack.handler(top)
-                            val handler = exiting.asInstanceOf[Handler[EX, AX, Y, Any, VX]]
-                            val result  = handler.done(stack.state(top).asInstanceOf[VX], Nested.unnest[AX](res))
-                            Debugger.onRegionExit(handler, result)
+                            val top  = stack.depth - 1
                             val next = stack.continuation(top).asInstanceOf[Arrow[Y, Any, Any]]
-                            stack.pop()
-                            val outer =
-                                exiting match
-                                    case hc: Handler.HandlerContext[VX, CX, AX, Y, Any] @unchecked =>
-                                        val j = stack.find(hc.tag)
+                            stack.handler(top) match
+                                case hc: Handler.ContextHandler[VX, CX, AX, Y, Any] @unchecked =>
+                                    // A context region binds, it does not transform: the result passes
+                                    // through at exit in its union representation.
+                                    Debugger.onRegionExit(hc, res)
+                                    stack.pop()
+                                    val j = stack.find(hc.tag)
+                                    val outer =
                                         if j < 0 then ctx.remove(hc.tag)
                                         else ctx.update(hc.tag, stack.state(j).asInstanceOf[VX])
-                                    case _ => ctx
-                            loop(result, next, Arrow.id, outer)
+                                    loop(res.asInstanceOf[Y < Any], next, Arrow.id, outer)
+                                case handler0 =>
+                                    val handler = handler0.asInstanceOf[Handler.ArrowHandler[EX, AX, Y, Any, VX]]
+                                    val result  = handler.done(stack.state(top).asInstanceOf[VX], Nested.unnest[AX](res))
+                                    Debugger.onRegionExit(handler, result)
+                                    stack.pop()
+                                    loop(result, next, Arrow.id, ctx)
+                            end match
                     else
                         contA match
                             case contA: Arrow.Chain[T, Any, B, S2] @unchecked =>
@@ -323,7 +370,7 @@ import scala.util.control.NonFatal
                             if i == stack.depth then rebuilt
                             else
                                 stack.handler(i) match
-                                    case handler: Handler.HandlerContext[VX, CX, ?, ?, ?] @unchecked =>
+                                    case handler: Handler.ContextHandler[VX, CX, ?, ?, ?] @unchecked =>
                                         rebuild(i + 1, rebuilt.update(handler.tag, stack.state(i).asInstanceOf[VX]))
                                     case _ => rebuild(i + 1, rebuilt)
                         return guarded(resumed, rebuild(0, Context.empty))

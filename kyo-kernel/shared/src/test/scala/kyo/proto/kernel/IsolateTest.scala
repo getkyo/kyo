@@ -8,6 +8,7 @@ import kyo.Tag
 import kyo.discard
 import kyo.proto.Arrow
 import kyo.proto.Loop
+import kyo.proto.kernel.internal.Stack
 
 class IsolateTest extends kyo.Test:
 
@@ -389,6 +390,111 @@ class IsolateTest extends kyo.Test:
             assert(outerState == 0)
 
             assert(eval(runA(5)(pendingRestore)) == ((9, 9)))
+        }
+    }
+
+    "the contextual isolate" - {
+        val contextual = Isolate.internal.Contextual
+
+        sealed trait Bind      extends ContextEffect[Int]
+        sealed trait OuterBind extends ContextEffect[Int]
+
+        def read: Int < Bind           = ContextEffect.suspend(Tag[Bind])
+        def readOuter: Int < OuterBind = ContextEffect.suspend(Tag[OuterBind])
+
+        "the child of an isolate reads the forked binding, the origin keeps its own" in {
+            val prog: (Int, Int) < Bind =
+                contextual.capture { st =>
+                    contextual.restore(contextual.isolate(st, read)).map(child => read.map(origin => (child, origin)))
+                }
+            val r = ContextEffect.handle(Tag[Bind])(_.getOrElse(10), onFork = (n: Int) => n * 2)(prog)
+            assert(eval(r) == (20, 10))
+        }
+
+        "default fork copies and default join keeps the origin" in {
+            val prog: (Int, Int) < Bind =
+                contextual.capture { st =>
+                    contextual.restore(contextual.isolate(st, read)).map(child => read.map(origin => (child, origin)))
+                }
+            assert(eval(ContextEffect.handle(Tag[Bind], 10)(prog)) == (10, 10))
+        }
+
+        "join observes the origin's current state, the forked state, and the branch result" in {
+            var seen = List.empty[(Int, Int, Int)]
+            val prog: Int < Bind =
+                contextual.capture { st =>
+                    contextual.restore(contextual.isolate(st, read))
+                }
+            val r = ContextEffect.handle(Tag[Bind])(
+                _.getOrElse(10),
+                onFork = (n: Int) => n * 2,
+                onJoin = (current: Int, forked: Int, result: Int) =>
+                    seen = (current, forked, result) :: seen
+                    current
+            )(prog)
+            assert(eval(r) == 20)
+            assert(seen == List((10, 20, 20)))
+        }
+
+        "joins run for every region in scope, in entry order" in {
+            var order = List.empty[String]
+            val body: Int < (Bind & OuterBind) =
+                contextual.capture { st =>
+                    contextual.restore(contextual.isolate(st, read.map(a => readOuter.map(_ + a))))
+                }
+            val inner = ContextEffect.handle(Tag[Bind])(
+                _.getOrElse(1),
+                onJoin = (current: Int, _: Int, _: Int) =>
+                    order = "bind" :: order
+                    current
+            )(body)
+            val r = ContextEffect.handle(Tag[OuterBind])(
+                _.getOrElse(2),
+                onJoin = (current: Int, _: Int, _: Int) =>
+                    order = "outer" :: order
+                    current
+            )(inner)
+            assert(eval(r) == 3)
+            assert(order == List("bind", "outer"))
+        }
+
+        "a region exited before the merge is not joined" in {
+            var joins = 0
+            val captured: (Stack.Snapshot, Int) < Any =
+                ContextEffect.handle(Tag[Bind])(
+                    _.getOrElse(10),
+                    onJoin = (current: Int, _: Int, _: Int) =>
+                        joins += 1
+                        current
+                )(contextual.capture(st => contextual.isolate(st, read)))
+            val r: Int < Any = contextual.restore(captured)
+            assert(eval(r) == 10)
+            assert(joins == 0)
+        }
+
+        "with no region in scope the cycle is the identity" in {
+            val prog: Int < Any =
+                contextual.capture { st =>
+                    contextual.restore(contextual.isolate(st, 42: Int < Any)).map(_ + 1)
+                }
+            assert(eval(prog) == 43)
+        }
+
+        "an isolated computation replays at its forked state" in {
+            var forks = 0
+            val prog: (Int, Int) < Bind =
+                contextual.capture { st =>
+                    val iso = contextual.isolate(st, read)
+                    contextual.restore(iso).map(a => contextual.restore(iso).map(b => (a, b)))
+                }
+            val r = ContextEffect.handle(Tag[Bind])(
+                _.getOrElse(10),
+                onFork = (n: Int) =>
+                    forks += 1
+                    n + 100
+            )(prog)
+            assert(eval(r) == (110, 110))
+            assert(forks == 1)
         }
     }
 

@@ -4,7 +4,6 @@ import kyo.Frame
 import kyo.Loop
 import kyo.Maybe
 import kyo.Maybe.Absent
-import kyo.Result
 import kyo.Tag
 import kyo.proto.Arrow
 import kyo.proto.Loop.Continue2
@@ -15,27 +14,31 @@ import kyo.proto.kernel.ContextEffect
 import kyo.proto.kernel.Effect
 import scala.annotation.publicInBinary
 
-abstract private[kernel] class Handler[E <: Effect, A, B, -S, State]:
+sealed abstract private[kernel] class Handler[E <: Effect, A, B, -S, State]:
     def tag: Tag[E]
 
     def recover(state: State, ex: Throwable): Maybe[B < S] = Absent
 
     private[kyo] def release(state: State, ex: Throwable): Any < Any = ()
-    def done(state: State, v: A): B < S
-    override def toString = s"Handler(${tag.show})"
+    override def toString                                            = s"Handler(${tag.show})"
 end Handler
 
 @publicInBinary private[kernel] object Handler:
 
-    abstract class HandlerCont[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Handler[E, A, B, S, Unit]:
+    // An arrow handler transforms at exit: done delivers the region's final result. Context
+    // regions bind without transforming, so done lives here and not on the Handler base.
+    sealed abstract class ArrowHandler[E <: Effect, A, B, -S, State] extends Handler[E, A, B, S, State]:
+        def done(state: State, v: A): B < S
+
+    abstract class ContHandler[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[E, A, B, S, Unit]:
         def run[X](input: I[X], cont: Arrow[O[X], A, E & S]): A < (E & S)
 
     // The operation carrier for effects generic over ArrowEffect[?, ?]: the clause receives the
-    // operation reified at its raise site tag, which the HandlerCont protocol cannot carry.
-    abstract class HandlerContOp[E <: Effect, A, B, S] extends Handler[E, A, B, S, Unit]:
+    // operation reified at its raise site tag, which the ContHandler protocol cannot carry.
+    abstract class ContOpHandler[E <: Effect, A, B, S] extends ArrowHandler[E, A, B, S, Unit]:
         def run[X](operation: X < E, next: Arrow[X, A, E & S]): A < (E & S)
 
-    abstract class HandlerLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State] extends Handler[E, A, B, S, State]:
+    abstract class LoopHandler[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State] extends ArrowHandler[E, A, B, S, State]:
         def run[X](state: State, input: I[X]): Outcome2[State, O[X] < (E & S), B < S] < S
 
         def answers[X](
@@ -66,13 +69,15 @@ end Handler
                     kyo.proto.Loop.continue(at, Effect.deferInline(throw ex)(using Frame.internal))
             end try
         end answers
-    end HandlerLoop
+    end LoopHandler
 
-    abstract class HandlerContext[State, E <: ContextEffect[State], A, B, S] extends Handler[E, A, B, S, State]:
+    // A context region binds, it does not transform: the eval passes the region's result
+    // through at exit, so there is no done here.
+    abstract class ContextHandler[State, E <: ContextEffect[State], A, B, S] extends Handler[E, A, B, S, State]:
         def derive(current: Maybe[State]): State
         def fork(current: State): State < S
-        def join(current: State, forked: State, result: Result[Nothing, State]): Result[Nothing, State] < S
-    end HandlerContext
+        def join(current: State, forked: State, result: State): State < S
+    end ContextHandler
 
     private[kyo] inline def answersLoopState[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State, C](
         inline effectTag: Tag[E],

@@ -559,7 +559,7 @@ class EvalTest extends AnyFreeSpec:
             val parked = Eval.partial(answerAsk(21)(body))
             assert(parked.isInstanceOf[Kyo.Park[?, ?]])
             assert(!afterRan)
-            assert(parked.asInstanceOf[Kyo.Park[?, ?]].entries.length == 3)
+            assert(parked.asInstanceOf[Kyo.Park[?, ?]].entries.regions == 1)
             assert(eval(parked) == 42)
             assert(afterRan)
 
@@ -594,7 +594,7 @@ class EvalTest extends AnyFreeSpec:
             val parked = Eval.partial(handled)
             assert(parked.isInstanceOf[Kyo.Park[?, ?]])
 
-            assert(parked.asInstanceOf[Kyo.Park[?, ?]].entries(1).asInstanceOf[Int] == 2)
+            assert(parked.asInstanceOf[Kyo.Park[?, ?]].entries.state(0).asInstanceOf[Int] == 2)
 
             assert(eval(parked) == 12)
         }
@@ -652,38 +652,76 @@ class EvalTest extends AnyFreeSpec:
             assert(ran)
         }
 
-        // pending the release stance: Eval.release is commented out in the eval
-        // "a parked value owes its regions' releases innermost first" in {
-        //     val log = collection.mutable.ListBuffer[String]()
-        //     val innerHandler = new Handler.HandlerCont[Const[Unit], Const[Int], Ask, Int, Int, Say]:
-        //         def tag = Tag[Ask]
-        //         override def release(state: Unit, ex: Throwable) =
-        //             log += "inner"
-        //             ()
-        //         def done(state: Unit, v: Int) = v
-        //         def answer[X](input: Unit, next: Arrow[Int, Int, Ask & Say]): Int < (Ask & Say) =
-        //             next(1, Arrow.id)
-        //     val outerHandler = new Handler.HandlerCont[Const[String], Const[Unit], Say, Int, Int, Any]:
-        //         def tag = Tag[Say]
-        //         override def release(state: Unit, ex: Throwable) =
-        //             log += "outer"
-        //             ()
-        //         def done(state: Unit, v: Int) = v
-        //         def answer[X](input: String, next: Arrow[Unit, Int, Say]): Int < Say =
-        //             next((), Arrow.id)
-        //     val body: Int < (Ask & Say) =
-        //         ask.map { a =>
-        //             requestStop()
-        //             Effect.defer(ask.map(_ + a))
-        //         }
-        //     val inner: Int < Say = Kyo.handle[Ask, Int, Int, Say, Unit](body, innerHandler, ())
-        //     val outer: Int < Any = Kyo.handle[Say, Int, Int, Any, Unit](inner, outerHandler, ())
-        //     val parked           = Eval.partial(outer)
-        //     assert(parked.isInstanceOf[Kyo.Park[?, ?]])
-        //     assert(parked.asInstanceOf[Kyo.Park[?, ?]].entries.length == 6)
-        //     discard(eval(Eval.release(parked)))
-        //     assert(log.toList == List("inner", "outer"))
-        // }
+        "a parked value owes its regions' releases innermost first" in {
+            val log = collection.mutable.ListBuffer[String]()
+            val innerHandler = new Handler.ContHandler[Const[Unit], Const[Int], Ask, Int, Int, Say]:
+                def tag = Tag[Ask]
+                override def release(state: Unit, ex: Throwable) =
+                    log += "inner"
+                    ()
+                def done(state: Unit, v: Int) = v
+                def run[X](input: Unit, cont: Arrow[Int, Int, Ask & Say]): Int < (Ask & Say) =
+                    cont(1, Arrow.id)
+            val outerHandler = new Handler.ContHandler[Const[String], Const[Unit], Say, Int, Int, Any]:
+                def tag = Tag[Say]
+                override def release(state: Unit, ex: Throwable) =
+                    log += "outer"
+                    ()
+                def done(state: Unit, v: Int) = v
+                def run[X](input: String, cont: Arrow[Unit, Int, Say]): Int < Say =
+                    cont((), Arrow.id)
+            val body: Int < (Ask & Say) =
+                ask.map { a =>
+                    requestStop()
+                    Effect.defer(ask.map(_ + a))
+                }
+            val inner: Int < Say = Kyo.handle[Ask, Int, Int, Say, Unit](body, innerHandler, ())
+            val outer: Int < Any = Kyo.handle[Say, Int, Int, Any, Unit](inner, outerHandler, ())
+            val parked           = Eval.partial(outer)
+            assert(parked.isInstanceOf[Kyo.Park[?, ?]])
+            assert(parked.asInstanceOf[Kyo.Park[?, ?]].entries.regions == 2)
+            discard(eval(Eval.release(parked, Boom)))
+            assert(log.toList == List("inner", "outer"))
+        }
+
+        "a discarded region value releases its interior before its own extent" in {
+            val log = collection.mutable.ListBuffer[String]()
+            val innerHandler = new Handler.ContHandler[Const[Unit], Const[Int], Ask, Int, Int, Say]:
+                def tag = Tag[Ask]
+                override def release(state: Unit, ex: Throwable) =
+                    log += "inner"
+                    ()
+                def done(state: Unit, v: Int) = v
+                def run[X](input: Unit, cont: Arrow[Int, Int, Ask & Say]): Int < (Ask & Say) =
+                    cont(1, Arrow.id)
+            val outerHandler = new Handler.ContHandler[Const[String], Const[Unit], Say, Int, Int, Any]:
+                def tag = Tag[Say]
+                override def release(state: Unit, ex: Throwable) =
+                    log += "outer"
+                    ()
+                def done(state: Unit, v: Int) = v
+                def run[X](input: String, cont: Arrow[Unit, Int, Say]): Int < Say =
+                    cont((), Arrow.id)
+            val body: Int < (Ask & Say) = ask.map(a => askWith(b => a + b))
+            val inner: Int < Say        = Kyo.handle[Ask, Int, Int, Say, Unit](body, innerHandler, ())
+            val outer: Int < Any        = Kyo.handle[Say, Int, Int, Any, Unit](inner, outerHandler, ())
+            discard(eval(Eval.release(outer, Boom)))
+            assert(log.toList == List("inner", "outer"))
+
+            log.clear()
+            discard(eval(Eval.release(outer.map(_ + 1), Boom)))
+            assert(log.toList == List("inner", "outer"))
+        }
+
+        "release of a settled value or an obligation-free computation owes nothing" in {
+            discard(eval(Eval.release(42: Int < Any, Boom)))
+            var ran = false
+            val v: Int < Ask = ask.map { a =>
+                ran = true; a
+            }
+            discard(eval(Eval.release(v, Boom)))
+            assert(!ran)
+        }
 
         "chain onto a parked value composes" in {
             val body: Int < Ask =

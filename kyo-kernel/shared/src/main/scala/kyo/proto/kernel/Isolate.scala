@@ -2,7 +2,12 @@ package kyo.proto.kernel
 
 import kyo.Ansi.*
 import kyo.Frame
+import kyo.proto.Arrow
+import kyo.proto.kernel.internal.Handler
+import kyo.proto.kernel.internal.Kyo
 import kyo.proto.kernel.internal.Nested
+import kyo.proto.kernel.internal.Pending
+import kyo.proto.kernel.internal.Stack
 import scala.quoted.*
 
 abstract class Isolate[Remove, -Keep, -Restore]:
@@ -60,11 +65,66 @@ object Isolate:
     private[kyo] object internal:
 
         private[kernel] object Contextual extends Isolate[Any, Any, Any]:
-            type State        = Unit
-            type Transform[A] = A // TODO I imagine this should have the snapshort of the stack?
-            def capture[A, S](f: Unit => A < S)(using Frame): A < S      = f(()) // TODO then here we wrap the computation with Park
-            def isolate[A, S](state: Unit, v: A < S)(using Frame): A < S = v
-            def restore[A, S](v: A < S)(using Frame): A < S              = v
+            type State        = Stack.Snapshot
+            type Transform[A] = (Stack.Snapshot, A)
+
+            def capture[A, S](f: Stack.Snapshot => A < S)(using _frame: Frame): A < S =
+                new Kyo.SnapshotWith[A, S]:
+                    override def frame = _frame
+                    def cont           = this
+                    override def apply[C, S2](v: Stack.Snapshot < S2, cont2: Arrow[A, C, S2]) =
+                        v match
+                            case p: Pending[Stack.Snapshot, S2] @unchecked => Effect.defer(p, this, cont2)
+                            case _                                         => cont2(f(Nested.unnest[Stack.Snapshot](v)), Arrow.id)
+
+            def isolate[A, S](state: Stack.Snapshot, v: A < S)(using Frame): (Stack.Snapshot, A) < S =
+                fork(state, 0, new Array[AnyRef](state.regions)).map { forked =>
+                    val parked: A < S = Kyo.Park[A, S](v.asInstanceOf[Any < Any], forked)
+                    parked.map(a => (forked, a))
+                }
+
+            def restore[A, S](v: (Stack.Snapshot, A) < S)(using Frame): A < S =
+                v.map { (forked, a) =>
+                    capture(current => join(forked, current, 0).andThen(a))
+                }
+
+            // Park currency: the snapshot carries erased handlers and states, so the casts
+            // reinterpret at that boundary and check nothing at runtime. The states array is
+            // a local accumulator for the suspended fold; withStates copies it out.
+            private def fork(entries: Stack.Snapshot, i: Int, states: Array[AnyRef])(using Frame): Stack.Snapshot < Any =
+                if i >= entries.regions then entries.withStates(states)
+                else
+                    val hc = entries.handler(i).asInstanceOf[Handler.ContextHandler[Any, ContextEffect[Any], Any, Any, Any]]
+                    hc.fork(entries.state(i)).map { forked =>
+                        states(i) = forked.asInstanceOf[AnyRef]
+                        fork(entries, i + 1, states)
+                    }
+
+            // Joins run in entry order at the merge point, observing the origin state current at
+            // that moment; a region the origin has already exited is not observed. Without an
+            // update lane a branch cannot move its binding, so the branch's final state is its
+            // forked state and the result argument threads it.
+            private def join(forked: Stack.Snapshot, current: Stack.Snapshot, i: Int)(using Frame): Any < Any =
+                if i >= forked.regions then ()
+                else
+                    val hc = forked.handler(i).asInstanceOf[Handler.ContextHandler[Any, ContextEffect[Any], Any, Any, Any]]
+                    stateOf(current, hc) match
+                        case kyo.Maybe.Present(cur) =>
+                            val fk = forked.state(i)
+                            hc.join(cur, fk, fk).map(_ => join(forked, current, i + 1))
+                        case _ =>
+                            join(forked, current, i + 1)
+                    end match
+
+            private def stateOf(current: Stack.Snapshot, hc: Handler.ContextHandler[Any, ?, ?, ?, ?]): kyo.Maybe[Any] =
+                var i = 0
+                while i < current.regions do
+                    if current.handler(i).tag.erased =:= hc.tag.erased then
+                        return kyo.Maybe(current.state(i))
+                    i += 1
+                end while
+                kyo.Maybe.empty
+            end stateOf
         end Contextual
 
         def deriveImpl[Remove: Type, Keep: Type, Restore: Type](using Quotes): Expr[Isolate[Remove, Keep, Restore]] =

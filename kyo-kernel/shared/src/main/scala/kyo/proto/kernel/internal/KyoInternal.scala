@@ -28,19 +28,12 @@ end site
 
 sealed trait Pending[+A, -S] extends kyo.proto.Kyo[A, S]:
     def frame: Frame = Frame.internal
-
-    private[kyo] def release(ex: Throwable): Any < Any
 end Pending
 
 object Kyo:
 
     abstract class Defer[A, B, C, -S] @publicInBinary private[kyo] () extends Pending[C, S]:
         Debugger.onAlloc(this)
-
-        private[kyo] def release(ex: Throwable): Any < Any =
-            value match
-                case p: Pending[?, ?] => p.release(ex)
-                case _                => ()
 
         def value: A < S
         def contA: Arrow[A, B, S]
@@ -54,8 +47,6 @@ object Kyo:
     sealed abstract class Suspend[E <: Effect, A, B, S] extends Pending[B, S]:
         Debugger.onAlloc(this)
 
-        private[kyo] def release(ex: Throwable): Any < Any = ()
-
         def tag: Tag[E]
         def cont: Arrow[A, B, S]
     end Suspend
@@ -66,7 +57,7 @@ object Kyo:
     abstract class SuspendContext[State, E <: ContextEffect[State], A, S] extends Suspend[E, State, A, S]:
         def default: Maybe[State]
 
-    def handle[E <: Effect, A, B, S, State](v: A < (E & S), handler: Handler[E, A, B, S, State], state: State): B < S =
+    def handle[E <: Effect, A, B, S, State](v: A < (E & S), handler: Handler.ArrowHandler[E, A, B, S, State], state: State): B < S =
         v match
             case kyo: Pending[A, E & S] @unchecked =>
                 val h  = handler
@@ -82,13 +73,6 @@ object Kyo:
 
     abstract class Handle[E <: Effect, A, B, C, -S, State] extends Pending[C, S]:
         Debugger.onAlloc(this)
-
-        private[kyo] def release(ex: Throwable): Any < Any =
-            Debugger.onRelease(handler, ex)
-            value match
-                case p: Pending[?, ?] => p.release(ex).andThen(handler.release(state, ex))(using Frame.internal)
-                case _                => handler.release(state, ex)
-        end release
 
         def value: A < (E & S)
         def handler: Handler[E, A, B, S, State]
@@ -110,6 +94,16 @@ object Kyo:
     abstract class SuspendContextWith[State, E <: ContextEffect[State], A, S]
         extends SuspendContext[State, E, A, S] with Arrow.Transform[State, A, S]
 
+    // Reads the contextual regions in scope as Park currency, the snapshot a Park installs;
+    // answered by the eval from the live stack without consuming it.
+    abstract class Snapshot[A, -S] extends Pending[A, S]:
+        Debugger.onAlloc(this)
+
+        def cont: Arrow[Stack.Snapshot, A, S]
+    end Snapshot
+
+    abstract class SnapshotWith[A, -S] extends Snapshot[A, S] with Arrow.Transform[Stack.Snapshot, A, S]
+
     abstract class HandleWith[E <: Effect, A, B, C, -S, State]
         extends Handle[E, A, B, C, S, State] with Arrow.Transform[B, C, S]
 
@@ -129,26 +123,11 @@ object Kyo:
 
     final class Park[+A, -S](
         val value: Any < Any,
-        val entries: Array[AnyRef]
+        val entries: Stack.Snapshot
     ) extends Pending[A, S]:
         Debugger.onAlloc(this)
 
-        private[kyo] def release(ex: Throwable): Any < Any =
-
-            @tailrec def loop(i: Int, acc: Any < Any): Any < Any =
-                if i < 0 then acc
-                else
-                    val handler = entries(i).asInstanceOf[Handler[Nothing, Any, Any, Any, Any]]
-                    val state   = entries(i + 1)
-                    Debugger.onRelease(handler, ex)
-                    loop(i - 3, acc.andThen(handler.release(state, ex))(using Frame.internal))
-            val owed: Any < Any = value match
-                case p: Pending[?, ?] => p.release(ex)
-                case _                => ()
-            loop(entries.length - 3, owed)
-        end release
-
         override def toString =
-            s"Park(${short(value)}, regions = ${entries.length / 3})"
+            s"Park(${short(value)}, regions = ${entries.regions})"
     end Park
 end Kyo

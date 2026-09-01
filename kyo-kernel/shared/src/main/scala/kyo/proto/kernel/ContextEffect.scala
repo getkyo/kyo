@@ -2,10 +2,9 @@ package kyo.proto.kernel
 
 import kyo.Frame
 import kyo.Maybe
-import kyo.Result
 import kyo.Tag
 import kyo.proto.Arrow
-import kyo.proto.kernel.internal.Handler.HandlerContext
+import kyo.proto.kernel.internal.Handler.ContextHandler
 import kyo.proto.kernel.internal.Kyo
 import kyo.proto.kernel.internal.Nested
 import kyo.proto.kernel.internal.Pending
@@ -79,19 +78,17 @@ object ContextEffect:
     )(
         inline derive: Maybe[A] => A,
         inline onFork: A => A < S = (current: A) => current,
-        inline onJoin: (A, A, Result[Nothing, A]) => Result[Nothing, A] < S =
-            (_: A, _: A, result: Result[Nothing, A]) => result
+        inline onJoin: (A, A, A) => A < S = (current: A, _: A, _: A) => current
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
         v match
             case _: Pending[?, ?] =>
                 def derived(current: Maybe[A]): A = derive(current)
                 val h =
-                    new HandlerContext[A, E, B, B, S]:
-                        def tag                                                     = effectTag
-                        def derive(current: Maybe[A])                               = derived(current)
-                        def fork(current: A)                                        = onFork(current)
-                        def join(current: A, forked: A, result: Result[Nothing, A]) = onJoin(current, forked, result)
-                        def done(state: A, v0: B)                                   = v0
+                    new ContextHandler[A, E, B, B, S]:
+                        def tag                                    = effectTag
+                        def derive(current: Maybe[A])              = derived(current)
+                        def fork(current: A)                       = onFork(current)
+                        def join(current: A, forked: A, result: A) = onJoin(current, forked, result)
 
                 new Kyo.Handle[E, B, B, B, S, A]:
                     override def frame = _frame

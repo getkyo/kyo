@@ -1,5 +1,6 @@
 package kyo.proto.kernel.internal
 
+import kyo.Span
 import kyo.proto.Arrow
 import kyo.proto.kernel.Effect
 import scala.annotation.tailrec
@@ -11,9 +12,9 @@ final private[kernel] class Stack:
     private var continuations = new Array[Arrow[?, ?, ?]](0)
     private var size          = 0
 
-    // Written on every HandlerLoop dispatch so the clause outcome escapes and is
+    // Written on every LoopHandler dispatch so the clause outcome escapes and is
     // never read back: C2's scalar replacement of the outcome inside the eval loop
-    // compiles to code that roughly doubles the settled HandlerLoop benchmark rows,
+    // compiles to code that roughly doubles the settled LoopHandler benchmark rows,
     // and a store into the pooled stack is one it cannot elide.
     var scratch: Any = null
 
@@ -46,7 +47,7 @@ final private[kernel] class Stack:
         scratch = null
     end clear
 
-    def snapshot(): Array[AnyRef] =
+    def snapshot(): Stack.Snapshot =
         val out = new Array[AnyRef](size * 3)
         @tailrec def loop(i: Int): Unit =
             if i < size then
@@ -59,8 +60,31 @@ final private[kernel] class Stack:
                 loop(i + 1)
         loop(0)
         size = 0
-        out
+        Stack.wrap(out)
     end snapshot
+
+    // Reads the contextual regions in scope as Park currency without consuming the stack:
+    // bindings only, the continuation slot of every entry is identity.
+    def contextual(): Stack.Snapshot =
+        var count = 0
+        var i     = 0
+        while i < size do
+            if handlers(i).isInstanceOf[Handler.ContextHandler[?, ?, ?, ?, ?]] then count += 1
+            i += 1
+        val out = new Array[AnyRef](count * 3)
+        var j   = 0
+        i = 0
+        while i < size do
+            if handlers(i).isInstanceOf[Handler.ContextHandler[?, ?, ?, ?, ?]] then
+                out(j) = handlers(i)
+                out(j + 1) = states(i).asInstanceOf[AnyRef]
+                out(j + 2) = Arrow.id[Any]
+                j += 3
+            end if
+            i += 1
+        end while
+        Stack.wrap(out)
+    end contextual
 
     def depth: Int                              = size
     def handler(i: Int): Handler[?, ?, ?, ?, ?] = handlers(i)
@@ -87,7 +111,7 @@ final private[kernel] class Stack:
         loop(size - 1)
     end find
 
-    def dump(from: Int): Array[AnyRef] =
+    def dump(from: Int): Stack.Snapshot =
         val count = size - from
         val out   = new Array[AnyRef](count * 3)
         @tailrec def loop(i: Int): Unit =
@@ -102,7 +126,7 @@ final private[kernel] class Stack:
                 loop(i + 1)
         loop(0)
         size = from
-        out
+        Stack.wrap(out)
     end dump
 
     private def grow(): Unit =
@@ -120,6 +144,35 @@ final private[kernel] class Stack:
 end Stack
 
 private[kernel] object Stack:
+
+    // A reified run of stack regions as [handler, state, continuation] triples, region 0
+    // outermost. Immutable once built; the one home for that layout: producers and
+    // consumers go through the accessors, never the raw representation.
+    opaque type Snapshot = Span[AnyRef]
+
+    private def wrap(entries: Array[AnyRef]): Snapshot = Span.fromUnsafe(entries)
+
+    extension (self: Snapshot)
+        def regions: Int                            = self.size / 3
+        def isEmpty: Boolean                        = self.size == 0
+        def handler(i: Int): Handler[?, ?, ?, ?, ?] = self(i * 3).asInstanceOf[Handler[?, ?, ?, ?, ?]]
+        def state(i: Int): Any                      = self(i * 3 + 1)
+        def continuation(i: Int): Arrow[?, ?, ?]    = self(i * 3 + 2).asInstanceOf[Arrow[?, ?, ?]]
+
+        // The forked variant of this snapshot: the same regions and continuations, with
+        // region i bound at states(i). The argument never escapes; it is copied.
+        private[kernel] def withStates(states: Array[AnyRef]): Snapshot =
+            val out = new Array[AnyRef](self.size)
+            var i   = 0
+            while i < self.regions do
+                out(i * 3) = self(i * 3)
+                out(i * 3 + 1) = states(i)
+                out(i * 3 + 2) = self(i * 3 + 2)
+                i += 1
+            end while
+            Span.fromUnsafe(out)
+        end withStates
+    end extension
 
     final private class Pool:
         private var free = new Array[Stack](4)

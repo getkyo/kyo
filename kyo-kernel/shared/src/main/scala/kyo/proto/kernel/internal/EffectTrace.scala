@@ -171,6 +171,9 @@ private[kernel] object EffectTrace:
 
                                 frame(s.frame)
                                 push(s.cont)
+                            case s: Kyo.Snapshot[?, ?] =>
+                                frame(s.frame)
+                                push(s.cont)
                             case h: Kyo.Handle[?, ?, ?, ?, ?, ?] =>
 
                                 push(h.cont)
@@ -184,10 +187,10 @@ private[kernel] object EffectTrace:
 
                                 val entries = p.entries
                                 @tailrec def parked(i: Int): Unit =
-                                    if i < entries.length then
-                                        push(entries(i + 2).asInstanceOf[Arrow[?, ?, ?]])
-                                        push(new Region(entries(i).asInstanceOf[Handler[?, ?, ?, ?, ?]].tag))
-                                        parked(i + 3)
+                                    if i < entries.regions then
+                                        push(entries.continuation(i))
+                                        push(new Region(entries.handler(i).tag))
+                                        parked(i + 1)
                                 parked(0)
                                 pushValue(p.value)
                     case c: Arrow.Chain[?, ?, ?, ?] =>

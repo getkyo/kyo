@@ -9,9 +9,9 @@ import kyo.proto.Arrow.Transform
 import kyo.proto.Loop
 import kyo.proto.kernel.internal.Eval
 import kyo.proto.kernel.internal.Handler
-import kyo.proto.kernel.internal.Handler.HandlerCont
-import kyo.proto.kernel.internal.Handler.HandlerContOp
-import kyo.proto.kernel.internal.Handler.HandlerLoop
+import kyo.proto.kernel.internal.Handler.ContHandler
+import kyo.proto.kernel.internal.Handler.ContOpHandler
+import kyo.proto.kernel.internal.Handler.LoopHandler
 import kyo.proto.kernel.internal.Kyo
 import kyo.proto.kernel.internal.Nested
 import kyo.proto.kernel.internal.Pending
@@ -70,7 +70,7 @@ object ArrowEffect:
         v match
             case _: Pending[?, ?] =>
                 val h =
-                    new HandlerCont[I, O, E, A, B, S & S2]:
+                    new ContHandler[I, O, E, A, B, S & S2]:
                         def tag = effectTag
                         def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
                             handle[X](input, next)
@@ -101,7 +101,7 @@ object ArrowEffect:
         v match
             case _: Pending[?, ?] =>
                 val h =
-                    new HandlerCont[I, O, E, A, B, S & S2]:
+                    new ContHandler[I, O, E, A, B, S & S2]:
                         def tag = effectTag
                         def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
                             handle[X](input, next)
@@ -143,7 +143,7 @@ object ArrowEffect:
         v match
             case _: Pending[?, ?] =>
                 val h =
-                    new HandlerContOp[E, A, B, S & S2]:
+                    new ContOpHandler[E, A, B, S & S2]:
                         def tag = effectTag
                         def run[X](operation: X < E, next: Arrow[X, A, E & S & S2]) =
                             handle[X](operation, next)
@@ -265,7 +265,7 @@ object ArrowEffect:
         v match
             case _: Pending[?, ?] =>
                 val h =
-                    new HandlerLoop[I, O, E, A, B, S & S2, State]:
+                    new LoopHandler[I, O, E, A, B, S & S2, State]:
                         def tag = effectTag
                         def run[X](st: State, input: I[X]) =
                             handle[X](st, input)
@@ -315,7 +315,7 @@ object ArrowEffect:
         v match
             case _: Pending[?, ?] =>
                 val h =
-                    new HandlerLoop[I, O, E, A, B, S & S2, State]:
+                    new LoopHandler[I, O, E, A, B, S & S2, State]:
                         def tag = effectTag
                         def run[X](st: State, input: I[X]) =
                             handle[X](st, input)
@@ -381,7 +381,7 @@ object ArrowEffect:
         v match
             case _: Pending[?, ?] =>
                 val h =
-                    new HandlerCont[I, O, E, A, B, S & S2]:
+                    new ContHandler[I, O, E, A, B, S & S2]:
                         def tag = effectTag
                         def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
                             handle[X](input, next)
@@ -436,7 +436,7 @@ object ArrowEffect:
         v match
             case _: Pending[?, ?] =>
                 val h =
-                    new HandlerLoop[I, O, E, A, B, S & S2, State]:
+                    new LoopHandler[I, O, E, A, B, S & S2, State]:
                         def tag = effectTag
                         def run[X](st: State, input: I[X]) =
                             handle[X](st, input)
