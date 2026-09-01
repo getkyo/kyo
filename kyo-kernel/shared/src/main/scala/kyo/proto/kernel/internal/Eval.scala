@@ -119,9 +119,16 @@ import scala.util.control.NonFatal
 
     // The discard drain behind its own empty-check, so an exit site is one call and the
     // signal is minted only when something drains, per drain so suppressed release
-    // failures attach to their own signal.
+    // failures attach to their own signal. A release failing here has no continuation to
+    // fail into, so it is contained and reported through the thread's uncaught-exception
+    // handler, the scheduler's own containment pattern.
     private def drainDiscarded(owed: Chunk[Stack.Snapshot]): Unit =
-        if !owed.isEmpty then drainOwed(owed, new kyo.KyoException("remainder discarded")(using Frame.internal))
+        if !owed.isEmpty then
+            val signal = new kyo.KyoException("remainder discarded")(using Frame.internal)
+            drainOwed(owed, signal)
+            if signal.getSuppressed.length != 0 then
+                val thread = Thread.currentThread()
+                thread.getUncaughtExceptionHandler().uncaughtException(thread, signal)
 
     // The context rebound past a dumped run: each dumped binding's tag rebinds to the
     // nearest live entry below, or leaves the context entirely, exactly as the settled
@@ -375,10 +382,26 @@ import scala.util.control.NonFatal
                     loop(kyo.value.asInstanceOf[T < S2], contA, contB, ctx)
 
                 case kyo: Kyo.Park[?, ?] =>
+                    val entries = kyo.entries
+                    // A spent extent refuses before anything installs; the park still
+                    // drains everything it owes, with the refused region's own release a
+                    // no-op through its claim, and the refusal unwinds from here.
+                    var ri = 0
+                    while ri < entries.regions do
+                        entries.handler(ri) match
+                            case hc: Handler.ContextHandler[VX, CX, ?, ?] @unchecked =>
+                                try hc.reenter(entries.state(ri).asInstanceOf[VX])
+                                catch
+                                    case ex if NonFatal(ex) =>
+                                        release(kyo, ex)
+                                        throw ex
+                            case _ => ()
+                        end match
+                        ri += 1
+                    end while
                     // What the parked eval owed re-homes below the installed run, like any
                     // dissolved extent.
                     stack.oweBelow(stack.depth, kyo.owed)
-                    val entries = kyo.entries
                     @tailrec def install(i: Int, c: Context): Context =
                         if i == entries.regions then c
                         else

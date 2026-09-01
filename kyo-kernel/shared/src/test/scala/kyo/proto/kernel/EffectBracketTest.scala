@@ -123,7 +123,9 @@ class EffectBracketTest extends AnyFreeSpec:
             assert(parked.isInstanceOf[Kyo.Park[?, ?]])
             Eval.release(parked, Boom)
             assert(count == 1)
-            assert(eval(parked) == 8)
+            // The abandoned extent is spent: resuming it is refused, and the release
+            // stays at exactly once.
+            discard(intercept[kyo.Closed](eval(parked)))
             assert(count == 1)
         }
 
@@ -237,7 +239,7 @@ class EffectBracketTest extends AnyFreeSpec:
             assert(seen.exists(_.exists(_ eq Boom)))
         }
 
-        "a leaked capture resumed after its region completed enters the spent extent" in {
+        "a leaked capture resumed after its region completed is refused as closed" in {
             val outcomes = collection.mutable.ListBuffer[Maybe[Throwable]]()
             var leaked   = Maybe.empty[kyo.proto.Arrow[Int, Int, Ask]]
             val body: Int < Ask =
@@ -255,15 +257,15 @@ class EffectBracketTest extends AnyFreeSpec:
             assert(eval(r) == -1)
             assert(outcomes.size == 1)
             assert(outcomes.head.isDefined)
-            // The stored capture outlived its region: resuming it completes the value in
-            // a spent extent, and the claimed cell keeps the release at exactly once.
-            assert(eval(leaked.get(1)) == 8)
+            // The stored capture outlived its region: the resource is released, so
+            // re-entering the extent refuses instead of running use against it.
+            discard(intercept[kyo.Closed](eval(leaked.get(1))))
             assert(outcomes.size == 1)
         }
 
-        "a throwing release on the discard drain does not starve the ones after it" in {
+        "a throwing release on the discard drain does not starve the ones after it and is reported" in {
             val log = collection.mutable.ListBuffer[String]()
-            object Bad extends RuntimeException("bad", null, false, false)
+            object Bad extends RuntimeException("bad", null, true, false)
             val body: Int < Ask =
                 Effect.bracket(Effect.defer(1))((_, _) => discard(log += "outer")) { _ =>
                     Effect.bracket(Effect.defer(2))((_, _) => throw Bad) { _ =>
@@ -271,8 +273,15 @@ class EffectBracketTest extends AnyFreeSpec:
                     }
                 }
             val dropped: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, _) => -1, b => b)
-            assert(eval(dropped) == -1)
+            var reported           = Maybe.empty[Throwable]
+            val thread             = Thread.currentThread()
+            val previous           = thread.getUncaughtExceptionHandler()
+            thread.setUncaughtExceptionHandler((_, ex) => reported = Maybe(ex))
+            try
+                assert(eval(dropped) == -1)
+            finally thread.setUncaughtExceptionHandler(previous)
             assert(log.toList == List("outer"))
+            assert(reported.exists(_.getSuppressed.exists(_ eq Bad)))
         }
     }
 
@@ -333,7 +342,7 @@ class EffectBracketTest extends AnyFreeSpec:
             assert(log.toList == List("binding", "bracket"))
         }
 
-        "a multi-shot capture over a bracket releases at the first completion" in {
+        "a multi-shot capture over a bracket refuses the second shot" in {
             val outcomes = collection.mutable.ListBuffer[Maybe[Throwable]]()
             val body: Int < Ask =
                 Effect.bracket(Effect.defer(7))((_, outcome) => discard(outcomes += outcome)) { a =>
@@ -343,7 +352,9 @@ class EffectBracketTest extends AnyFreeSpec:
                 [C] => (_, cont) => cont(1).map(x => cont(2).map(y => x * 100 + y)),
                 b => b
             )
-            assert(eval(r) == 809)
+            // The first shot completes the extent and releases; the second shot would
+            // run use against the released resource, so it is refused.
+            discard(intercept[kyo.Closed](eval(r)))
             assert(outcomes.toList == List(Maybe.empty))
         }
 

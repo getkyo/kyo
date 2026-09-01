@@ -88,6 +88,11 @@ end Handler
         // and the completion. Pure, like fork and join.
         private[kyo] def done(state: State): Unit = ()
 
+        // Consulted before a park re-installs the region: a handler refusing a spent
+        // extent throws here, and the park drains what it owes before the refusal
+        // propagates. Pure, like fork and join.
+        private[kyo] def reenter(state: State): Unit = ()
+
         // Pure, like fork and join: runs whenever the region dies without resuming, at
         // abandonment, when a failure unwinds past it, and when a dump it rode is discarded.
         // Both hooks may fire more than once per logical region (a shared dump, a fork's

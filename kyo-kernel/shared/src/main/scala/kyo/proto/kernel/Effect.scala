@@ -40,16 +40,18 @@ object Effect:
 
     /** Acquires a resource, uses it, and releases it exactly once: on completion, when a
       * failure unwinds past the bracket, when the computation is abandoned, and when a
-      * capture holding it is discarded. The region opens through a bind step, in the same
-      * slice the acquire settles: no safepoint can separate the two, so an existing
+      * capture holding it is discarded. The region opens through an ensure step, in the
+      * same slice the acquire settles: no safepoint can separate the two, so an existing
       * resource is never left without its region. Only that final slice is guarded: an
       * abandonment earlier in a multi-step acquire owes nothing yet, so a compound
       * acquisition nests brackets, one per step. Absent means the extent completed.
+      * Re-entering a released extent, by resuming a capture that outlived its region, is
+      * refused with [[Closed]].
       */
     def bracket[A, S1](acquire: A < S1)(
         release: (A, Maybe[Throwable]) => Unit
     )[B, S2](use: A => B < S2)(using _frame: Frame): B < (S1 & S2) =
-        val open = new Arrow.Bind[A, B, S1 & S2]:
+        val ensure = new Arrow.Ensure[A, B, S1 & S2]:
             def frame = _frame
             override def apply(a: A) =
                 val cell = new Cell(outcome => release(a, outcome))
@@ -61,15 +63,28 @@ object Effect:
                         case ex if NonFatal(ex) =>
                             cell.drain(ex)
                             throw ex
-                ContextEffect.handle(Tag[Finalize])(
-                    (_: Maybe[Cell]) => cell,
-                    fork = (_: Cell) => Cell.inert,
-                    join = (parent: Cell, _: Cell, _: Cell) => parent,
-                    done = (c: Cell) => c.complete(),
-                    release = (c: Cell, ex: Throwable) => c.drain(ex)
-                )(body)
+                val h = new Handler.ContextHandler[Cell, Finalize, B, S1 & S2]:
+                    def tag                                                             = Tag[Finalize]
+                    def derive(outer: Maybe[Cell])                                      = cell
+                    def fork(parent: Cell)                                              = Cell.inert
+                    def join(parent: Cell, fk: Cell, child: Cell)                       = parent
+                    override private[kyo] def done(state: Cell): Unit                   = state.complete()
+                    override private[kyo] def release(state: Cell, ex: Throwable): Unit = state.drain(ex)
+                    // A fork's inert view is claimed by design and installs freely; a
+                    // claimed obligation of the extent itself is a released resource,
+                    // and re-entering it is refused.
+                    override private[kyo] def reenter(state: Cell): Unit =
+                        if (state ne Cell.inert) && state.get() then
+                            throw new kyo.Closed("Bracket resource", _frame)(using _frame)
+                new Kyo.Handle[Cell, Finalize, B, B, B, S1 & S2]:
+                    override def frame = _frame
+                    def value          = body
+                    def handler        = h
+                    def state          = cell
+                    def cont           = Arrow.id
+                end new
             end apply
-        defer(acquire).chain(open)
+        defer(acquire).chain(ensure)
     end bracket
 
     def defer[A, B, S](v: A < S, cont: Arrow[A, B, S]): B < S =

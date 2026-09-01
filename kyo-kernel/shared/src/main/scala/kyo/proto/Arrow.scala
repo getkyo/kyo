@@ -87,13 +87,13 @@ object Arrow:
         override def toString = s"Step(${site(frame)})"
     end Step
 
-    // The step that opens a binding: it applies immediately on settled input, without the
-    // budget gate every other arrow consults. A gate here could defer a settled value with
-    // this step as its continuation, and a park of that node strands an obligation the
-    // value was already owed but no region yet carries. Skipping the gate makes the
-    // settle-to-open edge one slice by construction; the value's own gates all fire before
-    // the value settles.
-    abstract private[kyo] class Bind[-A, B, -S] extends Step[A, B, S]:
+    // The step whose application cannot be separated from its settled input: it applies
+    // immediately, without the budget gate every other user-function arrow consults, so
+    // no safepoint can sit between a value settling and this step consuming it. A gate
+    // here could defer a settled value with this step as its continuation, and a park of
+    // that node strands whatever the step was about to ensure; the value's own gates all
+    // fire before the value settles.
+    abstract private[kyo] class Ensure[-A, B, -S] extends Step[A, B, S]:
         override def apply(v: A): B < S
 
         final def apply[C, S2](v: A < S2, cont: Arrow[B, C, S2]): C < (S & S2) =
@@ -102,7 +102,7 @@ object Arrow:
                     Effect.defer(v, this, cont)
                 case _ =>
                     cont.head(apply(Nested.unnest(v)), cont.tail)
-    end Bind
+    end Ensure
 
     final private[kyo] class Chain[A, B, C, S] private[proto] (
         val a: Arrow[A, B, S],
