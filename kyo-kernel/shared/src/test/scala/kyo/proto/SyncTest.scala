@@ -25,6 +25,9 @@ class SyncTest extends AnyFreeSpec:
 
     private object Boom extends RuntimeException("boom", null, false, false)
 
+    sealed trait Ask extends kyo.proto.kernel.ArrowEffect[kyo.Const[Unit], kyo.Const[Int]]
+    def ask: Int < Ask = kyo.proto.kernel.ArrowEffect.suspend[Any](Tag[Ask], ())
+
     "acquireReleaseWith" - {
         "releases with Absent on completion, after use" in {
             val log = collection.mutable.ListBuffer[String]()
@@ -51,7 +54,7 @@ class SyncTest extends AnyFreeSpec:
             }
             val ex = intercept[RuntimeException](eval(Sync.Unsafe.run(v)))
             assert(ex eq Boom)
-            assert(seen == Maybe(Boom))
+            assert(seen.exists(_ eq Boom))
         }
 
         "releases when a parked remainder is abandoned" in {
@@ -66,7 +69,7 @@ class SyncTest extends AnyFreeSpec:
             assert(parked.isInstanceOf[Kyo.Park[?, ?]])
             assert(seen.isEmpty)
             Eval.release(parked, Boom)
-            assert(seen == Maybe(Maybe(Boom)))
+            assert(seen.exists(_.exists(_ eq Boom)))
         }
 
         "a resumed parked bracket completes and releases with Absent" in {
@@ -95,6 +98,32 @@ class SyncTest extends AnyFreeSpec:
             assert(log.toList == List("inner", "outer"))
         }
 
+        "a stop landing as the acquire settles still installs the region" in {
+            var count = 0
+            val v = Sync.acquireReleaseWith(Sync.defer {
+                requestStop()
+                7
+            })((_, _) => count += 1)(a => Sync.defer(a + 1))
+            val parked = Eval.partial(Sync.Unsafe.run(v))
+            assert(parked.isInstanceOf[Kyo.Park[?, ?]])
+            Eval.release(parked, Boom)
+            assert(count == 1)
+            assert(eval(parked) == 8)
+            assert(count == 1)
+        }
+
+        "a loop clause answering done releases a bracket opened inside" in {
+            var seen = Maybe.empty[Maybe[Throwable]]
+            val body: Int < (Ask & Sync) =
+                Sync.acquireReleaseWith(Sync.defer(7))((_, outcome) => seen = Maybe(outcome)) { a =>
+                    ask.map(x => a + x)
+                }
+            val r: Int < Sync =
+                kyo.proto.kernel.ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => kyo.proto.Loop.done(-1), b => b)
+            assert(eval(Sync.Unsafe.run(r)) == -1)
+            assert(seen.exists(_.isDefined))
+        }
+
         "the acquire is not guarded before it settles" in {
             var count = 0
             val v = Sync.acquireReleaseWith(Sync.defer {
@@ -111,9 +140,6 @@ class SyncTest extends AnyFreeSpec:
     }
 
     "captured continuations" - {
-        sealed trait Ask extends kyo.proto.kernel.ArrowEffect[kyo.Const[Unit], kyo.Const[Int]]
-        def ask: Int < Ask = kyo.proto.kernel.ArrowEffect.suspend[Any](Tag[Ask], ())
-
         "a discarded captured continuation still releases the bracket" in {
             var seen = Maybe.empty[Maybe[Throwable]]
             val body: Int < (Ask & Sync) =
@@ -152,7 +178,7 @@ class SyncTest extends AnyFreeSpec:
             val v    = Sync.ensure(outcome => seen = Maybe(outcome))(Sync.defer((throw Boom): Int))
             val ex   = intercept[RuntimeException](eval(Sync.Unsafe.run(v)))
             assert(ex eq Boom)
-            assert(seen == Maybe(Maybe(Boom)))
+            assert(seen.exists(_.exists(_ eq Boom)))
         }
     }
 end SyncTest
