@@ -1,0 +1,714 @@
+{
+ "base": "3eb1c6991d",
+ "tip": "7b024df81c",
+ "digests": {
+  "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Stack.scala": "4d296a9497aa4ec6dbd76949879c10c6c4338b51318b6d2905569a0decebfa8d",
+  "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/KyoInternal.scala": "671600c4a527c89f813f530c595d6d3441516aef7ca6a66f40c24ceb1575abf2",
+  "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Handler.scala": "388c7e7f82989bbc2aba3f24be97bae97fd5daeaf93b5c617ddd1655320f16a5",
+  "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/ContextEffect.scala": "0ac85ed44fdbb8de18cb55f8efc0bc442ef083b861514e24c2c62ced0b04dabb",
+  "kyo-kernel/shared/src/main/scala/kyo/proto/Arrow.scala": "3a08511c81c27ee8db7b00435213a6182d366de1437504c348210d568c5c56c2",
+  "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala": "6b7a88b00ffa9151521dc36c0992d9891ec2681c67a67be142912f32a1339941",
+  "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/Effect.scala": "52e91c1af34f3a7e04efae9d917e8eff44d3d4e3b44512f89f1605897647a905",
+  "kyo-kernel/shared/src/test/scala/kyo/proto/kernel/EffectBracketTest.scala": "83761e4223b494d7465896e9acb2dce5af98106df06a86ece4801a59ed3146e6",
+  "kyo-kernel/shared/src/test/scala/kyo/proto/kernel/internal/EvalTest.scala": "2837636c1e938853c181bc6266eff68fbf11df8f499a4ee0a3f542bc4bee27ea"
+ },
+ "edits": [
+  {
+   "id": 1,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Stack.scala",
+   "kind": "replace",
+   "label": "Stack.scala: import kyo.Chunk",
+   "sentence": "the owed slot and the eval's own owed, maintained by the sites that already maintain the other three arrays",
+   "old": "\nimport kyo.Span\n",
+   "new": "\nimport kyo.Chunk\nimport kyo.Span\n"
+  },
+  {
+   "id": 2,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Stack.scala",
+   "kind": "replace",
+   "label": "Stack.scala: // What each entry owes: the snapshots its dumps produced...",
+   "sentence": "the owed slot and the eval's own owed, maintained by the sites that already maintain the other three arrays",
+   "old": "    private var size          = 0\n\n",
+   "new": "    private var size          = 0\n\n    // What each entry owes: the snapshots its dumps produced, newest last. Every slot\n    // holds a real chunk, empty by default; the sites that null the other arrays reset\n    // these to empty, so no slot is ever null.\n    private var owed = new Array[Chunk[Stack.Snapshot]](0)\n\n    // What the eval itself owes: dumps whose owner dissolved with nothing below. Lives\n    // here rather than as an eval local so the nested eval functions do not lift it into\n    // a per-eval box; the same reset protocol as the owed slots keeps the pool clean.\n    private var evalOwed: Chunk[Stack.Snapshot] = Chunk.empty\n\n"
+  },
+  {
+   "id": 3,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Stack.scala",
+   "kind": "replace",
+   "label": "Stack.scala: // Popping hands back what the entry owes, so no exit sit...",
+   "sentence": "the owed slot and the eval's own owed, maintained by the sites that already maintain the other three arrays",
+   "old": "    def pop(): Unit = size -= 1\n",
+   "new": "    // Popping hands back what the entry owes, so no exit site can forget to drain it and\n    // no stale obligation can survive into the slot's next occupant.\n    def pop(): Chunk[Stack.Snapshot] =\n        size -= 1\n        takeOwed(size)\n\n    def takeOwed(i: Int): Chunk[Stack.Snapshot] =\n        val owedHere = owed(i)\n        if !owedHere.isEmpty then owed(i) = Chunk.empty\n        owedHere\n    end takeOwed\n\n    def owe(i: Int, snapshots: Chunk[Stack.Snapshot]): Unit =\n        if !snapshots.isEmpty then owed(i) = owed(i).concat(snapshots)\n\n    // Re-homes what a dissolving extent owes to the entry directly below it, or to the\n    // eval itself when nothing is below: everything the dissolved extent can reach lives\n    // inside the extent below.\n    def oweBelow(i: Int, snapshots: Chunk[Stack.Snapshot]): Unit =\n        if !snapshots.isEmpty then\n            if i == 0 then evalOwed = evalOwed.concat(snapshots)\n            else owed(i - 1) = owed(i - 1).concat(snapshots)\n\n    def takeEvalOwed(): Chunk[Stack.Snapshot] =\n        val owedHere = evalOwed\n        if !owedHere.isEmpty then evalOwed = Chunk.empty\n        owedHere\n    end takeEvalOwed\n"
+  },
+  {
+   "id": 4,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Stack.scala",
+   "kind": "replace",
+   "label": "Stack.scala: owed(i) = Chunk.empty",
+   "sentence": "the owed slot and the eval's own owed, maintained by the sites that already maintain the other three arrays",
+   "old": "                states(i) = null\n\n                continuations(i) = null\n                loop(i + 1)\n        loop(0)\n        size = 0\n",
+   "new": "                states(i) = null\n\n                continuations(i) = null\n                owed(i) = Chunk.empty\n                loop(i + 1)\n        loop(0)\n        size = 0\n"
+  },
+  {
+   "id": 5,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Stack.scala",
+   "kind": "replace",
+   "label": "Stack.scala: evalOwed = Chunk.empty",
+   "sentence": "the owed slot and the eval's own owed, maintained by the sites that already maintain the other three arrays",
+   "old": "        scratch = null\n    end clear\n",
+   "new": "        scratch = null\n        evalOwed = Chunk.empty\n    end clear\n"
+  },
+  {
+   "id": 6,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Stack.scala",
+   "kind": "replace",
+   "label": "Stack.scala: val out = new Array[AnyRef](size * 4)",
+   "sentence": "the owed slot and the eval's own owed, maintained by the sites that already maintain the other three arrays",
+   "old": "        val out = new Array[AnyRef](size * 3)\n",
+   "new": "        val out = new Array[AnyRef](size * 4)\n"
+  },
+  {
+   "id": 7,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Stack.scala",
+   "kind": "replace",
+   "label": "Stack.scala: out(i * 4) = handlers(i)",
+   "sentence": "the owed slot and the eval's own owed, maintained by the sites that already maintain the other three arrays",
+   "old": "                out(i * 3) = handlers(i)\n                out(i * 3 + 1) = states(i).asInstanceOf[AnyRef]\n                out(i * 3 + 2) = continuations(i)\n",
+   "new": "                out(i * 4) = handlers(i)\n                out(i * 4 + 1) = states(i).asInstanceOf[AnyRef]\n                out(i * 4 + 2) = continuations(i)\n                out(i * 4 + 3) = takeOwed(i)\n"
+  },
+  {
+   "id": 8,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Stack.scala",
+   "kind": "replace",
+   "label": "Stack.scala: // bindings only, the continuation slot of every entry is...",
+   "sentence": "the owed slot and the eval's own owed, maintained by the sites that already maintain the other three arrays",
+   "old": "    // bindings only, the continuation slot of every entry is identity.\n",
+   "new": "    // bindings only, the continuation slot of every entry is identity. Owed slots stay\n    // behind: bindings fork, obligations do not.\n"
+  },
+  {
+   "id": 9,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Stack.scala",
+   "kind": "replace",
+   "label": "Stack.scala: val out = new Array[AnyRef](count * 4)",
+   "sentence": "the owed slot and the eval's own owed, maintained by the sites that already maintain the other three arrays",
+   "old": "        val out = new Array[AnyRef](count * 3)\n",
+   "new": "        val out = new Array[AnyRef](count * 4)\n"
+  },
+  {
+   "id": 10,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Stack.scala",
+   "kind": "replace",
+   "label": "Stack.scala: out(j + 3) = Chunk.empty",
+   "sentence": "the owed slot and the eval's own owed, maintained by the sites that already maintain the other three arrays",
+   "old": "                j += 3\n",
+   "new": "                out(j + 3) = Chunk.empty\n                j += 4\n"
+  },
+  {
+   "id": 11,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Stack.scala",
+   "kind": "replace",
+   "label": "Stack.scala: owed(i) = Chunk.empty",
+   "sentence": "the owed slot and the eval's own owed, maintained by the sites that already maintain the other three arrays",
+   "old": "                states(i) = null\n                continuations(i) = null\n                loop(i + 1)\n        loop(to)\n",
+   "new": "                states(i) = null\n                continuations(i) = null\n                owed(i) = Chunk.empty\n                loop(i + 1)\n        loop(to)\n"
+  },
+  {
+   "id": 12,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Stack.scala",
+   "kind": "replace",
+   "label": "Stack.scala: // Every dump is owed by the entry directly below the dum...",
+   "sentence": "the owed slot and the eval's own owed, maintained by the sites that already maintain the other three arrays",
+   "old": "\n    def dump(from: Int): Stack.Snapshot =\n",
+   "new": "\n    // Every dump is owed by the entry directly below the dumped run: the capture is that\n    // entry's currency, so its exit bounds every resumption. The attachment lives here so\n    // no caller can produce an unowed dump.\n    def dump(from: Int): Stack.Snapshot =\n"
+  },
+  {
+   "id": 13,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Stack.scala",
+   "kind": "replace",
+   "label": "Stack.scala: val out   = new Array[AnyRef](count * 4)",
+   "sentence": "the owed slot and the eval's own owed, maintained by the sites that already maintain the other three arrays",
+   "old": "        val out   = new Array[AnyRef](count * 3)\n",
+   "new": "        val out   = new Array[AnyRef](count * 4)\n"
+  },
+  {
+   "id": 14,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Stack.scala",
+   "kind": "replace",
+   "label": "Stack.scala: out(i * 4) = handlers(j)",
+   "sentence": "the owed slot and the eval's own owed, maintained by the sites that already maintain the other three arrays",
+   "old": "                out(i * 3) = handlers(j)\n                out(i * 3 + 1) = states(j).asInstanceOf[AnyRef]\n                out(i * 3 + 2) = continuations(j)\n",
+   "new": "                out(i * 4) = handlers(j)\n                out(i * 4 + 1) = states(j).asInstanceOf[AnyRef]\n                out(i * 4 + 2) = continuations(j)\n                out(i * 4 + 3) = takeOwed(j)\n"
+  },
+  {
+   "id": 15,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Stack.scala",
+   "kind": "replace",
+   "label": "Stack.scala: val snapshot = Stack.wrap(out)",
+   "sentence": "the owed slot and the eval's own owed, maintained by the sites that already maintain the other three arrays",
+   "old": "        size = from\n        Stack.wrap(out)\n    end dump\n",
+   "new": "        size = from\n        val snapshot = Stack.wrap(out)\n        owed(from - 1) = owed(from - 1).append(snapshot)\n        snapshot\n    end dump\n"
+  },
+  {
+   "id": 16,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Stack.scala",
+   "kind": "replace",
+   "label": "Stack.scala: val grownOwed = new Array[Chunk[Stack.Snapshot]](capacity)",
+   "sentence": "the owed slot and the eval's own owed, maintained by the sites that already maintain the other three arrays",
+   "old": "        continuations = grownContinuations\n    end grow\n",
+   "new": "        continuations = grownContinuations\n        val grownOwed = new Array[Chunk[Stack.Snapshot]](capacity)\n        Array.copy(owed, 0, grownOwed, 0, size)\n        @tailrec def fill(i: Int): Unit =\n            if i < capacity then\n                grownOwed(i) = Chunk.empty\n                fill(i + 1)\n        fill(size)\n        owed = grownOwed\n    end grow\n"
+  },
+  {
+   "id": 17,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Stack.scala",
+   "kind": "replace",
+   "label": "Stack.scala: // A reified run of stack regions as [handler, state, con...",
+   "sentence": "the owed slot and the eval's own owed, maintained by the sites that already maintain the other three arrays",
+   "old": "    // A reified run of stack regions as [handler, state, continuation] triples, region 0\n    // outermost. Immutable once built; the one home for that layout: producers and\n    // consumers go through the accessors, never the raw representation.\n",
+   "new": "    // A reified run of stack regions as [handler, state, continuation, owed] quadruples,\n    // region 0 outermost. Immutable once built; the one home for that layout: producers\n    // and consumers go through the accessors, never the raw representation.\n"
+  },
+  {
+   "id": 18,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Stack.scala",
+   "kind": "replace",
+   "label": "Stack.scala: private[kernel] val empty: Snapshot = Span.fromUnsafe(new...",
+   "sentence": "the owed slot and the eval's own owed, maintained by the sites that already maintain the other three arrays",
+   "old": "    object Snapshot:\n        // Builds a snapshot region by region, keeping the layout here. Built snapshots\n",
+   "new": "    object Snapshot:\n        private[kernel] val empty: Snapshot = Span.fromUnsafe(new Array[AnyRef](0))\n\n        // Builds a snapshot region by region, keeping the layout here. Built snapshots\n"
+  },
+  {
+   "id": 19,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Stack.scala",
+   "kind": "replace",
+   "label": "Stack.scala: // carry bindings, not resumptions or obligations: every ...",
+   "sentence": "the owed slot and the eval's own owed, maintained by the sites that already maintain the other three arrays",
+   "old": "        // carry bindings, not resumptions: every continuation slot is identity.\n",
+   "new": "        // carry bindings, not resumptions or obligations: every continuation slot is\n        // identity and every owed slot is empty.\n"
+  },
+  {
+   "id": 20,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Stack.scala",
+   "kind": "replace",
+   "label": "Stack.scala: private val entries = new Array[AnyRef](regions * 4)",
+   "sentence": "the owed slot and the eval's own owed, maintained by the sites that already maintain the other three arrays",
+   "old": "            private val entries = new Array[AnyRef](regions * 3)\n",
+   "new": "            private val entries = new Array[AnyRef](regions * 4)\n"
+  },
+  {
+   "id": 21,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Stack.scala",
+   "kind": "replace",
+   "label": "Stack.scala: entries(count + 3) = Chunk.empty",
+   "sentence": "the owed slot and the eval's own owed, maintained by the sites that already maintain the other three arrays",
+   "old": "                count += 3\n",
+   "new": "                entries(count + 3) = Chunk.empty\n                count += 4\n"
+  },
+  {
+   "id": 22,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Stack.scala",
+   "kind": "replace",
+   "label": "Stack.scala: def regions: Int                         = self.size / 4",
+   "sentence": "the owed slot and the eval's own owed, maintained by the sites that already maintain the other three arrays",
+   "old": "        def regions: Int                         = self.size / 3\n",
+   "new": "        def regions: Int                         = self.size / 4\n"
+  },
+  {
+   "id": 23,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Stack.scala",
+   "kind": "replace",
+   "label": "Stack.scala: def handler(i: Int): Handler[?, ?, ?]    = self(i * 4).as...",
+   "sentence": "the owed slot and the eval's own owed, maintained by the sites that already maintain the other three arrays",
+   "old": "        def handler(i: Int): Handler[?, ?, ?]    = self(i * 3).asInstanceOf[Handler[?, ?, ?]]\n        def state(i: Int): Any                   = self(i * 3 + 1)\n        def continuation(i: Int): Arrow[?, ?, ?] = self(i * 3 + 2).asInstanceOf[Arrow[?, ?, ?]]\n",
+   "new": "        def handler(i: Int): Handler[?, ?, ?]    = self(i * 4).asInstanceOf[Handler[?, ?, ?]]\n        def state(i: Int): Any                   = self(i * 4 + 1)\n        def continuation(i: Int): Arrow[?, ?, ?] = self(i * 4 + 2).asInstanceOf[Arrow[?, ?, ?]]\n        def owed(i: Int): Chunk[Snapshot]        = self(i * 4 + 3).asInstanceOf[Chunk[Snapshot]]\n"
+  },
+  {
+   "id": 24,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/KyoInternal.scala",
+   "kind": "replace",
+   "label": "KyoInternal.scala: import kyo.Chunk",
+   "sentence": "a park carries what its eval owed, default empty",
+   "old": "\nimport kyo.Frame\n",
+   "new": "\nimport kyo.Chunk\nimport kyo.Frame\n"
+  },
+  {
+   "id": 25,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/KyoInternal.scala",
+   "kind": "replace",
+   "label": "KyoInternal.scala: val entries: Stack.Snapshot,",
+   "sentence": "a park carries what its eval owed, default empty",
+   "old": "        val entries: Stack.Snapshot\n",
+   "new": "        val entries: Stack.Snapshot,\n        val owed: Chunk[Stack.Snapshot] = Chunk.empty\n"
+  },
+  {
+   "id": 26,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Handler.scala",
+   "kind": "replace",
+   "label": "Handler.scala: // The completion edge: fires strictly in the eval at the...",
+   "sentence": "the context handler gains its completion edge, and both hooks state the at-least-once contract",
+   "old": "\n        // Pure, like fork and join: runs whenever the region dies without resuming, at\n",
+   "new": "\n        // The completion edge: fires strictly in the eval at the region's settled exit, in\n        // the same slice that pops the entry, so nothing can park between the body settling\n        // and the completion. Pure, like fork and join.\n        private[kyo] def done(state: State): Unit = ()\n\n        // Pure, like fork and join: runs whenever the region dies without resuming, at\n"
+  },
+  {
+   "id": 27,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Handler.scala",
+   "kind": "replace",
+   "label": "Handler.scala: // abandonment, when a failure unwinds past it, and when ...",
+   "sentence": "the context handler gains its completion edge, and both hooks state the at-least-once contract",
+   "old": "        // abandonment and when a failure unwinds past it. Arrow handlers have no release:\n",
+   "new": "        // abandonment, when a failure unwinds past it, and when a dump it rode is discarded.\n        // Both hooks may fire more than once per logical region (a shared dump, a fork's\n        // state, a merged shadow region): the eval guarantees the edge is reached at least\n        // once, and exactly-once belongs to the state. Arrow handlers have no release:\n"
+  },
+  {
+   "id": 28,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/ContextEffect.scala",
+   "kind": "replace",
+   "label": "ContextEffect.scala: handle(effectTag)((outer: Maybe[A]) => outer.fold(ifUndef...",
+   "sentence": "done beside release, the settled fast path still completes, the pair overload names its release argument",
+   "old": "        handle(effectTag)((outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined), fork, join, release)(v)\n",
+   "new": "        handle(effectTag)((outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined), fork, join, release = release)(v)\n"
+  },
+  {
+   "id": 29,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/ContextEffect.scala",
+   "kind": "replace",
+   "label": "ContextEffect.scala: /** Opens a binding for E: derive computes the state from...",
+   "sentence": "done beside release, the settled fast path still completes, the pair overload names its release argument",
+   "old": "\n    @nowarn(\"msg=anonymous\")\n    inline def handle[A, E <: ContextEffect[A], B, S](\n",
+   "new": "\n    /** Opens a binding for E: derive computes the state from the outer binding, fork and\n      * join carry it across isolate boundaries, done fires at the region's completion,\n      * and release fires whenever the region dies without resuming. All hooks are pure;\n      * over a pending body they run strictly in the eval, and over a settled body no\n      * region opens and done(derive(...)) fires here at the call site. done and release\n      * may each fire more than once per logical region (a shared dump, a fork, a merged\n      * shadow region): the edge is reached at least once, and exactly-once belongs to\n      * the state.\n      */\n    @nowarn(\"msg=anonymous\")\n    inline def handle[A, E <: ContextEffect[A], B, S](\n"
+  },
+  {
+   "id": 30,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/ContextEffect.scala",
+   "kind": "replace",
+   "label": "ContextEffect.scala: inline done: A => Unit = (_: A) => (),",
+   "sentence": "done beside release, the settled fast path still completes, the pair overload names its release argument",
+   "old": "        inline join: (A, A, A) => A,\n        inline release: (A, Throwable) => Unit = (_: A, _: Throwable) => ()\n",
+   "new": "        inline join: (A, A, A) => A,\n        inline done: A => Unit = (_: A) => (),\n        inline release: (A, Throwable) => Unit = (_: A, _: Throwable) => ()\n"
+  },
+  {
+   "id": 31,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/ContextEffect.scala",
+   "kind": "replace",
+   "label": "ContextEffect.scala: def completed(state: A): Unit               = done(state)",
+   "sentence": "done beside release, the settled fast path still completes, the pair overload names its release argument",
+   "old": "                def joined(parent: A, fk: A, child: A): A   = join(parent, fk, child)\n                def released(state: A, ex: Throwable): Unit = release(state, ex)\n",
+   "new": "                def joined(parent: A, fk: A, child: A): A   = join(parent, fk, child)\n                def completed(state: A): Unit               = done(state)\n                def released(state: A, ex: Throwable): Unit = release(state, ex)\n"
+  },
+  {
+   "id": 32,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/ContextEffect.scala",
+   "kind": "replace",
+   "label": "ContextEffect.scala: override private[kyo] def done(state: A)                 ...",
+   "sentence": "done beside release, the settled fast path still completes, the pair overload names its release argument",
+   "old": "                        def join(parent: A, forked: A, child: A)                   = joined(parent, forked, child)\n                        override private[kyo] def release(state: A, ex: Throwable) = released(state, ex)\n",
+   "new": "                        def join(parent: A, forked: A, child: A)                   = joined(parent, forked, child)\n                        override private[kyo] def done(state: A)                   = completed(state)\n                        override private[kyo] def release(state: A, ex: Throwable) = released(state, ex)\n"
+  },
+  {
+   "id": 33,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/ContextEffect.scala",
+   "kind": "replace",
+   "label": "ContextEffect.scala: case _ =>",
+   "sentence": "done beside release, the settled fast path still completes, the pair overload names its release argument",
+   "old": "            case _ => Nested.unnest[B](v)\n",
+   "new": "            case _ =>\n                // A settled body opens no region, but the completion edge still fires:\n                // whatever the state carries (a bracket's obligation) completes here.\n                done(derive(Maybe.empty))\n                Nested.unnest[B](v)\n"
+  },
+  {
+   "id": 34,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/Arrow.scala",
+   "kind": "replace",
+   "label": "Arrow.scala: // The step that opens a binding: it applies immediately ...",
+   "sentence": "the bind step: an arrow application with no budget gate",
+   "old": "\n    final private[kyo] class Chain[A, B, C, S] private[proto] (\n",
+   "new": "\n    // The step that opens a binding: it applies immediately on settled input, without the\n    // budget gate every other arrow consults. A gate here could defer a settled value with\n    // this step as its continuation, and a park of that node strands an obligation the\n    // value was already owed but no region yet carries. Skipping the gate makes the\n    // settle-to-open edge one slice by construction; the value's own gates all fire before\n    // the value settles.\n    abstract private[kyo] class Bind[-A, B, -S] extends Step[A, B, S]:\n        override def apply(v: A): B < S\n\n        final def apply[C, S2](v: A < S2, cont: Arrow[B, C, S2]): C < (S & S2) =\n            v match\n                case v: Pending[A, S2] @unchecked =>\n                    Effect.defer(v, this, cont)\n                case _ =>\n                    cont.head(apply(Nested.unnest(v)), cont.tail)\n    end Bind\n\n    final private[kyo] class Chain[A, B, C, S] private[proto] (\n"
+  },
+  {
+   "id": 35,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: import kyo.Chunk",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "\nimport kyo.Frame\n",
+   "new": "\nimport kyo.Chunk\nimport kyo.Frame\n"
+  },
+  {
+   "id": 36,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: * region, innermost first, and what each region owes drai...",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "      * region, innermost first. Open regions are found by inspecting the value spine; arrows are never traversed. Anything that never\n      * acquired, or is not a computation at all, owes nothing. A release that throws is suppressed onto the signal and cannot starve\n      * the ones after it.\n",
+   "new": "      * region, innermost first, and what each region owes drains before the region itself. Open regions are found by inspecting the\n      * value spine; arrows are never traversed. Anything that never acquired, or is not a computation at all, owes nothing. A release\n      * that throws is suppressed onto the signal and cannot starve the ones after it.\n"
+  },
+  {
+   "id": 37,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: expandOwed(collected, kyo.owed)",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "                        case kyo: Kyo.Park[?, ?] =>\n                            val entries = kyo.entries\n",
+   "new": "                        case kyo: Kyo.Park[?, ?] =>\n                            expandOwed(collected, kyo.owed)\n                            val entries = kyo.entries\n"
+  },
+  {
+   "id": 38,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: expandOwed(collected, entries.owed(i))",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "                                end match\n                                i += 1\n",
+   "new": "                                end match\n                                expandOwed(collected, entries.owed(i))\n                                i += 1\n"
+  },
+  {
+   "id": 39,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: releaseCollected(collected, ex)",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "        collect(v)\n        var i = collected.length - 2\n",
+   "new": "        collect(v)\n        releaseCollected(collected, ex)\n    end release\n\n    // Expands owed snapshots into the collect buffer as the [handler, state] pairs the\n    // walk itself collects. Append order is oldest snapshot and outermost region first,\n    // each region before what it owes, so the reversed walk in releaseCollected drains\n    // newest and innermost first, obligations before their owner.\n    private def expandOwed(collected: scala.collection.mutable.ArrayBuffer[AnyRef], owed: Chunk[Stack.Snapshot]): Unit =\n        if !owed.isEmpty then\n            val snapshots = owed.toIndexed\n            var j         = 0\n            while j < snapshots.length do\n                val snapshot = snapshots(j)\n                var i        = 0\n                while i < snapshot.regions do\n                    snapshot.handler(i) match\n                        case hc: Handler.ContextHandler[?, ?, ?, ?] =>\n                            collected += hc\n                            collected += snapshot.state(i).asInstanceOf[AnyRef]\n                        case _ => ()\n                    end match\n                    expandOwed(collected, snapshot.owed(i))\n                    i += 1\n                end while\n                j += 1\n            end while\n    end expandOwed\n\n    private def releaseCollected(collected: scala.collection.mutable.ArrayBuffer[AnyRef], ex: Throwable): Unit =\n        var i = collected.length - 2\n"
+  },
+  {
+   "id": 40,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: end releaseCollected",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "        end while\n    end release\n\n",
+   "new": "        end while\n    end releaseCollected\n\n    // Drains what an exiting entry owes: dumps nobody resumed, abandoned with the exit's\n    // signal.\n    private def drainOwed(owed: Chunk[Stack.Snapshot], ex: Throwable): Unit =\n        val collected = scala.collection.mutable.ArrayBuffer.empty[AnyRef]\n        expandOwed(collected, owed)\n        releaseCollected(collected, ex)\n    end drainOwed\n\n    // The dump for a crossing, with its debug trace out of the eval's hot body.\n    private def dumped(stack: Stack, idx: Int, kyo: Kyo.Suspend[?, ?, ?, ?]): Stack.Snapshot =\n        val entries = stack.dump(idx + 1)\n        Debugger.whenEnabled {\n            var i = entries.regions - 1\n            while i >= 0 do\n                Debugger.onRegionExit(entries.handler(i), kyo)\n                i -= 1\n        }\n        entries\n    end dumped\n\n    // The discard drain behind its own empty-check, so an exit site is one call and the\n    // signal is minted only when something drains, per drain so suppressed release\n    // failures attach to their own signal.\n    private def drainDiscarded(owed: Chunk[Stack.Snapshot]): Unit =\n        if !owed.isEmpty then drainOwed(owed, new kyo.KyoException(\"remainder discarded\")(using Frame.internal))\n\n    // The context rebound past a dumped run: each dumped binding's tag rebinds to the\n    // nearest live entry below, or leaves the context entirely, exactly as the settled\n    // pop rebinds one exiting binding.\n    private def rebound(stack: Stack, entries: Stack.Snapshot, ctx: Context): Context =\n        var c = ctx\n        var i = 0\n        while i < entries.regions do\n            entries.handler(i) match\n                case hc: Handler.ContextHandler[VX, CX, ?, ?] @unchecked =>\n                    val j = stack.find(hc.tag)\n                    c = if j < 0 then c.remove(hc.tag) else c.update(hc.tag, stack.state(j).asInstanceOf[VX])\n                case _ => ()\n            end match\n            i += 1\n        end while\n        c\n    end rebound\n\n"
+  },
+  {
+   "id": 41,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: // Erasure-forced at the storage boundary: the handler an...",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "        Debugger.onRelease(handler, ex)\n        try handler.asInstanceOf[Handler.ContextHandler[Any, ContextEffect[Any], Any, Any]].release(state, ex)\n",
+   "new": "        Debugger.onRelease(handler, ex)\n        // Erasure-forced at the storage boundary: the handler and its state travel in\n        // parallel slots, and the type system cannot carry their pairing.\n        try handler.asInstanceOf[Handler.ContextHandler[Any, ContextEffect[Any], Any, Any]].release(state, ex)\n"
+  },
+  {
+   "id": 42,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: val owedNow = stack.takeEvalOwed()",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "            if stack.isEmpty then parked.asInstanceOf[A < S]\n",
+   "new": "            val owedNow = stack.takeEvalOwed()\n            if stack.isEmpty then\n                if owedNow.isEmpty then parked.asInstanceOf[A < S]\n                else Kyo.Park[A, S](parked, Stack.Snapshot.empty, owedNow)\n"
+  },
+  {
+   "id": 43,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: Kyo.Park[A, S](parked, stack.snapshot(), owedNow)",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "                Kyo.Park[A, S](parked, stack.snapshot())\n",
+   "new": "                Kyo.Park[A, S](parked, stack.snapshot(), owedNow)\n"
+  },
+  {
+   "id": 44,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: else if idx == stack.depth - 1 then",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "                            if idx < 0 then bug(s\"unhandled suspension: $kyo\")\n                            else\n                                Debugger.onHandle(kyo, stack.handler(idx), stack.state(idx))\n",
+   "new": "                            if idx < 0 then bug(s\"unhandled suspension: $kyo\")\n                            else if idx == stack.depth - 1 then\n                                Debugger.onHandle(kyo, stack.handler(idx), stack.state(idx))\n"
+  },
+  {
+   "id": 45,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: if idx < stack.depth - 1 then",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "                                if idx < stack.depth - 1 then\n                                    Debugger.onForeign(kyo, stack.handler(stack.depth - 1))\n                                def continuation =\n                                    if idx == stack.depth - 1 then\n                                        kyo.cont.chain(contA.chain(contB))\n                                    else\n                                        val entries = stack.dump(idx + 1)\n                                        Debugger.whenEnabled {\n                                            var i = entries.regions - 1\n                                            while i >= 0 do\n                                                Debugger.onRegionExit(entries.handler(i), kyo)\n                                                i -= 1\n                                        }\n                                        val kc = kyo.cont\n                                        val ca = contA\n                                        val cb = contB\n                                        new Arrow.Step[OX[VX], C, EX & S2]:\n                                            def frame = Frame.internal\n                                            override def apply[D, S3](v: OX[VX] < S3, cont2: Arrow[C, D, S3]) =\n                                                v match\n                                                    case p: Pending[OX[VX], S3] @unchecked => Effect.defer(p, this, cont2)\n                                                    case _ =>\n                                                        cont2(\n                                                            Kyo.Park(\n                                                                Effect.defer(v, kc, ca, cb).asInstanceOf[Any < Any],\n                                                                entries\n                                                            ),\n                                                            Arrow.id\n                                                        )\n                                        end new\n",
+   "new": ""
+  },
+  {
+   "id": 46,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: val result = handler.run(kyo.input, kyo.cont.chain(contA....",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "                                        val result = handler.run(kyo.input, continuation)\n",
+   "new": "                                        val result = handler.run(kyo.input, kyo.cont.chain(contA.chain(contB)))\n"
+  },
+  {
+   "id": 47,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: val result = handler.run(operation, kyo.cont.chain(contA....",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "                                        val result = handler.run(operation, continuation)\n",
+   "new": "                                        val result = handler.run(operation, kyo.cont.chain(contA.chain(contB)))\n"
+  },
+  {
+   "id": 48,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: case handler: Handler.LoopHandler[VX, IX, OX, EX, C, Y, S...",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "                                    case handler: Handler.LoopHandler[VX, IX, OX, EX, C, Y, S2] @unchecked if idx == stack.depth - 1 =>\n",
+   "new": "                                    case handler: Handler.LoopHandler[VX, IX, OX, EX, C, Y, S2] @unchecked =>\n"
+  },
+  {
+   "id": 49,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: // The entry dissolves but its extent continues as the",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "                                                Debugger.onRegionExit(handler, pending)\n                                                stack.pop()\n                                                loop[OutT, Y, Any, S2](pending, dispatch, next, ctx)\n",
+   "new": "                                                Debugger.onRegionExit(handler, pending)\n                                                // The entry dissolves but its extent continues as the\n                                                // dispatch value, so what it owes re-homes below.\n                                                stack.oweBelow(idx, stack.pop())\n                                                loop[OutT, Y, Any, S2](pending, dispatch, next, ctx)\n"
+  },
+  {
+   "id": 50,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: val next     = stack.continuation(idx).asInstanceOf[Arrow...",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "                                                val result = Nested.unnest[Y < S2](done.asInstanceOf[Y < S2])\n                                                Debugger.onRegionExit(handler, result)\n                                                val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, Any]]\n                                                stack.truncate(idx)\n",
+   "new": "                                                val result = Nested.unnest[Y < S2](done.asInstanceOf[Y < S2])\n                                                Debugger.onRegionExit(handler, result)\n                                                val next     = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, Any]]\n                                                val owedHere = stack.takeOwed(idx)\n                                                stack.truncate(idx)\n"
+  },
+  {
+   "id": 51,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: drainDiscarded(owedHere)",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "                                                stack.truncate(idx)\n                                                loop(result, next, Arrow.id, ctx)\n                                        end match\n                                    case handler: Handler.LoopHandler[VX, IX, OX, EX, C, Y, S2] @unchecked =>\n",
+   "new": "                                                stack.truncate(idx)\n                                                drainDiscarded(owedHere)\n                                                loop(result, next, Arrow.id, ctx)\n                                        end match\n                                    case handler =>\n                                        bug(s\"unhandled: $handler\")\n                                end match\n                            else\n                                Debugger.onHandle(kyo, stack.handler(idx), stack.state(idx))\n                                Debugger.onForeign(kyo, stack.handler(stack.depth - 1))\n                                // A crossing vacates the regions above the answering entry: they\n                                // leave the stack as the capture's cargo, owed by the entry, and\n                                // their bindings leave the context, so the clause and its outcome\n                                // read what is below them.\n                                val entries = dumped(stack, idx, kyo)\n                                val ctx2    = rebound(stack, entries, ctx)\n                                def continuation =\n                                    val kc = kyo.cont\n                                    val ca = contA\n                                    val cb = contB\n                                    new Arrow.Step[OX[VX], C, EX & S2]:\n                                        def frame = Frame.internal\n                                        override def apply[D, S3](v: OX[VX] < S3, cont2: Arrow[C, D, S3]) =\n                                            v match\n                                                case p: Pending[OX[VX], S3] @unchecked => Effect.defer(p, this, cont2)\n                                                case _ =>\n                                                    cont2(\n                                                        Kyo.Park(\n                                                            Effect.defer(v, kc, ca, cb).asInstanceOf[Any < Any],\n                                                            entries\n                                                        ),\n                                                        Arrow.id\n                                                    )\n                                    end new\n                                end continuation\n                                stack.handler(idx) match\n                                    case handler: Handler.ContHandler[IX, OX, EX, C, Y, S2] @unchecked =>\n                                        val result = handler.run(kyo.input, continuation)\n                                        Debugger.onResult(result)\n                                        loop(result, Arrow.id, Arrow.id, ctx2)\n                                    case handler: Handler.ContOpHandler[EX, C, Y, S2] @unchecked =>\n                                        val operation: OX[VX] < EX =\n                                            new Kyo.SuspendArrow[IX, OX, EX, VX, OX[VX], EX]:\n                                                def tag   = kyo.tag\n                                                def input = kyo.input\n                                                def cont  = Arrow.id\n                                        val result = handler.run(operation, continuation)\n                                        Debugger.onResult(result)\n                                        loop(result, Arrow.id, Arrow.id, ctx2)\n                                    case handler: Handler.LoopHandler[VX, IX, OX, EX, C, Y, S2] @unchecked =>\n"
+  },
+  {
+   "id": 52,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: loop(outcome._2, continuation, Arrow.id, ctx2)",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "                                                if idx == stack.depth - 1 then loop(outcome._2, kyo.cont, contA.chain(contB), ctx)\n                                                else loop(outcome._2, continuation, Arrow.id, ctx)\n",
+   "new": "                                                loop(outcome._2, continuation, Arrow.id, ctx2)\n"
+  },
+  {
+   "id": 53,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: stack.oweBelow(idx, stack.pop())",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "                                                stack.pop()\n                                                loop(pending, dispatch, next, ctx)\n",
+   "new": "                                                stack.oweBelow(idx, stack.pop())\n                                                loop(pending, dispatch, next, ctx2)\n"
+  },
+  {
+   "id": 54,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: Debugger.whenEnabled {",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "                                                Debugger.whenEnabled {\n                                                    var j = stack.depth - 1\n                                                    while j > idx do\n                                                        Debugger.onRegionExit(stack.handler(j), outcome)\n                                                        j -= 1\n                                                }\n",
+   "new": ""
+  },
+  {
+   "id": 55,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: val next     = stack.continuation(idx).asInstanceOf[Arrow...",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "                                                val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, Any]]\n",
+   "new": "                                                val next     = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, Any]]\n                                                val owedHere = stack.takeOwed(idx)\n"
+  },
+  {
+   "id": 56,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: drainDiscarded(owedHere)",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "                                                stack.truncate(idx)\n                                                loop(result, next, Arrow.id, ctx)\n                                        end match\n",
+   "new": "                                                stack.truncate(idx)\n                                                drainDiscarded(owedHere)\n                                                loop(result, next, Arrow.id, ctx2)\n                                        end match\n"
+  },
+  {
+   "id": 57,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: stack.oweBelow(stack.depth, kyo.owed)",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "                case kyo: Kyo.Park[?, ?] if kyo.entries.isEmpty =>\n                    loop(kyo.value.asInstanceOf[T < S2], contA, contB, ctx)\n",
+   "new": "                case kyo: Kyo.Park[?, ?] if kyo.entries.isEmpty =>\n                    stack.oweBelow(stack.depth, kyo.owed)\n                    loop(kyo.value.asInstanceOf[T < S2], contA, contB, ctx)\n"
+  },
+  {
+   "id": 58,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: // What the parked eval owed re-homes below the installed...",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "                case kyo: Kyo.Park[?, ?] =>\n                    val entries = kyo.entries\n",
+   "new": "                case kyo: Kyo.Park[?, ?] =>\n                    // What the parked eval owed re-homes below the installed run, like any\n                    // dissolved extent.\n                    stack.oweBelow(stack.depth, kyo.owed)\n                    val entries = kyo.entries\n"
+  },
+  {
+   "id": 59,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: stack.owe(stack.depth - 1, entries.owed(i))",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "                                    stack.push(hc, st, cont)\n                                    install(i + 1, c.update(hc.tag, st))\n",
+   "new": "                                    stack.push(hc, st, cont)\n                                    stack.owe(stack.depth - 1, entries.owed(i))\n                                    install(i + 1, c.update(hc.tag, st))\n"
+  },
+  {
+   "id": 60,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: stack.owe(stack.depth - 1, entries.owed(i))",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "                                    stack.push(handler, st, cont)\n                                    install(i + 1, c)\n",
+   "new": "                                    stack.push(handler, st, cont)\n                                    stack.owe(stack.depth - 1, entries.owed(i))\n                                    install(i + 1, c)\n"
+  },
+  {
+   "id": 61,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: // through at exit in its union representation. The compl...",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "                                    // through at exit in its union representation.\n",
+   "new": "                                    // through at exit in its union representation. The completion edge\n                                    // fires in the same slice as the pop.\n"
+  },
+  {
+   "id": 62,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: hc.done(stack.state(top).asInstanceOf[VX])",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "                                    Debugger.onRegionExit(hc, res)\n                                    stack.pop()\n                                    val j = stack.find(hc.tag)\n",
+   "new": "                                    Debugger.onRegionExit(hc, res)\n                                    hc.done(stack.state(top).asInstanceOf[VX])\n                                    drainDiscarded(stack.pop())\n                                    val j = stack.find(hc.tag)\n"
+  },
+  {
+   "id": 63,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: drainDiscarded(stack.pop())",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "                                    Debugger.onRegionExit(handler, result)\n                                    stack.pop()\n                                    loop(result, next, Arrow.id, ctx)\n",
+   "new": "                                    Debugger.onRegionExit(handler, result)\n                                    drainDiscarded(stack.pop())\n                                    loop(result, next, Arrow.id, ctx)\n"
+  },
+  {
+   "id": 64,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: val owedNow = stack.takeEvalOwed()",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "            if stack.isEmpty then\n\n                EffectTrace.splice(ex)\n",
+   "new": "            if stack.isEmpty then\n                val owedNow = stack.takeEvalOwed()\n                if !owedNow.isEmpty then drainOwed(owedNow, ex)\n                EffectTrace.splice(ex)\n"
+  },
+  {
+   "id": 65,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: // A binding cannot answer a failure; it dies without res...",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "                        // A binding cannot answer a failure; it dies without resuming.\n",
+   "new": "                        // A binding cannot answer a failure; it dies without resuming, and\n                        // what it owes drains before the binding itself.\n"
+  },
+  {
+   "id": 66,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: val owedHere = stack.pop()",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "                        Debugger.onRegionExit(hc, ex)\n                        released(hc, state, ex)\n",
+   "new": "                        Debugger.onRegionExit(hc, ex)\n                        val owedHere = stack.pop()\n                        if !owedHere.isEmpty then drainOwed(owedHere, ex)\n                        released(hc, state, ex)\n"
+  },
+  {
+   "id": 67,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: stack.pop()",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "                        released(hc, state, ex)\n                        stack.pop()\n                        recovered(ex)\n",
+   "new": "                        released(hc, state, ex)\n                        recovered(ex)\n"
+  },
+  {
+   "id": 68,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: val owedHere = stack.pop()",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "                                    stack.pop()\n\n",
+   "new": "                                    val owedHere = stack.pop()\n                                    if !owedHere.isEmpty then drainOwed(owedHere, ex2)\n"
+  },
+  {
+   "id": 69,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: val owedHere = stack.pop()",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "                                stack.pop()\n",
+   "new": "                                val owedHere = stack.pop()\n                                if !owedHere.isEmpty then drainOwed(owedHere, ex)\n"
+  },
+  {
+   "id": 70,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: val resumed  = recovered(failure)",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "                        val resumed = recovered(failure)\n                        stack.pop()\n",
+   "new": "                        val resumed  = recovered(failure)\n                        val owedHere = stack.pop()\n                        if !owedHere.isEmpty then drainOwed(owedHere, failure)\n"
+  },
+  {
+   "id": 71,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/internal/Eval.scala",
+   "kind": "replace",
+   "label": "Eval.scala: try",
+   "sentence": "drains at every exit, the context rebound at crossings, the crossing split into its lazy top tier and eager non-top tier",
+   "old": "        try guarded(v, Context.empty)\n",
+   "new": "        try\n            val out = guarded(v, Context.empty)\n            // A park transferred what it owed into the remainder; anything still rooted\n            // on the stack belongs to no surviving extent and drains now.\n            drainDiscarded(stack.takeEvalOwed())\n            out\n"
+  },
+  {
+   "id": 72,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/Effect.scala",
+   "kind": "replace",
+   "label": "Effect.scala: import java.util.concurrent.atomic.AtomicBoolean",
+   "sentence": "the bracket is kernel machinery: Cell, Finalize, and bracket on the companion",
+   "old": "\nimport kyo.Frame\n",
+   "new": "\nimport java.util.concurrent.atomic.AtomicBoolean\nimport kyo.Frame\n"
+  },
+  {
+   "id": 73,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/Effect.scala",
+   "kind": "replace",
+   "label": "Effect.scala: import scala.util.control.NonFatal",
+   "sentence": "the bracket is kernel machinery: Cell, Finalize, and bracket on the companion",
+   "old": "import scala.annotation.nowarn\n\n",
+   "new": "import scala.annotation.nowarn\nimport scala.util.control.NonFatal\n\n"
+  },
+  {
+   "id": 74,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/kernel/Effect.scala",
+   "kind": "replace",
+   "label": "Effect.scala: /** The bracket region's effect: never suspended, a regio...",
+   "sentence": "the bracket is kernel machinery: Cell, Finalize, and bracket on the companion",
+   "old": "object Effect:\n\n",
+   "new": "object Effect:\n\n    /** The bracket region's effect: never suspended, a region exists only to be reached. */\n    sealed private[kyo] trait Finalize extends ContextEffect[Cell]\n\n    /** The obligation: a claim around the release thunk. The resource lives in the thunk's\n      * closure. Atomic because a parked remainder can be drained on one thread while a\n      * captured continuation completes on another.\n      */\n    final private[kyo] class Cell(fin: Maybe[Throwable] => Unit) extends AtomicBoolean:\n        private[kyo] def complete(): Unit           = if compareAndSet(false, true) then fin(Maybe.Absent)\n        private[kyo] def drain(ex: Throwable): Unit = if compareAndSet(false, true) then fin(Maybe(ex))\n    end Cell\n\n    private[kyo] object Cell:\n        // What a fork installs: a child's view of a bracket it does not own. Already\n        // claimed, so a child's death cannot drain the parent's obligation.\n        private[kyo] val inert: Cell =\n            val cell = new Cell(_ => ())\n            cell.set(true)\n            cell\n        end inert\n    end Cell\n\n    /** Acquires a resource, uses it, and releases it exactly once: on completion, when a\n      * failure unwinds past the bracket, when the computation is abandoned, and when a\n      * capture holding it is discarded. The region opens through a bind step, in the same\n      * slice the acquire settles: no safepoint can separate the two, so an existing\n      * resource is never left without its region. Only that final slice is guarded: an\n      * abandonment earlier in a multi-step acquire owes nothing yet, so a compound\n      * acquisition nests brackets, one per step. Absent means the extent completed.\n      */\n    def bracket[A, S1](acquire: A < S1)(\n        release: (A, Maybe[Throwable]) => Unit\n    )[B, S2](use: A => B < S2)(using _frame: Frame): B < (S1 & S2) =\n        val open = new Arrow.Bind[A, B, S1 & S2]:\n            def frame = _frame\n            override def apply(a: A) =\n                val cell = new Cell(outcome => release(a, outcome))\n                val body =\n                    // The region does not exist until the handle below wraps the body, so\n                    // a use that throws during application drains here on the way out.\n                    try use(a)\n                    catch\n                        case ex if NonFatal(ex) =>\n                            cell.drain(ex)\n                            throw ex\n                ContextEffect.handle(Tag[Finalize])(\n                    (_: Maybe[Cell]) => cell,\n                    fork = (_: Cell) => Cell.inert,\n                    join = (parent: Cell, _: Cell, _: Cell) => parent,\n                    done = (c: Cell) => c.complete(),\n                    release = (c: Cell, ex: Throwable) => c.drain(ex)\n                )(body)\n            end apply\n        defer(acquire).chain(open)\n    end bracket\n\n"
+  },
+  {
+   "id": 75,
+   "file": "kyo-kernel/shared/src/main/scala/kyo/proto/Sync.scala",
+   "kind": "delete",
+   "label": "delete Sync.scala",
+   "sentence": "the prototype dissolves into the kernel"
+  },
+  {
+   "id": 76,
+   "file": "kyo-kernel/shared/src/test/scala/kyo/proto/SyncTest.scala",
+   "kind": "delete",
+   "label": "delete SyncTest.scala",
+   "sentence": "the prototype's test dissolves into the kernel"
+  },
+  {
+   "id": 77,
+   "file": "kyo-kernel/shared/src/test/scala/kyo/proto/kernel/EffectBracketTest.scala",
+   "kind": "create",
+   "label": "create EffectBracketTest.scala",
+   "sentence": "the bracket pins live beside what they pin",
+   "new": "package kyo.proto.kernel\n\nimport kyo.Maybe\nimport kyo.Tag\nimport kyo.discard\nimport kyo.proto.kernel.internal.Eval\nimport kyo.proto.kernel.internal.Kyo\nimport kyo.proto.kernel.internal.Nested\nimport kyo.proto.kernel.internal.Pending\nimport kyo.proto.kernel.internal.Safepoint\nimport org.scalatest.freespec.AnyFreeSpec\n\nclass EffectBracketTest extends AnyFreeSpec:\n\n    private def eval[A, S](v: A < S): A =\n        Nested.unnest[A](Eval(v))\n\n    private def requestStop(): Unit =\n        discard(Safepoint.get())\n        discard(Safepoint.stop(Thread.currentThread()))\n        Safepoint.deadline(java.lang.System.currentTimeMillis() - 1)\n    end requestStop\n\n    private object Boom extends RuntimeException(\"boom\", null, false, false)\n\n    sealed trait Ask extends ArrowEffect[kyo.Const[Unit], kyo.Const[Int]]\n    def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())\n\n    \"bracket\" - {\n        \"releases with Absent on completion, after use\" in {\n            val log = collection.mutable.ListBuffer[String]()\n            val v = Effect.bracket(Effect.defer { log += \"open\"; 42 }) { (a, outcome) =>\n                discard(log += s\"close $a ${outcome.isEmpty}\")\n            } { a =>\n                Effect.defer { log += \"use\"; a + 1 }\n            }\n            assert(eval(v) == 43)\n            assert(log.toList == List(\"open\", \"use\", \"close 42 true\"))\n        }\n\n        \"a pure use completes the bracket through the settled fast path\" in {\n            var count = 0\n            val v     = Effect.bracket(Effect.defer(1))((_, _) => count += 1)(a => a + 1)\n            assert(eval(v) == 2)\n            assert(count == 1)\n        }\n\n        \"a use that throws during application still releases\" in {\n            var seen = Maybe.empty[Maybe[Throwable]]\n            val v = Effect.bracket(Effect.defer(7))((_, outcome) => seen = Maybe(outcome)) { _ =>\n                (throw Boom): Int < Any\n            }\n            val ex = intercept[RuntimeException](eval(v))\n            assert(ex eq Boom)\n            assert(seen.exists(_.exists(_ eq Boom)))\n        }\n\n        \"releases exactly once\" in {\n            var count = 0\n            val v     = Effect.bracket(Effect.defer(1))((_, _) => count += 1)(a => Effect.defer(a))\n            assert(eval(v) == 1)\n            assert(count == 1)\n        }\n\n        \"releases with the failure when the use throws\" in {\n            var seen = Maybe.empty[Throwable]\n            val v = Effect.bracket(Effect.defer(7))((_, outcome) => seen = outcome) { _ =>\n                Effect.defer((throw Boom): Int)\n            }\n            val ex = intercept[RuntimeException](eval(v))\n            assert(ex eq Boom)\n            assert(seen.exists(_ eq Boom))\n        }\n\n        \"releases when a parked remainder is abandoned\" in {\n            var seen = Maybe.empty[Maybe[Throwable]]\n            val v = Effect.bracket(Effect.defer(7))((_, outcome) => seen = Maybe(outcome)) { a =>\n                Effect.defer {\n                    requestStop()\n                    Effect.defer(a + 1)\n                }\n            }\n            val parked = Eval.partial(v)\n            assert(parked.isInstanceOf[Kyo.Park[?, ?]])\n            assert(seen.isEmpty)\n            Eval.release(parked, Boom)\n            assert(seen.exists(_.exists(_ eq Boom)))\n        }\n\n        \"a resumed parked bracket completes and releases with Absent\" in {\n            var seen = Maybe.empty[Maybe[Throwable]]\n            val v = Effect.bracket(Effect.defer(7))((_, outcome) => seen = Maybe(outcome)) { a =>\n                Effect.defer {\n                    requestStop()\n                    Effect.defer(a + 1)\n                }\n            }\n            val parked = Eval.partial(v)\n            assert(parked.isInstanceOf[Kyo.Park[?, ?]])\n            assert(eval(parked) == 8)\n            assert(seen == Maybe(Maybe.empty))\n        }\n\n        \"nested brackets release innermost first on failure\" in {\n            val log = collection.mutable.ListBuffer[String]()\n            val v = Effect.bracket(Effect.defer(1))((_, _) => discard(log += \"outer\")) { _ =>\n                Effect.bracket(Effect.defer(2))((_, _) => discard(log += \"inner\")) { _ =>\n                    Effect.defer((throw Boom): Int)\n                }\n            }\n            val ex = intercept[RuntimeException](eval(v))\n            assert(ex eq Boom)\n            assert(log.toList == List(\"inner\", \"outer\"))\n        }\n\n        \"a stop landing as the acquire settles still installs the region\" in {\n            var count = 0\n            val v = Effect.bracket(Effect.defer {\n                requestStop()\n                7\n            })((_, _) => count += 1)(a => Effect.defer(a + 1))\n            val parked = Eval.partial(v)\n            assert(parked.isInstanceOf[Kyo.Park[?, ?]])\n            Eval.release(parked, Boom)\n            assert(count == 1)\n            assert(eval(parked) == 8)\n            assert(count == 1)\n        }\n\n        \"a loop clause answering done releases a bracket opened inside\" in {\n            var seen = Maybe.empty[Maybe[Throwable]]\n            val body: Int < Ask =\n                Effect.bracket(Effect.defer(7))((_, outcome) => seen = Maybe(outcome)) { a =>\n                    ask.map(x => a + x)\n                }\n            val r: Int < Any =\n                ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => kyo.proto.Loop.done(-1), b => b)\n            assert(eval(r) == -1)\n            assert(seen.exists(_.isDefined))\n        }\n\n        \"the acquire is not guarded before it settles\" in {\n            var count = 0\n            val v = Effect.bracket(Effect.defer {\n                requestStop()\n                Effect.defer(7)\n            })((_, _) => count += 1)(a => Effect.defer(a))\n            val parked = Eval.partial(v)\n            assert(parked.isInstanceOf[Pending[?, ?]])\n            Eval.release(parked, Boom)\n            assert(count == 0)\n            assert(eval(parked) == 7)\n            assert(count == 1)\n        }\n    }\n\n    \"captured continuations\" - {\n        \"a discarded captured continuation still releases the bracket\" in {\n            var seen = Maybe.empty[Maybe[Throwable]]\n            val body: Int < Ask =\n                Effect.bracket(Effect.defer(7))((_, outcome) => seen = Maybe(outcome)) { a =>\n                    ask.map(x => a + x)\n                }\n            val dropped: Int < Any =\n                ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, _) => -1, b => b)\n            assert(eval(dropped) == -1)\n            assert(seen.exists(_.isDefined))\n        }\n\n        \"a captured continuation resumed in the clause completes the bracket there\" in {\n            var seen = Maybe.empty[Maybe[Throwable]]\n            val body: Int < Ask =\n                Effect.bracket(Effect.defer(7))((_, outcome) => seen = Maybe(outcome)) { a =>\n                    ask.map(x => a + x)\n                }\n            val resumed: Int < Any =\n                ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, cont) => cont(1), b => b)\n            assert(eval(resumed) == 8)\n            assert(seen == Maybe(Maybe.empty))\n        }\n\n        \"a park after a crossing resume still owes the bracket\" in {\n            var seen = Maybe.empty[Maybe[Throwable]]\n            val body: Int < Ask =\n                Effect.bracket(Effect.defer(7))((_, outcome) => seen = Maybe(outcome)) { a =>\n                    ask.map { x =>\n                        requestStop()\n                        Effect.defer(a + x)\n                    }\n                }\n            val resumed: Int < Any =\n                ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, cont) => cont(1), b => b)\n            val parked = Eval.partial(resumed)\n            assert(parked.isInstanceOf[Kyo.Park[?, ?]])\n            Eval.release(parked, Boom)\n            assert(seen.exists(_.exists(_ eq Boom)))\n        }\n\n        \"an effectful loop clause resuming after the pop completes the bracket\" in {\n            var seen = Maybe.empty[Maybe[Throwable]]\n            val body: Int < Ask =\n                Effect.bracket(Effect.defer(7))((_, outcome) => seen = Maybe(outcome)) { a =>\n                    ask.map(x => a + x)\n                }\n            val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], body)(\n                [C] => _ => Effect.defer(kyo.proto.Loop.continue((), 1: Int < Ask)),\n                b => b\n            )\n            assert(eval(r) == 8)\n            assert(seen == Maybe(Maybe.empty))\n        }\n\n        \"an effectful loop clause answering done releases through the eval root\" in {\n            var seen = Maybe.empty[Maybe[Throwable]]\n            val body: Int < Ask =\n                Effect.bracket(Effect.defer(7))((_, outcome) => seen = Maybe(outcome)) { a =>\n                    ask.map(x => a + x)\n                }\n            val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], body)(\n                [C] => _ => Effect.defer(kyo.proto.Loop.done(-1)),\n                b => b\n            )\n            assert(eval(r) == -1)\n            assert(seen.exists(_.isDefined))\n        }\n\n        \"a clause that throws after capturing releases the bracket with the failure\" in {\n            var seen = Maybe.empty[Maybe[Throwable]]\n            val body: Int < Ask =\n                Effect.bracket(Effect.defer(7))((_, outcome) => seen = Maybe(outcome)) { a =>\n                    ask.map(x => a + x)\n                }\n            val r: Int < Any =\n                ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, _) => (throw Boom): Int, b => b)\n            val ex = intercept[RuntimeException](eval(r))\n            assert(ex eq Boom)\n            assert(seen.exists(_.exists(_ eq Boom)))\n        }\n\n        \"a leaked capture resumed after its region completed enters the spent extent\" in {\n            val outcomes = collection.mutable.ListBuffer[Maybe[Throwable]]()\n            var leaked   = Maybe.empty[kyo.proto.Arrow[Int, Int, Ask]]\n            val body: Int < Ask =\n                Effect.bracket(Effect.defer(7))((_, outcome) => discard(outcomes += outcome)) { a =>\n                    ask.map(x => a + x)\n                }\n            val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(\n                [C] =>\n                    (_, cont) =>\n                        leaked = Maybe(cont)\n                        -1\n                ,\n                b => b\n            )\n            assert(eval(r) == -1)\n            assert(outcomes.size == 1)\n            assert(outcomes.head.isDefined)\n            // The stored capture outlived its region: resuming it completes the value in\n            // a spent extent, and the claimed cell keeps the release at exactly once.\n            assert(eval(leaked.get(1)) == 8)\n            assert(outcomes.size == 1)\n        }\n\n        \"a throwing release on the discard drain does not starve the ones after it\" in {\n            val log = collection.mutable.ListBuffer[String]()\n            object Bad extends RuntimeException(\"bad\", null, false, false)\n            val body: Int < Ask =\n                Effect.bracket(Effect.defer(1))((_, _) => discard(log += \"outer\")) { _ =>\n                    Effect.bracket(Effect.defer(2))((_, _) => throw Bad) { _ =>\n                        ask.map(x => x)\n                    }\n                }\n            val dropped: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, _) => -1, b => b)\n            assert(eval(dropped) == -1)\n            assert(log.toList == List(\"outer\"))\n        }\n    }\n\n    \"finalizer failures\" - {\n        \"a release that throws on completion fails the computation and releases the outer bracket\" in {\n            object Bad extends RuntimeException(\"bad\", null, false, false)\n            var outerSeen = Maybe.empty[Maybe[Throwable]]\n            val v = Effect.bracket(Effect.defer(1))((_, outcome) => outerSeen = Maybe(outcome)) { _ =>\n                Effect.bracket(Effect.defer(2))((_, _) => throw Bad)(b => Effect.defer(b))\n            }\n            val ex = intercept[RuntimeException](eval(v))\n            assert(ex eq Bad)\n            assert(outerSeen.exists(_.exists(_ eq Bad)))\n        }\n\n        \"a release failure on the unwind is suppressed onto the failure\" in {\n            val failure = new RuntimeException(\"failure\")\n            object Bad extends RuntimeException(\"bad\", null, false, false)\n            val v = Effect.bracket(Effect.defer(1))((_, _) => throw Bad) { _ =>\n                Effect.defer((throw failure): Int)\n            }\n            val ex = intercept[RuntimeException](eval(v))\n            assert(ex eq failure)\n            assert(ex.getSuppressed.exists(_ eq Bad))\n        }\n\n        \"a release failure on abandonment is suppressed onto the holder's signal\" in {\n            val signal = new RuntimeException(\"signal\")\n            object Bad extends RuntimeException(\"bad\", null, false, false)\n            val v = Effect.bracket(Effect.defer(1))((_, _) => throw Bad) { a =>\n                Effect.defer {\n                    requestStop()\n                    Effect.defer(a + 1)\n                }\n            }\n            val parked = Eval.partial(v)\n            assert(parked.isInstanceOf[Kyo.Park[?, ?]])\n            Eval.release(parked, signal)\n            assert(signal.getSuppressed.exists(_ eq Bad))\n        }\n    }\n\n    \"mixed with other kernel features\" - {\n        \"a bracket and a binding dumped together release inner first on discard\" in {\n            val log = collection.mutable.ListBuffer[String]()\n            sealed trait Cfg extends ContextEffect[Int]\n            val body: Int < Ask =\n                Effect.bracket(Effect.defer(1))((_, _) => discard(log += \"bracket\")) { a =>\n                    ContextEffect.handle(Tag[Cfg])(\n                        (_: Maybe[Int]).getOrElse(0),\n                        fork = (parent: Int) => parent,\n                        join = (parent: Int, _: Int, _: Int) => parent,\n                        release = (_: Int, _: Throwable) => discard(log += \"binding\")\n                    )(ask.map(x => a + x))\n                }\n            val dropped: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, _) => -1, b => b)\n            assert(eval(dropped) == -1)\n            assert(log.toList == List(\"binding\", \"bracket\"))\n        }\n\n        \"a multi-shot capture over a bracket releases at the first completion\" in {\n            val outcomes = collection.mutable.ListBuffer[Maybe[Throwable]]()\n            val body: Int < Ask =\n                Effect.bracket(Effect.defer(7))((_, outcome) => discard(outcomes += outcome)) { a =>\n                    ask.map(x => a + x)\n                }\n            val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(\n                [C] => (_, cont) => cont(1).map(x => cont(2).map(y => x * 100 + y)),\n                b => b\n            )\n            assert(eval(r) == 809)\n            assert(outcomes.toList == List(Maybe.empty))\n        }\n\n        \"a bracket held across two parks releases once on completion\" in {\n            var count = 0\n            var seen  = Maybe.empty[Maybe[Throwable]]\n            val v = Effect.bracket(Effect.defer(7)) { (_, outcome) =>\n                count += 1\n                seen = Maybe(outcome)\n            } { a =>\n                Effect.defer {\n                    requestStop()\n                    Effect.defer {\n                        requestStop()\n                        Effect.defer(a + 1)\n                    }\n                }\n            }\n            val p1 = Eval.partial(v)\n            assert(p1.isInstanceOf[Kyo.Park[?, ?]])\n            val p2 = Eval.partial(p1)\n            assert(p2.isInstanceOf[Kyo.Park[?, ?]])\n            assert(eval(p2) == 8)\n            assert(count == 1)\n            assert(seen == Maybe(Maybe.empty))\n        }\n\n        \"a contextual isolate inside a bracket forks an inert obligation\" in {\n            val outcomes = collection.mutable.ListBuffer[Maybe[Throwable]]()\n            val v = Effect.bracket(Effect.defer(7))((_, outcome) => discard(outcomes += outcome)) { a =>\n                Isolate.internal.Contextual.run(Effect.defer(a + 1)).map(_ + 1)\n            }\n            assert(eval(v) == 9)\n            assert(outcomes.toList == List(Maybe.empty))\n        }\n    }\n\n    \"unit acquire\" - {\n        \"runs after completion with Absent\" in {\n            var seen = Maybe.empty[Maybe[Throwable]]\n            val v    = Effect.bracket(())((_, outcome) => seen = Maybe(outcome))(_ => Effect.defer(5))\n            assert(eval(v) == 5)\n            assert(seen == Maybe(Maybe.empty))\n        }\n\n        \"runs with the failure on unwind\" in {\n            var seen = Maybe.empty[Maybe[Throwable]]\n            val v    = Effect.bracket(())((_, outcome) => seen = Maybe(outcome))(_ => Effect.defer((throw Boom): Int))\n            val ex   = intercept[RuntimeException](eval(v))\n            assert(ex eq Boom)\n            assert(seen.exists(_.exists(_ eq Boom)))\n        }\n    }\nend EffectBracketTest\n"
+  },
+  {
+   "id": 78,
+   "file": "kyo-kernel/shared/src/test/scala/kyo/proto/kernel/internal/EvalTest.scala",
+   "kind": "replace",
+   "label": "EvalTest.scala: \"owed dumps\" - {",
+   "sentence": "the owed drain pins: promptness, order, double fire, the outer binding, pooled reuse",
+   "old": "\nend EvalTest\n",
+   "new": "\n    \"owed dumps\" - {\n        \"a dropped capture's regions release when the answering region exits\" in {\n            val log = collection.mutable.ListBuffer[String]()\n            sealed trait Cfg extends kyo.proto.kernel.ContextEffect[Int]\n            val body: Int < Ask =\n                kyo.proto.kernel.ContextEffect.handle(Tag[Cfg])(\n                    _.getOrElse(7),\n                    fork = (parent: Int) => parent,\n                    join = (parent: Int, _: Int, _: Int) => parent,\n                    release = (_: Int, _: Throwable) => discard(log += \"released\")\n                )(ask.map(x => x))\n            val dropped: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, _) => -1, b => b)\n            val after: Int < Any = dropped.map { r =>\n                discard(log += s\"after $r\")\n                r\n            }\n            assert(eval(after) == -1)\n            assert(log.toList == List(\"released\", \"after -1\"))\n        }\n\n        \"sibling dumps drain newest first at the owner's exit\" in {\n            val log = collection.mutable.ListBuffer[String]()\n            sealed trait CfgA extends kyo.proto.kernel.ContextEffect[Int]\n            sealed trait CfgB extends kyo.proto.kernel.ContextEffect[Int]\n            def scoped[E <: kyo.proto.kernel.ContextEffect[Int]](tag: Tag[E], name: String)(v: Int < (Ask & E)): Int < Ask =\n                kyo.proto.kernel.ContextEffect.handle(tag)(\n                    (_: Maybe[Int]).getOrElse(0),\n                    fork = (parent: Int) => parent,\n                    join = (parent: Int, _: Int, _: Int) => parent,\n                    release = (_: Int, _: Throwable) => discard(log += name)\n                )(v)\n            val body: Int < Ask = scoped(Tag[CfgA], \"a\")(ask.map(x => x))\n            var first           = true\n            val handled: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(\n                [C] =>\n                    (_, _) =>\n                        if first then\n                            first = false\n                            scoped(Tag[CfgB], \"b\")(ask.map(x => x))\n                        else -1,\n                b => b\n            )\n            assert(eval(handled) == -1)\n            assert(log.toList == List(\"b\", \"a\"))\n        }\n\n        \"a raw release hook fires on both the unwind and the owed drain\" in {\n            val log = collection.mutable.ListBuffer[Int]()\n            sealed trait Cfg extends kyo.proto.kernel.ContextEffect[Int]\n            val body: Int < Ask =\n                kyo.proto.kernel.ContextEffect.handle(Tag[Cfg])(\n                    _.getOrElse(7),\n                    fork = (parent: Int) => parent,\n                    join = (parent: Int, _: Int, _: Int) => parent,\n                    release = (state: Int, _: Throwable) => discard(log += state)\n                )(ask.map(_ => (throw Boom): Int))\n            val outer: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, cont) => cont(1), b => b)\n            val ex               = intercept[RuntimeException](eval(outer))\n            assert(ex eq Boom)\n            assert(log.toList == List(7, 7))\n        }\n\n        \"a pooled stack reused by a later eval carries no stale obligations\" in {\n            sealed trait CfgA extends kyo.proto.kernel.ContextEffect[Int]\n            sealed trait CfgB extends kyo.proto.kernel.ContextEffect[Int]\n            var drops = 0\n            val body: Int < Ask =\n                kyo.proto.kernel.ContextEffect.handle(Tag[CfgA])(\n                    _.getOrElse(1),\n                    fork = (parent: Int) => parent,\n                    join = (parent: Int, _: Int, _: Int) => parent,\n                    release = (_: Int, _: Throwable) => drops += 1\n                )(ask.map(x => x))\n            val dropped: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, _) => -1, b => b)\n            assert(eval(dropped) == -1)\n            assert(drops == 1)\n            // The next eval on this thread borrows the same pooled stack; a stale owed\n            // slot or eval-owed chunk would fire hooks in a computation that never dumped.\n            var completions = 0\n            var releases    = 0\n            val clean: Int < Any =\n                kyo.proto.kernel.ContextEffect.handle(Tag[CfgB])(\n                    _.getOrElse(2),\n                    fork = (parent: Int) => parent,\n                    join = (parent: Int, _: Int, _: Int) => parent,\n                    done = (_: Int) => completions += 1,\n                    release = (_: Int, _: Throwable) => releases += 1\n                )(Effect.defer(5))\n            assert(eval(clean) == 5)\n            assert(completions == 1)\n            assert(releases == 0)\n            assert(drops == 1)\n        }\n\n        \"a clause reads the outer binding, not a dumped one\" in {\n            sealed trait Cfg extends kyo.proto.kernel.ContextEffect[Int]\n            def read: Int < Cfg = kyo.proto.kernel.ContextEffect.suspend(Tag[Cfg])\n            val body: Int < (Ask & Cfg) =\n                (kyo.proto.kernel.ContextEffect.handleInheritable(Tag[Cfg], 1)(ask.map(x => x)): Int < Ask)\n            val handled: Int < Cfg = ArrowEffect.handleCont(Tag[Ask], body)(\n                [C] => (_, cont) => read.map(c => cont(c)),\n                b => b\n            )\n            val outer: Int < Any = kyo.proto.kernel.ContextEffect.handleInheritable(Tag[Cfg], 100)(handled)\n            assert(eval(outer) == 100)\n        }\n    }\n\nend EvalTest\n"
+  }
+ ]
+}
