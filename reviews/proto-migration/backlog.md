@@ -66,8 +66,10 @@ information is present; what is missing is capture and splicing.
 
 ### B4. `Mask`
 
-`kyo/Mask.scala`. Absent from the proto. Needs a read before it can be scoped; it is the smallest
-item on the list and the least understood.
+Landed (2026-09-01 correction): the proto carries it in `ArrowEffect` (`Mask[E]` and
+`maskTag`, `ArrowEffect.scala:486`), not as a separate `Mask.scala`, with
+`ArrowEffectMaskTest` covering it. The original note ("absent from the proto") predated
+that and is superseded.
 
 ### B5. `handleFirst` / `dispatchFirst`
 

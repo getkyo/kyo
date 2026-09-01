@@ -49,6 +49,50 @@ class ArrowEffectTest extends AnyFreeSpec:
             assert(!reached)
         }
 
+        // The outcome payload channel: a done value must be delivered as data whatever
+        // it is, never re-entering the outcome dispatch as a continue or a suspension.
+        "a done payload that is itself a Continue2 still stops the region" in {
+            type Out = Loop.Outcome2[Unit, Int < Any, Int < Any]
+            val hostile: Out = eval(Loop.continue((), 7: Int < Any))
+            var reached      = false
+            val body: Out < Ask = ask.map { _ =>
+                reached = true
+                hostile
+            }
+            val r: Out < Any = ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.done(hostile), a => a)
+            val out          = eval(r)
+            assert(!reached)
+            assert(out.asInstanceOf[AnyRef] eq hostile.asInstanceOf[AnyRef])
+        }
+
+        "a done payload of type Any holding a Continue2 still stops the region" in {
+            val hostile: Any = eval(Loop.continue((), 0: Int < Any)): Loop.Outcome2[Unit, Int < Any, Any]
+            var reached      = false
+            val body: Any < Ask = ask.map { _ =>
+                reached = true
+                "resumed"
+            }
+            val r: Any < Any = ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.done(hostile), a => a)
+            val out          = eval(r)
+            assert(!reached)
+            assert(out.asInstanceOf[AnyRef] eq hostile.asInstanceOf[AnyRef])
+        }
+
+        "a done payload that is a pending computation is delivered as data" in {
+            val payload: Int < Say = say("p").map(_ => 7)
+            var reached            = false
+            val body: (Int < Say) < Ask = ask.map { _ =>
+                reached = true
+                box(payload)
+            }
+            val r: (Int < Say) < Any =
+                ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.done(box(payload)), a => box(a))
+            val boxed = eval(r)
+            assert(!reached)
+            val out: Int < Any = ArrowEffect.handleCont(Tag[Say], boxed)([C] => (_, cont) => cont(()), a => a)
+            assert(eval(out) == 7)
+        }
+
         "done sees the settled result" in {
             val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([C] => _ => Loop.continue((), 41: Int < Any), a => a * 10)
             assert(eval(r) == 420)
