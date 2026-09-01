@@ -404,7 +404,7 @@ import scala.util.control.NonFatal
                     case handler0 =>
                         val handler = handler0.asInstanceOf[Handler.ArrowHandler[VX, EX, AX, Y, Any]]
                         val outcome =
-                            try handler.recover(state.asInstanceOf[VX], ex)
+                            try if NonFatal(ex) then handler.recover(state.asInstanceOf[VX], ex) else Absent
                             catch
                                 case ex2 if NonFatal(ex2) =>
                                     Debugger.onRegionExit(handler, ex2)
@@ -432,7 +432,7 @@ import scala.util.control.NonFatal
             val res =
                 try loop(curr, Arrow.id, Arrow.id, ctx)
                 catch
-                    case failure if NonFatal(failure) =>
+                    case failure =>
 
                         Safepoint.reset(slot)
 

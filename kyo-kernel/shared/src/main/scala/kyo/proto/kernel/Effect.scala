@@ -42,8 +42,9 @@ object Effect:
                 val body =
                     try use(a)
                     catch
-                        case ex if NonFatal(ex) =>
-                            cell.drain(ex)
+                        case ex =>
+                            try cell.drain(ex)
+                            catch case t if NonFatal(t) && (t ne ex) => ex.addSuppressed(t)
                             throw ex
                 val h = new Handler.ContextHandler[Cell, Finalize, B, S1 & S2]:
                     def tag                                                             = Tag[Finalize]
