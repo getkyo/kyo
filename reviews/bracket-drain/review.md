@@ -138,6 +138,23 @@ virtual call (a natural inline barrier that spends no loop budget), and the loop
 only the dispatch decision. Probes ran tip-only against frozen baselines; both legs
 rerun only when both trees change.
 
+**The settled board.** Full class at -f 1, tip against the frozen base leg, 20/20 rows:
+emitting 78.6 (-0.7%), idle 17.9 (flat), trailing maps 30.9 (-15.7%), stateful,
+suspension, recursion, nested-payload and boxing rows flat. Four rows were confirmed at
+-f 3, 15 iterations each, both legs:
+
+| row | base -f 3 | tip -f 3 | delta | verdict |
+|---|---|---|---|---|
+| fusionPastBudgetPaysRescuesOnly | 45.803 ± 0.200 | 46.916 ± 0.370 | +2.4% | real, bars clear; accepted by ruling ("it's < 3% let's say fine for this specific case") |
+| handleLoopAnswersInPlace | 41.431 ± 0.402 | 42.339 ± 0.275 | +2.2% | real, bars clear; accepted by the same ruling |
+| handleLoopFusesContinuation | 41.408 ± 0.790 | 42.461 ± 0.356 | +2.5% | inside the combined band |
+| continuationBodiesFuse | 10.329 ± 0.210 | 11.147 ± 0.664 | +7.9% | inside the band; the row's variance is high on this machine |
+
+The accepted remainder's candidate mechanism is the loop body's +307 bytes of semantic
+addition (the owed drain sites, the done call, the park re-home), which the bytecode
+measurement isolates from the split-and-extraction reshuffle; not diagnosed further under
+the ruling. Suites at the final tip: JVM 1560, JS 1513, Native 1542, all green.
+
 The hot-path deltas of the semantic change itself and their gate rows:
 
 | site | delta | rows |

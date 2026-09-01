@@ -77,6 +77,15 @@ mid-flight. Rulings of record, verbatim:
 > (2026-09-01: probes run tip-only against frozen baselines; both legs rerun only when
 > both trees changed)
 
+> "it's < 3% let's say fine for this specific case" (2026-09-01: the two -f 3-confirmed
+> rows, fusionPastBudgetPaysRescuesOnly +2.4% and handleLoopAnswersInPlace +2.2%,
+> accepted for this change; candidate mechanism the loop body's +307 bytes of semantic
+> addition, not diagnosed further under this ruling)
+
+> "let's skip the live review thing and move the changes to my code. I've followed the
+> work." (2026-09-01: the live-review sequence is waived for this change; the branch
+> fast-forwards into the user's tree)
+
 ## The rejected alternative: keep dumped entries on the stack
 
 The suggestion: do not remove entries in `Stack.dump`; let a later `stack.truncate`,
