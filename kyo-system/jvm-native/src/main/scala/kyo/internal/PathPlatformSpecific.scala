@@ -759,6 +759,21 @@ private[kyo] object NioPathLockRegistry:
         if snap.contains(key) && !held.compareAndSet(snap, snap - key) then abort(key)
     end abort
 
+    // TEMPORARY DIAGNOSTIC (not for merge): describes the registry entry for a key.
+    private[kyo] def describe(key: String)(using AllowUnsafe): String =
+        held.get().get(key) match
+            case None => "absent"
+            case Some(entry) =>
+                val resource = entry.resource match
+                    case Absent => "no-resource"
+                    case Present(r) =>
+                        s"resource(lockReleased=${r.lockReleased}, channelClosed=${r.channelClosed}, cleaning=${r.cleaning}, lockValid=${r.lock.isValid}, channelOpen=${r.channel.isOpen})"
+                s"entry(isExclusive=${entry.isExclusive}, count=${entry.count}, $resource)"
+
+    // TEMPORARY DIAGNOSTIC (not for merge): every key currently held.
+    private[kyo] def describeAll(using AllowUnsafe): String =
+        held.get().keys.mkString("[", ", ", "]")
+
     private[kyo] def isOwned(key: String, isExclusive: Boolean)(using AllowUnsafe): Boolean =
         held.get().get(key).exists(entry =>
             entry.isExclusive == isExclusive && entry.resource.exists(resource => !resource.lockReleased && resource.lock.isValid)
