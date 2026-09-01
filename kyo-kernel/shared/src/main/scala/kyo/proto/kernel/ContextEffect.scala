@@ -124,14 +124,14 @@ object ContextEffect:
                 def joined(parent: A, fk: A, child: A): A   = join(parent, fk, child)
                 def released(state: A, ex: Throwable): Unit = release(state, ex)
                 val h =
-                    new ContextHandler[A, E]:
+                    new ContextHandler[A, E, B, S]:
                         def tag                                                    = effectTag
                         def derive(outer: Maybe[A])                                = derived(outer)
                         def fork(parent: A)                                        = forked(parent)
                         def join(parent: A, forked: A, child: A)                   = joined(parent, forked, child)
                         override private[kyo] def release(state: A, ex: Throwable) = released(state, ex)
 
-                new Kyo.Handle[E, B, B, B, S, A]:
+                new Kyo.Handle[A, E, B, B, B, S]:
                     override def frame = _frame
                     def value          = v
                     def handler        = h

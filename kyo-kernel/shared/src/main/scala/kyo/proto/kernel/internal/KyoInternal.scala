@@ -57,12 +57,12 @@ object Kyo:
     abstract class SuspendContext[State, E <: ContextEffect[State], A, S] extends Suspend[E, State, A, S]:
         def default: Maybe[State]
 
-    def handle[E <: Effect, A, B, S, State](v: A < (E & S), handler: Handler.ArrowHandler[E, A, B, S, State], state: State): B < S =
+    def handle[State, E <: Effect, A, B, S](v: A < (E & S), handler: Handler.ArrowHandler[State, E, A, B, S], state: State): B < S =
         v match
             case kyo: Pending[A, E & S] @unchecked =>
                 val h  = handler
                 val st = state
-                new Handle[E, A, B, B, S, State]:
+                new Handle[State, E, A, B, B, S]:
                     def value   = kyo
                     def handler = h
                     def state   = st
@@ -71,11 +71,11 @@ object Kyo:
             case _ =>
                 handler.done(state, Nested.unnest[A](v))
 
-    abstract class Handle[E <: Effect, A, B, C, -S, State] extends Pending[C, S]:
+    abstract class Handle[State, E <: Effect, A, B, C, -S] extends Pending[C, S]:
         Debugger.onAlloc(this)
 
         def value: A < (E & S)
-        def handler: Handler[E, State]
+        def handler: Handler[E, B, S]
         def state: State
         def cont: Arrow[B, C, S]
 
@@ -104,8 +104,8 @@ object Kyo:
 
     abstract class SnapshotWith[A, -S] extends Snapshot[A, S] with Arrow.Transform[Stack.Snapshot, A, S]
 
-    abstract class HandleWith[E <: Effect, A, B, C, -S, State]
-        extends Handle[E, A, B, C, S, State] with Arrow.Transform[B, C, S]
+    abstract class HandleWith[State, E <: Effect, A, B, C, -S]
+        extends Handle[State, E, A, B, C, S] with Arrow.Transform[B, C, S]
 
     // object Handle:
     //     def apply[E <: Effect, A, B, C, S, State](

@@ -7,7 +7,7 @@ import scala.annotation.tailrec
 
 final private[kernel] class Stack:
 
-    private var handlers      = new Array[Handler[?, ?]](0)
+    private var handlers      = new Array[Handler[?, ?, ?]](0)
     private var states        = new Array[Any](0)
     private var continuations = new Array[Arrow[?, ?, ?]](0)
     private var size          = 0
@@ -20,9 +20,9 @@ final private[kernel] class Stack:
 
     def isEmpty: Boolean = size == 0
 
-    def push[E <: Effect, B, S, State](
-        handler: Handler[E, State],
-        state: State,
+    def push[E <: Effect, B, S](
+        handler: Handler[E, B, S],
+        state: Any,
         cont: Arrow[B, Any, S]
     ): Unit =
         if size == handlers.length then grow()
@@ -69,13 +69,13 @@ final private[kernel] class Stack:
         var count = 0
         var i     = 0
         while i < size do
-            if handlers(i).isInstanceOf[Handler.ContextHandler[?, ?]] then count += 1
+            if handlers(i).isInstanceOf[Handler.ContextHandler[?, ?, ?, ?]] then count += 1
             i += 1
         val out = new Array[AnyRef](count * 3)
         var j   = 0
         i = 0
         while i < size do
-            if handlers(i).isInstanceOf[Handler.ContextHandler[?, ?]] then
+            if handlers(i).isInstanceOf[Handler.ContextHandler[?, ?, ?, ?]] then
                 out(j) = handlers(i)
                 out(j + 1) = states(i).asInstanceOf[AnyRef]
                 out(j + 2) = Arrow.id[Any]
@@ -87,7 +87,7 @@ final private[kernel] class Stack:
     end contextual
 
     def depth: Int                           = size
-    def handler(i: Int): Handler[?, ?]       = handlers(i)
+    def handler(i: Int): Handler[?, ?, ?]    = handlers(i)
     def state(i: Int): Any                   = states(i)
     def setState(i: Int, value: Any): Unit   = states(i) = value
     def continuation(i: Int): Arrow[?, ?, ?] = continuations(i)
@@ -131,7 +131,7 @@ final private[kernel] class Stack:
 
     private def grow(): Unit =
         val capacity           = if size == 0 then 8 else size * 2
-        val grownHandlers      = new Array[Handler[?, ?]](capacity)
+        val grownHandlers      = new Array[Handler[?, ?, ?]](capacity)
         val grownStates        = new Array[Any](capacity)
         val grownContinuations = new Array[Arrow[?, ?, ?]](capacity)
         Array.copy(handlers, 0, grownHandlers, 0, size)
@@ -159,7 +159,7 @@ private[kernel] object Stack:
             private val entries = new Array[AnyRef](regions * 3)
             private var count   = 0
 
-            def add(handler: Handler[?, ?], state: Any): Unit =
+            def add(handler: Handler[?, ?, ?], state: Any): Unit =
                 entries(count) = handler
                 entries(count + 1) = state.asInstanceOf[AnyRef]
                 entries(count + 2) = Arrow.id[Any]
@@ -175,7 +175,7 @@ private[kernel] object Stack:
     extension (self: Snapshot)
         def regions: Int                         = self.size / 3
         def isEmpty: Boolean                     = self.size == 0
-        def handler(i: Int): Handler[?, ?]       = self(i * 3).asInstanceOf[Handler[?, ?]]
+        def handler(i: Int): Handler[?, ?, ?]    = self(i * 3).asInstanceOf[Handler[?, ?, ?]]
         def state(i: Int): Any                   = self(i * 3 + 1)
         def continuation(i: Int): Arrow[?, ?, ?] = self(i * 3 + 2).asInstanceOf[Arrow[?, ?, ?]]
 

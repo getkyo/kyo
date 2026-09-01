@@ -654,30 +654,29 @@ class EvalTest extends AnyFreeSpec:
 
         "a parked value owes its regions' releases innermost first" in {
             val log = collection.mutable.ListBuffer[String]()
-            val innerHandler = new Handler.ContHandler[Const[Unit], Const[Int], Ask, Int, Int, Say]:
-                def tag = Tag[Ask]
-                override def release(state: Unit, ex: Throwable) =
-                    log += "inner"
-                    ()
-                def done(state: Unit, v: Int) = v
-                def run[X](input: Unit, cont: Arrow[Int, Int, Ask & Say]): Int < (Ask & Say) =
-                    cont(1, Arrow.id)
-            val outerHandler = new Handler.ContHandler[Const[String], Const[Unit], Say, Int, Int, Any]:
-                def tag = Tag[Say]
-                override def release(state: Unit, ex: Throwable) =
-                    log += "outer"
-                    ()
-                def done(state: Unit, v: Int) = v
-                def run[X](input: String, cont: Arrow[Unit, Int, Say]): Int < Say =
-                    cont((), Arrow.id)
-            val body: Int < (Ask & Say) =
-                ask.map { a =>
+            sealed trait CfgA extends kyo.proto.kernel.ContextEffect[Int]
+            sealed trait CfgB extends kyo.proto.kernel.ContextEffect[Int]
+            def readA: Int < CfgA = kyo.proto.kernel.ContextEffect.suspend(Tag[CfgA])
+            val body: Int < (CfgA & CfgB) =
+                readA.map { c =>
                     requestStop()
-                    Effect.defer(ask.map(_ + a))
+                    Effect.defer(readA.map(_ + c))
                 }
-            val inner: Int < Say = Kyo.handle[Ask, Int, Int, Say, Unit](body, innerHandler, ())
-            val outer: Int < Any = Kyo.handle[Say, Int, Int, Any, Unit](inner, outerHandler, ())
-            val parked           = Eval.partial(outer)
+            val inner: Int < CfgB =
+                kyo.proto.kernel.ContextEffect.handle(Tag[CfgA])(
+                    _.getOrElse(1),
+                    fork = (parent: Int) => parent,
+                    join = (parent: Int, _: Int, _: Int) => parent,
+                    release = (_: Int, _: Throwable) => discard(log += "inner")
+                )(body)
+            val outer: Int < Any =
+                kyo.proto.kernel.ContextEffect.handle(Tag[CfgB])(
+                    _.getOrElse(2),
+                    fork = (parent: Int) => parent,
+                    join = (parent: Int, _: Int, _: Int) => parent,
+                    release = (_: Int, _: Throwable) => discard(log += "outer")
+                )(inner)
+            val parked = Eval.partial(outer)
             assert(parked.isInstanceOf[Kyo.Park[?, ?]])
             assert(parked.asInstanceOf[Kyo.Park[?, ?]].entries.regions == 2)
             discard(eval(Eval.release(parked, Boom)))
@@ -686,25 +685,24 @@ class EvalTest extends AnyFreeSpec:
 
         "a discarded region value releases its interior before its own extent" in {
             val log = collection.mutable.ListBuffer[String]()
-            val innerHandler = new Handler.ContHandler[Const[Unit], Const[Int], Ask, Int, Int, Say]:
-                def tag = Tag[Ask]
-                override def release(state: Unit, ex: Throwable) =
-                    log += "inner"
-                    ()
-                def done(state: Unit, v: Int) = v
-                def run[X](input: Unit, cont: Arrow[Int, Int, Ask & Say]): Int < (Ask & Say) =
-                    cont(1, Arrow.id)
-            val outerHandler = new Handler.ContHandler[Const[String], Const[Unit], Say, Int, Int, Any]:
-                def tag = Tag[Say]
-                override def release(state: Unit, ex: Throwable) =
-                    log += "outer"
-                    ()
-                def done(state: Unit, v: Int) = v
-                def run[X](input: String, cont: Arrow[Unit, Int, Say]): Int < Say =
-                    cont((), Arrow.id)
-            val body: Int < (Ask & Say) = ask.map(a => askWith(b => a + b))
-            val inner: Int < Say        = Kyo.handle[Ask, Int, Int, Say, Unit](body, innerHandler, ())
-            val outer: Int < Any        = Kyo.handle[Say, Int, Int, Any, Unit](inner, outerHandler, ())
+            sealed trait CfgA extends kyo.proto.kernel.ContextEffect[Int]
+            sealed trait CfgB extends kyo.proto.kernel.ContextEffect[Int]
+            def readA: Int < CfgA         = kyo.proto.kernel.ContextEffect.suspend(Tag[CfgA])
+            val body: Int < (CfgA & CfgB) = readA.map(a => readA.map(_ + a))
+            val inner: Int < CfgB =
+                kyo.proto.kernel.ContextEffect.handle(Tag[CfgA])(
+                    _.getOrElse(1),
+                    fork = (parent: Int) => parent,
+                    join = (parent: Int, _: Int, _: Int) => parent,
+                    release = (_: Int, _: Throwable) => discard(log += "inner")
+                )(body)
+            val outer: Int < Any =
+                kyo.proto.kernel.ContextEffect.handle(Tag[CfgB])(
+                    _.getOrElse(2),
+                    fork = (parent: Int) => parent,
+                    join = (parent: Int, _: Int, _: Int) => parent,
+                    release = (_: Int, _: Throwable) => discard(log += "outer")
+                )(inner)
             discard(eval(Eval.release(outer, Boom)))
             assert(log.toList == List("inner", "outer"))
 
@@ -759,22 +757,6 @@ class EvalTest extends AnyFreeSpec:
             val ex = intercept[RuntimeException](eval(handled))
             assert(ex eq Boom)
             assert(log.toList == List(7))
-        }
-
-        "a failure unwinding past an arrow region runs its release" in {
-            val log = collection.mutable.ListBuffer[String]()
-            val handler = new Handler.ContHandler[Const[Unit], Const[Int], Ask, Int, Int, Any]:
-                def tag = Tag[Ask]
-                override def release(state: Unit, ex: Throwable) =
-                    discard(log += "released")
-                def done(state: Unit, v: Int) = v
-                def run[X](input: Unit, cont: Arrow[Int, Int, Ask]): Int < Ask =
-                    cont(1, Arrow.id)
-            val body: Int < Ask  = ask.map(_ => (throw Boom): Int)
-            val outer: Int < Any = Kyo.handle[Ask, Int, Int, Any, Unit](body, handler, ())
-            val ex               = intercept[RuntimeException](eval(outer))
-            assert(ex eq Boom)
-            assert(log.toList == List("released"))
         }
 
         "a binding is not released when an inner region recovers the failure" in {
