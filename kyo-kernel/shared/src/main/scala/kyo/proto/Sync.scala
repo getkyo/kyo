@@ -48,24 +48,29 @@ object Sync:
         Effect.deferInline(f)
 
     /** Acquires a resource, uses it, and releases it exactly once: on completion, when a
-      * failure unwinds past the bracket, or when the computation is abandoned. The release
-      * is registered in the same slice the acquire settles.
+      * failure unwinds past the bracket, or when the computation is abandoned. The region
+      * opens through a bind step, in the same slice the acquire settles: no safepoint can
+      * separate the two, so an existing resource is never left without its region.
       */
     def acquireReleaseWith[A, S1](acquire: A < (Sync & S1))(
         release: (A, Maybe[Throwable]) => Unit
-    )[B, S2](use: A => B < S2)(using Frame): B < (Sync & S1 & S2) =
-        defer(acquire).map { a =>
-            val cell = new Cell(outcome => release(a, outcome))
-            ContextEffect.handle(Tag[Finalize])(
-                (_: Maybe[Cell]) => cell,
-                fork = (_: Cell) => Cell.inert,
-                join = (parent: Cell, _: Cell, _: Cell) => parent,
-                release = (c: Cell, ex: Throwable) => c.drain(ex)
-            )(use(a).map { b =>
-                cell.complete()
-                b
-            })
-        }
+    )[B, S2](use: A => B < S2)(using _frame: Frame): B < (Sync & S1 & S2) =
+        val open = new Arrow.Bind[A, B, Sync & S1 & S2]:
+            def frame = _frame
+            override def apply(a: A) =
+                val cell = new Cell(outcome => release(a, outcome))
+                ContextEffect.handle(Tag[Finalize])(
+                    (_: Maybe[Cell]) => cell,
+                    fork = (_: Cell) => Cell.inert,
+                    join = (parent: Cell, _: Cell, _: Cell) => parent,
+                    release = (c: Cell, ex: Throwable) => c.drain(ex)
+                )(use(a).map { b =>
+                    cell.complete()
+                    b
+                })
+            end apply
+        defer(acquire).chain(open)
+    end acquireReleaseWith
 
     /** Runs a finalizer after the computation: on completion, failure, or abandonment,
       * exactly once. Absent means the computation completed.
