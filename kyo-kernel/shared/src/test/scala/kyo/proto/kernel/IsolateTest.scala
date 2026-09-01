@@ -520,4 +520,88 @@ class IsolateTest extends kyo.Test:
         }
     }
 
+    "ported crossings" - {
+        def crossing[A, S](v: A < S)(using Frame): (A < S) < Any =
+            Isolate.internal.Contextual(v)(kyo.proto.Kyo.lift[A < S, Any](_))
+
+        def read1: Int < Any     = ContextEffect.suspend[Int, TestEffect1](Tag[TestEffect1], -1)
+        def read2: String < Any  = ContextEffect.suspend[String, TestEffect2](Tag[TestEffect2], "none")
+        def read3: Boolean < Any = ContextEffect.suspend[Boolean, TestEffect3](Tag[TestEffect3], false)
+
+        def bind1[A, S](value: Int)(v: A < S)(using Frame): A < S =
+            ContextEffect.handleInheritable(Tag[TestEffect1], value, (_: Int) => value)(v)
+
+        "every layer of a three-deep nest survives a crossing" in {
+            val v =
+                ContextEffect.handleInheritable(Tag[TestEffect2], "outer") {
+                    ContextEffect.handleInheritable(Tag[TestEffect2], "middle") {
+                        ContextEffect.handleInheritable(Tag[TestEffect2], "inner") {
+                            Isolate.internal.Contextual.run(()).map(_ => ContextEffect.suspend(Tag[TestEffect2]))
+                        }
+                    }
+                }
+            assert(v.eval == "inner")
+        }
+
+        "a merging join updates the layer that was visible at the fork" in {
+            val v =
+                ContextEffect.handle(Tag[TestEffect1])(100, (_: Int) => 100, (s: Int) => s, (p: Int, f: Int, _: Int) => p + f) {
+                    ContextEffect.handle(Tag[TestEffect1])(5, (_: Int) => 5, (s: Int) => s, (p: Int, f: Int, _: Int) => p + f) {
+                        Isolate.internal.Contextual.run(()).map(_ => ContextEffect.suspend(Tag[TestEffect1]))
+                    }
+                }
+            assert(v.eval == 10)
+        }
+
+        "a join never reaches a scope that did not own the crossing" in {
+            val v =
+                ContextEffect.handle(Tag[TestEffect1])(1, (_: Int) => 1, (s: Int) => s, (p: Int, f: Int, _: Int) => p + f) {
+                    ContextEffect.handle(Tag[TestEffect1])(2, (_: Int) => 2, (s: Int) => s, (p: Int, f: Int, _: Int) => p + f) {
+                        Isolate.internal.Contextual.nest(())
+                    }.map { nested =>
+                        ContextEffect.handle(Tag[TestEffect1])(10, (_: Int) => 10, (s: Int) => s, (p: Int, f: Int, _: Int) => p + f) {
+                            nested.map(_ => ContextEffect.suspend(Tag[TestEffect1]))
+                        }
+                    }
+                }
+            assert(v.eval == 10)
+        }
+
+        "every binding in scope is asked" in {
+            val v =
+                ContextEffect.handleInheritable(Tag[TestEffect1], 1, (_: Int) => 1)(
+                    ContextEffect.handleInheritable(Tag[TestEffect2], "a", (_: String) => "a")(
+                        ContextEffect.handleInheritable(Tag[TestEffect3], true, (_: Boolean) => true)(
+                            crossing(read1.map(a => read2.map(b => read3.map(c => (a, b, c)))))
+                        )
+                    )
+                )
+            assert(eval(eval(v)) == ((1, "a", true)))
+        }
+
+        "an intervening map leaves the crossing resolving against the stack live at its point" in {
+            val composed = crossing(read1).map(child => child.map(_ + 1))
+            val child    = eval(bind1(7)(composed))
+            assert(eval(child) == 8)
+        }
+
+        "the fused form hands the crossing straight to its consumer" in {
+            val v = bind1(11)(Isolate.internal.Contextual(read1)(crossed => eval(crossed) + 1))
+            assert(eval(v) == 12)
+        }
+
+        "a composed isolate crosses the context too" in {
+            val composed     = Isolate.internal.Contextual.andThen(updateA)
+            val (_, crossed) = eval(runA(0)(bind1(42)(composed(read1)(kyo.proto.Kyo.lift[Int < (CellA & Any), Any](_)))))
+            assert(eval(runA(0)(crossed).map(_._2)) == 42)
+        }
+
+        "a fork of a fork asks the same strategies" in {
+            val v = ContextEffect.handle(Tag[TestEffect1])(2, (_: Int) => 2, (n: Int) => n + 1, (p: Int, _: Int, _: Int) => p)(
+                crossing(crossing(read1))
+            )
+            assert(eval(eval(eval(v))) == 4)
+        }
+    }
+
 end IsolateTest
