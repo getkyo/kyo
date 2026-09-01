@@ -44,32 +44,29 @@ end Handler
     abstract class LoopHandler[State, I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[State, E, A, B, S]:
         def run[X](state: State, input: I[X]): Outcome2[State, O[X] < (E & S), B < S] < S
 
-        // Staged like answers: the effectful-clause pending exit builds its dispatch in
-        // the handler's own compiled method, out of the eval's inline budget, and hands
-        // the loop one plain Defer to continue with.
-        private[kyo] def clausePending[X0](
-            reentry: Arrow[O[X0], A, E & S],
-            next: Arrow[B, Any, S],
-            pending: Pending[Outcome2[State, O[X0] < (E & S), B < S], S]
-        ): Any < S =
+        // Staged like answers: the effectful-clause dispatch is built in the handler's
+        // own compiled method, out of the eval's inline budget; the loop continues with
+        // it directly.
+        private[kyo] def clauseDispatch[X0](
+            reentry: Arrow[O[X0], A, E & S]
+        ): Arrow[Outcome2[State, O[X0] < (E & S), B < S], B, S] =
             type OutT = Outcome2[State, O[X0] < (E & S), B < S]
-            val dispatch =
-                new Arrow.Step[OutT, B, S]:
-                    def frame = Frame.internal
-                    override def apply[D, S3](out: OutT < S3, cont2: Arrow[B, D, S3]) =
-                        out match
-                            case p: Pending[OutT, S3] @unchecked =>
-                                Effect.defer(p, this, cont2)
-                            case out: Continue2[State, O[X0] < (E & S)] @unchecked =>
-                                Kyo.handle[State, E, A, B, S](
-                                    out._2.chain(reentry),
-                                    LoopHandler.this,
-                                    out._1
-                                ).chain(cont2)
-                            case out =>
-                                Nested.unnest[B < S](out).chain(cont2)
-            Effect.defer(pending, dispatch, next)
-        end clausePending
+            new Arrow.Step[OutT, B, S]:
+                def frame = Frame.internal
+                override def apply[D, S3](out: OutT < S3, cont2: Arrow[B, D, S3]) =
+                    out match
+                        case p: Pending[OutT, S3] @unchecked =>
+                            Effect.defer(p, this, cont2)
+                        case out: Continue2[State, O[X0] < (E & S)] @unchecked =>
+                            Kyo.handle[State, E, A, B, S](
+                                out._2.chain(reentry),
+                                LoopHandler.this,
+                                out._1
+                            ).chain(cont2)
+                        case out =>
+                            Nested.unnest[B < S](out).chain(cont2)
+            end new
+        end clauseDispatch
 
         def answers[X](
             state: State,

@@ -329,7 +329,8 @@ import scala.util.control.NonFatal
                                                 // dispatch value, so what it owes re-homes below.
                                                 stack.pop()
                                                 if stack.owesAny then stack.oweBelow(idx, stack.takePopped())
-                                                loop(handler.clausePending(reentry, next, pending), Arrow.id, Arrow.id, ctx)
+                                                type OutT = Outcome2[VX, OX[VX] < (EX & S2), Y < S2]
+                                                loop[OutT, Y, Any, S2](pending, handler.clauseDispatch(reentry), next, ctx)
                                             case done =>
                                                 val result = Nested.unnest[Y < S2](done.asInstanceOf[Y < S2])
                                                 Debugger.onRegionExit(handler, result)
@@ -351,7 +352,9 @@ import scala.util.control.NonFatal
                                                 Debugger.onRegionExit(handler, pending)
                                                 stack.pop()
                                                 if stack.owesAny then stack.oweBelow(idx, stack.takePopped())
-                                                loop(handler.clausePending(continuation, next, pending), Arrow.id, Arrow.id, ctx2)
+                                                type OutT = Outcome2[VX, OX[VX] < (EX & S2), Y < S2]
+                                                val reentry2 = continuation.asInstanceOf[Arrow[OX[VX], C, EX & S2]]
+                                                loop[OutT, Y, Any, S2](pending, handler.clauseDispatch(reentry2), next, ctx2)
                                             case outcome =>
                                                 val result = Nested.unnest[Y < S2](outcome)
                                                 Debugger.onRegionExit(handler, result)
