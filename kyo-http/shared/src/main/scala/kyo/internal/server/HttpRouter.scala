@@ -23,6 +23,19 @@ final private[kyo] class HttpRouter private (
     private val captureWireNames: Span[Span[String]],
     private val streamingReqFlags: Span[Boolean],
     private val streamingRespFlags: Span[Boolean],
+    /** Next endpoint registered for the same node and method, or -1.
+      *
+      * Two routes whose paths differ only in what a capture accepts —
+      * `/block/{height}` and `/block/{hash}` — reach the same trie node, since a
+      * capture matches any segment. They used to overwrite each other in the
+      * per-method slot and the first one registered became unreachable.
+      *
+      * They are now a chain in registration order. The dispatch takes the head,
+      * and if the captures fail to decode it follows the link and tries the next
+      * one, which is what makes the *codec* decide which route matched. A single
+      * route has -1 here and nothing changes for it.
+      */
+    private val nextCandidates: Span[Int],
     private[kyo] val corsConfig: Maybe[HttpServerConfig.Cors] = Absent
 ):
     import HttpRouter.*
@@ -41,6 +54,25 @@ final private[kyo] class HttpRouter private (
 
     /** Accessor: returns the capture wire names for the matched route. */
     def captureNames(lookup: RouteLookup): Span[String] = captureWireNames(lookup.endpointIdx)
+
+    /** Point `lookup` at the next route registered for the same node and method,
+      * returning false when there is none.
+      *
+      * Called only after a capture failed to decode, so the cost is paid on a
+      * request that was going to be rejected anyway. The trie walk is not
+      * redone: every candidate sits at the same node, so the captured segment
+      * indices in `lookup` stay valid and only the wire names and codecs differ.
+      */
+    def advanceToNextCandidate(lookup: RouteLookup): Boolean =
+        val next = nextCandidates(lookup.endpointIdx)
+        if next < 0 then false
+        else
+            lookup.endpointIdx = next
+            lookup.isStreamingRequest = streamingReqFlags(next)
+            lookup.isStreamingResponse = streamingRespFlags(next)
+            true
+        end if
+    end advanceToNextCandidate
 
     /** Trie walk using ParsedRequest segment-level comparison. */
     private def findNodeIndexParsed(request: ParsedRequest, lookup: RouteLookup): Int =
@@ -201,7 +233,7 @@ private[kyo] object HttpRouter:
             case Absent     => endpointSeq
         if handlers.isEmpty then
             val emptyNode = new Node(Span.empty, Span.empty, -1, -1, Span.fromUnsafe(Array.fill(MethodCount)(-1)), Set.empty)
-            new HttpRouter(Span(emptyNode), Span.empty, Span.empty, Span.empty, Span.empty, cors)
+            new HttpRouter(Span(emptyNode), Span.empty, Span.empty, Span.empty, Span.empty, Span.empty, cors)
         else
             val root = new MutableNode()
             handlers.foreach { ep =>
@@ -222,7 +254,8 @@ private[kyo] object HttpRouter:
             val flatCaptureNames = new Array[Span[String]](epCount)
             val flatStreamReq    = new Array[Boolean](epCount)
             val flatStreamResp   = new Array[Boolean](epCount)
-            val state            = new SerializeState(flatNodes, flatEndpoints, flatCaptureNames, flatStreamReq, flatStreamResp)
+            val flatNextCand     = Array.fill(epCount)(-1)
+            val state = new SerializeState(flatNodes, flatEndpoints, flatCaptureNames, flatStreamReq, flatStreamResp, flatNextCand)
             discard(serialize(root, state))
 
             new HttpRouter(
@@ -231,6 +264,7 @@ private[kyo] object HttpRouter:
                 Span.fromUnsafe(flatCaptureNames),
                 Span.fromUnsafe(flatStreamReq),
                 Span.fromUnsafe(flatStreamResp),
+                Span.fromUnsafe(flatNextCand),
                 cors
             )
         end if
@@ -255,7 +289,9 @@ private[kyo] object HttpRouter:
     // ==================== Build Phase ====================
 
     final private class MutableNode(
-        var endpoints: Map[HttpMethod, HttpHandler[?, ?, ?]] = Map.empty,
+        // A list, in registration order: same node and method can hold several
+        // routes whose captures accept different values. See `nextCandidates`.
+        var endpoints: Map[HttpMethod, List[HttpHandler[?, ?, ?]]] = Map.empty,
         var literalChildren: Map[String, MutableNode] = Map.empty,
         var captureChild: Maybe[MutableNode] = Absent,
         var restChild: Maybe[MutableNode] = Absent
@@ -303,7 +339,7 @@ private[kyo] object HttpRouter:
     ): Unit =
         segments match
             case Nil =>
-                node.endpoints = node.endpoints + (method -> endpoint)
+                node.endpoints = node.endpoints + (method -> (node.endpoints.getOrElse(method, Nil) :+ endpoint))
             case seg :: rest =>
                 seg match
                     case Segment.Literal(value) =>
@@ -329,14 +365,16 @@ private[kyo] object HttpRouter:
                                 val newNode = new MutableNode()
                                 node.restChild = Present(newNode)
                                 newNode
-                        childNode.endpoints = childNode.endpoints + (method -> endpoint)
+                        childNode.endpoints =
+                            childNode.endpoints + (method -> (childNode.endpoints.getOrElse(method, Nil) :+ endpoint))
         end match
     end insert
 
     /** Counts nodes and endpoints. Not tailrec — depth equals max route depth (typically < 10). */
     private def countNodes(root: MutableNode): (Int, Int) =
         def visit(node: MutableNode): (Int, Int) =
-            val base = (1, node.endpoints.size)
+            // Endpoint slots, not method slots: a method can hold several candidates.
+            val base = (1, node.endpoints.valuesIterator.map(_.size).sum)
             val afterLiterals = node.literalChildren.values.foldLeft(base) { (acc, child) =>
                 val (cn, ce) = visit(child)
                 (acc._1 + cn, acc._2 + ce)
@@ -360,7 +398,8 @@ private[kyo] object HttpRouter:
         val endpoints: Array[HttpHandler[?, ?, ?]],
         val captureNames: Array[Span[String]],
         val streamReq: Array[Boolean],
-        val streamResp: Array[Boolean]
+        val streamResp: Array[Boolean],
+        val nextCandidate: Array[Int]
     ):
         var nextNodeIdx: Int = 0
         var nextEpIdx: Int   = 0
@@ -395,13 +434,21 @@ private[kyo] object HttpRouter:
             case Absent            => -1
 
         val endpointIndices = Array.fill(MethodCount)(-1)
-        val allowedMethods = node.endpoints.foldLeft(Set.empty[HttpMethod]) { case (methods, (method, endpoint)) =>
-            val epIdx = state.allocEpIdx()
-            state.endpoints(epIdx) = endpoint
-            state.captureNames(epIdx) = extractCaptureNames(endpoint.route.request.path)
-            state.streamReq(epIdx) = RouteUtil.isStreamingRequest(endpoint.route)
-            state.streamResp(epIdx) = RouteUtil.isStreamingResponse(endpoint.route)
-            endpointIndices(methodIndex(method)) = epIdx
+        val allowedMethods = node.endpoints.foldLeft(Set.empty[HttpMethod]) { case (methods, (method, candidates)) =>
+            // Candidates are laid out in registration order and linked, so the
+            // dispatch can walk them when a capture refuses to decode. The head
+            // goes in the per-method slot; the rest hang off `nextCandidate`.
+            var previousIdx = -1
+            candidates.foreach { endpoint =>
+                val epIdx = state.allocEpIdx()
+                state.endpoints(epIdx) = endpoint
+                state.captureNames(epIdx) = extractCaptureNames(endpoint.route.request.path)
+                state.streamReq(epIdx) = RouteUtil.isStreamingRequest(endpoint.route)
+                state.streamResp(epIdx) = RouteUtil.isStreamingResponse(endpoint.route)
+                if previousIdx < 0 then endpointIndices(methodIndex(method)) = epIdx
+                else state.nextCandidate(previousIdx) = epIdx
+                previousIdx = epIdx
+            }
             methods + method
         }
 

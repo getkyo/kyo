@@ -107,6 +107,79 @@ class HttpServerTest extends BaseHttpTest:
 
     "routing" - {
 
+        "same path shape, disambiguated by the capture codec" - {
+            // Two routes on one URL template. A capture matches any segment, so
+            // both land on the same trie node and used to overwrite each other in
+            // the per-method slot — the first registered became unreachable. Now
+            // the codec decides: the height route is tried first, and a segment it
+            // refuses falls through to the hash route.
+            case class Height(value: Long) derives CanEqual
+            case class Hash(value: String) derives CanEqual
+
+            given HttpCodec[Height] =
+                HttpCodec.pattern("^[0-9]{1,19}$")(_.value.toString, s => Height(s.toLong), "block height")
+            given HttpCodec[Hash] =
+                HttpCodec.pattern("^0x[0-9a-fA-F]{64}$")(_.value, Hash(_), "32-byte block hash")
+
+            val byHeight = HttpRoute.getRaw("block" / Capture[Height]("height")).response(_.bodyText)
+            val byHash   = HttpRoute.getRaw("block" / Capture[Hash]("hash")).response(_.bodyText)
+
+            val heightEp = byHeight.handler(req => HttpResponse.ok(s"height=${req.fields.height.value}"))
+            val hashEp   = byHash.handler(req => HttpResponse.ok(s"hash=${req.fields.hash.value}"))
+
+            val aHash = "0x" + "ab" * 32
+
+            "a numeric segment reaches the height route" - {
+                runServer(heightEp, hashEp) { url =>
+                    sendRaw(url, HttpMethod.GET, "/block/25703562").map { resp =>
+                        assert(resp.status == HttpStatus.OK)
+                        assert(resp.fields.body == "height=25703562")
+                    }
+                }
+            }
+
+            "a hash segment falls through to the hash route" - {
+                // The first candidate's codec rejects it, which is a mismatch and
+                // not yet an error.
+                runServer(heightEp, hashEp) { url =>
+                    sendRaw(url, HttpMethod.GET, s"/block/$aHash").map { resp =>
+                        assert(resp.status == HttpStatus.OK)
+                        assert(resp.fields.body == s"hash=$aHash")
+                    }
+                }
+            }
+
+            "registration order does not decide the outcome" - {
+                runServer(hashEp, heightEp) { url =>
+                    sendRaw(url, HttpMethod.GET, "/block/42").map { resp =>
+                        assert(resp.status == HttpStatus.OK)
+                        assert(resp.fields.body == "height=42")
+                    }
+                }
+            }
+
+            "a segment neither route accepts is a 400, not a wrong match" - {
+                // Every candidate refused it, so the last failure stands. Answering
+                // 200 from either route would mean carrying a value neither codec
+                // accepts into a handler.
+                runServer(heightEp, hashEp) { url =>
+                    sendRaw(url, HttpMethod.GET, "/block/0xabcd").map { resp =>
+                        assert(resp.status == HttpStatus.BadRequest)
+                    }
+                }
+            }
+
+            "a single route still reports its own decode failure" - {
+                // Nothing to fall through to: the behaviour of one route with a
+                // constrained codec is unchanged.
+                runServer(heightEp) { url =>
+                    sendRaw(url, HttpMethod.GET, "/block/nonsense").map { resp =>
+                        assert(resp.status == HttpStatus.BadRequest)
+                    }
+                }
+            }
+        }
+
         "404 for unknown path" - {
             val route = HttpRoute.getRaw("exists").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("found"))
