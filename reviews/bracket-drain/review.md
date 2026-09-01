@@ -102,10 +102,43 @@ duplicated arms, measured bytecode-neutral below).
 | red-first reproductions | dropped capture, settle strand, loop-done discard, stale context: each observed red with the right failure before its fix |
 | `loop$1` bytecode | base 2197, unsplit eager variant 2508, final tree 2504: the split plus cold extraction is size-neutral against the unsplit shape while the hot top trace runs the pre-change lazy code; the +307 over base is the semantic addition itself. `recovered$1` 235 to 309. Defer and Handle arms untouched. |
 
-**Benches were parked during the build and unparked at review time** ("how about you
-launch the benchamarks in parallel?"). The A/B screening, full class at -f 1 with tip and
-base back to back, is reported in the table further down; the hot-path deltas and their
-gate rows:
+**The regression campaign.** The screening surfaced three regressions in sequence, each
+diagnosed to a named mechanism and closed; the final claim table below is the settled
+board.
+
+1. **`continuationBodiesFuse` +79%.** Mechanism: `loop$1` grew past HotSpot's
+   `DesiredMethodLimit`, so C1/C2 stopped inlining 5-byte accessors into it
+   (`failed to inline: size > DesiredMethodLimit` in the PrintInlining log against the
+   very same callees the base inlines). Fix: failure construction, the crossing dump
+   with its debug trace, and the discard drain moved out of the loop body
+   (`unhandled`, `unanswerable`, `dumped`, `drainDiscarded`), commit `162c646984`.
+2. **`deferBindUnderIdleHandler` +26%**, appearing only after fix 1 (a whack-a-mole
+   trade proven by commit bisect: fuse and idle flipped between rows as loop mass moved).
+   Mechanism: the settled-arm merge put the owed drain on the hot settled trace. Fix:
+   the settled exits extracted (`contextExit`, `arrowExit`) and the crossing resume step
+   staged onto the node (`SuspendArrow.crossing`), commit `c9841297b6`.
+3. **`emittingClausesPayRegionRebuild` +80.5%** (79.1 to 142.9), introduced by commit
+   `c9841297b6` itself: the staged `clausePending` wrapped the effectful-clause pending
+   exit in an `Effect.defer`, adding a node allocation and a loop iteration per
+   emission, and the emitting row's hot loop is exactly that exit. Fix: the handler
+   stages only the dispatch construction (`clauseDispatch` returns the arrow) and the
+   loop continues with it directly, restoring the pre-staging call shape, commit
+   `3e94e3517b`. The row returned to 78.8.
+
+**The staging idiom, and one refuted theory.** The recurring inline-budget mechanism is
+closed by staging: an `inline` outer method mints a fresh, initially monomorphic call
+site per expansion, so per-site JIT specialization survives even when the body is
+shared ("the call site that invokes Handler.answersLoopState will still be inlined,
+that's the point: a new call site"). The complementary experiment: removing scalac
+`inline` from `answersLoopState` itself cost +39% to +72% on the answers rows, because a
+>325-byte shared body is never JIT-cloned per site and `handle` goes megamorphic inside
+it. So the division of labor is: hot big bodies stay scalac-`inline` (per-site copies),
+cold interiors become plain shared methods on the handler/node classes reached through a
+virtual call (a natural inline barrier that spends no loop budget), and the loop keeps
+only the dispatch decision. Probes ran tip-only against frozen baselines; both legs
+rerun only when both trees change.
+
+The hot-path deltas of the semantic change itself and their gate rows:
 
 | site | delta | rows |
 |---|---|---|
@@ -132,20 +165,23 @@ parks, contextual isolate forking inert. EvalTest: drain promptness at the answe
 region's exit, sibling dumps newest first, the raw-hook at-least-once double fire, the
 clause reading the outer binding.
 
-## Open questions, deliberately not decided here
+## Formerly open, ruled 2026-09-01 (rulings verbatim in derivation.md)
 
-1. **`Spent` re-entry refusal** (held-out review section 5): pass-through is pinned as
-   the chosen-until-ruled semantics (the leaked-capture pin); the refusal hook remains
-   your call.
-2. **A release failure on the discard drain is swallowed** (suppressed onto the internal
-   discard signal, which the drain then drops). The other three paths surface it: the
-   completion path propagates it, the unwind and abandonment paths suppress it onto a
-   visible throwable. Pinned as-is ("does not starve the ones after it"); whether the
-   discard path should surface finalizer failures somewhere is open.
-3. **`release`/`done` visibility on `ContextEffect.handle`**: the reachability law now
-   supports user-facing; leaning yes, not yet ruled.
-4. **The name `Bind`** (main's `BindingStep`; "install" rejected as the Park arm's verb;
-   `Open` recorded as the alternative).
+1. **`Spent` re-entry refusal**: ruled refuse. `kyo.Closed` moved to kyo-kernel
+   (package unchanged, kyo-core callers untouched); the bracket's `reenter` throws
+   `Closed("Bracket resource", frame)` for a claimed non-inert cell, consulted in the
+   park install's pre-pass, which drains the whole park before the refusal propagates.
+   The pass-through pins became refusal pins: abandoned resume, leaked capture,
+   multi-shot second shot.
+2. **Discard-drain release failures**: ruled report via
+   `Thread.currentThread().getUncaughtExceptionHandler().uncaughtException(...)`, the
+   scheduler Worker containment pattern; failures suppress onto the minted discard
+   signal and the signal is reported only when something was suppressed. Pinned with a
+   handler-swap assertion.
+3. **`release`/`done` on `ContextEffect.handle`**: ruled user-facing; the contract
+   scaladoc carries the at-least-once-per-edge law.
+4. **The step's name**: ruled `Arrow.Ensure`, framed around uninterruptible
+   application (the acquire-to-install slice cannot be separated by a safepoint).
 
 Prior-art notes for the layers above (lens-prior-art.md, not kernel changes): the
 concurrency layer should standardize its abandonment signal throwable so release hooks

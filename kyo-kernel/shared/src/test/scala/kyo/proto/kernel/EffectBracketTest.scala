@@ -390,6 +390,176 @@ class EffectBracketTest extends AnyFreeSpec:
             assert(eval(v) == 9)
             assert(outcomes.toList == List(Maybe.empty))
         }
+
+        "a failing acquire never releases" in {
+            var count = 0
+            val v     = Effect.bracket(Effect.defer((throw Boom): Int))((_, _) => count += 1)(a => Effect.defer(a))
+            val ex    = intercept[RuntimeException](eval(v))
+            assert(ex eq Boom)
+            assert(count == 0)
+        }
+
+        "a failing inner acquire releases the outer bracket only" in {
+            val log = collection.mutable.ListBuffer[String]()
+            val v = Effect.bracket(Effect.defer(1))((_, _) => discard(log += "outer")) { _ =>
+                Effect.bracket(Effect.defer((throw Boom): Int))((_, _) => discard(log += "inner"))(b => Effect.defer(b))
+            }
+            val ex = intercept[RuntimeException](eval(v))
+            assert(ex eq Boom)
+            assert(log.toList == List("outer"))
+        }
+
+        "a bracket under a recovering handler releases with the failure, before the recovery" in {
+            var seen  = Maybe.empty[Maybe[Throwable]]
+            val order = collection.mutable.ListBuffer[String]()
+            val body: Int < Ask =
+                Effect.bracket(Effect.defer(7)) { (_, outcome) =>
+                    seen = Maybe(outcome)
+                    discard(order += "release")
+                }(_ => Effect.defer((throw Boom): Int))
+            val recovered: Int < Any =
+                ArrowEffect.handleCont[kyo.Const[Unit], kyo.Const[Int], Ask, Int, Int, Any, Any](Tag[Ask], body)(
+                    [C] => (_, cont) => cont(0),
+                    a => a,
+                    _ =>
+                        discard(order += "recover")
+                        Maybe(9)
+                )
+            assert(eval(recovered) == 9)
+            assert(seen.exists(_.exists(_ eq Boom)))
+            assert(order.toList == List("release", "recover"))
+        }
+
+        "a bracket failing after a crossing still releases before the recovery" in {
+            var seen  = Maybe.empty[Maybe[Throwable]]
+            val order = collection.mutable.ListBuffer[String]()
+            val body: Int < Ask =
+                Effect.bracket(Effect.defer(7)) { (_, outcome) =>
+                    seen = Maybe(outcome)
+                    discard(order += "release")
+                }(_ => ask.map(_ => (throw Boom): Int))
+            val recovered: Int < Any =
+                ArrowEffect.handleCont[kyo.Const[Unit], kyo.Const[Int], Ask, Int, Int, Any, Any](Tag[Ask], body)(
+                    [C] => (_, cont) => cont(0),
+                    a => a,
+                    _ =>
+                        discard(order += "recover")
+                        Maybe(9)
+                )
+            assert(eval(recovered) == 9)
+            assert(seen.exists(_.exists(_ eq Boom)))
+            assert(order.toList == List("release", "recover"))
+        }
+
+        "two stacked brackets abandoned together release innermost first" in {
+            val log = collection.mutable.ListBuffer[String]()
+            val v = Effect.bracket(Effect.defer(1))((_, _) => discard(log += "outer")) { _ =>
+                Effect.bracket(Effect.defer(2))((_, _) => discard(log += "inner")) { b =>
+                    Effect.defer {
+                        requestStop()
+                        Effect.defer(b + 1)
+                    }
+                }
+            }
+            val parked = Eval.partial(v)
+            assert(parked.isInstanceOf[Kyo.Park[?, ?]])
+            Eval.release(parked, Boom)
+            assert(log.toList == List("inner", "outer"))
+        }
+
+        "a release that throws on completion runs exactly once" in {
+            object Bad extends RuntimeException("bad", null, false, false)
+            var count = 0
+            val v = Effect.bracket(Effect.defer(1)) { (_, _) =>
+                count += 1
+                throw Bad
+            }(a => Effect.defer(a))
+            val ex = intercept[RuntimeException](eval(v))
+            assert(ex eq Bad)
+            assert(count == 1)
+        }
+
+        "a release that throws after a pure use runs exactly once" in {
+            object Bad extends RuntimeException("bad", null, false, false)
+            var count = 0
+            val v = Effect.bracket(Effect.defer(1)) { (_, _) =>
+                count += 1
+                throw Bad
+            }(a => a + 1)
+            val ex = intercept[RuntimeException](eval(v))
+            assert(ex eq Bad)
+            assert(count == 1)
+        }
+
+        "nested brackets complete innermost first" in {
+            val log = collection.mutable.ListBuffer[String]()
+            val v = Effect.bracket(Effect.defer(1))((_, _) => discard(log += "outer")) { _ =>
+                Effect.bracket(Effect.defer(2))((_, _) => discard(log += "inner"))(b => Effect.defer(b))
+            }
+            assert(eval(v) == 2)
+            assert(log.toList == List("inner", "outer"))
+        }
+
+        "a bracket releases before the next one acquires" in {
+            val log = collection.mutable.ListBuffer[String]()
+            def one(name: String): Int < Any =
+                Effect.bracket(Effect.defer {
+                    discard(log += s"acquire $name")
+                    name
+                })((_, _) => discard(log += s"release $name"))(_ => Effect.defer(1))
+            val v = one("a").map(_ => one("b"))
+            assert(eval(v) == 1)
+            assert(log.toList == List("acquire a", "release a", "acquire b", "release b"))
+        }
+
+        "a bracket owned by an isolated child releases at the child's completion" in {
+            val outcomes = collection.mutable.ListBuffer[Maybe[Throwable]]()
+            val v = Isolate.internal.Contextual.run(
+                Effect.bracket(Effect.defer(7))((_, outcome) => discard(outcomes += outcome))(a => Effect.defer(a + 1))
+            ).map(_ + 1)
+            assert(eval(v) == 9)
+            assert(outcomes.toList == List(Maybe.empty))
+        }
+
+        "a failure inside an isolated child releases the child's bracket" in {
+            var seen = Maybe.empty[Maybe[Throwable]]
+            val v = Isolate.internal.Contextual.run(
+                Effect.bracket(Effect.defer(7))((_, outcome) => seen = Maybe(outcome))(_ => Effect.defer((throw Boom): Int))
+            )
+            val ex = intercept[RuntimeException](eval(v))
+            assert(ex eq Boom)
+            assert(seen.exists(_.exists(_ eq Boom)))
+        }
+
+        "abandoning an isolated child releases its bracket" in {
+            var seen = Maybe.empty[Maybe[Throwable]]
+            val v = Isolate.internal.Contextual.run(
+                Effect.bracket(Effect.defer(7))((_, outcome) => seen = Maybe(outcome)) { a =>
+                    Effect.defer {
+                        requestStop()
+                        Effect.defer(a + 1)
+                    }
+                }
+            )
+            val parked = Eval.partial(v)
+            assert(parked.isInstanceOf[Kyo.Park[?, ?]])
+            assert(seen.isEmpty)
+            Eval.release(parked, Boom)
+            assert(seen.exists(_.exists(_ eq Boom)))
+        }
+
+        "a discarded capture's bracket is told the discard signal" in {
+            var seen = Maybe.empty[Maybe[Throwable]]
+            val body: Int < Ask =
+                Effect.bracket(Effect.defer(7))((_, outcome) => seen = Maybe(outcome))(a => ask.map(x => a + x))
+            val dropped: Int < Any =
+                ArrowEffect.handleCont[kyo.Const[Unit], kyo.Const[Int], Ask, Int, Int, Any, Any](Tag[Ask], body)(
+                    [C] => (_, _) => -1,
+                    b => b
+                )
+            assert(eval(dropped) == -1)
+            assert(seen.exists(_.exists(_.isInstanceOf[kyo.KyoException])))
+        }
     }
 
     "unit acquire" - {

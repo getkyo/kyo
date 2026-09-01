@@ -44,6 +44,62 @@ mid-flight. Rulings of record, verbatim:
 > lifted by "how about you launch the benchamarks in parallel?" (2026-09-01): the A/B
 > screening runs in review.md
 
+> "1 - wtf leaks will reacquire/reinstall the resource!? ... 1 - We have a Closed
+> exception, let's move if to the kernel if needed." (2026-09-01: re-entering a spent
+> extent is refused, not passed through; `kyo.Closed` moves to kyo-kernel and the
+> bracket's `reenter` throws it for a claimed non-inert cell)
+
+> "2 - see how IOPromise handles callback failures ... hmm see how the scheduler does
+> this. i think we can use the uncaught exception handler in java's thread." (2026-09-01:
+> a release failure on the discard drain is reported through the thread's
+> uncaught-exception handler, the scheduler Worker pattern; suppression order stays
+> newest-first on the minted signal)
+
+> "3 - ok, user facing" (2026-09-01: `done` and `release` stay on the public
+> `ContextEffect.handle` overloads)
+
+> "4 - it's essentially about not being interruptible no? maybe Arrow.Ensure or
+> Ensuring?" (2026-09-01: the gate-skipping step is `Arrow.Ensure`, framed around
+> uninterruptible application, not around binding)
+
+> "I had suggested a different design you had disregarded. I think we might be able to
+> aovid the owed booking by not removing elements on stack.dump and then stack.truncate
+> is called later when the hanlding stops and automatically calls finalizers."
+> (2026-09-01: examined and rejected on three laws; see the alternative below)
+
+> "we can also 'stage' methods in inlined classes. ... By putting code in inlined
+> classes, we can monomorphize call sites. ANalyze the code properly ... the call site
+> that invokes Handler.answersLoopState will still be inlined, that's the point: a new
+> call site" (2026-09-01: the staging idiom; the perf section of review.md carries the
+> measurements, including the refuted remove-inline experiment)
+
+> "why do you keep running both legs if only one is changing? or am I mistaken?"
+> (2026-09-01: probes run tip-only against frozen baselines; both legs rerun only when
+> both trees changed)
+
+## The rejected alternative: keep dumped entries on the stack
+
+The suggestion: do not remove entries in `Stack.dump`; let a later `stack.truncate`,
+when the handling stops, fire the finalizers, avoiding the owed bookkeeping in the loop.
+Examined against the semantics the pins hold and rejected on three laws, each of which
+the live entries would break:
+
+1. **The clause runs with the region absent.** A `handleLoop`/`handleCont` clause's row
+   is `S`, outside the region it serves: its code must evaluate with the dumped regions
+   gone from dispatch. Entries left on the stack keep answering `Context` reads and tag
+   finds, so an ask inside the clause would bind to a region that semantically exited
+   (the stale-context pin is exactly this observable).
+2. **Settled delivery needs a boundary.** Resuming a capture re-installs the dumped run
+   as a `Park`; the park's entries are the copy the resume installs. If the originals
+   were still live on the stack, the resume would double-install or alias live state.
+3. **Multi-shot needs the copy.** A capture can be resumed more than once (the multi-shot
+   refusal pin exercises the second shot); each shot needs its own snapshot of the
+   entries. Live stack slots are single-owner by construction.
+
+The owed slots are the residue of those three laws: the entries must leave the stack, so
+what they owe must be recorded somewhere that survives their departure, homed at the
+answering entry so the drain lands at that region's exit.
+
 ## The equations
 
 **Owed dumps.** A crossing into the region at `idx` dumps the regions above it; the dumped
@@ -172,10 +228,13 @@ resume completing (no premature drain), effectful-clause done draining through t
 root, sibling dumps draining newest first, the raw-hook at-least-once double-fire, and
 drain promptness observable at the answering region's exit.
 
-## Open, deliberately
+## Formerly open, now ruled (2026-09-01)
 
-- The `Spent` re-entry refusal (review section 5) is the user's open decision; the
-  pass-through pins document the chosen-until-ruled semantics.
-- Whether `release` on `ContextEffect.handle` stays user-facing: the reachability law now
-  supports it (discussed 2026-09-01, leaning yes).
-- Benches parked; the rows above are the gate list when they resume.
+- The `Spent` re-entry refusal: **refuse with `kyo.Closed`**, moved to kyo-kernel. The
+  pass-through pins were rewritten as refusal pins (abandoned resume, leaked capture,
+  multi-shot second shot).
+- Discard-drain release failures: **reported through the thread's uncaught-exception
+  handler**, the scheduler Worker containment pattern.
+- `done`/`release` on `ContextEffect.handle`: **user-facing**.
+- The step's name: **`Arrow.Ensure`**, framed around uninterruptible application.
+- Benches unparked; the A/B tables and the regression campaign are in review.md.
