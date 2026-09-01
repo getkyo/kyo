@@ -107,8 +107,9 @@ import scala.util.control.NonFatal
 
     // The exit drain for a run of live regions a loop clause discarded by answering done:
     // they release innermost first, what each owes before the region itself, before the
-    // caller truncates them away.
-    private def dropRegions(stack: Stack, from: Int, ex: Throwable): Unit =
+    // caller truncates them away. The scan runs first so the common nothing-owed
+    // completion pays no allocation, not even the signal's.
+    private def dropRegions(stack: Stack, from: Int): Unit =
         var any = false
         var i   = from
         while i < stack.depth && !any do
@@ -128,7 +129,7 @@ import scala.util.control.NonFatal
                 expandOwed(collected, stack.takeOwed(i))
                 i += 1
             end while
-            releaseCollected(collected, ex)
+            releaseCollected(collected, discarded())
         end if
     end dropRegions
 
@@ -295,9 +296,10 @@ import scala.util.control.NonFatal
                                             case done =>
                                                 val result = Nested.unnest[Y < S2](done.asInstanceOf[Y < S2])
                                                 Debugger.onRegionExit(handler, result)
-                                                val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, Any]]
-                                                dropRegions(stack, idx, discarded())
+                                                val next     = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, Any]]
+                                                val owedHere = stack.takeOwed(idx)
                                                 stack.truncate(idx)
+                                                if !owedHere.isEmpty then drainOwed(owedHere, discarded())
                                                 loop(result, next, Arrow.id, ctx)
                                         end match
                                     case handler: Handler.LoopHandler[VX, IX, OX, EX, C, Y, S2] @unchecked =>
@@ -347,7 +349,7 @@ import scala.util.control.NonFatal
                                                 // The clause answered done over live regions: they die
                                                 // without resuming, so they release before the truncate
                                                 // discards them.
-                                                dropRegions(stack, idx, discarded())
+                                                dropRegions(stack, idx)
                                                 stack.truncate(idx)
                                                 loop(result, next, Arrow.id, ctx)
                                         end match
