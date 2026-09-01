@@ -246,7 +246,7 @@ class IsolateTest extends kyo.Test:
             val body = forkHere.map(_ => ContextEffect.suspend(Tag[TestEffect1]))
             val bound =
                 ContextEffect.handleInheritable(Tag[TestEffect1], 1) {
-                    ContextEffect.handleInheritable(Tag[TestEffect1])(outer => outer.fold(0)(_ + 10))(body)
+                    ContextEffect.handleInheritable(Tag[TestEffect1], 0, _ + 10)(body)
                 }
             val cont = continuationOf(bound)
             assert(eval(runFork(cont(0))) == 11)
@@ -255,7 +255,7 @@ class IsolateTest extends kyo.Test:
         "a crossed binding resumes at its captured value" in {
 
             val body  = forkHere.map(_ => ContextEffect.suspend(Tag[TestEffect1]))
-            val bound = ContextEffect.handleInheritable(Tag[TestEffect1])(outer => outer.fold(0)(_ + 10))(body)
+            val bound = ContextEffect.handleInheritable(Tag[TestEffect1], 0, _ + 10)(body)
             val cont  = continuationOf(bound)
             assert(eval(runFork(cont(0))) == 0)
             assert(eval(ContextEffect.handleInheritable(Tag[TestEffect1], 5)(runFork(cont(0)))) == 0)

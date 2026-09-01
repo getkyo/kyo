@@ -231,7 +231,7 @@ object Main:
     // a binding deriving from the one enclosing it, the layered binding shape
     def layered: Int < Any =
         val body: Int < Any = cfg.map(_ + 1)
-        ContextEffect.handleInheritable(cfgTag, 41)(ContextEffect.handleInheritable(cfgTag)(_.fold(0)(_ * 2))(body))
+        ContextEffect.handleInheritable(cfgTag, 41)(ContextEffect.handleInheritable(cfgTag, 0, _ * 2)(body))
 
     // a throw inside the extent answered by the region's recovery clause, the failure recovery shape
     def recovering: Int < Any =

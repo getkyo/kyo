@@ -608,7 +608,7 @@ class EvalTest extends AnyFreeSpec:
                     Effect.defer(read.map(r2 => (r1, r2)))
                 }
             val handled: (Int, Int) < Any =
-                kyo.proto.kernel.ContextEffect.handleInheritable(Tag[Cfg])(outer => outer.map(_ + 1).getOrElse(11))(body)
+                kyo.proto.kernel.ContextEffect.handleInheritable(Tag[Cfg], 11, _ + 1)(body)
             val parked = Eval.partial(handled)
             assert(parked.isInstanceOf[Kyo.Park[?, ?]])
 

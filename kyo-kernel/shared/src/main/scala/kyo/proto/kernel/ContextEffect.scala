@@ -74,11 +74,39 @@ object ContextEffect:
         handleInheritable(effectTag)((_: Maybe[A]) => value)(v)
 
     inline def handleInheritable[A, E <: ContextEffect[A], B, S](
+        inline effectTag: Tag[E],
+        inline ifUndefined: A,
+        inline ifDefined: A => A
+    )(v: B < (E & S))(using inline _frame: Frame): B < S =
+        handleInheritable(effectTag)((outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined))(v)
+
+    inline def handleInheritable[A, E <: ContextEffect[A], B, S](
         inline effectTag: Tag[E]
     )(
         inline derive: Maybe[A] => A
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
         handle(effectTag)(derive, (parent: A) => parent, (parent: A, _: A, _: A) => parent)(v)
+
+    inline def handle[A, E <: ContextEffect[A], B, S](
+        inline effectTag: Tag[E]
+    )(
+        inline ifUndefined: A,
+        inline ifDefined: A => A,
+        inline fork: A => A,
+        inline join: (A, A, A) => A
+    )(v: B < (E & S))(using inline _frame: Frame): B < S =
+        handle(effectTag)((outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined), fork, join)(v)
+
+    inline def handle[A, E <: ContextEffect[A], B, S](
+        inline effectTag: Tag[E]
+    )(
+        inline ifUndefined: A,
+        inline ifDefined: A => A,
+        inline fork: A => A,
+        inline join: (A, A, A) => A,
+        inline release: (A, Throwable) => Unit
+    )(v: B < (E & S))(using inline _frame: Frame): B < S =
+        handle(effectTag)((outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined), fork, join, release)(v)
 
     @nowarn("msg=anonymous")
     inline def handle[A, E <: ContextEffect[A], B, S](
