@@ -85,8 +85,18 @@ class HostPathLockTest extends FileSystemLockTestSuite:
                         .map(_.interrupt)
                         .andThen(Loop.continue)
             }.andThen {
-                assertEventually {
-                    Scope.run(FileSystem.host.tryLock(target, Path.LockMode.Exclusive).map(_.isDefined))
+                // TEMPORARY DIAGNOSTIC (not for merge): bounded poll plus a registry dump, so a
+                // strand reports which layer holds the claim instead of hanging to the timeout.
+                def poll(remaining: Int)(using Frame): Boolean < (Async & Abort[FileSystemException]) =
+                    if remaining <= 0 then false
+                    else
+                        Scope.run(FileSystem.host.tryLock(target, Path.LockMode.Exclusive).map(_.isDefined)).map {
+                            case true  => true
+                            case false => Async.sleep(50.millis).andThen(poll(remaining - 1))
+                        }
+                poll(200).map { acquired =>
+                    Sync.Unsafe.defer(println(s"DIAG-LOOP acquired=$acquired target=$target " + LockDiag.dump(target)))
+                        .andThen(assert(acquired, "path never became acquirable"))
                 }
             }
         }
