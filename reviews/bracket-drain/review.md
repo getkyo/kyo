@@ -92,8 +92,8 @@ duplicated arms, measured bytecode-neutral below).
 | check | result |
 |---|---|
 | kernel JVM suite | 1542/1542 at the tip |
-| kernel JS suite | 1489/1489 at 9a9a12ff71; rerun at the tip in flight at package time |
-| kernel Native suite | 1516/1516 at 9a9a12ff71; rerun at the tip in flight at package time |
+| kernel JS suite | 1499/1499 at the tip |
+| kernel Native suite | 1526/1526 at the tip |
 | clean batch build | passes; no suspension cascade from Bind in Arrow.scala or bracket in Effect.scala |
 | red-first reproductions | dropped capture, settle strand, loop-done discard, stale context: each observed red with the right failure before its fix |
 | `loop$1` bytecode | base 2197, unsplit eager variant 2508, final tree 2504: the split plus cold extraction is size-neutral against the unsplit shape while the hot top trace runs the pre-change lazy code; the +307 over base is the semantic addition itself. `recovered$1` 235 to 309. Defer and Handle arms untouched. |
