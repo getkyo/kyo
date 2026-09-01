@@ -108,6 +108,14 @@ object ContextEffect:
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
         handle(effectTag)((outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined), fork, join, release = release)(v)
 
+    /** Opens a binding for E: derive computes the state from the outer binding, fork and
+      * join carry it across isolate boundaries, done fires at the region's settled exit,
+      * and release fires whenever the region dies without resuming. All hooks are pure
+      * and run strictly in the eval; done and release may each fire more than once per
+      * logical region (a shared dump, a fork, a merged shadow region): the eval
+      * guarantees the edge is reached at least once, and exactly-once belongs to the
+      * state.
+      */
     @nowarn("msg=anonymous")
     inline def handle[A, E <: ContextEffect[A], B, S](
         inline effectTag: Tag[E]
