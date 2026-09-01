@@ -44,25 +44,27 @@ import scala.util.control.NonFatal
         val saved = Safepoint.save(slot)
         if armed then Safepoint.arm(slot)
 
+        def park[T, B, C, S2](v: T < S2, contA: Arrow[T, B, S2], contB: Arrow[B, C, S2]): A < S =
+            val parked: Any < Any =
+                if contA.isInstanceOf[Arrow.Id[?]] && contB.isInstanceOf[Arrow.Id[?]] then v.asInstanceOf[Any < Any]
+                else Effect.defer(v, contA, contB).asInstanceOf[Any < Any]
+            if stack.isEmpty then parked.asInstanceOf[A < S]
+            else
+                Debugger.whenEnabled {
+                    var j = stack.depth - 1
+                    while j >= 0 do
+                        Debugger.onRegionExit(stack.handler(j), parked)
+                        j -= 1
+                }
+                Kyo.Park[A, S](parked, stack.snapshot())
+            end if
+        end park
+
         @tailrec def loop[T, B, C, S2](v: T < S2, contA: Arrow[T, B, S2], contB: Arrow[B, C, S2], ctx: Context): A < S =
             Debugger.onLoop(v, contA, contB)
             v match
                 case kyo: Kyo.Defer[?, ?, T, S2] @unchecked =>
-                    if armed && Safepoint.stopped(slot) then
-                        // TODO this isn't hot code, how about we extract to a separate method?
-                        val parked: Any < Any =
-                            if contA.isInstanceOf[Arrow.Id[?]] && contB.isInstanceOf[Arrow.Id[?]] then v.asInstanceOf[Any < Any]
-                            else Effect.defer(v, contA, contB).asInstanceOf[Any < Any]
-                        if stack.isEmpty then parked.asInstanceOf[A < S]
-                        else
-                            Debugger.whenEnabled {
-                                var j = stack.depth - 1
-                                while j >= 0 do
-                                    Debugger.onRegionExit(stack.handler(j), parked)
-                                    j -= 1
-                            }
-                            Kyo.Park[A, S](parked, stack.snapshot())
-                        end if
+                    if armed && Safepoint.stopped(slot) then park(v, contA, contB)
                     else
                         loop(kyo.value, kyo.contA, kyo.contB.chain(contA.chain(contB)), ctx)
 
