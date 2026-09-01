@@ -74,7 +74,9 @@ object Kyo:
                                 ),
                                 Arrow.id
                             )
+            end new
         end crossing
+    end SuspendArrow
 
     abstract class SuspendContext[State, E <: ContextEffect[State], A, S] extends Suspend[E, State, A, S]:
         def default: Maybe[State]

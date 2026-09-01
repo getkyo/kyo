@@ -251,6 +251,22 @@ import scala.util.control.NonFatal
             install(0, ctx)
         end installed
 
+        // The region exits, out of the settled arm's hot merge (the idle-handler row's
+        // inline-budget measurement): the binding's completion edge fires in the same
+        // slice as the pop, the exit drains what the entry owes, and the context rebinds
+        // to the nearest live entry below.
+        def contextExit(hc: Handler.ContextHandler[VX, CX, ?, ?], top: Int, ctx: Context): Context =
+            hc.done(stack.state(top).asInstanceOf[VX])
+            stack.pop()
+            if stack.owesAny then drainDiscarded(stack.takePopped())
+            val j = stack.find(hc.tag)
+            if j < 0 then ctx.remove(hc.tag)
+            else ctx.update(hc.tag, stack.state(j).asInstanceOf[VX])
+        end contextExit
+
+        def arrowExit(): Unit =
+            stack.pop()
+            if stack.owesAny then drainDiscarded(stack.takePopped())
 
         @tailrec def loop[T, B, C, S2](v: T < S2, contA: Arrow[T, B, S2], contB: Arrow[B, C, S2], ctx: Context): A < S =
             Debugger.onLoop(v, contA, contB)
@@ -383,23 +399,14 @@ import scala.util.control.NonFatal
                             stack.handler(top) match
                                 case hc: Handler.ContextHandler[VX, CX, ?, ?] @unchecked =>
                                     // A context region binds, it does not transform: the result passes
-                                    // through at exit in its union representation. The completion edge
-                                    // fires in the same slice as the pop.
+                                    // through at exit in its union representation.
                                     Debugger.onRegionExit(hc, res)
-                                    hc.done(stack.state(top).asInstanceOf[VX])
-                                    stack.pop()
-                                    if stack.owesAny then drainDiscarded(stack.takePopped())
-                                    val j = stack.find(hc.tag)
-                                    val outer =
-                                        if j < 0 then ctx.remove(hc.tag)
-                                        else ctx.update(hc.tag, stack.state(j).asInstanceOf[VX])
-                                    loop(res.asInstanceOf[Y < Any], next, Arrow.id, outer)
+                                    loop(res.asInstanceOf[Y < Any], next, Arrow.id, contextExit(hc, top, ctx))
                                 case handler0 =>
                                     val handler = handler0.asInstanceOf[Handler.ArrowHandler[VX, EX, AX, Y, Any]]
                                     val result  = handler.done(stack.state(top).asInstanceOf[VX], Nested.unnest[AX](res))
                                     Debugger.onRegionExit(handler, result)
-                                    stack.pop()
-                                    if stack.owesAny then drainDiscarded(stack.takePopped())
+                                    arrowExit()
                                     loop(result, next, Arrow.id, ctx)
                             end match
                     else
