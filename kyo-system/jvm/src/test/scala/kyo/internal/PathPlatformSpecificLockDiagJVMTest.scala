@@ -1,22 +1,24 @@
 package kyo.internal
 
-import java.nio.channels.FileChannel
-import java.nio.channels.OverlappingFileLockException
-import java.nio.file.StandardOpenOption
 import kyo.*
 
-/** TEMPORARY diagnostic (not for merge). Reproduces the Windows strand behind
-  * HostPathLockTest's "repeated interrupted acquisitions leave the path acquirable" and reports
-  * which layer holds the claim: the registry, or a leaked FileLock inside this JVM.
+/** TEMPORARY diagnostic (not for merge). Stresses the scenario behind HostPathLockTest's "repeated
+  * interrupted acquisitions leave the path acquirable" until a strand shows up, then reports which
+  * layer holds the claim: the registry, or a leaked FileLock inside this JVM.
   */
 class PathPlatformSpecificLockDiagJVMTest extends kyo.test.Test[Any]:
+
+    private val rounds  = 40
+    private val spawns  = 200
+    private val polls   = 40
+    private val backoff = 25.millis
 
     private def poll(target: Path, remaining: Int)(using Frame): Boolean < (Async & Abort[FileSystemException]) =
         if remaining <= 0 then false
         else
             Scope.run(FileSystem.host.tryLock(target, Path.LockMode.Exclusive).map(_.isDefined)).map {
                 case true  => true
-                case false => Async.sleep(50.millis).andThen(poll(target, remaining - 1))
+                case false => Async.sleep(backoff).andThen(poll(target, remaining - 1))
             }
 
     private def spawn(target: Path, remaining: Int)(using Frame): Unit < (Async & Abort[FileSystemException]) =
@@ -26,40 +28,30 @@ class PathPlatformSpecificLockDiagJVMTest extends kyo.test.Test[Any]:
                 .map(_.interrupt)
                 .andThen(spawn(target, remaining - 1))
 
-    "diag: repeated interrupted acquisitions leave the path acquirable" in {
-        Scope.acquireRelease(FileSystem.host.tempDir("kyo-lock-diag"))(h => Sync.Unsafe.defer(h.remove())).map { handle =>
-            val target = handle.path / "contended.bin"
-            spawn(target, 200).andThen(poll(target, 100)).map { acquired =>
+    private def round(dir: Path, index: Int)(using Frame): Boolean < (Async & Abort[FileSystemException]) =
+        val target = dir / s"contended-$index.bin"
+        spawn(target, spawns).andThen(poll(target, polls)).map { acquired =>
+            if acquired then true
+            else
                 Sync.Unsafe.defer {
-                    val jpath    = java.nio.file.Path.of(target.parts.mkString(java.io.File.separator))
-                    val absolute = jpath.toAbsolutePath.normalize()
-                    val key =
-                        try absolute.toRealPath().toString
-                        catch case _: Throwable => absolute.toString
-                    val registry = NioPathLockRegistry.describe(key)
-                    val all      = NioPathLockRegistry.describeAll
-                    val direct =
-                        try
-                            val ch = FileChannel.open(
-                                absolute,
-                                StandardOpenOption.CREATE,
-                                StandardOpenOption.READ,
-                                StandardOpenOption.WRITE
-                            )
-                            try
-                                val fl =
-                                    try ch.tryLock(0L, Long.MaxValue, false)
-                                    catch case e: OverlappingFileLockException => null
-                                if fl == null then "direct=null (overlapping or contended)"
-                                else
-                                    fl.release()
-                                    "direct=acquired"
-                                end if
-                            finally ch.close()
-                            end try
-                        catch case e: Throwable => s"direct threw $e"
-                    println(s"DIAG acquired=$acquired key=$key registry=$registry allKeys=$all $direct")
-                }.andThen(assert(acquired, "path never became acquirable"))
+                    println(s"DIAG-STRAND round=$index target=$target " + LockDiag.dump(target))
+                    false
+                }
+        }
+    end round
+
+    private def loop(dir: Path, index: Int)(using Frame): Int < (Async & Abort[FileSystemException]) =
+        if index >= rounds then -1
+        else
+            round(dir, index).map {
+                case true  => loop(dir, index + 1)
+                case false => index
+            }
+
+    "diag: repeated interrupted acquisitions leave the path acquirable, under repetition" in {
+        Scope.acquireRelease(FileSystem.host.tempDir("kyo-lock-stress"))(h => Sync.Unsafe.defer(h.remove())).map { handle =>
+            loop(handle.path, 0).map { stranded =>
+                assert(stranded == -1, s"strand first observed at round $stranded")
             }
         }
     }
