@@ -54,7 +54,7 @@ end Handler
                                 out._1
                             ).chain(cont2)
                         case out =>
-                            kyo.proto.Loop.unnest[B < S](out).chain(cont2)
+                            Nested.unnest[B < S](kyo.proto.Loop.unnest(out.asInstanceOf[OutT])).chain(cont2)
             end new
         end clauseDispatch
 

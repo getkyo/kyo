@@ -55,10 +55,10 @@ object Loop:
 
     final private[kyo] class Done[O](val value: O)
 
-    private[kyo] def unnest[T](v: Any): T =
+    private[kyo] def unnest[A, B, O](v: Outcome2[A, B, O]): O =
         v match
-            case v: Done[?] => v.value.asInstanceOf[T]
-            case v          => Nested.unnest[T](v)
+            case v: Done[O @unchecked] => v.value
+            case v                     => v.asInstanceOf[O]
 
     private val _continueUnit: Continue[Unit] =
         new Continue:

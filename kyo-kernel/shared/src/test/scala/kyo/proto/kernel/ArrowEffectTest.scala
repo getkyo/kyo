@@ -91,6 +91,63 @@ class ArrowEffectTest extends AnyFreeSpec:
             assert(eval(out) == 7)
         }
 
+        "an effectful clause ending with a pending payload delivers it as data" in {
+            sealed trait Tick extends ArrowEffect[Const[Unit], Const[Unit]]
+            val payload: Int < Say = say("p").map(_ => 7)
+            var reached            = false
+            val body: (Int < Say) < Ask = ask.map { _ =>
+                reached = true
+                box(payload)
+            }
+            val handled: (Int < Say) < Tick =
+                ArrowEffect.handleLoop(Tag[Ask], body)(
+                    [C] => _ => ArrowEffect.suspend[Any](Tag[Tick], ()).map(_ => Loop.done(box(payload))),
+                    a => box(a)
+                )
+            val r: (Int < Say) < Any =
+                ArrowEffect.handleLoop(Tag[Tick], handled)([C] => _ => Loop.continue((), (): Unit < Any), a => box(a))
+            val boxed = eval(r)
+            assert(!reached)
+            val out: Int < Any = ArrowEffect.handleCont(Tag[Say], boxed)([C] => (_, cont) => cont(()), a => a)
+            assert(eval(out) == 7)
+        }
+
+        "an unboxed computation payload runs as the region's result" in {
+            var evaluated          = 0
+            val payload: Int < Any = Effect.defer { evaluated += 1; 2 }
+            val body: Any < Ask    = ask.map(_ => "x")
+            val r: Any < Any       = ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.done(payload), a => a)
+            val out                = eval(r)
+            assert(evaluated == 1)
+            assert(out.asInstanceOf[Int] == 2)
+        }
+
+        "a crossing clause ending with a computation result runs it" in {
+            var evaluated          = 0
+            val payload: Int < Any = Effect.defer { evaluated += 1; 2 }
+            val body: Int < Ask =
+                ArrowEffect.handleCont(Tag[Say], say("s").map(_ => ask))([C] => (_, cont) => cont(()), a => a)
+            val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.done(payload), a => a)
+            assert(eval(r) == 2)
+            assert(evaluated == 1)
+        }
+
+        "a crossing clause ending with a boxed payload keeps it as data" in {
+            var evaluated          = 0
+            val payload: Int < Any = Effect.defer { evaluated += 1; 2 }
+            val body: (Int < Any) < Ask =
+                ArrowEffect.handleCont(Tag[Say], say("s").map(_ => ask.map(_ => box(payload))))(
+                    [C] => (_, cont) => cont(()),
+                    a => box(a)
+                )
+            val r: (Int < Any) < Any =
+                ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.done(box(payload)), a => box(a))
+            val data = eval(r)
+            assert(evaluated == 0)
+            assert(eval(data) == 2)
+            assert(evaluated == 1)
+        }
+
         "done sees the settled result" in {
             val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([C] => _ => Loop.continue((), 41: Int < Any), a => a * 10)
             assert(eval(r) == 420)

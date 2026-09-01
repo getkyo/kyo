@@ -289,7 +289,8 @@ import scala.util.control.NonFatal
                                                 type OutT = Outcome2[VX, OX[VX] < (EX & S2), Y < S2]
                                                 loop[OutT, Y, Any, S2](pending, handler.clauseDispatch(reentry), next, ctx)
                                             case done =>
-                                                val result = Loop.unnest[Y < S2](done)
+                                                val result =
+                                                    Nested.unnest[Y < S2](Loop.unnest(done.asInstanceOf[Outcome2[VX, Any, Y < S2]]))
                                                 Debugger.onRegionExit(handler, result)
                                                 val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, Any]]
                                                 if stack.owesAny then drainDiscarded(stack.takeOwed(idx))
@@ -313,7 +314,12 @@ import scala.util.control.NonFatal
                                                 val reentry2 = continuation.asInstanceOf[Arrow[OX[VX], C, EX & S2]]
                                                 loop[OutT, Y, Any, S2](pending, handler.clauseDispatch(reentry2), next, ctx2)
                                             case outcome =>
-                                                val result = Loop.unnest[Y < S2](outcome)
+                                                val result =
+                                                    Nested.unnest[Y < S2](Loop.unnest(outcome.asInstanceOf[Outcome2[
+                                                        VX,
+                                                        OX[VX] < (EX & S2),
+                                                        Y < S2
+                                                    ]]))
                                                 Debugger.onRegionExit(handler, result)
                                                 val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, Any]]
                                                 if stack.owesAny then drainDiscarded(stack.takeOwed(idx))

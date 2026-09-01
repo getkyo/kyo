@@ -948,5 +948,14 @@ class LoopTest extends AnyFreeSpec:
             assert(runs == 1)
             assert(out.asInstanceOf[AnyRef] eq hostile.asInstanceOf[AnyRef])
         }
+
+        "an Any-typed done payload holding a computation stays data" in {
+            var evaluated          = 0
+            val payload: Int < Any = Effect.defer { evaluated += 1; 2 }
+            val r: Any < Any       = Loop(0)(_ => Loop.done[Int, Any](payload))
+            val out                = r.eval
+            assert(evaluated == 0)
+            assert(out.asInstanceOf[AnyRef] eq payload.asInstanceOf[AnyRef])
+        }
     }
 end LoopTest
