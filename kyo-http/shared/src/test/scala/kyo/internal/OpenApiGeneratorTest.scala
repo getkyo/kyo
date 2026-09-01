@@ -197,5 +197,74 @@ class OpenApiGeneratorTest extends kyo.BaseHttpTest:
             assert(json.contains("Pet API"))
             assert(json.contains("petId"))
         }
+
+        "codec-declared schema" - {
+
+            // A dedicated type rather than a bare String: a second
+            // `given HttpCodec[String]` would be ambiguous with the built-in one,
+            // and this is how a constrained parameter is declared in practice.
+            case class Hash(value: String) derives CanEqual
+
+            val hashPattern = "^0x[0-9a-fA-F]{64}$"
+            val aHash       = "0x" + "ab" * 32
+
+            given HttpCodec[Hash] =
+                HttpCodec.pattern(hashPattern)(_.value, Hash(_), "32-byte hash")
+
+            def specFor(): HttpOpenApi =
+                val route = HttpRoute.getRaw("tx" / HttpPath.Capture[Hash]("hash"))
+                OpenApiGenerator.generate(Seq(route.handler(_ => HttpResponse.ok)), OpenApiGenerator.Config())
+
+            def hashParam(): HttpOpenApi.Parameter =
+                specFor().paths("/tx/{hash}").get.get.parameters.get.head
+
+            "publishes the codec's pattern on a path capture" in {
+                // Without this the generator can only probe the codec with sample
+                // values, which for a string recovers `type: string` and nothing
+                // else — the constraint would live in prose or not at all.
+                val param = hashParam()
+                assert(param.name == "hash")
+                assert(param.in == "path")
+                assert(param.json.pattern == Some(hashPattern))
+                assert(param.json.`type` == Some("string"))
+            }
+
+            "carries the codec's description onto the path parameter" in {
+                // A path capture has no route-level description the way a query
+                // param does, so this field was previously hardcoded to None.
+                assert(hashParam().description == Some("32-byte hash"))
+            }
+
+            "the same pattern also rejects a non-matching value" in {
+                // The point of declaring it on the codec: one expression both
+                // rejects and documents, so the document cannot describe a rule
+                // the server does not enforce.
+                val codec = summon[HttpCodec[Hash]]
+                assert(codec.decode(aHash).contains(Hash(aHash)))
+                assert(codec.decode("0xabcd").isFailure)
+                assert(codec.decode("nonsense").isFailure)
+            }
+
+            "reaches the serialized document" in {
+                assert(HttpOpenApi.toJson(specFor()).contains(hashPattern))
+            }
+
+            "a codec without a schema still falls back to probing" in {
+                // The inference path must keep working for every built-in codec.
+                val route = HttpRoute.getRaw("pets" / HttpPath.Capture[Int]("petId"))
+                val spec  = OpenApiGenerator.generate(Seq(route.handler(_ => HttpResponse.ok)), OpenApiGenerator.Config())
+                val param = spec.paths("/pets/{petId}").get.get.parameters.get.head
+                assert(param.json.`type` == Some("integer"))
+                assert(param.json.pattern.isEmpty)
+            }
+
+            "withSchema attaches a document without changing decoding" in {
+                val described = summon[HttpCodec[Int]].withSchema(
+                    HttpOpenApi.SchemaObject.integer.copy(description = Some("a page number"))
+                )
+                assert(described.decode("42").contains(42))
+                assert(described.schema.map(_.description).contains(Some("a page number")))
+            }
+        }
     }
 end OpenApiGeneratorTest
