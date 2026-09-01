@@ -8,9 +8,10 @@ class FileSystemConformanceDeclarationTest extends kyo.test.Test[Any]:
     "all declared conformance suites are public shared types" in {
         val suites = Chunk(
             classOf[FileSystemReadTestSuite],
-            classOf[FileSystemWriteTestSuite]
+            classOf[FileSystemWriteTestSuite],
+            classOf[FileSystemChannelTestSuite]
         )
-        assert(suites.size == 2)
+        assert(suites.size == 3)
     }
 
     "a read-only fixture cannot select write members" in {
