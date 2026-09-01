@@ -84,6 +84,45 @@ redistribute it:
    `Step.apply`. Small ceiling (a few loads per op), requires an `Arrow.apply`
    protocol change.
 
+## Megamorphic dispatch: the 5x cliff both evals share
+
+ProtoBench has no multi-handler row, so the entire recorded corpus measures the
+monomorphic best case. A probe bench (`ScratchPolyBench`, staged in both scratch
+worktrees) runs the same 10000 operations through one handler class versus four
+distinct effects with four distinct handle sites:
+
+| row | old eval | new eval |
+|---|---|---|
+| monoContHandler | 94.7 | 80.3 |
+| monoLoopHandler | 158.0 | 153.1 |
+| polyContHandlers | 453.9 | 406.1 |
+| polyLoopHandlers | 780.1 | 764.0 |
+
+Both evals pay the same ~5x once handler and node populations go polymorphic; the
+rewrite is slightly ahead on every row. The old design's per-site generated answer
+classes did not protect it.
+
+The profile decomposition of the poly row: visible vtable and itable stubs (4.6%),
+`Stack.find` inflated to 13% because its `handlers(i).tag` call goes megamorphic,
+and the bulk smeared across the loop's shared apply and clause sites as general
+inlining loss. Probes against the retail components:
+
+- Per-site dispatch classes: disproven by construction. The HandlerCont lane
+  already keeps the clause and continuation application in per-site generated
+  code and degrades identically, so moving more code per-site cannot close the
+  cliff; the cost is at the loop's shared sites.
+- Tag array in the Stack (store `handler.tag` at push, reference-compare in find):
+  rejected. Poly rows moved within noise; the monomorphic rows paid for it
+  (monoCont +17%, suspensionBaseline +7%).
+
+Standing conclusion: the cliff is the price of one shared interpreter loop
+servicing polymorphic node and handler populations, identical in kind for the old
+eval. Anything that changes it is a specialization architecture (per-effect-row
+drive entry points, profile splitting), not a lane tweak. Two corpus notes for
+the record: ProtoBench should gain a permanent shared-dispatch row so this axis
+stays measured (KernelBench has sharedHandlerPaysDispatch; ProtoBench does not),
+and all recorded numbers, including the old records, are monomorphic best cases.
+
 ## State
 
 - Fix committed on the branch as a8cff0a3f8, suite green (1497), `Debugger.enabled`
