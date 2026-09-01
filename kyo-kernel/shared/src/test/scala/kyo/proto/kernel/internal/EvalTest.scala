@@ -812,6 +812,38 @@ class EvalTest extends AnyFreeSpec:
             assert(cause.getSuppressed.exists(_ eq Bad))
         }
 
+        "a release rethrowing the signal itself does not self-suppress" in {
+            val log   = collection.mutable.ListBuffer[String]()
+            val cause = new RuntimeException("cause")
+            sealed trait CfgA extends kyo.proto.kernel.ContextEffect[Int]
+            sealed trait CfgB extends kyo.proto.kernel.ContextEffect[Int]
+            def readA: Int < CfgA = kyo.proto.kernel.ContextEffect.suspend(Tag[CfgA])
+            val body: Int < (CfgA & CfgB) =
+                readA.map { c =>
+                    requestStop()
+                    Effect.defer(readA.map(_ + c))
+                }
+            val inner: Int < CfgB =
+                kyo.proto.kernel.ContextEffect.handle(Tag[CfgA])(
+                    _.getOrElse(1),
+                    fork = (parent: Int) => parent,
+                    join = (parent: Int, _: Int, _: Int) => parent,
+                    release = (_: Int, ex: Throwable) => throw ex
+                )(body)
+            val handled: Int < Any =
+                kyo.proto.kernel.ContextEffect.handle(Tag[CfgB])(
+                    _.getOrElse(2),
+                    fork = (parent: Int) => parent,
+                    join = (parent: Int, _: Int, _: Int) => parent,
+                    release = (_: Int, _: Throwable) => discard(log += "outer")
+                )(inner)
+            val parked = Eval.partial(handled)
+            assert(parked.isInstanceOf[Kyo.Park[?, ?]])
+            discard(eval(Eval.release(parked, cause)))
+            assert(log.toList == List("outer"))
+            assert(cause.getSuppressed.isEmpty)
+        }
+
         "chain onto a parked value composes" in {
             val body: Int < Ask =
                 ask.map { a =>

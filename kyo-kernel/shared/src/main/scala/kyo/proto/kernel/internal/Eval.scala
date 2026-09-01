@@ -69,7 +69,10 @@ import scala.util.control.NonFatal
         Debugger.onRelease(handler, ex)
         try handler.asInstanceOf[Handler.ContextHandler[Any, ContextEffect[Any], Any, Any]].release(state, ex)
         catch
-            case t if NonFatal(t) => ex.addSuppressed(t)
+            // A release rethrowing the exception it was told about must not self-suppress.
+            case t if NonFatal(t) && (t ne ex) => ex.addSuppressed(t)
+            case t if NonFatal(t)              => ()
+        end try
     end released
 
     def apply[A, S](v: A < S): A < S = apply(v, armed = false)
