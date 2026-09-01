@@ -55,14 +55,16 @@ computation (`X < E`) because Mask is generic over `E <: ArrowEffect[?, ?]` with
 I and O, so it cannot call the typed `suspend` to rebuild the operation itself. That is
 the reason HandlerContOp exists with I and O erased from its signature.
 
-It can still be removed: move the operation construction from the eval lane into the
-`handleContOperation` glue, whose per-site HandlerCont builds the erased suspension the
-same way the eval does today (`new Kyo.SuspendArrow[AnyK, AnyK, ...]` with the tag cast,
-the `resuspend` precedent). The trade is one protocol class and one eval lane deleted
-against two representation-assertion casts in one glue method. The loop shrinks by a lane,
-which is cliff-relevant, and the per-dispatch allocation is unchanged (the suspension node
-is built either way). Worth doing; ArrowEffectTest's handleContOperation coverage and the
-Mask tests are the gate.
+RESOLVED: not removable, tried and reverted. Two attempts, both test-refuted. A
+variance-typed glue over handleCont (input at `[X] =>> Nothing`) is statically sound but
+dotty inserts a runtime cast on Nothing typed parameters, so any real input throws. An
+erased glue with row casts then failed five pinned tests for the real reason: the clause
+must receive the operation reified at its raise site tag (an AskSub raise answered by an
+Ask handler must reify at AskSub, and Mask's tunnel routing after a park depends on it).
+HandlerCont's clause receives only the input and the continuation; the raise tag is
+consumed by the eval and unrecoverable. HandlerContOp's protocol exists to carry it. The
+only alternative is a tag parameter on HandlerCont.run for every handler, which is worse.
+The class now carries a comment stating this so the question stays settled.
 
 ## 6 and 7. Isolate.Contextual: "Transform should have the snapshot of the stack" and "capture wraps the computation with Park"
 

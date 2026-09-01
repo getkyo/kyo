@@ -113,7 +113,7 @@ import scala.util.control.NonFatal
                                         val result = handler.run(kyo.input, continuation)
                                         Debugger.onResult(result)
                                         loop(result, Arrow.id, Arrow.id, ctx)
-                                    case handler: Handler.HandlerContOp[EX, C, Y, S2] @unchecked => // TODO let's explore if we can not have this handler type so we reduce the size of the loop
+                                    case handler: Handler.HandlerContOp[EX, C, Y, S2] @unchecked =>
                                         val operation: OX[VX] < EX =
                                             new Kyo.SuspendArrow[IX, OX, EX, VX, OX[VX], EX]:
                                                 def tag   = kyo.tag

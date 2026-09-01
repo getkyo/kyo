@@ -30,6 +30,8 @@ end Handler
     abstract class HandlerCont[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Handler[E, A, B, S, Unit]:
         def run[X](input: I[X], cont: Arrow[O[X], A, E & S]): A < (E & S)
 
+    // The operation carrier for effects generic over ArrowEffect[?, ?]: the clause receives the
+    // operation reified at its raise site tag, which the HandlerCont protocol cannot carry.
     abstract class HandlerContOp[E <: Effect, A, B, S] extends Handler[E, A, B, S, Unit]:
         def run[X](operation: X < E, next: Arrow[X, A, E & S]): A < (E & S)
 
@@ -72,8 +74,6 @@ end Handler
         def join(current: State, forked: State, result: Result[Nothing, State]): Result[Nothing, State] < S
     end HandlerContext
 
-    private[kyo] type AnyK[X] = Any
-
     private[kyo] inline def answersLoopState[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State, C](
         inline effectTag: Tag[E],
         inline handle: [X] => (State, I[X]) => Outcome2[State, O[X] < (E & S), B < (S)] < S,
@@ -106,7 +106,7 @@ end Handler
                                     running = false
                                 else
                                     next match
-                                        case sN: Kyo.SuspendArrow[AnyK, AnyK, Nothing, Any, Any, Any] @unchecked
+                                        case sN: Kyo.SuspendArrow[?, ?, ?, ?, ?, ?] @unchecked
                                             if sN.tag.erased =:= effectTag.erased =>
                                             in = sN.input
                                             k = sN.cont.asInstanceOf[Arrow[Any, Any, Any]]
@@ -114,7 +114,7 @@ end Handler
                                             val v0      = dN.value
                                             var matched = false
                                             v0 match
-                                                case sN: Kyo.SuspendArrow[AnyK, AnyK, Nothing, Any, Any, Any] @unchecked
+                                                case sN: Kyo.SuspendArrow[?, ?, ?, ?, ?, ?] @unchecked
                                                     if sN.tag.erased =:= effectTag.erased && dN.contB.isInstanceOf[Arrow.Id[?]] =>
                                                     val sc = sN.cont.asInstanceOf[Arrow[Any, Any, Any]]
                                                     val ca = dN.contA.asInstanceOf[Arrow[Any, Any, Any]]
