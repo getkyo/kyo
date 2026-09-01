@@ -126,15 +126,12 @@ import scala.util.control.NonFatal
     // The discard drain behind its own empty-check, so an exit site is one call and the
     // signal is minted only when something drains, per drain so suppressed release
     // failures attach to their own signal. A release failing here has no continuation to
-    // fail into, so it is contained and reported through the thread's uncaught-exception
-    // handler, the scheduler's own containment pattern.
+    // fail into, so it is contained and reported through the platform's unhandled edge.
     private def drainDiscarded(owed: Chunk[Stack.Snapshot]): Unit =
         if !owed.isEmpty then
             val signal = new kyo.KyoException("remainder discarded")(using Frame.internal)
             drainOwed(owed, signal)
-            if signal.getSuppressed.length != 0 then
-                val thread = Thread.currentThread()
-                thread.getUncaughtExceptionHandler().uncaughtException(thread, signal)
+            if signal.getSuppressed.length != 0 then Report.unhandled(signal)
 
     // The context rebound past a dumped run: each dumped binding's tag rebinds to the
     // nearest live entry below, or leaves the context entirely, exactly as the settled

@@ -263,25 +263,24 @@ class EffectBracketTest extends AnyFreeSpec:
             assert(outcomes.size == 1)
         }
 
-        "a throwing release on the discard drain does not starve the ones after it and is reported" in {
-            val log = collection.mutable.ListBuffer[String]()
-            object Bad extends RuntimeException("bad", null, true, false)
-            val body: Int < Ask =
-                Effect.bracket(Effect.defer(1))((_, _) => discard(log += "outer")) { _ =>
-                    Effect.bracket(Effect.defer(2))((_, _) => throw Bad) { _ =>
-                        ask.map(x => x)
-                    }
+        // The discard-drain report destination is platform behavior, pinned in the
+        // jvm-native ReportTest; the starvation property on that path is pinned there too.
+        "a throwing release on the unwind does not starve the ones after it" in {
+            object Bad extends RuntimeException("bad", null, false, false)
+            val failure = new RuntimeException("failure")
+            val log     = collection.mutable.ListBuffer[String]()
+            val v = Effect.bracket(Effect.defer(1))((_, _) => discard(log += "outer")) { _ =>
+                Effect.bracket(Effect.defer(2)) { (_, _) =>
+                    discard(log += "inner")
+                    throw Bad
+                } { _ =>
+                    Effect.defer((throw failure): Int)
                 }
-            val dropped: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, _) => -1, b => b)
-            var reported           = Maybe.empty[Throwable]
-            val thread             = Thread.currentThread()
-            val previous           = thread.getUncaughtExceptionHandler()
-            thread.setUncaughtExceptionHandler((_, ex) => reported = Maybe(ex))
-            try
-                assert(eval(dropped) == -1)
-            finally thread.setUncaughtExceptionHandler(previous)
-            assert(log.toList == List("outer"))
-            assert(reported.exists(_.getSuppressed.exists(_ eq Bad)))
+            }
+            val ex = intercept[RuntimeException](eval(v))
+            assert(ex eq failure)
+            assert(ex.getSuppressed.exists(_ eq Bad))
+            assert(log.toList == List("inner", "outer"))
         }
     }
 
