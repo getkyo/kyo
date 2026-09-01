@@ -128,6 +128,39 @@ platforms. So this is a per-platform optimization, not a correctness requirement
 
 ## Open questions the backlog does not settle
 
+### Q3 to Q6. Forks surfaced by the kernel test-suite port (added 2026-09-01)
+
+Each holds a known-red pin set in the proto suite until ruled; the pins are the reproduction.
+
+- **Q3. Park resume and binding re-resolution** (4 pins: ContextEffectThreadingTest x2,
+  IsolateTest "a join never reaches a scope that did not own the crossing", and the
+  kernel's resume-scope law generally). The kernel re-resolves a parked binding against
+  the scope of the thread that resumes it; the proto's `installed()` pushes captured
+  states verbatim. Re-deriving at install is safe for the bracket (its derive closes
+  over the cell) but breaks the isolate's deliberately forked entries, so a fix needs a
+  park-kind distinction or a `ContextHandler` resume hook. Verbatim is what fiber-carried
+  `Local` values want; the old law serves resume-under-enclosure.
+- **Q4. `handleFirst` and brackets** (1 pin: "a multi-shot handleFirst clause is refused
+  at its second branch"). A region settling with its `FirstSuspended` token drains the
+  dumps the handed-out remainder still needs, so the remainder arrives spent. The old
+  kernel excluded `FirstSuspended` from its completion drain; the proto-shaped fix is the
+  token carrying its owed dumps and `Eval.release` expanding it, so resumption works and
+  abandonment still drains.
+- **Q5. EffectTrace fidelity** (12 pins in EffectTraceTest, plus the unported jvm-native
+  EffectTracePhysicalTest). The kernel's traces carried continuation frames because its
+  stack held the trailing maps as entries; the proto fuses continuations into loop
+  locals, so at the catch only region labels survive. Frame-rich traces would mean
+  stashing the in-flight continuation per iteration, a hot-path store to be measured.
+- **Q6. The `Kyo` combinator companion.** KyoTest and the two KyoForeach suites test
+  `kyo/Kyo.scala` (zip, when, foreach, foldLeft, fill, ...), 2694 lines the proto lacks.
+  Port it into `kyo.proto` now, or leave those suites for the swap, when the file lands
+  on the proto directly.
+
+Divergent by design, not ported: HandlerTest (handler-as-arrow, `Handler.Out`),
+DebuggerTest (the session protocol, see Q1), StackTest (the flattened arrow stack), the
+`Effect.catching` node cases, the by-name `handleCatching` case, and the refusable
+effectful `fork` cases.
+
 ### Q2. Nesting in `Loop.Outcome*` (added 2026-09-01)
 
 The pending union handles a computation used as data with the nest-once contract: `Boxed`
