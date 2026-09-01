@@ -152,6 +152,26 @@ private[kernel] object Stack:
 
     private def wrap(entries: Array[AnyRef]): Snapshot = Span.fromUnsafe(entries)
 
+    object Snapshot:
+        // Builds a snapshot region by region, keeping the layout here. Built snapshots
+        // carry bindings, not resumptions: every continuation slot is identity.
+        final private[kernel] class Builder(regions: Int):
+            private val entries = new Array[AnyRef](regions * 3)
+            private var count   = 0
+
+            def add(handler: Handler[?, ?, ?, ?, ?], state: Any): Unit =
+                entries(count) = handler
+                entries(count + 1) = state.asInstanceOf[AnyRef]
+                entries(count + 2) = Arrow.id[Any]
+                count += 3
+            end add
+
+            def result(): Snapshot =
+                if count == entries.length then Span.fromUnsafe(entries)
+                else Span.fromUnsafe(java.util.Arrays.copyOf(entries, count))
+        end Builder
+    end Snapshot
+
     extension (self: Snapshot)
         def regions: Int                            = self.size / 3
         def isEmpty: Boolean                        = self.size == 0
@@ -159,19 +179,6 @@ private[kernel] object Stack:
         def state(i: Int): Any                      = self(i * 3 + 1)
         def continuation(i: Int): Arrow[?, ?, ?]    = self(i * 3 + 2).asInstanceOf[Arrow[?, ?, ?]]
 
-        // The forked variant of this snapshot: the same regions and continuations, with
-        // region i bound at states(i). The argument never escapes; it is copied.
-        private[kernel] def withStates(states: Array[AnyRef]): Snapshot =
-            val out = new Array[AnyRef](self.size)
-            var i   = 0
-            while i < self.regions do
-                out(i * 3) = self(i * 3)
-                out(i * 3 + 1) = states(i)
-                out(i * 3 + 2) = self(i * 3 + 2)
-                i += 1
-            end while
-            Span.fromUnsafe(out)
-        end withStates
     end extension
 
     final private class Pool:

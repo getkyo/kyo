@@ -608,11 +608,11 @@ class EvalTest extends AnyFreeSpec:
                     Effect.defer(read.map(r2 => (r1, r2)))
                 }
             val handled: (Int, Int) < Any =
-                kyo.proto.kernel.ContextEffect.handle(Tag[Cfg])(outer => outer.map(_ + 1).getOrElse(11))(body)
+                kyo.proto.kernel.ContextEffect.handleInheritable(Tag[Cfg])(outer => outer.map(_ + 1).getOrElse(11))(body)
             val parked = Eval.partial(handled)
             assert(parked.isInstanceOf[Kyo.Park[?, ?]])
 
-            val resumed = kyo.proto.kernel.ContextEffect.handle(Tag[Cfg], 100)(parked)
+            val resumed = kyo.proto.kernel.ContextEffect.handleInheritable(Tag[Cfg], 100)(parked)
             assert(eval(resumed) == (11, 11))
         }
 
@@ -723,6 +723,28 @@ class EvalTest extends AnyFreeSpec:
             assert(!ran)
         }
 
+        "a context binding owes its release through the public surface" in {
+            val log = collection.mutable.ListBuffer[Int]()
+            sealed trait Cfg extends kyo.proto.kernel.ContextEffect[Int]
+            def read: Int < Cfg = kyo.proto.kernel.ContextEffect.suspend(Tag[Cfg])
+            val body: Int < Cfg =
+                read.map { c =>
+                    requestStop()
+                    Effect.defer(read.map(_ + c))
+                }
+            val handled: Int < Any =
+                kyo.proto.kernel.ContextEffect.handle(Tag[Cfg])(
+                    _.getOrElse(7),
+                    fork = (parent: Int) => parent,
+                    join = (parent: Int, _: Int, _: Int) => parent,
+                    release = (state: Int, _: Throwable) => discard(log += state)
+                )(body)
+            val parked = Eval.partial(handled)
+            assert(parked.isInstanceOf[Kyo.Park[?, ?]])
+            discard(eval(Eval.release(parked, Boom)))
+            assert(log.toList == List(7))
+        }
+
         "chain onto a parked value composes" in {
             val body: Int < Ask =
                 ask.map { a =>
@@ -762,13 +784,13 @@ class EvalTest extends AnyFreeSpec:
         def read: Int < Count = kyo.proto.kernel.ContextEffect.suspend(Tag[Count])
 
         "a context region's exit reverts its own binding to the enclosing one" in {
-            val inner: Int < Count = kyo.proto.kernel.ContextEffect.handle(Tag[Count], 99)(read)
+            val inner: Int < Count = kyo.proto.kernel.ContextEffect.handleInheritable(Tag[Count], 99)(read)
             val r                  = inner.map(a => read.map(b => (a, b)))
-            assert(eval(kyo.proto.kernel.ContextEffect.handle(Tag[Count], 10)(r)) == (99, 10))
+            assert(eval(kyo.proto.kernel.ContextEffect.handleInheritable(Tag[Count], 10)(r)) == (99, 10))
         }
 
         "a context region's exit removes a binding that had no enclosing one" in {
-            val inner: Int < Any = kyo.proto.kernel.ContextEffect.handle(Tag[Count], 99)(read)
+            val inner: Int < Any = kyo.proto.kernel.ContextEffect.handleInheritable(Tag[Count], 99)(read)
 
             val r: Int < Any = inner.map(a => kyo.proto.kernel.ContextEffect.suspend(Tag[Count], -1).map(b => a * 1000 + b))
             assert(eval(r) == 98999)

@@ -72,11 +72,13 @@ end Handler
     end LoopHandler
 
     // A context region binds, it does not transform: the eval passes the region's result
-    // through at exit, so there is no done here.
+    // through at exit, so there is no done here. fork and join are pure and run strictly
+    // inside the eval, fork at each isolate crossing and join at the merge, where the origin
+    // region continues at the joined state.
     abstract class ContextHandler[State, E <: ContextEffect[State], A, B, S] extends Handler[E, A, B, S, State]:
-        def derive(current: Maybe[State]): State
-        def fork(current: State): State < S
-        def join(current: State, forked: State, result: State): State < S
+        def derive(outer: Maybe[State]): State
+        def fork(parent: State): State
+        def join(parent: State, forked: State, child: State): State
     end ContextHandler
 
     private[kyo] inline def answersLoopState[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State, C](

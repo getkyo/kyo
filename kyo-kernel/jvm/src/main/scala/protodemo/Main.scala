@@ -116,7 +116,7 @@ object Main:
     // a read answered by an enclosing region
     def context: Int < Any =
         val body: Int < Any = cfg.map(_ + 1)
-        ContextEffect.handle(cfgTag, 41)(body)
+        ContextEffect.handleInheritable(cfgTag, 41)(body)
 
     // a read past every region, answered by the boundary default
     def contextDefault: Int < Any =
@@ -172,7 +172,7 @@ object Main:
     def nested: Int < Any =
         val body: Int < Add  = cfg.map(c => add(c).map(_ + c))
         val inner: Int < Any = runAdd(body)
-        ContextEffect.handle(cfgTag, 10)(inner)
+        ContextEffect.handleInheritable(cfgTag, 10)(inner)
     end nested
 
     // an unbound context read crossing a region to the boundary default, the foreign context shape
@@ -231,7 +231,7 @@ object Main:
     // a binding deriving from the one enclosing it, the layered binding shape
     def layered: Int < Any =
         val body: Int < Any = cfg.map(_ + 1)
-        ContextEffect.handle(cfgTag, 41)(ContextEffect.handle(cfgTag)(_.fold(0)(_ * 2))(body))
+        ContextEffect.handleInheritable(cfgTag, 41)(ContextEffect.handleInheritable(cfgTag)(_.fold(0)(_ * 2))(body))
 
     // a throw inside the extent answered by the region's recovery clause, the failure recovery shape
     def recovering: Int < Any =

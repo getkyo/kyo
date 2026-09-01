@@ -164,7 +164,7 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
             def read: Int < Cfg      = kyo.proto.kernel.ContextEffect.suspend(Tag[Cfg])
             val v: Int < (Ask & Cfg) = ask.map(a => read.map(c => a + c))
 
-            val bound = kyo.proto.kernel.ContextEffect.handle(Tag[Cfg], 10)(Mask[Ask](v))
+            val bound = kyo.proto.kernel.ContextEffect.handleInheritable(Tag[Cfg], 10)(Mask[Ask](v))
             val out   = Mask.run[Ask](bound)
             assert(eval(runAsk(out)(32)) == 42)
         }

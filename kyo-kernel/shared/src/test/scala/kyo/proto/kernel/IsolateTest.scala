@@ -98,13 +98,13 @@ class IsolateTest extends kyo.Test:
         "a derived isolate for context effects passes the computation through" in {
             val i = Isolate.derive[TestEffect1, Any, Any]
             val v = i.run(ContextEffect.suspend(Tag[TestEffect1]))
-            assert(eval(ContextEffect.handle(Tag[TestEffect1], 10)(v)) == 10)
+            assert(eval(ContextEffect.handleInheritable(Tag[TestEffect1], 10)(v)) == 10)
         }
 
         "resolves implicitly for context effects" in {
             val i = summon[Isolate[TestEffect1, Any, TestEffect1]]
             val v = i.run(ContextEffect.suspend(Tag[TestEffect1]))
-            assert(eval(ContextEffect.handle(Tag[TestEffect1], 7)(v)) == 7)
+            assert(eval(ContextEffect.handleInheritable(Tag[TestEffect1], 7)(v)) == 7)
         }
     }
 
@@ -205,7 +205,7 @@ class IsolateTest extends kyo.Test:
 
         "a binding crossed at the suspension is present in a detached resume" in {
             val body: Int < (Fork & TestEffect1) = forkHere.map(n => ContextEffect.suspend(Tag[TestEffect1]).map(_ + n))
-            val bound: Int < Fork                = ContextEffect.handle(Tag[TestEffect1], 10)(body)
+            val bound: Int < Fork                = ContextEffect.handleInheritable(Tag[TestEffect1], 10)(body)
             val cont                             = continuationOf(bound)
 
             assert(eval(runFork(cont(5))) == 15)
@@ -213,7 +213,7 @@ class IsolateTest extends kyo.Test:
 
         "the continuation is a complete value: it resumes more than once, anywhere" in {
             val body  = forkHere.map(n => ContextEffect.suspend(Tag[TestEffect1]).map(_ * n))
-            val bound = ContextEffect.handle(Tag[TestEffect1], 3)(body)
+            val bound = ContextEffect.handleInheritable(Tag[TestEffect1], 3)(body)
             val cont  = continuationOf(bound)
             assert(eval(runFork(cont(2))) == 6)
             assert(eval(runFork(cont(5))) == 15)
@@ -225,7 +225,7 @@ class IsolateTest extends kyo.Test:
                 past += 1
                 n
             }
-            val cont = continuationOf(ContextEffect.handle(Tag[TestEffect1], 1)(body))
+            val cont = continuationOf(ContextEffect.handleInheritable(Tag[TestEffect1], 1)(body))
             assert(past == 0)
             assert(eval(runFork(cont(7))) == 7)
             assert(past == 1)
@@ -234,8 +234,8 @@ class IsolateTest extends kyo.Test:
         "the inner binding of a tag still answers after the crossing" in {
             val body = forkHere.map(_ => ContextEffect.suspend(Tag[TestEffect2]))
             val bound =
-                ContextEffect.handle(Tag[TestEffect2], "outer") {
-                    ContextEffect.handle(Tag[TestEffect2], "inner")(body)
+                ContextEffect.handleInheritable(Tag[TestEffect2], "outer") {
+                    ContextEffect.handleInheritable(Tag[TestEffect2], "inner")(body)
                 }
             val cont = continuationOf(bound)
             assert(eval(runFork(cont(0))) == "inner")
@@ -245,8 +245,8 @@ class IsolateTest extends kyo.Test:
 
             val body = forkHere.map(_ => ContextEffect.suspend(Tag[TestEffect1]))
             val bound =
-                ContextEffect.handle(Tag[TestEffect1], 1) {
-                    ContextEffect.handle(Tag[TestEffect1])(outer => outer.fold(0)(_ + 10))(body)
+                ContextEffect.handleInheritable(Tag[TestEffect1], 1) {
+                    ContextEffect.handleInheritable(Tag[TestEffect1])(outer => outer.fold(0)(_ + 10))(body)
                 }
             val cont = continuationOf(bound)
             assert(eval(runFork(cont(0))) == 11)
@@ -255,10 +255,10 @@ class IsolateTest extends kyo.Test:
         "a crossed binding resumes at its captured value" in {
 
             val body  = forkHere.map(_ => ContextEffect.suspend(Tag[TestEffect1]))
-            val bound = ContextEffect.handle(Tag[TestEffect1])(outer => outer.fold(0)(_ + 10))(body)
+            val bound = ContextEffect.handleInheritable(Tag[TestEffect1])(outer => outer.fold(0)(_ + 10))(body)
             val cont  = continuationOf(bound)
             assert(eval(runFork(cont(0))) == 0)
-            assert(eval(ContextEffect.handle(Tag[TestEffect1], 5)(runFork(cont(0)))) == 0)
+            assert(eval(ContextEffect.handleInheritable(Tag[TestEffect1], 5)(runFork(cont(0)))) == 0)
         }
     }
 
@@ -356,7 +356,7 @@ class IsolateTest extends kyo.Test:
             val nested: Int < TestEffect1 < TestEffect1 = isolate.nest(effect)
             val flattened: Int < TestEffect1            = nested.flatten
 
-            assert(eval(ContextEffect.handle(Tag[TestEffect1], 42)(flattened)) == 42)
+            assert(eval(ContextEffect.handleInheritable(Tag[TestEffect1], 42)(flattened)) == 42)
         }
 
         "allows effect handling between nest and flatten" in {
@@ -368,10 +368,10 @@ class IsolateTest extends kyo.Test:
 
             val nested = isolate.nest(effect)
 
-            val handled   = ContextEffect.handle(Tag[TestEffect2], "hello")(nested)
+            val handled   = ContextEffect.handleInheritable(Tag[TestEffect2], "hello")(nested)
             val flattened = handled.flatten
 
-            assert(eval(ContextEffect.handle(Tag[TestEffect1], 10)(flattened)) == 15)
+            assert(eval(ContextEffect.handleInheritable(Tag[TestEffect1], 10)(flattened)) == 15)
         }
 
         "transforms Remove to Restore in type signature" in {
@@ -407,19 +407,23 @@ class IsolateTest extends kyo.Test:
                 contextual.capture { st =>
                     contextual.restore(contextual.isolate(st, read)).map(child => read.map(origin => (child, origin)))
                 }
-            val r = ContextEffect.handle(Tag[Bind])(_.getOrElse(10), onFork = (n: Int) => n * 2)(prog)
+            val r = ContextEffect.handle(Tag[Bind])(
+                _.getOrElse(10),
+                fork = (parent: Int) => parent * 2,
+                join = (parent: Int, _: Int, _: Int) => parent
+            )(prog)
             assert(eval(r) == (20, 10))
         }
 
-        "default fork copies and default join keeps the origin" in {
+        "handleInheritable shares the binding and keeps the origin state" in {
             val prog: (Int, Int) < Bind =
                 contextual.capture { st =>
                     contextual.restore(contextual.isolate(st, read)).map(child => read.map(origin => (child, origin)))
                 }
-            assert(eval(ContextEffect.handle(Tag[Bind], 10)(prog)) == (10, 10))
+            assert(eval(ContextEffect.handleInheritable(Tag[Bind], 10)(prog)) == (10, 10))
         }
 
-        "join observes the origin's current state, the forked state, and the branch result" in {
+        "join observes the parent's current state, the forked state, and the child's final state" in {
             var seen = List.empty[(Int, Int, Int)]
             val prog: Int < Bind =
                 contextual.capture { st =>
@@ -427,13 +431,26 @@ class IsolateTest extends kyo.Test:
                 }
             val r = ContextEffect.handle(Tag[Bind])(
                 _.getOrElse(10),
-                onFork = (n: Int) => n * 2,
-                onJoin = (current: Int, forked: Int, result: Int) =>
-                    seen = (current, forked, result) :: seen
-                    current
+                fork = (parent: Int) => parent * 2,
+                join = (parent: Int, forked: Int, child: Int) =>
+                    seen = (parent, forked, child) :: seen
+                    parent
             )(prog)
             assert(eval(r) == 20)
             assert(seen == List((10, 20, 20)))
+        }
+
+        "the origin continues at the joined state" in {
+            val prog: (Int, Int) < Bind =
+                contextual.capture { st =>
+                    contextual.restore(contextual.isolate(st, read)).map(child => read.map(after => (child, after)))
+                }
+            val r = ContextEffect.handle(Tag[Bind])(
+                _.getOrElse(10),
+                fork = (parent: Int) => parent * 2,
+                join = (parent: Int, _: Int, child: Int) => parent + child
+            )(prog)
+            assert(eval(r) == (20, 30))
         }
 
         "joins run for every region in scope, in entry order" in {
@@ -444,15 +461,17 @@ class IsolateTest extends kyo.Test:
                 }
             val inner = ContextEffect.handle(Tag[Bind])(
                 _.getOrElse(1),
-                onJoin = (current: Int, _: Int, _: Int) =>
+                fork = (parent: Int) => parent,
+                join = (parent: Int, _: Int, _: Int) =>
                     order = "bind" :: order
-                    current
+                    parent
             )(body)
             val r = ContextEffect.handle(Tag[OuterBind])(
                 _.getOrElse(2),
-                onJoin = (current: Int, _: Int, _: Int) =>
+                fork = (parent: Int) => parent,
+                join = (parent: Int, _: Int, _: Int) =>
                     order = "outer" :: order
-                    current
+                    parent
             )(inner)
             assert(eval(r) == 3)
             assert(order == List("bind", "outer"))
@@ -460,12 +479,13 @@ class IsolateTest extends kyo.Test:
 
         "a region exited before the merge is not joined" in {
             var joins = 0
-            val captured: (Stack.Snapshot, Int) < Any =
+            val captured: (Stack.Snapshot, Stack.Snapshot, Int) < Any =
                 ContextEffect.handle(Tag[Bind])(
                     _.getOrElse(10),
-                    onJoin = (current: Int, _: Int, _: Int) =>
+                    fork = (parent: Int) => parent,
+                    join = (parent: Int, _: Int, _: Int) =>
                         joins += 1
-                        current
+                        parent
                 )(contextual.capture(st => contextual.isolate(st, read)))
             val r: Int < Any = contextual.restore(captured)
             assert(eval(r) == 10)
@@ -489,9 +509,11 @@ class IsolateTest extends kyo.Test:
                 }
             val r = ContextEffect.handle(Tag[Bind])(
                 _.getOrElse(10),
-                onFork = (n: Int) =>
+                fork = (parent: Int) =>
                     forks += 1
-                    n + 100
+                    parent + 100
+                ,
+                join = (parent: Int, _: Int, _: Int) => parent
             )(prog)
             assert(eval(r) == (110, 110))
             assert(forks == 1)

@@ -66,7 +66,7 @@ object Isolate:
 
         private[kernel] object Contextual extends Isolate[Any, Any, Any]:
             type State        = Stack.Snapshot
-            type Transform[A] = (Stack.Snapshot, A)
+            type Transform[A] = (Stack.Snapshot, Stack.Snapshot, A)
 
             def capture[A, S](f: Stack.Snapshot => A < S)(using _frame: Frame): A < S =
                 new Kyo.SnapshotWith[A, S]:
@@ -77,54 +77,94 @@ object Isolate:
                             case p: Pending[Stack.Snapshot, S2] @unchecked => Effect.defer(p, this, cont2)
                             case _                                         => cont2(f(Nested.unnest[Stack.Snapshot](v)), Arrow.id)
 
-            def isolate[A, S](state: Stack.Snapshot, v: A < S)(using Frame): (Stack.Snapshot, A) < S =
-                fork(state, 0, new Array[AnyRef](state.regions)).map { forked =>
-                    val parked: A < S = Kyo.Park[A, S](v.asInstanceOf[Any < Any], forked)
-                    parked.map(a => (forked, a))
-                }
+            def isolate[A, S](state: Stack.Snapshot, v: A < S)(using Frame): (Stack.Snapshot, Stack.Snapshot, A) < S =
+                val forked = fork(state)
+                // The child's final region states are read before the park exits, so join sees
+                // where the child ended, not only where it started.
+                val inner: (Stack.Snapshot, A) < S  = v.map(a => capture(finals => (finals, a)))
+                val parked: (Stack.Snapshot, A) < S = Kyo.Park[(Stack.Snapshot, A), S](inner.asInstanceOf[Any < Any], forked)
+                parked.map((finals, a) => (forked, finals, a))
+            end isolate
 
-            def restore[A, S](v: (Stack.Snapshot, A) < S)(using Frame): A < S =
-                v.map { (forked, a) =>
-                    capture(current => join(forked, current, 0).andThen(a))
+            def restore[A, S](v: (Stack.Snapshot, Stack.Snapshot, A) < S)(using _frame: Frame): A < S =
+                v.map { (forked, finals, a) =>
+                    new Kyo.SnapshotWith[A, S]:
+                        override def frame = _frame
+                        def cont           = this
+                        override def apply[C, S2](cur: Stack.Snapshot < S2, cont2: Arrow[A, C, S2]) =
+                            cur match
+                                case p: Pending[Stack.Snapshot, S2] @unchecked => Effect.defer(p, this, cont2)
+                                case _ =>
+                                    val av: A < Any = a
+                                    merge(forked, finals, Nested.unnest[Stack.Snapshot](cur)) match
+                                        case kyo.Maybe.Present(joined) =>
+                                            // The continuation delivers inside the park, so the
+                                            // joined bindings shadow the rest of the parent's
+                                            // extent up to the enclosing region boundary.
+                                            Kyo.Park[C, S2](cont2(av, Arrow.id).asInstanceOf[Any < Any], joined)
+                                        case _ =>
+                                            cont2(av, Arrow.id)
+                                    end match
                 }
 
             // Park currency: the snapshot carries erased handlers and states, so the casts
-            // reinterpret at that boundary and check nothing at runtime. The states array is
-            // a local accumulator for the suspended fold; withStates copies it out.
-            private def fork(entries: Stack.Snapshot, i: Int, states: Array[AnyRef])(using Frame): Stack.Snapshot < Any =
-                if i >= entries.regions then entries.withStates(states)
+            // reinterpret at that boundary and check nothing at runtime. fork is pure and runs
+            // strictly; a fold where every region keeps its state by reference shares the
+            // origin snapshot.
+            private def fork(entries: Stack.Snapshot): Stack.Snapshot =
+                if entries.isEmpty then entries
                 else
-                    val hc = entries.handler(i).asInstanceOf[Handler.ContextHandler[Any, ContextEffect[Any], Any, Any, Any]]
-                    hc.fork(entries.state(i)).map { forked =>
-                        states(i) = forked.asInstanceOf[AnyRef]
-                        fork(entries, i + 1, states)
-                    }
+                    val out     = Stack.Snapshot.Builder(entries.regions)
+                    var changed = false
+                    var i       = 0
+                    while i < entries.regions do
+                        val parent = entries.state(i)
+                        val child =
+                            entries.handler(i).asInstanceOf[Handler.ContextHandler[Any, ContextEffect[Any], Any, Any, Any]].fork(parent)
+                        out.add(entries.handler(i), child)
+                        if child.asInstanceOf[AnyRef] ne parent.asInstanceOf[AnyRef] then changed = true
+                        i += 1
+                    end while
+                    if changed then out.result() else entries
+            end fork
 
-            // Joins run in entry order at the merge point, observing the origin state current at
-            // that moment; a region the origin has already exited is not observed. Without an
-            // update lane a branch cannot move its binding, so the branch's final state is its
-            // forked state and the result argument threads it.
-            private def join(forked: Stack.Snapshot, current: Stack.Snapshot, i: Int)(using Frame): Any < Any =
-                if i >= forked.regions then ()
-                else
+            // The pure merge: joins run in entry order; each forked region's parent is the
+            // topmost live region with the same handler, so chained restores read through
+            // earlier merges, and a region the parent has already exited is skipped. Only
+            // bindings the join actually moved install; Absent means nothing changed.
+            private def merge(forked: Stack.Snapshot, finals: Stack.Snapshot, current: Stack.Snapshot): kyo.Maybe[Stack.Snapshot] =
+                var out = kyo.Maybe.empty[Stack.Snapshot.Builder]
+                var i   = 0
+                while i < forked.regions do
                     val hc = forked.handler(i).asInstanceOf[Handler.ContextHandler[Any, ContextEffect[Any], Any, Any, Any]]
-                    stateOf(current, hc) match
-                        case kyo.Maybe.Present(cur) =>
-                            val fk = forked.state(i)
-                            hc.join(cur, fk, fk).map(_ => join(forked, current, i + 1))
-                        case _ =>
-                            join(forked, current, i + 1)
-                    end match
-
-            private def stateOf(current: Stack.Snapshot, hc: Handler.ContextHandler[Any, ?, ?, ?, ?]): kyo.Maybe[Any] =
-                var i = 0
-                while i < current.regions do
-                    if current.handler(i).tag.erased =:= hc.tag.erased then
-                        return kyo.Maybe(current.state(i))
+                    var j  = current.regions - 1
+                    while j >= 0 && !(current.handler(j) eq hc) do j -= 1
+                    if j >= 0 then
+                        val parent = current.state(j)
+                        var child  = forked.state(i)
+                        var k      = finals.regions - 1
+                        while k >= 0 do
+                            if finals.handler(k) eq hc then
+                                child = finals.state(k)
+                                k = -1
+                            else k -= 1
+                        end while
+                        val joined = hc.join(parent, forked.state(i), child)
+                        if joined.asInstanceOf[AnyRef] ne parent.asInstanceOf[AnyRef] then
+                            val builder =
+                                out match
+                                    case kyo.Maybe.Present(builder) => builder
+                                    case _ =>
+                                        val builder = Stack.Snapshot.Builder(forked.regions)
+                                        out = kyo.Maybe(builder)
+                                        builder
+                            builder.add(hc, joined)
+                        end if
+                    end if
                     i += 1
                 end while
-                kyo.Maybe.empty
-            end stateOf
+                out.map(_.result())
+            end merge
         end Contextual
 
         def deriveImpl[Remove: Type, Keep: Type, Restore: Type](using Quotes): Expr[Isolate[Remove, Keep, Restore]] =
