@@ -719,28 +719,9 @@ class EvalTest extends AnyFreeSpec:
 
     private object Boom extends RuntimeException("boom", null, false, false)
 
-    // pending the update-lane ruling: ContextEffect.update has no seat in the current protocol
-    // "a context update outlives an operation answered after it" in {
-    //     sealed trait Count extends kyo.proto.kernel.ContextEffect[Int]
-    //     def bump: Int < Count = kyo.proto.kernel.ContextEffect.update(Tag[Count])(_ + 1)
-    //
-    //     val body: Int < (Count & Ask) = bump.map(_ => ask.map(_ => bump))
-    //     val r: Int < Count            = answerAsk(0)(body)
-    //     assert(eval(kyo.proto.kernel.ContextEffect.handle(Tag[Count], 10)(r)) == 12)
-    // }
-
     "the exit law" - {
         sealed trait Count extends kyo.proto.kernel.ContextEffect[Int]
         def read: Int < Count = kyo.proto.kernel.ContextEffect.suspend(Tag[Count])
-
-        // pending the update-lane ruling, with the pins above and below
-        // def bump: Int < Count = kyo.proto.kernel.ContextEffect.update(Tag[Count])(_ + 1)
-        //
-        // "an update to an outer binding survives an inner region's exit" in {
-        //     val inside: Int < Count = answerAsk(0)(ask.map(_ => bump))
-        //     val r: Int < Count      = inside.map(_ => bump)
-        //     assert(eval(kyo.proto.kernel.ContextEffect.handle(Tag[Count], 10)(r)) == 12)
-        // }
 
         "a context region's exit reverts its own binding to the enclosing one" in {
             val inner: Int < Count = kyo.proto.kernel.ContextEffect.handle(Tag[Count], 99)(read)
@@ -755,22 +736,6 @@ class EvalTest extends AnyFreeSpec:
             assert(eval(r) == 98999)
         }
 
-        // "a foreign crossing severs the extent: the region re-resolves and its updates do not span it" in {
-        //     val body: Int < (Count & Ask) = bump.map(_ => ask.map(_ => read))
-        //     val bound: Int < Ask          = kyo.proto.kernel.ContextEffect.handle(Tag[Count], 10)(body)
-        //     assert(eval(answerAsk(0)(bound)) == 10)
-        // }
-
-        // "a failed extent rolls its updates back" in {
-        //     val body: Int < (Count & Ask) = bump.map(_ => (throw Boom): Int)
-        //     val region: Int < Count = ArrowEffect.handleCont(Tag[Ask], body)(
-        //         [C] => (_, cont) => cont(1),
-        //         a => a,
-        //         _ => Maybe(-1)
-        //     )
-        //     val r = region.map(_ => read)
-        //     assert(eval(kyo.proto.kernel.ContextEffect.handle(Tag[Count], 10)(r)) == 10)
-        // }
     }
 
     "an unanswered default is taken exactly once" in {
