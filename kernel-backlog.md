@@ -54,22 +54,7 @@ Proposed: drop `S`, fix the call sites. Say go and it is a small change with a t
 
 ## Next up
 
-### Nesting in Loop.Outcome* (2026-09-01)
-
-The pending union handles a computation used as data with the nest-once contract:
-`Boxed` payloads are `Nested`-wrapped at the lift so the eval cannot mistake a payload
-for a suspension. `Loop.Outcome2` has the same structural exposure and no equivalent
-guard is on record: the eval and the staged dispatch discriminate an outcome by class
-(`case c: Continue2 => ...; case pending: Pending => ...; case done => done as B`), so a
-done payload `B` that is itself a `Continue2` (a loop whose result is another loop's
-outcome, or `B = Any` holding one) would dispatch as a continue, and a `B` that is a
-`Pending` (a computation as data in the done position) would dispatch as the clause's
-suspended outcome. Audit whether these shapes are reachable through the public
-`handleLoop`/`Loop.done` surface; if they are, the fix family is the one `<` already
-uses (a marker bound like `Boxed` closing the channel, or nest-once at the outcome
-boundary), plus hostile pins (done-of-Continue2, done-of-pending, `B = Any`). The old
-kernel's `Continue extends Serializable` design note is the prior art for proving an
-arm unreachable instead of guarding it.
+Nothing is in flight. The sweep is complete and the tree is clean.
 
 ## Parked (your call to revive)
 
