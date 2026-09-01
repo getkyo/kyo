@@ -61,8 +61,8 @@ object Isolate:
 
         private[kernel] object Contextual extends Isolate[Any, Any, Any]:
             type State        = Unit
-            type Transform[A] = A
-            def capture[A, S](f: Unit => A < S)(using Frame): A < S      = f(())
+            type Transform[A] = A // TODO I imagine this should have the snapshort of the stack?
+            def capture[A, S](f: Unit => A < S)(using Frame): A < S      = f(()) // TODO then here we wrap the computation with Park
             def isolate[A, S](state: Unit, v: A < S)(using Frame): A < S = v
             def restore[A, S](v: A < S)(using Frame): A < S              = v
         end Contextual

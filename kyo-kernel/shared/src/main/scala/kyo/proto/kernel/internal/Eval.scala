@@ -49,6 +49,7 @@ import scala.util.control.NonFatal
             v match
                 case kyo: Kyo.Defer[?, ?, T, S2] @unchecked =>
                     if armed && Safepoint.stopped(slot) then
+                        // TODO this isn't hot code, how about we extract to a separate method?
                         val parked: Any < Any =
                             if contA.isInstanceOf[Arrow.Id[?]] && contB.isInstanceOf[Arrow.Id[?]] then v.asInstanceOf[Any < Any]
                             else Effect.defer(v, contA, contB).asInstanceOf[Any < Any]
@@ -90,7 +91,7 @@ import scala.util.control.NonFatal
                                                 Debugger.onRegionExit(entries(i), kyo)
                                                 i -= 3
                                         }
-                                        val inner = kyo.cont.chain(contA.chain(contB))
+                                        val inner = kyo.cont.chain(contA.chain(contB)) // TODO why pre-chain it?
                                         new Arrow.Step[OX[VX], C, EX & S2]:
                                             def frame = Frame.internal
                                             override def apply[D, S3](v: OX[VX] < S3, cont2: Arrow[C, D, S3]) =
@@ -99,18 +100,20 @@ import scala.util.control.NonFatal
                                                     case _ =>
                                                         cont2(
                                                             Kyo.Park(
-                                                                Effect.defer(v, inner, Arrow.id).asInstanceOf[Any < Any],
+                                                                Effect.defer(v, inner, Arrow.id).asInstanceOf[
+                                                                    Any < Any
+                                                                ], // TODO can't this be defer(v, kyo.cont, contA.andThen(contB))?
                                                                 entries
                                                             ),
                                                             Arrow.id
                                                         )
                                         end new
-                                stack.handlerAt(idx) match
+                                stack.handlerAt(idx) match // TODO I think all access is indexed now. Let's refavtor the api so this is stack.handler(idx) and the other methods folow the same pattern
                                     case handler: Handler.HandlerCont[IX, OX, EX, C, Y, S2] @unchecked =>
                                         val result = handler.run(kyo.input, continuation)
                                         Debugger.onResult(result)
                                         loop(result, Arrow.id, Arrow.id, ctx)
-                                    case handler: Handler.HandlerContOp[EX, C, Y, S2] @unchecked =>
+                                    case handler: Handler.HandlerContOp[EX, C, Y, S2] @unchecked => // TODO let's explore if we can not have this handler type so we reduce the size of the loop
                                         val operation: OX[VX] < EX =
                                             new Kyo.SuspendArrow[IX, OX, EX, VX, OX[VX], EX]:
                                                 def tag   = kyo.tag
