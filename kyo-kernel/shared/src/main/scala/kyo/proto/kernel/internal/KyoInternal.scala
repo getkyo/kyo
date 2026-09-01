@@ -27,6 +27,7 @@ private[proto] def site(frame: Frame): String =
     else s"${frame.callerName}.$callee(${frame.position.show})"
 end site
 
+// TODO can't this be sealed abstract class and Debugger.onAlloc is in it? I imaigne putting in Kyo, which is a trait, would generate overhead? Or could we put it there so we can ensure all allocations are captured?
 sealed trait Pending[+A, -S] extends kyo.proto.Kyo[A, S]:
     def frame: Frame = Frame.internal
 end Pending

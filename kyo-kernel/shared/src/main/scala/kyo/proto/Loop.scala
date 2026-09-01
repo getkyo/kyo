@@ -53,6 +53,13 @@ object Loop:
 
     opaque type Outcome4[A, B, C, D, +O] = O | Continue4[A, B, C, D]
 
+    final private[kyo] class Done[O](val value: O)
+
+    private[kyo] def unnest[T](v: Any): T =
+        v match
+            case v: Done[?] => v.value.asInstanceOf[T]
+            case v          => Nested.unnest[T](v)
+
     private val _continueUnit: Continue[Unit] =
         new Continue:
             def _1 = ()
@@ -117,20 +124,27 @@ object Loop:
 
     @targetName("done1")
     inline def done[A, O](inline v: O): Outcome[A, O] < Any =
-
-        Nested.nest[Outcome[A, O], Any](v)
+        v match
+            case v: Continue[?] => new Done(v).asInstanceOf[Outcome[A, O] < Any]
+            case v              => Nested.nest[Outcome[A, O], Any](v)
 
     @targetName("done2")
     inline def done[A, B, O](inline v: O): Outcome2[A, B, O] < Any =
-        Nested.nest[Outcome2[A, B, O], Any](v)
+        v match
+            case v: Continue2[?, ?] => new Done(v).asInstanceOf[Outcome2[A, B, O] < Any]
+            case v                  => Nested.nest[Outcome2[A, B, O], Any](v)
 
     @targetName("done3")
     inline def done[A, B, C, O](inline v: O): Outcome3[A, B, C, O] < Any =
-        Nested.nest[Outcome3[A, B, C, O], Any](v)
+        v match
+            case v: Continue3[?, ?, ?] => new Done(v).asInstanceOf[Outcome3[A, B, C, O] < Any]
+            case v                     => Nested.nest[Outcome3[A, B, C, O], Any](v)
 
     @targetName("done4")
     inline def done[A, B, C, D, O](inline v: O): Outcome4[A, B, C, D, O] < Any =
-        Nested.nest[Outcome4[A, B, C, D, O], Any](v)
+        v match
+            case v: Continue4[?, ?, ?, ?] => new Done(v).asInstanceOf[Outcome4[A, B, C, D, O] < Any]
+            case v                        => Nested.nest[Outcome4[A, B, C, D, O], Any](v)
 
     @nowarn("msg=anonymous")
     inline def apply[A, O, S](inline input: A)(inline run: A => Outcome[A, O] < S)(
@@ -160,6 +174,8 @@ object Loop:
                                         end if
                     }
                     Effect.defer(kyo, arrow, Arrow.id)
+                case res: Done[?] =>
+                    res.value.asInstanceOf[O < S]
                 case res =>
                     res.asInstanceOf[O < S]
         loop(Maybe.empty, Loop.continue(input))
@@ -192,6 +208,8 @@ object Loop:
                                         end if
                     }
                     Effect.defer(kyo, arrow, Arrow.id)
+                case res: Done[?] =>
+                    res.value.asInstanceOf[O < S]
                 case res =>
                     res.asInstanceOf[O < S]
         loop(Maybe.empty, Loop.continue(input1, input2))
@@ -224,6 +242,8 @@ object Loop:
                                         end if
                     }
                     Effect.defer(kyo, arrow, Arrow.id)
+                case res: Done[?] =>
+                    res.value.asInstanceOf[O < S]
                 case res =>
                     res.asInstanceOf[O < S]
         loop(Maybe.empty, Loop.continue(input1, input2, input3))
@@ -256,6 +276,8 @@ object Loop:
                                         end if
                     }
                     Effect.defer(kyo, arrow, Arrow.id)
+                case res: Done[?] =>
+                    res.value.asInstanceOf[O < S]
                 case res =>
                     res.asInstanceOf[O < S]
         loop(Maybe.empty, Loop.continue(input1, input2, input3, input4))
@@ -271,6 +293,8 @@ object Loop:
                     loop(idx + 1)(run(idx))
                 case _: Arrow[?, ?, ?] =>
                     suspended(idx)(v)
+                case res: Done[?] =>
+                    res.value.asInstanceOf[O < S]
                 case res =>
                     res.asInstanceOf[O < S]
         loop(0)(Loop.continue)
@@ -285,6 +309,8 @@ object Loop:
                     loop(idx + 1)(run(idx, next._1))
                 case _: Arrow[?, ?, ?] =>
                     suspended(idx)(v)
+                case res: Done[?] =>
+                    res.value.asInstanceOf[O < S]
                 case res =>
                     res.asInstanceOf[O < S]
         loop(0)(Loop.continue(input))
@@ -301,6 +327,8 @@ object Loop:
                     loop(idx + 1)(run(idx, next._1, next._2))
                 case _: Arrow[?, ?, ?] =>
                     suspended(idx)(v)
+                case res: Done[?] =>
+                    res.value.asInstanceOf[O < S]
                 case res =>
                     res.asInstanceOf[O < S]
         loop(0)(Loop.continue(input1, input2))
@@ -317,6 +345,8 @@ object Loop:
                     loop(idx + 1)(run(idx, next._1, next._2, next._3))
                 case _: Arrow[?, ?, ?] =>
                     suspended(idx)(v)
+                case res: Done[?] =>
+                    res.value.asInstanceOf[O < S]
                 case res =>
                     res.asInstanceOf[O < S]
         loop(0)(Loop.continue(input1, input2, input3))
@@ -333,6 +363,8 @@ object Loop:
                     loop(idx + 1)(run(idx, next._1, next._2, next._3, next._4))
                 case _: Arrow[?, ?, ?] =>
                     suspended(idx)(v)
+                case res: Done[?] =>
+                    res.value.asInstanceOf[O < S]
                 case res =>
                     res.asInstanceOf[O < S]
         loop(0)(Loop.continue(input1, input2, input3, input4))
@@ -363,6 +395,8 @@ object Loop:
                                         end if
                     }
                     Effect.defer(kyo, arrow, Arrow.id)
+                case res: Done[?] =>
+                    res.value.asInstanceOf[A < S]
                 case res =>
                     res.asInstanceOf[A < S]
         loop(Maybe.empty, Loop.continue)
