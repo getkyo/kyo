@@ -124,7 +124,7 @@ object ContextEffect:
                 def joined(parent: A, fk: A, child: A): A   = join(parent, fk, child)
                 def released(state: A, ex: Throwable): Unit = release(state, ex)
                 val h =
-                    new ContextHandler[A, E, B, B, S]:
+                    new ContextHandler[A, E]:
                         def tag                                                    = effectTag
                         def derive(outer: Maybe[A])                                = derived(outer)
                         def fork(parent: A)                                        = forked(parent)

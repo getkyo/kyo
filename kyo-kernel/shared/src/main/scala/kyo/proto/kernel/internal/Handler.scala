@@ -14,21 +14,27 @@ import kyo.proto.kernel.ContextEffect
 import kyo.proto.kernel.Effect
 import scala.annotation.publicInBinary
 
-sealed abstract private[kernel] class Handler[E <: Effect, A, B, -S, State]:
+sealed abstract private[kernel] class Handler[E <: Effect, State]:
     def tag: Tag[E]
 
-    def recover(state: State, ex: Throwable): Maybe[B < S] = Absent
+    // Pure, like fork and join: runs whenever the region dies without resuming, at
+    // abandonment and when a failure unwinds past it.
+    private[kyo] def release(state: State, ex: Throwable): Unit = ()
 
-    private[kyo] def release(state: State, ex: Throwable): Any < Any = ()
-    override def toString                                            = s"Handler(${tag.show})"
+    override def toString = s"Handler(${tag.show})"
 end Handler
 
 @publicInBinary private[kernel] object Handler:
 
-    // An arrow handler transforms at exit: done delivers the region's final result. Context
-    // regions bind without transforming, so done lives here and not on the Handler base.
-    sealed abstract class ArrowHandler[E <: Effect, A, B, -S, State] extends Handler[E, A, B, S, State]:
+    // An arrow handler transforms at exit: done delivers the region's final result, and
+    // recover may replace it when the region fails. Context regions bind without
+    // transforming, so neither lives on the Handler base: a binding cannot manufacture
+    // the result its body failed to produce.
+    sealed abstract class ArrowHandler[E <: Effect, A, B, -S, State] extends Handler[E, State]:
         def done(state: State, v: A): B < S
+
+        def recover(state: State, ex: Throwable): Maybe[B < S] = Absent
+    end ArrowHandler
 
     abstract class ContHandler[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[E, A, B, S, Unit]:
         def run[X](input: I[X], cont: Arrow[O[X], A, E & S]): A < (E & S)
@@ -75,7 +81,7 @@ end Handler
     // through at exit, so there is no done here. fork and join are pure and run strictly
     // inside the eval, fork at each isolate crossing and join at the merge, where the origin
     // region continues at the joined state.
-    abstract class ContextHandler[State, E <: ContextEffect[State], A, B, S] extends Handler[E, A, B, S, State]:
+    abstract class ContextHandler[State, E <: ContextEffect[State]] extends Handler[E, State]:
         def derive(outer: Maybe[State]): State
         def fork(parent: State): State
         def join(parent: State, forked: State, child: State): State

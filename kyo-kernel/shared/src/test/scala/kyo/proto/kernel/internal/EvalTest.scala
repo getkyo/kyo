@@ -745,6 +745,91 @@ class EvalTest extends AnyFreeSpec:
             assert(log.toList == List(7))
         }
 
+        "a failure unwinding past a context binding runs its release" in {
+            val log = collection.mutable.ListBuffer[Int]()
+            sealed trait Cfg extends kyo.proto.kernel.ContextEffect[Int]
+            val body: Int < Cfg = kyo.proto.kernel.ContextEffect.suspend(Tag[Cfg]).map(_ => (throw Boom): Int)
+            val handled: Int < Any =
+                kyo.proto.kernel.ContextEffect.handle(Tag[Cfg])(
+                    _.getOrElse(7),
+                    fork = (parent: Int) => parent,
+                    join = (parent: Int, _: Int, _: Int) => parent,
+                    release = (state: Int, _: Throwable) => discard(log += state)
+                )(body)
+            val ex = intercept[RuntimeException](eval(handled))
+            assert(ex eq Boom)
+            assert(log.toList == List(7))
+        }
+
+        "a failure unwinding past an arrow region runs its release" in {
+            val log = collection.mutable.ListBuffer[String]()
+            val handler = new Handler.ContHandler[Const[Unit], Const[Int], Ask, Int, Int, Any]:
+                def tag = Tag[Ask]
+                override def release(state: Unit, ex: Throwable) =
+                    discard(log += "released")
+                def done(state: Unit, v: Int) = v
+                def run[X](input: Unit, cont: Arrow[Int, Int, Ask]): Int < Ask =
+                    cont(1, Arrow.id)
+            val body: Int < Ask  = ask.map(_ => (throw Boom): Int)
+            val outer: Int < Any = Kyo.handle[Ask, Int, Int, Any, Unit](body, handler, ())
+            val ex               = intercept[RuntimeException](eval(outer))
+            assert(ex eq Boom)
+            assert(log.toList == List("released"))
+        }
+
+        "a binding is not released when an inner region recovers the failure" in {
+            val log = collection.mutable.ListBuffer[Int]()
+            sealed trait Cfg extends kyo.proto.kernel.ContextEffect[Int]
+            val body: Int < (Ask & Cfg) = ask.map(_ => (throw Boom): Int)
+            val inner: Int < Cfg = ArrowEffect.handleCont[Const[Unit], Const[Int], Ask, Int, Int, Cfg, Any](Tag[Ask], body)(
+                [C] => (_, cont) => cont(0),
+                a => a,
+                _ => Maybe(9)
+            )
+            val handled: Int < Any =
+                kyo.proto.kernel.ContextEffect.handle(Tag[Cfg])(
+                    _.getOrElse(7),
+                    fork = (parent: Int) => parent,
+                    join = (parent: Int, _: Int, _: Int) => parent,
+                    release = (state: Int, _: Throwable) => discard(log += state)
+                )(inner)
+            assert(eval(handled) == 9)
+            assert(log.isEmpty)
+        }
+
+        "a throwing release does not starve the ones after it" in {
+            val log   = collection.mutable.ListBuffer[String]()
+            val cause = new RuntimeException("cause")
+            object Bad        extends RuntimeException("bad", null, false, false)
+            sealed trait CfgA extends kyo.proto.kernel.ContextEffect[Int]
+            sealed trait CfgB extends kyo.proto.kernel.ContextEffect[Int]
+            def readA: Int < CfgA = kyo.proto.kernel.ContextEffect.suspend(Tag[CfgA])
+            val body: Int < (CfgA & CfgB) =
+                readA.map { c =>
+                    requestStop()
+                    Effect.defer(readA.map(_ + c))
+                }
+            val inner: Int < CfgB =
+                kyo.proto.kernel.ContextEffect.handle(Tag[CfgA])(
+                    _.getOrElse(1),
+                    fork = (parent: Int) => parent,
+                    join = (parent: Int, _: Int, _: Int) => parent,
+                    release = (_: Int, _: Throwable) => throw Bad
+                )(body)
+            val handled: Int < Any =
+                kyo.proto.kernel.ContextEffect.handle(Tag[CfgB])(
+                    _.getOrElse(2),
+                    fork = (parent: Int) => parent,
+                    join = (parent: Int, _: Int, _: Int) => parent,
+                    release = (_: Int, _: Throwable) => discard(log += "outer")
+                )(inner)
+            val parked = Eval.partial(handled)
+            assert(parked.isInstanceOf[Kyo.Park[?, ?]])
+            discard(eval(Eval.release(parked, cause)))
+            assert(log.toList == List("outer"))
+            assert(cause.getSuppressed.exists(_ eq Bad))
+        }
+
         "chain onto a parked value composes" in {
             val body: Int < Ask =
                 ask.map { a =>

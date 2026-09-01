@@ -120,7 +120,7 @@ object Isolate:
                     while i < entries.regions do
                         val parent = entries.state(i)
                         val child =
-                            entries.handler(i).asInstanceOf[Handler.ContextHandler[Any, ContextEffect[Any], Any, Any, Any]].fork(parent)
+                            entries.handler(i).asInstanceOf[Handler.ContextHandler[Any, ContextEffect[Any]]].fork(parent)
                         out.add(entries.handler(i), child)
                         if child.asInstanceOf[AnyRef] ne parent.asInstanceOf[AnyRef] then changed = true
                         i += 1
@@ -136,7 +136,7 @@ object Isolate:
                 var out = kyo.Maybe.empty[Stack.Snapshot.Builder]
                 var i   = 0
                 while i < forked.regions do
-                    val hc = forked.handler(i).asInstanceOf[Handler.ContextHandler[Any, ContextEffect[Any], Any, Any, Any]]
+                    val hc = forked.handler(i).asInstanceOf[Handler.ContextHandler[Any, ContextEffect[Any]]]
                     var j  = current.regions - 1
                     while j >= 0 && !(current.handler(j) eq hc) do j -= 1
                     if j >= 0 then

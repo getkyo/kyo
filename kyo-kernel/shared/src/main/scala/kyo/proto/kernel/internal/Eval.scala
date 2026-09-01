@@ -21,11 +21,11 @@ import scala.util.control.NonFatal
 @publicInBinary private[kyo] object Eval:
 
     /** Runs the releases a computation still owes, for a holder giving up on resuming it: the abandonment signal reaches every open
-      * region, innermost first, both in when each release is invoked and in how the returned computation sequences them. Open regions
-      * are found by inspecting the value spine; arrows are never traversed. Anything that never acquired, or is not a computation at
-      * all, owes nothing.
+      * region, innermost first. Open regions are found by inspecting the value spine; arrows are never traversed. Anything that never
+      * acquired, or is not a computation at all, owes nothing. A release that throws is suppressed onto the signal and cannot starve
+      * the ones after it.
       */
-    def release[A, S](v: A < S, ex: Throwable): Any < Any =
+    def release[A, S](v: A < S, ex: Throwable): Unit =
         val collected = scala.collection.mutable.ArrayBuffer.empty[AnyRef]
         @tailrec def collect(v: Any): Unit =
             v match
@@ -50,16 +50,19 @@ import scala.util.control.NonFatal
                         case _: Kyo.Snapshot[?, ?]      => ()
                 case _ => ()
         collect(v)
-        var owed: Any < Any = ()
-        var i               = collected.length - 2
+        var i = collected.length - 2
         while i >= 0 do
-            val handler = collected(i).asInstanceOf[Handler[Nothing, Any, Any, Any, Any]]
-            Debugger.onRelease(handler, ex)
-            owed = owed.andThen(handler.release(collected(i + 1), ex))(using Frame.internal)
+            released(collected(i).asInstanceOf[Handler[?, ?]], collected(i + 1), ex)
             i -= 2
         end while
-        owed
     end release
+
+    private def released(handler: Handler[?, ?], state: Any, ex: Throwable): Unit =
+        Debugger.onRelease(handler, ex)
+        try handler.asInstanceOf[Handler[Nothing, Any]].release(state, ex)
+        catch
+            case t if NonFatal(t) => ex.addSuppressed(t)
+    end released
 
     def apply[A, S](v: A < S): A < S = apply(v, armed = false)
 
@@ -248,7 +251,7 @@ import scala.util.control.NonFatal
 
                 case kyo: Kyo.Handle[CX, ?, ?, T, S2, ?] @unchecked =>
                     kyo.handler match
-                        case handler: Handler.ContextHandler[VX, CX, Any, T, S2] @unchecked =>
+                        case handler: Handler.ContextHandler[VX, CX] @unchecked =>
                             val newState   = handler.derive(ctx.get(handler.tag))
                             val newContext = ctx.update(handler.tag, newState)
                             Debugger.onContext(kyo, newContext)
@@ -274,13 +277,13 @@ import scala.util.control.NonFatal
                                 if i == 0 then stored.chain(contA.chain(contB).asInstanceOf[Arrow[Any, Any, Any]])
                                 else stored
                             entries.handler(i) match
-                                case hc: Handler.ContextHandler[VX, CX, AX, Y, Any] @unchecked =>
+                                case hc: Handler.ContextHandler[VX, CX] @unchecked =>
                                     val st = entries.state(i).asInstanceOf[VX]
                                     Debugger.onRegionEnter(hc, st)
                                     stack.push(hc, st, cont)
                                     install(i + 1, c.update(hc.tag, st))
                                 case handler0 =>
-                                    val handler = handler0.asInstanceOf[Handler[EX, AX, Y, Any, VX]]
+                                    val handler = handler0.asInstanceOf[Handler[EX, VX]]
                                     val st      = entries.state(i).asInstanceOf[VX]
                                     Debugger.onRegionEnter(handler, st)
                                     stack.push(handler, st, cont)
@@ -298,7 +301,7 @@ import scala.util.control.NonFatal
                             val top  = stack.depth - 1
                             val next = stack.continuation(top).asInstanceOf[Arrow[Y, Any, Any]]
                             stack.handler(top) match
-                                case hc: Handler.ContextHandler[VX, CX, AX, Y, Any] @unchecked =>
+                                case hc: Handler.ContextHandler[VX, CX] @unchecked =>
                                     // A context region binds, it does not transform: the result passes
                                     // through at exit in its union representation.
                                     Debugger.onRegionExit(hc, res)
@@ -330,28 +333,39 @@ import scala.util.control.NonFatal
                 EffectTrace.splice(ex)
                 throw ex
             else
-                val top     = stack.depth - 1
-                val handler = stack.handler(top).asInstanceOf[Handler[EX, AX, Y, Any, VX]]
-                val state   = stack.state(top).asInstanceOf[VX]
-                val outcome =
-                    try handler.recover(state, ex)
-                    catch
-                        case ex2 if NonFatal(ex2) =>
-                            Debugger.onRegionExit(handler, ex2)
-                            stack.pop()
-
-                            EffectTrace.attach(ex2, stack)
-                            EffectTrace.splice(ex2)
-                            return recovered(ex2)
-                outcome match
-                    case Present(r) =>
-                        Debugger.onRecover(handler, ex)
-                        Debugger.onRegionExit(handler, r)
-                        r.chain(stack.continuation(top).asInstanceOf[Arrow[Y, A, S]])
-                    case Absent =>
-                        Debugger.onRegionExit(handler, ex)
+                val top   = stack.depth - 1
+                val state = stack.state(top)
+                stack.handler(top) match
+                    case hc: Handler.ContextHandler[VX, CX] @unchecked =>
+                        // A binding cannot answer a failure; it dies without resuming.
+                        Debugger.onRegionExit(hc, ex)
+                        released(hc, state, ex)
                         stack.pop()
                         recovered(ex)
+                    case handler0 =>
+                        val handler = handler0.asInstanceOf[Handler.ArrowHandler[EX, AX, Y, Any, VX]]
+                        val outcome =
+                            try handler.recover(state.asInstanceOf[VX], ex)
+                            catch
+                                case ex2 if NonFatal(ex2) =>
+                                    Debugger.onRegionExit(handler, ex2)
+                                    released(handler, state, ex2)
+                                    stack.pop()
+
+                                    EffectTrace.attach(ex2, stack)
+                                    EffectTrace.splice(ex2)
+                                    return recovered(ex2)
+                        outcome match
+                            case Present(r) =>
+                                Debugger.onRecover(handler, ex)
+                                Debugger.onRegionExit(handler, r)
+                                r.chain(stack.continuation(top).asInstanceOf[Arrow[Y, A, S]])
+                            case Absent =>
+                                Debugger.onRegionExit(handler, ex)
+                                released(handler, state, ex)
+                                stack.pop()
+                                recovered(ex)
+                        end match
                 end match
 
         @tailrec def guarded(curr: A < S, ctx: Context): A < S =
@@ -370,7 +384,7 @@ import scala.util.control.NonFatal
                             if i == stack.depth then rebuilt
                             else
                                 stack.handler(i) match
-                                    case handler: Handler.ContextHandler[VX, CX, ?, ?, ?] @unchecked =>
+                                    case handler: Handler.ContextHandler[VX, CX] @unchecked =>
                                         rebuild(i + 1, rebuilt.update(handler.tag, stack.state(i).asInstanceOf[VX]))
                                     case _ => rebuild(i + 1, rebuilt)
                         return guarded(resumed, rebuild(0, Context.empty))

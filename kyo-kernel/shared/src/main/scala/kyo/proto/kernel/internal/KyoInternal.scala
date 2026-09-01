@@ -75,7 +75,7 @@ object Kyo:
         Debugger.onAlloc(this)
 
         def value: A < (E & S)
-        def handler: Handler[E, A, B, S, State]
+        def handler: Handler[E, State]
         def state: State
         def cont: Arrow[B, C, S]
 
