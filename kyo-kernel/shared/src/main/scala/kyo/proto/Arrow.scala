@@ -9,6 +9,7 @@ import kyo.proto.kernel.internal.Safepoint
 import kyo.proto.kernel.internal.short
 import kyo.proto.kernel.internal.site
 import scala.annotation.nowarn
+import scala.annotation.tailrec
 
 trait Kyo[+A, -S]:
 
@@ -76,6 +77,25 @@ object Arrow:
                             out
                         end if
 
+    @nowarn("msg=anonymous")
+    inline def recursive[A, B, S](inline f: (Arrow[A, B, S], A) => B < S)(using _frame: Frame): Arrow[A, B, S] =
+        new Step[A, B, S]:
+            def frame                = _frame
+            override def apply(v: A) = f(this, v)
+            def apply[C, S2](v: A < S2, cont: Arrow[B, C, S2]) =
+                v match
+                    case v: Pending[A, S2] @unchecked =>
+                        Effect.defer(v, this, cont)
+                    case _ =>
+                        val slot = Safepoint.get()
+                        if !Safepoint.enter(slot) then
+                            Effect.defer(v, this, cont)
+                        else
+                            val out = cont.head(apply(Nested.unnest(v)), cont.tail)
+                            Safepoint.exit(slot)
+                            out
+                        end if
+
     private[kyo] trait Transform[-A, B, -S] extends Arrow[A, B, S]:
         type X = B
         def head = this
@@ -105,12 +125,33 @@ object Arrow:
         Debugger.onAlloc(this)
         def frame = Frame.internal
         def apply[D, S2](v: A < S2, cont: Arrow[C, D, S2]) =
-            a(v, b.chain(cont))
+            Effect.defer(v, this, cont)
 
         type X = B
-        def head              = a
-        def tail              = b
-        override def toString = s"Chain(${short(a)}, ${short(b)})"
+        def head = a
+        def tail = b
+        override def toString: String =
+            val out = new StringBuilder
+            @tailrec def render(pending: List[Arrow[?, ?, ?] | String], fuel: Int): Unit =
+                pending match
+                    case (s: String) :: rest =>
+                        out.append(s)
+                        render(rest, fuel)
+                    case (link: Arrow[?, ?, ?]) :: rest =>
+                        link match
+                            case c: Chain[?, ?, ?, ?] if fuel > 0 =>
+                                out.append("Chain(")
+                                render(c.a :: ", " :: c.b :: ")" :: rest, fuel - 1)
+                            case _: Chain[?, ?, ?, ?] =>
+                                out.append("...")
+                                render(rest, fuel)
+                            case other =>
+                                out.append(short(other))
+                                render(rest, fuel)
+                    case _ => ()
+            render(this :: Nil, 32)
+            out.result()
+        end toString
     end Chain
 
 end Arrow
