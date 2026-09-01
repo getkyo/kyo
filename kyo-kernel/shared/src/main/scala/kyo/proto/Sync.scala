@@ -4,7 +4,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kyo.Frame
 import kyo.Maybe
 import kyo.Maybe.Absent
-import kyo.Result
 import kyo.Tag
 import kyo.proto.kernel.<
 import kyo.proto.kernel.ContextEffect
@@ -29,9 +28,9 @@ object Sync:
       * closure. Atomic because a parked remainder can be drained on one thread while a
       * captured continuation completes on another.
       */
-    final private[kyo] class Cell(fin: Maybe[Result.Error[Nothing]] => Unit) extends AtomicBoolean:
+    final private[kyo] class Cell(fin: Maybe[Throwable] => Unit) extends AtomicBoolean:
         private[kyo] def complete(): Unit           = if compareAndSet(false, true) then fin(Absent)
-        private[kyo] def drain(ex: Throwable): Unit = if compareAndSet(false, true) then fin(Maybe(Result.Panic(ex)))
+        private[kyo] def drain(ex: Throwable): Unit = if compareAndSet(false, true) then fin(Maybe(ex))
     end Cell
 
     private[kyo] object Cell:
@@ -53,7 +52,7 @@ object Sync:
       * is registered in the same slice the acquire settles.
       */
     def acquireReleaseWith[A, S1](acquire: A < (Sync & S1))(
-        release: (A, Maybe[Result.Error[Nothing]]) => Unit
+        release: (A, Maybe[Throwable]) => Unit
     )[B, S2](use: A => B < S2)(using Frame): B < (Sync & S1 & S2) =
         defer(acquire).map { a =>
             val cell = new Cell(outcome => release(a, outcome))
@@ -71,7 +70,7 @@ object Sync:
     /** Runs a finalizer after the computation: on completion, failure, or abandonment,
       * exactly once. Absent means the computation completed.
       */
-    def ensure[A, S](f: Maybe[Result.Error[Nothing]] => Unit)(v: => A < S)(using Frame): A < (Sync & S) =
+    def ensure[A, S](f: Maybe[Throwable] => Unit)(v: => A < S)(using Frame): A < (Sync & S) =
         acquireReleaseWith(())((_, outcome) => f(outcome))(_ => v)
 
     /** WARNING: Low-level API. Discharges the Sync marker; the deferred effects run when
