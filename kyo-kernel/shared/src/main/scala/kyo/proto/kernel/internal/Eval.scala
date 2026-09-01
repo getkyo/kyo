@@ -105,33 +105,23 @@ import scala.util.control.NonFatal
         releaseCollected(collected, ex)
     end drainOwed
 
-    // The exit drain for a run of live regions a loop clause discarded by answering done:
-    // they release innermost first, what each owes before the region itself, before the
-    // caller truncates them away. The scan runs first so the common nothing-owed
-    // completion pays no allocation, not even the signal's.
-    private def dropRegions(stack: Stack, from: Int): Unit =
-        var any = false
-        var i   = from
-        while i < stack.depth && !any do
-            any = !stack.owedOf(i).isEmpty || stack.handler(i).isInstanceOf[Handler.ContextHandler[?, ?, ?, ?]]
+    // Restores the context for the run a dump removed: each dumped binding's tag rebinds
+    // to the nearest live entry below, or leaves the context entirely, mirroring the
+    // settled pop's downdate.
+    private def downdated(stack: Stack, entries: Stack.Snapshot, ctx: Context): Context =
+        var c = ctx
+        var i = 0
+        while i < entries.regions do
+            entries.handler(i) match
+                case hc: Handler.ContextHandler[VX, CX, ?, ?] @unchecked =>
+                    val j = stack.find(hc.tag)
+                    c = if j < 0 then c.remove(hc.tag) else c.update(hc.tag, stack.state(j).asInstanceOf[VX])
+                case _ => ()
+            end match
             i += 1
         end while
-        if any then
-            val collected = scala.collection.mutable.ArrayBuffer.empty[AnyRef]
-            i = from
-            while i < stack.depth do
-                stack.handler(i) match
-                    case hc: Handler.ContextHandler[?, ?, ?, ?] =>
-                        collected += hc
-                        collected += stack.state(i).asInstanceOf[AnyRef]
-                    case _ => ()
-                end match
-                expandOwed(collected, stack.takeOwed(i))
-                i += 1
-            end while
-            releaseCollected(collected, discarded())
-        end if
-    end dropRegions
+        c
+    end downdated
 
     private def released(handler: Handler.ContextHandler[?, ?, ?, ?], state: Any, ex: Throwable): Unit =
         Debugger.onRelease(handler, ex)
@@ -213,19 +203,29 @@ import scala.util.control.NonFatal
                             if idx < 0 then bug(s"unhandled suspension: $kyo")
                             else
                                 Debugger.onHandle(kyo, stack.handler(idx), stack.state(idx))
-                                if idx < stack.depth - 1 then
+                                val atTop = idx == stack.depth - 1
+                                if !atTop then
                                     Debugger.onForeign(kyo, stack.handler(stack.depth - 1))
-                                def continuation =
-                                    if idx == stack.depth - 1 then
-                                        kyo.cont.chain(contA.chain(contB))
+                                // A crossing vacates the regions above the answering entry: they
+                                // leave the stack as the capture's cargo, owed by the entry, and
+                                // their bindings leave the context, so the clause and its outcome
+                                // read what is below them.
+                                val entries =
+                                    if atTop then Stack.Snapshot.empty
                                     else
-                                        val entries = stack.dump(idx + 1)
+                                        val dumped = stack.dump(idx + 1)
                                         Debugger.whenEnabled {
-                                            var i = entries.regions - 1
+                                            var i = dumped.regions - 1
                                             while i >= 0 do
-                                                Debugger.onRegionExit(entries.handler(i), kyo)
+                                                Debugger.onRegionExit(dumped.handler(i), kyo)
                                                 i -= 1
                                         }
+                                        dumped
+                                val ctx2 = if atTop then ctx else downdated(stack, entries, ctx)
+                                def continuation =
+                                    if atTop then
+                                        kyo.cont.chain(contA.chain(contB))
+                                    else
                                         val kc = kyo.cont
                                         val ca = contA
                                         val cb = contB
@@ -247,7 +247,7 @@ import scala.util.control.NonFatal
                                     case handler: Handler.ContHandler[IX, OX, EX, C, Y, S2] @unchecked =>
                                         val result = handler.run(kyo.input, continuation)
                                         Debugger.onResult(result)
-                                        loop(result, Arrow.id, Arrow.id, ctx)
+                                        loop(result, Arrow.id, Arrow.id, ctx2)
                                     case handler: Handler.ContOpHandler[EX, C, Y, S2] @unchecked =>
                                         val operation: OX[VX] < EX =
                                             new Kyo.SuspendArrow[IX, OX, EX, VX, OX[VX], EX]:
@@ -256,8 +256,8 @@ import scala.util.control.NonFatal
                                                 def cont  = Arrow.id
                                         val result = handler.run(operation, continuation)
                                         Debugger.onResult(result)
-                                        loop(result, Arrow.id, Arrow.id, ctx)
-                                    case handler: Handler.LoopHandler[VX, IX, OX, EX, C, Y, S2] @unchecked if idx == stack.depth - 1 =>
+                                        loop(result, Arrow.id, Arrow.id, ctx2)
+                                    case handler: Handler.LoopHandler[VX, IX, OX, EX, C, Y, S2] @unchecked if atTop =>
                                         val k    = kyo.cont.chain(contA.chain(contB)).asInstanceOf[Arrow[Any, Any, Any]]
                                         val exit = handler.answers(stack.state(idx).asInstanceOf[VX], kyo.input, k, armed, slot)
                                         Debugger.onResult(exit)
@@ -309,8 +309,7 @@ import scala.util.control.NonFatal
                                         outcome0 match
                                             case outcome: Loop.Continue2[VX, OX[VX] < (EX & S2)] @unchecked =>
                                                 stack.setState(idx, outcome._1)
-                                                if idx == stack.depth - 1 then loop(outcome._2, kyo.cont, contA.chain(contB), ctx)
-                                                else loop(outcome._2, continuation, Arrow.id, ctx)
+                                                loop(outcome._2, continuation, Arrow.id, ctx2)
                                             case pending: Pending[Outcome2[VX, OX[VX] < (EX & S2), Y < S2], S2] @unchecked =>
                                                 type Out = Outcome2[VX, OX[VX] < (EX & S2), Y < S2]
                                                 val reentry = continuation
@@ -335,23 +334,15 @@ import scala.util.control.NonFatal
                                                 if !owedHere.isEmpty then
                                                     if idx == 0 then rootOwed = rootOwed.concat(owedHere)
                                                     else stack.oweAll(idx - 1, owedHere)
-                                                loop(pending, dispatch, next, ctx)
+                                                loop(pending, dispatch, next, ctx2)
                                             case outcome =>
                                                 val result = Nested.unnest[Y < S2](outcome)
-                                                Debugger.whenEnabled {
-                                                    var j = stack.depth - 1
-                                                    while j > idx do
-                                                        Debugger.onRegionExit(stack.handler(j), outcome)
-                                                        j -= 1
-                                                }
                                                 Debugger.onRegionExit(handler, result)
-                                                val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, Any]]
-                                                // The clause answered done over live regions: they die
-                                                // without resuming, so they release before the truncate
-                                                // discards them.
-                                                dropRegions(stack, idx)
+                                                val next     = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, Any]]
+                                                val owedHere = stack.takeOwed(idx)
                                                 stack.truncate(idx)
-                                                loop(result, next, Arrow.id, ctx)
+                                                if !owedHere.isEmpty then drainOwed(owedHere, discarded())
+                                                loop(result, next, Arrow.id, ctx2)
                                         end match
                                     case handler =>
                                         bug(s"unhandled: $handler")

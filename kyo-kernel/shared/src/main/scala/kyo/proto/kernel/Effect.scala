@@ -1,5 +1,6 @@
 package kyo.proto.kernel
 
+import java.util.concurrent.atomic.AtomicBoolean
 import kyo.Frame
 import kyo.Maybe
 import kyo.Result
@@ -9,10 +10,65 @@ import kyo.proto.kernel.internal.*
 import kyo.proto.kernel.internal.Kyo.*
 import language.implicitConversions
 import scala.annotation.nowarn
+import scala.util.control.NonFatal
 
 abstract class Effect private[kernel] ()
 
 object Effect:
+
+    /** The bracket region's effect: never suspended, a region exists only to be reached. */
+    sealed private[kyo] trait Finalize extends ContextEffect[Cell]
+
+    /** The obligation: a claim around the release thunk. The resource lives in the thunk's
+      * closure. Atomic because a parked remainder can be drained on one thread while a
+      * captured continuation completes on another.
+      */
+    final private[kyo] class Cell(fin: Maybe[Throwable] => Unit) extends AtomicBoolean:
+        private[kyo] def complete(): Unit           = if compareAndSet(false, true) then fin(Maybe.Absent)
+        private[kyo] def drain(ex: Throwable): Unit = if compareAndSet(false, true) then fin(Maybe(ex))
+    end Cell
+
+    private[kyo] object Cell:
+        // What a fork installs: a child's view of a bracket it does not own. Already
+        // claimed, so a child's death cannot drain the parent's obligation.
+        private[kyo] val inert: Cell =
+            val cell = new Cell(_ => ())
+            cell.set(true)
+            cell
+        end inert
+    end Cell
+
+    /** Acquires a resource, uses it, and releases it exactly once: on completion, when a
+      * failure unwinds past the bracket, when the computation is abandoned, and when a
+      * capture holding it is discarded. The region opens through a bind step, in the same
+      * slice the acquire settles: no safepoint can separate the two, so an existing
+      * resource is never left without its region. Absent means the extent completed.
+      */
+    def bracket[A, S1](acquire: A < S1)(
+        release: (A, Maybe[Throwable]) => Unit
+    )[B, S2](use: A => B < S2)(using _frame: Frame): B < (S1 & S2) =
+        val open = new Arrow.Bind[A, B, S1 & S2]:
+            def frame = _frame
+            override def apply(a: A) =
+                val cell = new Cell(outcome => release(a, outcome))
+                val body =
+                    // The region does not exist until the handle below wraps the body, so
+                    // a use that throws during application drains here on the way out.
+                    try use(a)
+                    catch
+                        case ex if NonFatal(ex) =>
+                            cell.drain(ex)
+                            throw ex
+                ContextEffect.handle(Tag[Finalize])(
+                    (_: Maybe[Cell]) => cell,
+                    fork = (_: Cell) => Cell.inert,
+                    join = (parent: Cell, _: Cell, _: Cell) => parent,
+                    done = (c: Cell) => c.complete(),
+                    release = (c: Cell, ex: Throwable) => c.drain(ex)
+                )(body)
+            end apply
+        defer(acquire).chain(open)
+    end bracket
 
     def defer[A, B, S](v: A < S, cont: Arrow[A, B, S]): B < S =
         cont match

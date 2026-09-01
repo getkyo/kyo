@@ -975,4 +975,80 @@ class EvalTest extends AnyFreeSpec:
         assert(seen.exists(_ eq Inner))
     }
 
+    "owed dumps" - {
+        "a dropped capture's regions release when the answering region exits" in {
+            val log = collection.mutable.ListBuffer[String]()
+            sealed trait Cfg extends kyo.proto.kernel.ContextEffect[Int]
+            val body: Int < Ask =
+                kyo.proto.kernel.ContextEffect.handle(Tag[Cfg])(
+                    _.getOrElse(7),
+                    fork = (parent: Int) => parent,
+                    join = (parent: Int, _: Int, _: Int) => parent,
+                    release = (_: Int, _: Throwable) => discard(log += "released")
+                )(ask.map(x => x))
+            val dropped: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, _) => -1, b => b)
+            val after: Int < Any = dropped.map { r =>
+                discard(log += s"after $r")
+                r
+            }
+            assert(eval(after) == -1)
+            assert(log.toList == List("released", "after -1"))
+        }
+
+        "sibling dumps drain newest first at the owner's exit" in {
+            val log = collection.mutable.ListBuffer[String]()
+            sealed trait CfgA extends kyo.proto.kernel.ContextEffect[Int]
+            sealed trait CfgB extends kyo.proto.kernel.ContextEffect[Int]
+            def scoped[E <: kyo.proto.kernel.ContextEffect[Int]](tag: Tag[E], name: String)(v: Int < (Ask & E)): Int < Ask =
+                kyo.proto.kernel.ContextEffect.handle(tag)(
+                    (_: Maybe[Int]).getOrElse(0),
+                    fork = (parent: Int) => parent,
+                    join = (parent: Int, _: Int, _: Int) => parent,
+                    release = (_: Int, _: Throwable) => discard(log += name)
+                )(v)
+            val body: Int < Ask = scoped(Tag[CfgA], "a")(ask.map(x => x))
+            var first           = true
+            val handled: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
+                [C] =>
+                    (_, _) =>
+                        if first then
+                            first = false
+                            scoped(Tag[CfgB], "b")(ask.map(x => x))
+                        else -1,
+                b => b
+            )
+            assert(eval(handled) == -1)
+            assert(log.toList == List("b", "a"))
+        }
+
+        "a raw release hook fires on both the unwind and the owed drain" in {
+            val log = collection.mutable.ListBuffer[Int]()
+            sealed trait Cfg extends kyo.proto.kernel.ContextEffect[Int]
+            val body: Int < Ask =
+                kyo.proto.kernel.ContextEffect.handle(Tag[Cfg])(
+                    _.getOrElse(7),
+                    fork = (parent: Int) => parent,
+                    join = (parent: Int, _: Int, _: Int) => parent,
+                    release = (state: Int, _: Throwable) => discard(log += state)
+                )(ask.map(_ => (throw Boom): Int))
+            val outer: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, cont) => cont(1), b => b)
+            val ex               = intercept[RuntimeException](eval(outer))
+            assert(ex eq Boom)
+            assert(log.toList == List(7, 7))
+        }
+
+        "a clause reads the outer binding, not a dumped one" in {
+            sealed trait Cfg extends kyo.proto.kernel.ContextEffect[Int]
+            def read: Int < Cfg = kyo.proto.kernel.ContextEffect.suspend(Tag[Cfg])
+            val body: Int < (Ask & Cfg) =
+                (kyo.proto.kernel.ContextEffect.handleInheritable(Tag[Cfg], 1)(ask.map(x => x)): Int < Ask)
+            val handled: Int < Cfg = ArrowEffect.handleCont(Tag[Ask], body)(
+                [C] => (_, cont) => read.map(c => cont(c)),
+                b => b
+            )
+            val outer: Int < Any = kyo.proto.kernel.ContextEffect.handleInheritable(Tag[Cfg], 100)(handled)
+            assert(eval(outer) == 100)
+        }
+    }
+
 end EvalTest
