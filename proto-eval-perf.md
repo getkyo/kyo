@@ -123,6 +123,52 @@ the record: ProtoBench should gain a permanent shared-dispatch row so this axis
 stays measured (KernelBench has sharedHandlerPaysDispatch; ProtoBench does not),
 and all recorded numbers, including the old records, are monomorphic best cases.
 
+## The answers burst: ported, ablated, minimized
+
+The kyo.kernel answers mechanism (per-site expanded dispatch, consecutive same-tag
+answers inside one compiled method) ported onto the proto HandlerLoop protocol in
+the probe worktree, suite green 1497 at every step. Ablation on
+handleLoopAnswersInPlace (mono guide), polyLoopHandlers (poly guide), emitting
+(red-flag row):
+
+| variant | answersInPlace | stateful | polyLoop | emitting |
+|---|---|---|---|---|
+| committed fix, no burst | 149.0 | 152.9 | 764.0 | 76.4 |
+| full port, Out cell | 74.2 | 78.4 | 382.6 | 96.4 |
+| A1: generic burst, no per-site expansion | 80.1 | 90.6 | 745.2 | 87.1 |
+| A2: per-site burst, immutable exits, no cell | 63.5 +-0.4 | 67.7 +-0.4 | 71.9 +-0.5 | 87.1 +-2.7 |
+
+What is actually necessary, isolated one variable at a time:
+
+1. The burst structure is the dominant single factor: consecutive settled answers
+   with the state in a local, never returning to the eval loop per operation.
+   Alone (A1, virtual run per answer, no inlining) it takes mono from 149 to 80.
+2. The per-site expansion matters twice: it buys the last 8 to 16 percent on mono
+   rows, and it carries the entire polymorphic win, but only when the
+   suspension-decompose runs inside the expanded template. With the decompose as a
+   shared helper (the Out-cell port) poly stopped at 383; with it spliced per site
+   (A2) poly collapsed to 71.9, indistinguishable from mono. The residual
+   megamorphic site was the decompose's node accessors, not the handler call.
+3. The mutable Out cell is NOT necessary and measurably hurts: replacing it with
+   an immutable exit ADT (Continue, Reattach, Suspended, Finished, Threw; one
+   small allocation per burst exit, throw path as a value) improved every row,
+   including emitting. No mutation remains anywhere in the protocol; the only vars
+   are locals inside the per-site method, and the exit objects are complete
+   values, so the value-semantics objections to write-through state do not apply.
+
+Where that leaves the numbers against everything else on record (all -f 3):
+answersInPlace 63.5 and fuses 61.2 versus the CPS kernel's 88.8 and 85.6 and the
+old proto record's 164.6 and 175.4; stateful 67.7 versus kernel 116.8; the
+4-handler polymorphic row within noise of monomorphic. Open items: emitting sits
+at 87.1 versus its 67.7 pre-fix best, the burst entry is overhead for clauses
+that suspend every operation and a single-step answer path is the candidate fix;
+the HandlerCont lane has not received the same treatment (its poly row still pays
+the cliff); crossings fall back to the general lane; the templates splice at
+expansion sites, so the machinery's visibility needs a real decision (the probe
+widened it to public because protodemo sits outside kyo); and with the burst in
+place the scalar-replacement escape store becomes obsolete on this lane, since
+the Continue2 never reaches the eval loop.
+
 ## State
 
 - Fix committed on the branch as a8cff0a3f8, suite green (1497), `Debugger.enabled`
