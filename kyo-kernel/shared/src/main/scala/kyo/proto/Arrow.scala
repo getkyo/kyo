@@ -87,12 +87,6 @@ object Arrow:
         override def toString = s"Step(${site(frame)})"
     end Step
 
-    // The step whose application cannot be separated from its settled input: it applies
-    // immediately, without the budget gate every other user-function arrow consults, so
-    // no safepoint can sit between a value settling and this step consuming it. A gate
-    // here could defer a settled value with this step as its continuation, and a park of
-    // that node strands whatever the step was about to ensure; the value's own gates all
-    // fire before the value settles.
     abstract private[kyo] class Ensure[-A, B, -S] extends Step[A, B, S]:
         override def apply(v: A): B < S
 

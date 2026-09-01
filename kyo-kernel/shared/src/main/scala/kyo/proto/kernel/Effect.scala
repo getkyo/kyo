@@ -16,21 +16,14 @@ abstract class Effect private[kernel] ()
 
 object Effect:
 
-    /** The bracket region's effect: never suspended, a region exists only to be reached. */
     sealed private[kyo] trait Finalize extends ContextEffect[Cell]
 
-    /** The obligation: a claim around the release thunk. The resource lives in the thunk's
-      * closure. Atomic because a parked remainder can be drained on one thread while a
-      * captured continuation completes on another.
-      */
     final private[kyo] class Cell(fin: Maybe[Throwable] => Unit) extends AtomicBoolean:
         private[kyo] def complete(): Unit           = if compareAndSet(false, true) then fin(Maybe.Absent)
         private[kyo] def drain(ex: Throwable): Unit = if compareAndSet(false, true) then fin(Maybe(ex))
     end Cell
 
     private[kyo] object Cell:
-        // What a fork installs: a child's view of a bracket it does not own. Already
-        // claimed, so a child's death cannot drain the parent's obligation.
         private[kyo] val inert: Cell =
             val cell = new Cell(_ => ())
             cell.set(true)
@@ -38,16 +31,6 @@ object Effect:
         end inert
     end Cell
 
-    /** Acquires a resource, uses it, and releases it exactly once: on completion, when a
-      * failure unwinds past the bracket, when the computation is abandoned, and when a
-      * capture holding it is discarded. The region opens through an ensure step, in the
-      * same slice the acquire settles: no safepoint can separate the two, so an existing
-      * resource is never left without its region. Only that final slice is guarded: an
-      * abandonment earlier in a multi-step acquire owes nothing yet, so a compound
-      * acquisition nests brackets, one per step. Absent means the extent completed.
-      * Re-entering a released extent, by resuming a capture that outlived its region, is
-      * refused with [[Closed]].
-      */
     def bracket[A, S1](acquire: A < S1)(
         release: (A, Maybe[Throwable]) => Unit
     )[B, S2](use: A => B < S2)(using _frame: Frame): B < (S1 & S2) =
@@ -56,8 +39,6 @@ object Effect:
             override def apply(a: A) =
                 val cell = new Cell(outcome => release(a, outcome))
                 val body =
-                    // The region does not exist until the handle below wraps the body, so
-                    // a use that throws during application drains here on the way out.
                     try use(a)
                     catch
                         case ex if NonFatal(ex) =>
@@ -70,9 +51,6 @@ object Effect:
                     def join(parent: Cell, fk: Cell, child: Cell)                       = parent
                     override private[kyo] def done(state: Cell): Unit                   = state.complete()
                     override private[kyo] def release(state: Cell, ex: Throwable): Unit = state.drain(ex)
-                    // A fork's inert view is claimed by design and installs freely; a
-                    // claimed obligation of the extent itself is a released resource,
-                    // and re-entering it is refused.
                     override private[kyo] def reenter(state: Cell): Unit =
                         if (state ne Cell.inert) && state.get() then
                             throw new kyo.Closed("Bracket resource", _frame)(using _frame)

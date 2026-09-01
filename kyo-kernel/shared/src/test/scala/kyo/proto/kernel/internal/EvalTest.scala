@@ -1051,8 +1051,6 @@ class EvalTest extends AnyFreeSpec:
             val dropped: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, _) => -1, b => b)
             assert(eval(dropped) == -1)
             assert(drops == 1)
-            // The next eval on this thread borrows the same pooled stack; a stale owed
-            // slot or eval-owed chunk would fire hooks in a computation that never dumped.
             var completions = 0
             var releases    = 0
             val clean: Int < Any =

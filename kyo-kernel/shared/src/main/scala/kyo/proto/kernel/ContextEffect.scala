@@ -66,7 +66,6 @@ object ContextEffect:
                     case kyo: Pending[A, S2] @unchecked => Effect.defer(kyo, this, cont2)
                     case _                              => cont2(f(Nested.unnest[A](v)), Arrow.id)
 
-    // The child of an isolate inherits the binding and the merge keeps the parent's state.
     inline def handleInheritable[A, E <: ContextEffect[A], B, S](
         inline effectTag: Tag[E],
         inline value: A
@@ -108,15 +107,6 @@ object ContextEffect:
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
         handle(effectTag)((outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined), fork, join, release = release)(v)
 
-    /** Opens a binding for E: derive computes the state from the outer binding, fork and
-      * join carry it across isolate boundaries, done fires at the region's completion,
-      * and release fires whenever the region dies without resuming. All hooks are pure;
-      * over a pending body they run strictly in the eval, and over a settled body no
-      * region opens and done(derive(...)) fires here at the call site. done and release
-      * may each fire more than once per logical region (a shared dump, a fork, a merged
-      * shadow region): the edge is reached at least once, and exactly-once belongs to
-      * the state.
-      */
     @nowarn("msg=anonymous")
     inline def handle[A, E <: ContextEffect[A], B, S](
         inline effectTag: Tag[E]
@@ -151,8 +141,6 @@ object ContextEffect:
                     def cont           = Arrow.id
                 end new
             case _ =>
-                // A settled body opens no region, but the completion edge still fires:
-                // whatever the state carries (a bracket's obligation) completes here.
                 done(derive(Maybe.empty))
                 Nested.unnest[B](v)
         end match

@@ -49,8 +49,6 @@ class ArrowEffectTest extends AnyFreeSpec:
             assert(!reached)
         }
 
-        // The outcome payload channel: a done value must be delivered as data whatever
-        // it is, never re-entering the outcome dispatch as a continue or a suspension.
         "a done payload that is itself a Continue2 still stops the region" in {
             type Out = Loop.Outcome2[Unit, Int < Any, Int < Any]
             val hostile: Out = eval(Loop.continue((), 7: Int < Any))

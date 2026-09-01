@@ -9,8 +9,6 @@ class LoopTest extends AnyFreeSpec:
 
     given Frame = Frame.internal
 
-    // produces the value behind a deferred step so the loop's pending arm is
-    // exercised
     def defer[A, S](v: => A < S): A < S =
         Effect.defer(v)
 
@@ -659,9 +657,6 @@ class LoopTest extends AnyFreeSpec:
         assert(count == 10000)
     }
 
-    // a deferred body hides a miscount: an extra evaluation of `run` only builds a node, and if the loop
-    // then stops it is discarded unexecuted. A settled body is executed by the evaluation itself, so it is
-    // the case that reports the count honestly
     "repeat with a settled body runs it exactly n times" in {
         var count = 0
 
@@ -912,8 +907,6 @@ class LoopTest extends AnyFreeSpec:
         }
     }
 
-    // The outcome payload channel of the driver's own dispatch: a done value must be
-    // delivered as data whatever it is, and never re-enter the dispatch as a continue.
     "outcome payloads that are outcomes" - {
         "a done payload that is itself a Continue stops the loop" in {
             type Out = Loop.Outcome[Int, Int]

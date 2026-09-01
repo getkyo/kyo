@@ -78,9 +78,7 @@ object Isolate:
                             case _                                         => cont2(f(Nested.unnest[Stack.Snapshot](v)), Arrow.id)
 
             def isolate[A, S](state: Stack.Snapshot, v: A < S)(using Frame): (Stack.Snapshot, Stack.Snapshot, A) < S =
-                val forked = fork(state)
-                // The child's final region states are read before the park exits, so join sees
-                // where the child ended, not only where it started.
+                val forked                          = fork(state)
                 val inner: (Stack.Snapshot, A) < S  = v.map(a => capture(finals => (finals, a)))
                 val parked: (Stack.Snapshot, A) < S = Kyo.Park[(Stack.Snapshot, A), S](inner.asInstanceOf[Any < Any], forked)
                 parked.map((finals, a) => (forked, finals, a))
@@ -98,19 +96,12 @@ object Isolate:
                                     val av: A < Any = a
                                     merge(forked, finals, Nested.unnest[Stack.Snapshot](cur)) match
                                         case kyo.Maybe.Present(joined) =>
-                                            // The continuation delivers inside the park, so the
-                                            // joined bindings shadow the rest of the parent's
-                                            // extent up to the enclosing region boundary.
                                             Kyo.Park[C, S2](cont2(av, Arrow.id).asInstanceOf[Any < Any], joined)
                                         case _ =>
                                             cont2(av, Arrow.id)
                                     end match
                 }
 
-            // Park currency: the snapshot carries erased handlers and states, so the casts
-            // reinterpret at that boundary and check nothing at runtime. fork is pure and runs
-            // strictly; a fold where every region keeps its state by reference shares the
-            // origin snapshot.
             private def fork(entries: Stack.Snapshot): Stack.Snapshot =
                 if entries.isEmpty then entries
                 else
@@ -128,10 +119,6 @@ object Isolate:
                     if changed then out.result() else entries
             end fork
 
-            // The pure merge: joins run in entry order; each forked region's parent is the
-            // topmost live region with the same handler, so chained restores read through
-            // earlier merges, and a region the parent has already exited is skipped. Only
-            // bindings the join actually moved install; Absent means nothing changed.
             private def merge(forked: Stack.Snapshot, finals: Stack.Snapshot, current: Stack.Snapshot): kyo.Maybe[Stack.Snapshot] =
                 var out = kyo.Maybe.empty[Stack.Snapshot.Builder]
                 var i   = 0

@@ -123,8 +123,6 @@ class EffectBracketTest extends AnyFreeSpec:
             assert(parked.isInstanceOf[Kyo.Park[?, ?]])
             Eval.release(parked, Boom)
             assert(count == 1)
-            // The abandoned extent is spent: resuming it is refused, and the release
-            // stays at exactly once.
             discard(intercept[kyo.Closed](eval(parked)))
             assert(count == 1)
         }
@@ -257,14 +255,10 @@ class EffectBracketTest extends AnyFreeSpec:
             assert(eval(r) == -1)
             assert(outcomes.size == 1)
             assert(outcomes.head.isDefined)
-            // The stored capture outlived its region: the resource is released, so
-            // re-entering the extent refuses instead of running use against it.
             discard(intercept[kyo.Closed](eval(leaked.get(1))))
             assert(outcomes.size == 1)
         }
 
-        // The discard-drain report destination is platform behavior, pinned in the
-        // jvm-native ReportTest; the starvation property on that path is pinned there too.
         "a throwing release on the unwind does not starve the ones after it" in {
             object Bad extends RuntimeException("bad", null, false, false)
             val failure = new RuntimeException("failure")
@@ -351,8 +345,6 @@ class EffectBracketTest extends AnyFreeSpec:
                 [C] => (_, cont) => cont(1).map(x => cont(2).map(y => x * 100 + y)),
                 b => b
             )
-            // The first shot completes the extent and releases; the second shot would
-            // run use against the released resource, so it is refused.
             discard(intercept[kyo.Closed](eval(r)))
             assert(outcomes.toList == List(Maybe.empty))
         }

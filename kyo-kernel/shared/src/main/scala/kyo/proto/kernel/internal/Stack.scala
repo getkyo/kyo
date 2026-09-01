@@ -13,20 +13,10 @@ final private[kernel] class Stack:
     private var continuations = new Array[Arrow[?, ?, ?]](0)
     private var size          = 0
 
-    // What each entry owes: the snapshots its dumps produced, newest last. Every slot
-    // holds a real chunk, empty by default; the sites that null the other arrays reset
-    // these to empty, so no slot is ever null.
     private var owed = new Array[Chunk[Stack.Snapshot]](0)
 
-    // What the eval itself owes: dumps whose owner dissolved with nothing below. Lives
-    // here rather than as an eval local so the nested eval functions do not lift it into
-    // a per-eval box; the same reset protocol as the owed slots keeps the pool clean.
     private var evalOwed: Chunk[Stack.Snapshot] = Chunk.empty
 
-    // Written on every LoopHandler dispatch so the clause outcome escapes and is
-    // never read back: C2's scalar replacement of the outcome inside the eval loop
-    // compiles to code that roughly doubles the settled LoopHandler benchmark rows,
-    // and a store into the pooled stack is one it cannot elide.
     var scratch: Any = null
 
     def isEmpty: Boolean = size == 0
@@ -45,16 +35,10 @@ final private[kernel] class Stack:
 
     def pop(): Unit = size -= 1
 
-    // Whether anything on this stack owes at all: set by every owe and by dump, cleared
-    // only with the stack, so it can false-positive after a drain but never miss. The
-    // exit sites in the eval's hot body compile to this one read and a rarely taken
-    // branch, with the drain machinery out of line: the inline-budget measurement on the
-    // continuationBodiesFuse row is what forced the shape.
     private var owes = false
 
     def owesAny: Boolean = owes
 
-    // The owed slot the pop just vacated, so an exit site drains after a bare pop.
     def takePopped(): Chunk[Stack.Snapshot] = takeOwed(size)
 
     def takeOwed(i: Int): Chunk[Stack.Snapshot] =
@@ -68,9 +52,6 @@ final private[kernel] class Stack:
             owes = true
             owed(i) = owed(i).concat(snapshots)
 
-    // Re-homes what a dissolving extent owes to the entry directly below it, or to the
-    // eval itself when nothing is below: everything the dissolved extent can reach lives
-    // inside the extent below.
     def oweBelow(i: Int, snapshots: Chunk[Stack.Snapshot]): Unit =
         if !snapshots.isEmpty then
             owes = true
@@ -116,9 +97,6 @@ final private[kernel] class Stack:
         Stack.wrap(out)
     end snapshot
 
-    // Reads the contextual regions in scope as Park currency without consuming the stack:
-    // bindings only, the continuation slot of every entry is identity. Owed slots stay
-    // behind: bindings fork, obligations do not.
     def contextual(): Stack.Snapshot =
         var count = 0
         var i     = 0
@@ -167,9 +145,6 @@ final private[kernel] class Stack:
         loop(size - 1)
     end find
 
-    // Every dump is owed by the entry directly below the dumped run: the capture is that
-    // entry's currency, so its exit bounds every resumption. The attachment lives here so
-    // no caller can produce an unowed dump.
     def dump(from: Int): Stack.Snapshot =
         val count = size - from
         val out   = new Array[AnyRef](count * 4)
@@ -216,9 +191,6 @@ end Stack
 
 private[kernel] object Stack:
 
-    // A reified run of stack regions as [handler, state, continuation, owed] quadruples,
-    // region 0 outermost. Immutable once built; the one home for that layout: producers
-    // and consumers go through the accessors, never the raw representation.
     opaque type Snapshot = Span[AnyRef]
 
     private def wrap(entries: Array[AnyRef]): Snapshot = Span.fromUnsafe(entries)
@@ -226,9 +198,6 @@ private[kernel] object Stack:
     object Snapshot:
         private[kernel] val empty: Snapshot = Span.fromUnsafe(new Array[AnyRef](0))
 
-        // Builds a snapshot region by region, keeping the layout here. Built snapshots
-        // carry bindings, not resumptions or obligations: every continuation slot is
-        // identity and every owed slot is empty.
         final private[kernel] class Builder(regions: Int):
             private val entries = new Array[AnyRef](regions * 4)
             private var count   = 0

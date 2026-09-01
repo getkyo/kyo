@@ -55,10 +55,6 @@ object Kyo:
     abstract class SuspendArrow[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Suspend[E, O[A], B, S]:
         def input: I[A]
 
-        // Staged like LoopHandler.answers: a crossing's resume step is built in the
-        // node's own compiled method, out of the eval's inline budget. Applying it to a
-        // settled answer re-installs the dumped run as a park and resumes the remainder
-        // inside it.
         private[kyo] def crossing[C](entries: Stack.Snapshot, resume: Arrow[B, C, S]): Arrow[O[A], C, S] =
             val kc = cont
             new Arrow.Step[O[A], C, S]:
@@ -118,8 +114,6 @@ object Kyo:
     abstract class SuspendContextWith[State, E <: ContextEffect[State], A, S]
         extends SuspendContext[State, E, A, S] with Arrow.Transform[State, A, S]
 
-    // Reads the contextual regions in scope as Park currency, the snapshot a Park installs;
-    // answered by the eval from the live stack without consuming it.
     abstract class Snapshot[A, -S] extends Pending[A, S]:
         Debugger.onAlloc(this)
 
@@ -130,20 +124,6 @@ object Kyo:
 
     abstract class HandleWith[State, E <: Effect, A, B, C, -S]
         extends Handle[State, E, A, B, C, S] with Arrow.Transform[B, C, S]
-
-    // object Handle:
-    //     def apply[E <: Effect, A, B, C, S, State](
-    //         v: A < (E & S),
-    //         h: Handler[E, A, B, S, State],
-    //         st: State,
-    //         c: Arrow[B, C, S]
-    //     ): Handle[E, A, B, C, S, State] =
-    //         new Handle[E, A, B, C, S, State]:
-    //             def value   = v
-    //             def handler = h
-    //             def state   = st
-    //             def cont    = c
-    // end Handle
 
     final class Park[+A, -S](
         val value: Any < Any,

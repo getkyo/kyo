@@ -21,11 +21,6 @@ import scala.util.control.NonFatal
 
 @publicInBinary private[kyo] object Eval:
 
-    /** Runs the releases a computation still owes, for a holder giving up on resuming it: the abandonment signal reaches every open
-      * region, innermost first, and what each region owes drains before the region itself. Open regions are found by inspecting the
-      * value spine; arrows are never traversed. Anything that never acquired, or is not a computation at all, owes nothing. A release
-      * that throws is suppressed onto the signal and cannot starve the ones after it.
-      */
     def release[A, S](v: A < S, ex: Throwable): Unit =
         val collected = scala.collection.mutable.ArrayBuffer.empty[AnyRef]
         @tailrec def collect(v: Any): Unit =
@@ -64,10 +59,6 @@ import scala.util.control.NonFatal
         releaseCollected(collected, ex)
     end release
 
-    // Expands owed snapshots into the collect buffer as the [handler, state] pairs the
-    // walk itself collects. Append order is oldest snapshot and outermost region first,
-    // each region before what it owes, so the reversed walk in releaseCollected drains
-    // newest and innermost first, obligations before their owner.
     private def expandOwed(collected: scala.collection.mutable.ArrayBuffer[AnyRef], owed: Chunk[Stack.Snapshot]): Unit =
         if !owed.isEmpty then
             val snapshots = owed.toIndexed
@@ -97,21 +88,16 @@ import scala.util.control.NonFatal
         end while
     end releaseCollected
 
-    // Drains what an exiting entry owes: dumps nobody resumed, abandoned with the exit's
-    // signal.
     private def drainOwed(owed: Chunk[Stack.Snapshot], ex: Throwable): Unit =
         val collected = scala.collection.mutable.ArrayBuffer.empty[AnyRef]
         expandOwed(collected, owed)
         releaseCollected(collected, ex)
     end drainOwed
 
-    // Failure construction out of the eval's hot body: the interpolation code at three
-    // sites was measurable inline-budget mass.
     private def unhandled(kyo: Any): Nothing = bug(s"unhandled suspension: $kyo")
 
     private def unanswerable(handler: Handler[?, ?, ?]): Nothing = bug(s"unhandled: $handler")
 
-    // The dump for a crossing, with its debug trace out of the eval's hot body.
     private def dumped(stack: Stack, idx: Int, kyo: Kyo.Suspend[?, ?, ?, ?]): Stack.Snapshot =
         val entries = stack.dump(idx + 1)
         Debugger.whenEnabled {
@@ -123,19 +109,12 @@ import scala.util.control.NonFatal
         entries
     end dumped
 
-    // The discard drain behind its own empty-check, so an exit site is one call and the
-    // signal is minted only when something drains, per drain so suppressed release
-    // failures attach to their own signal. A release failing here has no continuation to
-    // fail into, so it is contained and reported through the platform's unhandled edge.
     private def drainDiscarded(owed: Chunk[Stack.Snapshot]): Unit =
         if !owed.isEmpty then
             val signal = new kyo.KyoException("remainder discarded")(using Frame.internal)
             drainOwed(owed, signal)
             if signal.getSuppressed.length != 0 then Report.unhandled(signal)
 
-    // The context rebound past a dumped run: each dumped binding's tag rebinds to the
-    // nearest live entry below, or leaves the context entirely, exactly as the settled
-    // pop rebinds one exiting binding.
     private def rebound(stack: Stack, entries: Stack.Snapshot, ctx: Context): Context =
         var c = ctx
         var i = 0
@@ -153,11 +132,8 @@ import scala.util.control.NonFatal
 
     private def released(handler: Handler.ContextHandler[?, ?, ?, ?], state: Any, ex: Throwable): Unit =
         Debugger.onRelease(handler, ex)
-        // Erasure-forced at the storage boundary: the handler and its state travel in
-        // parallel slots, and the type system cannot carry their pairing.
         try handler.asInstanceOf[Handler.ContextHandler[Any, ContextEffect[Any], Any, Any]].release(state, ex)
         catch
-            // A release rethrowing the exception it was told about must not self-suppress.
             case t if NonFatal(t) && (t ne ex) => ex.addSuppressed(t)
             case t if NonFatal(t)              => ()
         end try
@@ -201,12 +177,6 @@ import scala.util.control.NonFatal
             end if
         end park
 
-        // Resume-path work, out of the eval's hot body: its mass in the loop measurably
-        // pushed the fused delivery past the inline budget (the continuationBodiesFuse
-        // row). A spent extent refuses before anything installs, with the park draining
-        // everything it owes and the refused region's own release a no-op through its
-        // claim; what the parked eval owed re-homes below the installed run; then the
-        // entries install, returning the context they bind.
         def installed(kyo: Kyo.Park[?, ?], resume: Arrow[Any, Any, Any], ctx: Context): Context =
             val entries = kyo.entries
             var ri      = 0
@@ -248,10 +218,6 @@ import scala.util.control.NonFatal
             install(0, ctx)
         end installed
 
-        // The region exits, out of the settled arm's hot merge (the idle-handler row's
-        // inline-budget measurement): the binding's completion edge fires in the same
-        // slice as the pop, the exit drains what the entry owes, and the context rebinds
-        // to the nearest live entry below.
         def contextExit(hc: Handler.ContextHandler[VX, CX, ?, ?], top: Int, ctx: Context): Context =
             hc.done(stack.state(top).asInstanceOf[VX])
             stack.pop()
@@ -287,10 +253,6 @@ import scala.util.control.NonFatal
                                 Debugger.onHandle(kyo, stack.handler(idx), stack.state(idx))
                                 val atTop = idx == stack.depth - 1
                                 if !atTop then Debugger.onForeign(kyo, stack.handler(stack.depth - 1))
-                                // A crossing vacates the regions above the answering entry: they
-                                // leave the stack as the capture's cargo, owed by the entry, and
-                                // their bindings leave the context, so the clause and its outcome
-                                // read what is below them.
                                 val entries = if atTop then Stack.Snapshot.empty else dumped(stack, idx, kyo)
                                 val ctx2    = if atTop then ctx else rebound(stack, entries, ctx)
                                 def continuation =
@@ -322,8 +284,6 @@ import scala.util.control.NonFatal
                                                 val reentry = k.asInstanceOf[Arrow[OX[VX], C, EX & S2]]
                                                 val next    = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, S2]]
                                                 Debugger.onRegionExit(handler, pending)
-                                                // The entry dissolves but its extent continues as the
-                                                // dispatch value, so what it owes re-homes below.
                                                 stack.pop()
                                                 if stack.owesAny then stack.oweBelow(idx, stack.takePopped())
                                                 type OutT = Outcome2[VX, OX[VX] < (EX & S2), Y < S2]
@@ -398,8 +358,6 @@ import scala.util.control.NonFatal
                             val next = stack.continuation(top).asInstanceOf[Arrow[Y, Any, Any]]
                             stack.handler(top) match
                                 case hc: Handler.ContextHandler[VX, CX, ?, ?] @unchecked =>
-                                    // A context region binds, it does not transform: the result passes
-                                    // through at exit in its union representation.
                                     Debugger.onRegionExit(hc, res)
                                     loop(res.asInstanceOf[Y < Any], next, Arrow.id, contextExit(hc, top, ctx))
                                 case handler0 =>
@@ -429,8 +387,6 @@ import scala.util.control.NonFatal
                 val state = stack.state(top)
                 stack.handler(top) match
                     case hc: Handler.ContextHandler[VX, CX, ?, ?] @unchecked =>
-                        // A binding cannot answer a failure; it dies without resuming, and
-                        // what it owes drains before the binding itself.
                         Debugger.onRegionExit(hc, ex)
                         stack.pop()
                         val owedHere = stack.takePopped()
@@ -496,8 +452,6 @@ import scala.util.control.NonFatal
 
         try
             val out = guarded(v, Context.empty)
-            // A park transferred what it owed into the remainder; anything still rooted
-            // on the stack belongs to no surviving extent and drains now.
             drainDiscarded(stack.takeEvalOwed())
             out
         finally

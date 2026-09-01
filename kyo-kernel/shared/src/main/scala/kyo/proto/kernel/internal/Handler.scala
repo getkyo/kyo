@@ -14,7 +14,6 @@ import kyo.proto.kernel.ContextEffect
 import kyo.proto.kernel.Effect
 import scala.annotation.publicInBinary
 
-// The region interface: a handler for effect E whose region delivers A in row S at exit.
 sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
     def tag: Tag[E]
 
@@ -23,10 +22,6 @@ end Handler
 
 @publicInBinary private[kernel] object Handler:
 
-    // An arrow handler transforms at exit: done turns the body's A into the region's B, and
-    // recover may replace it when the region fails. Context regions bind without
-    // transforming, so neither lives on the Handler base: a binding cannot manufacture
-    // the result its body failed to produce.
     sealed abstract class ArrowHandler[State, E <: Effect, A, B, -S] extends Handler[E, B, S]:
         def done(state: State, v: A): B < S
 
@@ -36,17 +31,12 @@ end Handler
     abstract class ContHandler[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
         def run[X](input: I[X], cont: Arrow[O[X], A, E & S]): A < (E & S)
 
-    // The operation carrier for effects generic over ArrowEffect[?, ?]: the clause receives the
-    // operation reified at its raise site tag, which the ContHandler protocol cannot carry.
     abstract class ContOpHandler[E <: Effect, A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
         def run[X](operation: X < E, next: Arrow[X, A, E & S]): A < (E & S)
 
     abstract class LoopHandler[State, I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[State, E, A, B, S]:
         def run[X](state: State, input: I[X]): Outcome2[State, O[X] < (E & S), B < S] < S
 
-        // Staged like answers: the effectful-clause dispatch is built in the handler's
-        // own compiled method, out of the eval's inline budget; the loop continues with
-        // it directly.
         private[kyo] def clauseDispatch[X0](
             reentry: Arrow[O[X0], A, E & S]
         ): Arrow[Outcome2[State, O[X0] < (E & S), B < S], B, S] =
@@ -98,31 +88,15 @@ end Handler
         end answers
     end LoopHandler
 
-    // A context region binds, it does not transform: the eval passes the region's result
-    // through at exit, so there is no done here. fork and join are pure and run strictly
-    // inside the eval, fork at each isolate crossing and join at the merge, where the origin
-    // region continues at the joined state.
     abstract class ContextHandler[State, E <: ContextEffect[State], A, -S] extends Handler[E, A, S]:
         def derive(outer: Maybe[State]): State
         def fork(parent: State): State
         def join(parent: State, forked: State, child: State): State
 
-        // The completion edge: fires strictly in the eval at the region's settled exit, in
-        // the same slice that pops the entry, so nothing can park between the body settling
-        // and the completion. Pure, like fork and join.
         private[kyo] def done(state: State): Unit = ()
 
-        // Consulted before a park re-installs the region: a handler refusing a spent
-        // extent throws here, and the park drains what it owes before the refusal
-        // propagates. Pure, like fork and join.
         private[kyo] def reenter(state: State): Unit = ()
 
-        // Pure, like fork and join: runs whenever the region dies without resuming, at
-        // abandonment, when a failure unwinds past it, and when a dump it rode is discarded.
-        // Both hooks may fire more than once per logical region (a shared dump, a fork's
-        // state, a merged shadow region): the eval guarantees the edge is reached at least
-        // once, and exactly-once belongs to the state. Arrow handlers have no release:
-        // their failure hook is recover, and resource safety routes through a binding.
         private[kyo] def release(state: State, ex: Throwable): Unit = ()
     end ContextHandler
 
