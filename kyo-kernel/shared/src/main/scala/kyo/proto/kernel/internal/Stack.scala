@@ -43,11 +43,19 @@ final private[kernel] class Stack:
         size += 1
     end push
 
-    // Popping hands back what the entry owes, so no exit site can forget to drain it and
-    // no stale obligation can survive into the slot's next occupant.
-    def pop(): Chunk[Stack.Snapshot] =
-        size -= 1
-        takeOwed(size)
+    def pop(): Unit = size -= 1
+
+    // Whether anything on this stack owes at all: set by every owe and by dump, cleared
+    // only with the stack, so it can false-positive after a drain but never miss. The
+    // exit sites in the eval's hot body compile to this one read and a rarely taken
+    // branch, with the drain machinery out of line: the inline-budget measurement on the
+    // continuationBodiesFuse row is what forced the shape.
+    private var owes = false
+
+    def owesAny: Boolean = owes
+
+    // The owed slot the pop just vacated, so an exit site drains after a bare pop.
+    def takePopped(): Chunk[Stack.Snapshot] = takeOwed(size)
 
     def takeOwed(i: Int): Chunk[Stack.Snapshot] =
         val owedHere = owed(i)
@@ -56,13 +64,16 @@ final private[kernel] class Stack:
     end takeOwed
 
     def owe(i: Int, snapshots: Chunk[Stack.Snapshot]): Unit =
-        if !snapshots.isEmpty then owed(i) = owed(i).concat(snapshots)
+        if !snapshots.isEmpty then
+            owes = true
+            owed(i) = owed(i).concat(snapshots)
 
     // Re-homes what a dissolving extent owes to the entry directly below it, or to the
     // eval itself when nothing is below: everything the dissolved extent can reach lives
     // inside the extent below.
     def oweBelow(i: Int, snapshots: Chunk[Stack.Snapshot]): Unit =
         if !snapshots.isEmpty then
+            owes = true
             if i == 0 then evalOwed = evalOwed.concat(snapshots)
             else owed(i - 1) = owed(i - 1).concat(snapshots)
 
@@ -85,6 +96,7 @@ final private[kernel] class Stack:
         size = 0
         scratch = null
         evalOwed = Chunk.empty
+        owes = false
     end clear
 
     def snapshot(): Stack.Snapshot =
@@ -175,6 +187,7 @@ final private[kernel] class Stack:
         loop(0)
         size = from
         val snapshot = Stack.wrap(out)
+        owes = true
         owed(from - 1) = owed(from - 1).append(snapshot)
         snapshot
     end dump

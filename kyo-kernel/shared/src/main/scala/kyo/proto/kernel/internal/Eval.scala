@@ -105,6 +105,12 @@ import scala.util.control.NonFatal
         releaseCollected(collected, ex)
     end drainOwed
 
+    // Failure construction out of the eval's hot body: the interpolation code at three
+    // sites was measurable inline-budget mass.
+    private def unhandled(kyo: Any): Nothing = bug(s"unhandled suspension: $kyo")
+
+    private def unanswerable(handler: Handler[?, ?, ?]): Nothing = bug(s"unhandled: $handler")
+
     // The dump for a crossing, with its debug trace out of the eval's hot body.
     private def dumped(stack: Stack, idx: Int, kyo: Kyo.Suspend[?, ?, ?, ?]): Stack.Snapshot =
         val entries = stack.dump(idx + 1)
@@ -198,6 +204,53 @@ import scala.util.control.NonFatal
             end if
         end park
 
+        // Resume-path work, out of the eval's hot body: its mass in the loop measurably
+        // pushed the fused delivery past the inline budget (the continuationBodiesFuse
+        // row). A spent extent refuses before anything installs, with the park draining
+        // everything it owes and the refused region's own release a no-op through its
+        // claim; what the parked eval owed re-homes below the installed run; then the
+        // entries install, returning the context they bind.
+        def installed(kyo: Kyo.Park[?, ?], resume: Arrow[Any, Any, Any], ctx: Context): Context =
+            val entries = kyo.entries
+            var ri      = 0
+            while ri < entries.regions do
+                entries.handler(ri) match
+                    case hc: Handler.ContextHandler[VX, CX, ?, ?] @unchecked =>
+                        try hc.reenter(entries.state(ri).asInstanceOf[VX])
+                        catch
+                            case ex if NonFatal(ex) =>
+                                release(kyo, ex)
+                                throw ex
+                    case _ => ()
+                end match
+                ri += 1
+            end while
+            stack.oweBelow(stack.depth, kyo.owed)
+            @tailrec def install(i: Int, c: Context): Context =
+                if i == entries.regions then c
+                else
+                    val stored = entries.continuation(i).asInstanceOf[Arrow[Y, Any, Any]]
+                    val cont =
+                        if i == 0 then stored.chain(resume)
+                        else stored
+                    entries.handler(i) match
+                        case hc: Handler.ContextHandler[VX, CX, Y, Any] @unchecked =>
+                            val st = entries.state(i).asInstanceOf[VX]
+                            Debugger.onRegionEnter(hc, st)
+                            stack.push(hc, st, cont)
+                            stack.owe(stack.depth - 1, entries.owed(i))
+                            install(i + 1, c.update(hc.tag, st))
+                        case handler0 =>
+                            val handler = handler0.asInstanceOf[Handler[EX, Y, Any]]
+                            val st      = entries.state(i).asInstanceOf[VX]
+                            Debugger.onRegionEnter(handler, st)
+                            stack.push(handler, st, cont)
+                            stack.owe(stack.depth - 1, entries.owed(i))
+                            install(i + 1, c)
+                    end match
+            install(0, ctx)
+        end installed
+
         @tailrec def loop[T, B, C, S2](v: T < S2, contA: Arrow[T, B, S2], contB: Arrow[B, C, S2], ctx: Context): A < S =
             Debugger.onLoop(v, contA, contB)
             v match
@@ -209,30 +262,59 @@ import scala.util.control.NonFatal
                 case kyo: Kyo.Suspend[?, ?, T, S2] @unchecked =>
                     kyo match
                         case kyo: Kyo.SuspendContext[VX, CX, T, S2] @unchecked =>
-                            val state = ctx.get(kyo.tag).orElse(kyo.default).getOrElse(bug(s"unhandled suspension: $kyo"))
+                            val state = ctx.get(kyo.tag).orElse(kyo.default).getOrElse(unhandled(kyo))
                             Debugger.onContext(kyo, ctx)
                             loop(kyo.cont(state, contA.chain(contB)), Arrow.id, Arrow.id, ctx)
 
                         case kyo: Kyo.SuspendArrow[IX, OX, EX, VX, T, EX & S2] @unchecked =>
                             val idx = stack.find(kyo.tag)
-                            if idx < 0 then bug(s"unhandled suspension: $kyo")
-                            else if idx == stack.depth - 1 then
+                            if idx < 0 then unhandled(kyo)
+                            else
                                 Debugger.onHandle(kyo, stack.handler(idx), stack.state(idx))
+                                val atTop = idx == stack.depth - 1
+                                if !atTop then Debugger.onForeign(kyo, stack.handler(stack.depth - 1))
+                                // A crossing vacates the regions above the answering entry: they
+                                // leave the stack as the capture's cargo, owed by the entry, and
+                                // their bindings leave the context, so the clause and its outcome
+                                // read what is below them.
+                                val entries = if atTop then Stack.Snapshot.empty else dumped(stack, idx, kyo)
+                                val ctx2    = if atTop then ctx else rebound(stack, entries, ctx)
+                                def continuation =
+                                    if atTop then kyo.cont.chain(contA.chain(contB))
+                                    else
+                                        val kc = kyo.cont
+                                        val ca = contA
+                                        val cb = contB
+                                        new Arrow.Step[OX[VX], C, EX & S2]:
+                                            def frame = Frame.internal
+                                            override def apply[D, S3](v: OX[VX] < S3, cont2: Arrow[C, D, S3]) =
+                                                v match
+                                                    case p: Pending[OX[VX], S3] @unchecked => Effect.defer(p, this, cont2)
+                                                    case _ =>
+                                                        cont2(
+                                                            Kyo.Park(
+                                                                Effect.defer(v, kc, ca, cb).asInstanceOf[Any < Any],
+                                                                entries
+                                                            ),
+                                                            Arrow.id
+                                                        )
+                                        end new
+                                end continuation
                                 stack.handler(idx) match
                                     case handler: Handler.ContHandler[IX, OX, EX, C, Y, S2] @unchecked =>
-                                        val result = handler.run(kyo.input, kyo.cont.chain(contA.chain(contB)))
+                                        val result = handler.run(kyo.input, continuation)
                                         Debugger.onResult(result)
-                                        loop(result, Arrow.id, Arrow.id, ctx)
+                                        loop(result, Arrow.id, Arrow.id, ctx2)
                                     case handler: Handler.ContOpHandler[EX, C, Y, S2] @unchecked =>
                                         val operation: OX[VX] < EX =
                                             new Kyo.SuspendArrow[IX, OX, EX, VX, OX[VX], EX]:
                                                 def tag   = kyo.tag
                                                 def input = kyo.input
                                                 def cont  = Arrow.id
-                                        val result = handler.run(operation, kyo.cont.chain(contA.chain(contB)))
+                                        val result = handler.run(operation, continuation)
                                         Debugger.onResult(result)
-                                        loop(result, Arrow.id, Arrow.id, ctx)
-                                    case handler: Handler.LoopHandler[VX, IX, OX, EX, C, Y, S2] @unchecked =>
+                                        loop(result, Arrow.id, Arrow.id, ctx2)
+                                    case handler: Handler.LoopHandler[VX, IX, OX, EX, C, Y, S2] @unchecked if atTop =>
                                         val k    = kyo.cont.chain(contA.chain(contB)).asInstanceOf[Arrow[Any, Any, Any]]
                                         val exit = handler.answers(stack.state(idx).asInstanceOf[VX], kyo.input, k, armed, slot)
                                         Debugger.onResult(exit)
@@ -262,62 +344,17 @@ import scala.util.control.NonFatal
                                                 Debugger.onRegionExit(handler, pending)
                                                 // The entry dissolves but its extent continues as the
                                                 // dispatch value, so what it owes re-homes below.
-                                                stack.oweBelow(idx, stack.pop())
+                                                stack.pop()
+                                                if stack.owesAny then stack.oweBelow(idx, stack.takePopped())
                                                 loop[OutT, Y, Any, S2](pending, dispatch, next, ctx)
                                             case done =>
                                                 val result = Nested.unnest[Y < S2](done.asInstanceOf[Y < S2])
                                                 Debugger.onRegionExit(handler, result)
-                                                val next     = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, Any]]
-                                                val owedHere = stack.takeOwed(idx)
+                                                val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, Any]]
+                                                if stack.owesAny then drainDiscarded(stack.takeOwed(idx))
                                                 stack.truncate(idx)
-                                                drainDiscarded(owedHere)
                                                 loop(result, next, Arrow.id, ctx)
                                         end match
-                                    case handler =>
-                                        bug(s"unhandled: $handler")
-                                end match
-                            else
-                                Debugger.onHandle(kyo, stack.handler(idx), stack.state(idx))
-                                Debugger.onForeign(kyo, stack.handler(stack.depth - 1))
-                                // A crossing vacates the regions above the answering entry: they
-                                // leave the stack as the capture's cargo, owed by the entry, and
-                                // their bindings leave the context, so the clause and its outcome
-                                // read what is below them.
-                                val entries = dumped(stack, idx, kyo)
-                                val ctx2    = rebound(stack, entries, ctx)
-                                def continuation =
-                                    val kc = kyo.cont
-                                    val ca = contA
-                                    val cb = contB
-                                    new Arrow.Step[OX[VX], C, EX & S2]:
-                                        def frame = Frame.internal
-                                        override def apply[D, S3](v: OX[VX] < S3, cont2: Arrow[C, D, S3]) =
-                                            v match
-                                                case p: Pending[OX[VX], S3] @unchecked => Effect.defer(p, this, cont2)
-                                                case _ =>
-                                                    cont2(
-                                                        Kyo.Park(
-                                                            Effect.defer(v, kc, ca, cb).asInstanceOf[Any < Any],
-                                                            entries
-                                                        ),
-                                                        Arrow.id
-                                                    )
-                                    end new
-                                end continuation
-                                stack.handler(idx) match
-                                    case handler: Handler.ContHandler[IX, OX, EX, C, Y, S2] @unchecked =>
-                                        val result = handler.run(kyo.input, continuation)
-                                        Debugger.onResult(result)
-                                        loop(result, Arrow.id, Arrow.id, ctx2)
-                                    case handler: Handler.ContOpHandler[EX, C, Y, S2] @unchecked =>
-                                        val operation: OX[VX] < EX =
-                                            new Kyo.SuspendArrow[IX, OX, EX, VX, OX[VX], EX]:
-                                                def tag   = kyo.tag
-                                                def input = kyo.input
-                                                def cont  = Arrow.id
-                                        val result = handler.run(operation, continuation)
-                                        Debugger.onResult(result)
-                                        loop(result, Arrow.id, Arrow.id, ctx2)
                                     case handler: Handler.LoopHandler[VX, IX, OX, EX, C, Y, S2] @unchecked =>
                                         val outcome0 = handler.run(stack.state(idx).asInstanceOf[VX], kyo.input)
                                         stack.scratch = outcome0
@@ -346,19 +383,19 @@ import scala.util.control.NonFatal
                                                                     Nested.unnest[Y < S2](out).chain(cont2)
                                                 val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, S2]]
                                                 Debugger.onRegionExit(handler, pending)
-                                                stack.oweBelow(idx, stack.pop())
+                                                stack.pop()
+                                                if stack.owesAny then stack.oweBelow(idx, stack.takePopped())
                                                 loop(pending, dispatch, next, ctx2)
                                             case outcome =>
                                                 val result = Nested.unnest[Y < S2](outcome)
                                                 Debugger.onRegionExit(handler, result)
-                                                val next     = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, Any]]
-                                                val owedHere = stack.takeOwed(idx)
+                                                val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, Any]]
+                                                if stack.owesAny then drainDiscarded(stack.takeOwed(idx))
                                                 stack.truncate(idx)
-                                                drainDiscarded(owedHere)
                                                 loop(result, next, Arrow.id, ctx2)
                                         end match
                                     case handler =>
-                                        bug(s"unhandled: $handler")
+                                        unanswerable(handler)
                                 end match
                             end if
 
@@ -382,49 +419,7 @@ import scala.util.control.NonFatal
                     loop(kyo.value.asInstanceOf[T < S2], contA, contB, ctx)
 
                 case kyo: Kyo.Park[?, ?] =>
-                    val entries = kyo.entries
-                    // A spent extent refuses before anything installs; the park still
-                    // drains everything it owes, with the refused region's own release a
-                    // no-op through its claim, and the refusal unwinds from here.
-                    var ri = 0
-                    while ri < entries.regions do
-                        entries.handler(ri) match
-                            case hc: Handler.ContextHandler[VX, CX, ?, ?] @unchecked =>
-                                try hc.reenter(entries.state(ri).asInstanceOf[VX])
-                                catch
-                                    case ex if NonFatal(ex) =>
-                                        release(kyo, ex)
-                                        throw ex
-                            case _ => ()
-                        end match
-                        ri += 1
-                    end while
-                    // What the parked eval owed re-homes below the installed run, like any
-                    // dissolved extent.
-                    stack.oweBelow(stack.depth, kyo.owed)
-                    @tailrec def install(i: Int, c: Context): Context =
-                        if i == entries.regions then c
-                        else
-                            val stored = entries.continuation(i).asInstanceOf[Arrow[Y, Any, Any]]
-                            val cont =
-                                if i == 0 then stored.chain(contA.chain(contB).asInstanceOf[Arrow[Any, Any, Any]])
-                                else stored
-                            entries.handler(i) match
-                                case hc: Handler.ContextHandler[VX, CX, Y, Any] @unchecked =>
-                                    val st = entries.state(i).asInstanceOf[VX]
-                                    Debugger.onRegionEnter(hc, st)
-                                    stack.push(hc, st, cont)
-                                    stack.owe(stack.depth - 1, entries.owed(i))
-                                    install(i + 1, c.update(hc.tag, st))
-                                case handler0 =>
-                                    val handler = handler0.asInstanceOf[Handler[EX, Y, Any]]
-                                    val st      = entries.state(i).asInstanceOf[VX]
-                                    Debugger.onRegionEnter(handler, st)
-                                    stack.push(handler, st, cont)
-                                    stack.owe(stack.depth - 1, entries.owed(i))
-                                    install(i + 1, c)
-                            end match
-                    loop(kyo.value, Arrow.id, Arrow.id, install(0, ctx))
+                    loop(kyo.value, Arrow.id, Arrow.id, installed(kyo, contA.chain(contB).asInstanceOf[Arrow[Any, Any, Any]], ctx))
 
                 case kyo: Kyo.Snapshot[T, S2] @unchecked =>
                     loop(kyo.cont(stack.contextual(), contA.chain(contB)), Arrow.id, Arrow.id, ctx)
@@ -442,7 +437,8 @@ import scala.util.control.NonFatal
                                     // fires in the same slice as the pop.
                                     Debugger.onRegionExit(hc, res)
                                     hc.done(stack.state(top).asInstanceOf[VX])
-                                    drainDiscarded(stack.pop())
+                                    stack.pop()
+                                    if stack.owesAny then drainDiscarded(stack.takePopped())
                                     val j = stack.find(hc.tag)
                                     val outer =
                                         if j < 0 then ctx.remove(hc.tag)
@@ -452,7 +448,8 @@ import scala.util.control.NonFatal
                                     val handler = handler0.asInstanceOf[Handler.ArrowHandler[VX, EX, AX, Y, Any]]
                                     val result  = handler.done(stack.state(top).asInstanceOf[VX], Nested.unnest[AX](res))
                                     Debugger.onRegionExit(handler, result)
-                                    drainDiscarded(stack.pop())
+                                    stack.pop()
+                                    if stack.owesAny then drainDiscarded(stack.takePopped())
                                     loop(result, next, Arrow.id, ctx)
                             end match
                     else
@@ -478,7 +475,8 @@ import scala.util.control.NonFatal
                         // A binding cannot answer a failure; it dies without resuming, and
                         // what it owes drains before the binding itself.
                         Debugger.onRegionExit(hc, ex)
-                        val owedHere = stack.pop()
+                        stack.pop()
+                        val owedHere = stack.takePopped()
                         if !owedHere.isEmpty then drainOwed(owedHere, ex)
                         released(hc, state, ex)
                         recovered(ex)
@@ -489,7 +487,8 @@ import scala.util.control.NonFatal
                             catch
                                 case ex2 if NonFatal(ex2) =>
                                     Debugger.onRegionExit(handler, ex2)
-                                    val owedHere = stack.pop()
+                                    stack.pop()
+                                    val owedHere = stack.takePopped()
                                     if !owedHere.isEmpty then drainOwed(owedHere, ex2)
                                     EffectTrace.attach(ex2, stack)
                                     EffectTrace.splice(ex2)
@@ -501,7 +500,8 @@ import scala.util.control.NonFatal
                                 r.chain(stack.continuation(top).asInstanceOf[Arrow[Y, A, S]])
                             case Absent =>
                                 Debugger.onRegionExit(handler, ex)
-                                val owedHere = stack.pop()
+                                stack.pop()
+                                val owedHere = stack.takePopped()
                                 if !owedHere.isEmpty then drainOwed(owedHere, ex)
                                 recovered(ex)
                         end match
@@ -517,8 +517,9 @@ import scala.util.control.NonFatal
 
                         EffectTrace.attach(failure, stack)
                         EffectTrace.splice(failure)
-                        val resumed  = recovered(failure)
-                        val owedHere = stack.pop()
+                        val resumed = recovered(failure)
+                        stack.pop()
+                        val owedHere = stack.takePopped()
                         if !owedHere.isEmpty then drainOwed(owedHere, failure)
                         @tailrec def rebuild(i: Int, rebuilt: Context): Context =
                             if i == stack.depth then rebuilt
