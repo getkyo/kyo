@@ -105,10 +105,28 @@ import scala.util.control.NonFatal
         releaseCollected(collected, ex)
     end drainOwed
 
-    // Restores the context for the run a dump removed: each dumped binding's tag rebinds
-    // to the nearest live entry below, or leaves the context entirely, mirroring the
-    // settled pop's downdate.
-    private def downdated(stack: Stack, entries: Stack.Snapshot, ctx: Context): Context =
+    // The dump for a crossing, with its debug trace out of the eval's hot body.
+    private def dumped(stack: Stack, idx: Int, kyo: Kyo.Suspend[?, ?, ?, ?]): Stack.Snapshot =
+        val entries = stack.dump(idx + 1)
+        Debugger.whenEnabled {
+            var i = entries.regions - 1
+            while i >= 0 do
+                Debugger.onRegionExit(entries.handler(i), kyo)
+                i -= 1
+        }
+        entries
+    end dumped
+
+    // The discard drain behind its own empty-check, so an exit site is one call and the
+    // signal is minted only when something drains, per drain so suppressed release
+    // failures attach to their own signal.
+    private def drainDiscarded(owed: Chunk[Stack.Snapshot]): Unit =
+        if !owed.isEmpty then drainOwed(owed, new kyo.KyoException("remainder discarded")(using Frame.internal))
+
+    // The context rebound past a dumped run: each dumped binding's tag rebinds to the
+    // nearest live entry below, or leaves the context entirely, exactly as the settled
+    // pop rebinds one exiting binding.
+    private def rebound(stack: Stack, entries: Stack.Snapshot, ctx: Context): Context =
         var c = ctx
         var i = 0
         while i < entries.regions do
@@ -121,7 +139,7 @@ import scala.util.control.NonFatal
             i += 1
         end while
         c
-    end downdated
+    end rebound
 
     private def released(handler: Handler.ContextHandler[?, ?, ?, ?], state: Any, ex: Throwable): Unit =
         Debugger.onRelease(handler, ex)
@@ -134,10 +152,6 @@ import scala.util.control.NonFatal
             case t if NonFatal(t)              => ()
         end try
     end released
-
-    // The abandonment signal for a dump nobody resumed, minted per drain so suppressed
-    // release failures attach to their own signal.
-    private def discarded(): Throwable = new kyo.KyoException("remainder discarded")(using Frame.internal)
 
     def apply[A, S](v: A < S): A < S = apply(v, armed = false)
 
@@ -154,11 +168,6 @@ import scala.util.control.NonFatal
 
         val stack = Stack.borrow()
 
-        // What the eval itself owes: dumps whose owner dissolved at depth 0 (a loop
-        // handler's effectful-clause pop with nothing below). Drained at the eval's end,
-        // transferred by a park so the obligations ride the remainder.
-        var rootOwed: Chunk[Stack.Snapshot] = Chunk.empty
-
         val slot  = Safepoint.get()
         val saved = Safepoint.save(slot)
         if armed then Safepoint.arm(slot)
@@ -167,8 +176,7 @@ import scala.util.control.NonFatal
             val parked: Any < Any =
                 if contA.isInstanceOf[Arrow.Id[?]] && contB.isInstanceOf[Arrow.Id[?]] then v.asInstanceOf[Any < Any]
                 else Effect.defer(v, contA, contB).asInstanceOf[Any < Any]
-            val owedNow = rootOwed
-            rootOwed = Chunk.empty
+            val owedNow = stack.takeEvalOwed()
             if stack.isEmpty then
                 if owedNow.isEmpty then parked.asInstanceOf[A < S]
                 else Kyo.Park[A, S](parked, Stack.Snapshot.empty, owedNow)
@@ -201,63 +209,23 @@ import scala.util.control.NonFatal
                         case kyo: Kyo.SuspendArrow[IX, OX, EX, VX, T, EX & S2] @unchecked =>
                             val idx = stack.find(kyo.tag)
                             if idx < 0 then bug(s"unhandled suspension: $kyo")
-                            else
+                            else if idx == stack.depth - 1 then
                                 Debugger.onHandle(kyo, stack.handler(idx), stack.state(idx))
-                                val atTop = idx == stack.depth - 1
-                                if !atTop then
-                                    Debugger.onForeign(kyo, stack.handler(stack.depth - 1))
-                                // A crossing vacates the regions above the answering entry: they
-                                // leave the stack as the capture's cargo, owed by the entry, and
-                                // their bindings leave the context, so the clause and its outcome
-                                // read what is below them.
-                                val entries =
-                                    if atTop then Stack.Snapshot.empty
-                                    else
-                                        val dumped = stack.dump(idx + 1)
-                                        Debugger.whenEnabled {
-                                            var i = dumped.regions - 1
-                                            while i >= 0 do
-                                                Debugger.onRegionExit(dumped.handler(i), kyo)
-                                                i -= 1
-                                        }
-                                        dumped
-                                val ctx2 = if atTop then ctx else downdated(stack, entries, ctx)
-                                def continuation =
-                                    if atTop then
-                                        kyo.cont.chain(contA.chain(contB))
-                                    else
-                                        val kc = kyo.cont
-                                        val ca = contA
-                                        val cb = contB
-                                        new Arrow.Step[OX[VX], C, EX & S2]:
-                                            def frame = Frame.internal
-                                            override def apply[D, S3](v: OX[VX] < S3, cont2: Arrow[C, D, S3]) =
-                                                v match
-                                                    case p: Pending[OX[VX], S3] @unchecked => Effect.defer(p, this, cont2)
-                                                    case _ =>
-                                                        cont2(
-                                                            Kyo.Park(
-                                                                Effect.defer(v, kc, ca, cb).asInstanceOf[Any < Any],
-                                                                entries
-                                                            ),
-                                                            Arrow.id
-                                                        )
-                                        end new
                                 stack.handler(idx) match
                                     case handler: Handler.ContHandler[IX, OX, EX, C, Y, S2] @unchecked =>
-                                        val result = handler.run(kyo.input, continuation)
+                                        val result = handler.run(kyo.input, kyo.cont.chain(contA.chain(contB)))
                                         Debugger.onResult(result)
-                                        loop(result, Arrow.id, Arrow.id, ctx2)
+                                        loop(result, Arrow.id, Arrow.id, ctx)
                                     case handler: Handler.ContOpHandler[EX, C, Y, S2] @unchecked =>
                                         val operation: OX[VX] < EX =
                                             new Kyo.SuspendArrow[IX, OX, EX, VX, OX[VX], EX]:
                                                 def tag   = kyo.tag
                                                 def input = kyo.input
                                                 def cont  = Arrow.id
-                                        val result = handler.run(operation, continuation)
+                                        val result = handler.run(operation, kyo.cont.chain(contA.chain(contB)))
                                         Debugger.onResult(result)
-                                        loop(result, Arrow.id, Arrow.id, ctx2)
-                                    case handler: Handler.LoopHandler[VX, IX, OX, EX, C, Y, S2] @unchecked if atTop =>
+                                        loop(result, Arrow.id, Arrow.id, ctx)
+                                    case handler: Handler.LoopHandler[VX, IX, OX, EX, C, Y, S2] @unchecked =>
                                         val k    = kyo.cont.chain(contA.chain(contB)).asInstanceOf[Arrow[Any, Any, Any]]
                                         val exit = handler.answers(stack.state(idx).asInstanceOf[VX], kyo.input, k, armed, slot)
                                         Debugger.onResult(exit)
@@ -285,13 +253,9 @@ import scala.util.control.NonFatal
                                                                     Nested.unnest[Y < S2](out).chain(cont2)
                                                 val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, S2]]
                                                 Debugger.onRegionExit(handler, pending)
-                                                val owedHere = stack.pop()
                                                 // The entry dissolves but its extent continues as the
-                                                // dispatch value, so what it owes re-homes to the
-                                                // enclosing entry, or to the eval at depth 0.
-                                                if !owedHere.isEmpty then
-                                                    if idx == 0 then rootOwed = rootOwed.concat(owedHere)
-                                                    else stack.oweAll(idx - 1, owedHere)
+                                                // dispatch value, so what it owes re-homes below.
+                                                stack.oweBelow(idx, stack.pop())
                                                 loop[OutT, Y, Any, S2](pending, dispatch, next, ctx)
                                             case done =>
                                                 val result = Nested.unnest[Y < S2](done.asInstanceOf[Y < S2])
@@ -299,9 +263,54 @@ import scala.util.control.NonFatal
                                                 val next     = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, Any]]
                                                 val owedHere = stack.takeOwed(idx)
                                                 stack.truncate(idx)
-                                                if !owedHere.isEmpty then drainOwed(owedHere, discarded())
+                                                drainDiscarded(owedHere)
                                                 loop(result, next, Arrow.id, ctx)
                                         end match
+                                    case handler =>
+                                        bug(s"unhandled: $handler")
+                                end match
+                            else
+                                Debugger.onHandle(kyo, stack.handler(idx), stack.state(idx))
+                                Debugger.onForeign(kyo, stack.handler(stack.depth - 1))
+                                // A crossing vacates the regions above the answering entry: they
+                                // leave the stack as the capture's cargo, owed by the entry, and
+                                // their bindings leave the context, so the clause and its outcome
+                                // read what is below them.
+                                val entries = dumped(stack, idx, kyo)
+                                val ctx2    = rebound(stack, entries, ctx)
+                                def continuation =
+                                    val kc = kyo.cont
+                                    val ca = contA
+                                    val cb = contB
+                                    new Arrow.Step[OX[VX], C, EX & S2]:
+                                        def frame = Frame.internal
+                                        override def apply[D, S3](v: OX[VX] < S3, cont2: Arrow[C, D, S3]) =
+                                            v match
+                                                case p: Pending[OX[VX], S3] @unchecked => Effect.defer(p, this, cont2)
+                                                case _ =>
+                                                    cont2(
+                                                        Kyo.Park(
+                                                            Effect.defer(v, kc, ca, cb).asInstanceOf[Any < Any],
+                                                            entries
+                                                        ),
+                                                        Arrow.id
+                                                    )
+                                    end new
+                                end continuation
+                                stack.handler(idx) match
+                                    case handler: Handler.ContHandler[IX, OX, EX, C, Y, S2] @unchecked =>
+                                        val result = handler.run(kyo.input, continuation)
+                                        Debugger.onResult(result)
+                                        loop(result, Arrow.id, Arrow.id, ctx2)
+                                    case handler: Handler.ContOpHandler[EX, C, Y, S2] @unchecked =>
+                                        val operation: OX[VX] < EX =
+                                            new Kyo.SuspendArrow[IX, OX, EX, VX, OX[VX], EX]:
+                                                def tag   = kyo.tag
+                                                def input = kyo.input
+                                                def cont  = Arrow.id
+                                        val result = handler.run(operation, continuation)
+                                        Debugger.onResult(result)
+                                        loop(result, Arrow.id, Arrow.id, ctx2)
                                     case handler: Handler.LoopHandler[VX, IX, OX, EX, C, Y, S2] @unchecked =>
                                         val outcome0 = handler.run(stack.state(idx).asInstanceOf[VX], kyo.input)
                                         stack.scratch = outcome0
@@ -330,10 +339,7 @@ import scala.util.control.NonFatal
                                                                     Nested.unnest[Y < S2](out).chain(cont2)
                                                 val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, S2]]
                                                 Debugger.onRegionExit(handler, pending)
-                                                val owedHere = stack.pop()
-                                                if !owedHere.isEmpty then
-                                                    if idx == 0 then rootOwed = rootOwed.concat(owedHere)
-                                                    else stack.oweAll(idx - 1, owedHere)
+                                                stack.oweBelow(idx, stack.pop())
                                                 loop(pending, dispatch, next, ctx2)
                                             case outcome =>
                                                 val result = Nested.unnest[Y < S2](outcome)
@@ -341,7 +347,7 @@ import scala.util.control.NonFatal
                                                 val next     = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, Any]]
                                                 val owedHere = stack.takeOwed(idx)
                                                 stack.truncate(idx)
-                                                if !owedHere.isEmpty then drainOwed(owedHere, discarded())
+                                                drainDiscarded(owedHere)
                                                 loop(result, next, Arrow.id, ctx2)
                                         end match
                                     case handler =>
@@ -365,11 +371,13 @@ import scala.util.control.NonFatal
                     end match
 
                 case kyo: Kyo.Park[?, ?] if kyo.entries.isEmpty =>
-                    if !kyo.owed.isEmpty then rootOwed = kyo.owed.concat(rootOwed)
+                    stack.oweBelow(stack.depth, kyo.owed)
                     loop(kyo.value.asInstanceOf[T < S2], contA, contB, ctx)
 
                 case kyo: Kyo.Park[?, ?] =>
-                    if !kyo.owed.isEmpty then rootOwed = kyo.owed.concat(rootOwed)
+                    // What the parked eval owed re-homes below the installed run, like any
+                    // dissolved extent.
+                    stack.oweBelow(stack.depth, kyo.owed)
                     val entries = kyo.entries
                     @tailrec def install(i: Int, c: Context): Context =
                         if i == entries.regions then c
@@ -383,14 +391,14 @@ import scala.util.control.NonFatal
                                     val st = entries.state(i).asInstanceOf[VX]
                                     Debugger.onRegionEnter(hc, st)
                                     stack.push(hc, st, cont)
-                                    stack.oweAll(stack.depth - 1, entries.owed(i))
+                                    stack.owe(stack.depth - 1, entries.owed(i))
                                     install(i + 1, c.update(hc.tag, st))
                                 case handler0 =>
                                     val handler = handler0.asInstanceOf[Handler[EX, Y, Any]]
                                     val st      = entries.state(i).asInstanceOf[VX]
                                     Debugger.onRegionEnter(handler, st)
                                     stack.push(handler, st, cont)
-                                    stack.oweAll(stack.depth - 1, entries.owed(i))
+                                    stack.owe(stack.depth - 1, entries.owed(i))
                                     install(i + 1, c)
                             end match
                     loop(kyo.value, Arrow.id, Arrow.id, install(0, ctx))
@@ -411,8 +419,7 @@ import scala.util.control.NonFatal
                                     // fires in the same slice as the pop.
                                     Debugger.onRegionExit(hc, res)
                                     hc.done(stack.state(top).asInstanceOf[VX])
-                                    val owedHere = stack.pop()
-                                    if !owedHere.isEmpty then drainOwed(owedHere, discarded())
+                                    drainDiscarded(stack.pop())
                                     val j = stack.find(hc.tag)
                                     val outer =
                                         if j < 0 then ctx.remove(hc.tag)
@@ -422,8 +429,7 @@ import scala.util.control.NonFatal
                                     val handler = handler0.asInstanceOf[Handler.ArrowHandler[VX, EX, AX, Y, Any]]
                                     val result  = handler.done(stack.state(top).asInstanceOf[VX], Nested.unnest[AX](res))
                                     Debugger.onRegionExit(handler, result)
-                                    val owedHere = stack.pop()
-                                    if !owedHere.isEmpty then drainOwed(owedHere, discarded())
+                                    drainDiscarded(stack.pop())
                                     loop(result, next, Arrow.id, ctx)
                             end match
                     else
@@ -437,11 +443,8 @@ import scala.util.control.NonFatal
 
         @tailrec def recovered(ex: Throwable): A < S =
             if stack.isEmpty then
-                if !rootOwed.isEmpty then
-                    val owedNow = rootOwed
-                    rootOwed = Chunk.empty
-                    drainOwed(owedNow, ex)
-                end if
+                val owedNow = stack.takeEvalOwed()
+                if !owedNow.isEmpty then drainOwed(owedNow, ex)
                 EffectTrace.splice(ex)
                 throw ex
             else
@@ -513,12 +516,8 @@ import scala.util.control.NonFatal
         try
             val out = guarded(v, Context.empty)
             // A park transferred what it owed into the remainder; anything still rooted
-            // here belongs to no surviving extent and drains now.
-            if !rootOwed.isEmpty then
-                val owedNow = rootOwed
-                rootOwed = Chunk.empty
-                drainOwed(owedNow, discarded())
-            end if
+            // on the stack belongs to no surviving extent and drains now.
+            drainDiscarded(stack.takeEvalOwed())
             out
         finally
             Safepoint.restore(slot, saved)

@@ -223,6 +223,123 @@ class EffectBracketTest extends AnyFreeSpec:
             assert(eval(r) == -1)
             assert(seen.exists(_.isDefined))
         }
+
+        "a clause that throws after capturing releases the bracket with the failure" in {
+            var seen = Maybe.empty[Maybe[Throwable]]
+            val body: Int < Ask =
+                Effect.bracket(Effect.defer(7))((_, outcome) => seen = Maybe(outcome)) { a =>
+                    ask.map(x => a + x)
+                }
+            val r: Int < Any =
+                ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, _) => (throw Boom): Int, b => b)
+            val ex = intercept[RuntimeException](eval(r))
+            assert(ex eq Boom)
+            assert(seen.exists(_.exists(_ eq Boom)))
+        }
+
+        "a leaked capture resumed after its region completed enters the spent extent" in {
+            val outcomes = collection.mutable.ListBuffer[Maybe[Throwable]]()
+            var leaked   = Maybe.empty[kyo.proto.Arrow[Int, Int, Ask]]
+            val body: Int < Ask =
+                Effect.bracket(Effect.defer(7))((_, outcome) => discard(outcomes += outcome)) { a =>
+                    ask.map(x => a + x)
+                }
+            val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
+                [C] =>
+                    (_, cont) =>
+                        leaked = Maybe(cont)
+                        -1
+                ,
+                b => b
+            )
+            assert(eval(r) == -1)
+            assert(outcomes.size == 1)
+            assert(outcomes.head.isDefined)
+            // The stored capture outlived its region: resuming it completes the value in
+            // a spent extent, and the claimed cell keeps the release at exactly once.
+            assert(eval(leaked.get(1)) == 8)
+            assert(outcomes.size == 1)
+        }
+
+        "a throwing release on the discard drain does not starve the ones after it" in {
+            val log = collection.mutable.ListBuffer[String]()
+            object Bad extends RuntimeException("bad", null, false, false)
+            val body: Int < Ask =
+                Effect.bracket(Effect.defer(1))((_, _) => discard(log += "outer")) { _ =>
+                    Effect.bracket(Effect.defer(2))((_, _) => throw Bad) { _ =>
+                        ask.map(x => x)
+                    }
+                }
+            val dropped: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, _) => -1, b => b)
+            assert(eval(dropped) == -1)
+            assert(log.toList == List("outer"))
+        }
+    }
+
+    "mixed with other kernel features" - {
+        "a bracket and a binding dumped together release inner first on discard" in {
+            val log = collection.mutable.ListBuffer[String]()
+            sealed trait Cfg extends ContextEffect[Int]
+            val body: Int < Ask =
+                Effect.bracket(Effect.defer(1))((_, _) => discard(log += "bracket")) { a =>
+                    ContextEffect.handle(Tag[Cfg])(
+                        (_: Maybe[Int]).getOrElse(0),
+                        fork = (parent: Int) => parent,
+                        join = (parent: Int, _: Int, _: Int) => parent,
+                        release = (_: Int, _: Throwable) => discard(log += "binding")
+                    )(ask.map(x => a + x))
+                }
+            val dropped: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, _) => -1, b => b)
+            assert(eval(dropped) == -1)
+            assert(log.toList == List("binding", "bracket"))
+        }
+
+        "a multi-shot capture over a bracket releases at the first completion" in {
+            val outcomes = collection.mutable.ListBuffer[Maybe[Throwable]]()
+            val body: Int < Ask =
+                Effect.bracket(Effect.defer(7))((_, outcome) => discard(outcomes += outcome)) { a =>
+                    ask.map(x => a + x)
+                }
+            val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
+                [C] => (_, cont) => cont(1).map(x => cont(2).map(y => x * 100 + y)),
+                b => b
+            )
+            assert(eval(r) == 809)
+            assert(outcomes.toList == List(Maybe.empty))
+        }
+
+        "a bracket held across two parks releases once on completion" in {
+            var count = 0
+            var seen  = Maybe.empty[Maybe[Throwable]]
+            val v = Effect.bracket(Effect.defer(7)) { (_, outcome) =>
+                count += 1
+                seen = Maybe(outcome)
+            } { a =>
+                Effect.defer {
+                    requestStop()
+                    Effect.defer {
+                        requestStop()
+                        Effect.defer(a + 1)
+                    }
+                }
+            }
+            val p1 = Eval.partial(v)
+            assert(p1.isInstanceOf[Kyo.Park[?, ?]])
+            val p2 = Eval.partial(p1)
+            assert(p2.isInstanceOf[Kyo.Park[?, ?]])
+            assert(eval(p2) == 8)
+            assert(count == 1)
+            assert(seen == Maybe(Maybe.empty))
+        }
+
+        "a contextual isolate inside a bracket forks an inert obligation" in {
+            val outcomes = collection.mutable.ListBuffer[Maybe[Throwable]]()
+            val v = Effect.bracket(Effect.defer(7))((_, outcome) => discard(outcomes += outcome)) { a =>
+                Isolate.internal.Contextual.run(Effect.defer(a + 1)).map(_ + 1)
+            }
+            assert(eval(v) == 9)
+            assert(outcomes.toList == List(Maybe.empty))
+        }
     }
 
     "unit acquire" - {

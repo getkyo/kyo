@@ -18,6 +18,11 @@ final private[kernel] class Stack:
     // these to empty, so no slot is ever null.
     private var owed = new Array[Chunk[Stack.Snapshot]](0)
 
+    // What the eval itself owes: dumps whose owner dissolved with nothing below. Lives
+    // here rather than as an eval local so the nested eval functions do not lift it into
+    // a per-eval box; the same reset protocol as the owed slots keeps the pool clean.
+    private var evalOwed: Chunk[Stack.Snapshot] = Chunk.empty
+
     // Written on every LoopHandler dispatch so the clause outcome escapes and is
     // never read back: C2's scalar replacement of the outcome inside the eval loop
     // compiles to code that roughly doubles the settled LoopHandler benchmark rows,
@@ -52,8 +57,22 @@ final private[kernel] class Stack:
         l
     end takeOwed
 
-    def oweAll(i: Int, snapshots: Chunk[Stack.Snapshot]): Unit =
+    def owe(i: Int, snapshots: Chunk[Stack.Snapshot]): Unit =
         if !snapshots.isEmpty then owed(i) = owed(i).concat(snapshots)
+
+    // Re-homes what a dissolving extent owes to the entry directly below it, or to the
+    // eval itself when nothing is below: everything the dissolved extent can reach lives
+    // inside the extent below.
+    def oweBelow(i: Int, snapshots: Chunk[Stack.Snapshot]): Unit =
+        if !snapshots.isEmpty then
+            if i == 0 then evalOwed = evalOwed.concat(snapshots)
+            else owed(i - 1) = owed(i - 1).concat(snapshots)
+
+    def takeEvalOwed(): Chunk[Stack.Snapshot] =
+        val l = evalOwed
+        if !l.isEmpty then evalOwed = Chunk.empty
+        l
+    end takeEvalOwed
 
     def clear(): Unit =
         @tailrec def loop(i: Int): Unit =
@@ -67,6 +86,7 @@ final private[kernel] class Stack:
         loop(0)
         size = 0
         scratch = null
+        evalOwed = Chunk.empty
     end clear
 
     def snapshot(): Stack.Snapshot =
