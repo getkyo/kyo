@@ -40,6 +40,16 @@ object Effect:
             end new
     end defer
 
+    def defer[A, B, C, D, S](v: A < S, cont1: Arrow[A, B, S], cont2: Arrow[B, C, S], cont3: Arrow[C, D, S]): D < S =
+        if cont1.isInstanceOf[Arrow.Id[?]] then
+            defer(v, cont2.asInstanceOf[Arrow[A, C, S]], cont3)
+        else if cont2.isInstanceOf[Arrow.Id[?]] then
+            defer(v, cont1.asInstanceOf[Arrow[A, C, S]], cont3)
+        else if cont3.isInstanceOf[Arrow.Id[?]] then
+            defer(v, cont1, cont2.asInstanceOf[Arrow[B, D, S]])
+        else
+            defer(v, cont1, cont2.chain(cont3))
+
     def defer[A, S](f: => A < S)(using Frame): A < S =
         deferInline(f)
 

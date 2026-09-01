@@ -91,7 +91,9 @@ import scala.util.control.NonFatal
                                                 Debugger.onRegionExit(entries(i), kyo)
                                                 i -= 3
                                         }
-                                        val inner = kyo.cont.chain(contA.chain(contB)) // TODO why pre-chain it?
+                                        val kc = kyo.cont
+                                        val ca = contA
+                                        val cb = contB
                                         new Arrow.Step[OX[VX], C, EX & S2]:
                                             def frame = Frame.internal
                                             override def apply[D, S3](v: OX[VX] < S3, cont2: Arrow[C, D, S3]) =
@@ -100,9 +102,7 @@ import scala.util.control.NonFatal
                                                     case _ =>
                                                         cont2(
                                                             Kyo.Park(
-                                                                Effect.defer(v, inner, Arrow.id).asInstanceOf[
-                                                                    Any < Any
-                                                                ], // TODO can't this be defer(v, kyo.cont, contA.andThen(contB))?
+                                                                Effect.defer(v, kc, ca, cb).asInstanceOf[Any < Any],
                                                                 entries
                                                             ),
                                                             Arrow.id
