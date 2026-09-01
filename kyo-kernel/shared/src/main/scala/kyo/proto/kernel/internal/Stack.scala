@@ -44,17 +44,15 @@ final private[kernel] class Stack:
     end push
 
     // Popping hands back what the entry owes, so no exit site can forget to drain it and
-    // no stale list can survive into the slot's next occupant.
+    // no stale obligation can survive into the slot's next occupant.
     def pop(): Chunk[Stack.Snapshot] =
         size -= 1
         takeOwed(size)
 
-    def owedOf(i: Int): Chunk[Stack.Snapshot] = owed(i)
-
     def takeOwed(i: Int): Chunk[Stack.Snapshot] =
-        val l = owed(i)
-        if !l.isEmpty then owed(i) = Chunk.empty
-        l
+        val owedHere = owed(i)
+        if !owedHere.isEmpty then owed(i) = Chunk.empty
+        owedHere
     end takeOwed
 
     def owe(i: Int, snapshots: Chunk[Stack.Snapshot]): Unit =
@@ -69,9 +67,9 @@ final private[kernel] class Stack:
             else owed(i - 1) = owed(i - 1).concat(snapshots)
 
     def takeEvalOwed(): Chunk[Stack.Snapshot] =
-        val l = evalOwed
-        if !l.isEmpty then evalOwed = Chunk.empty
-        l
+        val owedHere = evalOwed
+        if !owedHere.isEmpty then evalOwed = Chunk.empty
+        owedHere
     end takeEvalOwed
 
     def clear(): Unit =

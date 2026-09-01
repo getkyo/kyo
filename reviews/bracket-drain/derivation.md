@@ -40,6 +40,10 @@ mid-flight. Rulings of record, verbatim:
 > "bracket must be bullet proof" (2026-09-01: the interaction and finalizer-failure pin
 > sweeps)
 
+> "no benchs for now please" (2026-08-31, the standing park during the design session)
+> lifted by "how about you launch the benchamarks in parallel?" (2026-09-01): the A/B
+> screening runs in review.md
+
 ## The equations
 
 **Owed dumps.** A crossing into the region at `idx` dumps the regions above it; the dumped
@@ -114,9 +118,12 @@ slot), deleting `dropRegions` and the dead topness check.
 | completion | `ContextHandler.done`, the settled context pop's edge, like release on the death edges |
 | context rebind at the crossing | `rebound`: the settled pop's rebind, applied to the dumped run |
 
-No new node kind. No eval arm added (one deleted, net). No registry: the owed chunks live
-in the stack and the snapshots the dump already builds, and uniqueness stays in the
-`Cell`.
+No new node kind. The crossing dispatch splits into a lazy top tier and an eager non-top
+tier: eight handler arms across two dispatches where the base had five in one, with
+`dropRegions` deleted; measured bytecode-neutral against the unsplit shape while the hot
+top trace runs the pre-change lazy code (the loop table in review.md). No registry: the
+owed chunks live in the stack and the snapshots the dump already builds, and uniqueness
+stays in the `Cell`.
 
 ## Surface (as built)
 
@@ -138,8 +145,10 @@ in the stack and the snapshots the dump already builds, and uniqueness stays in 
   walk on one order.
 - `Handler.scala`: `ContextHandler.done`; the at-least-once wording on both hooks.
 - `ContextEffect.scala`: `done` parameter (defaulted, beside `release`); the settled arm
-  fires `done(derive(Absent))`; the contract scaladoc.
-- `EffectBracketTest.scala` (new, kernel package), `EvalTest.scala` additions.
+  fires `done(derive(Absent))`; the contract scaladoc; the pair overload names its
+  `release` argument so the new defaulted parameter cannot misbind.
+- `EffectBracketTest.scala` (new, kernel package), `EvalTest.scala` additions;
+  `Sync.scala` and `SyncTest.scala` deleted; a boundary comment on `Eval.released`.
 
 Hot-path deltas, each named for the bench pass (parked by the user's standing
 instruction, so all unverified):
@@ -153,7 +162,7 @@ instruction, so all unverified):
 - non-top crossings: the dump is now eager on the loop-done path too, and the downdate
   walk runs per crossing (type tests only when no bindings were dumped).
 
-## Pins (all green, 1535/1535 JVM)
+## Pins (all green, 1546/1546 JVM at the tip)
 
 Reproductions that were red first: the dropped capture, the settled-acquire strand (the
 manufactured `DeferWith` shape observed in the failure), the loop-done discard, and the

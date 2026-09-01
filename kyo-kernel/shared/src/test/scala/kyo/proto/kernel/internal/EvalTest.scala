@@ -1037,6 +1037,38 @@ class EvalTest extends AnyFreeSpec:
             assert(log.toList == List(7, 7))
         }
 
+        "a pooled stack reused by a later eval carries no stale obligations" in {
+            sealed trait CfgA extends kyo.proto.kernel.ContextEffect[Int]
+            sealed trait CfgB extends kyo.proto.kernel.ContextEffect[Int]
+            var drops = 0
+            val body: Int < Ask =
+                kyo.proto.kernel.ContextEffect.handle(Tag[CfgA])(
+                    _.getOrElse(1),
+                    fork = (parent: Int) => parent,
+                    join = (parent: Int, _: Int, _: Int) => parent,
+                    release = (_: Int, _: Throwable) => drops += 1
+                )(ask.map(x => x))
+            val dropped: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, _) => -1, b => b)
+            assert(eval(dropped) == -1)
+            assert(drops == 1)
+            // The next eval on this thread borrows the same pooled stack; a stale owed
+            // slot or eval-owed chunk would fire hooks in a computation that never dumped.
+            var completions = 0
+            var releases    = 0
+            val clean: Int < Any =
+                kyo.proto.kernel.ContextEffect.handle(Tag[CfgB])(
+                    _.getOrElse(2),
+                    fork = (parent: Int) => parent,
+                    join = (parent: Int, _: Int, _: Int) => parent,
+                    done = (_: Int) => completions += 1,
+                    release = (_: Int, _: Throwable) => releases += 1
+                )(Effect.defer(5))
+            assert(eval(clean) == 5)
+            assert(completions == 1)
+            assert(releases == 0)
+            assert(drops == 1)
+        }
+
         "a clause reads the outer binding, not a dumped one" in {
             sealed trait Cfg extends kyo.proto.kernel.ContextEffect[Int]
             def read: Int < Cfg = kyo.proto.kernel.ContextEffect.suspend(Tag[Cfg])

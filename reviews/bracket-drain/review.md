@@ -76,8 +76,12 @@ Bottom-up, one file at a time; the sentence to say when applying each:
    tier, cold bodies live behind one-call helpers, and the loop-done arms unify."
 7. **`Effect.scala`** — "The bracket is kernel machinery: Cell, Finalize, and bracket on
    the companion, built on the bind step and the done edge."
-8. **Delete `Sync.scala`**, **add `EffectBracketTest.scala`**, **extend `EvalTest.scala`**
-   — "The prototype dissolves into the kernel, and the pins live beside what they pin."
+8. **Delete `Sync.scala` and `SyncTest.scala`**, **add `EffectBracketTest.scala`**,
+   **extend `EvalTest.scala`** — "The prototype and its test dissolve into the kernel,
+   and the pins live beside what they pin."
+
+The sequence exists as data: `sequence.py --verify` beside this file reproduces the tip
+from the base byte for byte, `--list` walks it, `--show N` prints one edit.
 
 ## Adjudication
 
@@ -91,15 +95,17 @@ duplicated arms, measured bytecode-neutral below).
 
 | check | result |
 |---|---|
-| kernel JVM suite | 1542/1542 at the tip |
+| kernel JVM suite | 1546/1546 at the tip |
 | kernel JS suite | 1499/1499 at the tip |
 | kernel Native suite | 1526/1526 at the tip |
 | clean batch build | passes; no suspension cascade from Bind in Arrow.scala or bracket in Effect.scala |
 | red-first reproductions | dropped capture, settle strand, loop-done discard, stale context: each observed red with the right failure before its fix |
 | `loop$1` bytecode | base 2197, unsplit eager variant 2508, final tree 2504: the split plus cold extraction is size-neutral against the unsplit shape while the hot top trace runs the pre-change lazy code; the +307 over base is the semantic addition itself. `recovered$1` 235 to 309. Defer and Handle arms untouched. |
 
-**Benches: parked by your standing instruction, so the hot-path deltas are disclosed,
-not measured.** The deltas and their gate rows:
+**Benches were parked during the build and unparked at review time** ("how about you
+launch the benchamarks in parallel?"). The A/B screening, full class at -f 1 with tip and
+base back to back, is reported in the table further down; the hot-path deltas and their
+gate rows:
 
 | site | delta | rows |
 |---|---|---|
@@ -109,9 +115,10 @@ not measured.** The deltas and their gate rows:
 | loop-done exits | one owed read + branch; no allocation when nothing is owed | handleLoop |
 | `ContextEffect.handle` settled fast path | inline `done(derive(Absent))`; DCE expected for the default | context settled |
 | non-top crossings | the dump is eager on the loop-done path too; the rebind walk per crossing | emitting, crossing |
-| bracket call | Bind replaces the map arrow (net zero); Cell per shot | bracket rows (new) |
+| bracket call | equal node count by structure (flags F8); Cell per shot | bracket rows (new) |
 
-## The pin suite (28 in EffectBracketTest, plus the EvalTest owed block)
+## The pin suite (28 in EffectBracketTest, plus the EvalTest owed block: promptness,
+sibling order, the raw double fire, the outer-binding read, pooled-stack reuse)
 
 Completion order and payload, the settled fast path, use throwing during application,
 exactly-once, failure payload, abandonment, park-resume, LIFO nesting, the settle strand,
@@ -139,6 +146,12 @@ clause reading the outer binding.
    supports user-facing; leaning yes, not yet ruled.
 4. **The name `Bind`** (main's `BindingStep`; "install" rejected as the Park arm's verb;
    `Open` recorded as the alternative).
+
+Prior-art notes for the layers above (lens-prior-art.md, not kernel changes): the
+concurrency layer should standardize its abandonment signal throwable so release hooks
+can discriminate cancellation the way ZIO and kotlinx users do; and the effectful-release
+tier the deleted prototype hinted at (boundary discharge) is state-layer work, with the
+incumbent as precedent.
 
 ## Held-out review reconciliation
 

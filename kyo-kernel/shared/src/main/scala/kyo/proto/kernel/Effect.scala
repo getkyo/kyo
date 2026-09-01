@@ -42,7 +42,9 @@ object Effect:
       * failure unwinds past the bracket, when the computation is abandoned, and when a
       * capture holding it is discarded. The region opens through a bind step, in the same
       * slice the acquire settles: no safepoint can separate the two, so an existing
-      * resource is never left without its region. Absent means the extent completed.
+      * resource is never left without its region. Only that final slice is guarded: an
+      * abandonment earlier in a multi-step acquire owes nothing yet, so a compound
+      * acquisition nests brackets, one per step. Absent means the extent completed.
       */
     def bracket[A, S1](acquire: A < S1)(
         release: (A, Maybe[Throwable]) => Unit
