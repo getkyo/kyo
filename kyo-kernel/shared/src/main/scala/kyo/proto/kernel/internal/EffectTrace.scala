@@ -150,8 +150,8 @@ private[kernel] object EffectTrace:
                 if i >= 0 then
                     if full then dropped += i + 1
                     else
-                        region(stack.handlerAt(i).tag)
-                        push(stack.continuationAt(i))
+                        region(stack.handler(i).tag)
+                        push(stack.continuation(i))
                         drain()
                         loop(i - 1)
             loop(n - 1)

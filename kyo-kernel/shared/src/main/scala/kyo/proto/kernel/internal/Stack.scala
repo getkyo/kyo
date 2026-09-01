@@ -62,11 +62,11 @@ final private[kernel] class Stack:
         out
     end snapshot
 
-    def depth: Int                                = size
-    def handlerAt(i: Int): Handler[?, ?, ?, ?, ?] = handlers(i)
-    def stateAt(i: Int): Any                      = states(i)
-    def updateState(i: Int, value: Any): Unit     = states(i) = value
-    def continuationAt(i: Int): Arrow[?, ?, ?]    = continuations(i)
+    def depth: Int                              = size
+    def handler(i: Int): Handler[?, ?, ?, ?, ?] = handlers(i)
+    def state(i: Int): Any                      = states(i)
+    def setState(i: Int, value: Any): Unit      = states(i) = value
+    def continuation(i: Int): Arrow[?, ?, ?]    = continuations(i)
 
     def truncate(to: Int): Unit =
         @tailrec def loop(i: Int): Unit =
@@ -104,11 +104,6 @@ final private[kernel] class Stack:
         size = from
         out
     end dump
-
-    def handler: Handler[?, ?, ?, ?, ?] = handlers(size - 1)
-    def state: Any                      = states(size - 1)
-    def state_=(value: Any): Unit       = states(size - 1) = value
-    def cont: Arrow[?, ?, ?]            = continuations(size - 1)
 
     private def grow(): Unit =
         val capacity           = if size == 0 then 8 else size * 2
