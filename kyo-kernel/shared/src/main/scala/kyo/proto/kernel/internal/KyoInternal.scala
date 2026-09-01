@@ -55,6 +55,27 @@ object Kyo:
     abstract class SuspendArrow[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Suspend[E, O[A], B, S]:
         def input: I[A]
 
+        // Staged like LoopHandler.answers: a crossing's resume step is built in the
+        // node's own compiled method, out of the eval's inline budget. Applying it to a
+        // settled answer re-installs the dumped run as a park and resumes the remainder
+        // inside it.
+        private[kyo] def crossing[C](entries: Stack.Snapshot, resume: Arrow[B, C, S]): Arrow[O[A], C, S] =
+            val kc = cont
+            new Arrow.Step[O[A], C, S]:
+                def frame = Frame.internal
+                override def apply[D, S3](v: O[A] < S3, cont2: Arrow[C, D, S3]) =
+                    v match
+                        case p: Pending[O[A], S3] @unchecked => Effect.defer(p, this, cont2)
+                        case _ =>
+                            cont2(
+                                Kyo.Park(
+                                    Effect.defer(v, kc, resume).asInstanceOf[Any < Any],
+                                    entries
+                                ),
+                                Arrow.id
+                            )
+        end crossing
+
     abstract class SuspendContext[State, E <: ContextEffect[State], A, S] extends Suspend[E, State, A, S]:
         def default: Maybe[State]
 

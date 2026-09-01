@@ -251,6 +251,7 @@ import scala.util.control.NonFatal
             install(0, ctx)
         end installed
 
+
         @tailrec def loop[T, B, C, S2](v: T < S2, contA: Arrow[T, B, S2], contB: Arrow[B, C, S2], ctx: Context): A < S =
             Debugger.onLoop(v, contA, contB)
             v match
@@ -281,25 +282,7 @@ import scala.util.control.NonFatal
                                 val ctx2    = if atTop then ctx else rebound(stack, entries, ctx)
                                 def continuation =
                                     if atTop then kyo.cont.chain(contA.chain(contB))
-                                    else
-                                        val kc = kyo.cont
-                                        val ca = contA
-                                        val cb = contB
-                                        new Arrow.Step[OX[VX], C, EX & S2]:
-                                            def frame = Frame.internal
-                                            override def apply[D, S3](v: OX[VX] < S3, cont2: Arrow[C, D, S3]) =
-                                                v match
-                                                    case p: Pending[OX[VX], S3] @unchecked => Effect.defer(p, this, cont2)
-                                                    case _ =>
-                                                        cont2(
-                                                            Kyo.Park(
-                                                                Effect.defer(v, kc, ca, cb).asInstanceOf[Any < Any],
-                                                                entries
-                                                            ),
-                                                            Arrow.id
-                                                        )
-                                        end new
-                                end continuation
+                                    else kyo.crossing(entries, contA.chain(contB))
                                 stack.handler(idx) match
                                     case handler: Handler.ContHandler[IX, OX, EX, C, Y, S2] @unchecked =>
                                         val result = handler.run(kyo.input, continuation)
@@ -323,30 +306,14 @@ import scala.util.control.NonFatal
                                                 stack.setState(idx, e._1)
                                                 loop(e._2.asInstanceOf[Any < S2], Arrow.id, Arrow.id, ctx)
                                             case pending: Pending[Outcome2[VX, OX[VX] < (EX & S2), Y < S2], S2] @unchecked =>
-                                                type OutT = Outcome2[VX, OX[VX] < (EX & S2), Y < S2]
                                                 val reentry = k.asInstanceOf[Arrow[OX[VX], C, EX & S2]]
-                                                val dispatch =
-                                                    new Arrow.Step[OutT, Y, S2]:
-                                                        def frame = Frame.internal
-                                                        override def apply[D, S3](out: OutT < S3, cont2: Arrow[Y, D, S3]) =
-                                                            out match
-                                                                case p: Pending[OutT, S3] @unchecked =>
-                                                                    Effect.defer(p, this, cont2)
-                                                                case out: Loop.Continue2[VX, OX[VX] < (EX & S2)] @unchecked =>
-                                                                    Kyo.handle[VX, EX, C, Y, S2](
-                                                                        out._2.chain(reentry),
-                                                                        handler,
-                                                                        out._1
-                                                                    ).chain(cont2)
-                                                                case out =>
-                                                                    Nested.unnest[Y < S2](out).chain(cont2)
-                                                val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, S2]]
+                                                val next    = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, S2]]
                                                 Debugger.onRegionExit(handler, pending)
                                                 // The entry dissolves but its extent continues as the
                                                 // dispatch value, so what it owes re-homes below.
                                                 stack.pop()
                                                 if stack.owesAny then stack.oweBelow(idx, stack.takePopped())
-                                                loop[OutT, Y, Any, S2](pending, dispatch, next, ctx)
+                                                loop(handler.clausePending(reentry, next, pending), Arrow.id, Arrow.id, ctx)
                                             case done =>
                                                 val result = Nested.unnest[Y < S2](done.asInstanceOf[Y < S2])
                                                 Debugger.onRegionExit(handler, result)
@@ -364,28 +331,11 @@ import scala.util.control.NonFatal
                                                 stack.setState(idx, outcome._1)
                                                 loop(outcome._2, continuation, Arrow.id, ctx2)
                                             case pending: Pending[Outcome2[VX, OX[VX] < (EX & S2), Y < S2], S2] @unchecked =>
-                                                type Out = Outcome2[VX, OX[VX] < (EX & S2), Y < S2]
-                                                val reentry = continuation
-                                                val dispatch =
-                                                    new Arrow.Step[Out, Y, S2]:
-                                                        def frame = Frame.internal
-                                                        override def apply[D, S3](out: Out < S3, cont2: Arrow[Y, D, S3]) =
-                                                            out match
-                                                                case kyo: Pending[Out, S3] @unchecked =>
-                                                                    Effect.defer(kyo, this, cont2)
-                                                                case out: Loop.Continue2[VX, OX[VX] < (EX & S2)] @unchecked =>
-                                                                    Kyo.handle[VX, EX, C, Y, S2](
-                                                                        out._2.chain(reentry),
-                                                                        handler,
-                                                                        out._1
-                                                                    ).chain(cont2)
-                                                                case out =>
-                                                                    Nested.unnest[Y < S2](out).chain(cont2)
                                                 val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, S2]]
                                                 Debugger.onRegionExit(handler, pending)
                                                 stack.pop()
                                                 if stack.owesAny then stack.oweBelow(idx, stack.takePopped())
-                                                loop(pending, dispatch, next, ctx2)
+                                                loop(handler.clausePending(continuation, next, pending), Arrow.id, Arrow.id, ctx2)
                                             case outcome =>
                                                 val result = Nested.unnest[Y < S2](outcome)
                                                 Debugger.onRegionExit(handler, result)
