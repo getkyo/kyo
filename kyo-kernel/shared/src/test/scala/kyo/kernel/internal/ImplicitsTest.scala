@@ -94,12 +94,16 @@ class ImplicitsTest extends kyo.Test:
             typeCheckFailure("val bad: Loop.type < Any = Loop")("Cannot lift 'kyo.kernel.Loop$' to a 'Loop$ < S'")
         }
 
-        // the abortCastUnit trap (a Unit row mismatch aborts with the issue-903
-        // guidance) cannot be pinned here: the abort fires during inline
-        // expansion inside compiletime.testing, whose capture is
-        // zinc-state-dependent and flips between runs. The deterministic pin
-        // compiles the shape with a real dotc: kyo-compile-bench
-        // CompileBenchNegativeTest.
+        "a Unit row mismatch aborts with the issue-903 guidance" in {
+            typeCheckFailure(
+                """
+                sealed trait E1 extends ArrowEffect[[X] =>> Int, [X] =>> Int]
+                sealed trait E2 extends ArrowEffect[[X] =>> Int, [X] =>> Int]
+                def v: Unit < E1 = ???
+                val bad: Unit < E2 = v
+                """
+            )("Cannot lift `Unit < ")
+        }
     }
 
     "lifted functions" - {

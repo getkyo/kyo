@@ -104,6 +104,18 @@ class ImplicitsTest extends AnyFreeSpec:
             assert(typeCheckErrors("val bad: ArrowEffect.type < Any = ArrowEffect").nonEmpty)
             assert(typeCheckErrors("val bad: Loop.type < Any = Loop").nonEmpty)
         }
+
+        "a Unit row mismatch aborts with the issue-903 guidance" in {
+            val errors = typeCheckErrors(
+                """
+                sealed trait E1 extends ArrowEffect[[X] =>> Int, [X] =>> Int]
+                sealed trait E2 extends ArrowEffect[[X] =>> Int, [X] =>> Int]
+                def v: Unit < E1 = ???
+                val bad: Unit < E2 = v
+                """
+            )
+            assert(errors.exists(_.message.contains("Cannot lift `Unit < ")), errors.map(_.message).mkString("\n"))
+        }
     }
 
     "lifted functions" - {
