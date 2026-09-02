@@ -320,7 +320,10 @@ class FlowTest extends kyo.test.Test[Any]:
                 .otherwise(ctx => "zero", name = "default")
             var branchCount = 0
             FlowFold(flow)(new FlowVisitorCollect[Unit]((), (_, _) => ()):
-                override def onDispatch(name: String, infos: Seq[Flow.BranchInfo], frame: Frame, meta: Flow.Meta) =
+                override def onDispatch[V](name: String, infos: Seq[Flow.BranchInfo], frame: Frame, meta: Flow.Meta)(using
+                    Tag[V],
+                    Schema[V]
+                ) =
                     branchCount = infos.size)
             assert(branchCount == 3)
         }
@@ -329,7 +332,12 @@ class FlowTest extends kyo.test.Test[Any]:
             val flow     = Flow.input[Int]("x").loop("r") { ctx => Loop.done(ctx.x - 1) }
             var loopName = ""
             FlowFold(flow)(new FlowVisitorCollect[Unit]((), (_, _) => ()):
-                override def onLoop(name: String, frame: Frame, meta: Flow.Meta) = loopName = name)
+                override def onLoop[V, State](name: String, frame: Frame, meta: Flow.Meta)(using
+                    Tag[V],
+                    Schema[V],
+                    Tag[State],
+                    Schema[State]
+                ) = loopName = name)
             assert(loopName == "r")
         }
 
@@ -368,7 +376,7 @@ class FlowTest extends kyo.test.Test[Any]:
             var foreachName = ""
             var foreachConc = 0
             FlowFold(flow)(new FlowVisitorCollect[Unit]((), (_, _) => ()):
-                override def onForEach(name: String, conc: Int, frame: Frame, meta: Flow.Meta) =
+                override def onForEach[V](name: String, conc: Int, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) =
                     foreachName = name; foreachConc = conc)
             assert(foreachName == "items")
             assert(foreachConc == 5)
@@ -390,7 +398,7 @@ class FlowTest extends kyo.test.Test[Any]:
             var subflowName             = ""
             var childRef: Flow[?, ?, ?] = null
             FlowFold(flow)(new FlowVisitorCollect[Unit]((), (_, _) => ()):
-                override def onSubflow(name: String, childFlow: Flow[?, ?, ?], frame: Frame, meta: Flow.Meta) =
+                override def onSubflow(name: String, childFlow: Flow[?, ?, ?], child: Unit, frame: Frame, meta: Flow.Meta) =
                     subflowName = name; childRef = childFlow)
             assert(subflowName == "result")
             assert(childRef eq child, "visitor should receive the same child flow instance")
@@ -417,10 +425,14 @@ class FlowTest extends kyo.test.Test[Any]:
                 .otherwise(ctx => "small", name = "default")
                 .output("z")(ctx => ctx.d)
             val names = FlowFold(flow)(new FlowVisitorCollect[Chunk[String]](Chunk.empty, _ ++ _):
-                override def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V])        = Chunk(name)
-                override def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V])       = Chunk(name)
-                override def onDispatch(name: String, branches: Seq[Flow.BranchInfo], frame: Frame, meta: Flow.Meta) = Chunk(name)
-                override def onSubflow(name: String, childFlow: Flow[?, ?, ?], frame: Frame, meta: Flow.Meta)        = Chunk(name))
+                override def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V])  = Chunk(name)
+                override def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) = Chunk(name)
+                override def onDispatch[V](name: String, branches: Seq[Flow.BranchInfo], frame: Frame, meta: Flow.Meta)(using
+                    Tag[V],
+                    Schema[V]
+                ) = Chunk(name)
+                override def onSubflow(name: String, childFlow: Flow[?, ?, ?], child: Chunk[String], frame: Frame, meta: Flow.Meta) =
+                    Chunk(name))
             assert(names.toSeq == Seq("x", "y", "d", "z"))
         }
     }
@@ -512,7 +524,7 @@ class FlowTest extends kyo.test.Test[Any]:
 
     "compile errors" - {
 
-        "dispatch without otherwise — output" in {
+        "dispatch without otherwise, over an output" in {
             typeCheckFailure("""
                 import kyo.*
                 val flow = Flow.init("test").input[Int]("x")
@@ -522,7 +534,7 @@ class FlowTest extends kyo.test.Test[Any]:
             """)("dispatch requires .otherwise")
         }
 
-        "dispatch without otherwise — step" in {
+        "dispatch without otherwise, over a step" in {
             typeCheckFailure("""
                 import kyo.*
                 val flow = Flow.init("test").input[Int]("x")
@@ -532,7 +544,7 @@ class FlowTest extends kyo.test.Test[Any]:
             """)("dispatch requires .otherwise")
         }
 
-        "dispatch without otherwise — input" in {
+        "dispatch without otherwise, over an input" in {
             typeCheckFailure("""
                 import kyo.*
                 val flow = Flow.init("test").input[Int]("x")
@@ -542,7 +554,7 @@ class FlowTest extends kyo.test.Test[Any]:
             """)("dispatch requires .otherwise")
         }
 
-        "dispatch without otherwise — sleep" in {
+        "dispatch without otherwise, over a sleep" in {
             typeCheckFailure("""
                 import kyo.*
                 val flow = Flow.init("test").input[Int]("x")
@@ -561,15 +573,6 @@ class FlowTest extends kyo.test.Test[Any]:
 
             "Running" in {
                 assert(Flow.Status.Running.show == "running")
-            }
-
-            "WaitingForInput" in {
-                assert(Flow.Status.WaitingForInput("x").show == "waiting:x")
-            }
-
-            "Sleeping" in {
-                val until = Instant.Epoch + 1.hour
-                assert(Flow.Status.Sleeping("pause", until).show == "sleeping:pause")
             }
 
             "Completed" in {
@@ -593,10 +596,6 @@ class FlowTest extends kyo.test.Test[Any]:
 
         "isTerminal for non-terminal statuses" - {
             "Running is not terminal" in { assert(!Flow.Status.Running.isTerminal); () }
-            "WaitingForInput is not terminal" in { assert(!Flow.Status.WaitingForInput("x").isTerminal); () }
-            "Sleeping is not terminal" in {
-                assert(!Flow.Status.Sleeping("pause", Instant.Epoch + 1.hour).isTerminal); ()
-            }
         }
     }
 
