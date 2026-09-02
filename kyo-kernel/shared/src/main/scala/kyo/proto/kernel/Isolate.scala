@@ -2,6 +2,7 @@ package kyo.proto.kernel
 
 import kyo.Ansi.*
 import kyo.Frame
+import kyo.Maybe
 import kyo.proto.kernel.Arrow
 import kyo.proto.kernel.internal.Handler
 import kyo.proto.kernel.internal.Kyo
@@ -72,10 +73,10 @@ object Isolate:
                 new Kyo.SnapshotWith[A, S]:
                     override def frame = _frame
                     def cont           = this
-                    override def apply[C, S2](v: Stack.Snapshot < S2, cont2: Arrow[A, C, S2]) =
+                    override def apply[C, S2](v: Stack < S2, cont2: Arrow[A, C, S2]) =
                         v match
-                            case p: Pending[Stack.Snapshot, S2] @unchecked => Effect.defer(p, this, cont2)
-                            case _                                         => cont2(f(Nested.unnest[Stack.Snapshot](v)), Arrow.id)
+                            case p: Pending[Stack, S2] @unchecked => Effect.defer(p, this, cont2)
+                            case _                                => cont2(f(Nested.unnest[Stack](v).contextual()), Arrow.id)
 
             def isolate[A, S](state: Stack.Snapshot, v: A < S)(using Frame): (Stack.Snapshot, Stack.Snapshot, A) < S =
                 val forked                          = fork(state)
@@ -89,69 +90,62 @@ object Isolate:
                     new Kyo.SnapshotWith[A, S]:
                         override def frame = _frame
                         def cont           = this
-                        override def apply[C, S2](cur: Stack.Snapshot < S2, cont2: Arrow[A, C, S2]) =
+                        override def apply[C, S2](cur: Stack < S2, cont2: Arrow[A, C, S2]) =
                             cur match
-                                case p: Pending[Stack.Snapshot, S2] @unchecked => Effect.defer(p, this, cont2)
+                                case p: Pending[Stack, S2] @unchecked => Effect.defer(p, this, cont2)
                                 case _ =>
                                     val av: A < Any = a
-                                    merge(forked, finals, Nested.unnest[Stack.Snapshot](cur)) match
-                                        case kyo.Maybe.Present(joined) =>
-                                            Kyo.Park[C, S2](cont2(av, Arrow.id).asInstanceOf[Any < Any], joined)
-                                        case _ =>
-                                            cont2(av, Arrow.id)
-                                    end match
+                                    join(forked, finals, Nested.unnest[Stack](cur))
+                                    cont2(av, Arrow.id)
                 }
+
+            final private class Forked[State, E <: ContextEffect[State], A, S](val origin: Handler.ContextHandler[State, E, A, S])
+                extends Handler.ContextHandler[State, E, A, S]:
+                def tag                                                     = origin.tag
+                def derive(outer: Maybe[State]): State                      = origin.derive(outer)
+                def fork(parent: State): State                              = origin.fork(parent)
+                def join(parent: State, forked: State, child: State): State = origin.join(parent, forked, child)
+            end Forked
 
             private def fork(entries: Stack.Snapshot): Stack.Snapshot =
                 if entries.isEmpty then entries
                 else
-                    val out     = Stack.Snapshot.Builder(entries.regions)
-                    var changed = false
-                    var i       = 0
+                    val out = Stack.Snapshot.Builder(entries.regions)
+                    var i   = 0
                     while i < entries.regions do
-                        val parent = entries.state(i)
-                        val child =
-                            entries.handler(i).asInstanceOf[Handler.ContextHandler[Any, ContextEffect[Any], Any, Any]].fork(parent)
-                        out.add(entries.handler(i), child)
-                        if child.asInstanceOf[AnyRef] ne parent.asInstanceOf[AnyRef] then changed = true
+                        val origin = entries.handler(i).asInstanceOf[Handler.ContextHandler[Any, ContextEffect[Any], Any, Any]]
+                        out.add(new Forked(origin), origin.fork(entries.state(i)))
                         i += 1
                     end while
-                    if changed then out.result() else entries
+                    out.result()
             end fork
 
-            private def merge(forked: Stack.Snapshot, finals: Stack.Snapshot, current: Stack.Snapshot): kyo.Maybe[Stack.Snapshot] =
-                var out = kyo.Maybe.empty[Stack.Snapshot.Builder]
-                var i   = 0
+            private def join(forked: Stack.Snapshot, finals: Stack.Snapshot, stack: Stack): Unit =
+                var i = 0
                 while i < forked.regions do
-                    val hc = forked.handler(i).asInstanceOf[Handler.ContextHandler[Any, ContextEffect[Any], Any, Any]]
-                    var j  = current.regions - 1
-                    while j >= 0 && !(current.handler(j) eq hc) do j -= 1
-                    if j >= 0 then
-                        val parent = current.state(j)
-                        var child  = forked.state(i)
-                        var k      = finals.regions - 1
-                        while k >= 0 do
-                            if finals.handler(k) eq hc then
-                                child = finals.state(k)
-                                k = -1
-                            else k -= 1
-                        end while
-                        val joined = hc.join(parent, forked.state(i), child)
-                        if joined.asInstanceOf[AnyRef] ne parent.asInstanceOf[AnyRef] then
-                            val builder =
-                                out match
-                                    case kyo.Maybe.Present(builder) => builder
-                                    case _ =>
-                                        val builder = Stack.Snapshot.Builder(forked.regions)
-                                        out = kyo.Maybe(builder)
-                                        builder
-                            builder.add(hc, joined)
-                        end if
-                    end if
+                    forked.handler(i) match
+                        case copy: Forked[Any, ContextEffect[Any], Any, Any] @unchecked =>
+                            val origin = copy.origin
+                            var j      = stack.depth - 1
+                            while j >= 0 && !(stack.handler(j) eq origin) do j -= 1
+                            if j >= 0 then
+                                val parent = stack.state(j)
+                                var child  = forked.state(i)
+                                var k      = finals.regions - 1
+                                while k >= 0 do
+                                    if finals.handler(k) eq copy then
+                                        child = finals.state(k)
+                                        k = -1
+                                    else k -= 1
+                                end while
+                                val joined = origin.join(parent, forked.state(i), child)
+                                if joined.asInstanceOf[AnyRef] ne parent.asInstanceOf[AnyRef] then stack.setState(j, joined)
+                            end if
+                        case _ => ()
+                    end match
                     i += 1
                 end while
-                out.map(_.result())
-            end merge
+            end join
         end Contextual
 
         def deriveImpl[Remove: Type, Keep: Type, Restore: Type](using Quotes): Expr[Isolate[Remove, Keep, Restore]] =

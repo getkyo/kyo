@@ -563,7 +563,7 @@ class IsolateTest extends Test:
             assert(v.eval == 10)
         }
 
-        "an isolate cycle fires done once, for the region the user installed" in {
+        "an isolate cycle fires done once, for the region the user installed, with the joined state" in {
             val log = ListBuffer[String]()
             val r: Int < Any = ContextEffect.handle(Tag[TestEffect1])(
                 (o: Maybe[Int]) => o.getOrElse(10),
@@ -572,7 +572,7 @@ class IsolateTest extends Test:
                 done = (s: Int) => discard(log += s"done $s")
             )(Isolate.internal.Contextual.run(ContextEffect.suspend(Tag[TestEffect1])))
             assert(r.eval == 20)
-            assert(log.toList == List("done 10"))
+            assert(log.toList == List("done 30"))
         }
 
         "a restored crossing reads the binding it captured, not the scope it restores in" in {

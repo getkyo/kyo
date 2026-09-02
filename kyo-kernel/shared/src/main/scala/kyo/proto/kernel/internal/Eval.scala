@@ -186,7 +186,7 @@ import scala.util.control.NonFatal
                     loop(kyo.value, Arrow.id, Arrow.id, installed(kyo, contA.chain(contB).asInstanceOf[Arrow[Any, Any, Any]], ctx))
 
                 case kyo: Kyo.Snapshot[T, S2] @unchecked =>
-                    loop(kyo.cont(stack.contextual(), contA.chain(contB)), Arrow.id, Arrow.id, ctx)
+                    loop(kyo.cont(stack, contA.chain(contB)), Arrow.id, Arrow.id, rebuilt())
 
                 case res =>
                     if contA.isInstanceOf[Arrow.Id[?]] && contB.isInstanceOf[Arrow.Id[?]] then
@@ -294,6 +294,17 @@ import scala.util.control.NonFatal
                 drainDiscarded(stack.takePopped())
         end arrowExit
 
+        def rebuilt(): Context =
+            @tailrec def rebuild(i: Int, c: Context): Context =
+                if i == stack.depth then c
+                else
+                    stack.handler(i) match
+                        case handler: Handler.ContextHandler[VX, CX, ?, ?] @unchecked =>
+                            rebuild(i + 1, c.update(handler.tag, stack.state(i).asInstanceOf[VX]))
+                        case _ => rebuild(i + 1, c)
+            rebuild(0, Context.empty)
+        end rebuilt
+
         @tailrec def recovered(ex: Throwable): A < S =
             if stack.isEmpty then
                 val owedNow = stack.takeEvalOwed()
@@ -352,14 +363,7 @@ import scala.util.control.NonFatal
                         stack.pop()
                         val owedHere = stack.takePopped()
                         if !owedHere.isEmpty then drainOwed(owedHere, failure)
-                        @tailrec def rebuild(i: Int, rebuilt: Context): Context =
-                            if i == stack.depth then rebuilt
-                            else
-                                stack.handler(i) match
-                                    case handler: Handler.ContextHandler[VX, CX, ?, ?] @unchecked =>
-                                        rebuild(i + 1, rebuilt.update(handler.tag, stack.state(i).asInstanceOf[VX]))
-                                    case _ => rebuild(i + 1, rebuilt)
-                        return guarded(resumed, rebuild(0, Context.empty))
+                        return guarded(resumed, rebuilt())
             res match
                 case susp: Kyo.Suspend[?, ?, ?, ?] =>
 

@@ -116,7 +116,7 @@ object Kyo:
     abstract class Snapshot[A, -S] extends Pending[A, S]:
         Debugger.onAlloc(this)
 
-        def cont: Arrow[Stack.Snapshot, A, S]
+        def cont: Arrow[Stack, A, S]
     end Snapshot
 
     final class Park[+A, -S](
@@ -140,7 +140,7 @@ object Kyo:
     abstract class SuspendContextWith[State, E <: ContextEffect[State], A, S]
         extends SuspendContext[State, E, A, S] with Arrow.Transform[State, A, S]
 
-    abstract class SnapshotWith[A, -S] extends Snapshot[A, S] with Arrow.Transform[Stack.Snapshot, A, S]
+    abstract class SnapshotWith[A, -S] extends Snapshot[A, S] with Arrow.Transform[Stack, A, S]
 
     abstract class HandleWith[State, E <: Effect, A, B, C, -S]
         extends Handle[State, E, A, B, C, S] with Arrow.Transform[B, C, S]
