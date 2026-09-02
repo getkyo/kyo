@@ -10,7 +10,7 @@ class FileSystemConformanceDeclarationTest extends kyo.test.Test[Any]:
             classOf[FileSystemReadTestSuite],
             classOf[FileSystemWriteTestSuite],
             classOf[FileSystemChannelTestSuite],
-            classOf[FileSystemLockTestSuite]
+            classOf[FileSystemLockTest]
         )
         assert(suites.size == 4)
     }

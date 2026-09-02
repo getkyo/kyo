@@ -599,6 +599,15 @@ object Path extends PathPlatformSpecific:
       *
       * Use [[check]] before a protected operation when the backend can lose external ownership.
       * It raises [[FileLockOwnershipLostException]] if the claim no longer belongs to this handle.
+      *
+      * On the JVM and Native on POSIX platforms (Linux, macOS), the lock is a process-wide
+      * `fcntl` record lock, and POSIX releases every lock the process holds on a file when the
+      * process closes any handle to that file. Reading or writing the locked path through this
+      * API, or through any other API, opens and closes such a handle, and the release is silent:
+      * neither the platform lock object nor [[check]] can observe it. While a lock is held, do
+      * not touch the locked file from the same process; lock a sentinel path next to the data
+      * instead and perform the I/O on the data path. Windows locks are handle-scoped and the
+      * Node backend uses a lockfile protocol, so neither has this behavior.
       */
     trait Lock:
         /** The compatibility mode granted to this handle. */

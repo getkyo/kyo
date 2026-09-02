@@ -1,9 +1,7 @@
 package kyo
 
 /** Shared behavioral contract for [[FileSystem.Read]] lock implementations. */
-abstract class FileSystemLockTestSuite extends kyo.test.Test[Any]:
-
-    private given Frame = Frame.internal
+abstract class FileSystemLockTest extends kyo.test.Test[Any]:
 
     protected def withFileSystem(
         use: (FileSystem.Read[Sync], Path) => Unit < (Async & Sync & Scope & Abort[FileSystemException])
@@ -283,4 +281,4 @@ abstract class FileSystemLockTestSuite extends kyo.test.Test[Any]:
         }
     }
 
-end FileSystemLockTestSuite
+end FileSystemLockTest

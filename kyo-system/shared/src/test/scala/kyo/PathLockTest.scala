@@ -1,6 +1,6 @@
 package kyo
 
-class HostPathLockTest extends FileSystemLockTestSuite:
+class HostPathLockTest extends FileSystemLockTest:
     protected def withFileSystem(
         use: (FileSystem.Read[Sync], Path) => Unit < (Async & Sync & Scope & Abort[FileSystemException])
     )(using Frame): Unit < (Async & Sync & Scope & Abort[FileSystemException]) =

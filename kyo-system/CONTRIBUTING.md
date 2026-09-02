@@ -121,6 +121,12 @@ Locks are advisory, scope-managed values. `Path.LockMode` selects shared or excl
 `Path.LockWait` selects immediate, unbounded, or deadline-bounded acquisition. Fiber waiting must use
 `Async`; never block an OS thread. Ownership checks and cleanup failures remain typed.
 
+POSIX `fcntl` record locks (JVM and Native on Linux and macOS) are process-wide: the OS releases
+every lock the process holds on a file when the process closes any handle to that file, silently
+and undetectably. Documented on `Path.Lock`: callers lock a sentinel path, never the data path
+they read or write. Windows locks are handle-scoped; the Node backend uses a lockfile protocol.
+Neither is affected.
+
 ## Error contracts
 
 `FileSystemException` is the umbrella. Concrete exceptions mix in only the marker traits for the
@@ -158,7 +164,7 @@ Use the reusable suites for backend laws:
 - `FileSystemReadTestSuite`
 - `FileSystemWriteTestSuite`
 - `FileSystemChannelTestSuite`
-- `FileSystemLockTestSuite`
+- `FileSystemLockTest`
 
 Test capability rows with `typeCheck` and `typeCheckErrors`. Use deterministic `Async` coordination
 for lock tests. Never use sleeps or blocking primitives to make scheduling tests pass.
