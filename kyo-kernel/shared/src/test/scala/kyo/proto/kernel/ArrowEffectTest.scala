@@ -2545,21 +2545,21 @@ class ArrowEffectTest extends AnyFreeSpec:
                 (_, a) => a
             )
 
-        def both[A, S](v: A < (Choose & S)): List[A] < S =
+        def both[A, S](v: List[A] < (Choose & S)): List[A] < S =
             ArrowEffect.handleCont(Tag[Choose], v)(
-                [C] => (_, cont) => cont(true).map(a => cont(false).map(b => List(a, b))),
-                a => List(a)
+                [C] => (_, cont) => cont(true).map(a => cont(false).map(b => a ++ b)),
+                a => a
             )
 
         "scoped state kept in a nested region is per branch under a multi-shot choice" in {
-            val body: (Boolean, Int) < (Choose & Bump) = choose.map(b => bump.map(n => (b, n)))
-            val perBranch: List[(Boolean, Int)] < Any  = both(counted(body))
+            val body: List[(Boolean, Int)] < (Choose & Bump) = choose.map(b => bump.map(n => List((b, n))))
+            val perBranch: List[(Boolean, Int)] < Any        = both(counted(body))
             assert(perBranch.eval == List((true, 1), (false, 1)))
         }
 
         "state kept in the answering handler is shared across the branches of a multi-shot choice" in {
-            val body: (Boolean, Int) < (Choose & Bump) = choose.map(b => bump.map(n => (b, n)))
-            val shared: List[(Boolean, Int)] < Any     = counted(both(body))
+            val body: List[(Boolean, Int)] < (Choose & Bump) = choose.map(b => bump.map(n => List((b, n))))
+            val shared: List[(Boolean, Int)] < Any           = counted(both(body))
             assert(shared.eval == List((true, 1), (false, 2)))
         }
     }
