@@ -43,85 +43,12 @@ import scala.util.control.NonFatal
         val saved = Safepoint.save(slot)
         if armed then Safepoint.arm(slot)
 
-        def park[T, B, C, S2](v: T < S2, contA: Arrow[T, B, S2], contB: Arrow[B, C, S2]): A < S =
-            val parked: Any < Any =
-                if contA.isInstanceOf[Arrow.Id[?]] && contB.isInstanceOf[Arrow.Id[?]] then v.asInstanceOf[Any < Any]
-                else Effect.defer(v, contA, contB).asInstanceOf[Any < Any]
-            val owedNow = stack.takeEvalOwed()
-            if stack.isEmpty then
-                if owedNow.isEmpty then parked.asInstanceOf[A < S]
-                else Kyo.Park[A, S](parked, Stack.Snapshot.empty, owedNow)
-            else
-                Debugger.whenEnabled {
-                    var j = stack.depth - 1
-                    while j >= 0 do
-                        Debugger.onRegionExit(stack.handler(j), parked)
-                        j -= 1
-                }
-                Kyo.Park[A, S](parked, stack.snapshot(), owedNow)
-            end if
-        end park
-
-        def installed(kyo: Kyo.Park[?, ?], resume: Arrow[Any, Any, Any], ctx: Context): Context =
-            val entries = kyo.entries
-            var ri      = 0
-            while ri < entries.regions do
-                entries.handler(ri) match
-                    case hc: Handler.ContextHandler[VX, CX, ?, ?] @unchecked =>
-                        try hc.reenter(entries.state(ri).asInstanceOf[VX])
-                        catch
-                            case ex if NonFatal(ex) =>
-                                release(kyo, ex)
-                                throw ex
-                    case _ => ()
-                end match
-                ri += 1
-            end while
-            if !stack.isEmpty then stack.settle(stack.depth - 1, entries)
-            stack.oweBelow(stack.depth, kyo.owed)
-            @tailrec def install(i: Int, c: Context): Context =
-                if i == entries.regions then c
-                else
-                    val stored = entries.continuation(i).asInstanceOf[Arrow[Y, Any, Any]]
-                    val cont =
-                        if i == 0 then stored.chain(resume)
-                        else stored
-                    entries.handler(i) match
-                        case hc: Handler.ContextHandler[VX, CX, Y, Any] @unchecked =>
-                            val st = entries.state(i).asInstanceOf[VX]
-                            Debugger.onRegionEnter(hc, st)
-                            stack.push(hc, st, cont)
-                            stack.owe(stack.depth - 1, entries.owed(i))
-                            install(i + 1, c.update(hc.tag, st))
-                        case handler0 =>
-                            val handler = handler0.asInstanceOf[Handler[EX, Y, Any]]
-                            val st      = entries.state(i).asInstanceOf[VX]
-                            Debugger.onRegionEnter(handler, st)
-                            stack.push(handler, st, cont)
-                            stack.owe(stack.depth - 1, entries.owed(i))
-                            install(i + 1, c)
-                    end match
-            install(0, ctx)
-        end installed
-
-        def contextExit(hc: Handler.ContextHandler[VX, CX, ?, ?], top: Int, ctx: Context): Context =
-            hc.done(stack.state(top).asInstanceOf[VX])
-            stack.pop()
-            if stack.owesAny then drainDiscarded(stack.takePopped())
-            val j = stack.find(hc.tag)
-            if j < 0 then ctx.remove(hc.tag)
-            else ctx.update(hc.tag, stack.state(j).asInstanceOf[VX])
-        end contextExit
-
-        def arrowExit(): Unit =
-            stack.pop()
-            if stack.owesAny then drainDiscarded(stack.takePopped())
-
         @tailrec def loop[T, B, C, S2](v: T < S2, contA: Arrow[T, B, S2], contB: Arrow[B, C, S2], ctx: Context): A < S =
             Debugger.onLoop(v, contA, contB)
             v match
                 case kyo: Kyo.Defer[?, ?, T, S2] @unchecked =>
-                    if armed && Safepoint.stopped(slot) then park(v, contA, contB)
+                    if armed && Safepoint.stopped(slot) then
+                        park(v, contA, contB)
                     else
                         loop(kyo.value, kyo.contA, kyo.contB.chain(contA.chain(contB)), ctx)
 
@@ -134,13 +61,15 @@ import scala.util.control.NonFatal
 
                         case kyo: Kyo.SuspendArrow[IX, OX, EX, VX, T, EX & S2] @unchecked =>
                             val idx = stack.find(kyo.tag)
-                            if idx < 0 then unhandled(kyo, stack)
+                            if idx < 0 then
+                                unhandled(kyo, stack)
                             else
                                 Debugger.onHandle(kyo, stack.handler(idx), stack.state(idx))
                                 val atTop = idx == stack.depth - 1
                                 if !atTop then Debugger.onForeign(kyo, stack.handler(stack.depth - 1))
                                 stack.handler(idx) match
                                     case handler: Handler.ContHandler[IX, OX, EX, C, Y, S2] @unchecked =>
+                                        // TODO how about we move the atTop branching to the called methods?
                                         val entries = if atTop then Stack.Snapshot.empty else dumped(stack, idx, kyo)
                                         val ctx2    = if atTop then ctx else rebound(stack, entries, ctx)
                                         val continuation =
@@ -163,6 +92,7 @@ import scala.util.control.NonFatal
                                         val result = handler.answering(operation, continuation, kyo, stack)
                                         Debugger.onResult(result)
                                         loop(result, Arrow.id, Arrow.id, ctx2)
+                                    // TODO are you sure the repeated code for the special atTop case is worth it? size of the loop mehtod is critical for performance
                                     case handler: Handler.LoopHandler[VX, IX, OX, EX, C, Y, S2] @unchecked if atTop =>
                                         val k    = kyo.cont.chain(contA.chain(contB)).asInstanceOf[Arrow[Any, Any, Any]]
                                         val exit = handler.answers(stack.state(idx).asInstanceOf[VX], kyo.input, k, armed, slot, kyo.frame)
@@ -260,7 +190,8 @@ import scala.util.control.NonFatal
 
                 case res =>
                     if contA.isInstanceOf[Arrow.Id[?]] && contB.isInstanceOf[Arrow.Id[?]] then
-                        if stack.isEmpty then res.asInstanceOf[A < S]
+                        if stack.isEmpty then
+                            res.asInstanceOf[A < S]
                         else
                             val top  = stack.depth - 1
                             val next = stack.continuation(top).asInstanceOf[Arrow[Y, Any, Any]]
@@ -283,6 +214,86 @@ import scala.util.control.NonFatal
                                 loop(contA(res, contB), Arrow.id, Arrow.id, ctx)
             end match
         end loop
+
+        def park[T, B, C, S2](v: T < S2, contA: Arrow[T, B, S2], contB: Arrow[B, C, S2]): A < S =
+            val parked: Any < Any =
+                if contA.isInstanceOf[Arrow.Id[?]] && contB.isInstanceOf[Arrow.Id[?]] then v.asInstanceOf[Any < Any]
+                else Effect.defer(v, contA, contB).asInstanceOf[Any < Any]
+            val owedNow = stack.takeEvalOwed()
+            if stack.isEmpty then
+                if owedNow.isEmpty then parked.asInstanceOf[A < S]
+                else Kyo.Park[A, S](parked, Stack.Snapshot.empty, owedNow)
+            else
+                Debugger.whenEnabled {
+                    var j = stack.depth - 1
+                    while j >= 0 do
+                        Debugger.onRegionExit(stack.handler(j), parked)
+                        j -= 1
+                }
+                Kyo.Park[A, S](parked, stack.snapshot(), owedNow)
+            end if
+        end park
+
+        def installed(kyo: Kyo.Park[?, ?], resume: Arrow[Any, Any, Any], ctx: Context): Context =
+            val entries = kyo.entries
+            var ri      = 0
+            while ri < entries.regions do
+                entries.handler(ri) match
+                    case hc: Handler.ContextHandler[VX, CX, ?, ?] @unchecked =>
+                        try hc.reenter(entries.state(ri).asInstanceOf[VX])
+                        catch
+                            case ex if NonFatal(ex) =>
+                                release(kyo, ex)
+                                throw ex
+                    case _ => ()
+                end match
+                ri += 1
+            end while
+
+            if !stack.isEmpty then
+                stack.settle(stack.depth - 1, entries)
+            stack.oweBelow(stack.depth, kyo.owed)
+
+            @tailrec def install(i: Int, c: Context): Context =
+                if i == entries.regions then c
+                else
+                    val stored = entries.continuation(i).asInstanceOf[Arrow[Y, Any, Any]]
+                    val cont =
+                        if i == 0 then stored.chain(resume)
+                        else stored
+                    entries.handler(i) match
+                        case hc: Handler.ContextHandler[VX, CX, Y, Any] @unchecked =>
+                            val st = entries.state(i).asInstanceOf[VX]
+                            Debugger.onRegionEnter(hc, st)
+                            stack.push(hc, st, cont)
+                            stack.owe(stack.depth - 1, entries.owed(i))
+                            install(i + 1, c.update(hc.tag, st))
+                        case handler0 =>
+                            val handler = handler0.asInstanceOf[Handler[EX, Y, Any]]
+                            val st      = entries.state(i).asInstanceOf[VX]
+                            Debugger.onRegionEnter(handler, st)
+                            stack.push(handler, st, cont)
+                            stack.owe(stack.depth - 1, entries.owed(i))
+                            install(i + 1, c)
+                    end match
+            install(0, ctx)
+        end installed
+
+        def contextExit(hc: Handler.ContextHandler[VX, CX, ?, ?], top: Int, ctx: Context): Context =
+            hc.done(stack.state(top).asInstanceOf[VX])
+            stack.pop()
+            if stack.owesAny then
+                drainDiscarded(stack.takePopped())
+            val j = stack.find(hc.tag)
+            if j < 0 then ctx.remove(hc.tag)
+            else ctx.update(hc.tag, stack.state(j).asInstanceOf[VX])
+        end contextExit
+
+        def arrowExit(): Unit =
+            stack.pop()
+            if stack.owesAny then
+                drainDiscarded(stack.takePopped())
+        end arrowExit
 
         @tailrec def recovered(ex: Throwable): A < S =
             if stack.isEmpty then

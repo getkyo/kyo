@@ -3,13 +3,18 @@ package kyo.proto.kernel
 import kyo.Const
 import kyo.Maybe
 import kyo.Tag
+import kyo.proto.Loop
 import org.scalatest.freespec.AnyFreeSpec
+import scala.collection.mutable.ListBuffer
 
 class ContextEffectTest extends AnyFreeSpec:
 
     sealed trait Count extends ContextEffect[Int]
     sealed trait Name  extends ContextEffect[String]
     sealed trait Flag  extends ContextEffect[Boolean]
+
+    sealed trait Cfg    extends ContextEffect[Int]
+    sealed trait CfgSub extends Cfg
 
     def count: Int < Count   = ContextEffect.suspend(Tag[Count])
     def label: String < Name = ContextEffect.suspend(Tag[Name])
@@ -206,6 +211,59 @@ class ContextEffectTest extends AnyFreeSpec:
             val v      = held(1, _ => count0 += 1)(count.map(_ + 1))
             assert(v.eval == 2)
             assert(count0 == 1)
+        }
+
+        def logged[A, S](log: ListBuffer[String])(v: A < (Count & S)): A < S =
+            ContextEffect.handle(Tag[Count])(
+                derive = (_: Maybe[Int]) => 1,
+                fork = (s: Int) => s,
+                join = (parent: Int, _: Int, _: Int) => parent,
+                done = (_: Int) => log += "done",
+                release = (_: Int, _: Throwable) => log += "release"
+            )(v)
+
+        "a region crossed to a foreign loop answered with a pending outcome completes without a release" in {
+            val log          = ListBuffer.empty[String]
+            val v: Int < Ask = logged(log)(ask.map(a => count.map(_ + a)))
+            val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Effect.defer(Loop.continue((), 41: Int < Any)), a => a)
+            assert(r.eval == 42)
+            assert(log.toList == List("done"))
+        }
+
+        "a region crossed to a foreign clause that resumes inside a nested region completes without a release" in {
+            val log          = ListBuffer.empty[String]
+            val v: Int < Ask = logged(log)(ask.map(a => count.map(_ + a)))
+            val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], v)(
+                [C] => (_, cont) => ArrowEffect.handleCont(Tag[Say], cont(41))([C2] => (_, k) => k(()), a => a),
+                a => a
+            )
+            assert(r.eval == 42)
+            assert(log.toList == List("done"))
+        }
+
+        "a settled body still derives from the binding around it" in {
+            var seen = Maybe.empty[Maybe[Int]]
+            val v: Int < Any =
+                ContextEffect.handleInheritable(Tag[Count], 5)(
+                    Effect.defer(
+                        ContextEffect.handleInheritable(Tag[Count]) { (outer: Maybe[Int]) =>
+                            seen = Maybe(outer)
+                            outer.getOrElse(0) + 1
+                        }(42: Int < Count)
+                    )
+                )
+            assert(v.eval == 42)
+            assert(seen == Maybe(Maybe(5)))
+        }
+    }
+
+    "tag subtyping" - {
+        "an inner region at the supertype tag leaves no binding behind once its outer subtype region exits" in {
+            val v: Int < Any =
+                ContextEffect.handleInheritable(Tag[CfgSub], 1)(
+                    ContextEffect.handleInheritable(Tag[Cfg], 2)(ContextEffect.suspend(Tag[Cfg]))
+                ).map(_ => ContextEffect.suspend(Tag[Cfg], -1))
+            assert(v.eval == -1)
         }
     }
 

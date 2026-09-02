@@ -1,13 +1,23 @@
 package kyo.proto
 
+import kyo.Const
 import kyo.Frame
+import kyo.Maybe
+import kyo.Tag
 import kyo.proto.kernel.<
+import kyo.proto.kernel.ArrowEffect
+import kyo.proto.kernel.ContextEffect
 import kyo.proto.kernel.Effect
 import org.scalatest.freespec.AnyFreeSpec
 
 class LoopTest extends AnyFreeSpec:
 
     given Frame = Frame.internal
+
+    sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
+    def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
+
+    sealed trait Cfg extends ContextEffect[Int]
 
     "apply" - {
         "with a single iteration" in {
@@ -669,6 +679,55 @@ class LoopTest extends AnyFreeSpec:
         count = 0
         Loop.repeat(100)(({ count += 1 }: Unit < Any)).eval
         assert(count == 100)
+    }
+
+    "repeat suspends a bare operation each time" in {
+        var answered = 0
+        val r: Unit < Any = ArrowEffect.handleLoop(Tag[Ask], Loop.repeat(3)(ask))(
+            [C] =>
+                _ =>
+                    answered += 1
+                    Loop.continue((), 1: Int < Any)
+            ,
+            a => a
+        )
+        r.eval
+        assert(answered == 3)
+    }
+
+    "repeat enters a context region each time" in {
+        var entered = 0
+        val region: Int < Any =
+            ContextEffect.handleInheritable(Tag[Cfg]) { (_: Maybe[Int]) =>
+                entered += 1
+                1
+            }(ContextEffect.suspend(Tag[Cfg]))
+        Loop.repeat(3)(region).eval
+        assert(entered == 3)
+    }
+
+    "repeat acquires a bracket each time" in {
+        var acquired = 0
+        var released = 0
+        val body: Int < Any =
+            Effect.bracket(Effect.defer {
+                acquired += 1
+                acquired
+            })((_, _) => released += 1)(a => (a: Int < Any))
+        Loop.repeat(3)(body).eval
+        assert(acquired == 3)
+        assert(released == 3)
+    }
+
+    "indexed loops a bare operation whose answer is an outcome" in {
+        sealed trait Step extends ArrowEffect[Const[Int], Const[Loop.Outcome[Int, Int]]]
+        def step(i: Int): Loop.Outcome[Int, Int] < Step = ArrowEffect.suspend[Any](Tag[Step], i)
+        val looped: Int < Step                          = Loop.indexed(0)((_, i) => step(i))
+        val r: Int < Any = ArrowEffect.handleLoop(Tag[Step], looped)(
+            [C] => i => Loop.continue((), (if i < 3 then Loop.continue(i + 1) else Loop.done(i)): Loop.Outcome[Int, Int] < Any),
+            a => a
+        )
+        assert(r.eval == 3)
     }
 
     "whileTrue" - {

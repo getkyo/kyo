@@ -553,6 +553,15 @@ class IsolateTest extends Test:
             assert(v.eval == 10)
         }
 
+        "a merging join outlives an arrow region that closes after the restore" in {
+            val v =
+                ContextEffect.handle(Tag[TestEffect1])(5, (_: Int) => 5, (s: Int) => s, (p: Int, f: Int, _: Int) => p + f) {
+                    ArrowEffect.handleCont(Tag[NotContextEffect], Isolate.internal.Contextual.run(()))([C] => (_, cont) => cont(0), a => a)
+                        .map(_ => ContextEffect.suspend(Tag[TestEffect1]))
+                }
+            assert(v.eval == 10)
+        }
+
         "a restored crossing reads the binding it captured, not the scope it restores in" in {
             val v =
                 ContextEffect.handle(Tag[TestEffect1])(1, (_: Int) => 1, (s: Int) => s, (p: Int, f: Int, _: Int) => p + f) {
