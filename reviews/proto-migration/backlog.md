@@ -465,6 +465,21 @@ Everything open, in one place, so nothing above has to be re-derived. Numbered f
    recommended: it would give an interpreter's clause the callee's local scope, the reading the
    kernel deliberately does not take; the Choice case is solved by the region placement or by
    answering with a computation (entry 3).
+   Higher-order operations, from the user's question whether the audit assumed higher-order
+   effects impossible in this kernel: they are not, and the earlier discussion overstated the
+   gap. An operation's input is any value, so a higher-order operation carries its body as a
+   computation (`Local(f, m)`, `Catch(m, h)`), and its handler's clause elaborates the body by
+   running its own handler over it and resuming the continuation with the result, in the public
+   combinators alone. ArrowEffectTest "higher-order operations" pins three laws, green at
+   `b63aa97bc7`: a `local` body's foreign effect crosses out of the elaborated region and the
+   resumed continuation sees the outer environment again (`(40, 40, 4)`); the elaborated region
+   is re-established per shot under a two-shot resume (`List((40, 40), (40, 40))`); a
+   higher-order `catch` recovers inside its body and a failure after it escapes (`Right(42)`,
+   `Left("later")`). The rows the pins needed are the honest ones: `local` keeps `Say` in its
+   result row because its body carries it, and `runReader` runs under `Say`, since a clause typed
+   at `Reader & Say & S` is where the body's elaboration returns. What the audit discussion did
+   establish is narrower: a clause's dispatch is not routed through the crossing snapshot, which
+   is a scoping law, not a limit on higher-order operations.
 3. **Fixes blocked by "tests only".** S9, S10, and the entry 9 flip if ruled; the S9 fix also
    revisits S4's lane scan, which the mark subsumes.
 4. **The fifteen TODO notes.** Section T above: the DO items (two renames, the `KyoInternal` split
