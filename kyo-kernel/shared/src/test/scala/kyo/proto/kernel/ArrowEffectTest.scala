@@ -2411,7 +2411,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                     [C] =>
                         (_, cont) =>
                             stash = Maybe(cont)
-                            0
+                        0
                     ,
                     a => a
                 )
@@ -2441,6 +2441,93 @@ class ArrowEffectTest extends AnyFreeSpec:
             )
             val r = ArrowEffect.handleCont(Tag[Say], viaCont)([C] => (_, cont) => cont(()), a => a)
             assert(r.eval == -1)
+        }
+
+        "a stashed continuation's row is required at the resume site" in {
+            assert(typeCheckErrors(
+                """
+                val stash: Arrow[Unit, Int, Say & Cfg] = ???
+                val r: Int < Any = ArrowEffect.handleCont(Tag[Say], stash(()))([C] => (_, cont) => cont(()), a => a)
+                """
+            ).nonEmpty)
+        }
+    }
+
+    "eff issue 12 pins, writer" - {
+        sealed trait Tell extends ArrowEffect[Const[List[Int]], Const[Unit]]
+        def tell(w: List[Int]): Unit < Tell = ArrowEffect.suspend[Any](Tag[Tell], w)
+
+        def runWriter[A, S](v: A < (Tell & S)): (A, List[Int]) < S =
+            ArrowEffect.handleLoopState(Tag[Tell], List.empty[Int], v)(
+                [C] => (acc, w) => Loop.continue(acc ++ w, (): Unit < Any),
+                (acc, a) => (a, acc)
+            )
+
+        def listen[A, S](v: A < (Tell & S)): (A, List[Int]) < (Tell & S) =
+            ArrowEffect.handleLoopState(Tag[Tell], List.empty[Int], v)(
+                [C] => (acc, w) => tell(w).map(_ => Loop.continue(acc ++ w, (): Unit < Any)),
+                (acc, a) => (a, acc)
+            )
+
+        def pass[A, S](v: (A, List[Int] => List[Int]) < (Tell & S)): A < (Tell & S) =
+            ArrowEffect.handleLoopState(Tag[Tell], List.empty[Int], v)(
+                [C] => (acc, w) => Loop.continue(acc ++ w, (): Unit < Any),
+                (acc, af) => tell(af._2(acc)).map(_ => af._1)
+            )
+
+        sealed trait CC extends ArrowEffect[Const[Maybe[Int]], Const[Int]]
+        def capture: Int < CC      = ArrowEffect.suspend[Any](Tag[CC], Maybe.empty[Int])
+        def jump(n: Int): Int < CC = ArrowEffect.suspend[Any](Tag[CC], Maybe(n))
+
+        def runCC[A, S](v: A < (CC & S)): A < S =
+            var captured = Maybe.empty[Arrow[Int, A, CC & S]]
+            ArrowEffect.handleCont(Tag[CC], v)(
+                [C] =>
+                    (input, cont) =>
+                        input match
+                            case Maybe.Absent =>
+                                captured = Maybe(cont)
+                                cont(0)
+                            case Maybe.Present(n) => captured.get(n)
+                ,
+                a => a
+            )
+
+        "a forwarding listen keeps a tell that precedes an escape and re-establishes its frame at the captured state" in {
+            val body: (Unit, List[Int]) < (Tell & CC) =
+                listen(capture.map { x =>
+                    if x == 0 then tell(List(1)).map(_ => jump(2)).unit
+                    else tell(List(x))
+                })
+            assert(runWriter(runCC(body)).eval == ((((), List(2)), List(1, 2))))
+        }
+
+        "a transactional pass drops its tells when the body escapes before completing" in {
+            val body: Unit < (Tell & CC) =
+                capture.map { x =>
+                    if x == 0 then pass(tell(List(1)).map(_ => jump(2)).map(_ => ((), (l: List[Int]) => l)))
+                    else tell(List(x))
+                }
+            assert(runWriter(runCC(body)).eval == (((), List(2))))
+        }
+
+        "a transactional pass duplicates the tells before a multi-shot resume; a forwarding listen does not" in {
+            val viaPass: (Unit, List[Int]) < Any =
+                runWriter(
+                    ArrowEffect.handleCont(
+                        Tag[Ask],
+                        pass(tell(List(1)).map(_ => ask).map(a => tell(List(a)).map(_ => ((), (l: List[Int]) => l))))
+                    )([C] => (_, cont) => cont(2).map(_ => cont(3)), a => a)
+                )
+            assert(viaPass.eval == (((), List(1, 2, 1, 3))))
+            val viaListen: ((Unit, List[Int]), List[Int]) < Any =
+                runWriter(
+                    ArrowEffect.handleCont(
+                        Tag[Ask],
+                        listen(tell(List(1)).map(_ => ask).map(a => tell(List(a))))
+                    )([C] => (_, cont) => cont(2).map(_ => cont(3)), a => a)
+                )
+            assert(viaListen.eval == ((((), List(1, 3)), List(1, 2, 3))))
         }
     }
 

@@ -640,6 +640,7 @@ class IsolateTest extends Test:
             discard(Safepoint.get())
             discard(Safepoint.stop(Thread.currentThread()))
             Safepoint.deadline(java.lang.System.currentTimeMillis() - 1)
+        end requestStop
 
         "a crossing inside an isolated child resumed twice joins each shot into the live parent" in {
             val log                              = ListBuffer[String]()

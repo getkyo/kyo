@@ -266,6 +266,19 @@ class ContextEffectTest extends AnyFreeSpec:
                 ).map(_ => ContextEffect.suspend(Tag[Cfg], -1))
             assert(v.eval == -1)
         }
+
+        "a read takes the innermost binding whether its tag is exact or a subtype" in {
+            val exactInner: Int < Any =
+                ContextEffect.handleInheritable(Tag[CfgSub], 1)(
+                    ContextEffect.handleInheritable(Tag[Cfg], 2)(ContextEffect.suspend(Tag[Cfg]))
+                )
+            val subInner: Int < Any =
+                ContextEffect.handleInheritable(Tag[Cfg], 1)(
+                    ContextEffect.handleInheritable(Tag[CfgSub], 2)(ContextEffect.suspend(Tag[Cfg]))
+                )
+            assert(exactInner.eval == 2)
+            assert(subInner.eval == 2)
+        }
     }
 
     "reading audit pins" - {
@@ -353,8 +366,7 @@ class ContextEffectTest extends AnyFreeSpec:
                                 log += s"shot $b"
                                 a + b
                             }
-                        }
-                ,
+                    },
                 a =>
                     log += "handler done"
                     a

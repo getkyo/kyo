@@ -666,20 +666,20 @@ class EffectBracketTest extends AnyFreeSpec:
                             Effect.defer {
                                 requestStop()
                                 ()
-                            }.map(_ => Effect.defer(cont(1)))
-                    ,
+                            }.map(_ => Effect.defer(cont(1))),
                     a => a
                 )
+            end program
             val abandoned = ListBuffer[Maybe[Throwable]]()
             val p1        = Eval.partial(program(abandoned))
             assert(p1.evalNow.isEmpty)
             Eval.release(p1, Boom)
-            assert(abandoned.toList == List(Maybe(Boom)))
+            assert(abandoned.toList == List(Maybe(Boom: Throwable)))
             val resumed = ListBuffer[Maybe[Throwable]]()
             val p2      = Eval.partial(program(resumed))
             assert(p2.evalNow.isEmpty)
             assert(p2.eval == 8)
-            assert(resumed.toList == List(Maybe.empty))
+            assert(resumed.toList == List(Maybe.empty[Throwable]))
         }
     }
 
