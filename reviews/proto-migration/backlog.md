@@ -597,6 +597,28 @@ Everything open, in one place, so nothing above has to be re-derived. Numbered f
    an idle arrow handler between the read and the innermost binding; entries and exits of one tag
    in a loop) and reads `gc.alloc.rate.norm` on them. The `TypeMap` revert (`ece42c6b33`) reaches
    nothing in the kernel.
+   Sweep state (2026-09-02): `BenchBracket` over `ProtoBench`, control `28d1dcb43f` (the commit
+   before S1, red by design with the reproduction pins, gate skipped with `BENCH_ALLOW_RED`),
+   variant `787a3c9029`. The control leg completed and is stored as
+   `control-28d1dcb43f-f91ac432` (timing only); the variant leg died twice before measuring: a
+   stale inlined expansion of the control design in the bench classes (`NoClassDefFoundError:
+   Kyo$DeferWith`, since zinc does not recompile a caller when only an inlined body changed),
+   then the gate's own accessor (below). The harness now cleans kyo-data and the kernel per leg
+   (`368b364a93`), takes the class from `BENCH_CLASS`, covers every source tree a pair can differ
+   in, cleans before it restores, and removes what the source sha deletes. Not relaunched, by
+   instruction; the variant leg and the table are pending that word.
+   Q1 footprint defect found by the sweep and fixed (`905a9efa96`): `Debugger.enabled` referenced
+   the `private[kyo]` `CompileTimeFlag`, so dotty emitted an inline accessor into `Debugger$`
+   whose parameter is the package `kyo.internal` spelled as a class; never called, but any
+   reflection over the class died on the descriptor (JMH's generator). `@publicInBinary` on
+   `CompileTimeFlag` removes it; `DebuggerBytecodeTest` pins its absence the way JMH reads the
+   class. The earlier "zero footprint" claim had checked callers only, not `Debugger` itself.
+   Also landed: `kyo-compile-bench` folded into the kernel's jmh sources (`7ab7110fb9`,
+   `CompileBench` with the compiler in the jmh scope, fixtures as jmh resources, the expansion
+   dump as the harness's `BenchExpansion`); the issue-903 Unit row guidance pinned through
+   `typeCheckErrors` in both kernels' `ImplicitsTest` (`692d014e9d`), the real-dotc test and the
+   compiler in Test scope gone; the capture fails only inside an inline helper, which is what the
+   old note had seen.
 6. **Q7 performance rows**, open as measured: `foreignCrossingsPayRotation` (copy-on-escape, a
    representation ruling), `fusionAfterSuspension`, `partialSuspensionBaseline`,
    `sharedHandlerPaysDispatch`, `userTypesSkipKernelWrapping`.
