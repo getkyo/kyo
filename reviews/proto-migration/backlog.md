@@ -268,6 +268,16 @@ reference has no per-allocation hook at all.
 That is a build-configuration problem rather than a missing capability, but it touches every item
 here: any of this work measured on a build with the gate on will be measuring the gate.
 
+Resolved (2026-09-02, "the debugger mechanism must not leave ANY footprint in the bytecode.
+You can NOT use @static it must be compile time"). `Debugger.enabled` is
+`CompileTimeFlag.boolean("kyo.proto.kernel.internal.Debugger.enabled", false)`, a macro in
+kyo-data's `kyo.internal` that reads the system property in the compiler's own JVM at
+expansion and expands to a literal, so `inline if enabled` folds and the hooks compile to
+nothing when off. Enabling it is a compiler-process property, `sbt
+-Dkyo.proto.kernel.internal.Debugger.enabled=true ...`, and a rebuild. Verified in
+`164eb68f47`: `javap` finds zero `Debugger` references in `Eval$`, `Handler$` and the `Defer`
+node with the gate off; DebuggerTest green.
+
 ## Soundness findings (added 2026-09-02)
 
 Source: `soundness-audit.md`, the reading pass over the whole proto kernel. Twelve reproduction
@@ -356,6 +366,43 @@ object. Status: fixed in `ccafba44c9` (a per-eval epoch on the pooled stack), ve
 The reading pass predicted that a stop consumed by a nested `Eval.partial` is lost to the
 enclosing slice. Ruling: the scheduler contract has no nested partial; `Eval.partial` is called
 only by the task loop. The test was removed; no change.
+
+### S8. A child copy's re-entry check was silent, and the bracket forked an inert cell
+
+A continuation captured inside an isolated child under a bracket, with the answering handler
+between the bracket and the isolate so the crossing dumps only the copy, and resumed after the
+bracket ended, ran the `use` code on the released resource: the copy's state was `Cell.inert`
+(exempt from the re-entry check) and `Forked` inherited the no-op `reenter`. Test:
+EffectBracketTest "a capture inside an isolated child, resumed after the bracket ended, is
+refused" (red: 8 where `Closed` was due). Fix in `164eb68f47`: `Forked` forwards `reenter` to
+its origin, the bracket forks the live cell (copies are silent to `done` and `release` under
+the S3 ruling, so the inert cell had no purpose left), and the re-entry check drops its
+exemption. Status: fixed, JVM green (2449); JS and Native deferred to the final sweep
+("no need to keep running js and native for now, we do a sweep at the end").
+
+### S9. A crossing resumed in a nested eval is released again at the owner's exit (from the eff issue 12 audit)
+
+`reviews/proto-migration/eff-issue-12-audit.md`, entry 1. The cross-eval twin of S4: a
+clause that resumes a crossing inside a nested eval (`answerAsk(0)(cont(41)).eval` inside the
+clause) re-installs the dump on a different pooled stack, whose `settle` cannot see the debt
+in the outer eval's lane; the owner region's exit drains it and `release` fires after `done`.
+The same path with a race is a resume handed to another thread. Fix shapes, ruling pending:
+(1) the debt is discharged on the snapshot itself, `installed` marks it consumed and every
+drain skips a consumed snapshot, which subsumes S4's lane scan and covers nested evals and
+other threads (recommended); (2) a stack remembers the stack active on its thread when
+borrowed and `settle` walks that chain, nested evals only; (3) rule raw hooks at-least-once
+across evals and pin the release. Status: open, no test yet.
+
+The audit's other fifteen entries are predicted green or already ruled: thirteen laws with no
+pin today (local handlers not in scope for a clause, computations as answers, a suspending
+clause travelling with its continuation, bindings above and below the answering handler,
+recoveries captured with a continuation, per-shot hooked regions, `handleFirst` remainders
+and raw context regions, brackets below the answering handler, isolates crossed and parked,
+parks inside clauses) and two ruled by existing pins. Two of the thirteen raise rulings:
+entry 7, a loop clause's post-suspension throw escapes its region's own `recover` while the
+same code under `handleCont` is caught, which follows the clause signatures; entry 13, an
+isolate resumed under a different region of its tag joins nothing, the identity law. Both
+are recommended as pinned. Pins pending.
 
 Report finding 21, the `scratch` store on the pooled stack, is not a defect: it is the measured
 escape that defeats a C2 scalar-replacement pathology on the settled loop rows (`a8cff0a3f8`,
