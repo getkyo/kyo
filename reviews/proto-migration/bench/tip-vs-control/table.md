@@ -1,0 +1,77 @@
+| row | control us/op | tip us/op | delta | control band | control B/op | tip B/op | B/op delta | flag |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| `continuationBodiesFuse` | 17.759 | 10.752 | -39.5% | 27.8% | 48120.2 | 48120.1 | -0.1 | improvement |
+| `deepRecursionNoRescue` | 1.531 | 1.512 | -1.3% | 1.0% | 0.0 | 0.0 | -0.0 |  |
+| `deepRecursionOneRescue` | 2.779 | 2.768 | -0.4% | 0.7% | 32.0 | 32.0 | -0.0 |  |
+| `deepRecursionPaysRescuesOnly` | 49.088 | 48.625 | -0.9% | 4.2% | 608.4 | 608.4 | -0.0 |  |
+| `deferBindPerStep` | 12.955 | 12.837 | -0.9% | 5.1% | 64080.1 | 64080.1 | -0.0 |  |
+| `deferBindUnderIdleHandler` | 17.234 | 16.954 | -1.6% | 8.4% | 64136.2 | 64136.2 | -0.0 |  |
+| `deferBindUnderTrailingMap` | 29.297 | 29.210 | -0.3% | 2.1% | 112144.3 | 112144.3 | -0.0 |  |
+| `dynamicChainOfBindsStaysLinear` | 4.050 | 4.046 | -0.1% | 1.0% | 13984.0 | 13984.0 | -0.0 |  |
+| `dynamicChainOfMapsStaysLinear` | 4.071 | 4.039 | -0.8% | 1.4% | 13984.0 | 13984.0 | -0.0 |  |
+| `effectfulIterationViaArrow` | 78.845 | 77.121 | -2.2% | 3.8% | 480136.7 | 480136.7 | -0.0 |  |
+| `effectfulIterationViaLoop` | 227.069 | 220.732 | -2.8% | 5.3% | 1120226.0 | 1120226.0 | -0.1 |  |
+| `emittingClausesPayRegionRebuild` | 78.655 | 75.536 | -4.0% | 6.3% | 176280.7 | 176280.7 | -0.0 |  |
+| `evalFixedOverhead` | 0.002 | 0.002 | -1.1% | 2.3% | 0.0 | 0.0 | -0.0 |  |
+| `foreignCrossingsAnsweredInPlace` | 668.890 | 632.651 | -5.4% | 5.0% | 1520286.0 | 1520285.7 | -0.3 | improvement |
+| `foreignCrossingsPayRotation` | 1083.981 | 1053.743 | -2.8% | 1.2% | 2240361.8 | 2480385.5 | +240023.7 | improvement ALLOC |
+| `fusionAfterSuspension` | 130.353 | 131.354 | +0.8% | 28.2% | 536609.2 | 536609.2 | +0.0 |  |
+| `fusionAfterSuspensionRunOnly` | 0.529 | 0.527 | -0.4% | 2.9% | 1240.0 | 1240.0 | -0.0 |  |
+| `fusionAllocatesNothing` | 0.081 | 0.078 | -3.5% | 9.3% | 0.0 | 0.0 | -0.0 |  |
+| `fusionPastBudgetPaysRescuesOnly` | 46.237 | 45.619 | -1.3% | 3.7% | 488.4 | 488.4 | -0.0 |  |
+| `handleLoopAnswersInPlace` | 43.310 | 42.847 | -1.1% | 1.4% | 480136.4 | 480136.4 | -0.0 |  |
+| `handleLoopFusesContinuation` | 42.981 | 42.796 | -0.4% | 0.4% | 480152.4 | 480152.4 | -0.0 |  |
+| `idleHandlerAddsNothing` | 45.478 | 45.330 | -0.3% | 0.9% | 528.4 | 528.4 | -0.0 |  |
+| `inlineLimitCostsTimeNotAllocation` | 281.957 | 280.085 | -0.7% | 1.4% | 738402.5 | 738402.5 | -0.0 |  |
+| `inlineLimitKeepsZeroAllocation` | 1.121 | 1.122 | +0.1% | 0.8% | 0.0 | 0.0 | +0.0 |  |
+| `nestedPayloadsUnwrapInMaps` | 6.006 | 6.001 | -0.1% | 0.6% | 32064.1 | 32064.1 | -0.0 |  |
+| `partialSuspensionBaseline` | 115.200 | 107.542 | -6.6% | 21.6% | 480121.0 | 480121.0 | -0.1 |  |
+| `pureIterationViaArrow` | 93.595 | 91.071 | -2.7% | 42.9% | 158624.8 | 158624.8 | -0.0 |  |
+| `pureIterationViaLoop` | 15.862 | 15.891 | +0.2% | 0.6% | 160048.1 | 160048.1 | +0.0 |  |
+| `pureIterationViaMethod` | 66.723 | 66.249 | -0.7% | 14.5% | 158456.6 | 158456.6 | -0.0 |  |
+| `sharedHandlerPaysDispatch` | 166.151 | 165.677 | -0.3% | 3.7% | 240457.5 | 240457.5 | -0.0 |  |
+| `statefulAnswersPaySuccessor` | 40.772 | 40.971 | +0.5% | 1.2% | 480160.4 | 480160.4 | +0.0 |  |
+| `suspensionBaseline` | 76.366 | 76.563 | +0.3% | 4.1% | 480120.7 | 480120.7 | +0.0 |  |
+| `suspensionFusesContinuation` | 40.881 | 35.829 | -12.4% | 45.9% | 240096.4 | 240096.3 | -0.0 |  |
+| `trailingMapsStayLinear` | 307.436 | 291.729 | -5.1% | 29.0% | 1600642.8 | 1600642.6 | -0.1 |  |
+| `uncachedValuesPayBoxingOnly` | 49.705 | 49.589 | -0.2% | 3.9% | 155200.4 | 155200.4 | -0.0 |  |
+| `userTypesSkipKernelWrapping` | 50.152 | 50.265 | +0.2% | 1.5% | 176672.5 | 176672.5 | +0.0 |  |
+
+| row | control legs 1 / 2 / 3 | tip legs 1 / 2 |
+|---|---|---|
+| `continuationBodiesFuse` | 18.993 / 19.232 / 15.050 | 10.338 / 11.166 |
+| `deepRecursionNoRescue` | 1.539 / 1.531 / 1.523 | 1.512 / 1.512 |
+| `deepRecursionOneRescue` | 2.781 / 2.768 / 2.788 | 2.781 / 2.756 |
+| `deepRecursionPaysRescuesOnly` | 48.334 / 48.543 / 50.388 | 48.587 / 48.662 |
+| `deferBindPerStep` | 12.763 / 12.724 / 13.378 | 12.749 / 12.925 |
+| `deferBindUnderIdleHandler` | 16.858 / 16.723 / 18.120 | 16.573 / 17.334 |
+| `deferBindUnderTrailingMap` | 29.493 / 28.901 / 29.497 | 29.083 / 29.336 |
+| `dynamicChainOfBindsStaysLinear` | 4.035 / 4.074 / 4.041 | 4.046 / 4.046 |
+| `dynamicChainOfMapsStaysLinear` | 4.044 / 4.066 / 4.102 | 4.037 / 4.042 |
+| `effectfulIterationViaArrow` | 77.591 / 80.528 / 78.415 | 77.019 / 77.222 |
+| `effectfulIterationViaLoop` | 219.544 / 230.458 / 231.204 | 222.064 / 219.400 |
+| `emittingClausesPayRegionRebuild` | 80.342 / 80.073 / 75.550 | 74.988 / 76.084 |
+| `evalFixedOverhead` | 0.002 / 0.002 / 0.002 | 0.001 / 0.002 |
+| `foreignCrossingsAnsweredInPlace` | 666.551 / 686.479 / 653.639 | 605.628 / 659.675 |
+| `foreignCrossingsPayRotation` | 1081.281 / 1091.850 / 1078.812 | 1027.254 / 1080.231 |
+| `fusionAfterSuspension` | 115.408 / 127.657 / 147.994 | 131.985 / 130.724 |
+| `fusionAfterSuspensionRunOnly` | 0.525 / 0.524 / 0.539 | 0.532 / 0.522 |
+| `fusionAllocatesNothing` | 0.079 / 0.079 / 0.086 | 0.078 / 0.078 |
+| `fusionPastBudgetPaysRescuesOnly` | 45.667 / 45.696 / 47.347 | 45.277 / 45.961 |
+| `handleLoopAnswersInPlace` | 43.651 / 43.248 / 43.030 | 42.820 / 42.873 |
+| `handleLoopFusesContinuation` | 43.003 / 43.059 / 42.880 | 42.602 / 42.989 |
+| `idleHandlerAddsNothing` | 45.558 / 45.641 / 45.235 | 45.498 / 45.162 |
+| `inlineLimitCostsTimeNotAllocation` | 280.046 / 281.963 / 283.863 | 280.133 / 280.037 |
+| `inlineLimitKeepsZeroAllocation` | 1.116 / 1.125 / 1.123 | 1.121 / 1.123 |
+| `nestedPayloadsUnwrapInMaps` | 6.008 / 6.023 / 5.988 | 5.988 / 6.015 |
+| `partialSuspensionBaseline` | 106.953 / 108.539 / 130.109 | 107.926 / 107.158 |
+| `pureIterationViaArrow` | 110.417 / 77.280 / 93.088 | 85.224 / 96.919 |
+| `pureIterationViaLoop` | 15.825 / 15.918 / 15.844 | 15.879 / 15.904 |
+| `pureIterationViaMethod` | 62.931 / 65.187 / 72.050 | 66.408 / 66.090 |
+| `sharedHandlerPaysDispatch` | 163.697 / 164.939 / 169.816 | 164.006 / 167.347 |
+| `statefulAnswersPaySuccessor` | 40.546 / 40.745 / 41.024 | 41.008 / 40.934 |
+| `suspensionBaseline` | 76.408 / 74.829 / 77.861 | 76.220 / 76.907 |
+| `suspensionFusesContinuation` | 35.451 / 35.480 / 51.713 | 36.119 / 35.539 |
+| `trailingMapsStayLinear` | 275.841 / 290.567 / 355.900 | 293.796 / 289.663 |
+| `uncachedValuesPayBoxingOnly` | 49.099 / 49.057 / 50.959 | 49.953 / 49.226 |
+| `userTypesSkipKernelWrapping` | 49.917 / 49.888 / 50.652 | 49.976 / 50.555 |
