@@ -191,14 +191,18 @@ class EffectTraceTest extends AnyFreeSpec:
         assert(msg.contains("handle"))
     }
 
-    "a throw in a continuation frame names its site" in {
+    "a throw in a continuation frame with no region standing travels on the physical trace" in {
         def deep(i: Int): Int < Any =
             if i == 0 then 0 else (0: Int < Any).map(_ => deep(i - 1))
-        def boomAt(v: Int < Any): Int < Any = v.map(_ => (throw new RuntimeException("late")): Int)
-        val ex                              = intercept[RuntimeException](eval(boomAt(deep(10000))))
-        val t                               = carrier(ex)
-        assert(t.nonEmpty)
-        assert(t.get.getMessage.contains("boomAt"))
+        var site = 0
+        def boomAt(v: Int < Any): Int < Any =
+            v.map { _ =>
+                site = summon[kyo.Frame].position.lineNumber; (throw new RuntimeException("late")): Int
+            }
+        val ex = intercept[RuntimeException](eval(boomAt(deep(10000))))
+        assert(carrier(ex).forall(_.elements.isEmpty))
+        val top = ex.getStackTrace.head
+        assert(!kyo.internal.Platform.isJVM || (top.getFileName == "EffectTraceTest.scala" && top.getLineNumber == site))
     }
 
     "an unhandled suspension arrives enriched" in {
@@ -258,12 +262,13 @@ class EffectTraceTest extends AnyFreeSpec:
         assert(methods(ex).contains("thrower"))
     }
 
-    "a deferred block carries the steps after a budget rescue" in {
+    "a throw after a budget rescue with no region standing travels on the physical trace" in {
         def boomHere: Int < Any = (0: Int < Any).map(_ => (throw new Boom): Int)
         def deep(i: Int): Int < Any =
             if i == 0 then boomHere else (0: Int < Any).map(_ => deep(i - 1))
         val ex = intercept[Boom](eval(deep(600)))
-        assert(methods(ex).contains("deep") || methods(ex).contains("boomHere"))
+        assert(carrier(ex).forall(_.elements.isEmpty))
+        assert(!kyo.internal.Platform.isJVM || ex.getStackTrace.exists(_.getMethodName.contains("boomHere")))
     }
 
     "region nesting" - {

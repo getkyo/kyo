@@ -385,13 +385,7 @@ import scala.util.control.NonFatal
                             case contA: Arrow.Chain[T, Any, B, S2] @unchecked =>
                                 loop(res, contA.a, contA.b.chain(contB), ctx)
                             case _ =>
-                                val next =
-                                    try contA(res, contB)
-                                    catch
-                                        case ex =>
-                                            EffectTrace.attach(ex, contA, contB, stack)
-                                            throw ex
-                                loop(next, Arrow.id, Arrow.id, ctx)
+                                loop(contA(res, contB), Arrow.id, Arrow.id, ctx)
             end match
         end loop
 

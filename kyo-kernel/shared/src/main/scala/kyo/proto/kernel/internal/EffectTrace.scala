@@ -31,19 +31,14 @@ private[kernel] object EffectTrace:
 
     private val noElements = new Array[StackTraceElement](0)
 
-    def attach(ex: Throwable, cont: Arrow[?, ?, ?]): Unit =
+    def attach(ex: Throwable, cont: Arrow[?, ?, ?], frame: Frame): Unit =
         reconstruct(ex, Maybe.Absent) { builder =>
             builder.arrow(cont)
+            builder.frame(frame)
         }
 
     def attach(ex: Throwable, stack: Stack): Unit =
         reconstruct(ex, Maybe(stack)) { builder =>
-            builder.entries(stack)
-        }
-
-    def attach(ex: Throwable, a: Arrow[?, ?, ?], b: Arrow[?, ?, ?], stack: Stack): Unit =
-        reconstruct(ex, Maybe(stack)) { builder =>
-            builder.arrows(a, b)
             builder.entries(stack)
         }
 
@@ -176,12 +171,6 @@ private[kernel] object EffectTrace:
         def arrow(a: Arrow[?, ?, ?]): Unit =
             push(a)
             drain()
-
-        def arrows(a: Arrow[?, ?, ?], b: Arrow[?, ?, ?]): Unit =
-            push(b)
-            push(a)
-            drain()
-        end arrows
 
         def node(p: Pending[?, ?]): Unit =
             push(new Node(p))

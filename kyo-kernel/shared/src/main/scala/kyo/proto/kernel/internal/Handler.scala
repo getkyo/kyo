@@ -112,7 +112,7 @@ end Handler
             catch
                 case ex: Throwable =>
                     val at = st
-                    EffectTrace.attach(ex, k)
+                    EffectTrace.attach(ex, k, frame)
                     Loop.continue(at, Effect.deferInline(throw ex)(using frame))
             end try
         end answers
@@ -201,7 +201,7 @@ end Handler
             catch
                 case ex: Throwable =>
                     val at = st
-                    EffectTrace.attach(ex, k)
+                    EffectTrace.attach(ex, k, _frame)
                     result = Loop.continue(at, Effect.deferInline(throw ex)(using _frame))
                     running = false
         end while

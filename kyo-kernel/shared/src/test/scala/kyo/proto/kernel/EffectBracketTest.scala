@@ -1137,8 +1137,9 @@ class EffectBracketTest extends AnyFreeSpec:
             assert(count == 1)
         }
 
-        "a multi-shot handleFirst clause is refused at its second branch" in {
+        "a handleFirst clause runs before the release its remainder runs after" in {
             var closed             = false
+            var closedAtClause     = false
             var seen               = List.empty[String]
             val acquire: Int < Ask = Effect.defer(1)
             val v =
@@ -1150,11 +1151,17 @@ class EffectBracketTest extends AnyFreeSpec:
                 }
             val branches: Int < Ask =
                 ArrowEffect.handleFirst(Tag[Ask], v)(
-                    handle = [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
+                    handle = [C] =>
+                        (_, cont) =>
+                            closedAtClause = closed
+                            cont(10).map(a => cont(20).map(b => a + b))
+                    ,
                     done = a => a
                 )
             discard(intercept[kyo.Closed](eval(answerAsk(0)(branches))))
-            assert(seen == List("branch 10"))
+            assert(!closedAtClause)
+            assert(closed)
+            assert(seen == List())
         }
 
         "branches of a multi-shot clause share the resource the use closed over" in {

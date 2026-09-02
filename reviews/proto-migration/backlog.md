@@ -139,17 +139,32 @@ Each holds a known-red pin set in the proto suite until ruled; the pins are the 
   resume site rewrite a lexically inner one. The four pins now pin the proto's law
   (ContextEffectThreadingTest x2, IsolateTest "a restored crossing reads the binding it
   captured").
-- **Q4. `handleFirst` and brackets** (1 pin: "a multi-shot handleFirst clause is refused
-  at its second branch"). A region settling with its `FirstSuspended` token drains the
-  dumps the handed-out remainder still needs, so the remainder arrives spent. The old
-  kernel excluded `FirstSuspended` from its completion drain; the proto-shaped fix is the
-  token carrying its owed dumps and `Eval.release` expanding it, so resumption works and
-  abandonment still drains.
-- **Q5. EffectTrace fidelity** (12 pins in EffectTraceTest, plus the unported jvm-native
-  EffectTracePhysicalTest). The kernel's traces carried continuation frames because its
-  stack held the trailing maps as entries; the proto fuses continuations into loop
-  locals, so at the catch only region labels survive. Frame-rich traces would mean
-  stashing the in-flight continuation per iteration, a hot-path store to be measured.
+- **Q4. `handleFirst` and brackets: RULED, the proto is the correct scoping**
+  (2026-09-01, "keep the proto behavior"). A bracket lives as long as the region that
+  answers the suspensions inside it. `handleFirst` ends that region with its
+  `FirstSuspended` token, and the exit drains what the region owes, so the remainder the
+  clause receives finds its brackets released: every branch is refused with `kyo.Closed`,
+  the first included. The kernel's alternative, the token carrying its owed dumps until
+  resumed or released, cannot rule out a holder dropping the token and leaking the
+  resource. The clause itself still runs inside the region, so it sees the resource open;
+  the region exits when the clause's value is delivered, and the remainder that value runs
+  is refused at its first branch. The pin asserts exactly that order (EffectBracketTest
+  "a handleFirst clause runs before the release its remainder runs after").
+- **Q5. EffectTrace fidelity: DONE, with one ruling** (2026-09-01). Every site that hands
+  user code to the evaluator on a cold path attaches what it was applying: the cont and op
+  handlers attach the continuation with the suspension node, the loop handler attaches the
+  continuation and the suspension's frame when its clause or the answer's application
+  throws, and the unhandled path attaches the node. The carrier remembers the last stack it
+  walked, so the unwind's re-attach adds no duplicate regions. EffectTracePhysicalTest is
+  ported to jvm-native. The settled dispatch attaches nothing, ruled "let's remove the
+  try/catch then": a handler over the megamorphic apply inside the loop body cost +27% on
+  deferBindUnderTrailingMap (31.1 to 39.5 us at 3 forks), the same with a handler touching
+  only the stack, so the cost is the handler's presence; recording the arrows per iteration
+  on the pooled Stack retained them past the eval and is rejected for good ("DO NOT GO BACK
+  TO THESE LEAKING FIELDS"). At that site the throwing step is still on the JVM stack, so
+  the physical trace names it by file and line, and the two no-region pins assert exactly
+  that; the effect trace carries what the physical stack cannot see, suspension boundaries
+  and regions.
 - **Q6. The `Kyo` combinator companion: DONE** (2026-09-01, "let's port Kyo.scala from
   the old kernel"). `kyo/proto/Kyo.scala` carries the companion, comments stripped; the
   internal node base `trait Kyo` moved into KyoInternal.scala beside the internal object,
