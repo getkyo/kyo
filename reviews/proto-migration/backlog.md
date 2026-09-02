@@ -23,6 +23,9 @@ The proto has adjacent machinery in `Handler.HandlerContext`: `fork(current: Sta
 State`. Whether those are the isolation surface in a different shape, or only the context-effect half
 of it, is the first thing to establish.
 
+Landed: `kyo/proto/kernel/Isolate.scala` with `Isolate.internal.Contextual` and the derived
+isolates; IsolateTest. The S3 and S8 fixes changed its join and copy semantics, see below.
+
 ### B2. Partial evaluation and preemption, without a `Park` node
 
 `Eval.partial`, parking and resumption are absent from the proto. The `Safepoint` substrate is
@@ -56,6 +59,11 @@ The cost to weigh: rebuilding N regions allocates N nodes per park, where the re
 spans. Which is cheaper depends on park frequency against region depth, and that is a measurement,
 not a decision.
 
+Superseded: the proto carries `Kyo.Park` (a value, a `Stack.Snapshot` of entries, and the owed
+lanes) as the park node, installed by `Eval.installed`; `Eval.partial` and the `Safepoint` stop and
+deadline protocol are the scheduler contract, pinned across EvalTest, EvalThreadingTest and
+SafepointTest. The "no Park node" reasoning above is history.
+
 ### B3. `EffectTrace`
 
 `kyo/kernel/internal/EffectTrace.scala`. Splices effect frames into an exception's stack trace so a
@@ -63,6 +71,9 @@ failure points at the operation that caused it rather than at kernel internals. 
 
 Note the proto's `Frame` is already threaded through the surface (`ask(using Frame)`), so the
 information is present; what is missing is capture and splicing.
+
+Landed: `kyo/proto/kernel/internal/EffectTrace.scala`, the cold-site attaches of Q5, the per-eval
+epoch of S6; EffectTraceTest, EffectTracePhysicalTest, EffectTraceThreadingTest.
 
 ### B4. `Mask`
 
@@ -85,6 +96,9 @@ expansion implements it anonymously, which keeps a primitive input unboxed.
 Its second role in the reference does **not** carry over: the completion path checks
 `!r.isInstanceOf[FirstSuspended]` before draining orphaned finalizers, and the proto has no finalizer
 registry (see R3). So in the proto it is purely `handleFirst`'s protocol token.
+
+Landed: `ArrowEffect.handleFirst` and `dispatchFirst` with `FirstSuspended` internal; the Q4 ruling
+on brackets under `handleFirst`; the eff audit's entry 9 pins the raw-region face.
 
 ## Ruled out, with the reasoning
 
@@ -425,6 +439,46 @@ the redundant `ctx2` ternary, the loop-arm merge only if `javap` shows a duplica
 and `onAlloc` moving into `Kyo`. NEEDS RULING: removing the six function liftings (two
 experiments named against the old kernel); a name for `scratch` that says what it does (it
 stays); a common supertype for `ContHandler` and `ContOpHandler` carrying `answering`.
+
+## Pending work, consolidated (2026-09-02, tip `49a2b77e6f`)
+
+Everything open, in one place, so nothing above has to be re-derived. Numbered for reference.
+
+1. **Rulings pending.** S9's fix shape (recommended: the consumed mark on the snapshot); entry 9
+   of the eff audit, whether a raw region revived after its release is refused with `Closed` as a
+   bracket is (recommended: refuse, on the same mark); S10's law, a read resolving innermost first
+   among related tags (recommended: yes, the walk `find` does); entries 7 and 13 of the eff audit
+   stand as pinned (recommended). None can be acted on under "tests only".
+2. **The eff issue 12 campaign.** `eff-issue-12-audit.md`, 17 entries and six closing experiments,
+   citations anchored to `32021c06b9`. All of it is pinned: ArrowEffectTest "eff issue 12 pins"
+   (entries 2, 3, 4a, 4b, 6, 7a, 7b, closing item 5) and "eff issue 12 pins, writer" (entry 15,
+   three cases); ContextEffectTest "reading audit pins" (entries 1, 5, 8, 9) and "tag subtyping"
+   (closing item 6); EffectBracketTest "reading audit pins" (entries 10, 14); IsolateTest "eff
+   issue 12 pins" (entries 11, 12, 13); entries 16 and 17 are covered by the existing cases the
+   report cites. Red today: entry 1 (S9) and closing item 6 (S10). The agent is exploring further
+   aspects at the user's request; every new entry gets a pin in the same groups, red or green, and
+   the four suites run after each batch.
+3. **Fixes blocked by "tests only".** S9, S10, and the entry 9 flip if ruled; the S9 fix also
+   revisits S4's lane scan, which the mark subsumes.
+4. **The fifteen TODO notes.** Section T above: the DO items (two renames, the `KyoInternal` split
+   and `object Kyo` to `object Pending`, deleting each note), the DO WITH MEASUREMENT items (the
+   `atTop` chain, `onAlloc` into `Kyo`), and the three NEEDS RULING items. None started.
+5. **Measurement debt.** The fix pass (S1 to S6, S8 and the compile-time gate) is unmeasured; the
+   discipline is the whole `ProtoBench` class on both tips, `-f 1` then `-f 3` on any row outside
+   the drift band, with `-prof gc`. S5 reaches every context-handler row (a region node where the
+   settled arm returned in place), S3 rebuilds the context on every `Snapshot` node, S4 scans lanes
+   on settle, S6 bumps an epoch per eval, S8 forks the live cell.
+6. **Q7 performance rows**, open as measured: `foreignCrossingsPayRotation` (copy-on-escape, a
+   representation ruling), `fusionAfterSuspension`, `partialSuspensionBaseline`,
+   `sharedHandlerPaysDispatch`, `userTypesSkipKernelWrapping`.
+7. **Q1** resolved (compile-time gate); **Q2** closed; **Q3 to Q6** ruled; **Q7** open as above.
+8. **The swap plan** (`kernel-swap-plan.md`): phases 1 to 5 not started; D6, the debug package,
+   still needs the user's explanation; D1 scaladoc ruled later.
+9. **Final sweep**, deferred by instruction: JS and Native on the final tip, the clean batch build
+   (`kyo-kernelJVM/clean` then `compile`, for the lift equilibrium), `PendingBytecodeTest` and
+   `ArrowEffectBytecodeTest`, and the `javap` check that `Debugger` leaves no footprint.
+10. **S7, dropped** by ruling (no nested `Eval.partial`); **finding 21** of the soundness report is
+    the deliberate C2 escape and stays; **finding 10** pins the JVM's construction-site frames.
 
 The audit's other fifteen entries are predicted green or already ruled: thirteen laws with no
 pin today (local handlers not in scope for a clause, computations as answers, a suspending
