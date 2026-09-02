@@ -32,6 +32,7 @@ end Handler
     abstract class ContHandler[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
         def run[X](input: I[X], cont: Arrow[O[X], A, E & S]): A < (E & S)
 
+        // TODO why isn't this in Eval?
         private[kyo] def answering[X](input: I[X], cont: Arrow[O[X], A, E & S], kyo: Pending[?, ?], stack: Stack): A < (E & S) =
             try run(input, cont)
             catch
@@ -43,6 +44,7 @@ end Handler
     abstract class ContOpHandler[E <: Effect, A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
         def run[X](operation: X < E, next: Arrow[X, A, E & S]): A < (E & S)
 
+        // TODO why isn't this in Eval?
         private[kyo] def answering[X](operation: X < E, next: Arrow[X, A, E & S], kyo: Pending[?, ?], stack: Stack): A < (E & S) =
             try run(operation, next)
             catch
@@ -54,6 +56,7 @@ end Handler
     abstract class LoopHandler[State, I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[State, E, A, B, S]:
         def run[X](state: State, input: I[X]): Outcome2[State, O[X] < (E & S), B < S] < S
 
+        // TODO why aren't these methods in Eval?
         private[kyo] def running[X](
             state: State,
             input: I[X],
@@ -133,6 +136,7 @@ end Handler
         private[kyo] def release(state: State, ex: Throwable): Unit = ()
     end ContextHandler
 
+    // TODO can we move this to Eval? 
     private[kyo] inline def answersLoopState[State, I[_], O[_], E <: ArrowEffect[I, O], A, B, S, C](
         inline effectTag: Tag[E],
         inline handle: [X] => (State, I[X]) => Outcome2[State, O[X] < (E & S), B < (S)] < S,

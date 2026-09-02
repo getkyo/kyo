@@ -257,3 +257,86 @@ reference has no per-allocation hook at all.
 
 That is a build-configuration problem rather than a missing capability, but it touches every item
 here: any of this work measured on a build with the gate on will be measuring the gate.
+
+## Soundness findings (added 2026-09-02)
+
+Source: `soundness-audit.md`, the reading pass over the whole proto kernel. Twelve reproduction
+tests are red on JVM, each failing on the value the finding predicted; the tip carrying them is
+`28d1dcb43f`. Grouped by root cause, with the ruling and the fix direction. Status moves to
+"fixed" when the named tests are green and the full suites are green on JVM, JS and Native.
+
+### S1. `Loop.repeat` and `Loop.indexed` detect suspension by `Arrow`, not `Pending`
+
+Ruling: an artifact of an older representation; fix. `Loop.apply` matches `Pending`; `repeat`
+and the five `indexed` overloads match `Arrow`, which only `DeferWith` (from `Effect.defer(f)`
+and `map`) mixes in. A `Handle`, a bare `SuspendArrow` or `SuspendContext`, a `Park`, or an
+arrow-form `Defer` body is treated as settled: `repeat` skips it, `indexed` returns the node as
+the loop's value. Tests: LoopTest "repeat suspends a bare operation each time", "repeat enters a
+context region each time", "repeat acquires a bracket each time", "indexed loops a bare operation
+whose answer is an outcome". Fix: the `Pending` arm in all six sites. Status: open.
+
+### S2. A context region's exit re-adds a key it does not own
+
+Reads (`Context.get`, a `TypeMap` lookup by `<:<`), entry (`derive(ctx.get(tag))`) and
+`Stack.find` are all subtype-aware; `Context.remove` is exact. `contextExit` and `rebound`
+recompute the binding after a pop with `stack.find(tag)`, so an inner `Cfg` region exiting under
+an outer `CfgSub` region finds the outer and writes an exact `Cfg` key with the outer's state;
+the outer's exit removes only `CfgSub`, and `Cfg` stays bound for the rest of the eval. Test:
+ContextEffectTest "an inner region at the supertype tag leaves no binding behind once its outer
+subtype region exits". Fix: the recomputation at exit and in `rebound` walks the stack for the
+exact tag; when none is found the exact key is removed and the subtype-aware read still sees the
+outer region's own key. Recomputing from the stack (rather than saving the prior binding at
+entry) is the right shape because the stack is the source of truth once S3 updates a region's
+state in place. Status: open.
+
+### S3. The Contextual isolate's join lands on copies of the regions
+
+`Isolate.internal.Contextual.restore` merges the snapshots and installs the joined entries as
+fresh regions through a `Kyo.Park`, above the originals. The joined state lives in the copy: reads
+inside the restore's continuation see it, the copy's exit rebinds from the original's untouched
+state, and each copy fires the user's `done`. Tests: IsolateTest "a merging join outlives an arrow
+region that closes after the restore", "an isolate cycle fires done once, for the region the user
+installed". Fix direction: apply the joined state to the owning region's slot on the live stack
+(the region found by handler identity) and update the context, pushing nothing; the evaluator's
+`Snapshot` arm has to give the node the means to do that. Needs a derivation before the edit.
+Ruling on the second test's law (copies are not regions to the hooks) is taken. Status: open.
+
+### S4. A debt re-homed below the answering region is never settled by the resume
+
+A crossing owes the dumped regions in the answering handler's lane so a clause that never
+resumes still releases them. `installed` settles the debt only in the top lane. When the foreign
+loop clause's outcome is pending, the handler pops and `oweBelow` moves its lane one down; when
+the clause resumes inside a nested region, the top lane is that region's. Either way the resume
+misses the debt, the region completes and fires `done`, and the drain at exit fires `release` on
+it with the "remainder discarded" failure. Brackets are masked by the Cell. Tests:
+ContextEffectTest "a region crossed to a foreign loop answered with a pending outcome completes
+without a release", "a region crossed to a foreign clause that resumes inside a nested region
+completes without a release". Fix: settle by snapshot identity in whatever lane holds the debt.
+Status: open.
+
+### S5. A `ContextEffect.handle` node derives its state on every read, and its settled arm derives from nothing
+
+`def state = h.derive(Maybe.empty)` reruns `derive` for every `Eval.release` and `toString`; the
+settled arm runs `done(derive(Maybe.empty))` when the expression is built, blind to the
+enclosing binding. Tests: EvalTest "an abandoned region value derives its state once and releases
+that state", ContextEffectTest "a settled body still derives from the binding around it". Fix:
+derive once per node, and make the settled arm observationally equal to the deferred one (the
+region node, entered under the enclosing binding). Status: open.
+
+### S6. The effect trace dedupes by the identity of the pooled `Stack`
+
+`EffectTrace.reconstruct` skips the walk when `seen eq stack`; the stack is the per-thread pooled
+instance the next eval borrows again, so a failure rethrown through a later eval on the same
+thread never gets that eval's regions. Test: EffectTraceTest "a failure rethrown through a later
+eval on the same thread names the later eval's region". Fix: dedupe per eval, not per stack
+object. Status: open.
+
+### S7. Nested `Eval.partial` (dropped)
+
+The reading pass predicted that a stop consumed by a nested `Eval.partial` is lost to the
+enclosing slice. Ruling: the scheduler contract has no nested partial; `Eval.partial` is called
+only by the task loop. The test was removed; no change.
+
+Not carried: the cached physical frames on the trace carrier (report finding 10, no
+distinguishing assertion yet) and the dead `scratch` write on the pooled stack (report finding
+21, unobservable). The report's nine coverage pins, predicted green, are on offer.

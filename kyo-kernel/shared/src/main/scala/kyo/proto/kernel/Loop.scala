@@ -290,7 +290,7 @@ object Loop:
             v match
                 case next: Continue[Unit] @unchecked =>
                     loop(idx + 1)(run(idx))
-                case _: Arrow[?, ?, ?] =>
+                case _: Pending[?, ?] =>
                     suspended(idx)(v)
                 case res: Done[?] =>
                     res.value.asInstanceOf[O < S]
@@ -306,7 +306,7 @@ object Loop:
             v match
                 case next: Continue[A] @unchecked =>
                     loop(idx + 1)(run(idx, next._1))
-                case _: Arrow[?, ?, ?] =>
+                case _: Pending[?, ?] =>
                     suspended(idx)(v)
                 case res: Done[?] =>
                     res.value.asInstanceOf[O < S]
@@ -324,7 +324,7 @@ object Loop:
             v match
                 case next: Continue2[A, B] @unchecked =>
                     loop(idx + 1)(run(idx, next._1, next._2))
-                case _: Arrow[?, ?, ?] =>
+                case _: Pending[?, ?] =>
                     suspended(idx)(v)
                 case res: Done[?] =>
                     res.value.asInstanceOf[O < S]
@@ -342,7 +342,7 @@ object Loop:
             v match
                 case next: Continue3[A, B, C] @unchecked =>
                     loop(idx + 1)(run(idx, next._1, next._2, next._3))
-                case _: Arrow[?, ?, ?] =>
+                case _: Pending[?, ?] =>
                     suspended(idx)(v)
                 case res: Done[?] =>
                     res.value.asInstanceOf[O < S]
@@ -360,7 +360,7 @@ object Loop:
             v match
                 case next: Continue4[A, B, C, D] @unchecked =>
                     loop(idx + 1)(run(idx, next._1, next._2, next._3, next._4))
-                case _: Arrow[?, ?, ?] =>
+                case _: Pending[?, ?] =>
                     suspended(idx)(v)
                 case res: Done[?] =>
                     res.value.asInstanceOf[O < S]
@@ -410,7 +410,7 @@ object Loop:
 
                 val v: Any < S = run
                 v match
-                    case _: Arrow[?, ?, ?] =>
+                    case _: Pending[?, ?] =>
                         suspended(i + 1)(v)
                     case _ =>
                         loop(i + 1)

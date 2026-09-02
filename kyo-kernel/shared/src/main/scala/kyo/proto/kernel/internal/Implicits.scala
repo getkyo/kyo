@@ -14,6 +14,7 @@ trait Implicits:
 
     implicit inline def abortCastUnit[S1, S2](inline v: Unit < S1): Unit < S2 = ${ LiftMacro.abortCastUnitMacro[S1, S2]('v) }
 
+    // TODO let's check if we can remove these liftings. I also wanted to see if we can detect if an arrow is a pure function without < S in the return to enable optimizations. If I;m not mistaken these liftings prevent implementing that
     implicit inline def liftPureFunction1[A1, B](inline f: A1 => B)(
         using inline flat: CanLift[B]
     ): A1 => B < Any =

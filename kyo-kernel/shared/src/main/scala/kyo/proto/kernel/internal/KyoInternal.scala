@@ -13,6 +13,7 @@ import language.implicitConversions
 import scala.annotation.publicInBinary
 import scala.annotation.tailrec
 
+// TODO we can not have methods thrown at files like this. A source file is a type + its companion
 private[proto] def short(v: Any): String =
     v match
         case v: Pending[?, ?]            => v.toString
@@ -35,6 +36,7 @@ sealed trait Pending[+A, -S] extends Kyo[A, S]:
     def frame: Frame = Frame.internal
 end Pending
 
+// TODO this should be Pending no?
 object Kyo:
 
     abstract class Defer[A, B, C, -S] @publicInBinary private[kyo] () extends Pending[C, S]:
@@ -111,26 +113,11 @@ object Kyo:
             else s"Handle(${short(value)}, $handler, $state, ${if cont eq this then "this" else short(cont)})"
     end Handle
 
-    abstract class DeferWith[A, B, -S] extends Defer[A, B, B, S] with Arrow.Transform[A, B, S]:
-        def contA = this
-        def contB = Arrow.id
-
-    abstract class SuspendArrowWith[I[_], O[_], E <: ArrowEffect[I, O], State, A, S]
-        extends SuspendArrow[I, O, E, State, A, S] with Arrow.Transform[O[State], A, S]
-
-    abstract class SuspendContextWith[State, E <: ContextEffect[State], A, S]
-        extends SuspendContext[State, E, A, S] with Arrow.Transform[State, A, S]
-
     abstract class Snapshot[A, -S] extends Pending[A, S]:
         Debugger.onAlloc(this)
 
         def cont: Arrow[Stack.Snapshot, A, S]
     end Snapshot
-
-    abstract class SnapshotWith[A, -S] extends Snapshot[A, S] with Arrow.Transform[Stack.Snapshot, A, S]
-
-    abstract class HandleWith[State, E <: Effect, A, B, C, -S]
-        extends Handle[State, E, A, B, C, S] with Arrow.Transform[B, C, S]
 
     final class Park[+A, -S](
         val value: Any < Any,
@@ -142,4 +129,20 @@ object Kyo:
         override def toString =
             s"Park(${short(value)}, regions = ${entries.regions})"
     end Park
+
+    abstract class DeferWith[A, B, -S] extends Defer[A, B, B, S] with Arrow.Transform[A, B, S]:
+        def contA = this
+        def contB = Arrow.id
+
+    abstract class SuspendArrowWith[I[_], O[_], E <: ArrowEffect[I, O], State, A, S]
+        extends SuspendArrow[I, O, E, State, A, S] with Arrow.Transform[O[State], A, S]
+
+    abstract class SuspendContextWith[State, E <: ContextEffect[State], A, S]
+        extends SuspendContext[State, E, A, S] with Arrow.Transform[State, A, S]
+
+    abstract class SnapshotWith[A, -S] extends Snapshot[A, S] with Arrow.Transform[Stack.Snapshot, A, S]
+
+    abstract class HandleWith[State, E <: Effect, A, B, C, -S]
+        extends Handle[State, E, A, B, C, S] with Arrow.Transform[B, C, S]
+
 end Kyo
