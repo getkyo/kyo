@@ -9,7 +9,7 @@ Sources:
 - **Arrow**: `ProtoKernelBench` today (2026-09-01), 3 forks, gc profiler, same session as the proto run; cells marked † are
   the 2026-08-18 `-f 1` screen (`reviews/bench/screen-0818-f1-head-kernel.json`, time only) where today's run had not
   reached the row yet, and allocation marked † is the 2026-08-11 board's kernel2 column.
-- **proto**: `ProtoBench` today, commit 32ee518804, 3 forks, gc profiler.
+- **proto**: `ProtoBench` today, commit b32f3b1318, 3 forks, gc profiler.
 
 Status: 🟢 proto within 5% of that kernel or better, 🟡 5% to 25% behind, 🔴 more than 25% behind, ⚪ no data for that kernel.
 
@@ -18,25 +18,25 @@ Status: 🟢 proto within 5% of that kernel or better, 🟡 5% to 25% behind, �
 | row | main (CPS) | Arrow | proto | proto/main | proto/Arrow | vs main | vs Arrow |
 |---|---|---|---|---|---|---|---|
 | evalFixedOverhead | 0.009 ± 0.001 | 0.014 ± 0.001 | 0.002 ± 0.001 | 0.22 | 0.14 | 🟢 | 🟢 |
-| fusionAllocatesNothing | 0.830 ± 0.010 | 0.085 ± 0.001 | 0.081 ± 0.003 | 0.10 | 0.95 | 🟢 | 🟢 |
-| fusionPastBudgetPaysRescuesOnly | 48.4 ± 0.7 | 43.6 ± 0.9 | 46.1 ± 1.3 | 0.95 | 1.06 | 🟢 | 🟡 |
-| uncachedValuesPayBoxingOnly | 74.7 ± 1.3 | 46.6 ± 0.8 | 51.1 ± 0.7 | 0.68 | 1.10 | 🟢 | 🟡 |
-| deepRecursionPaysRescuesOnly | 55.1 ± 0.6 | 49.2 ± 0.3 | 50.5 ± 0.6 | 0.92 | 1.03 | 🟢 | 🟢 |
-| deepRecursionNoRescue | - | 1.530 ± 0.025 | 1.552 ± 0.022 | - | 1.01 | ⚪ | 🟢 |
-| deepRecursionOneRescue | - | 2.871 ± 0.022 | 2.871 ± 0.023 | - | 1.00 | ⚪ | 🟢 |
-| deferBindPerStep | - | 65.5 ± 0.5 | 13.3 ± 0.3 | - | 0.20 | ⚪ | 🟢 |
-| deferBindUnderIdleHandler | - | 67.6 ± 1.1 | 19.1 ± 1.0 | - | 0.28 | ⚪ | 🟢 |
-| deferBindUnderTrailingMap | - | 44.3 ± 0.2 | 39.7 ± 1.1 | - | 0.90 | ⚪ | 🟢 |
-| nestedPayloadsUnwrapInMaps | - | 6.068 ± 0.058 | 6.078 ± 0.028 | - | 1.00 | ⚪ | 🟢 |
-| suspensionBaseline | 127.7 ± 3.6 | 83.6 ± 0.6 | 80.5 ± 2.7 | 0.63 | 0.96 | 🟢 | 🟢 |
-| suspensionFusesContinuation | 70.2 ± 7.0 | 43.8 ± 0.5 | 34.6 ± 0.6 | 0.49 | 0.79 | 🟢 | 🟢 |
-| idleHandlerAddsNothing | 48.8 ± 0.8 | 43.6 ± 0.3 | 46.3 ± 1.5 | 0.95 | 1.06 | 🟢 | 🟡 |
-| continuationBodiesFuse | 24.8 ± 0.4 | 8.845 ± 0.210 | 9.970 ± 0.654 | 0.40 | 1.13 | 🟢 | 🟡 |
-| trailingMapsStayLinear | 472,770.9 ± 10,199.1 | 644.5 ± 12.7 | 298.8 ± 11.1 | 0.00 | 0.46 | 🟢 | 🟢 |
-| handleLoopAnswersInPlace | 134.8 ± 1.2 | 79.5 ± 0.6 | 43.4 ± 0.3 | 0.32 | 0.55 | 🟢 | 🟢 |
-| handleLoopFusesContinuation | - | 80.0 ± 1.6 | 43.2 ± 0.3 | - | 0.54 | ⚪ | 🟢 |
-| statefulAnswersPaySuccessor | 153.7 ± 2.5 | 87.0 ± 0.5 | 41.4 ± 0.5 | 0.27 | 0.48 | 🟢 | 🟢 |
-| emittingClausesPayRegionRebuild | - | 144.3 ± 1.1 | 79.0 ± 2.4 | - | 0.55 | ⚪ | 🟢 |
+| fusionAllocatesNothing | 0.830 ± 0.010 | 0.085 ± 0.001 | 0.079 ± 0.001 | 0.10 | 0.93 | 🟢 | 🟢 |
+| fusionPastBudgetPaysRescuesOnly | 48.4 ± 0.7 | 43.6 ± 0.9 | 45.1 ± 0.2 | 0.93 | 1.03 | 🟢 | 🟢 |
+| uncachedValuesPayBoxingOnly | 74.7 ± 1.3 | 46.6 ± 0.8 | 49.3 ± 0.3 | 0.66 | 1.06 | 🟢 | 🟡 |
+| deepRecursionPaysRescuesOnly | 55.1 ± 0.6 | 49.2 ± 0.3 | 49.8 ± 0.3 | 0.90 | 1.01 | 🟢 | 🟢 |
+| deepRecursionNoRescue | - | 1.530 ± 0.025 | 1.568 ± 0.038 | - | 1.02 | ⚪ | 🟢 |
+| deepRecursionOneRescue | - | 2.871 ± 0.022 | 2.830 ± 0.009 | - | 0.99 | ⚪ | 🟢 |
+| deferBindPerStep | - | 65.5 ± 0.5 | 12.9 ± 0.1 | - | 0.20 | ⚪ | 🟢 |
+| deferBindUnderIdleHandler | - | 67.6 ± 1.1 | 17.2 ± 0.4 | - | 0.25 | ⚪ | 🟢 |
+| deferBindUnderTrailingMap | - | 44.3 ± 0.2 | 29.7 ± 0.6 | - | 0.67 | ⚪ | 🟢 |
+| nestedPayloadsUnwrapInMaps | - | 6.068 ± 0.058 | 5.976 ± 0.032 | - | 0.98 | ⚪ | 🟢 |
+| suspensionBaseline | 127.7 ± 3.6 | 83.6 ± 0.6 | 76.6 ± 0.8 | 0.60 | 0.92 | 🟢 | 🟢 |
+| suspensionFusesContinuation | 70.2 ± 7.0 | 43.8 ± 0.5 | 33.3 ± 0.2 | 0.47 | 0.76 | 🟢 | 🟢 |
+| idleHandlerAddsNothing | 48.8 ± 0.8 | 43.6 ± 0.3 | 45.2 ± 0.3 | 0.93 | 1.04 | 🟢 | 🟢 |
+| continuationBodiesFuse | 24.8 ± 0.4 | 8.845 ± 0.210 | 10.4 ± 0.5 | 0.42 | 1.18 | 🟢 | 🟡 |
+| trailingMapsStayLinear | 472,770.9 ± 10,199.1 | 644.5 ± 12.7 | 289.8 ± 3.8 | 0.00 | 0.45 | 🟢 | 🟢 |
+| handleLoopAnswersInPlace | 134.8 ± 1.2 | 79.5 ± 0.6 | 42.7 ± 0.3 | 0.32 | 0.54 | 🟢 | 🟢 |
+| handleLoopFusesContinuation | - | 80.0 ± 1.6 | 42.8 ± 0.2 | - | 0.54 | ⚪ | 🟢 |
+| statefulAnswersPaySuccessor | 153.7 ± 2.5 | 87.0 ± 0.5 | 40.7 ± 0.3 | 0.26 | 0.47 | 🟢 | 🟢 |
+| emittingClausesPayRegionRebuild | - | 144.3 ± 1.1 | 77.1 ± 2.2 | - | 0.53 | ⚪ | 🟢 |
 
 ## Allocation (B/op)
 
