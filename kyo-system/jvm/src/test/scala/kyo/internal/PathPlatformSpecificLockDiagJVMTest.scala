@@ -34,7 +34,7 @@ class PathPlatformSpecificLockDiagJVMTest extends kyo.test.Test[Any]:
             if acquired then true
             else
                 Sync.Unsafe.defer {
-                    println(s"DIAG-STRAND round=$index target=$target " + LockDiag.dump(target))
+                    println(s"DIAG-STRAND round=$index target=$target " + LockDiag.dump(target) + " " + HostFileSystem.diagTrail(target))
                     false
                 }
         }

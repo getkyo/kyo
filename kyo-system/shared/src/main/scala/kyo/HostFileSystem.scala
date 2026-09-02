@@ -20,6 +20,22 @@ private[kyo] object HostFileSystem:
     // alike.
     private[kyo] var afterClaimHook: () => Unit = () => ()
 
+    // TEMPORARY DIAGNOSTIC (not for merge): per-path event trail for the interrupted-acquisition strand.
+    private val diagEvents =
+        import AllowUnsafe.embrace.danger
+        AtomicRef.Unsafe.init(Map.empty[String, Chunk[String]])
+
+    @scala.annotation.tailrec
+    private[kyo] def diagRecord(path: Path, event: String)(using AllowUnsafe): Unit =
+        val key  = path.toString
+        val snap = diagEvents.get()
+        val next = snap.updated(key, snap.getOrElse(key, Chunk.empty[String]).append(event))
+        if !diagEvents.compareAndSet(snap, next) then diagRecord(path, event)
+    end diagRecord
+
+    private[kyo] def diagTrail(path: Path)(using AllowUnsafe): String =
+        diagEvents.get().getOrElse(path.toString, Chunk.empty[String]).mkString("trail=[", ",", "]")
+
     // The window a pending reservation waits on is one channel open plus one platform lock call, so
     // it clears in well under a millisecond. The budget is generous against that rather than tuned:
     // its job is to terminate at all when an entry is never going to resolve, not to time the window.
@@ -348,8 +364,9 @@ private[kyo] object HostFileSystem:
                 Sync.defer(new java.util.concurrent.atomic.AtomicReference[Maybe[Path.Lock]](Absent)).map { holder =>
                     Scope.ensure {
                         Sync.Unsafe.defer(holder.getAndSet(Absent)).map {
-                            case Present(lock) => lock.release(lock.ownership)
-                            case Absent        => ()
+                            case Present(lock) =>
+                                Sync.Unsafe.defer(diagRecord(path, "finalizer-present")).andThen(lock.release(lock.ownership))
+                            case Absent => Sync.Unsafe.defer(diagRecord(path, "finalizer-absent"))
                         }
                     }.andThen {
                         // A shared claim can arrive while another shared claim is between reserving
@@ -374,6 +391,7 @@ private[kyo] object HostFileSystem:
                                     case Path.LockAttempt.Acquired(raw) =>
                                         val lock = lockFrom(path, raw, mode, AtomicInt.Unsafe.init(0).safe)
                                         holder.set(Present(lock))
+                                        diagRecord(path, "claim")
                                         afterClaimHook()
                                         Result.succeed(Present(lock))
                                     case Path.LockAttempt.Pending       => Result.succeed(Absent)
