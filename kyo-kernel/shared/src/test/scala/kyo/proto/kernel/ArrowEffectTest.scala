@@ -2565,16 +2565,16 @@ class ArrowEffectTest extends AnyFreeSpec:
     }
 
     "higher-order operations" - {
-        enum ReaderOp[X]:
-            case Ask                                                extends ReaderOp[Int]
+        enum ReaderOp[X] derives CanEqual:
+            case Ask                                            extends ReaderOp[Int]
             case Local[X](f: Int => Int, m: X < (Reader & Say)) extends ReaderOp[X]
         sealed trait Reader extends ArrowEffect[ReaderOp, [X] =>> X]
 
         def askR: Int < Reader = ArrowEffect.suspend[Int](Tag[Reader], ReaderOp.Ask)
-        def local[A](f: Int => Int)(m: A < (Reader & Say)): A < Reader =
+        def local[A](f: Int => Int)(m: A < (Reader & Say)): A < (Reader & Say) =
             ArrowEffect.suspend[A](Tag[Reader], ReaderOp.Local(f, m))
 
-        def runReader[A, S](env: Int)(v: A < (Reader & S)): A < S =
+        def runReader[A, S](env: Int)(v: A < (Reader & Say & S)): A < (Say & S) =
             ArrowEffect.handleCont(Tag[Reader], v)(
                 [C] =>
                     (op, cont) =>
@@ -2606,7 +2606,7 @@ class ArrowEffectTest extends AnyFreeSpec:
         }
 
         enum ErrOp[X]:
-            case Fail(msg: String)                              extends ErrOp[Nothing]
+            case Fail(msg: String)                          extends ErrOp[Nothing]
             case Catch[X](m: X < Err, h: String => X < Err) extends ErrOp[X]
         sealed trait Err extends ArrowEffect[ErrOp, [X] =>> X]
 
@@ -2628,7 +2628,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                                             case Right(c) => cont(c)
                                             case Left(e2) => (Left(e2): Either[String, A])
                                         }
-                                }
+                            }
                 ,
                 a => a
             )
