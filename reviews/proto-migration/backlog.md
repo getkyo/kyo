@@ -491,6 +491,18 @@ Everything open, in one place, so nothing above has to be re-derived. Numbered f
    value yields inward, the continuation escapes the answering region, the resume site's handler
    answers the remainder; the type-level twin is the stashed-row pin), and `locally m >> locally
    m` as two shots of a computation answer under the re-established local handler.
+   The soundness question, as the ticket frames it: issue 13's `unsafeCoerce` needs handler-scope
+   code sequenced after a locally run action, so that a yield inside the action suspends the
+   handler's code as part of the local coroutine (the fifth of the five properties its author
+   lists). The kernel lacks that property by construction: a computation answer hands control
+   to the body and the clause has nothing after it; elaboration in the clause runs the body at
+   the handler's level where the rows forbid it from reaching a handler between the operation
+   and the elaborating handler; and a clause's post-resume code sits below the re-installed
+   regions. The last is pinned at `0f74c1dfce`, ArrowEffectTest "a clause's code after the
+   resume is not captured by a coroutine handler inside the region", green (208 in the class).
+   The remaining ticket content is semantics, labelled so by both authors, and open for a ruling:
+   a captured `catch` region answers ahead of the resume site's handler (pinned as law), where
+   lexi-lambda proposes interposition instead.
 3. **Fixes blocked by "tests only".** S9, S10, and the entry 9 flip if ruled; the S9 fix also
    revisits S4's lane scan, which the mark subsumes.
 4. **The fifteen TODO notes.** Section T above: the DO items (two renames, the `KyoInternal` split

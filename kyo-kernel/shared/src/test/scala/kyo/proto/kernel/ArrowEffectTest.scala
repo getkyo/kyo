@@ -2416,8 +2416,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                         cont(1).map { x =>
                             log += s"post $x"
                             x * 10
-                        }
-                ,
+                    },
                 a => a
             )
             assert(r.eval == -10)
