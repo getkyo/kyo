@@ -26,7 +26,6 @@ final class EffectTrace extends Exception(null, null, false, false):
 
 end EffectTrace
 
-// TODO please review if all the APIs are still necessary and if we can simplify them. Also check if we can improve naming for clarity
 private[kernel] object EffectTrace:
 
     private val noElements = new Array[StackTraceElement](0)
@@ -39,20 +38,20 @@ private[kernel] object EffectTrace:
 
     def attach(ex: Throwable, stack: Stack): Unit =
         reconstruct(ex, Maybe(stack)) { builder =>
-            builder.entries(stack)
+            builder.regions(stack)
         }
 
     def attach(ex: Throwable, node: Pending[?, ?], stack: Stack): Unit =
         reconstruct(ex, Maybe(stack)) { builder =>
             builder.node(node)
-            builder.entries(stack)
+            builder.regions(stack)
         }
 
     def attach(ex: Throwable, node: Pending[?, ?], cont: Arrow[?, ?, ?], stack: Stack): Unit =
         reconstruct(ex, Maybe(stack)) { builder =>
             builder.arrow(cont)
             builder.node(node)
-            builder.entries(stack)
+            builder.regions(stack)
         }
 
     private inline def reconstruct(ex: Throwable, stack: Maybe[Stack])(inline fill: Builder => Unit): Unit =
@@ -179,7 +178,7 @@ private[kernel] object EffectTrace:
             push(new Node(p))
             drain()
 
-        def entries(stack: Stack): Unit =
+        def regions(stack: Stack): Unit =
             val n = stack.depth
             @tailrec def loop(i: Int): Unit =
                 if i >= 0 then
@@ -190,7 +189,7 @@ private[kernel] object EffectTrace:
                         drain()
                         loop(i - 1)
             loop(n - 1)
-        end entries
+        end regions
 
         @tailrec private def drain(): Unit =
             if work.isEmpty then ()
