@@ -87,9 +87,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "an eval inside a map evaluates its argument rather than nesting it" in {
-
-            assertTypeError("answerAsk(1)(ask.map(_ => ask.asInstanceOf[Int < Any].eval)).eval")
-            val ex = intercept[Throwable](answerAsk(1)(ask.map(_ => Eval[Int, Any](ask.asInstanceOf[Int < Any]))).eval)
+            val ex = intercept[Throwable](answerAsk(1)(ask.map(_ => ask.asInstanceOf[Int < Any].eval)).eval)
             assert(ex.getMessage.contains("unhandled suspension"))
         }
 
