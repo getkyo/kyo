@@ -14,7 +14,9 @@ permissions:
 # a v1.* tag) or a `/release` comment on a PR. Producers build ONE os-arch's classifier natives each
 # and upload only those; the publish job downloads all of them into ffiPrebuiltDir so the single JVM
 # ci-release slices every os-arch's classifier jars (DECISION-P2b) and the completeness guard runs as
-# the pre-sonaRelease belt. No Windows producer: Windows is NIO + JDK TLS by ruling, no native.
+# the pre-sonaRelease belt. Windows carries exactly one publishable native, kyo-aeron's shim:
+# kyo-net is NIO + JDK TLS there by ruling and declares itself out through osTargets, while
+# kyo-aeron has no fallback tier and would otherwise ship unusable on Windows.
 jobs:
   # macos-14 is arm64, and covers BOTH Mac targets: darwin-aarch64 is the host build; darwin-x86_64 is
   # a real cross-build on the same runner. build-boringssl.sh cross-builds the vendored BoringSSL with
@@ -42,40 +44,54 @@ jobs:
         with:
           jvm: corretto:25
           apps: sbt
-      - name: Install BoringSSL build toolchain
+      - name: Install vendored-native build toolchain
         shell: bash
         run: |
           command -v cmake >/dev/null 2>&1 || brew install cmake
           command -v go >/dev/null 2>&1 || brew install go
-      - name: Build vendored BoringSSL (darwin-aarch64 + darwin-x86_64)
+      # Every vendored dependency any FFI module links, for both Mac targets. ffiCompileAll below
+      # compiles every module, so a module whose staged tree is missing fails the whole producer.
+      # macOS needs no uuid package; the Aeron driver takes it from libSystem.
+      - name: Stage vendored natives (darwin-aarch64 + darwin-x86_64)
         shell: bash
         run: |
           bash kyo-net/build/boringssl/build-boringssl.sh darwin-aarch64
           bash kyo-net/build/boringssl/build-boringssl.sh darwin-x86_64
-      - name: Compile kyo-net natives (darwin-aarch64 + darwin-x86_64)
+          bash kyo-aeron/scripts/build-aeron.sh darwin-aarch64
+          bash kyo-aeron/scripts/build-aeron.sh darwin-x86_64
+      # ONE compile for every FFI module. The plugin knows which projects declare ffiLibraries, so the
+      # workflow does not enumerate them: adding an FFI module needs no edit here. Previously this job
+      # carried a hand-written block per module (compile, collect, upload), which is how a module ends up
+      # published with no native for a platform it needs.
+      - name: Compile every module's darwin natives (darwin-aarch64 + darwin-x86_64)
         shell: bash
         run: |
           # Host build: build.sbt resolves the BoringSSL staged dir and the target to darwin-aarch64.
-          sbt -Dplatform=JVM 'kyo-netJVM/ffiCompile'
+          sbt -Dplatform=JVM ffiCompileAll
           # Cross build: -Dos.arch=x86_64 points the host-keyed resolution at darwin-x86_64 (so the
           # boringssl shim links the x86_64 archives), -arch x86_64 makes clang emit x86_64 code.
-          # ffiCFlags is a per-project setting, so scope the set to kyo-netJVM (ThisBuild / ffiCFlags
-          # is undefined in this build).
-          sbt -Dplatform=JVM -Dos.arch=x86_64 'set LocalProject("kyo-netJVM") / ffiCFlags ++= Seq("-arch", "x86_64")' 'kyo-netJVM/ffiCompile'
+          # `set every` applies the flag to every project, since ffiCFlags is per-project and this leg
+          # cross-builds all of them.
+          sbt -Dplatform=JVM -Dos.arch=x86_64 'set every ffiCFlags ++= Seq("-arch", "x86_64")' ffiCompileAll
       - name: Collect darwin natives
         shell: bash
         run: |
-          mkdir -p kyonet-natives
-          find kyo-net -path '*/ffi/lib*-darwin-*.dylib' -exec cp {} kyonet-natives/ \;
-          for f in libkyonet_posix_uring-darwin-aarch64.dylib libkyonet_boringssl-darwin-aarch64.dylib \
-                   libkyonet_posix_uring-darwin-x86_64.dylib  libkyonet_boringssl-darwin-x86_64.dylib; do
-            test -s "kyonet-natives/$f" || { echo "producer natives-darwin is missing $f" >&2; exit 1; }
+          mkdir -p natives-out
+          # Repo-wide: whatever any FFI module built for this os-arch. The publish host sorts out which
+          # module gets which, by library id, through ffiPrebuiltPool.
+          find . -path '*/target/ffi/lib*-darwin-*.dylib' -exec cp -n {} natives-out/ \;
+          test -n "$(ls -A natives-out)" || { echo "producer natives-darwin built nothing" >&2; exit 1; }
+          # Every collected file must actually be a Mach-O object. Per-module completeness is checked at
+          # publish time by ffiPackagingCheck, which knows what each module requires; this step only
+          # guarantees the producer did its job and produced the right kind of file.
+          for f in natives-out/*; do
+            file "$f" | grep -qi 'Mach-O' || { echo "$f is not a Mach-O object" >&2; exit 1; }
           done
-          ls -l kyonet-natives
+          ls -l natives-out
       - uses: actions/upload-artifact@v7
         with:
           name: natives-darwin
-          path: kyonet-natives
+          path: natives-out
           if-no-files-found: error
 
   # ubuntu-latest is x86_64: it produces the glibc linux-x86_64 natives directly, and the linux-musl-x86_64
@@ -102,46 +118,54 @@ jobs:
         with:
           jvm: corretto:25
           apps: sbt
-      - name: Install BoringSSL + posix build dependencies
+      # uuid-dev is the Aeron driver's -luuid link target and is not preinstalled; the rest serve
+      # kyo-net's shims. ffiCompileAll compiles every FFI module, so every module's build-time
+      # dependency belongs here.
+      - name: Install vendored-native build dependencies
         shell: bash
         run: |
-          bash scripts/apt-install.sh --if-missing cmake go:golang-go liburing-dev
+          bash scripts/apt-install.sh --if-missing cmake go:golang-go liburing-dev uuid-dev
       - name: Build linux-x86_64 (glibc) natives
         shell: bash
         run: |
           bash kyo-net/build/boringssl/build-boringssl.sh linux-x86_64
-          sbt -Dplatform=JVM 'kyo-netJVM/ffiCompile'
-          mkdir -p kyonet-natives
-          find kyo-net -path '*/ffi/lib*-linux-x86_64.so' -exec cp {} kyonet-natives/ \;
+          bash kyo-aeron/scripts/build-aeron.sh linux-x86_64
+          sbt -Dplatform=JVM ffiCompileAll
+          mkdir -p natives-out
+          find . -path '*/target/ffi/lib*-linux-x86_64.so' -exec cp -n {} natives-out/ \;
       - name: Build linux-musl-x86_64 natives (Alpine)
         shell: bash
         run: |
-          # apk add the exact toolchain build-boringssl.sh needs (it is a bash script: Alpine ships only
-          # busybox sh) plus liburing-dev for the posix_uring shim and curl/tar for the sbt launcher, which
-          # is a JAR the musl JDK runs (no glibc dependency).
+          # apk add the exact toolchain the staging scripts need (they are bash scripts: Alpine ships
+          # only busybox sh), plus liburing-dev for the posix_uring shim, util-linux-dev for the Aeron
+          # driver's -luuid, and curl/tar for the sbt launcher, which is a JAR the musl JDK runs (no
+          # glibc dependency).
           docker run --rm -v "$PWD:/work" -w /work eclipse-temurin:25-jdk-alpine sh -c '
             set -eu
-            apk add --no-cache bash cmake go build-base git file binutils perl linux-headers liburing-dev curl tar
+            apk add --no-cache bash cmake go build-base git file binutils perl linux-headers liburing-dev util-linux-dev curl tar
             sbt_ver="$(sed -n "s/^sbt.version=//p" project/build.properties)"
             curl -fsSL "https://github.com/sbt/sbt/releases/download/v${sbt_ver}/sbt-${sbt_ver}.tgz" | tar -xz -C /opt
             export PATH="/opt/sbt/bin:$PATH"
             bash kyo-net/build/boringssl/build-boringssl.sh linux-musl-x86_64
-            sbt -Dplatform=JVM kyo-netJVM/ffiCompile
-            mkdir -p kyonet-natives
-            find kyo-net -path "*/ffi/lib*-linux-musl-x86_64.so" -exec cp {} kyonet-natives/ \;
+            bash kyo-aeron/scripts/build-aeron.sh linux-musl-x86_64
+            sbt -Dplatform=JVM ffiCompileAll
+            mkdir -p natives-out
+            find . -path "*/target/ffi/lib*-linux-musl-x86_64.so" -exec cp -n {} natives-out/ \;
           '
       - name: Verify + list natives
         shell: bash
         run: |
-          for f in libkyonet_posix_uring-linux-x86_64.so      libkyonet_boringssl-linux-x86_64.so \
-                   libkyonet_posix_uring-linux-musl-x86_64.so libkyonet_boringssl-linux-musl-x86_64.so; do
-            test -s "kyonet-natives/$f" || { echo "producer natives-linux-x86_64 is missing $f" >&2; exit 1; }
+          test -n "$(ls -A natives-out)" || { echo "this producer built nothing" >&2; exit 1; }
+          # Per-module completeness is checked at publish time by ffiPackagingCheck, which knows what
+          # each module requires; here we only prove the producer ran and emitted ELF objects.
+          for f in natives-out/*; do
+            file "$f" | grep -qi 'ELF' || { echo "$f is not an ELF object" >&2; exit 1; }
           done
-          ls -l kyonet-natives
+          ls -l natives-out
       - uses: actions/upload-artifact@v7
         with:
           name: natives-linux-x86_64
-          path: kyonet-natives
+          path: natives-out
           if-no-files-found: error
 
   # ubuntu-24.04-arm is arm64: the glibc linux-aarch64 natives directly, the linux-musl-aarch64 natives via
@@ -166,47 +190,141 @@ jobs:
         with:
           jvm: corretto:25
           apps: sbt
-      - name: Install BoringSSL + posix build dependencies
+      # uuid-dev is the Aeron driver's -luuid link target and is not preinstalled; the rest serve
+      # kyo-net's shims. ffiCompileAll compiles every FFI module, so every module's build-time
+      # dependency belongs here.
+      - name: Install vendored-native build dependencies
         shell: bash
         run: |
-          bash scripts/apt-install.sh --if-missing cmake go:golang-go liburing-dev
+          bash scripts/apt-install.sh --if-missing cmake go:golang-go liburing-dev uuid-dev
       - name: Build linux-aarch64 (glibc) natives
         shell: bash
         run: |
           bash kyo-net/build/boringssl/build-boringssl.sh linux-aarch64
-          sbt -Dplatform=JVM 'kyo-netJVM/ffiCompile'
-          mkdir -p kyonet-natives
-          find kyo-net -path '*/ffi/lib*-linux-aarch64.so' -exec cp {} kyonet-natives/ \;
+          bash kyo-aeron/scripts/build-aeron.sh linux-aarch64
+          sbt -Dplatform=JVM ffiCompileAll
+          mkdir -p natives-out
+          find . -path '*/target/ffi/lib*-linux-aarch64.so' -exec cp -n {} natives-out/ \;
       - name: Build linux-musl-aarch64 natives (Alpine)
         shell: bash
         run: |
           docker run --rm -v "$PWD:/work" -w /work eclipse-temurin:25-jdk-alpine sh -c '
             set -eu
-            apk add --no-cache bash cmake go build-base git file binutils perl linux-headers liburing-dev curl tar
+            apk add --no-cache bash cmake go build-base git file binutils perl linux-headers liburing-dev util-linux-dev curl tar
             sbt_ver="$(sed -n "s/^sbt.version=//p" project/build.properties)"
             curl -fsSL "https://github.com/sbt/sbt/releases/download/v${sbt_ver}/sbt-${sbt_ver}.tgz" | tar -xz -C /opt
             export PATH="/opt/sbt/bin:$PATH"
             bash kyo-net/build/boringssl/build-boringssl.sh linux-musl-aarch64
-            sbt -Dplatform=JVM kyo-netJVM/ffiCompile
-            mkdir -p kyonet-natives
-            find kyo-net -path "*/ffi/lib*-linux-musl-aarch64.so" -exec cp {} kyonet-natives/ \;
+            bash kyo-aeron/scripts/build-aeron.sh linux-musl-aarch64
+            sbt -Dplatform=JVM ffiCompileAll
+            mkdir -p natives-out
+            find . -path "*/target/ffi/lib*-linux-musl-aarch64.so" -exec cp -n {} natives-out/ \;
           '
       - name: Verify + list natives
         shell: bash
         run: |
-          for f in libkyonet_posix_uring-linux-aarch64.so      libkyonet_boringssl-linux-aarch64.so \
-                   libkyonet_posix_uring-linux-musl-aarch64.so libkyonet_boringssl-linux-musl-aarch64.so; do
-            test -s "kyonet-natives/$f" || { echo "producer natives-linux-aarch64 is missing $f" >&2; exit 1; }
+          test -n "$(ls -A natives-out)" || { echo "this producer built nothing" >&2; exit 1; }
+          # Per-module completeness is checked at publish time by ffiPackagingCheck, which knows what
+          # each module requires; here we only prove the producer ran and emitted ELF objects.
+          for f in natives-out/*; do
+            file "$f" | grep -qi 'ELF' || { echo "$f is not an ELF object" >&2; exit 1; }
           done
-          ls -l kyonet-natives
+          ls -l natives-out
       - uses: actions/upload-artifact@v7
         with:
           name: natives-linux-aarch64
-          path: kyonet-natives
+          path: natives-out
+          if-no-files-found: error
+
+  # The two Windows producers. Windows carries exactly one publishable native, kyo-aeron's shim:
+  # kyo-net's libraries declare themselves out of Windows (their C is #ifdef-guarded to an empty
+  # translation unit there, and Windows is NIO + the JDK's TLS by ruling), while kyo-aeron has no
+  # fallback tier at all, so without these jobs it publishes a module that cannot work on Windows.
+  #
+  # Host-native, one runner per architecture, rather than one runner cross-building both. MSVC could
+  # cross-compile, but `cl` has no per-invocation target flag in the kyo-ffi plugin's model: it emits
+  # for whatever architecture the ambient vcvars environment selected. A cross-staged libaeron would
+  # therefore pair with a host-arch shim, which is precisely the class of mismatch this release path
+  # exists to prevent.
+  natives-windows-x86_64:
+    if: |
+      github.repository == 'getkyo/kyo' && (
+        (github.event_name == 'push') ||
+        (github.event_name == 'issue_comment' &&
+         github.event.issue.pull_request &&
+         github.event.comment.body == '/release'))
+    runs-on: windows-latest
+    env:
+      JAVA_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
+      JVM_OPTS:  -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
+      - uses: coursier/setup-action@v3.0.2
+        with:
+          jvm: corretto:25
+          apps: sbt
+      - uses: ./.github/actions/windows-native-setup
+        with:
+          os-arch: windows-x86_64
+      - name: Compile every module's windows-x86_64 natives
+        shell: bash
+        run: sbt -Dplatform=JVM ffiCompileAll
+      - uses: ./.github/actions/windows-native-collect
+        with:
+          os-arch: windows-x86_64
+      - uses: actions/upload-artifact@v7
+        with:
+          name: natives-windows-x86_64
+          path: natives-out
+          if-no-files-found: error
+
+  # windows-11-arm is free for public repositories and the same 4 vCPU / 16 GB tier as every other
+  # pole, so the memory tuning above carries over unchanged.
+  natives-windows-aarch64:
+    if: |
+      github.repository == 'getkyo/kyo' && (
+        (github.event_name == 'push') ||
+        (github.event_name == 'issue_comment' &&
+         github.event.issue.pull_request &&
+         github.event.comment.body == '/release'))
+    runs-on: windows-11-arm
+    env:
+      JAVA_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
+      JVM_OPTS:  -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
+      # Amazon ships no Corretto for Windows on ARM (its platform list carries Windows x64 only, and
+      # coursier's JVM index has no corretto under windows/arm64); Temurin is indexed there but tops
+      # out well below 25. Microsoft owns the platform and is current on it. This is load-bearing:
+      # hostOsArch reads the RUNNING JVM's os.arch, so an emulated x64 JDK here would name every
+      # artifact windows-x86_64 and this producer would upload nothing under its own name.
+      - uses: coursier/setup-action@v3.0.2
+        with:
+          jvm: microsoft-openjdk:25
+          apps: sbt
+      - uses: ./.github/actions/windows-native-setup
+        with:
+          os-arch: windows-aarch64
+      - name: Compile every module's windows-aarch64 natives
+        shell: bash
+        run: sbt -Dplatform=JVM ffiCompileAll
+      - uses: ./.github/actions/windows-native-collect
+        with:
+          os-arch: windows-aarch64
+      - uses: actions/upload-artifact@v7
+        with:
+          name: natives-windows-aarch64
+          path: natives-out
           if-no-files-found: error
 
   publish:
-    needs: [natives-darwin, natives-linux-x86_64, natives-linux-aarch64]
+    needs: [natives-darwin, natives-linux-x86_64, natives-linux-aarch64, natives-windows-x86_64, natives-windows-aarch64]
     if: |
       github.repository == 'getkyo/kyo' && (
         (github.event_name == 'push') ||
@@ -225,19 +343,20 @@ jobs:
       # Shared with release-probe.yml so the probe builds in this exact environment. A native
       # dependency added for publishing has one place to be added, and the probe inherits it.
       - uses: ./.github/actions/release-setup
-      # Fold every producer's per-os-arch natives into one tree; the JVM ci-release below points
-      # kyo-netJVM's ffiPrebuiltDir at it, so the classifier slice covers every os-arch (not just this
-      # host's). merge-multiple flattens the per-producer artifacts into one directory; the filenames
-      # (lib<id>-<os>-<arch>.<ext>) are unique across producers, so nothing collides.
-      - name: Download producer natives into ffiPrebuiltDir
+      # Fold every producer's per-os-arch natives into ONE pool, shared by every FFI module. Each project
+      # takes only the natives whose library id it declares (ffiPrebuiltPool) and ignores the rest, so the
+      # publish step below names no module and adding an FFI module needs no edit here. merge-multiple
+      # flattens the per-producer artifacts into one directory; filenames (lib<id>-<os>-<arch>.<ext>) are
+      # unique across producers, so nothing collides.
+      - name: Download every producer's natives into the shared pool
         uses: actions/download-artifact@v8
         with:
           pattern: natives-*
-          path: kyonet-prebuilt
+          path: ffi-prebuilt
           merge-multiple: true
-      - name: List staged prebuilt natives
+      - name: List the shared native pool
         shell: bash
-        run: ls -l kyonet-prebuilt
+        run: ls -l ffi-prebuilt
       # Phase 1: build, sign, and stage EVERY platform into one local bundle (target/sona-staging).
       # dottydoc crashes intermittently while rendering per-module javadoc; that happens here, inside
       # +publishSigned (no upload), so each stage is independently retriable. CI_SONATYPE_RELEASE=""
@@ -256,7 +375,7 @@ jobs:
         with:
           max_attempts: 3
           timeout_minutes: 120
-          command: rm -rf target/sona-staging && sbt -Dplatform=JVM 'set LocalProject("kyo-netJVM") / ffiPrebuiltDir := Some(file("kyonet-prebuilt"))' "ci-release"
+          command: rm -rf target/sona-staging && sbt -Dplatform=JVM 'set every ffiPrebuiltPool := Some(file("ffi-prebuilt"))' "ci-release"
         env:
           CI_SONATYPE_RELEASE: ""
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
@@ -268,7 +387,9 @@ jobs:
         with:
           max_attempts: 3
           timeout_minutes: 120
-          command: sbt -Dplatform=JS "ci-release"
+          # The Scala.js artifact bundles the same shim (under kyo-ffi/native/<os>-<arch>), and koffi loads
+          # it on macOS exactly as the JVM does, so the JS stage stages the darwin natives too.
+          command: sbt -Dplatform=JS 'set every ffiPrebuiltPool := Some(file("ffi-prebuilt"))' "ci-release"
         env:
           CI_SONATYPE_RELEASE: ""
           CI_CLEAN: ""
@@ -291,14 +412,25 @@ jobs:
           SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
       # The pre-sonaRelease belt (DECISION-P2b Decision 5): fail the release if any kyo-net library the
       # state manifest declares `native`/`prebuilt` has no real native in the merged resource tree, or if
-      # any classifier would ship a `stub`. Runs against the same ffiPrebuiltDir the JVM stage sliced, so
-      # it validates the full cross-os-arch set, not just this host's.
+      # any classifier would ship a `stub`. Runs against the shared pool the JVM stage sliced, so it
+      # validates the full cross-os-arch set, not just this host's.
       - name: Native classifier completeness guard (pre-release belt)
         shell: bash
         run: |
           sbt -Dplatform=JVM \
-            'set LocalProject("kyo-netJVM") / ffiPrebuiltDir := Some(file("kyonet-prebuilt"))' \
+            'set every ffiPrebuiltPool := Some(file("ffi-prebuilt"))' \
             kyo-netJVM/kyoNetNativeClassifierGuard
+      # Every FFI module, on both publishing platforms: each staged native must match the platform
+      # directory it sits in (read from the object-file magic, not the path), and each library must have a
+      # native for every platform its own osTargets say it builds for. The required set is DERIVED per
+      # module (ffiReleasePlatforms), so this step names no module and a new FFI module is covered the day
+      # it is added. RC6 shipped kyo-stats-machine with one native, the macOS shim compiled on the Linux
+      # runner and filed under linux-x86_64, so no Mac could read a single host metric and nothing said so.
+      - name: FFI native packaging guard, every module (pre-release belt)
+        shell: bash
+        run: |
+          sbt -Dplatform=JVM 'set every ffiPrebuiltPool := Some(file("ffi-prebuilt"))' ffiPackagingCheckAll
+          sbt -Dplatform=JS  'set every ffiPrebuiltPool := Some(file("ffi-prebuilt"))' ffiPackagingCheckAll
       # Phase 2: upload and publish the whole staged bundle as ONE Central Portal deployment. Single
       # attempt: re-uploading would collide on the portal. It bundles target/sona-staging and does not
       # re-run doc. Tag pushes only; snapshots were already published by the stage steps above.

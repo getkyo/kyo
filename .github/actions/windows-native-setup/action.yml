@@ -1,0 +1,70 @@
+name: windows-native-setup
+description: >-
+  Provision a Windows runner to compile kyo's FFI natives: the MSVC environment for the
+  requested architecture, MinGW gcc for every other C library, and the staged libaeron tree.
+  Shared by the two release producers so the x64 and arm64 legs cannot drift apart.
+  Checkout and the JDK are the caller's responsibility, because the JDK vendor differs by
+  architecture (Corretto has no Windows-on-ARM build).
+inputs:
+  os-arch:
+    description: 'windows-x86_64 or windows-aarch64.'
+    required: true
+runs:
+  using: composite
+  steps:
+    # cl has no per-invocation target flag in the kyo-ffi plugin's model: it builds for whatever
+    # architecture the ambient environment selected, so the vcvars script IS the architecture
+    # selection, for both libaeron and the shim that links it. vcvars64 is the x64 toolchain and
+    # vcvarsarm64 the ARM64 one; picking the wrong one produces objects for the other architecture
+    # under this producer's name.
+    - name: Set up MSVC environment
+      shell: cmd
+      run: |
+        if "${{ inputs.os-arch }}"=="windows-x86_64" (set "VCVARS=vcvars64.bat") else (set "VCVARS=vcvarsarm64.bat")
+        for /f "usebackq delims=" %%i in (`"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set "VSROOT=%%i"
+        call "%VSROOT%\VC\Auxiliary\Build\%VCVARS%" || exit /b 1
+        rem Redirect first: cmd reads a digit immediately before `>>` as a file-descriptor number,
+        rem and these values end in x64 / arm64 / 10.0.x.0.
+        >>"%GITHUB_ENV%" echo PATH=%PATH%
+        >>"%GITHUB_ENV%" echo INCLUDE=%INCLUDE%
+        >>"%GITHUB_ENV%" echo LIB=%LIB%
+        >>"%GITHUB_ENV%" echo LIBPATH=%LIBPATH%
+        where cl
+
+    # Every FFI library other than kyo-aeron's compiles with `cc`, which the Windows images do not
+    # provide. On x64 that is MinGW gcc. On arm64 it cannot be: the image ships an
+    # x86_64-w64-mingw32 gcc, which would emit x64 objects for a native named aarch64, so that
+    # producer uses the image's LLVM clang, which targets the host. SBT_UPDATE_LIMIT=1 serializes
+    # dependency resolution, which concurrent resolution trips through Windows file locking.
+    - name: Configure build environment
+      shell: bash
+      run: |
+        case "${{ inputs.os-arch }}" in
+          windows-x86_64)  cc=gcc;   expect=x86_64 ;;
+          windows-aarch64) cc=clang; expect=aarch64 ;;
+          *) echo "unknown os-arch '${{ inputs.os-arch }}'" >&2; exit 1 ;;
+        esac
+        {
+          echo "SBT_UPDATE_LIMIT=1"
+          echo "CC=$cc"
+        } >> "$GITHUB_ENV"
+        "$cc" --version | head -1
+        # The artifacts are NAMED for this producer's architecture, so a compiler targeting another
+        # one uploads a mislabelled DLL into the shared pool. The publish-time check reads the PE
+        # machine field and would catch it, but the message is far clearer here.
+        target=$("$cc" -dumpmachine)
+        echo "$cc target: $target"
+        case "$target" in
+          "$expect"*) ;;
+          *) echo "$cc targets '$target' on a ${{ inputs.os-arch }} runner; expected $expect-*." >&2
+             exit 1 ;;
+        esac
+
+    # The staged libaeron tree is gitignored, so anything compiling kyo-aeron's C shim builds it
+    # first: the shim statically links aeron_driver_static. cmake is preinstalled on both images.
+    # build-aeron.sh refuses a cross-architecture Windows request, so this is always host-native.
+    - name: Prepare libaeron
+      shell: bash
+      run: |
+        command -v cmake >/dev/null 2>&1 || { echo "cmake missing on the Windows runner" >&2; exit 1; }
+        bash kyo-aeron/scripts/build-aeron.sh "${{ inputs.os-arch }}"

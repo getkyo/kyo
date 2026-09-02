@@ -46,6 +46,12 @@ jobs:
           - { os: linux-x64,   image: ubuntu-latest,    targets: '["JVM","JS","Native","Wasm"]' }
           - { os: linux-arm64, image: ubuntu-24.04-arm, targets: '["JVM","JS","Native","Wasm"]' }
           - { os: windows-x64, image: windows-latest,   targets: '["JVM","JS"]' }
+          # windows-11-arm is free for public repos and the same 4 vCPU / 16 GB tier as the rest, so
+          # the existing memory tuning carries over. It exists because the release publishes a
+          # windows-aarch64 kyo-aeron native and kyo-aeron has no fallback tier: a native nothing runs
+          # is the RC6 shape. Building cleanly proves little on Windows in particular, where the shim
+          # once linked into a DLL with an empty export table and every lookup failed at runtime.
+          - { os: windows-arm64, image: windows-11-arm, targets: '["JVM","JS"]' }
     uses: ./.github/workflows/build.yml
     with:
       os: ${{ matrix.pole.os }}
