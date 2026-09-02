@@ -212,8 +212,24 @@ session observes an eval exactly when `Debugger.enabled` compiles the hooks in (
 `inline val`, false today, the Q1 decision). MaskTest's cases all live in
 ArrowEffectMaskTest, one renamed for the recover arm. The fifteen KernelBench rows without
 a proto twin are in ProtoBench under their own names, `partialSuspensionBaseline` included.
-Still divergent by design: the `Effect.catching` node cases, the by-name `handleCatching`
-case, and the refusable effectful `fork` cases, each of a construct the proto does not have.
+A case-level audit of the 155 old cases with no exact-name twin (2026-09-02,
+`testport-audit-effect.md`, `testport-audit-arrow.md`) found 55 twins under other names, 22
+missing, and 18 divergent. The 22 are ported: defer over an effectful body and a pending
+value, defer composed with a recovery, the recovery cases that used `Effect.catching`
+rewritten over a recovering region (type dispatch, throws after a `handleFirst`, a stateful,
+and a resumed stateful region, past the budget rescue, outside a boxed computation, across a
+park), the two-shot and ten-shot `handle` overloads, abandonment of a park with nothing owed,
+the stateful node in the `dispatchFirst` walk, the two cross-region isolation pins, the two
+throwing-release safepoint pins, nested evals' regions innermost first, and the fused
+region's trace. Main's `ContextTest`, absent from both kernels, is ported too.
+Divergent by construct or ruling, with the reasons in the two audits: the effectful and
+`Result`-carrying releases (the proto's release is `(A, Maybe[Throwable]) => Unit`), the
+refusing and effectful `fork` strategies (the proto's `fork` is total), `Effect.catching` and
+the by-name `handleCatching`, `Context.inherit` and `Noninheritable` (the proto's
+`handleInheritable`), re-entering a spent bracket (refused with `kyo.Closed`), the
+`handleFirst` remainder (ruled Q4), the park-resume binding (ruled Q3), a `done` throw
+reaching its own recovery, and the physical-trace law for throws with no region standing
+(ruled Q5).
 
 ### Q2. Nesting in `Loop.Outcome*` (added 2026-09-01)
 

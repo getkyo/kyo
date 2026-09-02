@@ -57,25 +57,24 @@ and `Kyo.lift` 43 are unchanged in shape.
 
 ## Decisions to rule before phase 1
 
-- **D1. Scaladoc.** The proto carries none by ruling. The repository rule is that public
-  types carry scaladoc. Options: (a) restore scaladoc on the public files only
-  (`ArrowEffect`, `ContextEffect`, `Effect`, `Isolate`, `Pending`, `Arrow`, `Loop`, `Kyo`),
-  written for the proto's semantics, with internals staying comment-free; (b) ship without
-  and amend the rule for the kernel. Recommendation: (a), done as its own phase after the
-  move so the diff is readable.
-- **D2. `Effect.catching` and `ArrowEffect.handleCatching`.** No proto counterpart; one
-  downstream user each. Options: port to the proto's shape as a cold construct over
-  `handleCont`'s recover arm, or drop and let the downstream site move to the recover arm.
-  Recommendation: drop; the recover arm is the proto's expression of the same law, and the
-  backlog already records the catching cases as divergent by design.
-- **D3. `Pending.finalizeResources`.** The old finalizer lane; the proto's counterpart is
-  `Effect.bracket` and the owed dumps. Recommendation: drop, with the one downstream site
-  moving to bracket when its module migrates.
-- **D4. `ContextEffect` and `Isolate` protocols.** The proto's `derive`/`fork`/`join`/
-  `release`/`reenter`/`done` and the single `cont` isolate are the kernel's protocols from
-  this step; the old `bound`/`onFork`/`onJoin`/`onRelease` and `fork`/`join`/`resume`/
-  `updates` are gone. This is already ruled by the proto being the kernel; listed so the
-  downstream count (18 files) is visible.
+- **D1. Scaladoc: RULED, later** (2026-09-02, "we'll add scaladocs later. No prose in code
+  for now"). The proto stays comment-free through the swap; scaladoc on the public files is
+  its own phase afterwards.
+- **D2. `Effect.catching` and `ArrowEffect.handleCatching`: RULED, drop** (2026-09-02,
+  "handlers have the recover now"). The recover arm of `handleCont` and `handleLoop*` is the
+  proto's expression of the same law; the old cases that used `catching` as a tool are
+  ported over a recovering region, and the ones about `catching` itself are divergent.
+- **D3. `Pending.finalizeResources`: RULED, drop** (2026-09-02, "Eval.release no?"). The
+  proto's counterparts are `Effect.bracket` on the acquisition side and, for abandonment,
+  `Eval.release` over a parked value plus the owed drain at a region's exit; the one
+  downstream site moves to those when its module migrates.
+- **D4. `ContextEffect` and `Isolate` against main.** Corrected: the earlier text compared
+  the proto to the Arrow kernel in this branch, whose `bound`/`onFork`/`onJoin`/`onRelease`
+  and `fork`/`join`/`resume`/`updates` never existed on main. Against main, `Isolate` is the
+  same surface (`capture`, `isolate`, `restore`, `nest`, `derive`). `ContextEffect` differs
+  in one place: main's `handle(tag, value)` plus the `Noninheritable` marker trait become
+  the proto's `handle(tag)(derive, fork, join, done, release)` with explicit strategies and
+  `handleInheritable` for the inheriting default. That is the surface downstream migrates to.
 - **D5. `Mask`.** Stays inside `ArrowEffect` as ruled ("Mask is in ArrowEffect");
   `kyo/Mask.scala` is deleted and the one downstream import changes when it migrates.
 - **D6. The debug package.** `kyo.proto.debug` (jvm: `ConsoleDebugger`, `DebugSession`)
@@ -128,9 +127,16 @@ JS, and Native, then `Jmh/run -f 1 kyo.kernel.bench.KernelBench` against today's
 ### Phase 2. Surface parity, per the rulings
 
 - Apply D2, D3, D5 as deletions or ports; each port arrives with its pins.
-- The test base: the proto suites extend `AnyFreeSpec` directly; the old suites extend
-  `kyo.Test`, which exists for a documented reason (the kernel cannot test on kyo-test).
-  The moved suites switch to `kyo.Test`; `TestVariant` stays for `KyoForeachCollTest`.
+- The test base: RULED (2026-09-02, "we'll keep scalatest for the kernel"). The suites stay
+  on ScalaTest as they are, extending `AnyFreeSpec` directly; `TestVariant` stays for
+  `KyoForeachCollTest`. No switch to the `kyo.Test` base.
+- Test hygiene, ruled 2026-09-02: a suite may use an internal only when that internal is
+  its subject (StackTest may call `dump`, SafepointTest may drive the slot, a park case may
+  test for `Kyo.Park`); every other suite exercises the kernel through the public surface
+  or the scheduler contract (`Eval.partial`, `Eval.release`, a stop request). Nothing is
+  deleted until each of its scenarios has a public-surface twin. The audit in
+  `reviews/proto-migration/testport-internals-audit.md` lists every out-of-subject use and
+  the rewrite for each.
 
 Gate: suites on three platforms; the 35-row board at 1 fork against phase 1's board.
 
