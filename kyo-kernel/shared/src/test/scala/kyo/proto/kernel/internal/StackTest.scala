@@ -372,7 +372,7 @@ class StackTest extends AnyFreeSpec:
             val kb    = Arrow[Int](_ + 1)
             stack.push(a, (), Arrow.id[Int])
             stack.push(b, 3, kb)
-            val snapshot = stack.snapshot()
+            val snapshot = stack.takeAll()
             assert(stack.isEmpty)
             assert(snapshot.regions == 2)
             assert(snapshot.handler(0) eq a)
@@ -388,7 +388,7 @@ class StackTest extends AnyFreeSpec:
             stack.push(askHandler, (), Arrow.id[Int])
             stack.push(sayHandler, (), Arrow.id[Int])
             val inner    = stack.dump(1)
-            val snapshot = stack.snapshot()
+            val snapshot = stack.takeAll()
             assert(snapshot.regions == 1)
             val carried = snapshot.owed(0).toIndexed
             assert(carried.length == 1)

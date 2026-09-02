@@ -120,7 +120,7 @@ import scala.util.control.NonFatal
                                         end match
                                     case handler: Handler.LoopHandler[VX, IX, OX, EX, C, Y, S2] @unchecked =>
                                         val outcome0 = handler.running(stack.state(idx).asInstanceOf[VX], kyo.input, kyo, stack, idx)
-                                        stack.scratch = outcome0
+                                        stack.sink = outcome0
                                         Debugger.onResult(outcome0)
                                         outcome0 match
                                             case outcome: Loop.Continue2[VX, OX[VX] < (EX & S2)] @unchecked
@@ -230,7 +230,7 @@ import scala.util.control.NonFatal
                         Debugger.onRegionExit(stack.handler(j), parked)
                         j -= 1
                 }
-                Kyo.Park[A, S](parked, stack.snapshot(), owedNow)
+                Kyo.Park[A, S](parked, stack.takeAll(), owedNow)
             end if
         end park
 

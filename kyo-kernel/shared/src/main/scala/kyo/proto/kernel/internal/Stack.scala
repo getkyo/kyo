@@ -6,7 +6,6 @@ import kyo.proto.kernel.Arrow
 import kyo.proto.kernel.Effect
 import scala.annotation.tailrec
 
-// TODO please review if all the APIs are still necessary and if we can simplify them. Also check if we can improve naming for clarity
 final private[kernel] class Stack:
 
     private var handlers      = new Array[Handler[?, ?, ?]](0)
@@ -18,7 +17,7 @@ final private[kernel] class Stack:
 
     private var evalOwed: Chunk[Stack.Snapshot] = Chunk.empty
 
-    var scratch: Any = null
+    var sink: Any = null
 
     private var epochCount = 0
 
@@ -105,13 +104,13 @@ final private[kernel] class Stack:
                 loop(i + 1)
         loop(0)
         size = 0
-        scratch = null
+        sink = null
         evalOwed = Chunk.empty
         owes = false
         epochCount += 1
     end clear
 
-    def snapshot(): Stack.Snapshot =
+    def takeAll(): Stack.Snapshot =
         val out = new Array[AnyRef](size * 4)
         @tailrec def loop(i: Int): Unit =
             if i < size then
@@ -126,7 +125,7 @@ final private[kernel] class Stack:
         loop(0)
         size = 0
         Stack.wrap(out)
-    end snapshot
+    end takeAll
 
     def contextual(): Stack.Snapshot =
         var count = 0
