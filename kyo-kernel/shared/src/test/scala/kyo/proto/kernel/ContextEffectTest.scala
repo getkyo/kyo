@@ -322,7 +322,7 @@ class ContextEffectTest extends AnyFreeSpec:
         def answerAsk[A, S](value: Int)(v: A < (Ask & S)): A < S =
             ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue((), value: Int < Any), a => a)
 
-        "a crossing resumed in a nested eval inside the clause completes its region without a release at the owner's exit" in {
+        "a crossing resumed in a nested eval inside the clause is out of contract: its region is released again at the owner's exit" in {
             val log             = ListBuffer[String]()
             val body: Int < Ask = hooked(log, "cfg", 1)(ask.map(_ + 1))
             val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
@@ -330,7 +330,7 @@ class ContextEffectTest extends AnyFreeSpec:
                 a => a
             )
             assert(r.eval == 43)
-            assert(log.toList == List("done cfg 1"))
+            assert(log.toList == List("done cfg 1", "release cfg 1"))
         }
 
         "a binding below the answering handler is the resume site's, one above it is the captured one" in {

@@ -405,9 +405,17 @@ The same path with a race is a resume handed to another thread. Fix shapes, ruli
 drain skips a consumed snapshot, which subsumes S4's lane scan and covers nested evals and
 other threads (recommended); (2) a stack remembers the stack active on its thread when
 borrowed and `settle` walks that chain, nested evals only; (3) rule raw hooks at-least-once
-across evals and pin the release. Status: open; the reproduction is red as predicted
-(ContextEffectTest "a crossing resumed in a nested eval inside the clause completes its region
-without a release at the owner's exit", `List("done cfg 1", "release cfg 1")`).
+across evals and pin the release. Ruled 2026-09-02: not a valid issue. Shape (1) was applied
+and reverted on the rule that nothing captured in a computation value may be mutable
+(`9de69b42c3`, `b6b1334eab`); `s9-exploration.md` re-derived the space and proposed shape (2);
+the user ruled the triggering shape out of contract: a park that crossed a region of a live
+evaluation, evaluated with `.eval` inside that same evaluation. Nested evaluations of unrelated
+computations stay supported (kyo-core `Fiber.toFuture`, `Sync.Unsafe.evalOrThrow`, kyo-jsonrpc
+and kyo-net do it); only this shape is outside the hooks' exactly-once promise, and it is
+at-least-once for raw hooks and exact for brackets through the cell. The pin is flipped to the
+ruled behavior: ContextEffectTest "a crossing resumed in a nested eval inside the clause is out
+of contract: its region is released again at the owner's exit", `List("done cfg 1", "release
+cfg 1")`. No code change.
 
 ### S10. A context read at a supertype tag ignores an inner subtype binding
 
