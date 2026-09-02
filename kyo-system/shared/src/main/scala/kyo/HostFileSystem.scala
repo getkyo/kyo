@@ -371,7 +371,7 @@ private[kyo] object HostFileSystem:
             // every caller in kyo. Widening that signature to carry Async.mask is a kyo-core change
             // with a far wider blast radius than this defect, so it is left for its own work.
             val acquire =
-                Sync.defer(new java.util.concurrent.atomic.AtomicReference[LockHolder](LockHolder.Empty)).map { holder =>
+                Sync.Unsafe.defer(AtomicRef.Unsafe.init[LockHolder](LockHolder.Empty)).map { holder =>
                     Scope.ensure {
                         // Drained is permanent: after this getAndSet no claim can be recorded, so a
                         // slice that outruns the interrupt and still reaches the claim node observes
@@ -381,7 +381,7 @@ private[kyo] object HostFileSystem:
                                 Sync.Unsafe.defer(diagRecord(path, "finalizer-claimed")).andThen(lock.release(lock.ownership))
                             case _ => Sync.Unsafe.defer(diagRecord(path, "finalizer-empty"))
                         }
-                    }.andThen {
+                    }.andThen(Sync.Unsafe.defer(diagRecord(path, "ensured"))).andThen {
                         // A shared claim can arrive while another shared claim is between reserving
                         // its registry entry and installing the platform lock behind it. The two are
                         // compatible, so refusing there denies a lock the contract grants; the entry
@@ -423,7 +423,8 @@ private[kyo] object HostFileSystem:
                                     case Path.LockAttempt.Pending       => Result.succeed(Absent)
                                     case Path.LockAttempt.Failed(error) => error
                             }.map {
-                                case Result.Success(Present(lock)) => lock
+                                case Result.Success(Present(lock)) =>
+                                    Sync.Unsafe.defer(diagRecord(path, "returned")).andThen(lock)
                                 case Result.Success(Absent) =>
                                     if remaining <= 0 then Abort.fail(FileLockUnavailableException(path))
                                     else Async.sleep(pendingLockRetryDelay).andThen(attempt(remaining - 1))
