@@ -741,29 +741,6 @@ lazy val `kyo-data` =
 // for comparison boards. A separate unpublished project so the external dependencies never
 // reach a published kyo artifact's pom; row names match KernelBench's so result tables join
 // by name.
-// Compile-time benchmark: a warmed in-process dotc compiles fixture files against each
-// kernel's classes, one fixture per cost driver. The project depends only on kyo-data (for
-// the corpus classpath) and the compiler; the kernels enter as -classpath entries, so the
-// harness stays green regardless of the stack migration state.
-lazy val `kyo-compile-bench` =
-    project
-        .in(file("kyo-compile-bench"))
-        .enablePlugins(JmhPlugin)
-        .dependsOn(`kyo-data`.jvm)
-        .disablePlugins(MimaPlugin)
-        .settings(
-            `kyo-settings`,
-            publish / skip := true,
-            // No tests or doctests here; keep the doctest driver jars (built from the stack
-            // above the kernel, mid-migration) off the Test classpath that Jmh extends.
-            Test / unmanagedJars := Seq.empty,
-            // the deep-inline fixtures recurse far in dotty's inliner; forked JMH JVMs
-            // need the same stack headroom the build's own JVM runs with
-            Jmh / javaOptions ++= Seq("-Xss32m", "-Xmx4g"),
-            libraryDependencies += "org.scala-lang" %% "scala3-compiler" % scalaVersion.value,
-            libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test
-        )
-
 lazy val `kyo-kernel` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
@@ -813,7 +790,8 @@ lazy val `kyo-kernel` =
                 "dev.zio"            %% "zio"              % zioVersion,
                 "org.typelevel"      %% "cats-effect"      % catsVersion,
                 "dev.zio"            %% "zio-blocks-async" % zioBlocksVersion,
-                "io.github.marcinzh" %% "turbolift-core"   % turboliftVersion
+                "io.github.marcinzh" %% "turbolift-core"   % turboliftVersion,
+                "org.scala-lang"     %% "scala3-compiler"  % scalaVersion.value
             ).map(_ % "jmh"),
             // The Safepoint overflow suite fills the global slot table; a suite running
             // concurrently in the same classloader would see its threads degraded to the
