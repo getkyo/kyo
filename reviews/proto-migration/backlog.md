@@ -480,6 +480,17 @@ Everything open, in one place, so nothing above has to be re-derived. Numbered f
    at `Reader & Say & S` is where the body's elaboration returns. What the audit discussion did
    establish is narrower: a clause's dispatch is not routed through the crossing snapshot, which
    is a scoping law, not a limit on higher-order operations.
+   The ticket's own programs, checked against the suites at the user's request (the audit's
+   entries had covered some only by analogy): the OP's `catch` is ArrowEffectTest "a local
+   handler around the operation does not see the effect its interpreter's clause raises"; the
+   `local` variant is EvalTest "a clause reads the outer binding, not a dumped one"; the coroutine
+   swap and the suspended `catch` bound to the old handler are the two "travels with the
+   continuation" pins. Ported at `b3eaf169ac`, green (207 in the class): the `listen` and
+   `censor` variants ("eff issue 12 pins, writer", with a per-tell `censor` handler), issue 13's
+   dance with the answering handler outside the coroutine handler (a computation answered as a
+   value yields inward, the continuation escapes the answering region, the resume site's handler
+   answers the remainder; the type-level twin is the stashed-row pin), and `locally m >> locally
+   m` as two shots of a computation answer under the re-established local handler.
 3. **Fixes blocked by "tests only".** S9, S10, and the entry 9 flip if ruled; the S9 fix also
    revisits S4's lane scan, which the mark subsumes.
 4. **The fifteen TODO notes.** Section T above: the DO items (two renames, the `KyoInternal` split
