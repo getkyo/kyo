@@ -94,6 +94,35 @@ class HostPathLockTest extends FileSystemLockTest:
         }
     }
 
+    "data path I/O while holding the lock does not disturb the claim" in {
+        // The scenario from review: on POSIX, an fcntl lock on the data file itself is released
+        // the moment the same process closes any other handle to that file, so a read of the
+        // locked path would silently destroy cross-process exclusion. The claim lives on a
+        // sentinel sibling that data I/O never opens, so reads and writes of the data path leave
+        // it standing.
+        Scope.acquireRelease(FileSystem.host.tempDir("kyo-lock-sentinel"))(h => Sync.Unsafe.defer(h.remove())).map { handle =>
+            val target = handle.path / "state.bin"
+            Scope.run {
+                FileSystem.host.lock(target, Path.LockMode.Exclusive, Path.LockWait.Immediate).map { lock =>
+                    FileSystem.host.write(target, "first", Path.WriteOptions()).andThen {
+                        FileSystem.host.read(target).map { value =>
+                            assert(value == "first")
+                            FileSystem.host.write(target, "second", Path.WriteOptions()).andThen {
+                                lock.check.andThen {
+                                    FileSystem.host.tryLock(target, Path.LockMode.Exclusive).map { conflicting =>
+                                        assert(conflicting.isEmpty, "the claim was lost after data path I/O")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }.andThen {
+                Scope.run(FileSystem.host.tryLock(target, Path.LockMode.Exclusive).map(released => assert(released.isDefined)))
+            }
+        }
+    }
+
     "failed raw release remains retryable" in {
         AtomicInt.init(0).map { releases =>
             val raw = new Path.RawLock:

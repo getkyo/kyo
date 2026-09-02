@@ -600,14 +600,11 @@ object Path extends PathPlatformSpecific:
       * Use [[check]] before a protected operation when the backend can lose external ownership.
       * It raises [[FileLockOwnershipLostException]] if the claim no longer belongs to this handle.
       *
-      * On the JVM and Native on POSIX platforms (Linux, macOS), the lock is a process-wide
-      * `fcntl` record lock, and POSIX releases every lock the process holds on a file when the
-      * process closes any handle to that file. Reading or writing the locked path through this
-      * API, or through any other API, opens and closes such a handle, and the release is silent:
-      * neither the platform lock object nor [[check]] can observe it. While a lock is held, do
-      * not touch the locked file from the same process; lock a sentinel path next to the data
-      * instead and perform the I/O on the data path. Windows locks are handle-scoped and the
-      * Node backend uses a lockfile protocol, so neither has this behavior.
+      * The claim is taken on a sentinel sibling of the path, never on the path itself, so holding
+      * a lock and reading or writing the locked path from the same process is safe on every
+      * platform. The sentinel may remain on disk after the process exits; it is an empty artifact
+      * whose claim died with the process. The lock coordinates processes that use this API; it
+      * does not exclude a foreign process that locks the data file directly through the OS.
       */
     trait Lock:
         /** The compatibility mode granted to this handle. */
@@ -1501,8 +1498,9 @@ object Path extends PathPlatformSpecific:
             Frame
         ): Result[FileReadException | FileWriteException | FileStructureException, Path.RawChannel]
 
-        /** Acquires a raw advisory lock on this path in `mode`, non-blocking (fails
-          * immediately if the lock is held incompatibly rather than waiting). Platform
+        /** Acquires a raw advisory lock for this path in `mode`, non-blocking (fails
+          * immediately if the lock is held incompatibly rather than waiting). The claim is
+          * taken on a sentinel sibling of the path, never on the path itself. Platform
           * implementations provide the concrete lock.
           */
         def lock(mode: LockMode)(using AllowUnsafe, Frame): Result[FileLockException, Path.RawLock]

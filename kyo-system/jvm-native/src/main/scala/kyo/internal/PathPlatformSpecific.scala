@@ -351,10 +351,9 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
     // arriving under different names then open two channels to one file, which the JVM refuses as an
     // overlapping claim: a lock the contract grants, denied.
     //
-    // toRealPath resolves links but requires the file to exist, and lock() creates it. Falling back
-    // to the parent's real path plus the file name covers the not-yet-created case, since a link in
-    // the ancestry still collapses. When neither resolves, the normalized absolute path is the best
-    // name available and matches the previous behaviour.
+    // toRealPath resolves links but requires the file to exist. Falling back to the parent's real
+    // path plus the file name covers the not-yet-created case, since a link in the ancestry still
+    // collapses. When neither resolves, the normalized absolute path is the best name available.
     private def registryKey(using AllowUnsafe): String =
         val absolute = jpath.toAbsolutePath.normalize()
         try absolute.toRealPath().toString
@@ -369,6 +368,16 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
                 end if
         end try
     end registryKey
+
+    // The claim is taken on a sentinel sibling, never on the data file. POSIX releases every fcntl
+    // lock a process holds on a file when the process closes any handle to that file, so a lock on
+    // the data file itself evaporates the moment the same process reads or writes it. The sentinel
+    // is a file data I/O never opens, which closes that hole by construction. The suffix matches
+    // the one the Node backend already claims, so every backend agrees on what is locked, and it
+    // hangs off the resolved registry key so two names for one data file still claim one sentinel.
+    // The sentinel may outlive the process as an empty artifact; the lock on it dies with the
+    // process, so a leftover file is inert.
+    private def sentinel(key: String): String = key + ".kyo-lock"
 
     // Collapses the pending answer onto a failure, which is all a caller that cannot wait can do
     // with it. Callers that can wait take lockAttempt instead.
@@ -394,9 +403,10 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
             case NioPathLockRegistry.Reservation.First =>
                 settled {
                     try
-                        ensureParent(jpath)
+                        val sentinelPath = java.nio.file.Path.of(sentinel(key))
+                        ensureParent(sentinelPath)
                         val ch =
-                            FileChannel.open(jpath, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE)
+                            FileChannel.open(sentinelPath, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE)
                         try
                             val fl =
                                 try ch.tryLock(0L, Long.MaxValue, !isExclusive)

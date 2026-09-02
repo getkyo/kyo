@@ -121,11 +121,13 @@ Locks are advisory, scope-managed values. `Path.LockMode` selects shared or excl
 `Path.LockWait` selects immediate, unbounded, or deadline-bounded acquisition. Fiber waiting must use
 `Async`; never block an OS thread. Ownership checks and cleanup failures remain typed.
 
-POSIX `fcntl` record locks (JVM and Native on Linux and macOS) are process-wide: the OS releases
-every lock the process holds on a file when the process closes any handle to that file, silently
-and undetectably. Documented on `Path.Lock`: callers lock a sentinel path, never the data path
-they read or write. Windows locks are handle-scoped; the Node backend uses a lockfile protocol.
-Neither is affected.
+Every backend claims a sentinel sibling (`<resolved path>.kyo-lock`), never the data file. POSIX
+`fcntl` record locks are process-wide and the OS releases every lock the process holds on a file
+when the process closes any handle to that file, silently and undetectably; locking a file the
+caller also reads or writes would therefore drop the claim on the first touch. The sentinel is a
+file data I/O never opens, which closes that hole by construction, and it is the convention the
+Node lockfile protocol already used. The lock does not exclude a foreign process that locks the
+data file directly through the OS.
 
 ## Error contracts
 

@@ -80,6 +80,18 @@ abstract class FileSystemLockTest extends kyo.test.Test[Any]:
     }
 
     "lifecycle" - {
+        "locking claims a sentinel sibling and leaves the data path untouched" in {
+            withFileSystem { (fileSystem, path) =>
+                Scope.run {
+                    fileSystem.lock(path, Path.LockMode.Exclusive, Path.LockWait.Immediate).map { _ =>
+                        fileSystem.exists(path).map { dataExists =>
+                            assert(!dataExists, s"locking created the data file $path")
+                        }
+                    }
+                }
+            }
+        }
+
         "scope closure releases the owning claim" in {
             withFileSystem { (fileSystem, path) =>
                 Scope.run(fileSystem.lock(path, Path.LockMode.Exclusive, Path.LockWait.Immediate).unit).andThen {

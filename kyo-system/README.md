@@ -70,17 +70,16 @@ val positioned =
 ### Locks
 
 Advisory locks are scope-managed. Choose shared or exclusive compatibility and an explicit waiting
-policy. On POSIX platforms the JVM and Native locks are `fcntl` record locks, which the operating
-system silently releases when the process closes any other handle to the locked file, so lock a
-sentinel path and perform the I/O on the data path:
+policy. The claim is taken on a sentinel sibling of the path (`state.bin.kyo-lock` here), never on
+the path itself, so reading and writing the locked path while holding the lock is safe:
 
 ```scala
 import kyo.*
 
 val guarded = Scope.run {
     Path.run {
-        Path("state.lock").lock(Path.LockMode.Exclusive, Path.LockWait.Immediate).map { lock =>
-            Path("state.bin").read.map(data => lock.check.andThen(Path("state.bin").write(data)))
+        Path("state.bin").lock(Path.LockMode.Exclusive, Path.LockWait.Immediate).map { lock =>
+            Path("state.bin").write("next").andThen(lock.check)
         }
     }
 }
