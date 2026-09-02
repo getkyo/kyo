@@ -3,6 +3,7 @@ package kyo.proto.kernel.internal
 import kyo.Const
 import kyo.Maybe
 import kyo.Tag
+import kyo.discard
 import kyo.proto.Arrow
 import kyo.proto.Loop
 import kyo.proto.kernel.<
@@ -337,7 +338,7 @@ class EffectTraceTest extends AnyFreeSpec:
         val before                   = fatal.getStackTrace
         def fatalStep: Int < Ask     = ask.map(_ => throw fatal)
         var caught: Throwable | Null = null
-        try kyo.discard(eval(runAsk(fatalStep)(1)))
+        try discard(eval(runAsk(fatalStep)(1)))
         catch case ex: Throwable => caught = ex
         assert(caught eq fatal)
         assert(fatal.getSuppressed.isEmpty)

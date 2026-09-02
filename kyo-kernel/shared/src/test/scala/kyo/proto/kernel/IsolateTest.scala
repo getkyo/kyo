@@ -5,12 +5,14 @@ import kyo.Frame
 import kyo.Maybe
 import kyo.Maybe.*
 import kyo.Tag
+import kyo.Test
 import kyo.discard
 import kyo.proto.Arrow
+import kyo.proto.Kyo
 import kyo.proto.Loop
 import kyo.proto.kernel.internal.Stack
 
-class IsolateTest extends kyo.Test:
+class IsolateTest extends Test:
 
     private def eval[A](v: A < Any): A = v.eval
 
@@ -522,7 +524,7 @@ class IsolateTest extends kyo.Test:
 
     "ported crossings" - {
         def crossing[A, S](v: A < S)(using Frame): (A < S) < Any =
-            Isolate.internal.Contextual(v)(kyo.proto.Kyo.lift[A < S, Any](_))
+            Isolate.internal.Contextual(v)(Kyo.lift[A < S, Any](_))
 
         def read1: Int < Any     = ContextEffect.suspend[Int, TestEffect1](Tag[TestEffect1], -1)
         def read2: String < Any  = ContextEffect.suspend[String, TestEffect2](Tag[TestEffect2], "none")
@@ -592,7 +594,7 @@ class IsolateTest extends kyo.Test:
 
         "a composed isolate crosses the context too" in {
             val composed     = Isolate.internal.Contextual.andThen(updateA)
-            val (_, crossed) = eval(runA(0)(bind1(42)(composed(read1)(kyo.proto.Kyo.lift[Int < (CellA & Any), Any](_)))))
+            val (_, crossed) = eval(runA(0)(bind1(42)(composed(read1)(Kyo.lift[Int < (CellA & Any), Any](_)))))
             assert(eval(runA(0)(crossed).map(_._2)) == 42)
         }
 

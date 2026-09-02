@@ -12,8 +12,6 @@ class LoopTest extends AnyFreeSpec:
     def defer[A, S](v: => A < S): A < S =
         Effect.defer(v)
 
-    def box[A](v: A): A < Any = v
-
     "apply" - {
         "with a single iteration" in {
             assert(

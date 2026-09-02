@@ -5,12 +5,16 @@ import kyo.Maybe
 import kyo.Tag
 import kyo.discard
 import kyo.proto.Arrow
+import kyo.proto.Kyo
 import kyo.proto.Loop
 import kyo.proto.kernel.<
 import kyo.proto.kernel.ArrowEffect
+import kyo.proto.kernel.ContextEffect
 import kyo.proto.kernel.Effect
+import kyo.proto.kernel.internal.Kyo.Park
 import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
+import scala.collection.mutable.ListBuffer
 
 class EvalTest extends AnyFreeSpec:
 
@@ -27,7 +31,7 @@ class EvalTest extends AnyFreeSpec:
     def answerAsk[A, S](value: Int)(v: A < (Ask & S)): A < S =
         ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue((), value: Int < Any), a => a)
 
-    def recordSay[A, S](name: String, log: collection.mutable.ListBuffer[String])(v: A < (Say & S)): A < S =
+    def recordSay[A, S](name: String, log: ListBuffer[String])(v: A < (Say & S)): A < S =
         ArrowEffect.handleLoop(Tag[Say], v)(
             [C] =>
                 _ =>
@@ -36,8 +40,6 @@ class EvalTest extends AnyFreeSpec:
             ,
             a => a
         )
-
-    def box[A](v: A): A < Any = v
 
     "values and map" - {
         "a settled value evaluates to itself" in {
@@ -72,13 +74,13 @@ class EvalTest extends AnyFreeSpec:
 
         "a computation held as a value round trips through the box" in {
             val inner: Int < Ask         = ask.map(_ + 1)
-            val outer: (Int < Ask) < Any = box(inner)
+            val outer: (Int < Ask) < Any = Kyo.lift(inner)
             assert(eval(answerAsk(41)(eval(outer))) == 42)
         }
 
         "double nesting round trips one level per eval" in {
             val inner: Int < Ask                 = ask.map(_ + 1)
-            val twice: ((Int < Ask) < Any) < Any = box(box(inner))
+            val twice: ((Int < Ask) < Any) < Any = Kyo.lift(Kyo.lift(inner))
             assert(eval(answerAsk(41)(eval(eval(twice)))) == 42)
         }
 
@@ -96,7 +98,7 @@ class EvalTest extends AnyFreeSpec:
         "map receives a computation held as a value unopened" in {
             val inner: Int < Ask    = ask
             var received: Int < Ask = 0
-            val r: Int < Any = box(inner).map { c =>
+            val r: Int < Any = Kyo.lift(inner).map { c =>
                 received = c
                 7
             }
@@ -219,14 +221,14 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a foreign operation crosses the region in place" in {
-            val log                     = collection.mutable.ListBuffer[String]()
+            val log                     = ListBuffer[String]()
             val body: Int < (Ask & Say) = say("a").map(_ => ask).map(_ + 1)
             assert(eval(recordSay("outer", log)(answerAsk(41)(body))) == 42)
             assert(log.toList == List("outer"))
         }
 
         "a clause that suspends before its outcome runs outside its region" in {
-            val log                        = collection.mutable.ListBuffer[String]()
+            val log                        = ListBuffer[String]()
             val program: Int < (Ask & Say) = say("m").map(_ => ask).map(_ + 1)
             val sayInner: Int < Ask        = recordSay("inner", log)(program)
             val askScope: Int < Say = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
@@ -238,7 +240,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "an effectful answer runs under this handler with the interior parked" in {
-            val log                        = collection.mutable.ListBuffer[String]()
+            val log                        = ListBuffer[String]()
             val program: Int < (Ask & Say) = say("m").map(_ => ask).map(_ + 1)
             val sayInner: Int < Ask        = recordSay("inner", log)(program)
             val askScope: Int < Say = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
@@ -264,7 +266,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a clause suspending and then answering effectfully runs the answer under this handler" in {
-            val log                        = collection.mutable.ListBuffer[String]()
+            val log                        = ListBuffer[String]()
             val program: Int < (Ask & Say) = say("m").map(_ => ask).map(_ + 1)
             val sayInner: Int < Ask        = recordSay("inner", log)(program)
             val askScope: Int < Say = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
@@ -291,7 +293,7 @@ class EvalTest extends AnyFreeSpec:
 
         "a clause suspending and then answering with an own-tag re-raise is answered by this handler" in {
             var clauseRuns = 0
-            val log        = collection.mutable.ListBuffer[String]()
+            val log        = ListBuffer[String]()
             val handled: Int < Say = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))(
                 [C] =>
                     _ =>
@@ -307,7 +309,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "an effectful answer's remainder runs inside the interior region" in {
-            val log                        = collection.mutable.ListBuffer[String]()
+            val log                        = ListBuffer[String]()
             val program: Int < (Ask & Say) = ask.map(a => say("after").map(_ => a + 1))
             val sayInner: Int < Ask        = recordSay("inner", log)(program)
             val askScope: Int < Say = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
@@ -319,7 +321,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "an effectful answer's remainder raises the interior's effect with no outer handler for it" in {
-            val log                        = collection.mutable.ListBuffer[String]()
+            val log                        = ListBuffer[String]()
             val program: Int < (Ask & Say) = ask.map(a => say("after").map(_ => a + 1))
             val sayInner: Int < Ask        = recordSay("inner", log)(program)
 
@@ -333,7 +335,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a clause suspending and then answering effectfully keeps the remainder inside the interior region" in {
-            val log                        = collection.mutable.ListBuffer[String]()
+            val log                        = ListBuffer[String]()
             val program: Int < (Ask & Say) = ask.map(a => say("after").map(_ => a + 1))
             val sayInner: Int < Ask        = recordSay("inner", log)(program)
             val askScope: Int < Say = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
@@ -345,7 +347,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "an effectful answer's fused remainder runs inside the interior region" in {
-            val log                        = collection.mutable.ListBuffer[String]()
+            val log                        = ListBuffer[String]()
             val program: Int < (Ask & Say) = askWith(a => say("after").map(_ => a + 1))
             val sayInner: Int < Ask        = recordSay("inner", log)(program)
             val askScope: Int < Say = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
@@ -357,7 +359,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "an effectful answer's fused remainder raises the interior's effect with no outer handler for it" in {
-            val log                        = collection.mutable.ListBuffer[String]()
+            val log                        = ListBuffer[String]()
             val program: Int < (Ask & Say) = askWith(a => say("after").map(_ => a + 1))
             val sayInner: Int < Ask        = recordSay("inner", log)(program)
             val pendingAnswer: Int < Any   = answerAsk(0)(ask.map(_ => 41))
@@ -370,7 +372,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a clause suspending and then answering effectfully keeps the fused remainder inside the interior region" in {
-            val log                        = collection.mutable.ListBuffer[String]()
+            val log                        = ListBuffer[String]()
             val program: Int < (Ask & Say) = askWith(a => say("after").map(_ => a + 1))
             val sayInner: Int < Ask        = recordSay("inner", log)(program)
             val askScope: Int < Say = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
@@ -383,9 +385,9 @@ class EvalTest extends AnyFreeSpec:
 
         "a computation held as a value crosses a handler as a value" in {
             val payload: Int < Say   = say("p").map(_ => 7)
-            val v: (Int < Say) < Ask = ask.map(_ => box(payload))
+            val v: (Int < Say) < Ask = ask.map(_ => Kyo.lift(payload))
             val handled: (Int < Say) < Any =
-                ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue((), 0: Int < Any), a => box(a))
+                ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue((), 0: Int < Any), a => Kyo.lift(a))
             var seen = ""
             val r: Int < Any = ArrowEffect.handleLoop(Tag[Say], eval(handled))(
                 [C] =>
@@ -405,7 +407,7 @@ class EvalTest extends AnyFreeSpec:
             val inner: Int < Ask         = ask.map(_ + 1)
             val body: Int < (Give & Ask) = give.map(c => c)
             val r: Int < Any = answerAsk(41)(
-                ArrowEffect.handleLoop(Tag[Give], body)([C] => _ => Loop.continue((), box(inner)), a => a)
+                ArrowEffect.handleLoop(Tag[Give], body)([C] => _ => Loop.continue((), Kyo.lift(inner)), a => a)
             )
             assert(eval(r) == 42)
         }
@@ -450,7 +452,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a stateful clause that suspends threads its state through the park" in {
-            val log = collection.mutable.ListBuffer[String]()
+            val log = ListBuffer[String]()
             val v   = ask.map(a => ask.map(b => a * 10 + b))
             val handled: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], 1, v)(
                 [C] => (s, _) => say(s"state $s").map(_ => Loop.continue(s + 1, s: Int < Any)),
@@ -461,7 +463,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a stateful effectful answer's remainder runs inside the interior region" in {
-            val log                        = collection.mutable.ListBuffer[String]()
+            val log                        = ListBuffer[String]()
             val program: Int < (Ask & Say) = ask.map(a => say("after").map(_ => a + 1))
             val sayInner: Int < Ask        = recordSay("inner", log)(program)
             val askScope: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], 40, sayInner)(
@@ -473,7 +475,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a stateful effectful answer's fused remainder runs inside the interior region" in {
-            val log                        = collection.mutable.ListBuffer[String]()
+            val log                        = ListBuffer[String]()
             val program: Int < (Ask & Say) = askWith(a => say("after").map(_ => a + 1))
             val sayInner: Int < Ask        = recordSay("inner", log)(program)
             val askScope: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], 40, sayInner)(
@@ -556,9 +558,9 @@ class EvalTest extends AnyFreeSpec:
                     }
                 }
             val parked = Eval.partial(answerAsk(21)(body))
-            assert(parked.isInstanceOf[Kyo.Park[?, ?]])
+            assert(parked.isInstanceOf[Park[?, ?]])
             assert(!afterRan)
-            assert(parked.asInstanceOf[Kyo.Park[?, ?]].entries.regions == 1)
+            assert(parked.asInstanceOf[Park[?, ?]].entries.regions == 1)
             assert(eval(parked) == 42)
             assert(afterRan)
 
@@ -576,7 +578,7 @@ class EvalTest extends AnyFreeSpec:
             assert(!ran)
             assert(back.asInstanceOf[AnyRef] eq input.asInstanceOf[AnyRef])
 
-            assert(Nested.unnest[Int](Eval.partial(back)) == 42)
+            assert(Eval.partial(back).evalNow == Maybe(42))
             assert(ran)
         }
 
@@ -591,27 +593,27 @@ class EvalTest extends AnyFreeSpec:
                 (_, a) => a
             )
             val parked = Eval.partial(handled)
-            assert(parked.isInstanceOf[Kyo.Park[?, ?]])
+            assert(parked.isInstanceOf[Park[?, ?]])
 
-            assert(parked.asInstanceOf[Kyo.Park[?, ?]].entries.state(0).asInstanceOf[Int] == 2)
+            assert(parked.asInstanceOf[Park[?, ?]].entries.state(0).asInstanceOf[Int] == 2)
 
             assert(eval(parked) == 12)
         }
 
         "a resumed region restores its parked binding" in {
-            sealed trait Cfg extends kyo.proto.kernel.ContextEffect[Int]
-            def read: Int < Cfg = kyo.proto.kernel.ContextEffect.suspend(Tag[Cfg])
+            sealed trait Cfg extends ContextEffect[Int]
+            def read: Int < Cfg = ContextEffect.suspend(Tag[Cfg])
             val body: (Int, Int) < Cfg =
                 read.map { r1 =>
                     requestStop()
                     Effect.defer(read.map(r2 => (r1, r2)))
                 }
             val handled: (Int, Int) < Any =
-                kyo.proto.kernel.ContextEffect.handleInheritable(Tag[Cfg], 11, _ + 1)(body)
+                ContextEffect.handleInheritable(Tag[Cfg], 11, _ + 1)(body)
             val parked = Eval.partial(handled)
-            assert(parked.isInstanceOf[Kyo.Park[?, ?]])
+            assert(parked.isInstanceOf[Park[?, ?]])
 
-            val resumed = kyo.proto.kernel.ContextEffect.handleInheritable(Tag[Cfg], 100)(parked)
+            val resumed = ContextEffect.handleInheritable(Tag[Cfg], 100)(parked)
             assert(eval(resumed) == (11, 11))
         }
 
@@ -620,14 +622,14 @@ class EvalTest extends AnyFreeSpec:
             val body: Int < Any =
                 Effect.defer {
                     requestStop()
-                    nested = Nested.unnest[Int](Eval(Effect.defer(Effect.defer(41)): Int < Any))
+                    nested = (Effect.defer(Effect.defer(41)): Int < Any).eval
                     Effect.defer(nested + 1)
                 }
             val parked = Eval.partial(body)
 
             assert(nested == 41)
             assert(parked.isInstanceOf[Pending[?, ?]])
-            assert(!parked.isInstanceOf[Kyo.Park[?, ?]])
+            assert(!parked.isInstanceOf[Park[?, ?]])
             assert(eval(parked) == 42)
         }
 
@@ -647,56 +649,56 @@ class EvalTest extends AnyFreeSpec:
                 ran = true
                 3
             }
-            assert(Nested.unnest[Int](Eval.partial(next)) == 3)
+            assert(Eval.partial(next).evalNow == Maybe(3))
             assert(ran)
         }
 
         "a parked value owes its regions' releases innermost first" in {
-            val log = collection.mutable.ListBuffer[String]()
-            sealed trait CfgA extends kyo.proto.kernel.ContextEffect[Int]
-            sealed trait CfgB extends kyo.proto.kernel.ContextEffect[Int]
-            def readA: Int < CfgA = kyo.proto.kernel.ContextEffect.suspend(Tag[CfgA])
+            val log = ListBuffer[String]()
+            sealed trait CfgA extends ContextEffect[Int]
+            sealed trait CfgB extends ContextEffect[Int]
+            def readA: Int < CfgA = ContextEffect.suspend(Tag[CfgA])
             val body: Int < (CfgA & CfgB) =
                 readA.map { c =>
                     requestStop()
                     Effect.defer(readA.map(_ + c))
                 }
             val inner: Int < CfgB =
-                kyo.proto.kernel.ContextEffect.handle(Tag[CfgA])(
+                ContextEffect.handle(Tag[CfgA])(
                     _.getOrElse(1),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
                     release = (_: Int, _: Throwable) => discard(log += "inner")
                 )(body)
             val outer: Int < Any =
-                kyo.proto.kernel.ContextEffect.handle(Tag[CfgB])(
+                ContextEffect.handle(Tag[CfgB])(
                     _.getOrElse(2),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
                     release = (_: Int, _: Throwable) => discard(log += "outer")
                 )(inner)
             val parked = Eval.partial(outer)
-            assert(parked.isInstanceOf[Kyo.Park[?, ?]])
-            assert(parked.asInstanceOf[Kyo.Park[?, ?]].entries.regions == 2)
+            assert(parked.isInstanceOf[Park[?, ?]])
+            assert(parked.asInstanceOf[Park[?, ?]].entries.regions == 2)
             discard(eval(Eval.release(parked, Boom)))
             assert(log.toList == List("inner", "outer"))
         }
 
         "a discarded region value releases its interior before its own extent" in {
-            val log = collection.mutable.ListBuffer[String]()
-            sealed trait CfgA extends kyo.proto.kernel.ContextEffect[Int]
-            sealed trait CfgB extends kyo.proto.kernel.ContextEffect[Int]
-            def readA: Int < CfgA         = kyo.proto.kernel.ContextEffect.suspend(Tag[CfgA])
+            val log = ListBuffer[String]()
+            sealed trait CfgA extends ContextEffect[Int]
+            sealed trait CfgB extends ContextEffect[Int]
+            def readA: Int < CfgA         = ContextEffect.suspend(Tag[CfgA])
             val body: Int < (CfgA & CfgB) = readA.map(a => readA.map(_ + a))
             val inner: Int < CfgB =
-                kyo.proto.kernel.ContextEffect.handle(Tag[CfgA])(
+                ContextEffect.handle(Tag[CfgA])(
                     _.getOrElse(1),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
                     release = (_: Int, _: Throwable) => discard(log += "inner")
                 )(body)
             val outer: Int < Any =
-                kyo.proto.kernel.ContextEffect.handle(Tag[CfgB])(
+                ContextEffect.handle(Tag[CfgB])(
                     _.getOrElse(2),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
@@ -732,33 +734,33 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a context binding owes its release through the public surface" in {
-            val log = collection.mutable.ListBuffer[Int]()
-            sealed trait Cfg extends kyo.proto.kernel.ContextEffect[Int]
-            def read: Int < Cfg = kyo.proto.kernel.ContextEffect.suspend(Tag[Cfg])
+            val log = ListBuffer[Int]()
+            sealed trait Cfg extends ContextEffect[Int]
+            def read: Int < Cfg = ContextEffect.suspend(Tag[Cfg])
             val body: Int < Cfg =
                 read.map { c =>
                     requestStop()
                     Effect.defer(read.map(_ + c))
                 }
             val handled: Int < Any =
-                kyo.proto.kernel.ContextEffect.handle(Tag[Cfg])(
+                ContextEffect.handle(Tag[Cfg])(
                     _.getOrElse(7),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
                     release = (state: Int, _: Throwable) => discard(log += state)
                 )(body)
             val parked = Eval.partial(handled)
-            assert(parked.isInstanceOf[Kyo.Park[?, ?]])
+            assert(parked.isInstanceOf[Park[?, ?]])
             discard(eval(Eval.release(parked, Boom)))
             assert(log.toList == List(7))
         }
 
         "a failure unwinding past a context binding runs its release" in {
-            val log = collection.mutable.ListBuffer[Int]()
-            sealed trait Cfg extends kyo.proto.kernel.ContextEffect[Int]
-            val body: Int < Cfg = kyo.proto.kernel.ContextEffect.suspend(Tag[Cfg]).map(_ => (throw Boom): Int)
+            val log = ListBuffer[Int]()
+            sealed trait Cfg extends ContextEffect[Int]
+            val body: Int < Cfg = ContextEffect.suspend(Tag[Cfg]).map(_ => (throw Boom): Int)
             val handled: Int < Any =
-                kyo.proto.kernel.ContextEffect.handle(Tag[Cfg])(
+                ContextEffect.handle(Tag[Cfg])(
                     _.getOrElse(7),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
@@ -770,8 +772,8 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a binding is not released when an inner region recovers the failure" in {
-            val log = collection.mutable.ListBuffer[Int]()
-            sealed trait Cfg extends kyo.proto.kernel.ContextEffect[Int]
+            val log = ListBuffer[Int]()
+            sealed trait Cfg extends ContextEffect[Int]
             val body: Int < (Ask & Cfg) = ask.map(_ => (throw Boom): Int)
             val inner: Int < Cfg = ArrowEffect.handleCont[Const[Unit], Const[Int], Ask, Int, Int, Cfg, Any](Tag[Ask], body)(
                 [C] => (_, cont) => cont(0),
@@ -779,7 +781,7 @@ class EvalTest extends AnyFreeSpec:
                 _ => Maybe(9)
             )
             val handled: Int < Any =
-                kyo.proto.kernel.ContextEffect.handle(Tag[Cfg])(
+                ContextEffect.handle(Tag[Cfg])(
                     _.getOrElse(7),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
@@ -790,65 +792,65 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a throwing release does not starve the ones after it" in {
-            val log   = collection.mutable.ListBuffer[String]()
+            val log   = ListBuffer[String]()
             val cause = new RuntimeException("cause")
             object Bad        extends RuntimeException("bad", null, false, false)
-            sealed trait CfgA extends kyo.proto.kernel.ContextEffect[Int]
-            sealed trait CfgB extends kyo.proto.kernel.ContextEffect[Int]
-            def readA: Int < CfgA = kyo.proto.kernel.ContextEffect.suspend(Tag[CfgA])
+            sealed trait CfgA extends ContextEffect[Int]
+            sealed trait CfgB extends ContextEffect[Int]
+            def readA: Int < CfgA = ContextEffect.suspend(Tag[CfgA])
             val body: Int < (CfgA & CfgB) =
                 readA.map { c =>
                     requestStop()
                     Effect.defer(readA.map(_ + c))
                 }
             val inner: Int < CfgB =
-                kyo.proto.kernel.ContextEffect.handle(Tag[CfgA])(
+                ContextEffect.handle(Tag[CfgA])(
                     _.getOrElse(1),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
                     release = (_: Int, _: Throwable) => throw Bad
                 )(body)
             val handled: Int < Any =
-                kyo.proto.kernel.ContextEffect.handle(Tag[CfgB])(
+                ContextEffect.handle(Tag[CfgB])(
                     _.getOrElse(2),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
                     release = (_: Int, _: Throwable) => discard(log += "outer")
                 )(inner)
             val parked = Eval.partial(handled)
-            assert(parked.isInstanceOf[Kyo.Park[?, ?]])
+            assert(parked.isInstanceOf[Park[?, ?]])
             discard(eval(Eval.release(parked, cause)))
             assert(log.toList == List("outer"))
             assert(cause.getSuppressed.exists(_ eq Bad))
         }
 
         "a release rethrowing the signal itself does not self-suppress" in {
-            val log   = collection.mutable.ListBuffer[String]()
+            val log   = ListBuffer[String]()
             val cause = new RuntimeException("cause")
-            sealed trait CfgA extends kyo.proto.kernel.ContextEffect[Int]
-            sealed trait CfgB extends kyo.proto.kernel.ContextEffect[Int]
-            def readA: Int < CfgA = kyo.proto.kernel.ContextEffect.suspend(Tag[CfgA])
+            sealed trait CfgA extends ContextEffect[Int]
+            sealed trait CfgB extends ContextEffect[Int]
+            def readA: Int < CfgA = ContextEffect.suspend(Tag[CfgA])
             val body: Int < (CfgA & CfgB) =
                 readA.map { c =>
                     requestStop()
                     Effect.defer(readA.map(_ + c))
                 }
             val inner: Int < CfgB =
-                kyo.proto.kernel.ContextEffect.handle(Tag[CfgA])(
+                ContextEffect.handle(Tag[CfgA])(
                     _.getOrElse(1),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
                     release = (_: Int, ex: Throwable) => throw ex
                 )(body)
             val handled: Int < Any =
-                kyo.proto.kernel.ContextEffect.handle(Tag[CfgB])(
+                ContextEffect.handle(Tag[CfgB])(
                     _.getOrElse(2),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
                     release = (_: Int, _: Throwable) => discard(log += "outer")
                 )(inner)
             val parked = Eval.partial(handled)
-            assert(parked.isInstanceOf[Kyo.Park[?, ?]])
+            assert(parked.isInstanceOf[Park[?, ?]])
             discard(eval(Eval.release(parked, cause)))
             assert(log.toList == List("outer"))
             assert(cause.getSuppressed.isEmpty)
@@ -861,7 +863,7 @@ class EvalTest extends AnyFreeSpec:
                     Effect.defer(ask.map(b => a + b))
                 }
             val parked = Eval.partial(answerAsk(21)(body))
-            assert(parked.isInstanceOf[Kyo.Park[?, ?]])
+            assert(parked.isInstanceOf[Park[?, ?]])
             assert(eval(parked.map(_ * 10)) == 420)
         }
     }
@@ -889,29 +891,29 @@ class EvalTest extends AnyFreeSpec:
     private object Boom extends RuntimeException("boom", null, false, false)
 
     "the exit law" - {
-        sealed trait Count extends kyo.proto.kernel.ContextEffect[Int]
-        def read: Int < Count = kyo.proto.kernel.ContextEffect.suspend(Tag[Count])
+        sealed trait Count extends ContextEffect[Int]
+        def read: Int < Count = ContextEffect.suspend(Tag[Count])
 
         "a context region's exit reverts its own binding to the enclosing one" in {
-            val inner: Int < Count = kyo.proto.kernel.ContextEffect.handleInheritable(Tag[Count], 99)(read)
+            val inner: Int < Count = ContextEffect.handleInheritable(Tag[Count], 99)(read)
             val r                  = inner.map(a => read.map(b => (a, b)))
-            assert(eval(kyo.proto.kernel.ContextEffect.handleInheritable(Tag[Count], 10)(r)) == (99, 10))
+            assert(eval(ContextEffect.handleInheritable(Tag[Count], 10)(r)) == (99, 10))
         }
 
         "a context region's exit removes a binding that had no enclosing one" in {
-            val inner: Int < Any = kyo.proto.kernel.ContextEffect.handleInheritable(Tag[Count], 99)(read)
+            val inner: Int < Any = ContextEffect.handleInheritable(Tag[Count], 99)(read)
 
-            val r: Int < Any = inner.map(a => kyo.proto.kernel.ContextEffect.suspend(Tag[Count], -1).map(b => a * 1000 + b))
+            val r: Int < Any = inner.map(a => ContextEffect.suspend(Tag[Count], -1).map(b => a * 1000 + b))
             assert(eval(r) == 98999)
         }
 
     }
 
     "an unanswered default is taken exactly once" in {
-        sealed trait Count extends kyo.proto.kernel.ContextEffect[Int]
+        sealed trait Count extends ContextEffect[Int]
 
         var evals = 0
-        val r: Int < Any = kyo.proto.kernel.ContextEffect.suspend(
+        val r: Int < Any = ContextEffect.suspend(
             Tag[Count], {
                 evals += 1
                 42
@@ -932,7 +934,7 @@ class EvalTest extends AnyFreeSpec:
     }
 
     "a region recovering across a foreign crossing leaves the budget where it found it" in {
-        val samples = collection.mutable.ListBuffer.empty[Safepoint.State]
+        val samples = ListBuffer.empty[Safepoint.State]
         def sample(): Unit =
             val slot = Safepoint.get()
 
@@ -987,10 +989,10 @@ class EvalTest extends AnyFreeSpec:
 
     "owed dumps" - {
         "a dropped capture's regions release when the answering region exits" in {
-            val log = collection.mutable.ListBuffer[String]()
-            sealed trait Cfg extends kyo.proto.kernel.ContextEffect[Int]
+            val log = ListBuffer[String]()
+            sealed trait Cfg extends ContextEffect[Int]
             val body: Int < Ask =
-                kyo.proto.kernel.ContextEffect.handle(Tag[Cfg])(
+                ContextEffect.handle(Tag[Cfg])(
                     _.getOrElse(7),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
@@ -1006,11 +1008,11 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "sibling dumps drain newest first at the owner's exit" in {
-            val log = collection.mutable.ListBuffer[String]()
-            sealed trait CfgA extends kyo.proto.kernel.ContextEffect[Int]
-            sealed trait CfgB extends kyo.proto.kernel.ContextEffect[Int]
-            def scoped[E <: kyo.proto.kernel.ContextEffect[Int]](tag: Tag[E], name: String)(v: Int < (Ask & E)): Int < Ask =
-                kyo.proto.kernel.ContextEffect.handle(tag)(
+            val log = ListBuffer[String]()
+            sealed trait CfgA extends ContextEffect[Int]
+            sealed trait CfgB extends ContextEffect[Int]
+            def scoped[E <: ContextEffect[Int]](tag: Tag[E], name: String)(v: Int < (Ask & E)): Int < Ask =
+                ContextEffect.handle(tag)(
                     (_: Maybe[Int]).getOrElse(0),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
@@ -1032,10 +1034,10 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a raw release hook fires once for a region resumed from a dump and then unwound" in {
-            val log = collection.mutable.ListBuffer[Int]()
-            sealed trait Cfg extends kyo.proto.kernel.ContextEffect[Int]
+            val log = ListBuffer[Int]()
+            sealed trait Cfg extends ContextEffect[Int]
             val body: Int < Ask =
-                kyo.proto.kernel.ContextEffect.handle(Tag[Cfg])(
+                ContextEffect.handle(Tag[Cfg])(
                     _.getOrElse(7),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
@@ -1048,11 +1050,11 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a pooled stack reused by a later eval carries no stale obligations" in {
-            sealed trait CfgA extends kyo.proto.kernel.ContextEffect[Int]
-            sealed trait CfgB extends kyo.proto.kernel.ContextEffect[Int]
+            sealed trait CfgA extends ContextEffect[Int]
+            sealed trait CfgB extends ContextEffect[Int]
             var drops = 0
             val body: Int < Ask =
-                kyo.proto.kernel.ContextEffect.handle(Tag[CfgA])(
+                ContextEffect.handle(Tag[CfgA])(
                     _.getOrElse(1),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
@@ -1064,7 +1066,7 @@ class EvalTest extends AnyFreeSpec:
             var completions = 0
             var releases    = 0
             val clean: Int < Any =
-                kyo.proto.kernel.ContextEffect.handle(Tag[CfgB])(
+                ContextEffect.handle(Tag[CfgB])(
                     _.getOrElse(2),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
@@ -1078,15 +1080,15 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a clause reads the outer binding, not a dumped one" in {
-            sealed trait Cfg extends kyo.proto.kernel.ContextEffect[Int]
-            def read: Int < Cfg = kyo.proto.kernel.ContextEffect.suspend(Tag[Cfg])
+            sealed trait Cfg extends ContextEffect[Int]
+            def read: Int < Cfg = ContextEffect.suspend(Tag[Cfg])
             val body: Int < (Ask & Cfg) =
-                (kyo.proto.kernel.ContextEffect.handleInheritable(Tag[Cfg], 1)(ask.map(x => x)): Int < Ask)
+                (ContextEffect.handleInheritable(Tag[Cfg], 1)(ask.map(x => x)): Int < Ask)
             val handled: Int < Cfg = ArrowEffect.handleCont(Tag[Ask], body)(
                 [C] => (_, cont) => read.map(c => cont(c)),
                 b => b
             )
-            val outer: Int < Any = kyo.proto.kernel.ContextEffect.handleInheritable(Tag[Cfg], 100)(handled)
+            val outer: Int < Any = ContextEffect.handleInheritable(Tag[Cfg], 100)(handled)
             assert(eval(outer) == 100)
         }
     }
@@ -1135,14 +1137,14 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a nested computation stays data until flattened" in {
-            val nested: (Int < Ask) < Any = box(ask.map(_ + 1))
+            val nested: (Int < Ask) < Any = Kyo.lift(ask.map(_ + 1))
             assert(eval(answerAsk(1)(nested.flatten)) == 2)
         }
     }
 
     "handleLoop, ported" - {
         "regions exit innermost first" in {
-            val log   = collection.mutable.ListBuffer[String]()
+            val log   = ListBuffer[String]()
             val inner = answerAsk(41)(ask.map(_ + 1)).map(_ * 10)
             val outer = recordSay("s", log)(inner).map(_ + 1000)
             assert(eval(outer) == 1420)
@@ -1162,7 +1164,7 @@ class EvalTest extends AnyFreeSpec:
 
         "a clause that suspends before a done runs outside its region" in {
             var reached = false
-            val log     = collection.mutable.ListBuffer[String]()
+            val log     = ListBuffer[String]()
             val program: Int < Ask = ask.map { a =>
                 reached = true
                 a + 1
@@ -1175,7 +1177,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a done climbs past an inner region without running its remainder" in {
-            val log                        = collection.mutable.ListBuffer[String]()
+            val log                        = ListBuffer[String]()
             var innerExit                  = false
             val program: Int < (Ask & Say) = say("m").map(_ => ask).map(_ + 1)
             val mapped = recordSay("s", log)(program).map { v =>
@@ -1219,7 +1221,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "state updates survive an inner region's exit" in {
-            val log                       = collection.mutable.ListBuffer[String]()
+            val log                       = ListBuffer[String]()
             val inner: Int < (VarE & Say) = varOp(_ => 7).map(_ => say("x")).map(_ => 1)
             val innerScope                = recordSay("s", log)(inner)
             val program                   = innerScope.map(_ => varOp(identity))
@@ -1246,7 +1248,7 @@ class EvalTest extends AnyFreeSpec:
         def innerProgram: Int < (Ask & Say) = say("m").map(_ => ask).map(_ + 1)
 
         "a stateful clause's suspension is answered outside its scope" in {
-            val log      = collection.mutable.ListBuffer[String]()
+            val log      = ListBuffer[String]()
             val sayInner = recordSay("inner", log)(innerProgram)
             val askScope = ArrowEffect.handleLoopState(Tag[Ask], 0, sayInner)(
                 [C] => (n, _) => say("c").map(_ => Loop.continue(n + 1, 41: Int < Any))
@@ -1257,7 +1259,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a handleCont clause's suspension is answered outside its scope" in {
-            val log                         = collection.mutable.ListBuffer[String]()
+            val log                         = ListBuffer[String]()
             val sayInner: Int < (Ask & Say) = recordSay("inner", log)(innerProgram)
             val askScope = ArrowEffect.handleCont(Tag[Ask], sayInner)(
                 [C] => (_, cont) => say("c").map(_ => cont(41)),
@@ -1269,7 +1271,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a clause's suspension before done is answered outside its scope" in {
-            val log      = collection.mutable.ListBuffer[String]()
+            val log      = ListBuffer[String]()
             val sayInner = recordSay("inner", log)(innerProgram)
             val askScope =
                 ArrowEffect.handleLoop(Tag[Ask], sayInner)([C] => _ => say("c").map(_ => Loop.done(-1)), a => a)
@@ -1293,7 +1295,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a clause does not see handlers inside its own scope" in {
-            val log      = collection.mutable.ListBuffer[String]()
+            val log      = ListBuffer[String]()
             val sayInner = recordSay("inner", log)(innerProgram)
             val askScope =
                 ArrowEffect.handleLoop(Tag[Ask], sayInner)([C] => _ => Loop.continue((), say("c").map(_ => 41)), a => a)
@@ -1337,8 +1339,8 @@ class EvalTest extends AnyFreeSpec:
 
         "stays valid after its eval completes, replaying the trailing maps once per shot" in {
             for depth <- List(8, 64) do
-                val runs                                          = new Array[Int](depth)
-                var stored: Maybe[kyo.proto.Arrow[Int, Int, Ask]] = Maybe.empty
+                val runs                                = new Array[Int](depth)
+                var stored: Maybe[Arrow[Int, Int, Ask]] = Maybe.empty
                 val first: Int < Any = ArrowEffect.handleCont(Tag[Ask], trailing(depth, runs))(
                     [C] =>
                         (_, cont) =>
@@ -1414,7 +1416,7 @@ class EvalTest extends AnyFreeSpec:
                 Effect.defer {
                     requestStop()
                     ()
-                }.map(_ => box(payload))
+                }.map(_ => Kyo.lift(payload))
             val parked = Eval.partial(v)
             assert(parked.evalNow.isEmpty)
             val out = eval(parked)

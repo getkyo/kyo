@@ -2,9 +2,10 @@ package kyo.proto.kernel
 
 import kyo.Id
 import kyo.Tag
+import org.scalatest.freespec.AnyFreeSpec
 import scala.reflect.ClassTag
 
-class PendingBytecodeTest extends org.scalatest.freespec.AnyFreeSpec:
+class PendingBytecodeTest extends AnyFreeSpec:
 
     object TestEffect extends ArrowEffect[Id, Id]
 

@@ -3,13 +3,16 @@ package kyo.proto.kernel
 import kyo.Const
 import kyo.Maybe
 import kyo.Tag
+import kyo.discard
 import kyo.proto.Arrow
+import kyo.proto.Kyo
 import kyo.proto.Loop
 import kyo.proto.kernel.internal.Eval
 import kyo.proto.kernel.internal.Pending
 import kyo.proto.kernel.internal.Safepoint
 import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
+import scala.collection.mutable.ListBuffer
 
 class ArrowEffectTest extends AnyFreeSpec:
 
@@ -24,8 +27,6 @@ class ArrowEffectTest extends AnyFreeSpec:
 
     sealed trait Say extends ArrowEffect[Const[String], Const[Unit]]
     def say(s: String): Unit < Say = ArrowEffect.suspend[Any](Tag[Say], s)
-
-    def box[A](v: A): A < Any = v
 
     private val Period = Safepoint.period()
 
@@ -92,10 +93,10 @@ class ArrowEffectTest extends AnyFreeSpec:
             var reached            = false
             val body: (Int < Say) < Ask = ask.map { _ =>
                 reached = true
-                box(payload)
+                Kyo.lift(payload)
             }
             val r: (Int < Say) < Any =
-                ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.done(box(payload)), a => box(a))
+                ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.done(Kyo.lift(payload)), a => Kyo.lift(a))
             val boxed = eval(r)
             assert(!reached)
             val out: Int < Any = ArrowEffect.handleCont(Tag[Say], boxed)([C] => (_, cont) => cont(()), a => a)
@@ -108,15 +109,15 @@ class ArrowEffectTest extends AnyFreeSpec:
             var reached            = false
             val body: (Int < Say) < Ask = ask.map { _ =>
                 reached = true
-                box(payload)
+                Kyo.lift(payload)
             }
             val handled: (Int < Say) < Tick =
                 ArrowEffect.handleLoop(Tag[Ask], body)(
-                    [C] => _ => ArrowEffect.suspend[Any](Tag[Tick], ()).map(_ => Loop.done(box(payload))),
-                    a => box(a)
+                    [C] => _ => ArrowEffect.suspend[Any](Tag[Tick], ()).map(_ => Loop.done(Kyo.lift(payload))),
+                    a => Kyo.lift(a)
                 )
             val r: (Int < Say) < Any =
-                ArrowEffect.handleLoop(Tag[Tick], handled)([C] => _ => Loop.continue((), (): Unit < Any), a => box(a))
+                ArrowEffect.handleLoop(Tag[Tick], handled)([C] => _ => Loop.continue((), (): Unit < Any), a => Kyo.lift(a))
             val boxed = eval(r)
             assert(!reached)
             val out: Int < Any = ArrowEffect.handleCont(Tag[Say], boxed)([C] => (_, cont) => cont(()), a => a)
@@ -147,12 +148,12 @@ class ArrowEffectTest extends AnyFreeSpec:
             var evaluated          = 0
             val payload: Int < Any = Effect.defer { evaluated += 1; 2 }
             val body: (Int < Any) < Ask =
-                ArrowEffect.handleCont(Tag[Say], say("s").map(_ => ask.map(_ => box(payload))))(
+                ArrowEffect.handleCont(Tag[Say], say("s").map(_ => ask.map(_ => Kyo.lift(payload))))(
                     [C] => (_, cont) => cont(()),
-                    a => box(a)
+                    a => Kyo.lift(a)
                 )
             val r: (Int < Any) < Any =
-                ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.done(box(payload)), a => box(a))
+                ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.done(Kyo.lift(payload)), a => Kyo.lift(a))
             val data = eval(r)
             assert(evaluated == 0)
             assert(eval(data) == 2)
@@ -570,14 +571,14 @@ class ArrowEffectTest extends AnyFreeSpec:
             val r: Int < Any = ArrowEffect.handleContOperation(Tag[AskSub], v)(
                 [X] =>
                     (operation, _) =>
-                        val suspend = operation.asInstanceOf[kyo.proto.kernel.internal.Kyo.Suspend[?, ?, ?, ?]]
-                        seen = suspend.tag.show :: seen
+                        seen = operation.toString :: seen
                         -1
                 ,
                 a => a
             )
             assert(eval(r) == -1)
-            assert(seen == List(Tag[Ask].show))
+            assert(seen.size == 1)
+            assert(seen.head.startsWith(s"Kyo(${Tag[Ask].show}, "))
         }
 
         "a map chained after the region applies to the result" in {
@@ -595,7 +596,7 @@ class ArrowEffectTest extends AnyFreeSpec:
 
         "a map chained after a settled pass-through applies strictly" in {
             var ran = false
-            val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], box(42))([C] => (_, cont) => cont(0), a => a).map { a =>
+            val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], 42: Int < Ask)([C] => (_, cont) => cont(0), a => a).map { a =>
                 ran = true
                 a + 1
             }
@@ -1097,7 +1098,7 @@ class ArrowEffectTest extends AnyFreeSpec:
         "sees through a parked slice" in {
             val body: Int < Ask =
                 ask.map { a =>
-                    kyo.discard(Safepoint.stop(Thread.currentThread()))
+                    discard(Safepoint.stop(Thread.currentThread()))
                     Safepoint.deadline(java.lang.System.currentTimeMillis() - 1)
                     Effect.defer(ask.map(b => a + b), Arrow.id)
                 }
@@ -1149,8 +1150,8 @@ class ArrowEffectTest extends AnyFreeSpec:
 
         "a computation held as a value passes through a handler untouched" in {
             val payload: Int < Any   = (1: Int < Any).map(_ + 1)
-            val v: (Int < Any) < Ask = ask.map(_ => box(payload))
-            val r: (Int < Any) < Any = ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, cont) => cont(0), a => box(a))
+            val v: (Int < Any) < Ask = ask.map(_ => Kyo.lift(payload))
+            val r: (Int < Any) < Any = ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, cont) => cont(0), a => Kyo.lift(a))
             assert(eval(eval(r)) == 2)
         }
 
@@ -1174,8 +1175,8 @@ class ArrowEffectTest extends AnyFreeSpec:
     "nested box" - {
         "a pending computation held as a value double-boxes and unboxes one level per eval" in {
             val inner: Int < Say                 = say("x").map(_ => 1)
-            val once: (Int < Say) < Any          = box(inner)
-            val twice: ((Int < Say) < Any) < Any = box(once)
+            val once: (Int < Say) < Any          = Kyo.lift(inner)
+            val twice: ((Int < Say) < Any) < Any = Kyo.lift(once)
             val back: (Int < Say) < Any          = eval(twice)
             val r: Int < Any                     = ArrowEffect.handleCont(Tag[Say], eval(back))([C] => (_, cont) => cont(()), a => a)
             assert(eval(r) == 1)
@@ -1183,28 +1184,27 @@ class ArrowEffectTest extends AnyFreeSpec:
 
         "mapping over a double-boxed computation sees the once-boxed value" in {
             val inner: Int < Say                 = say("x").map(_ => 1)
-            val twice: ((Int < Say) < Any) < Any = box(box(inner))
-            def widen[A, S](v: A < S): A < S     = v
+            val twice: ((Int < Say) < Any) < Any = Kyo.lift(Kyo.lift(inner))
             val unbox = (once: (Int < Say) < Any) =>
                 eval(ArrowEffect.handleCont(Tag[Say], eval(once))([C] => (_, cont) => cont(()), a => a))
-            val r: Int < Any = widen(twice).map(once => unbox(once))
+            val r: Int < Any = twice.map(once => unbox(once))
             assert(eval(r) == 1)
         }
 
         "a pending computation held as a value crosses a handler boxed" in {
             val payload: Int < Say         = say("p").map(_ => 7)
-            val v: (Int < Say) < Ask       = ask.map(_ => box(payload))
-            val handled: (Int < Say) < Any = ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, cont) => cont(0), a => box(a))
+            val v: (Int < Say) < Ask       = ask.map(_ => Kyo.lift(payload))
+            val handled: (Int < Say) < Any = ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, cont) => cont(0), a => Kyo.lift(a))
             val r: Int < Any               = ArrowEffect.handleCont(Tag[Say], eval(handled))([C] => (_, cont) => cont(()), a => a)
             assert(eval(r) == 7)
         }
 
         "a stateful handler passes a pending computation value through intact" in {
             val payload: Int < Say   = say("p").map(_ => 7)
-            val v: (Int < Say) < Ask = ask.map(_ => box(payload))
+            val v: (Int < Say) < Ask = ask.map(_ => Kyo.lift(payload))
             val r: (Int < Say) < Any = ArrowEffect.handleLoopState(Tag[Ask], 0, v)(
                 [C] => (state, _) => Loop.continue(state + 1, 0: Int < Any),
-                (_, a) => box(a)
+                (_, a) => Kyo.lift(a)
             )
             val boxed          = eval(r)
             val out: Int < Any = ArrowEffect.handleCont(Tag[Say], boxed)([C] => (_, cont) => cont(()), a => a)
@@ -1285,8 +1285,8 @@ class ArrowEffectTest extends AnyFreeSpec:
     }
 
     private def requestStop(): Unit =
-        kyo.discard(Safepoint.get())
-        kyo.discard(Safepoint.stop(Thread.currentThread()))
+        discard(Safepoint.get())
+        discard(Safepoint.stop(Thread.currentThread()))
         Safepoint.deadline(java.lang.System.currentTimeMillis() - 1)
     end requestStop
 
@@ -1600,15 +1600,15 @@ class ArrowEffectTest extends AnyFreeSpec:
 
         "the done clause receives a computation held as a value unboxed" in {
             val payload: Int < Say           = say("p").map(_ => 7)
-            val v: (Int < Say) < (Ask & Say) = say("x").map(_ => box(payload))
+            val v: (Int < Say) < (Ask & Say) = say("x").map(_ => Kyo.lift(payload))
             var seen: AnyRef                 = null
             val first = handleFirst(Tag[Ask], v)(
-                [X] => (_, _) => box(payload),
+                [X] => (_, _) => Kyo.lift(payload),
                 a =>
                     seen = a.asInstanceOf[AnyRef]
-                    box(a)
+                    Kyo.lift(a)
             )
-            val boxed = eval(ArrowEffect.handleCont(Tag[Say], first)([X] => (_, cont) => cont(()), a => box(a)))
+            val boxed = eval(ArrowEffect.handleCont(Tag[Say], first)([X] => (_, cont) => cont(()), a => Kyo.lift(a)))
             assert(seen eq payload.asInstanceOf[AnyRef])
             assert(eval(ArrowEffect.handleCont(Tag[Say], boxed)([X] => (_, cont) => cont(()), a => a)) == 7)
         }
@@ -1752,9 +1752,9 @@ class ArrowEffectTest extends AnyFreeSpec:
 
         "a computation held as a value passes through untouched" in {
             val payload: Int < Any   = (1: Int < Any).map(_ + 1)
-            val v: (Int < Any) < Ask = ask.map(_ => box(payload))
+            val v: (Int < Any) < Ask = ask.map(_ => Kyo.lift(payload))
             val r: (Int < Any) < Any =
-                ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, cont) => cont(0), a => box(a), _ => Maybe(box(-1)))
+                ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, cont) => cont(0), a => Kyo.lift(a), _ => Maybe(Kyo.lift(-1)))
             assert(eval(eval(r)) == 2)
         }
     }
@@ -1792,7 +1792,7 @@ class ArrowEffectTest extends AnyFreeSpec:
         }
 
         "a clause keeps only the values it was given" in {
-            val seen = collection.mutable.ListBuffer[(Int, Unit)]()
+            val seen = ListBuffer[(Int, Unit)]()
             def run(): Int =
                 eval(ArrowEffect.handleLoopState(Tag[Ask], 0, ask.map(a => ask.map(b => ask.map(c => a + b + c))))(
                     [C] =>
@@ -1828,7 +1828,7 @@ class ArrowEffectTest extends AnyFreeSpec:
         }
 
         "a throw after settled answers recovers with every commit already made" in {
-            val states = collection.mutable.ListBuffer[Int]()
+            val states = ListBuffer[Int]()
             case class Boom() extends RuntimeException
             def loop(i: Int): Int < Ask =
                 if i > 5 then i else ask.map(a => if a == 2 then throw Boom() else loop(i + 1))
@@ -1917,7 +1917,7 @@ class ArrowEffectTest extends AnyFreeSpec:
         }
 
         "a throw while applying the continuation recovers after the answers made" in {
-            val seen = collection.mutable.ListBuffer[Int]()
+            val seen = ListBuffer[Int]()
             case class Boom() extends RuntimeException
             def loop(i: Int): Int < Ask =
                 if i > 5 then i else ask.map(a => if i == 2 then throw Boom() else loop(i + a))
@@ -2053,9 +2053,9 @@ class ArrowEffectTest extends AnyFreeSpec:
         "a boxed answer crosses the answers loop unopened" in {
             val payload: Int < Say = say("p").map(_ => 7)
             val region: (Int < Say) < Any =
-                ArrowEffect.handleLoop(Tag[AskBoxed], askBoxed.map(v => box(v)))(
-                    [C] => _ => Loop.continue((), box(payload): (Int < Say) < Any),
-                    a => box(a)
+                ArrowEffect.handleLoop(Tag[AskBoxed], askBoxed.map(v => Kyo.lift(v)))(
+                    [C] => _ => Loop.continue((), Kyo.lift(payload): (Int < Say) < Any),
+                    a => Kyo.lift(a)
                 )
             val got: Int < Say = eval(region)
             assert(got.asInstanceOf[AnyRef] eq payload.asInstanceOf[AnyRef])
@@ -2175,10 +2175,10 @@ class ArrowEffectTest extends AnyFreeSpec:
         "a recovery does not reach into a boxed computation" in {
             val fallback: String < TestEffect1 = "caught"
             val boxed: (String < TestEffect1) < Any =
-                recovering(box(testEffect1(1).map(_ => (throw new RuntimeException("Test exception")): String)))(_ => fallback)
+                recovering(Kyo.lift(testEffect1(1).map(_ => (throw new RuntimeException("Test exception")): String)))(_ => fallback)
             val inner: String < TestEffect1 = eval(boxed)
             val handled                     = ArrowEffect.handleCont(Tag[TestEffect1], inner)([C] => (input, cont) => cont(input.toString))
-            kyo.discard(intercept[RuntimeException](eval(handled)))
+            discard(intercept[RuntimeException](eval(handled)))
         }
 
         "a recovery guards a stateful region across a park" in {

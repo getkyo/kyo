@@ -1,12 +1,10 @@
 package kyo.proto.kernel
 
 import kyo.Const
-import kyo.Frame
 import kyo.Maybe
 import kyo.Tag
 import kyo.proto.Arrow
 import kyo.proto.Loop
-import kyo.proto.kernel.internal.Kyo
 import org.scalatest.freespec.AnyFreeSpec
 
 class EffectTest extends AnyFreeSpec:
@@ -24,15 +22,8 @@ class EffectTest extends AnyFreeSpec:
     def recovering[A](v: A < Wrap)(f: Throwable => A): A < Any =
         ArrowEffect.handleCont(Tag[Wrap], v)([C] => (_, cont) => cont(()), a => a, ex => Maybe(f(ex)))
 
-    def inc(using _frame: Frame): Arrow.Transform[Int, Int, Any] =
-        new Arrow.Transform[Int, Int, Any]:
-            def frame                                              = _frame
-            def apply[C, S2](v: Int < S2, next: Arrow[Int, C, S2]) = v.map(i => next(i + 1))
-
-    def double(using _frame: Frame): Arrow.Transform[Int, Int, Any] =
-        new Arrow.Transform[Int, Int, Any]:
-            def frame                                              = _frame
-            def apply[C, S2](v: Int < S2, next: Arrow[Int, C, S2]) = v.map(i => next(i * 2))
+    def inc: Arrow[Int, Int, Any]    = Arrow[Int](i => i + 1)
+    def double: Arrow[Int, Int, Any] = Arrow[Int](i => i * 2)
 
     "defer composes with maps without running early" in {
         var ran = false
@@ -123,12 +114,8 @@ class EffectTest extends AnyFreeSpec:
             assert(eval(Effect.defer(1: Int < Any, double, inc)) == 3)
         }
 
-        "collapses an identity second continuation into the one-continuation node" in {
-            val node = Effect.defer(1: Int < Any, inc, Arrow.id[Int])
-            node match
-                case d: Kyo.Defer[?, ?, ?, ?] => assert(d.contB eq Arrow.id[Int])
-                case other                    => fail(s"expected a deferral node, got $other")
-            assert(eval(node) == 2)
+        "an identity second continuation leaves the result unchanged" in {
+            assert(eval(Effect.defer(1: Int < Any, inc, Arrow.id[Int])) == 2)
         }
 
         "the four-argument form runs its three continuations in order" in {

@@ -1,5 +1,6 @@
 package kyo.proto.kernel.internal
 
+import java.util.concurrent.atomic.AtomicInteger
 import kyo.Const
 import kyo.Tag
 import kyo.discard
@@ -24,7 +25,7 @@ class EffectTraceThreadingTest extends AnyFreeSpec:
         var round = 0
         while round < 200 do
             val shared           = new Boom
-            val gate             = new java.util.concurrent.atomic.AtomicInteger(0)
+            val gate             = new AtomicInteger(0)
             @volatile var failed = false
             def runner(): Thread = new Thread(() =>
                 discard(gate.incrementAndGet())

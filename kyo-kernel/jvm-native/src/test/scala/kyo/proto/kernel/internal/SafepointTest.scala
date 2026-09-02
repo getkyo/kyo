@@ -3,6 +3,7 @@ package kyo.proto.kernel.internal
 import kyo.Const
 import kyo.Maybe
 import kyo.Tag
+import kyo.discard
 import kyo.proto.kernel.<
 import kyo.proto.kernel.ArrowEffect
 import kyo.proto.kernel.Effect
@@ -18,8 +19,8 @@ class SafepointTest extends AnyFreeSpec:
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
     private def requestStop(): Unit =
-        kyo.discard(Safepoint.get())
-        kyo.discard(Safepoint.stop(Thread.currentThread()))
+        discard(Safepoint.get())
+        discard(Safepoint.stop(Thread.currentThread()))
         Safepoint.deadline(java.lang.System.currentTimeMillis() - 1)
     end requestStop
 
@@ -127,7 +128,7 @@ class SafepointTest extends AnyFreeSpec:
         var built = 0
         val outer: Int < Any =
             Effect.defer {
-                kyo.discard(eval(dropped))
+                discard(eval(dropped))
                 0
             }.map { z =>
                 var acc: Int < Any = z
@@ -155,8 +156,8 @@ class SafepointTest extends AnyFreeSpec:
         val dropped: Int < Any =
             ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, _) => -1, a => a)
         val slot = Safepoint.get()
-        kyo.discard(Safepoint.enter(slot))
-        kyo.discard(Safepoint.enter(slot))
+        discard(Safepoint.enter(slot))
+        discard(Safepoint.enter(slot))
         try
             val before = Safepoint.save(slot)
             Safepoint.restore(slot, before)

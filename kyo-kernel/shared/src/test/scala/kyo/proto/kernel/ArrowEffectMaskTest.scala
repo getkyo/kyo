@@ -3,11 +3,15 @@ package kyo.proto.kernel
 import kyo.Const
 import kyo.Maybe
 import kyo.Tag
+import kyo.discard
 import kyo.proto.Arrow
 import kyo.proto.Loop
 import kyo.proto.kernel.ArrowEffect.Mask
 import kyo.proto.kernel.internal.Eval
+import kyo.proto.kernel.internal.Pending
+import kyo.proto.kernel.internal.Safepoint
 import org.scalatest.freespec.AnyFreeSpec
+import scala.collection.mutable.ListBuffer
 
 class ArrowEffectMaskTest extends AnyFreeSpec:
 
@@ -20,7 +24,7 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
 
     sealed trait Say extends ArrowEffect[Const[String], Const[Unit]]
     def say(s: String): Unit < Say = ArrowEffect.suspend[Any](Tag[Say], s)
-    def runSay[A, S](v: A < (Say & S))(buf: scala.collection.mutable.ListBuffer[String]): A < S =
+    def runSay[A, S](v: A < (Say & S))(buf: ListBuffer[String]): A < S =
         ArrowEffect.handleCont(Tag[Say], v)([C] =>
             (input, cont) =>
                 buf += input
@@ -34,15 +38,15 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
 
     sealed trait Log extends ArrowEffect[Const[String], Const[Unit]]
     def logLine(s: String): Unit < Log = ArrowEffect.suspend[Any](Tag[Log], s)
-    def runLog[A, S](v: A < (Log & S))(buf: scala.collection.mutable.ListBuffer[String]): A < S =
+    def runLog[A, S](v: A < (Log & S))(buf: ListBuffer[String]): A < S =
         ArrowEffect.handleCont(Tag[Log], v)([C] =>
             (input, cont) =>
                 buf += input
                 cont(()))
 
     private def requestStop(): Unit =
-        kyo.discard(kyo.proto.kernel.internal.Safepoint.stop(Thread.currentThread()))
-        kyo.proto.kernel.internal.Safepoint.deadline(java.lang.System.currentTimeMillis() - 1)
+        discard(Safepoint.stop(Thread.currentThread()))
+        Safepoint.deadline(java.lang.System.currentTimeMillis() - 1)
 
     private object Boom extends RuntimeException("boom", null, false, false)
 
@@ -69,7 +73,7 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
     }
 
     "masking is selective: other effects stay live for local handlers and outer answers flow back in" in {
-        val buf = scala.collection.mutable.ListBuffer[String]()
+        val buf = ListBuffer[String]()
         val v: Int < (Ask & Say) =
             ask.map(a => say(s"got $a").map(_ => ask.map(b => a + b)))
         val masked: Int < (Mask[Ask] & Say) = Mask[Ask](v)
@@ -140,7 +144,7 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
         }
 
         "a multi-shot outer handler replays the masked region and its local effects" in {
-            val buf = scala.collection.mutable.ListBuffer[String]()
+            val buf = ListBuffer[String]()
             val v: Int < (Ask & Say) =
                 ask.map(a => say(a.toString).map(_ => a))
             val out: Int < Ask = Mask.run[Ask](runSay(Mask[Ask](v))(buf))
@@ -171,7 +175,7 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
             val body: Int < Ask =
                 ask.map { a =>
                     requestStop()
-                    kyo.proto.kernel.Effect.defer(ask.map(b => a * 100 + b))
+                    Effect.defer(ask.map(b => a * 100 + b))
                 }
             val out: Int < Any = runAsk(Mask.run[Ask](runAsk(Mask[Ask](body))(1)))(42)
             val parked         = Eval.partial(out)
@@ -179,12 +183,12 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
         }
 
         "a slice parked mid-tunnel resumes and both masked effects still route" in {
-            val innerBuf = scala.collection.mutable.ListBuffer[String]()
-            val outerBuf = scala.collection.mutable.ListBuffer[String]()
+            val innerBuf = ListBuffer[String]()
+            val outerBuf = ListBuffer[String]()
             val v: Int < (Ask & Say) =
                 ask.map { a =>
                     requestStop()
-                    kyo.proto.kernel.Effect.defer(say(s"after $a").map(_ => ask.map(b => a + b)))
+                    Effect.defer(say(s"after $a").map(_ => ask.map(b => a + b)))
                 }
             val out: Int < Any =
                 runSay(runAsk(Mask.run[Ask & Say](runSay(runAsk(Mask[Ask & Say](v))(1))(innerBuf)))(42))(outerBuf)
@@ -195,11 +199,11 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
         }
 
         "a context binding between the mask and run crosses the tunnel intact" in {
-            sealed trait Cfg extends kyo.proto.kernel.ContextEffect[Int]
-            def read: Int < Cfg      = kyo.proto.kernel.ContextEffect.suspend(Tag[Cfg])
+            sealed trait Cfg extends ContextEffect[Int]
+            def read: Int < Cfg      = ContextEffect.suspend(Tag[Cfg])
             val v: Int < (Ask & Cfg) = ask.map(a => read.map(c => a + c))
 
-            val bound = kyo.proto.kernel.ContextEffect.handleInheritable(Tag[Cfg], 10)(Mask[Ask](v))
+            val bound = ContextEffect.handleInheritable(Tag[Cfg], 10)(Mask[Ask](v))
             val out   = Mask.run[Ask](bound)
             assert(eval(runAsk(out)(32)) == 42)
         }
@@ -218,9 +222,9 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
     }
 
     "a mask over part of a wider row leaves the other effects live" in {
-        val logs     = scala.collection.mutable.ListBuffer[String]()
-        val innerBuf = scala.collection.mutable.ListBuffer[String]()
-        val outerBuf = scala.collection.mutable.ListBuffer[String]()
+        val logs     = ListBuffer[String]()
+        val innerBuf = ListBuffer[String]()
+        val outerBuf = ListBuffer[String]()
         val v: Int < (Ask & Say & Log) =
             ask.map(a => logLine("mid").map(_ => say("s").map(_ => ask.map(b => a + b))))
         val masked = Mask[Ask & Say](v)
@@ -235,8 +239,8 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
     }
 
     "a mask over an intersection with only one member occurring" in {
-        val innerBuf     = scala.collection.mutable.ListBuffer[String]()
-        val outerBuf     = scala.collection.mutable.ListBuffer[String]()
+        val innerBuf     = ListBuffer[String]()
+        val outerBuf     = ListBuffer[String]()
         val v: Int < Ask = ask.map(_ + 1)
         val masked       = Mask[Ask & Say](v)
         val innerHandled = runSay(runAsk(masked)(1))(innerBuf)
@@ -265,13 +269,13 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
 
     "a settled computation passes through mask and run untouched" in {
         val masked = Mask[Ask](42: Int < Ask)
-        assert(!masked.isInstanceOf[kyo.proto.kernel.internal.Pending[?, ?]])
+        assert(!masked.isInstanceOf[Pending[?, ?]])
 
         assert(eval(runAsk(Mask.run[Ask](masked))(997)) == 42)
     }
 
     "interleaved operations of both masked effects keep program order" in {
-        val order = scala.collection.mutable.ListBuffer[String]()
+        val order = ListBuffer[String]()
         val v: Int < (Ask & Say) =
             ask.map(a => say("first").map(_ => ask.map(b => say("second").map(_ => a * 10 + b))))
         val out = Mask.run[Ask & Say](Mask[Ask & Say](v))
@@ -296,8 +300,8 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
     }
 
     "one mask over an intersection masks both effects and each re-emerges at its own handler" in {
-        val innerBuf = scala.collection.mutable.ListBuffer[String]()
-        val outerBuf = scala.collection.mutable.ListBuffer[String]()
+        val innerBuf = ListBuffer[String]()
+        val outerBuf = ListBuffer[String]()
         val v: Int < (Ask & Say) =
             ask.map(a => say(s"got $a").map(_ => ask.map(b => a + b)))
         val masked       = Mask[Ask & Say](v)
@@ -311,8 +315,8 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
     }
 
     "masks of different effects stack independently" in {
-        val innerBuf = scala.collection.mutable.ListBuffer[String]()
-        val outerBuf = scala.collection.mutable.ListBuffer[String]()
+        val innerBuf = ListBuffer[String]()
+        val outerBuf = ListBuffer[String]()
         val v: Int < (Ask & Say) =
             ask.map(a => say("crossed").map(_ => a))
         val bothMasked: Int < (Mask[Ask] & Mask[Say]) = Mask[Say](Mask[Ask](v))

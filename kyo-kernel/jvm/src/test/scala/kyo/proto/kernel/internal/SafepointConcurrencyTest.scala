@@ -11,7 +11,7 @@ import org.scalatest.freespec.AnyFreeSpec
 
 class SafepointConcurrencyTest extends AnyFreeSpec:
 
-    private val Period = 512
+    private val Period = Safepoint.period()
     private val Slots  = 65536
     private val Homes  = 8192
 

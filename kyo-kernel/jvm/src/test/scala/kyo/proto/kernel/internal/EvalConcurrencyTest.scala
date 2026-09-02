@@ -1,5 +1,6 @@
 package kyo.proto.kernel.internal
 
+import java.util.concurrent.ConcurrentLinkedQueue
 import kyo.Const
 import kyo.Maybe
 import kyo.Tag
@@ -34,7 +35,7 @@ class EvalConcurrencyTest extends AnyFreeSpec:
         assert(eval(r) == -1)
         val k             = stored.get
         def resume(): Int = eval(ArrowEffect.handleCont(Tag[Say], k(()))([C] => (_, cont) => cont(()), a => a))
-        val results       = new java.util.concurrent.ConcurrentLinkedQueue[Int]()
+        val results       = new ConcurrentLinkedQueue[Int]()
         val threads = (1 to 4).map(_ =>
             new Thread(() =>
                 results.add(resume()); ()

@@ -58,6 +58,7 @@ import scala.util.control.NonFatal
                         case _: Kyo.Snapshot[?, ?]      => ()
                 case _ => ()
         collect(v)
+        // TODO why do we need to collect then release? can't we release while iterating?
         releaseCollected(collected, ex)
     end release
 

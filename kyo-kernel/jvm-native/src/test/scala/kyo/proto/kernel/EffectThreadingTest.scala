@@ -1,5 +1,6 @@
 package kyo.proto.kernel
 
+import java.util.concurrent.atomic.AtomicInteger
 import kyo.discard
 import kyo.proto.kernel.internal.Eval
 import kyo.proto.kernel.internal.Safepoint
@@ -38,7 +39,7 @@ class EffectThreadingTest extends AnyFreeSpec:
     "an abandonment racing a resume releases exactly once" in {
         var iterations = 0
         while iterations < 200 do
-            val released = new java.util.concurrent.atomic.AtomicInteger
+            val released = new AtomicInteger
             val v: Int < Any =
                 Effect.bracket(Effect.defer(1))((_, _) => discard(released.incrementAndGet()))(r =>
                     Effect.defer {

@@ -41,7 +41,6 @@ class KyoTest extends AnyFreeSpec:
             ArrowEffect.handleCont(Tag[TestEffect2], v)([C] => (input, cont) => cont(input.toUpperCase), a => a)
     end TestEffect2
 
-    def widen[A](v: A): A < Any = v
     "toString" in {
         val rendered = TestEffect1(1).map(_ + 1).toString
         assert(rendered.contains("Kyo(kyo.proto.KyoTest.TestEffect1, "))
@@ -54,12 +53,12 @@ class KyoTest extends AnyFreeSpec:
     "eval" in {
         assert(TestEffect1.run(TestEffect1(1).map(_ + 1)).eval == 3)
         typeCheckFailure("TestEffect1(1).eval")("value eval is not a member of Int < KyoTest.this.TestEffect1")
-        val typeMap = widen(TypeMap(1, true)).eval
+        val typeMap = (TypeMap(1, true): TypeMap[Int & Boolean] < Any).eval
         assert(typeMap.get[Boolean])
     }
 
     "eval widened" in {
-        val x = widen(TestEffect1(1).map(_ + 1)).eval
+        val x = Kyo.lift[Int < TestEffect1, Any](TestEffect1(1).map(_ + 1)).eval
         val y = TestEffect1.run(x).eval
         assert(y == 3)
     }
@@ -107,10 +106,9 @@ class KyoTest extends AnyFreeSpec:
     }
 
     "nested" - {
-        def lift[A](v: A): A < Any                                          = widen(v)
         def add(v: Int < TestEffect1)                                       = v.map(_ + 1)
         def transform[A, B](v: A < TestEffect1, f: A => B): B < TestEffect1 = v.map(f(_))
-        val io: Int < TestEffect1 < TestEffect1                             = lift(TestEffect1(1))
+        val io: Int < TestEffect1 < TestEffect1                             = Kyo.lift(TestEffect1(1))
 
         "map + flatten" in {
             val a: Int < TestEffect1 < TestEffect1 =
@@ -192,11 +190,11 @@ class KyoTest extends AnyFreeSpec:
 
     "when" - {
         "true" in {
-            val trueEffect = Kyo.when(Kyo.lift(true))(Kyo.lift(1), Kyo.lift(2))
+            val trueEffect = Kyo.when(true)(1, 2)
             assert(trueEffect.eval == 1)
         }
         "false" in {
-            val falseEffect = Kyo.when(Kyo.lift(false))(Kyo.lift(1), Kyo.lift(2))
+            val falseEffect = Kyo.when(false)(1, 2)
             assert(falseEffect.eval == 2)
         }
         "effectful true" in {
@@ -209,11 +207,11 @@ class KyoTest extends AnyFreeSpec:
         }
         "single branch" - {
             "true" in {
-                val trueEffect = Kyo.when(Kyo.lift(true))(Kyo.lift(1))
+                val trueEffect = Kyo.when(true)(1)
                 assert(trueEffect.eval == Present(1))
             }
             "false" in {
-                val falseEffect = Kyo.when(Kyo.lift(false))(Kyo.lift(1))
+                val falseEffect = Kyo.when(false)(1)
                 assert(falseEffect.eval == Absent)
             }
             "effectful true" in {
@@ -229,11 +227,11 @@ class KyoTest extends AnyFreeSpec:
 
     "unless" - {
         "true" in {
-            val trueEffect = Kyo.unless(Kyo.lift(true))(Kyo.lift(1))
+            val trueEffect = Kyo.unless(true)(1)
             assert(trueEffect.eval == Absent)
         }
         "false" in {
-            val falseEffect = Kyo.unless(Kyo.lift(false))(Kyo.lift(1))
+            val falseEffect = Kyo.unless(false)(1)
             assert(falseEffect.eval == Present(1))
         }
         "effectful true" in {

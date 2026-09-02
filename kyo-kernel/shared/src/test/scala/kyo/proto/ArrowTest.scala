@@ -10,6 +10,7 @@ import kyo.proto.kernel.ArrowEffect
 import kyo.proto.kernel.internal.Safepoint
 import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
+import scala.compiletime.testing.typeChecks
 
 class ArrowTest extends AnyFreeSpec:
 
@@ -202,7 +203,7 @@ class ArrowTest extends AnyFreeSpec:
     }
 
     "an arrow is not a function" in {
-        assert(!scala.compiletime.testing.typeChecks("val f: Int => Int < Any = kyo.proto.Arrow[Int](i => i + 1)"))
+        assert(!typeChecks("val f: Int => Int < Any = Arrow[Int](i => i + 1)"))
     }
 
     "an arrow applies to a plain value" in {

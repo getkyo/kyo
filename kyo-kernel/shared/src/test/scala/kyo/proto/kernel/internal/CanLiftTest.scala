@@ -1,6 +1,7 @@
 package kyo.proto.kernel.internal
 
 import kyo.Const
+import kyo.Maybe
 import kyo.discard
 import kyo.proto.kernel.<
 import kyo.proto.kernel.ArrowEffect
@@ -95,7 +96,7 @@ class CanLiftTest extends AnyFreeSpec:
     }
 
     "case objects lift without reaching the macro" in {
-        discard(summon[CanLift[kyo.Maybe.Absent.type]])
+        discard(summon[CanLift[Maybe.Absent.type]])
         succeed
     }
 

@@ -3,6 +3,7 @@ package kyo.proto.kernel
 import kyo.Const
 import kyo.Maybe
 import kyo.Tag
+import kyo.discard
 import kyo.proto.Arrow
 import kyo.proto.Kyo
 import kyo.proto.Loop
@@ -32,25 +33,23 @@ class PendingTest extends AnyFreeSpec:
     def answerSay[A](v: A < Say): A < Any =
         ArrowEffect.handleLoop(Tag[Say], v)([C] => _ => Loop.continue((), (): Unit < Any), a => a)
 
-    def settled[A](v: A): A < Any = v
-
     def after[A](v: A): A < Ask = ask.map(_ => v)
 
     "a settled payload evaluates to itself" in {
-        val outer: (Int < Any) < Any = settled(42: Int < Any)
+        val outer: (Int < Any) < Any = Kyo.lift(42: Int < Any)
         assert(eval(eval(outer)) == 42)
     }
 
     "eval returns a pending payload without running it" in {
         val inner: Int < Ask   = ask.map(_ + 1)
-        val payload: Int < Ask = eval(settled(inner))
+        val payload: Int < Ask = eval(Kyo.lift(inner))
         assert(eval(answerAsk(41)(payload)) == 42)
     }
 
     "map receives a pending payload as a value" in {
         val inner: Int < Ask    = ask
         var received: Int < Ask = 0
-        val r: Int < Any = settled(inner).map { c =>
+        val r: Int < Any = Kyo.lift(inner).map { c =>
             received = c
             7
         }
@@ -67,16 +66,16 @@ class PendingTest extends AnyFreeSpec:
 
     "a payload returned past the budget stays a value" in {
         def loop(i: Int): (Int < Ask) < Any =
-            if i == 0 then settled(ask)
+            if i == 0 then Kyo.lift(ask)
             else (0: Int < Any).map(_ => loop(i - 1))
         val payload: Int < Ask = eval(loop(10000))
         assert(eval(answerAsk(42)(payload)) == 42)
     }
 
     "a handler applies done to a settled payload without driving it" in {
-        val outer: (Unit < Say) < Ask = settled(say("x"): Unit < Say)
+        val outer: (Unit < Say) < Ask = Kyo.lift(say("x"): Unit < Say)
         val handled: (Unit < Say) < Any =
-            ArrowEffect.handleLoop(Tag[Ask], outer)([C] => _ => Loop.continue((), 1: Int < Any), a => settled(a))
+            ArrowEffect.handleLoop(Tag[Ask], outer)([C] => _ => Loop.continue((), 1: Int < Any), a => Kyo.lift(a))
         val payload: Unit < Say = eval(handled)
         var seen                = ""
         val r: Unit < Any = ArrowEffect.handleLoop(Tag[Say], payload)(
@@ -94,7 +93,7 @@ class PendingTest extends AnyFreeSpec:
     "a region returns a foreign payload untouched" in {
         val body: (Unit < Say) < Ask = after(say("y"): Unit < Say)
         val handled: (Unit < Say) < Any =
-            ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.continue((), 1: Int < Any), a => settled(a))
+            ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.continue((), 1: Int < Any), a => Kyo.lift(a))
         val payload: Unit < Say = eval(handled)
         var seen                = ""
         val r: Unit < Any = ArrowEffect.handleLoop(Tag[Say], payload)(
@@ -112,7 +111,7 @@ class PendingTest extends AnyFreeSpec:
     "an answer can be a computation value" in {
         val inner: Int < Ask = ask
         val body: Int < Give = give.map(_ => 5)
-        val r: Int < Any     = ArrowEffect.handleLoop(Tag[Give], body)([C] => _ => Loop.continue((), settled(inner)), a => a)
+        val r: Int < Any     = ArrowEffect.handleLoop(Tag[Give], body)([C] => _ => Loop.continue((), Kyo.lift(inner)), a => a)
         assert(eval(r) == 5)
     }
 
@@ -125,7 +124,7 @@ class PendingTest extends AnyFreeSpec:
 
     "mapping over a payload derives a new payload" in {
         val inner: Int < Ask           = ask
-        val derived: (Int < Ask) < Any = settled(inner).map(c => settled(c.map(_ * 2)))
+        val derived: (Int < Ask) < Any = Kyo.lift(inner).map(c => Kyo.lift(c.map(_ * 2)))
         val payload: Int < Ask         = eval(derived)
         assert(eval(answerAsk(21)(payload)) == 42)
     }
@@ -133,7 +132,7 @@ class PendingTest extends AnyFreeSpec:
     "a payload handles inside map" in {
         def deliver[B](f: Int => B): B < Ask = ask.map(a => f(a))
         val comp: (Int < Say) < Ask          = deliver(a => say("s").map(_ => a + 1))
-        val handled: (Int < Any) < Any       = answerAsk(10)(comp.map(c => settled(answerSay[Int](c))))
+        val handled: (Int < Any) < Any       = answerAsk(10)(comp.map(c => Kyo.lift(answerSay[Int](c))))
         assert(eval(eval(handled)) == 11)
     }
 
@@ -226,7 +225,7 @@ class PendingTest extends AnyFreeSpec:
             val f2: (Int, Int) => String < Any           = (_, _) => "test"
             val f3: (Int, Int, Int) => String < Any      = (_, _, _) => "test"
             val f4: (Int, Int, Int, Int) => String < Any = (_, _, _, _) => "test"
-            kyo.discard(f1, f2, f3, f4)
+            discard(f1, f2, f3, f4)
             assert(typeCheckErrors("val _: Int => String < Any < Any = f1").nonEmpty)
             assert(typeCheckErrors("val _: (Int, Int) => String < Any < Any = f2").nonEmpty)
             assert(typeCheckErrors("val _: (Int, Int, Int) => String < Any < Any = f3").nonEmpty)
@@ -235,7 +234,7 @@ class PendingTest extends AnyFreeSpec:
 
         "a generic method does not accept a wider effect row" in {
             def widen[A](v: A < Any) = v
-            kyo.discard(widen(1: Int < Any))
+            discard(widen(1: Int < Any))
             assert(typeCheckErrors("widen(ask)").nonEmpty)
         }
     }
@@ -245,7 +244,7 @@ class PendingTest extends AnyFreeSpec:
         val body: Int < Give = give.map(_ => 0)
         val r: (Int < Ask) < Any = ArrowEffect.handleLoop(Tag[Give], body)(
             [C] => _ => Loop.done(Kyo.lift(inner)),
-            a => settled(inner)
+            a => Kyo.lift(inner)
         )
         val payload: Int < Ask = eval(r)
         assert(eval(answerAsk(41)(payload)) == 42)
@@ -258,14 +257,14 @@ class PendingTest extends AnyFreeSpec:
             got = c
             3
         }
-        val r: Int < Any = ArrowEffect.handleLoop(Tag[Give], body)([C] => _ => Loop.continue((), settled(inner)), a => a)
+        val r: Int < Any = ArrowEffect.handleLoop(Tag[Give], body)([C] => _ => Loop.continue((), Kyo.lift(inner)), a => a)
         assert(eval(r) == 3)
         assert(eval(answerAsk(41)(got.map(_ + 1))) == 42)
     }
 
     "double nesting round trips" in {
         val inner: Int < Ask                 = ask.map(_ + 1)
-        val twice: ((Int < Ask) < Any) < Any = settled(settled(inner))
+        val twice: ((Int < Ask) < Any) < Any = Kyo.lift(Kyo.lift(inner))
         val payload: Int < Ask               = eval(eval(twice))
         assert(eval(answerAsk(41)(payload)) == 42)
     }
@@ -273,7 +272,7 @@ class PendingTest extends AnyFreeSpec:
     "a loop answer payload delivers unwrapped through a bare suspension" in {
         val inner: Int < Ask = ask.map(_ + 1)
         val r: (Int < Ask) < Any =
-            ArrowEffect.handleLoop(Tag[Give], give)([C] => _ => Loop.continue((), settled(inner)), a => settled(a))
+            ArrowEffect.handleLoop(Tag[Give], give)([C] => _ => Loop.continue((), Kyo.lift(inner)), a => Kyo.lift(a))
         val payload: Int < Ask = eval(r)
         assert(eval(answerAsk(41)(payload)) == 42)
     }
@@ -281,7 +280,7 @@ class PendingTest extends AnyFreeSpec:
     "a suspended loop answer delivering a payload resumes unwrapped" in {
         val inner: Int < Ask = ask.map(_ + 1)
         val handled: (Int < Ask) < Ask =
-            ArrowEffect.handleLoop(Tag[Give], give)([C] => _ => Loop.continue((), after(inner)), a => settled(a))
+            ArrowEffect.handleLoop(Tag[Give], give)([C] => _ => Loop.continue((), after(inner)), a => Kyo.lift(a))
         val payload: Int < Ask = eval(answerAsk(0)(handled))
         assert(eval(answerAsk(41)(payload)) == 42)
     }
@@ -290,8 +289,8 @@ class PendingTest extends AnyFreeSpec:
         val inner: Int < Ask = ask.map(_ + 1)
         val r: (Int < Ask) < Any =
             ArrowEffect.handleLoopState(Tag[Give], 0, give)(
-                [C] => (s, _) => Loop.continue(s + 1, settled(inner)),
-                (_, a) => settled(a)
+                [C] => (s, _) => Loop.continue(s + 1, Kyo.lift(inner)),
+                (_, a) => Kyo.lift(a)
             )
         val payload: Int < Ask = eval(r)
         assert(eval(answerAsk(41)(payload)) == 42)
@@ -301,7 +300,7 @@ class PendingTest extends AnyFreeSpec:
         val inner: Int < Ask = ask.map(_ + 1)
         val r: (Int < Ask) < Ask = ArrowEffect.handleLoop(Tag[Give], give)(
             [C] => _ => after(0).map(_ => Loop.done(Kyo.lift(inner))),
-            a => settled(a)
+            a => Kyo.lift(a)
         )
         val payload: Int < Ask = eval(answerAsk(0)(r))
         assert(eval(answerAsk(41)(payload)) == 42)
@@ -311,8 +310,8 @@ class PendingTest extends AnyFreeSpec:
         val inner: Int < Ask = ask.map(_ + 1)
         var got: Int < Ask   = 0
         val r: Int < Any = ArrowEffect.handleLoopWith[Const[Unit], Const[Int < Ask], Give, Int < Ask, Int < Ask, Any, Any](Tag[Give], give)(
-            [C] => _ => Loop.continue((), settled(inner)),
-            a => settled(a)
+            [C] => _ => Loop.continue((), Kyo.lift(inner)),
+            a => Kyo.lift(a)
         ) { b =>
             got = b
             9
@@ -329,7 +328,7 @@ class PendingTest extends AnyFreeSpec:
     "flatMap receives a pending payload as a value" in {
         val inner: Int < Ask    = ask
         var received: Int < Ask = 0
-        val r: Int < Any = settled(inner).flatMap { c =>
+        val r: Int < Any = Kyo.lift(inner).flatMap { c =>
             received = c
             7
         }
@@ -349,7 +348,7 @@ class PendingTest extends AnyFreeSpec:
 
     "andThen leaves a discarded payload untouched" in {
         val inner: Int < Ask = ask
-        val r: Int < Any     = settled(inner).andThen(7)
+        val r: Int < Any     = Kyo.lift(inner).andThen(7)
         assert(eval(r) == 7)
     }
 
@@ -373,13 +372,13 @@ class PendingTest extends AnyFreeSpec:
 
     "evalNow returns a payload unwrapped" in {
         val inner: Int < Ask   = ask.map(_ + 1)
-        val payload: Int < Ask = settled(inner).evalNow.getOrElse(0)
+        val payload: Int < Ask = Kyo.lift(inner).evalNow.getOrElse(0)
         assert(eval(answerAsk(41)(payload)) == 42)
     }
 
     "flatten runs a nested payload" in {
         val inner: Int < Ask = ask.map(_ + 1)
-        assert(eval(answerAsk(41)(settled(inner).flatten)) == 42)
+        assert(eval(answerAsk(41)(Kyo.lift(inner).flatten)) == 42)
     }
 
     "flatten merges the effects of both layers" in {
@@ -559,22 +558,19 @@ class PendingTest extends AnyFreeSpec:
     }
 
     "a computation as a value round-trips through the nested box" in {
-        def box[A](v: A): A < Any    = v
         val inner: Int < Any         = (1: Int < Any).map(_ + 1)
-        val outer: (Int < Any) < Any = box(inner)
+        val outer: (Int < Any) < Any = Kyo.lift(inner)
         assert(outer.eval.eval == 2)
     }
 
     "a computation as a value survives mapping" in {
-        def box[A](v: A): A < Any = v
-        val inner: Int < Any      = (1: Int < Any).map(_ + 1)
-        val v: Int < Any          = box(inner).map(c => c.map(_ * 10))
+        val inner: Int < Any = (1: Int < Any).map(_ + 1)
+        val v: Int < Any     = Kyo.lift(inner).map(c => c.map(_ * 10))
         assert(v.eval == 20)
     }
 
     "the extension surface applies to a val of nested type" in {
-        def box[A](v: A): A < Any     = v
-        val nested: (Int < Any) < Any = box(box(41))
+        val nested: (Int < Any) < Any = Kyo.lift(Kyo.lift(41))
         assert(nested.map(c => c).eval == 41)
         assert(nested.map(c => c.map(_ + 1)).eval == 42)
         assert(nested.evalNow.isDefined)
@@ -659,20 +655,18 @@ class PendingTest extends AnyFreeSpec:
                 ContextEffect.handleInheritable(Tag[TestEffect3], value)(v)
         end TestEffect3
 
-        def lifted[A](v: A): A < Any = v
-
         "basic nesting operations" in {
-            val nested: String < TestEffect1 < Any = lifted(TestEffect1(42))
+            val nested: String < TestEffect1 < Any = Kyo.lift(TestEffect1(42))
             assert(TestEffect1.run(nested.map(c => c)).eval == "Effect1:42")
             assert(TestEffect1.run(nested.flatten).eval == "Effect1:42")
 
-            val result = lifted(TestEffect1(5)).map(_.map(s => TestEffect1(s.length)))
+            val result = Kyo.lift(TestEffect1(5)).map(_.map(s => TestEffect1(s.length)))
             assert(TestEffect1.run(result).eval == "Effect1:9")
         }
 
         "multiple effects" in {
             val comp: Int < TestEffect2 < TestEffect1 =
-                lifted(TestEffect1(10)).map(_.map(s => lifted(TestEffect2(s))))
+                Kyo.lift(TestEffect1(10)).map(_.map(s => Kyo.lift(TestEffect2(s))))
 
             val result = TestEffect1.run(comp.map(c => TestEffect2.run(c)))
             assert(result.eval == "Effect1:10".length + 10)
@@ -690,86 +684,86 @@ class PendingTest extends AnyFreeSpec:
         end drainedBudget
 
         "map over a nested value denied by the budget defers the wrapped value" in {
-            val nested: Int < TestEffect2 < Any = lifted(TestEffect2("hello"))
+            val nested: Int < TestEffect2 < Any = Kyo.lift(TestEffect2("hello"))
             val deferred                        = drainedBudget(nested.map(c => TestEffect2.run(c)))
             assert(deferred.eval == "hello".length + 10)
         }
 
         "flatMap over a nested value denied by the budget defers the wrapped value" in {
-            val nested: Int < TestEffect2 < Any = lifted(TestEffect2("hello"))
+            val nested: Int < TestEffect2 < Any = Kyo.lift(TestEffect2("hello"))
             val deferred                        = drainedBudget(nested.flatMap(_.handle(TestEffect2.run)))
             assert(deferred.eval == "hello".length + 10)
         }
 
         "flatten over a doubly nested value denied by the budget strips exactly one level" in {
             val inner: Int < TestEffect2              = TestEffect2("hello")
-            val nested: Int < TestEffect2 < Any < Any = lifted(lifted(inner): Int < TestEffect2 < Any)
+            val nested: Int < TestEffect2 < Any < Any = Kyo.lift(Kyo.lift(inner): Int < TestEffect2 < Any)
             val deferred: Int < TestEffect2 < Any     = drainedBudget(nested.flatten)
             val data                                  = deferred.eval
             assert(TestEffect2.run(data).eval == "hello".length + 10)
         }
 
         "andThen over a nested value denied by the budget discards it unevaluated" in {
-            val nested: Int < TestEffect2 < Any = lifted(TestEffect2("hello"))
+            val nested: Int < TestEffect2 < Any = Kyo.lift(TestEffect2("hello"))
             val deferred                        = drainedBudget(nested.andThen(99: Int < Any))
             assert(deferred.eval == 99)
         }
 
         "unit over a nested value denied by the budget discards it unevaluated" in {
-            val nested: Int < TestEffect2 < Any = lifted(TestEffect2("hello"))
+            val nested: Int < TestEffect2 < Any = Kyo.lift(TestEffect2("hello"))
             val deferred                        = drainedBudget(nested.unit)
             assert(deferred.eval == ())
         }
 
         "a doubly nested value denied by the budget strips exactly one level under map" in {
             val inner: Int < TestEffect2              = TestEffect2("hello")
-            val nested: Int < TestEffect2 < Any < Any = lifted(lifted(inner): Int < TestEffect2 < Any)
+            val nested: Int < TestEffect2 < Any < Any = Kyo.lift(Kyo.lift(inner): Int < TestEffect2 < Any)
             val deferred: Int < TestEffect2 < Any     = drainedBudget(nested.map(c => c))
             val data                                  = deferred.eval
             assert(TestEffect2.run(data).eval == "hello".length + 10)
         }
 
         "map on nested" in {
-            val nested: String < TestEffect1 < Any = lifted(TestEffect1(50))
+            val nested: String < TestEffect1 < Any = Kyo.lift(TestEffect1(50))
 
             val mapped: Int < TestEffect1 = nested.map(_.map(_.length))
             assert(TestEffect1.run(mapped).eval == "Effect1:50".length)
 
-            val mapped2 = nested.map(v => lifted(v.map(_.length))).map(c => TestEffect1.run(c))
+            val mapped2 = nested.map(v => Kyo.lift(v.map(_.length))).map(c => TestEffect1.run(c))
             assert(mapped2.eval == "Effect1:50".length)
 
-            val mapped3 = nested.map(v => lifted(v.map(_.length))).map(v => lifted(TestEffect1.run(v)))
+            val mapped3 = nested.map(v => Kyo.lift(v.map(_.length))).map(v => Kyo.lift(TestEffect1.run(v)))
             assert(mapped3.eval.eval == "Effect1:50".length)
         }
 
         "unit on nested" in {
-            val comp = lifted(TestEffect1(60)).map(_.unit).handle(TestEffect1.run)
+            val comp = Kyo.lift(TestEffect1(60)).map(_.unit).handle(TestEffect1.run)
             assert(comp.eval == ())
 
-            val comp2 = lifted(TestEffect1(60)).map(v => v.unit.handle(TestEffect1.run))
+            val comp2 = Kyo.lift(TestEffect1(60)).map(v => v.unit.handle(TestEffect1.run))
             assert(comp2.eval == ())
 
-            val comp4 = lifted(TestEffect1(60)).map(v => lifted(v.unit)).map(v => lifted(v.handle(TestEffect1.run)))
+            val comp4 = Kyo.lift(TestEffect1(60)).map(v => Kyo.lift(v.unit)).map(v => Kyo.lift(v.handle(TestEffect1.run)))
             assert(comp4.eval.eval == ())
         }
 
         "andThen on nested" in {
-            val comp = lifted(TestEffect1(60)).andThen(TestEffect1(70)).handle(TestEffect1.run)
+            val comp = Kyo.lift(TestEffect1(60)).andThen(TestEffect1(70)).handle(TestEffect1.run)
             assert(comp.eval == "Effect1:70")
 
             val comp2 =
-                lifted(TestEffect1(60)).andThen(lifted(TestEffect2("Effect")))
+                Kyo.lift(TestEffect1(60)).andThen(Kyo.lift(TestEffect2("Effect")))
                     .handle(TestEffect1.run).map(_.handle(TestEffect2.run))
             assert(comp2.eval == 16)
 
             val comp3 =
-                lifted(TestEffect1(60)).andThen(lifted(TestEffect2("Effect")))
+                Kyo.lift(TestEffect1(60)).andThen(Kyo.lift(TestEffect2("Effect")))
                     .handle(TestEffect1.run).flatten.handle(TestEffect2.run)
             assert(comp3.eval == 16)
         }
 
         "handle on nested" in {
-            val nested: String < TestEffect1 < Any = lifted(TestEffect1(80))
+            val nested: String < TestEffect1 < Any = Kyo.lift(TestEffect1(80))
 
             val result = nested.handle(comp => TestEffect1.run(comp.flatten).map(_.length))
             assert(result.eval == 10)
@@ -783,7 +777,7 @@ class PendingTest extends AnyFreeSpec:
 
         "method returning nested computation" in {
             def compute(x: Int): String < TestEffect1 < TestEffect2 =
-                TestEffect2(x.toString).map(n => lifted(TestEffect1(n)))
+                TestEffect2(x.toString).map(n => Kyo.lift(TestEffect1(n)))
 
             val result = TestEffect2.run(compute(200).map(c => TestEffect1.run(c)))
             assert(result.eval == "Effect1:13")
@@ -794,7 +788,7 @@ class PendingTest extends AnyFreeSpec:
 
         "nested effect suspensions" in {
             val nested: Int < TestEffect2 < TestEffect1 =
-                TestEffect1(1).map(_ => lifted(TestEffect2("hello")))
+                TestEffect1(1).map(_ => Kyo.lift(TestEffect2("hello")))
 
             val result = TestEffect1.run(nested.map(TestEffect2.run))
             assert(result.eval == 15)
@@ -873,7 +867,7 @@ class PendingTest extends AnyFreeSpec:
             def run[A, S](v: => A < (Bump & S)) =
                 ArrowEffect.handleCont(Tag[Bump], v)([C] => (input, cont) => cont(input + 1), a => a)
 
-            lifted(bump(1)).evalNow match
+            Kyo.lift(bump(1)).evalNow match
                 case Maybe.Absent => fail()
                 case Maybe.Present(v) =>
                     assert(run(v).evalNow == Maybe.Absent)
