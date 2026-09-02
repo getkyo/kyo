@@ -213,7 +213,7 @@ object ArrowEffect:
                 case kyo: Pending.Handle[?, ?, ?, ?, ?, ?] => loop(kyo.value)
                 case kyo: Pending.Park[?, ?]               => loop(kyo.value)
                 case kyo: Pending.Defer[?, ?, ?, ?]        => loop(kyo.value)
-                case _                                 => ()
+                case _                                     => ()
         loop(v)
     end dispatchFirst
 

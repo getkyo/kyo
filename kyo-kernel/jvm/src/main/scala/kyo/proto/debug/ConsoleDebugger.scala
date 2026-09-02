@@ -83,15 +83,15 @@ final class ConsoleDebugger extends Debugger:
             case _: Pending.SuspendArrow[?, ?, ?, ?, ?, ?] => "SuspendArrow"
             case _: Pending.SuspendContext[?, ?, ?, ?]     => "SuspendContext"
             case _: Pending.Handle[?, ?, ?, ?, ?, ?]       => "Handle"
-            case _: Arrow.Id[?]                        => "Id"
-            case _: Arrow.Chain[?, ?, ?, ?]            => "Chain"
-            case _: Loop.Continue[?]                   => "Continue"
-            case _: Loop.Continue2[?, ?]               => "Continue2"
-            case _: Loop.Continue3[?, ?, ?]            => "Continue3"
-            case _: Loop.Continue4[?, ?, ?, ?]         => "Continue4"
-            case _: Arrow.Step[?, ?, ?]                => "Step"
-            case _: Arrow.Transform[?, ?, ?]           => "Transform"
-            case v                                     => v.getClass.getSimpleName
+            case _: Arrow.Id[?]                            => "Id"
+            case _: Arrow.Chain[?, ?, ?, ?]                => "Chain"
+            case _: Loop.Continue[?]                       => "Continue"
+            case _: Loop.Continue2[?, ?]                   => "Continue2"
+            case _: Loop.Continue3[?, ?, ?]                => "Continue3"
+            case _: Loop.Continue4[?, ?, ?, ?]             => "Continue4"
+            case _: Arrow.Step[?, ?, ?]                    => "Step"
+            case _: Arrow.Transform[?, ?, ?]               => "Transform"
+            case v                                         => v.getClass.getSimpleName
         counts = counts.updated(name, counts.getOrElse(name, 0) + 1)
         println(s"$pad🧮 alloc: $value")
         println(s"$pad${ConsoleDebugger.layoutLine(value.getClass)}")
