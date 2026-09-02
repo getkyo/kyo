@@ -273,7 +273,7 @@ and `map`) mixes in. A `Handle`, a bare `SuspendArrow` or `SuspendContext`, a `P
 arrow-form `Defer` body is treated as settled: `repeat` skips it, `indexed` returns the node as
 the loop's value. Tests: LoopTest "repeat suspends a bare operation each time", "repeat enters a
 context region each time", "repeat acquires a bracket each time", "indexed loops a bare operation
-whose answer is an outcome". Fix: the `Pending` arm in all six sites. Status: open.
+whose answer is an outcome". Fix: the `Pending` arm in all six sites. Status: fixed in `dcb877587f`, verified on JVM, JS and Native.
 
 ### S2. A context region's exit re-adds a key it does not own
 
@@ -287,7 +287,7 @@ subtype region exits". Fix: the recomputation at exit and in `rebound` walks the
 exact tag; when none is found the exact key is removed and the subtype-aware read still sees the
 outer region's own key. Recomputing from the stack (rather than saving the prior binding at
 entry) is the right shape because the stack is the source of truth once S3 updates a region's
-state in place. Status: open.
+state in place. Status: fixed in `ccafba44c9` (`Stack.findExact` at exit and in `rebound`), verified on JVM, JS and Native.
 
 ### S3. The Contextual isolate's join lands on copies of the regions
 
@@ -299,7 +299,10 @@ region that closes after the restore", "an isolate cycle fires done once, for th
 installed". Fix direction: apply the joined state to the owning region's slot on the live stack
 (the region found by handler identity) and update the context, pushing nothing; the evaluator's
 `Snapshot` arm has to give the node the means to do that. Needs a derivation before the edit.
-Ruling on the second test's law (copies are not regions to the hooks) is taken. Status: open.
+Ruling pending on the second test's law: whether the fork and join copies are regions to the
+user's hooks (`done` for the child copy at 20, then the origin at 30; the bracket's `Cell.inert`
+fork is the precedent and this is the recommendation) or silent (the origin only, at 30). Under
+either, the test's current `List("done 10")` is wrong, since the origin exits joined. Status: open.
 
 ### S4. A debt re-homed below the answering region is never settled by the resume
 
@@ -312,7 +315,7 @@ it with the "remainder discarded" failure. Brackets are masked by the Cell. Test
 ContextEffectTest "a region crossed to a foreign loop answered with a pending outcome completes
 without a release", "a region crossed to a foreign clause that resumes inside a nested region
 completes without a release". Fix: settle by snapshot identity in whatever lane holds the debt.
-Status: open.
+Status: fixed in `ccafba44c9` (`Stack.settle` by snapshot identity across lanes), verified on JVM, JS and Native.
 
 ### S5. A `ContextEffect.handle` node derives its state on every read, and its settled arm derives from nothing
 
@@ -321,7 +324,7 @@ settled arm runs `done(derive(Maybe.empty))` when the expression is built, blind
 enclosing binding. Tests: EvalTest "an abandoned region value derives its state once and releases
 that state", ContextEffectTest "a settled body still derives from the binding around it". Fix:
 derive once per node, and make the settled arm observationally equal to the deferred one (the
-region node, entered under the enclosing binding). Status: open.
+region node, entered under the enclosing binding). Status: fixed in `ccafba44c9` (one region node for both bodies, state derived once), verified on JVM, JS and Native.
 
 ### S6. The effect trace dedupes by the identity of the pooled `Stack`
 
@@ -329,7 +332,7 @@ region node, entered under the enclosing binding). Status: open.
 instance the next eval borrows again, so a failure rethrown through a later eval on the same
 thread never gets that eval's regions. Test: EffectTraceTest "a failure rethrown through a later
 eval on the same thread names the later eval's region". Fix: dedupe per eval, not per stack
-object. Status: open.
+object. Status: fixed in `ccafba44c9` (a per-eval epoch on the pooled stack), verified on JVM, JS and Native.
 
 ### S7. Nested `Eval.partial` (dropped)
 
