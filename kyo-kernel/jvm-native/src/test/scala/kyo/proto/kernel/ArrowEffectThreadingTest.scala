@@ -70,7 +70,8 @@ class ArrowEffectThreadingTest extends AnyFreeSpec:
                     [C] => (s, _) => Effect.defer(Loop.continue(s + 1, 1: Int < Any)),
                     (s, a) => s + a
                 )
-                result = handled.eval
+                result =
+                    handled.eval
             ,
             "small-stack",
             256 * 1024

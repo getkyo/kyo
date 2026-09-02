@@ -678,7 +678,7 @@ class EvalTest extends AnyFreeSpec:
             val parked = Eval.partial(outer)
             assert(parked.isInstanceOf[Park[?, ?]])
             assert(parked.asInstanceOf[Park[?, ?]].entries.regions == 2)
-            discard(Eval.release(parked, Boom).eval)
+            Eval.release(parked, Boom)
             assert(log.toList == List("inner", "outer"))
         }
 
@@ -702,11 +702,11 @@ class EvalTest extends AnyFreeSpec:
                     join = (parent: Int, _: Int, _: Int) => parent,
                     release = (_: Int, _: Throwable) => discard(log += "outer")
                 )(inner)
-            discard(Eval.release(outer, Boom).eval)
+            Eval.release(outer, Boom)
             assert(log.toList == List("inner", "outer"))
 
             log.clear()
-            discard(Eval.release(outer.map(_ + 1), Boom).eval)
+            Eval.release(outer.map(_ + 1), Boom)
             assert(log.toList == List("inner", "outer"))
         }
 
@@ -722,12 +722,12 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "release of a settled value or an obligation-free computation owes nothing" in {
-            discard(Eval.release(42: Int < Any, Boom).eval)
+            Eval.release(42: Int < Any, Boom)
             var ran = false
             val v: Int < Ask = ask.map { a =>
                 ran = true; a
             }
-            discard(Eval.release(v, Boom).eval)
+            Eval.release(v, Boom)
             assert(!ran)
         }
 
@@ -749,7 +749,7 @@ class EvalTest extends AnyFreeSpec:
                 )(body)
             val parked = Eval.partial(handled)
             assert(parked.isInstanceOf[Park[?, ?]])
-            discard(Eval.release(parked, Boom).eval)
+            Eval.release(parked, Boom)
             assert(log.toList == List(7))
         }
 
@@ -817,7 +817,7 @@ class EvalTest extends AnyFreeSpec:
                 )(inner)
             val parked = Eval.partial(handled)
             assert(parked.isInstanceOf[Park[?, ?]])
-            discard(Eval.release(parked, cause).eval)
+            Eval.release(parked, cause)
             assert(log.toList == List("outer"))
             assert(cause.getSuppressed.exists(_ eq Bad))
         }
@@ -849,7 +849,7 @@ class EvalTest extends AnyFreeSpec:
                 )(inner)
             val parked = Eval.partial(handled)
             assert(parked.isInstanceOf[Park[?, ?]])
-            discard(Eval.release(parked, cause).eval)
+            Eval.release(parked, cause)
             assert(log.toList == List("outer"))
             assert(cause.getSuppressed.isEmpty)
         }

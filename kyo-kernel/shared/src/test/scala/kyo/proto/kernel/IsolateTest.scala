@@ -582,7 +582,7 @@ class IsolateTest extends Test:
         "an intervening map leaves the crossing resolving against the stack live at its point" in {
             val composed = crossing(read1).map(child => child.map(_ + 1))
             val child    = bind1(7)(composed).eval
-            assert(child.eval == 8)
+            assert(child == 8)
         }
 
         "the fused form hands the crossing straight to its consumer" in {

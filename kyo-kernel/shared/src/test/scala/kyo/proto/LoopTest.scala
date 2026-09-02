@@ -87,7 +87,7 @@ class LoopTest extends AnyFreeSpec:
 
         "suspend at the beginning" in {
             val result = Loop(1)(i =>
-                defer {
+                Effect.defer {
                     if i < 5 then Loop.continue(i + 1) else Loop.done(i)
                 }
             )
@@ -178,7 +178,7 @@ class LoopTest extends AnyFreeSpec:
 
         "suspend at the beginning" in {
             val result = Loop(1, 1)((i, j) =>
-                defer {
+                Effect.defer {
                     if i + j < 5 then Loop.continue(i + 1, j + 1) else Loop.done(i + j)
                 }
             )
@@ -258,7 +258,7 @@ class LoopTest extends AnyFreeSpec:
 
         "suspend at the beginning" in {
             val result = Loop(1, 1, 1)((i, j, k) =>
-                defer {
+                Effect.defer {
                     if i + j + k < 5 then Loop.continue(i + 1, j + 1, k + 1) else Loop.done(i + j + k)
                 }
             )
@@ -339,7 +339,7 @@ class LoopTest extends AnyFreeSpec:
 
         "suspend at the beginning" in {
             val result = Loop(1, 1, 1, 1)((i, j, k, l) =>
-                defer {
+                Effect.defer {
                     if i + j + k + l < 5 then Loop.continue(i + 1, j + 1, k + 1, l + 1) else Loop.done(i + j + k + l)
                 }
             )
@@ -763,7 +763,7 @@ class LoopTest extends AnyFreeSpec:
 
         "a done payload that is a computation held as a value stays data" in {
             var evaluated = 0
-            val payload: Int < Any = defer {
+            val payload: Int < Any = Effect.defer {
                 evaluated += 1
                 2
             }
@@ -780,7 +780,7 @@ class LoopTest extends AnyFreeSpec:
     "outcome payloads held as data" - {
 
         def payloadOf(counter: () => Unit): Int < Any =
-            defer {
+            Effect.defer {
                 counter()
                 2
             }
@@ -814,7 +814,7 @@ class LoopTest extends AnyFreeSpec:
             var evaluated = 0
             val payload   = payloadOf(() => evaluated += 1)
             val looped = Loop(0) { i =>
-                defer {
+                Effect.defer {
                     if i < 3 then Loop.continue(i + 1)
                     else Loop.done[Int, Int < Any](payload)
                 }
@@ -829,7 +829,7 @@ class LoopTest extends AnyFreeSpec:
             var evaluated = 0
             val payload   = payloadOf(() => evaluated += 1)
             val looped = Loop.indexed { idx =>
-                defer {
+                Effect.defer {
                     if idx == 0 then Loop.continue
                     else Loop.done[Unit, Int < Any](payload)
                 }
@@ -857,7 +857,7 @@ class LoopTest extends AnyFreeSpec:
             var rounds    = 0
             val payload   = payloadOf(() => evaluated += 1)
             val looped = Loop.foreach {
-                defer {
+                Effect.defer {
                     if rounds < 2 then
                         rounds += 1
                         Loop.continue
