@@ -248,6 +248,16 @@ boundary), plus hostile pins: done-of-`Continue2`, done-of-pending, `B = Any`. T
 kernel's `Continue extends Serializable` design note is the prior art for proving an arm
 unreachable instead of guarding it.
 
+Closed (2026-09-02). The guard is the one `<` uses, applied at the outcome boundary:
+`Loop.done` wraps a `Continue*` payload in `Done` and nests every other payload
+(Loop.scala:124-140), so a done payload is never confused with a continue or with the clause's
+suspended outcome. Pinned from the public surface: LoopTest "outcome payloads that are outcomes"
+(a done payload that is itself a `Continue`, one of type `Any` holding a `Continue`, a suspended
+done payload that is a `Continue`, an `Any`-typed payload holding a computation),
+PendingTest "a loop can end its region with a computation result" and its effectful twin, and
+ArrowEffectTest "an Any-typed Continue2 does not conform to the clause's outcome without
+Loop.done" for the compile-time closure.
+
 ### Q1. The debugger gate
 
 `Debugger.enabled` is an `inline val` and instrumenting a build is a source edit. Measured cost with
