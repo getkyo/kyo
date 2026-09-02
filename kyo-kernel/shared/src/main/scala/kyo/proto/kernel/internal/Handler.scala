@@ -136,7 +136,7 @@ end Handler
         private[kyo] def release(state: State, ex: Throwable): Unit = ()
     end ContextHandler
 
-    // TODO can we move this to Eval? 
+    // TODO can we move this to Eval?
     private[kyo] inline def answersLoopState[State, I[_], O[_], E <: ArrowEffect[I, O], A, B, S, C](
         inline effectTag: Tag[E],
         inline handle: [X] => (State, I[X]) => Outcome2[State, O[X] < (E & S), B < (S)] < S,

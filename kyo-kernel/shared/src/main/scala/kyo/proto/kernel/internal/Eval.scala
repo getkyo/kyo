@@ -284,7 +284,7 @@ import scala.util.control.NonFatal
             stack.pop()
             if stack.owesAny then
                 drainDiscarded(stack.takePopped())
-            val j = stack.find(hc.tag)
+            val j = stack.findExact(hc.tag)
             if j < 0 then ctx.remove(hc.tag)
             else ctx.update(hc.tag, stack.state(j).asInstanceOf[VX])
         end contextExit

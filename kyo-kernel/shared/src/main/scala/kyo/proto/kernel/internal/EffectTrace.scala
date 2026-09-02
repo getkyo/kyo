@@ -25,6 +25,7 @@ final class EffectTrace extends Exception(null, null, false, false):
 
 end EffectTrace
 
+// TODO please review if all the APIs are still necessary and if we can simplify them. Also check if we can improve naming for clarity
 private[kernel] object EffectTrace:
 
     private val noElements = new Array[StackTraceElement](0)

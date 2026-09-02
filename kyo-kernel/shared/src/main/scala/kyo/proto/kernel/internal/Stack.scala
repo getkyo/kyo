@@ -6,6 +6,7 @@ import kyo.proto.kernel.Arrow
 import kyo.proto.kernel.Effect
 import scala.annotation.tailrec
 
+// TODO please review if all the APIs are still necessary and if we can simplify them. Also check if we can improve naming for clarity
 final private[kernel] class Stack:
 
     private var handlers      = new Array[Handler[?, ?, ?]](0)
@@ -150,6 +151,14 @@ final private[kernel] class Stack:
             else loop(i - 1)
         loop(size - 1)
     end find
+
+    def findExact[E <: Effect](tag: kyo.Tag[E]): Int =
+        @tailrec def loop(i: Int): Int =
+            if i < 0 then -1
+            else if handlers(i).tag.erased =:= tag.erased then i
+            else loop(i - 1)
+        loop(size - 1)
+    end findExact
 
     def dump(from: Int): Stack.Snapshot =
         val count = size - from
