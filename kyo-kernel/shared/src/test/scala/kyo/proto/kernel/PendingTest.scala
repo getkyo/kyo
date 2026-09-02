@@ -515,6 +515,30 @@ class PendingTest extends AnyFreeSpec:
             )
             assert(result.eval == 6)
         }
+
+        "works with two functions" in {
+            val result = (5: Int < Any).handle(
+                _.map(_ + 1),
+                _.map(_ * 2)
+            )
+            assert(result.eval == 12)
+        }
+
+        "works with ten functions" in {
+            val result = (5: Int < Any).handle(
+                _.map(_ + 1),
+                _.map(_ * 2),
+                _.map(_.toString),
+                _.map(_.length),
+                _.map(_ > 1),
+                _.map(if _ then "Yes" else "No"),
+                _.map(_.toLowerCase),
+                _.map(_.length),
+                _.map(_ * 2),
+                _.map(_ > 5)
+            )
+            assert(result.eval == true)
+        }
     }
 
     "map on a settled value runs eagerly" in {

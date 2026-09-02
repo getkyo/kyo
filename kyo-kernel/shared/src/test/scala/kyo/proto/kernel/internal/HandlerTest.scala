@@ -167,7 +167,9 @@ class HandlerTest extends AnyFreeSpec:
         "a loop handler's failure carries the suspension" in {
             val stack = Stack.borrow()
             try
-                val ex = intercept[Boom](throwingLoopHandler.running(0, (), node, stack))
+                val handler = throwingLoopHandler
+                stack.push(handler, 0, Arrow.id[Int])
+                val ex = intercept[Boom](handler.running(0, (), ask.asInstanceOf[Kyo.Suspend[?, ?, ?, ?]], stack, 0))
                 val c  = carrier(ex)
                 assert(c.nonEmpty)
                 assert(c.get.elements.exists(_.getFileName == "HandlerTest.scala"))

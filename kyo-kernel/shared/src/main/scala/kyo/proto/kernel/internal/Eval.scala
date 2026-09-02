@@ -105,7 +105,7 @@ import scala.util.control.NonFatal
 
     private def unanswerable(handler: Handler[?, ?, ?]): Nothing = bug(s"unhandled: $handler")
 
-    private def dumped(stack: Stack, idx: Int, kyo: Kyo.Suspend[?, ?, ?, ?]): Stack.Snapshot =
+    private[kernel] def dumped(stack: Stack, idx: Int, kyo: Kyo.Suspend[?, ?, ?, ?]): Stack.Snapshot =
         val entries = stack.dump(idx + 1)
         Debugger.whenEnabled {
             var i = entries.regions - 1
@@ -311,7 +311,7 @@ import scala.util.control.NonFatal
                                                 loop(result, next, Arrow.id, ctx)
                                         end match
                                     case handler: Handler.LoopHandler[VX, IX, OX, EX, C, Y, S2] @unchecked =>
-                                        val outcome0 = handler.running(stack.state(idx).asInstanceOf[VX], kyo.input, kyo, stack)
+                                        val outcome0 = handler.running(stack.state(idx).asInstanceOf[VX], kyo.input, kyo, stack, idx)
                                         stack.scratch = outcome0
                                         Debugger.onResult(outcome0)
                                         outcome0 match

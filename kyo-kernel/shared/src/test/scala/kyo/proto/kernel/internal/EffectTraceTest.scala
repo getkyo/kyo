@@ -57,7 +57,7 @@ class EffectTraceTest extends AnyFreeSpec:
         assert(ex.getStackTrace.exists(e => e.getFileName == "EffectTraceTest.scala"))
     }
 
-    "nested evals accumulate their regions" in {
+    "nested evals accumulate their regions innermost first" in {
         val inner = runAsk(ask.map(_ => (throw Boom()): Int))(1)
 
         val outer: Int < Any = runSay(say("x").map { _ =>
@@ -68,8 +68,22 @@ class EffectTraceTest extends AnyFreeSpec:
         val trace = ex.getStackTrace
         assert(trace.exists(_.getClassName == Tag[Ask].show))
         assert(trace.exists(_.getClassName == Tag[Say].show))
-
+        val regions = trace.filter(_.getMethodName == "handle").map(_.getClassName).toList
+        assert(regions.indexOf(Tag[Ask].show) < regions.indexOf(Tag[Say].show))
         assert(ex.getSuppressed.count(_.isInstanceOf[EffectTrace]) == 1)
+    }
+
+    "a fused region names the body, then the region" in {
+        val fused: Int < Any =
+            ArrowEffect.handleLoopWith[Const[Unit], Const[Int], Ask, Int, Int, Any, Any](Tag[Ask], innerStep(ask))(
+                [C] => _ => Loop.continue((), 1: Int < Any),
+                a => a
+            )((_: Int) + 1)
+        val ex  = intercept[Boom](eval(fused))
+        val els = carrier(ex).get.elements.toList
+        assert(els.exists(_.getMethodName == "innerStep"))
+        assert(els.exists(_.getMethodName == "handle"))
+        assert(els.indexWhere(_.getMethodName == "innerStep") < els.indexWhere(_.getMethodName == "handle"))
     }
 
     "a recovery clause inspects the enriched exception" in {

@@ -4,6 +4,7 @@ import kyo.Frame
 import kyo.Maybe
 import kyo.Maybe.Absent
 import kyo.Tag
+import kyo.discard
 import kyo.proto.kernel.<
 import kyo.proto.kernel.Arrow
 import kyo.proto.kernel.ArrowEffect
@@ -56,12 +57,14 @@ end Handler
         private[kyo] def running[X](
             state: State,
             input: I[X],
-            kyo: Pending[?, ?],
-            stack: Stack
+            kyo: Kyo.Suspend[?, ?, ?, ?],
+            stack: Stack,
+            idx: Int
         ): Outcome2[State, O[X] < (E & S), B < S] < S =
             try run(state, input)
             catch
                 case ex =>
+                    discard(Eval.dumped(stack, idx, kyo))
                     EffectTrace.attach(ex, kyo, stack)
                     throw ex
 

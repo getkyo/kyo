@@ -30,6 +30,18 @@ class ArrowEffectTest extends AnyFreeSpec:
 
     private val Period = Safepoint.period()
 
+    sealed trait Wrap extends ArrowEffect[Const[Unit], Const[Unit]]
+
+    def recovering[A, S](v: A < (Wrap & S))(f: Throwable => A): A < S =
+        ArrowEffect.handleCont(Tag[Wrap], v)([C] => (_, cont) => cont(()), a => a, ex => Maybe(f(ex)))
+
+    sealed trait TestEffect1 extends ArrowEffect[Const[Int], Const[String]]
+
+    def testEffect1(i: Int): String < TestEffect1 = ArrowEffect.suspend[Any](Tag[TestEffect1], i)
+
+    def burn(n: Int): Int < Any =
+        if n == 0 then 0 else (0: Int < Any).map(_ => burn(n - 1))
+
     "handleLoop" - {
         "answers every operation in place" in {
             def loop(i: Int): Int < Ask =
@@ -2092,6 +2104,190 @@ class ArrowEffectTest extends AnyFreeSpec:
                 (_, a) => a
             )
             assert(eval(result) == (Some(1), Some(5)))
+        }
+    }
+
+    "recover, ported from catching" - {
+        "the recovery dispatches on the exception type" in {
+            def recovered(ex: Throwable): String < Any =
+                recovering(Effect.defer((throw ex): String)) {
+                    case _: IllegalArgumentException => "Illegal Argument"
+                    case _: RuntimeException         => "Runtime"
+                    case _                           => "Other"
+                }
+            assert(eval(recovered(new RuntimeException())) == "Runtime")
+            assert(eval(recovered(new IllegalArgumentException())) == "Illegal Argument")
+            assert(eval(recovered(new Exception())) == "Other")
+        }
+
+        "a throw after a handleFirst region's exit reaches the recovery" in {
+            val region: String < TestEffect1 =
+                ArrowEffect.handleFirst(Tag[TestEffect1], testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
+                    handle = [C] => (input, cont) => cont(input.toString),
+                    done = a => a
+                )
+            val effect: String < TestEffect1 =
+                recovering(region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s))(_ => "caught")
+            val result = ArrowEffect.handleCont(Tag[TestEffect1], effect)([C] => (input, cont) => cont(input.toString))
+            assert(eval(result) == "caught")
+        }
+
+        "a throw after a stateful region's exit reaches the recovery" in {
+            val region: String < Any =
+                ArrowEffect.handleLoopState(Tag[TestEffect1], 7, testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
+                    [C] => (state, input) => Loop.continue(state + 1, (input * state).toString: String < Any),
+                    (_, a) => a
+                )
+            val effect = recovering(region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s))(_ => "caught")
+            assert(eval(effect) == "caught")
+        }
+
+        "a throw after a stateful region reached through a resumed continuation reaches the recovery" in {
+            val effect: String < TestEffect1 = recovering {
+                testEffect1(3).map { prefix =>
+                    val region: String < Any =
+                        ArrowEffect.handleLoopState(Tag[TestEffect1], 7, testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
+                            [C] => (state, input) => Loop.continue(state + 1, (input * state).toString: String < Any),
+                            (_, a) => a
+                        )
+                    region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else prefix + s)
+                }
+            }(_ => "caught")
+            val result = ArrowEffect.handleCont(Tag[TestEffect1], effect)([C] => (input, cont) => cont(input.toString))
+            assert(eval(result) == "caught")
+        }
+
+        "a recovery catches past the budget rescue" in {
+            val effect = recovering(burn(Period * 2).map(_ => (throw new RuntimeException("Test exception")): Int))(_ => -1)
+            assert(eval(effect) == -1)
+        }
+
+        "a recovery catches past the budget inside a stateful region" in {
+            val body = testEffect1(1).map(a => burn(Period * 2).map(_ => testEffect1(2).map(b => a + b)))
+            val region: String < Any =
+                ArrowEffect.handleLoopState(Tag[TestEffect1], 7, body)(
+                    [C] => (state, input) => Loop.continue(state + 1, (input * state).toString: String < Any),
+                    (_, a) => a
+                )
+            val effect = recovering(region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s))(_ => "caught")
+            assert(eval(effect) == "caught")
+        }
+
+        "a recovery does not reach into a boxed computation" in {
+            val fallback: String < TestEffect1 = "caught"
+            val boxed: (String < TestEffect1) < Any =
+                recovering(box(testEffect1(1).map(_ => (throw new RuntimeException("Test exception")): String)))(_ => fallback)
+            val inner: String < TestEffect1 = eval(boxed)
+            val handled                     = ArrowEffect.handleCont(Tag[TestEffect1], inner)([C] => (input, cont) => cont(input.toString))
+            kyo.discard(intercept[RuntimeException](eval(handled)))
+        }
+
+        "a recovery guards a stateful region across a park" in {
+            val body = testEffect1(1).map { a =>
+                requestStop()
+                testEffect1(2).map(b => a + b)
+            }
+            val region: String < Any =
+                ArrowEffect.handleLoopState(Tag[TestEffect1], 7, body)(
+                    [C] => (state, input) => Loop.continue(state + 1, (input * state).toString: String < Any),
+                    (_, a) => a
+                )
+            val effect = recovering(region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s))(_ => "caught")
+            val parked = Eval.partial(effect)
+            assert(parked.isInstanceOf[Pending[?, ?]])
+            assert(eval(parked) == "caught")
+        }
+
+        "dispatchFirst peels a stateless and a stateful region node" in {
+            var seen = ""
+            val inner: Int < (Ask & Say) =
+                ArrowEffect.handleLoopState(Tag[Ask], 0, say("deep").map(_ => ask))(
+                    [X] => (state, _) => Loop.continue(state + 1, state: Int < Any),
+                    (_, a) => a
+                )
+            val outer: Int < Say = ArrowEffect.handleCont(Tag[Ask], inner)([X] => (_, cont) => cont(1), a => a)
+            ArrowEffect.dispatchFirst(Tag[Say], outer)([X] => input => seen = input)
+            assert(seen == "deep")
+        }
+
+        "a deferred payload that throws mid answer loop cannot commit another dispatch's state or continuation" in {
+            case class Boom() extends RuntimeException
+            val body: Int < (Ask & Say) =
+                say("s").map(_ => ask.map(a => Effect.defer((throw Boom()): Int).map(_ + a)))
+            val recovered: Int < (Ask & Say) = recovering(body)(_ => -1)
+            val askRegion: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], "s0", recovered)(
+                [C] => (s, _) => Loop.continue(s + "+", 1: Int < Any),
+                (s, a) => if s == "s0+" then a else -100
+            )
+            val sayRegion: Int < Any = ArrowEffect.handleLoopState(Tag[Say], 100, askRegion)(
+                [C] => (n, _) => Loop.continue(n + 1, (): Unit < Any),
+                (n, a) => n * 1000 + a
+            )
+            assert(eval(sayRegion) == 100999)
+        }
+
+        "a clause throw passes over a recovery standing inside the region on every dispatch path" in {
+            case class Boom() extends RuntimeException
+            val body: Int < Ask = recovering(ask.map(_ + 1))(_ => -1)
+            def viaLoop: Int < Any =
+                ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => throw Boom(), a => a)
+            def viaCont: Int < Any =
+                ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, _) => throw Boom(), a => a)
+            assert((try eval(viaLoop)
+            catch case _: Boom => -2) == -2)
+            assert((try eval(viaCont)
+            catch case _: Boom => -2) == -2)
+        }
+
+        "a throwing release in a nested eval does not disarm the enclosing slice" in {
+            val inner: Int < Ask =
+                Effect.bracket(Effect.defer(1))((_, _) => throw new IllegalStateException("release"))(_ => ask.map(_ + 1))
+            val dropped: Int < Any =
+                ArrowEffect.handleCont(Tag[Ask], inner)([C] => (_, _) => -1, a => a)
+            var built = 0
+            val outer: Int < Any =
+                Effect.defer {
+                    kyo.discard(eval(dropped))
+                    0
+                }.map { z =>
+                    var acc: Int < Any = z
+                    var i              = 0
+                    while i < 100 do
+                        acc = acc.map { x =>
+                            built += 1
+                            if built == 50 then requestStop()
+                            x + 1
+                        }
+                        i += 1
+                    end while
+                    acc
+                }
+            val p = Eval.partial(outer)
+            assert(p.isInstanceOf[Pending[?, ?]])
+            assert(built >= 50 && built <= 52, s"built=$built")
+            assert(eval(p) == 100)
+            assert(built == 100)
+        }
+
+        "a throwing release on the completing path leaves the caller's safepoint state intact" in {
+            val v: Int < Ask =
+                Effect.bracket(Effect.defer(1))((_, _) => throw new IllegalStateException("release"))(_ => ask.map(_ + 1))
+            val dropped: Int < Any =
+                ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, _) => -1, a => a)
+            val slot = Safepoint.get()
+            kyo.discard(Safepoint.enter(slot))
+            kyo.discard(Safepoint.enter(slot))
+            try
+                val before = Safepoint.save(slot)
+                Safepoint.restore(slot, before)
+                kyo.discard(eval(dropped))
+                val after = Safepoint.save(slot)
+                Safepoint.restore(slot, after)
+                assert(after.equals(before))
+            finally
+                Safepoint.exit(slot)
+                Safepoint.exit(slot)
+            end try
         }
     }
 

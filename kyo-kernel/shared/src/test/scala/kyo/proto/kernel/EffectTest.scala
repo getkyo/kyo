@@ -1,13 +1,28 @@
 package kyo.proto.kernel
 
+import kyo.Const
 import kyo.Frame
+import kyo.Maybe
+import kyo.Tag
 import kyo.proto.Arrow
+import kyo.proto.Loop
 import kyo.proto.kernel.internal.Kyo
 import org.scalatest.freespec.AnyFreeSpec
 
 class EffectTest extends AnyFreeSpec:
 
     private def eval[A](v: A < Any): A = v.eval
+
+    sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
+    def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
+
+    def answerAsk[A](value: Int)(v: A < Ask): A < Any =
+        ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue((), value: Int < Any), a => a)
+
+    sealed trait Wrap extends ArrowEffect[Const[Unit], Const[Unit]]
+
+    def recovering[A](v: A < Wrap)(f: Throwable => A): A < Any =
+        ArrowEffect.handleCont(Tag[Wrap], v)([C] => (_, cont) => cont(()), a => a, ex => Maybe(f(ex)))
 
     def inc(using _frame: Frame): Arrow.Transform[Int, Int, Any] =
         new Arrow.Transform[Int, Int, Any]:
@@ -28,6 +43,17 @@ class EffectTest extends AnyFreeSpec:
         val r = d.map(_ + 1)
         assert(!ran)
         assert(eval(r) == 2)
+        assert(ran)
+    }
+
+    "defer suspends effects performed by its body" in {
+        var ran = false
+        val d: Int < Ask = Effect.defer {
+            ran = true
+            ask.map(_ + 1)
+        }
+        assert(!ran)
+        assert(eval(answerAsk(41)(d)) == 42)
         assert(ran)
     }
 
@@ -68,9 +94,28 @@ class EffectTest extends AnyFreeSpec:
         assert(order == List(3, 2, 1))
     }
 
+    "defer with a recovery inside" in {
+        val effect = Effect.defer(recovering(Effect.defer((throw new RuntimeException("Test exception")): Int))(_ => 42))
+        assert(eval(effect) == 42)
+    }
+
+    "combining multiple effects" in {
+        val effect =
+            for
+                a <- Effect.defer(1)
+                b <- recovering(Effect.defer(2 / 0))(_ => 2)
+                c <- Effect.defer(3)
+            yield a + b + c
+        assert(eval(effect) == 6)
+    }
+
     "the deferral node" - {
         "runs the value into its continuation" in {
             assert(eval(Effect.defer(1: Int < Any, inc)) == 2)
+        }
+
+        "defers a pending value" in {
+            assert(eval(answerAsk(41)(Effect.defer(ask, inc))) == 42)
         }
 
         "runs both continuations in order" in {

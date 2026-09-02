@@ -711,6 +711,17 @@ class EvalTest extends AnyFreeSpec:
             assert(log.toList == List("inner", "outer"))
         }
 
+        "abandoning a park with no outstanding releases is a no-op" in {
+            val v: Int < Any = Effect.defer {
+                requestStop()
+                1
+            }.map(_ + 41)
+            val p = Eval.partial(v)
+            assert(p.isInstanceOf[Pending[?, ?]])
+            Eval.release(p, Boom)
+            assert(eval(p) == 42)
+        }
+
         "release of a settled value or an obligation-free computation owes nothing" in {
             discard(eval(Eval.release(42: Int < Any, Boom)))
             var ran = false
