@@ -9,8 +9,6 @@ import scala.annotation.tailrec
 
 class EvalCaptureTowerTest extends AnyFreeSpec:
 
-    private def eval[A](v: A < Any): A = v.eval
-
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
@@ -23,7 +21,7 @@ class EvalCaptureTowerTest extends AnyFreeSpec:
         def loop(i: Int): Int < Ask =
             if i > 20000 then i else ask.map(a => loop(i + a)).map(x => x)
         val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], loop(0))([C] => (_, cont) => cont(1), a => a)
-        assert(eval(r) == 20001)
+        assert(r.eval == 20001)
     }
 
     "a capture across an inner region keeps the region as an entry" in {
@@ -39,7 +37,7 @@ class EvalCaptureTowerTest extends AnyFreeSpec:
             a => a
         )
         val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], inner)([C] => (_, cont) => cont(1), a => a)
-        assert(eval(r) == 1 + Reach + 8)
+        assert(r.eval == 1 + Reach + 8)
         assert(seen == List("x"))
     }
 
@@ -50,6 +48,6 @@ class EvalCaptureTowerTest extends AnyFreeSpec:
             [C] => (_, cont) => cont(1).map(r1 => cont(2).map(r2 => r1 * 100000 + r2)),
             a => a
         )
-        assert(eval(r) == (1 + Reach + 8) * 100000 + (2 + Reach + 8))
+        assert(r.eval == (1 + Reach + 8) * 100000 + (2 + Reach + 8))
     }
 end EvalCaptureTowerTest

@@ -11,8 +11,6 @@ import scala.collection.mutable.ListBuffer
 
 class ReportTest extends AnyFreeSpec:
 
-    private def eval[A](v: A < Any): A = v.eval
-
     private object Bad extends RuntimeException("bad", null, true, false)
 
     sealed trait Ask extends ArrowEffect[kyo.Const[Unit], kyo.Const[Int]]
@@ -42,7 +40,7 @@ class ReportTest extends AnyFreeSpec:
         val previous           = thread.getUncaughtExceptionHandler()
         thread.setUncaughtExceptionHandler((_, ex) => reported = Maybe(ex))
         try
-            assert(eval(dropped) == -1)
+            assert(dropped.eval == -1)
         finally thread.setUncaughtExceptionHandler(previous)
         assert(log.toList == List("outer"))
         assert(reported.exists(_.getSuppressed.exists(_ eq Bad)))

@@ -7,8 +7,6 @@ import org.scalatest.freespec.AnyFreeSpec
 
 class ContextEffectTest extends AnyFreeSpec:
 
-    private def eval[A](v: A < Any): A = v.eval
-
     sealed trait Count extends ContextEffect[Int]
     sealed trait Name  extends ContextEffect[String]
     sealed trait Flag  extends ContextEffect[Boolean]
@@ -26,17 +24,17 @@ class ContextEffectTest extends AnyFreeSpec:
     "reads what is bound" - {
 
         "a binding answers a read under it" in {
-            assert(eval(ContextEffect.handleInheritable(Tag[Count], 42)(count)) == 42)
+            assert(ContextEffect.handleInheritable(Tag[Count], 42)(count).eval == 42)
         }
 
         "a read transforms in the same step" in {
             val v = ContextEffect.suspendWith(Tag[Count])(c => c * 2)
-            assert(eval(ContextEffect.handleInheritable(Tag[Count], 21)(v)) == 42)
+            assert(ContextEffect.handleInheritable(Tag[Count], 21)(v).eval == 42)
         }
 
         "every read under one binding takes the same value" in {
             val v = count.map(a => count.map(b => count.map(c => a + b + c)))
-            assert(eval(ContextEffect.handleInheritable(Tag[Count], 10, _ + 1)(v)) == 30)
+            assert(ContextEffect.handleInheritable(Tag[Count], 10, _ + 1)(v).eval == 30)
         }
 
         "bindings of different effects stand together" in {
@@ -47,14 +45,14 @@ class ContextEffectTest extends AnyFreeSpec:
                         ContextEffect.handleInheritable(Tag[Count], 10, _ * 2)(v): String < (Name & Flag)
                     }
                 }
-            assert(eval(r) == "10-middle-true")
+            assert(r.eval == "10-middle-true")
         }
     }
 
     "layering" - {
 
         "nothing bound outside takes ifUndefined" in {
-            assert(eval(ContextEffect.handleInheritable(Tag[Count], 100, _ * 2)(count)) == 100)
+            assert(ContextEffect.handleInheritable(Tag[Count], 100, _ * 2)(count).eval == 100)
         }
 
         "a binding inside another applies ifDefined to it" in {
@@ -62,7 +60,7 @@ class ContextEffectTest extends AnyFreeSpec:
                 ContextEffect.handleInheritable(Tag[Count], 100, _ * 2) {
                     ContextEffect.handleInheritable(Tag[Count], 100, _ * 2)(count)
                 }
-            assert(eval(r) == 200)
+            assert(r.eval == 200)
         }
 
         "the innermost binding is what a read takes" in {
@@ -70,7 +68,7 @@ class ContextEffectTest extends AnyFreeSpec:
                 ContextEffect.handleInheritable(Tag[Count], 1) {
                     ContextEffect.handleInheritable(Tag[Count], 2)(count)
                 }
-            assert(eval(r) == 2)
+            assert(r.eval == 2)
         }
 
         "a merging binding keeps what an enclosing one holds" in {
@@ -79,7 +77,7 @@ class ContextEffectTest extends AnyFreeSpec:
                 ContextEffect.handleInheritable(Tag[MapCtx], Map("a" -> 1), _.updated("a", 1)) {
                     ContextEffect.handleInheritable(Tag[MapCtx], Map("b" -> 2), _.updated("b", 2))(v)
                 }
-            assert(eval(r) == Map("a" -> 1, "b" -> 2))
+            assert(r.eval == Map("a" -> 1, "b" -> 2))
         }
     }
 
@@ -88,21 +86,21 @@ class ContextEffectTest extends AnyFreeSpec:
         "a binding does not reach a read after it" in {
             val inner = ContextEffect.handleInheritable(Tag[Count], 42)(count)
             val v     = inner.map(a => ContextEffect.suspend(Tag[Count], -1).map(b => (a, b)))
-            assert(eval(v) == ((42, -1)))
+            assert(v.eval == ((42, -1)))
         }
 
         "a read with a default and nothing bound takes the default" in {
-            assert(eval(ContextEffect.suspend(Tag[Count], -1)) == -1)
+            assert(ContextEffect.suspend(Tag[Count], -1).eval == -1)
         }
 
         "a read with a default takes a binding over it" in {
             val v = ContextEffect.suspend(Tag[Count], -1)
-            assert(eval(ContextEffect.handleInheritable(Tag[Count], 7)(v)) == 7)
+            assert(ContextEffect.handleInheritable(Tag[Count], 7)(v).eval == 7)
         }
 
         "a required read with nothing bound is a bug" in {
             intercept[Throwable] {
-                val _ = eval(count.asInstanceOf[Int < Any])
+                val _ = count.asInstanceOf[Int < Any].eval
             }
         }
     }
@@ -113,13 +111,13 @@ class ContextEffectTest extends AnyFreeSpec:
             val v: Int < (Count & Ask) = ask.map(a => count.map(c => a + c))
             val bound: Int < Ask       = ContextEffect.handleInheritable(Tag[Count], 2)(v)
             val r                      = ArrowEffect.handleCont(Tag[Ask], bound)([C] => (_, cont) => cont(40), a => a)
-            assert(eval(r) == 42)
+            assert(r.eval == 42)
         }
 
         "a region installed inside a binding reads it" in {
             val v: Int < (Count & Ask) = ask.map(a => count.map(c => a + c))
             val r: Int < Count         = ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, cont) => cont(40), a => a)
-            assert(eval(ContextEffect.handleInheritable(Tag[Count], 2)(r)) == 42)
+            assert(ContextEffect.handleInheritable(Tag[Count], 2)(r).eval == 42)
         }
 
         "a clause of a region under a binding reads it" in {
@@ -128,7 +126,7 @@ class ContextEffectTest extends AnyFreeSpec:
                 ContextEffect.handleInheritable(Tag[Count], 41) {
                     ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, cont) => count.map(c => cont(c)), a => a)
                 }
-            assert(eval(bound) == 42)
+            assert(bound.eval == 42)
         }
 
         "a continuation captured under a binding carries it" in {
@@ -137,7 +135,7 @@ class ContextEffectTest extends AnyFreeSpec:
             val sayHandled: Int < Ask =
                 ArrowEffect.handleCont(Tag[Say], bound)([C] => (_, cont) => cont(()), a => a)
             val r = ArrowEffect.handleCont(Tag[Ask], sayHandled)([C] => (_, cont) => cont(40), a => a)
-            assert(eval(r) == 42)
+            assert(r.eval == 42)
         }
     }
 
@@ -145,8 +143,8 @@ class ContextEffectTest extends AnyFreeSpec:
 
         "the same bound computation evaluates the same way twice" in {
             val v = ContextEffect.handleInheritable(Tag[Count], 21)(count.map(_ * 2))
-            assert(eval(v) == 42)
-            assert(eval(v) == 42)
+            assert(v.eval == 42)
+            assert(v.eval == 42)
         }
 
         "a captured binding resolves against the scope it resumes in" in {
@@ -156,7 +154,7 @@ class ContextEffectTest extends AnyFreeSpec:
                 ContextEffect.handleInheritable(Tag[Count], 10) {
                     ArrowEffect.handleCont(Tag[Ask], bound)([C] => (_, cont) => cont(0), a => a)
                 }
-            assert(eval(r) == 11)
+            assert(r.eval == 11)
         }
     }
 
@@ -174,7 +172,7 @@ class ContextEffectTest extends AnyFreeSpec:
         "runs when the extent ends" in {
             var released = Maybe.empty[Int]
             val v        = held(42, i => released = Maybe(i))(count.map(_ + 1))
-            assert(eval(v) == 43)
+            assert(v.eval == 43)
             assert(released == Maybe(42))
         }
 
@@ -182,7 +180,7 @@ class ContextEffectTest extends AnyFreeSpec:
             var order = List.empty[String]
             val v = held(1, _ => order = order :+ "release")(count.map(_ => order = order :+ "body"))
                 .map(_ => order = order :+ "after")
-            eval(v)
+            v.eval
             assert(order == List("body", "release", "after"))
         }
 
@@ -190,7 +188,7 @@ class ContextEffectTest extends AnyFreeSpec:
             var released = false
             val v        = held(1, _ => released = true)(count.map(_ => (throw new RuntimeException("boom")): Int))
             intercept[RuntimeException] {
-                val _ = eval(v)
+                val _ = v.eval
             }
             assert(released)
         }
@@ -199,14 +197,14 @@ class ContextEffectTest extends AnyFreeSpec:
             var released     = false
             val v: Int < Ask = held(1, _ => released = true)(ask.map(a => count.map(_ + a)))
             val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, _) => 99, a => a)
-            assert(eval(r) == 99)
+            assert(r.eval == 99)
             assert(released)
         }
 
         "runs once when the extent ends and the eval then drains" in {
             var count0 = 0
             val v      = held(1, _ => count0 += 1)(count.map(_ + 1))
-            assert(eval(v) == 2)
+            assert(v.eval == 2)
             assert(count0 == 1)
         }
     }

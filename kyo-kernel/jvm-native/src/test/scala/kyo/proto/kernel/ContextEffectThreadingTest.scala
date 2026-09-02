@@ -8,8 +8,6 @@ import org.scalatest.freespec.AnyFreeSpec
 
 class ContextEffectThreadingTest extends AnyFreeSpec:
 
-    private def eval[A](v: A < Any): A = v.eval
-
     sealed trait Count extends ContextEffect[Int]
 
     def count: Int < Count = ContextEffect.suspend(Tag[Count])
@@ -23,7 +21,7 @@ class ContextEffectThreadingTest extends AnyFreeSpec:
         )
         val parked = Eval.partial(v)
         assert(parked.evalNow.isEmpty)
-        assert(eval(parked) == 42)
+        assert(parked.eval == 42)
     }
 
     "a park holding a binding resumes on another thread with the binding it captured" in {
@@ -37,11 +35,11 @@ class ContextEffectThreadingTest extends AnyFreeSpec:
             assert(p.evalNow.isEmpty, label)
             p
         end parked
-        assert(eval(parked("first")) == 11)
+        assert(parked("first").eval == 11)
         @volatile var enclosed = 0
         val p1                 = parked("second")
         val t = new Thread(() =>
-            enclosed = eval(ContextEffect.handleInheritable(Tag[Count], 100)(p1: Int < Count))
+            enclosed = ContextEffect.handleInheritable(Tag[Count], 100)(p1: Int < Count).eval
         )
         t.start()
         t.join(10000)
@@ -61,8 +59,8 @@ class ContextEffectThreadingTest extends AnyFreeSpec:
             assert(p.evalNow.isEmpty)
             @volatile var a = 0
             @volatile var b = 0
-            val ta          = new Thread(() => a = eval(ContextEffect.handleInheritable(Tag[Count], 100)(p: Int < Count)))
-            val tb          = new Thread(() => b = eval(ContextEffect.handleInheritable(Tag[Count], 1000)(p: Int < Count)))
+            val ta          = new Thread(() => a = ContextEffect.handleInheritable(Tag[Count], 100)(p: Int < Count).eval)
+            val tb          = new Thread(() => b = ContextEffect.handleInheritable(Tag[Count], 1000)(p: Int < Count).eval)
             ta.start()
             tb.start()
             ta.join(10000)

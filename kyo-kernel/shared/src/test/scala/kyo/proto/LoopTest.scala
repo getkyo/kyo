@@ -9,9 +9,6 @@ class LoopTest extends AnyFreeSpec:
 
     given Frame = Frame.internal
 
-    def defer[A, S](v: => A < S): A < S =
-        Effect.defer(v)
-
     "apply" - {
         "with a single iteration" in {
             assert(
@@ -100,7 +97,7 @@ class LoopTest extends AnyFreeSpec:
         "suspend in the middle" in {
             val result = Loop(1)(i =>
                 if i < 3 then
-                    defer(Loop.continue(i + 1))
+                    Effect.defer(Loop.continue(i + 1))
                 else if i < 5 then
                     Loop.continue(i + 1)
                 else
@@ -114,7 +111,7 @@ class LoopTest extends AnyFreeSpec:
                 if i < 5 then
                     Loop.continue(i + 1)
                 else
-                    defer(Loop.done(i))
+                    Effect.defer(Loop.done(i))
             )
             assert(result.eval == 5)
         }
@@ -191,7 +188,7 @@ class LoopTest extends AnyFreeSpec:
         "suspend in the middle" in {
             val result = Loop(1, 1)((i, j) =>
                 if i + j < 3 then
-                    defer(Loop.continue(i + 1, j + 1))
+                    Effect.defer(Loop.continue(i + 1, j + 1))
                 else if i + j < 5 then
                     Loop.continue(i + 1, j + 1)
                 else
@@ -205,7 +202,7 @@ class LoopTest extends AnyFreeSpec:
                 if i + j < 5 then
                     Loop.continue(i + 1, j + 1)
                 else
-                    defer(Loop.done(i + j))
+                    Effect.defer(Loop.done(i + j))
             )
             assert(result.eval == 6)
         }
@@ -271,7 +268,7 @@ class LoopTest extends AnyFreeSpec:
         "suspend in the middle" in {
             val result = Loop(1, 1, 1)((i, j, k) =>
                 if i + j + k < 3 then
-                    defer(Loop.continue(i + 1, j + 1, k + 1))
+                    Effect.defer(Loop.continue(i + 1, j + 1, k + 1))
                 else if i + j + k < 5 then
                     Loop.continue(i + 1, j + 1, k + 1)
                 else
@@ -285,7 +282,7 @@ class LoopTest extends AnyFreeSpec:
                 if i + j + k < 5 then
                     Loop.continue(i + 1, j + 1, k + 1)
                 else
-                    defer(Loop.done(i + j + k))
+                    Effect.defer(Loop.done(i + j + k))
             )
             assert(result.eval == 6)
         }
@@ -352,7 +349,7 @@ class LoopTest extends AnyFreeSpec:
         "suspend in the middle" in {
             val result = Loop(1, 1, 1, 1)((i, j, k, l) =>
                 if i + j + k + l < 3 then
-                    defer(Loop.continue(i + 1, j + 1, k + 1, i + 1))
+                    Effect.defer(Loop.continue(i + 1, j + 1, k + 1, i + 1))
                 else if i + j + k + l < 5 then
                     Loop.continue(i + 1, j + 1, k + 1, l + 1)
                 else
@@ -366,7 +363,7 @@ class LoopTest extends AnyFreeSpec:
                 if i + j + k + l < 5 then
                     Loop.continue(i + 1, j + 1, k + 1, l + 1)
                 else
-                    defer(Loop.done(i + j + k + l))
+                    Effect.defer(Loop.done(i + j + k + l))
             )
             assert(result.eval == 8)
         }
@@ -401,9 +398,9 @@ class LoopTest extends AnyFreeSpec:
         "suspend" in {
             val result = Loop.indexed(idx =>
                 if idx < 5 then
-                    defer(Loop.continue)
+                    Effect.defer(Loop.continue)
                 else
-                    defer(Loop.done(idx))
+                    Effect.defer(Loop.done(idx))
             )
             assert(result.eval == 5)
         }
@@ -438,9 +435,9 @@ class LoopTest extends AnyFreeSpec:
         "suspend" in {
             val result = Loop.indexed(1)((idx, i) =>
                 if idx < 5 then
-                    defer(Loop.continue(i + 1))
+                    Effect.defer(Loop.continue(i + 1))
                 else
-                    defer(Loop.done(i))
+                    Effect.defer(Loop.done(i))
             )
             assert(result.eval == 6)
         }
@@ -477,9 +474,9 @@ class LoopTest extends AnyFreeSpec:
         "suspend" in {
             val result = Loop.indexed(1, 1)((idx, i, j) =>
                 if idx < 5 then
-                    defer(Loop.continue(i + 1, j + 1))
+                    Effect.defer(Loop.continue(i + 1, j + 1))
                 else
-                    defer(Loop.done(i + j))
+                    Effect.defer(Loop.done(i + j))
             )
             assert(result.eval == 12)
         }
@@ -522,9 +519,9 @@ class LoopTest extends AnyFreeSpec:
         "suspend" in {
             val result = Loop.indexed(1, 1, 1)((idx, i, j, k) =>
                 if idx < 5 then
-                    defer(Loop.continue(i + 1, j + 1, k + 1))
+                    Effect.defer(Loop.continue(i + 1, j + 1, k + 1))
                 else
-                    defer(Loop.done(i + j + k))
+                    Effect.defer(Loop.done(i + j + k))
             )
             assert(result.eval == 18)
         }
@@ -567,9 +564,9 @@ class LoopTest extends AnyFreeSpec:
         "suspend" in {
             val result = Loop.indexed(1, 1, 1, 1)((idx, i, j, k, l) =>
                 if idx < 5 then
-                    defer(Loop.continue(i + 1, j + 1, k + 1, l + 1))
+                    Effect.defer(Loop.continue(i + 1, j + 1, k + 1, l + 1))
                 else
-                    defer(Loop.done(i + j + k + l))
+                    Effect.defer(Loop.done(i + j + k + l))
             )
             assert(result.eval == 24)
         }
@@ -618,9 +615,9 @@ class LoopTest extends AnyFreeSpec:
             val result = Loop.foreach {
                 effect += "A"
                 if effect.length < 3 then
-                    defer(Loop.continue)
+                    Effect.defer(Loop.continue)
                 else
-                    defer(Loop.done)
+                    Effect.defer(Loop.done)
                 end if
             }
             result.eval
@@ -629,7 +626,7 @@ class LoopTest extends AnyFreeSpec:
 
         "returns" in {
             val result = Loop.foreach {
-                defer(Loop.done(1))
+                Effect.defer(Loop.done(1))
             }
             assert(result.eval == 1)
         }
@@ -637,7 +634,7 @@ class LoopTest extends AnyFreeSpec:
 
     "repeat" in {
         var count = 0
-        val io    = defer(count += 1)
+        val io    = Effect.defer(count += 1)
 
         Loop.repeat(0)(io).eval
         assert(count == 0)
@@ -693,7 +690,7 @@ class LoopTest extends AnyFreeSpec:
 
         "with suspended condition" in {
             var counter = 0
-            val result = Loop.whileTrue(defer(counter < 3)) {
+            val result = Loop.whileTrue(Effect.defer(counter < 3)) {
                 counter += 1
             }
             result.eval
@@ -703,7 +700,7 @@ class LoopTest extends AnyFreeSpec:
         "with suspended body" in {
             var counter = 0
             val result = Loop.whileTrue(counter < 3) {
-                defer(counter += 1)
+                Effect.defer(counter += 1)
             }
             result.eval
             assert(counter == 3)
@@ -721,8 +718,8 @@ class LoopTest extends AnyFreeSpec:
         "stack safety with suspended operations" in {
             var counter     = 0
             val largeNumber = 10000
-            val result = Loop.whileTrue(defer(counter < largeNumber)) {
-                defer(counter += 1)
+            val result = Loop.whileTrue(Effect.defer(counter < largeNumber)) {
+                Effect.defer(counter += 1)
             }
             result.eval
             assert(counter == largeNumber)
@@ -792,7 +789,7 @@ class LoopTest extends AnyFreeSpec:
             var evaluated = 0
             val payload   = payloadOf(() => evaluated += 1)
             val looped = Loop(0) { _ =>
-                defer(Loop.done[Int, Int < Any](payload))
+                Effect.defer(Loop.done[Int, Int < Any](payload))
             }
             val data = looped.eval
             assert(evaluated == 0)
@@ -804,7 +801,7 @@ class LoopTest extends AnyFreeSpec:
             var evaluated = 0
             val payload   = payloadOf(() => evaluated += 1)
             val looped = Loop(0) { i =>
-                if i < 3 then defer(Loop.continue(i + 1))
+                if i < 3 then Effect.defer(Loop.continue(i + 1))
                 else Loop.done[Int, Int < Any](payload)
             }
             val data = looped.eval
@@ -847,7 +844,7 @@ class LoopTest extends AnyFreeSpec:
             var evaluated = 0
             val payload   = payloadOf(() => evaluated += 1)
             val looped = Loop(0, 1) { (a, b) =>
-                defer(Loop.done[Int, Int, Int < Any](payload))
+                Effect.defer(Loop.done[Int, Int, Int < Any](payload))
             }
             val data = looped.eval
             assert(evaluated == 0)
@@ -880,7 +877,7 @@ class LoopTest extends AnyFreeSpec:
             val looped = Loop(payload: Int < Any) { state =>
                 if first then
                     first = false
-                    defer(Loop.continue(state))
+                    Effect.defer(Loop.continue(state))
                 else Loop.done[Int < Any, Int < Any](state)
             }
             val data = looped.eval
@@ -940,7 +937,7 @@ class LoopTest extends AnyFreeSpec:
             val looped = Loop(0) { _ =>
                 runs += 1
                 if runs > 2 then throw new IllegalStateException("done payload re-entered the loop as a continue")
-                defer(Loop.done[Int, Out](hostile))
+                Effect.defer(Loop.done[Int, Out](hostile))
             }
             val out = looped.eval
             assert(runs == 1)

@@ -8,8 +8,6 @@ import org.scalatest.freespec.AnyFreeSpec
 
 class EffectThreadingTest extends AnyFreeSpec:
 
-    private def eval[A](v: A < Any): A = v.eval
-
     private object Abandoned extends RuntimeException("abandoned", null, false, false)
 
     "a cross-thread stop parks inside a bracket and abandonment releases" in {
@@ -49,7 +47,7 @@ class EffectThreadingTest extends AnyFreeSpec:
                 )
             val p = Eval.partial(v)
             assert(p.evalNow.isEmpty)
-            val resumer   = new Thread(() => discard(eval(p)))
+            val resumer   = new Thread(() => discard(p.eval))
             val abandoner = new Thread(() => Eval.release(p, Abandoned))
             resumer.start()
             abandoner.start()

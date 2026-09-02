@@ -9,8 +9,6 @@ import org.scalatest.freespec.AnyFreeSpec
 
 class EffectTest extends AnyFreeSpec:
 
-    private def eval[A](v: A < Any): A = v.eval
-
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
@@ -33,7 +31,7 @@ class EffectTest extends AnyFreeSpec:
         }
         val r = d.map(_ + 1)
         assert(!ran)
-        assert(eval(r) == 2)
+        assert(r.eval == 2)
         assert(ran)
     }
 
@@ -44,7 +42,7 @@ class EffectTest extends AnyFreeSpec:
             ask.map(_ + 1)
         }
         assert(!ran)
-        assert(eval(answerAsk(41)(d)) == 42)
+        assert(answerAsk(41)(d).eval == 42)
         assert(ran)
     }
 
@@ -55,7 +53,7 @@ class EffectTest extends AnyFreeSpec:
             7
         }
         assert(!ran)
-        assert(eval(d.map(_ * 6)) == 42)
+        assert(d.map(_ * 6).eval == 42)
         assert(ran)
     }
 
@@ -65,8 +63,8 @@ class EffectTest extends AnyFreeSpec:
             runs += 1
             runs
         }
-        assert(eval(d) == 1)
-        assert(eval(d) == 2)
+        assert(d.eval == 1)
+        assert(d.eval == 2)
     }
 
     "nested defer calls run innermost last, in order" in {
@@ -81,13 +79,13 @@ class EffectTest extends AnyFreeSpec:
                 }
             }
         }
-        assert(eval(d) == 42)
+        assert(d.eval == 42)
         assert(order == List(3, 2, 1))
     }
 
     "defer with a recovery inside" in {
         val effect = Effect.defer(recovering(Effect.defer((throw new RuntimeException("Test exception")): Int))(_ => 42))
-        assert(eval(effect) == 42)
+        assert(effect.eval == 42)
     }
 
     "combining multiple effects" in {
@@ -97,30 +95,30 @@ class EffectTest extends AnyFreeSpec:
                 b <- recovering(Effect.defer(2 / 0))(_ => 2)
                 c <- Effect.defer(3)
             yield a + b + c
-        assert(eval(effect) == 6)
+        assert(effect.eval == 6)
     }
 
     "the deferral node" - {
         "runs the value into its continuation" in {
-            assert(eval(Effect.defer(1: Int < Any, inc)) == 2)
+            assert(Effect.defer(1: Int < Any, inc).eval == 2)
         }
 
         "defers a pending value" in {
-            assert(eval(answerAsk(41)(Effect.defer(ask, inc))) == 42)
+            assert(answerAsk(41)(Effect.defer(ask, inc)).eval == 42)
         }
 
         "runs both continuations in order" in {
-            assert(eval(Effect.defer(1: Int < Any, inc, double)) == 4)
-            assert(eval(Effect.defer(1: Int < Any, double, inc)) == 3)
+            assert(Effect.defer(1: Int < Any, inc, double).eval == 4)
+            assert(Effect.defer(1: Int < Any, double, inc).eval == 3)
         }
 
         "an identity second continuation leaves the result unchanged" in {
-            assert(eval(Effect.defer(1: Int < Any, inc, Arrow.id[Int])) == 2)
+            assert(Effect.defer(1: Int < Any, inc, Arrow.id[Int]).eval == 2)
         }
 
         "the four-argument form runs its three continuations in order" in {
-            assert(eval(Effect.defer(1: Int < Any, inc, double, inc)) == 5)
-            assert(eval(Effect.defer(1: Int < Any, double, inc, double)) == 6)
+            assert(Effect.defer(1: Int < Any, inc, double, inc).eval == 5)
+            assert(Effect.defer(1: Int < Any, double, inc, double).eval == 6)
         }
     }
 

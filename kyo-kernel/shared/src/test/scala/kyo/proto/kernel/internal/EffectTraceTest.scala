@@ -14,8 +14,6 @@ import scala.annotation.tailrec
 import scala.util.control.NoStackTrace
 
 class EffectTraceTest extends AnyFreeSpec:
-    private def eval[A](v: A < Any): A = v.eval
-
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
     def runAsk[A, S](v: A < (Ask & S))(answer: Int): A < S =
@@ -33,7 +31,7 @@ class EffectTraceTest extends AnyFreeSpec:
 
     "a throw inside a region carries the region's label" in {
         val v  = runAsk(ask.map(_ => (throw Boom()): Int))(1)
-        val ex = intercept[Boom](eval(v))
+        val ex = intercept[Boom](v.eval)
         val c  = carrier(ex)
         assert(c.nonEmpty)
         assert(ex.getMessage == "boom")
@@ -44,7 +42,7 @@ class EffectTraceTest extends AnyFreeSpec:
     "regions splice innermost first" in {
         val inner = runAsk(ask.map(_ => (throw Boom()): Int))(1)
         val outer = runSay(inner: Int < (Say & Any))
-        val ex    = intercept[Boom](eval(outer))
+        val ex    = intercept[Boom](outer.eval)
         val trace = ex.getStackTrace
         val ask0  = trace.indexWhere(_.getClassName == Tag[Ask].show)
         val say0  = trace.indexWhere(_.getClassName == Tag[Say].show)
@@ -54,7 +52,7 @@ class EffectTraceTest extends AnyFreeSpec:
     "the continuation a region holds contributes its frames" in {
 
         val v  = runAsk(ask.map(_ => (throw Boom()): Int))(1).map(_ + 1)
-        val ex = intercept[Boom](eval(runSay(v: Int < Say)))
+        val ex = intercept[Boom](runSay(v: Int < Say).eval)
         assert(ex.getStackTrace.exists(e => e.getFileName == "EffectTraceTest.scala"))
     }
 
@@ -62,10 +60,10 @@ class EffectTraceTest extends AnyFreeSpec:
         val inner = runAsk(ask.map(_ => (throw Boom()): Int))(1)
 
         val outer: Int < Any = runSay(say("x").map { _ =>
-            val r: Int = eval(inner)
+            val r: Int = inner.eval
             r
         })
-        val ex    = intercept[Boom](eval(outer))
+        val ex    = intercept[Boom](outer.eval)
         val trace = ex.getStackTrace
         assert(trace.exists(_.getClassName == Tag[Ask].show))
         assert(trace.exists(_.getClassName == Tag[Say].show))
@@ -80,7 +78,7 @@ class EffectTraceTest extends AnyFreeSpec:
                 [C] => _ => Loop.continue((), 1: Int < Any),
                 a => a
             )((_: Int) + 1)
-        val ex  = intercept[Boom](eval(fused))
+        val ex  = intercept[Boom](fused.eval)
         val els = carrier(ex).get.elements.toList
         assert(els.exists(_.getMethodName == "innerStep"))
         assert(els.exists(_.getMethodName == "handle"))
@@ -97,7 +95,7 @@ class EffectTraceTest extends AnyFreeSpec:
                     ex.getStackTrace.exists(_.getClassName == Tag[Ask].show)
                 Maybe(-1)
         )
-        assert(eval(v) == -1)
+        assert(v.eval == -1)
         assert(sawCarrier)
     }
 
@@ -116,14 +114,14 @@ class EffectTraceTest extends AnyFreeSpec:
                 enriched = Maybe(ex.getMessage == "second" && ex.getStackTrace.exists(_.getClassName == Tag[Say].show))
                 Maybe(-7)
         )
-        assert(eval(checked) == -7)
+        assert(checked.eval == -7)
         assert(enriched == Maybe(true))
     }
 
     "NoStackTrace keeps its carrier and skips the splice" in {
         final class Silent extends RuntimeException("silent") with NoStackTrace
         val v  = runAsk(ask.map(_ => (throw Silent()): Int))(1)
-        val ex = intercept[Silent](eval(v))
+        val ex = intercept[Silent](v.eval)
         val c  = carrier(ex)
         assert(c.nonEmpty)
         assert(c.get.elements.nonEmpty)
@@ -132,7 +130,7 @@ class EffectTraceTest extends AnyFreeSpec:
 
     "a fatal error passes through untouched" in {
         val v  = runAsk(ask.map(_ => (throw new InterruptedException("stop")): Int))(1)
-        val ex = intercept[InterruptedException](eval(v))
+        val ex = intercept[InterruptedException](v.eval)
         assert(carrier(ex).isEmpty)
     }
 
@@ -140,7 +138,7 @@ class EffectTraceTest extends AnyFreeSpec:
 
         object Shared extends RuntimeException("shared", null, false, false)
         val v  = runAsk(ask.map(_ => (throw Shared): Int))(1)
-        val ex = intercept[Shared.type](eval(v))
+        val ex = intercept[Shared.type](v.eval)
         assert(carrier(ex).isEmpty)
         assert(ex.getStackTrace.isEmpty)
     }
@@ -150,7 +148,7 @@ class EffectTraceTest extends AnyFreeSpec:
             if n == 0 then v
             else wrap(n - 1, ArrowEffect.handleCont(Tag[Say], v: Int < (Say & Ask))([C] => (_, cont) => cont(())))
         val v  = runAsk(wrap(100, ask.map(_ => (throw Boom()): Int)))(1)
-        val ex = intercept[Boom](eval(v))
+        val ex = intercept[Boom](v.eval)
         val c  = carrier(ex)
         assert(c.nonEmpty)
         assert(c.get.dropped > 0)
@@ -159,7 +157,7 @@ class EffectTraceTest extends AnyFreeSpec:
 
     "a throw with no region standing still carries the frames of the steps it was in" in {
         val v: Int < Any = runAsk(ask)(1).map(_ => (throw Boom()): Int).map(_ + 1)
-        val ex           = intercept[Boom](eval(v))
+        val ex           = intercept[Boom](v.eval)
         assert(carrier(ex).nonEmpty)
         assert(carrier(ex).get.elements.forall(_.getFileName == "EffectTraceTest.scala"))
         assert(carrier(ex).get.elements.forall(_.getClassName.startsWith("map @ ")))
@@ -168,7 +166,7 @@ class EffectTraceTest extends AnyFreeSpec:
 
     "the carrier renders the frames as a message" in {
         val v  = runAsk(ask.map(_ => (throw Boom()): Int))(1)
-        val ex = intercept[Boom](eval(v))
+        val ex = intercept[Boom](v.eval)
         assert(carrier(ex).get.getMessage.startsWith("effect trace:"))
     }
     private def methods(ex: Throwable): List[String] =
@@ -195,7 +193,7 @@ class EffectTraceTest extends AnyFreeSpec:
     "a throw in a cont handler's clause carries the continuation it was handed" in {
         val boom = new RuntimeException("boom")
         val ex = intercept[RuntimeException] {
-            eval(ArrowEffect.handleCont(Tag[Ask], outerStep(ask))([C] => (_, _) => throw boom))
+            ArrowEffect.handleCont(Tag[Ask], outerStep(ask))([C] => (_, _) => throw boom).eval
         }
         assert(ex eq boom)
         val ms = methods(ex)
@@ -208,7 +206,7 @@ class EffectTraceTest extends AnyFreeSpec:
     "a throw in a handler clause carries the suspension and its region" in {
         val boom = new RuntimeException("boom")
         val ex = intercept[RuntimeException] {
-            eval(ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([C] => _ => throw boom, a => a))
+            ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([C] => _ => throw boom, a => a).eval
         }
         assert(ex eq boom)
         val t = carrier(ex)
@@ -227,14 +225,14 @@ class EffectTraceTest extends AnyFreeSpec:
             v.map { _ =>
                 site = summon[kyo.Frame].position.lineNumber; (throw new RuntimeException("late")): Int
             }
-        val ex = intercept[RuntimeException](eval(boomAt(deep(10000))))
+        val ex = intercept[RuntimeException](boomAt(deep(10000)).eval)
         assert(carrier(ex).forall(_.elements.isEmpty))
         val top = ex.getStackTrace.head
         assert(!kyo.internal.Platform.isJVM || (top.getFileName == "EffectTraceTest.scala" && top.getLineNumber == site))
     }
 
     "an unhandled suspension arrives enriched" in {
-        val ex = intercept[Throwable](eval(ask.asInstanceOf[Int < Any]))
+        val ex = intercept[Throwable](ask.asInstanceOf[Int < Any].eval)
         assert(ex.getMessage.contains("unhandled suspension"))
         val t = carrier(ex)
         assert(t.nonEmpty)
@@ -243,13 +241,13 @@ class EffectTraceTest extends AnyFreeSpec:
 
     "the effect frames of a throw inside a mapped step" - {
         "are carried through an eval" in {
-            val ex = intercept[Boom](eval(runAsk(outerStep(ask))(1)))
+            val ex = intercept[Boom](runAsk(outerStep(ask))(1).eval)
             assert(methods(ex).contains("innerStep"))
             assert(methods(ex).contains("outerStep"))
         }
 
         "name the call site's callee and the enclosing definition" in {
-            val ex  = intercept[Boom](eval(runAsk(outerStep(ask))(1)))
+            val ex  = intercept[Boom](runAsk(outerStep(ask))(1).eval)
             val els = carrier(ex).get.elements.toList
             val inner = els.find(_.getMethodName == "innerStep") match
                 case Some(e) => e
@@ -260,20 +258,20 @@ class EffectTraceTest extends AnyFreeSpec:
         }
 
         "run innermost first" in {
-            val ex = intercept[Boom](eval(runAsk(outerStep(ask))(1)))
+            val ex = intercept[Boom](runAsk(outerStep(ask))(1).eval)
             val ms = methods(ex)
             assert(ms.indexOf("innerStep") < ms.indexOf("outerStep"))
         }
 
         "skip the internal frame placeholder" in {
-            val ex = intercept[Boom](eval(runAsk(outerStep(ask))(1)))
+            val ex = intercept[Boom](runAsk(outerStep(ask))(1).eval)
             assert(carrier(ex).get.elements.forall(_.getFileName != "<internal>"))
         }
 
         "a fused suspension carries the operation's own frame" in {
             def fusedStep: Int < Ask                 = askWith(_ => throw new Boom)
             def aroundFused(v: Int < Ask): Int < Ask = v.map(_ + 1)
-            val ex                                   = intercept[Boom](eval(runAsk(aroundFused(fusedStep))(1)))
+            val ex                                   = intercept[Boom](runAsk(aroundFused(fusedStep))(1).eval)
             val ms                                   = methods(ex)
             assert(ms.contains("fusedStep"))
             assert(ms.contains("aroundFused"))
@@ -285,7 +283,7 @@ class EffectTraceTest extends AnyFreeSpec:
     "a suspension boundary the physical stack cannot cross" in {
         def thrower(v: Int < Ask): Int < Ask = v.map(_ => throw new Boom)
         def around(v: Int < Ask): Int < Ask  = thrower(v).map(_ + 1)
-        val ex                               = intercept[Boom](eval(runAsk(around(ask))(1)))
+        val ex                               = intercept[Boom](runAsk(around(ask))(1).eval)
         assert(methods(ex).contains("around"))
         assert(methods(ex).contains("thrower"))
     }
@@ -294,7 +292,7 @@ class EffectTraceTest extends AnyFreeSpec:
         def boomHere: Int < Any = (0: Int < Any).map(_ => (throw new Boom): Int)
         def deep(i: Int): Int < Any =
             if i == 0 then boomHere else (0: Int < Any).map(_ => deep(i - 1))
-        val ex = intercept[Boom](eval(deep(600)))
+        val ex = intercept[Boom](deep(600).eval)
         assert(carrier(ex).forall(_.elements.isEmpty))
         assert(!kyo.internal.Platform.isJVM || ex.getStackTrace.exists(_.getMethodName.contains("boomHere")))
     }
@@ -303,7 +301,7 @@ class EffectTraceTest extends AnyFreeSpec:
         def useAsk: Int < (Ask & Say) = outerStep(ask).map(v => say("x").map(_ => v))
 
         "names each region exactly once" in {
-            val ex = intercept[Boom](eval(runSay(runAsk(useAsk)(1))))
+            val ex = intercept[Boom](runSay(runAsk(useAsk)(1)).eval)
             assert(classes(ex).count(_.endsWith("Ask")) == 1)
             assert(classes(ex).count(_.endsWith("Say")) == 1)
         }
@@ -316,7 +314,7 @@ class EffectTraceTest extends AnyFreeSpec:
                         a => a
                     )
                 )
-            val ex = intercept[Boom](eval(v))
+            val ex = intercept[Boom](v.eval)
             assert(carrier(ex).nonEmpty)
             assert(classes(ex).exists(_.endsWith("Say")))
             assert(carrier(ex).get.elements.forall(_.getFileName != "<internal>"))
@@ -328,7 +326,7 @@ class EffectTraceTest extends AnyFreeSpec:
                     [C] => (_, cont) => cont(1).map(_ => cont(2)),
                     a => a
                 )
-            val ex = intercept[Boom](eval(r))
+            val ex = intercept[Boom](r.eval)
             assert(classes(ex).count(_.endsWith("Ask")) == 1)
         }
     }
@@ -338,7 +336,7 @@ class EffectTraceTest extends AnyFreeSpec:
         val before                   = fatal.getStackTrace
         def fatalStep: Int < Ask     = ask.map(_ => throw fatal)
         var caught: Throwable | Null = null
-        try discard(eval(runAsk(fatalStep)(1)))
+        try discard(runAsk(fatalStep)(1).eval)
         catch case ex: Throwable => caught = ex
         assert(caught eq fatal)
         assert(fatal.getSuppressed.isEmpty)
@@ -347,13 +345,13 @@ class EffectTraceTest extends AnyFreeSpec:
 
     "the cap" - {
         "stops the walk at exactly the cap and records what it did not reach" in {
-            val ex = intercept[Boom](eval(runAsk(deepChain(200))(1)))
+            val ex = intercept[Boom](runAsk(deepChain(200))(1).eval)
             assert(carrier(ex).get.elements.length == 64)
             assert(carrier(ex).get.dropped > 0)
         }
 
         "bounds a chain far deeper than the Java stack" in {
-            val ex = intercept[Boom](eval(runAsk(deepChain(1000000))(1)))
+            val ex = intercept[Boom](runAsk(deepChain(1000000))(1).eval)
             assert(carrier(ex).get.elements.length == 64)
             assert(carrier(ex).get.dropped > 0)
         }
@@ -366,16 +364,16 @@ class EffectTraceTest extends AnyFreeSpec:
                 def input          = ()
                 override def frame = throw new IllegalStateException("frame read failed")
                 def cont           = Arrow.id[Int]
-        val ex = intercept[Throwable](eval(unreadable.asInstanceOf[Int < Any]))
+        val ex = intercept[Throwable](unreadable.asInstanceOf[Int < Any].eval)
         assert(carrier(ex).toList.flatMap(_.elements.toList).isEmpty)
     }
 
     "a second crossing rewrites the spliced trace rather than duplicating it" in {
         def rethrown: Int < Any = Effect.defer {
-            val crossed: Int = eval(runAsk(outerStep(ask))(1))
+            val crossed: Int = runAsk(outerStep(ask))(1).eval
             crossed
         }
-        val ex = intercept[Boom](eval(rethrown))
+        val ex = intercept[Boom](rethrown.eval)
         assert(ex.getStackTrace.count(_.getMethodName == "innerStep") == 1)
         assert(ex.getStackTrace.count(_.getMethodName == "outerStep") == 1)
         assert(ex.getSuppressed.count(_.isInstanceOf[EffectTrace]) == 1)

@@ -13,8 +13,6 @@ class SafepointTest extends AnyFreeSpec:
 
     private val Period = Safepoint.period()
 
-    private def eval[A](v: A < Any): A = v.eval
-
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
@@ -128,7 +126,7 @@ class SafepointTest extends AnyFreeSpec:
         var built = 0
         val outer: Int < Any =
             Effect.defer {
-                discard(eval(dropped))
+                discard(dropped.eval)
                 0
             }.map { z =>
                 var acc: Int < Any = z
@@ -146,7 +144,7 @@ class SafepointTest extends AnyFreeSpec:
         val p = Eval.partial(outer)
         assert(p.evalNow.isEmpty)
         assert(built >= 50 && built <= 52, s"built=$built")
-        assert(eval(p) == 100)
+        assert(p.eval == 100)
         assert(built == 100)
     }
 
@@ -161,7 +159,7 @@ class SafepointTest extends AnyFreeSpec:
         try
             val before = Safepoint.save(slot)
             Safepoint.restore(slot, before)
-            assert(eval(dropped) == -1)
+            assert(dropped.eval == -1)
             val after = Safepoint.save(slot)
             Safepoint.restore(slot, after)
             assert(after.equals(before))

@@ -11,8 +11,6 @@ import scala.collection.mutable.ListBuffer
 
 class DebuggerTest extends AnyFreeSpec:
 
-    private def eval[A](v: A < Any): A = v.eval
-
     private def requestStop(): Unit =
         discard(Safepoint.get())
         discard(Safepoint.stop(Thread.currentThread()))
@@ -61,7 +59,7 @@ class DebuggerTest extends AnyFreeSpec:
     }
 
     "the noop leaves results untouched" in {
-        assert(eval((1: Int < Any).map(_ + 1).map(_ * 2)) == 4)
+        assert((1: Int < Any).map(_ + 1).map(_ * 2).eval == 4)
     }
 
     "install makes the session current and uninstall restores the noop" in {
@@ -72,7 +70,7 @@ class DebuggerTest extends AnyFreeSpec:
 
     "a session observes an eval exactly when the hooks are compiled in" in {
         val d = new Recording
-        session(d)(assert(eval(answered(ask.map(_ + 1))) == 42))
+        session(d)(assert(answered(ask.map(_ + 1)).eval == 42))
         if Debugger.enabled then
             assert(d.events.contains("loop"))
             assert(d.events.contains("handle"))
@@ -84,9 +82,9 @@ class DebuggerTest extends AnyFreeSpec:
 
     "uninstall stops the stream" in {
         val d = new Recording
-        session(d)(discard(eval((1: Int < Any).map(_ + 1))))
+        session(d)(discard((1: Int < Any).map(_ + 1).eval))
         val n = d.events.size
-        assert(eval((1: Int < Any).map(_ + 1)) == 2)
+        assert((1: Int < Any).map(_ + 1).eval == 2)
         assert(d.events.size == n)
     }
 
@@ -100,7 +98,7 @@ class DebuggerTest extends AnyFreeSpec:
                 }.map(_ + 41)
             val p = Eval.partial(v)
             assert(p.isInstanceOf[Pending[?, ?]])
-            assert(eval(p) == 42)
+            assert(p.eval == 42)
         }
     }
 
@@ -109,7 +107,7 @@ class DebuggerTest extends AnyFreeSpec:
         val d        = new Recording
         session(d) {
             val v = Effect.bracket(Effect.defer(1))((_, _) => released += 1)(r => (r + 1: Int < Any).map(_ * 2))
-            assert(eval(v) == 4)
+            assert(v.eval == 4)
         }
         assert(released == 1)
     }

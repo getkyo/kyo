@@ -14,8 +14,6 @@ import scala.compiletime.testing.typeCheckErrors
 
 class PendingTest extends AnyFreeSpec:
 
-    private def eval[A](v: A < Any): A = v.eval
-
     private val Period = Safepoint.period()
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
@@ -37,13 +35,13 @@ class PendingTest extends AnyFreeSpec:
 
     "a settled payload evaluates to itself" in {
         val outer: (Int < Any) < Any = Kyo.lift(42: Int < Any)
-        assert(eval(eval(outer)) == 42)
+        assert(outer.eval.eval == 42)
     }
 
     "eval returns a pending payload without running it" in {
         val inner: Int < Ask   = ask.map(_ + 1)
-        val payload: Int < Ask = eval(Kyo.lift(inner))
-        assert(eval(answerAsk(41)(payload)) == 42)
+        val payload: Int < Ask = Kyo.lift(inner).eval
+        assert(answerAsk(41)(payload).eval == 42)
     }
 
     "map receives a pending payload as a value" in {
@@ -53,30 +51,30 @@ class PendingTest extends AnyFreeSpec:
             received = c
             7
         }
-        assert(eval(r) == 7)
-        assert(eval(answerAsk(41)(received.map(_ + 1))) == 42)
+        assert(r.eval == 7)
+        assert(answerAsk(41)(received.map(_ + 1)).eval == 42)
     }
 
     "a map can return a computation as its value" in {
         val inner: Int < Ask     = ask.map(_ + 1)
         val r: (Int < Ask) < Ask = after(inner)
-        val payload: Int < Ask   = eval(answerAsk(1)(r))
-        assert(eval(answerAsk(41)(payload)) == 42)
+        val payload: Int < Ask   = answerAsk(1)(r).eval
+        assert(answerAsk(41)(payload).eval == 42)
     }
 
     "a payload returned past the budget stays a value" in {
         def loop(i: Int): (Int < Ask) < Any =
             if i == 0 then Kyo.lift(ask)
             else (0: Int < Any).map(_ => loop(i - 1))
-        val payload: Int < Ask = eval(loop(10000))
-        assert(eval(answerAsk(42)(payload)) == 42)
+        val payload: Int < Ask = loop(10000).eval
+        assert(answerAsk(42)(payload).eval == 42)
     }
 
     "a handler applies done to a settled payload without driving it" in {
         val outer: (Unit < Say) < Ask = Kyo.lift(say("x"): Unit < Say)
         val handled: (Unit < Say) < Any =
             ArrowEffect.handleLoop(Tag[Ask], outer)([C] => _ => Loop.continue((), 1: Int < Any), a => Kyo.lift(a))
-        val payload: Unit < Say = eval(handled)
+        val payload: Unit < Say = handled.eval
         var seen                = ""
         val r: Unit < Any = ArrowEffect.handleLoop(Tag[Say], payload)(
             [C] =>
@@ -86,7 +84,7 @@ class PendingTest extends AnyFreeSpec:
             ,
             a => a
         )
-        assert(eval(r) == ())
+        assert(r.eval == ())
         assert(seen == "x")
     }
 
@@ -94,7 +92,7 @@ class PendingTest extends AnyFreeSpec:
         val body: (Unit < Say) < Ask = after(say("y"): Unit < Say)
         val handled: (Unit < Say) < Any =
             ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.continue((), 1: Int < Any), a => Kyo.lift(a))
-        val payload: Unit < Say = eval(handled)
+        val payload: Unit < Say = handled.eval
         var seen                = ""
         val r: Unit < Any = ArrowEffect.handleLoop(Tag[Say], payload)(
             [C] =>
@@ -104,7 +102,7 @@ class PendingTest extends AnyFreeSpec:
             ,
             a => a
         )
-        assert(eval(r) == ())
+        assert(r.eval == ())
         assert(seen == "y")
     }
 
@@ -112,49 +110,49 @@ class PendingTest extends AnyFreeSpec:
         val inner: Int < Ask = ask
         val body: Int < Give = give.map(_ => 5)
         val r: Int < Any     = ArrowEffect.handleLoop(Tag[Give], body)([C] => _ => Loop.continue((), Kyo.lift(inner)), a => a)
-        assert(eval(r) == 5)
+        assert(r.eval == 5)
     }
 
     "a captured continuation accepts a computation answer" in {
         val inner: Int < Ask = ask
         val body: Int < Give = give.map(_ => 9)
         val r: Int < Any     = ArrowEffect.handleCont(Tag[Give], body)([C] => (_, cont) => cont(inner), a => a)
-        assert(eval(r) == 9)
+        assert(r.eval == 9)
     }
 
     "mapping over a payload derives a new payload" in {
         val inner: Int < Ask           = ask
         val derived: (Int < Ask) < Any = Kyo.lift(inner).map(c => Kyo.lift(c.map(_ * 2)))
-        val payload: Int < Ask         = eval(derived)
-        assert(eval(answerAsk(21)(payload)) == 42)
+        val payload: Int < Ask         = derived.eval
+        assert(answerAsk(21)(payload).eval == 42)
     }
 
     "a payload handles inside map" in {
         def deliver[B](f: Int => B): B < Ask = ask.map(a => f(a))
         val comp: (Int < Say) < Ask          = deliver(a => say("s").map(_ => a + 1))
         val handled: (Int < Any) < Any       = answerAsk(10)(comp.map(c => Kyo.lift(answerSay[Int](c))))
-        assert(eval(eval(handled)) == 11)
+        assert(handled.eval.eval == 11)
     }
 
     "a generic function nests its result across effects" in {
         def f(a: Int): Int < Say       = say("x").map(_ => a + 5)
         def g[B](f: Int => B): B < Ask = ask.map(a => f(a))
         val nested: (Int < Say) < Ask  = g(f)
-        val payload: Int < Say         = eval(answerAsk(1)(nested))
-        assert(eval(answerSay(payload)) == 6)
+        val payload: Int < Say         = answerAsk(1)(nested).eval
+        assert(answerSay(payload).eval == 6)
     }
 
     "a pure function passes to map point-free" in {
         val f: Int => Int = _ + 1
         val r: Int < Ask  = ask.map(f)
-        assert(eval(answerAsk(41)(r)) == 42)
+        assert(answerAsk(41)(r).eval == 42)
     }
 
     "a generic function passes to map point-free" in {
         def f(a: Int): Int < Say       = say("x").map(_ => a + 5)
         def g[B](f: Int => B): B < Ask = ask.map(f)
         val nested: (Int < Say) < Ask  = g(f)
-        assert(eval(answerSay(eval(answerAsk(1)(nested)))) == 6)
+        assert(answerSay(answerAsk(1)(nested).eval).eval == 6)
     }
 
     "evalNow builds its receiver once" in {
@@ -246,8 +244,8 @@ class PendingTest extends AnyFreeSpec:
             [C] => _ => Loop.done(Kyo.lift(inner)),
             a => Kyo.lift(inner)
         )
-        val payload: Int < Ask = eval(r)
-        assert(eval(answerAsk(41)(payload)) == 42)
+        val payload: Int < Ask = r.eval
+        assert(answerAsk(41)(payload).eval == 42)
     }
 
     "a fused continuation receives the answer payload" in {
@@ -258,31 +256,31 @@ class PendingTest extends AnyFreeSpec:
             3
         }
         val r: Int < Any = ArrowEffect.handleLoop(Tag[Give], body)([C] => _ => Loop.continue((), Kyo.lift(inner)), a => a)
-        assert(eval(r) == 3)
-        assert(eval(answerAsk(41)(got.map(_ + 1))) == 42)
+        assert(r.eval == 3)
+        assert(answerAsk(41)(got.map(_ + 1)).eval == 42)
     }
 
     "double nesting round trips" in {
         val inner: Int < Ask                 = ask.map(_ + 1)
         val twice: ((Int < Ask) < Any) < Any = Kyo.lift(Kyo.lift(inner))
-        val payload: Int < Ask               = eval(eval(twice))
-        assert(eval(answerAsk(41)(payload)) == 42)
+        val payload: Int < Ask               = twice.eval.eval
+        assert(answerAsk(41)(payload).eval == 42)
     }
 
     "a loop answer payload delivers unwrapped through a bare suspension" in {
         val inner: Int < Ask = ask.map(_ + 1)
         val r: (Int < Ask) < Any =
             ArrowEffect.handleLoop(Tag[Give], give)([C] => _ => Loop.continue((), Kyo.lift(inner)), a => Kyo.lift(a))
-        val payload: Int < Ask = eval(r)
-        assert(eval(answerAsk(41)(payload)) == 42)
+        val payload: Int < Ask = r.eval
+        assert(answerAsk(41)(payload).eval == 42)
     }
 
     "a suspended loop answer delivering a payload resumes unwrapped" in {
         val inner: Int < Ask = ask.map(_ + 1)
         val handled: (Int < Ask) < Ask =
             ArrowEffect.handleLoop(Tag[Give], give)([C] => _ => Loop.continue((), after(inner)), a => Kyo.lift(a))
-        val payload: Int < Ask = eval(answerAsk(0)(handled))
-        assert(eval(answerAsk(41)(payload)) == 42)
+        val payload: Int < Ask = answerAsk(0)(handled).eval
+        assert(answerAsk(41)(payload).eval == 42)
     }
 
     "a stateful loop answer payload delivers unwrapped through a bare suspension" in {
@@ -292,8 +290,8 @@ class PendingTest extends AnyFreeSpec:
                 [C] => (s, _) => Loop.continue(s + 1, Kyo.lift(inner)),
                 (_, a) => Kyo.lift(a)
             )
-        val payload: Int < Ask = eval(r)
-        assert(eval(answerAsk(41)(payload)) == 42)
+        val payload: Int < Ask = r.eval
+        assert(answerAsk(41)(payload).eval == 42)
     }
 
     "a loop can end its region effectfully with a computation result" in {
@@ -302,8 +300,8 @@ class PendingTest extends AnyFreeSpec:
             [C] => _ => after(0).map(_ => Loop.done(Kyo.lift(inner))),
             a => Kyo.lift(a)
         )
-        val payload: Int < Ask = eval(answerAsk(0)(r))
-        assert(eval(answerAsk(41)(payload)) == 42)
+        val payload: Int < Ask = answerAsk(0)(r).eval
+        assert(answerAsk(41)(payload).eval == 42)
     }
 
     "a fused handler continuation receives a payload as a value" in {
@@ -316,13 +314,13 @@ class PendingTest extends AnyFreeSpec:
             got = b
             9
         }
-        assert(eval(r) == 9)
-        assert(eval(answerAsk(41)(got)) == 42)
+        assert(r.eval == 9)
+        assert(answerAsk(41)(got).eval == 42)
     }
 
     "flatMap chains a settled value into an effectful computation" in {
         val r: Int < Ask = (5: Int < Ask).flatMap(a => ask.map(_ + a))
-        assert(eval(answerAsk(1)(r)) == 6)
+        assert(answerAsk(1)(r).eval == 6)
     }
 
     "flatMap receives a pending payload as a value" in {
@@ -332,8 +330,8 @@ class PendingTest extends AnyFreeSpec:
             received = c
             7
         }
-        assert(eval(r) == 7)
-        assert(eval(answerAsk(41)(received.map(_ + 1))) == 42)
+        assert(r.eval == 7)
+        assert(answerAsk(41)(received.map(_ + 1)).eval == 42)
     }
 
     "andThen sequences effects and discards the value" in {
@@ -342,19 +340,19 @@ class PendingTest extends AnyFreeSpec:
             ran = true
             ask.map(_ + 1)
         }
-        assert(eval(answerAsk(41)(r)) == 42)
+        assert(answerAsk(41)(r).eval == 42)
         assert(ran)
     }
 
     "andThen leaves a discarded payload untouched" in {
         val inner: Int < Ask = ask
         val r: Int < Any     = Kyo.lift(inner).andThen(7)
-        assert(eval(r) == 7)
+        assert(r.eval == 7)
     }
 
     "unit discards the result" in {
-        assert(eval((42: Int < Any).unit) == ())
-        assert(eval(answerAsk(1)(ask.unit)) == ())
+        assert((42: Int < Any).unit.eval == ())
+        assert(answerAsk(1)(ask.unit).eval == ())
     }
 
     "eval returns the settled result" in {
@@ -373,23 +371,23 @@ class PendingTest extends AnyFreeSpec:
     "evalNow returns a payload unwrapped" in {
         val inner: Int < Ask   = ask.map(_ + 1)
         val payload: Int < Ask = Kyo.lift(inner).evalNow.getOrElse(0)
-        assert(eval(answerAsk(41)(payload)) == 42)
+        assert(answerAsk(41)(payload).eval == 42)
     }
 
     "flatten runs a nested payload" in {
         val inner: Int < Ask = ask.map(_ + 1)
-        assert(eval(answerAsk(41)(Kyo.lift(inner).flatten)) == 42)
+        assert(answerAsk(41)(Kyo.lift(inner).flatten).eval == 42)
     }
 
     "flatten merges the effects of both layers" in {
         val inner: Int < Ask          = ask.map(_ + 1)
         val nested: (Int < Ask) < Ask = after(inner)
-        assert(eval(answerAsk(20)(nested.flatten)) == 21)
+        assert(answerAsk(20)(nested.flatten).eval == 21)
     }
 
     "handle applies transformations fluently" in {
-        assert(ask.map(_ + 1).handle(v => answerAsk(41)(v)).handle(v => eval(v)) == 42)
-        assert(ask.handle(v => answerAsk(1)(v), v => eval(v)) == 1)
+        assert(ask.map(_ + 1).handle(v => answerAsk(41)(v)).handle(v => v.eval) == 42)
+        assert(ask.handle(v => answerAsk(1)(v), v => v.eval) == 1)
         val ten: Int = (0: Int < Any).handle(
             v => v.map(_ + 1),
             v => v.map(_ + 1),
@@ -400,7 +398,7 @@ class PendingTest extends AnyFreeSpec:
             v => v.map(_ + 1),
             v => v.map(_ + 1),
             v => v.map(_ + 1),
-            v => eval(v)
+            v => v.eval
         )
         assert(ten == 9)
     }
@@ -424,7 +422,7 @@ class PendingTest extends AnyFreeSpec:
         }
 
         "can produce a value instead of a computation" in {
-            val result: Int = ask.handle(v => answerAsk(2)(v)).handle(v => eval(v))
+            val result: Int = ask.handle(v => answerAsk(2)(v)).handle(v => v.eval)
             assert(result == 2)
         }
 

@@ -14,8 +14,6 @@ import kyo.proto.kernel.internal.Stack
 
 class IsolateTest extends Test:
 
-    private def eval[A](v: A < Any): A = v.eval
-
     sealed trait TestEffect1         extends ContextEffect[Int]
     sealed trait TestEffect2         extends ContextEffect[String]
     sealed trait TestEffect3         extends ContextEffect[Boolean]
@@ -100,13 +98,13 @@ class IsolateTest extends Test:
         "a derived isolate for context effects passes the computation through" in {
             val i = Isolate.derive[TestEffect1, Any, Any]
             val v = i.run(ContextEffect.suspend(Tag[TestEffect1]))
-            assert(eval(ContextEffect.handleInheritable(Tag[TestEffect1], 10)(v)) == 10)
+            assert(ContextEffect.handleInheritable(Tag[TestEffect1], 10)(v).eval == 10)
         }
 
         "resolves implicitly for context effects" in {
             val i = summon[Isolate[TestEffect1, Any, TestEffect1]]
             val v = i.run(ContextEffect.suspend(Tag[TestEffect1]))
-            assert(eval(ContextEffect.handleInheritable(Tag[TestEffect1], 7)(v)) == 7)
+            assert(ContextEffect.handleInheritable(Tag[TestEffect1], 7)(v).eval == 7)
         }
     }
 
@@ -114,17 +112,17 @@ class IsolateTest extends Test:
         "threads capture, isolation, and restore" in {
             val v = updateA.run(setA(5).map(_ => getA).map(_ + 1))
 
-            assert(eval(runA(0)(v)) == ((5, 6)))
+            assert(runA(0)(v).eval == ((5, 6)))
         }
 
         "isolation starts from the captured enclosing state" in {
             val v = updateA.run(getA.map(_ + 100))
-            assert(eval(runA(7)(v)) == ((7, 107)))
+            assert(runA(7)(v).eval == ((7, 107)))
         }
 
         "a local isolate keeps the enclosing state untouched" in {
             val v = localA.run(setA(100).map(_ => getA))
-            assert(eval(runA(7)(v)) == ((7, 100)))
+            assert(runA(7)(v).eval == ((7, 100)))
         }
 
         "a pending arrow effect crosses the boundary and is handled outside" in {
@@ -133,7 +131,7 @@ class IsolateTest extends Test:
             val v = updateA.run(setA(5).map(_ => op(10)).map(_ + 1))
             val handled: Int < CellA =
                 ArrowEffect.handleCont(Tag[NotContextEffect], v)([C] => (input, cont) => cont(input * 2), a => a)
-            assert(eval(runA(0)(handled)) == ((5, 21)))
+            assert(runA(0)(handled).eval == ((5, 21)))
         }
 
         "an operation raised at a subtype tag crosses and is answered outside" in {
@@ -142,7 +140,7 @@ class IsolateTest extends Test:
             val v = updateA.run(setA(5).map(_ => opSub(10)).map(_ + 1))
             val handled: Int < CellA =
                 ArrowEffect.handleCont(Tag[NotContextEffectSub], v)([C] => (input, cont) => cont(input * 2), a => a)
-            assert(eval(runA(0)(handled)) == ((5, 21)))
+            assert(runA(0)(handled).eval == ((5, 21)))
         }
     }
 
@@ -152,13 +150,13 @@ class IsolateTest extends Test:
             val body: Int < (CellA & CellB) =
                 setA(1).map(_ => setB(2)).map(_ => getA.map(a => getB.map(b => a * 10 + b)))
             val v = both.run(body)
-            assert(eval(runA(0)(runB(0)(v))) == ((1, (2, 12))))
+            assert(runA(0)(runB(0)(v)).eval == ((1, (2, 12))))
         }
 
         "composing with Contextual leaves the other side's management untouched" in {
-            val before = eval(runA(0)(updateA.run(setA(5).map(_ => getA))))
-            assert(eval(runA(0)(updateA.andThen(Isolate.internal.Contextual).run(setA(5).map(_ => getA)))) == before)
-            assert(eval(runA(0)(Isolate.internal.Contextual.andThen(updateA).run(setA(5).map(_ => getA)))) == before)
+            val before = runA(0)(updateA.run(setA(5).map(_ => getA))).eval
+            assert(runA(0)(updateA.andThen(Isolate.internal.Contextual).run(setA(5).map(_ => getA))).eval == before)
+            assert(runA(0)(Isolate.internal.Contextual.andThen(updateA).run(setA(5).map(_ => getA))).eval == before)
         }
     }
 
@@ -166,7 +164,7 @@ class IsolateTest extends Test:
         "provides the isolate as a given" in {
             def op(using i: Isolate[CellA, Any, CellA]): Int < CellA = i.run(setA(3).map(_ => getA))
             val r                                                    = updateA.use(op)
-            assert(eval(runA(0)(r)) == ((3, 3)))
+            assert(runA(0)(r).eval == ((3, 3)))
         }
     }
 
@@ -174,7 +172,7 @@ class IsolateTest extends Test:
         "crosses the state to the consumer" in {
 
             val v: Int < CellA = updateA(setA(5).map(_ => getA.map(_ + 1)))(crossed => crossed)
-            assert(eval(runA(0)(v)) == ((5, 6)))
+            assert(runA(0)(v).eval == ((5, 6)))
         }
     }
 
@@ -198,7 +196,7 @@ class IsolateTest extends Test:
                 ,
                 _ => ()
             )
-            discard(eval(r))
+            discard(r.eval)
             out.get
         end continuationOf
 
@@ -210,15 +208,15 @@ class IsolateTest extends Test:
             val bound: Int < Fork                = ContextEffect.handleInheritable(Tag[TestEffect1], 10)(body)
             val cont                             = continuationOf(bound)
 
-            assert(eval(runFork(cont(5))) == 15)
+            assert(runFork(cont(5)).eval == 15)
         }
 
         "the continuation is a complete value: it resumes more than once, anywhere" in {
             val body  = forkHere.map(n => ContextEffect.suspend(Tag[TestEffect1]).map(_ * n))
             val bound = ContextEffect.handleInheritable(Tag[TestEffect1], 3)(body)
             val cont  = continuationOf(bound)
-            assert(eval(runFork(cont(2))) == 6)
-            assert(eval(runFork(cont(5))) == 15)
+            assert(runFork(cont(2)).eval == 6)
+            assert(runFork(cont(5)).eval == 15)
         }
 
         "the fork point splits: the boundary run stops there and the resume carries on" in {
@@ -229,7 +227,7 @@ class IsolateTest extends Test:
             }
             val cont = continuationOf(ContextEffect.handleInheritable(Tag[TestEffect1], 1)(body))
             assert(past == 0)
-            assert(eval(runFork(cont(7))) == 7)
+            assert(runFork(cont(7)).eval == 7)
             assert(past == 1)
         }
 
@@ -240,7 +238,7 @@ class IsolateTest extends Test:
                     ContextEffect.handleInheritable(Tag[TestEffect2], "inner")(body)
                 }
             val cont = continuationOf(bound)
-            assert(eval(runFork(cont(0))) == "inner")
+            assert(runFork(cont(0)).eval == "inner")
         }
 
         "derived layers reconstruct the fork point values on resume" in {
@@ -251,7 +249,7 @@ class IsolateTest extends Test:
                     ContextEffect.handleInheritable(Tag[TestEffect1], 0, _ + 10)(body)
                 }
             val cont = continuationOf(bound)
-            assert(eval(runFork(cont(0))) == 11)
+            assert(runFork(cont(0)).eval == 11)
         }
 
         "a crossed binding resumes at its captured value" in {
@@ -259,8 +257,8 @@ class IsolateTest extends Test:
             val body  = forkHere.map(_ => ContextEffect.suspend(Tag[TestEffect1]))
             val bound = ContextEffect.handleInheritable(Tag[TestEffect1], 0, _ + 10)(body)
             val cont  = continuationOf(bound)
-            assert(eval(runFork(cont(0))) == 0)
-            assert(eval(ContextEffect.handleInheritable(Tag[TestEffect1], 5)(runFork(cont(0)))) == 0)
+            assert(runFork(cont(0)).eval == 0)
+            assert(ContextEffect.handleInheritable(Tag[TestEffect1], 5)(runFork(cont(0))).eval == 0)
         }
     }
 
@@ -358,7 +356,7 @@ class IsolateTest extends Test:
             val nested: Int < TestEffect1 < TestEffect1 = isolate.nest(effect)
             val flattened: Int < TestEffect1            = nested.flatten
 
-            assert(eval(ContextEffect.handleInheritable(Tag[TestEffect1], 42)(flattened)) == 42)
+            assert(ContextEffect.handleInheritable(Tag[TestEffect1], 42)(flattened).eval == 42)
         }
 
         "allows effect handling between nest and flatten" in {
@@ -373,7 +371,7 @@ class IsolateTest extends Test:
             val handled   = ContextEffect.handleInheritable(Tag[TestEffect2], "hello")(nested)
             val flattened = handled.flatten
 
-            assert(eval(ContextEffect.handleInheritable(Tag[TestEffect1], 10)(flattened)) == 15)
+            assert(ContextEffect.handleInheritable(Tag[TestEffect1], 10)(flattened).eval == 15)
         }
 
         "transforms Remove to Restore in type signature" in {
@@ -388,10 +386,10 @@ class IsolateTest extends Test:
         "a stateful isolate defers the restore to the nested layer" in {
             val nested = updateA.nest(setA(9).map(_ => getA))
 
-            val (outerState, pendingRestore) = eval(runA(0)(nested))
+            val (outerState, pendingRestore) = runA(0)(nested).eval
             assert(outerState == 0)
 
-            assert(eval(runA(5)(pendingRestore)) == ((9, 9)))
+            assert(runA(5)(pendingRestore).eval == ((9, 9)))
         }
     }
 
@@ -414,7 +412,7 @@ class IsolateTest extends Test:
                 fork = (parent: Int) => parent * 2,
                 join = (parent: Int, _: Int, _: Int) => parent
             )(prog)
-            assert(eval(r) == (20, 10))
+            assert(r.eval == (20, 10))
         }
 
         "handleInheritable shares the binding and keeps the origin state" in {
@@ -422,7 +420,7 @@ class IsolateTest extends Test:
                 contextual.capture { st =>
                     contextual.restore(contextual.isolate(st, read)).map(child => read.map(origin => (child, origin)))
                 }
-            assert(eval(ContextEffect.handleInheritable(Tag[Bind], 10)(prog)) == (10, 10))
+            assert(ContextEffect.handleInheritable(Tag[Bind], 10)(prog).eval == (10, 10))
         }
 
         "join observes the parent's current state, the forked state, and the child's final state" in {
@@ -438,7 +436,7 @@ class IsolateTest extends Test:
                     seen = (parent, forked, child) :: seen
                     parent
             )(prog)
-            assert(eval(r) == 20)
+            assert(r.eval == 20)
             assert(seen == List((10, 20, 20)))
         }
 
@@ -452,7 +450,7 @@ class IsolateTest extends Test:
                 fork = (parent: Int) => parent * 2,
                 join = (parent: Int, _: Int, child: Int) => parent + child
             )(prog)
-            assert(eval(r) == (20, 30))
+            assert(r.eval == (20, 30))
         }
 
         "joins run for every region in scope, in entry order" in {
@@ -475,7 +473,7 @@ class IsolateTest extends Test:
                     order = "outer" :: order
                     parent
             )(inner)
-            assert(eval(r) == 3)
+            assert(r.eval == 3)
             assert(order == List("bind", "outer"))
         }
 
@@ -490,7 +488,7 @@ class IsolateTest extends Test:
                         parent
                 )(contextual.capture(st => contextual.isolate(st, read)))
             val r: Int < Any = contextual.restore(captured)
-            assert(eval(r) == 10)
+            assert(r.eval == 10)
             assert(joins == 0)
         }
 
@@ -499,7 +497,7 @@ class IsolateTest extends Test:
                 contextual.capture { st =>
                     contextual.restore(contextual.isolate(st, 42: Int < Any)).map(_ + 1)
                 }
-            assert(eval(prog) == 43)
+            assert(prog.eval == 43)
         }
 
         "an isolated computation replays at its forked state" in {
@@ -517,7 +515,7 @@ class IsolateTest extends Test:
                 ,
                 join = (parent: Int, _: Int, _: Int) => parent
             )(prog)
-            assert(eval(r) == (110, 110))
+            assert(r.eval == (110, 110))
             assert(forks == 1)
         }
     }
@@ -578,31 +576,31 @@ class IsolateTest extends Test:
                         )
                     )
                 )
-            assert(eval(eval(v)) == ((1, "a", true)))
+            assert(v.eval.eval == ((1, "a", true)))
         }
 
         "an intervening map leaves the crossing resolving against the stack live at its point" in {
             val composed = crossing(read1).map(child => child.map(_ + 1))
-            val child    = eval(bind1(7)(composed))
-            assert(eval(child) == 8)
+            val child    = bind1(7)(composed).eval
+            assert(child.eval == 8)
         }
 
         "the fused form hands the crossing straight to its consumer" in {
-            val v = bind1(11)(Isolate.internal.Contextual(read1)(crossed => eval(crossed) + 1))
-            assert(eval(v) == 12)
+            val v = bind1(11)(Isolate.internal.Contextual(read1)(crossed => crossed.eval + 1))
+            assert(v.eval == 12)
         }
 
         "a composed isolate crosses the context too" in {
             val composed     = Isolate.internal.Contextual.andThen(updateA)
-            val (_, crossed) = eval(runA(0)(bind1(42)(composed(read1)(Kyo.lift[Int < (CellA & Any), Any](_)))))
-            assert(eval(runA(0)(crossed).map(_._2)) == 42)
+            val (_, crossed) = runA(0)(bind1(42)(composed(read1)(Kyo.lift[Int < (CellA & Any), Any](_)))).eval
+            assert(runA(0)(crossed).map(_._2).eval == 42)
         }
 
         "a fork of a fork asks the same strategies" in {
             val v = ContextEffect.handle(Tag[TestEffect1])(2, (_: Int) => 2, (n: Int) => n + 1, (p: Int, _: Int, _: Int) => p)(
                 crossing(crossing(read1))
             )
-            assert(eval(eval(eval(v))) == 4)
+            assert(v.eval.eval.eval == 4)
         }
     }
 

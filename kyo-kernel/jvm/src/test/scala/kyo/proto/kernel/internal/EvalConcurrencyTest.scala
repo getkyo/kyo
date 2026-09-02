@@ -10,8 +10,6 @@ import kyo.proto.kernel.ArrowEffect
 import org.scalatest.freespec.AnyFreeSpec
 
 class EvalConcurrencyTest extends AnyFreeSpec:
-    private def eval[A](v: A < Any): A = v.eval
-
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
@@ -32,9 +30,9 @@ class EvalConcurrencyTest extends AnyFreeSpec:
             ,
             a => a
         )
-        assert(eval(r) == -1)
+        assert(r.eval == -1)
         val k             = stored.get
-        def resume(): Int = eval(ArrowEffect.handleCont(Tag[Say], k(()))([C] => (_, cont) => cont(()), a => a))
+        def resume(): Int = ArrowEffect.handleCont(Tag[Say], k(()))([C] => (_, cont) => cont(()), a => a).eval
         val results       = new ConcurrentLinkedQueue[Int]()
         val threads = (1 to 4).map(_ =>
             new Thread(() =>

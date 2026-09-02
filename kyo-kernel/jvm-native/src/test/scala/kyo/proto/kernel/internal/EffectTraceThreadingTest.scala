@@ -11,8 +11,6 @@ import org.scalatest.freespec.AnyFreeSpec
 
 class EffectTraceThreadingTest extends AnyFreeSpec:
 
-    private def eval[A](v: A < Any): A = v.eval
-
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
@@ -32,7 +30,7 @@ class EffectTraceThreadingTest extends AnyFreeSpec:
                 while gate.get() < 2 do ()
                 var i = 0
                 while i < 3 do
-                    try discard(eval(answerAsk(1)(ask.map(_ => (throw shared): Int))))
+                    try discard(answerAsk(1)(ask.map(_ => (throw shared): Int)).eval)
                     catch
                         case b: Boom      => ()
                         case _: Throwable => failed = true
