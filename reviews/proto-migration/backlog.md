@@ -299,10 +299,17 @@ region that closes after the restore", "an isolate cycle fires done once, for th
 installed". Fix direction: apply the joined state to the owning region's slot on the live stack
 (the region found by handler identity) and update the context, pushing nothing; the evaluator's
 `Snapshot` arm has to give the node the means to do that. Needs a derivation before the edit.
-Ruling pending on the second test's law: whether the fork and join copies are regions to the
-user's hooks (`done` for the child copy at 20, then the origin at 30; the bracket's `Cell.inert`
-fork is the precedent and this is the recommendation) or silent (the origin only, at 30). Under
-either, the test's current `List("done 10")` is wrong, since the origin exits joined. Status: open.
+Ruled: fork and join copies are silent to the user's hooks; only the region the user installed
+fires `done` and `release`, with the joined state. Fixed in `1ede100a1b`: the `Snapshot` node's
+continuation receives the live stack, `restore` writes each joined state into the origin's slot
+by handler identity and continues in place, the evaluator rebuilds the context after the node
+(the rebuild `guarded` already had), and fork copies carry a `Forked` handler that delegates
+`tag`, `derive`, `fork` and `join` and inherits the no-op hooks. Verified on JVM, JS and Native.
+Consequence for the Q3 pins: "a restored crossing reads the binding it captured" was green by
+arithmetic coincidence (the outer region's `1 + 1` join copy pushed above the restore scope, not
+the inner binding). Ruled 2026-09-02: a read placed after a restored crossing sees the scope it
+restores in, and the join lands on the live region; the pin now asserts 10 inside that scope and
+the joined 2 once it exits (`66294c5fca`). Status: fixed.
 
 ### S4. A debt re-homed below the answering region is never settled by the resume
 
@@ -340,6 +347,9 @@ The reading pass predicted that a stop consumed by a nested `Eval.partial` is lo
 enclosing slice. Ruling: the scheduler contract has no nested partial; `Eval.partial` is called
 only by the task loop. The test was removed; no change.
 
-Not carried: the cached physical frames on the trace carrier (report finding 10, no
-distinguishing assertion yet) and the dead `scratch` write on the pooled stack (report finding
-21, unobservable). The report's nine coverage pins, predicted green, are on offer.
+Report finding 21, the `scratch` store on the pooled stack, is not a defect: it is the measured
+escape that defeats a C2 scalar-replacement pathology on the settled loop rows (`a8cff0a3f8`,
+363 to 155 us on `handleLoopAnswersInPlace`), and it stays. Report finding 10, the physical
+frames cached from the first splicing thread, and the nine coverage pins (findings 12 to 20)
+are added as tests in the "reading audit pins" groups of ArrowEffectTest, ContextEffectTest,
+EvalTest, EffectBracketTest and EffectTraceThreadingTest; finding 10 is predicted red.

@@ -49,4 +49,21 @@ class EffectTraceThreadingTest extends AnyFreeSpec:
         end while
     }
 
+    "a shared exception spliced on a second thread shows that thread's own physical frames" in {
+        val shared = new Boom
+        def spliceHere(): Unit =
+            try discard(answerAsk(1)(ask.map(_ => (throw shared): Int)).eval)
+            catch case _: Boom => ()
+        spliceHere()
+        @volatile var onSecond = List.empty[String]
+        def spliceOnSecondThread(): Unit =
+            spliceHere()
+            onSecond = shared.getStackTrace.map(_.getMethodName).toList
+        val t = new Thread(() => spliceOnSecondThread(), "second-splicer")
+        t.start()
+        t.join(10000)
+        assert(!t.isAlive)
+        assert(onSecond.exists(_.startsWith("spliceOnSecondThread")))
+    }
+
 end EffectTraceThreadingTest

@@ -1,5 +1,7 @@
 package kyo.proto.kernel
 
+import kyo.Closed
+import kyo.Const
 import kyo.Maybe
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
@@ -25,7 +27,7 @@ class EffectBracketTest extends AnyFreeSpec:
 
     private object Boom extends RuntimeException("boom", null, false, false)
 
-    sealed trait Ask extends ArrowEffect[kyo.Const[Unit], kyo.Const[Int]]
+    sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
     "bracket" - {
@@ -429,7 +431,7 @@ class EffectBracketTest extends AnyFreeSpec:
                     discard(order += "release")
                 }(_ => Effect.defer((throw Boom): Int))
             val recovered: Int < Any =
-                ArrowEffect.handleCont[kyo.Const[Unit], kyo.Const[Int], Ask, Int, Int, Any, Any](Tag[Ask], body)(
+                ArrowEffect.handleCont[Const[Unit], Const[Int], Ask, Int, Int, Any, Any](Tag[Ask], body)(
                     [C] => (_, cont) => cont(0),
                     a => a,
                     _ =>
@@ -450,7 +452,7 @@ class EffectBracketTest extends AnyFreeSpec:
                     discard(order += "release")
                 }(_ => ask.map(_ => (throw Boom): Int))
             val recovered: Int < Any =
-                ArrowEffect.handleCont[kyo.Const[Unit], kyo.Const[Int], Ask, Int, Int, Any, Any](Tag[Ask], body)(
+                ArrowEffect.handleCont[Const[Unit], Const[Int], Ask, Int, Int, Any, Any](Tag[Ask], body)(
                     [C] => (_, cont) => cont(0),
                     a => a,
                     _ =>
@@ -564,12 +566,35 @@ class EffectBracketTest extends AnyFreeSpec:
             val body: Int < Ask =
                 Effect.bracket(Effect.defer(7))((_, outcome) => seen = Maybe(outcome))(a => ask.map(x => a + x))
             val dropped: Int < Any =
-                ArrowEffect.handleCont[kyo.Const[Unit], kyo.Const[Int], Ask, Int, Int, Any, Any](Tag[Ask], body)(
+                ArrowEffect.handleCont[Const[Unit], Const[Int], Ask, Int, Int, Any, Any](Tag[Ask], body)(
                     [C] => (_, _) => -1,
                     b => b
                 )
             assert(dropped.eval == -1)
             assert(seen.exists(_.exists(_.isInstanceOf[kyo.KyoException])))
+        }
+    }
+
+    "reading audit pins" - {
+        "a leaked capture's refusal is recoverable by the region that resumes it" in {
+            var leaked          = Maybe.empty[Arrow[Int, Int, Ask]]
+            val body: Int < Ask = Effect.bracket(Effect.defer(7))((_, _) => ())(a => ask.map(_ + a))
+            val first: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
+                [C] =>
+                    (_, cont) =>
+                        leaked = Maybe(cont)
+                        -1
+                ,
+                a => a
+            )
+            assert(first.eval == -1)
+            val again: Int < Any =
+                ArrowEffect.handleCont[Const[Unit], Const[Int], Ask, Int, Int, Any, Any](Tag[Ask], leaked.get(1))(
+                    [C] => (_, cont) => cont(0),
+                    a => a,
+                    ex => Maybe(if ex.isInstanceOf[Closed] then -2 else -3)
+                )
+            assert(again.eval == -2)
         }
     }
 
@@ -592,10 +617,10 @@ class EffectBracketTest extends AnyFreeSpec:
     def answerAsk[A, S](value: Int)(v: A < (Ask & S)): A < S =
         ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, cont) => cont(value), a => a)
 
-    sealed trait Str extends ArrowEffect[kyo.Const[Int], kyo.Const[String]]
+    sealed trait Str extends ArrowEffect[Const[Int], Const[String]]
     def str(i: Int): String < Str = ArrowEffect.suspend[Any](Tag[Str], i)
 
-    sealed trait Wrap extends ArrowEffect[kyo.Const[Unit], kyo.Const[Unit]]
+    sealed trait Wrap extends ArrowEffect[Const[Unit], Const[Unit]]
     def recovering[A](v: A < Wrap)(f: Throwable => A): A < Any =
         ArrowEffect.handleCont(Tag[Wrap], v)([C] => (_, cont) => cont(()), a => a, ex => Maybe(f(ex)))
 

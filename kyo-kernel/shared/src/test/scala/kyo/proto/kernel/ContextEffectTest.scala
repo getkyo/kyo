@@ -268,6 +268,45 @@ class ContextEffectTest extends AnyFreeSpec:
         }
     }
 
+    "reading audit pins" - {
+        def hooked[A, S](log: ListBuffer[String], name: String, value: Int)(v: A < (Count & S)): A < S =
+            ContextEffect.handle(Tag[Count])(
+                derive = (_: Maybe[Int]) => value,
+                fork = (s: Int) => s,
+                join = (parent: Int, _: Int, _: Int) => parent,
+                done = (s: Int) => discard(log += s"done $name $s"),
+                release = (s: Int, _: Throwable) => discard(log += s"release $name $s")
+            )(v)
+
+        "each shot of a crossing drains the debts it re-installs" in {
+            val log = ListBuffer[String]()
+            val body: Int < (Ask & Say) =
+                hooked(log, "outer", 1)(hooked(log, "inner", 2)(say("s").map(_ => 0)).map(a => ask.map(_ + a)))
+            val handledSay: Int < Ask = ArrowEffect.handleCont(Tag[Say], body)([C] => (_, cont) => cont(()), a => a)
+            val twice: Int < Any = ArrowEffect.handleCont(Tag[Ask], handledSay)(
+                [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
+                a => a
+            )
+            assert(twice.eval == 30)
+            assert(log.count(_ == "done outer 1") == 2)
+            assert(log.count(_ == "release outer 1") == 0)
+        }
+
+        "a throwing done is followed by one release carrying the failure" in {
+            val log  = ListBuffer[String]()
+            val boom = new RuntimeException("boom")
+            val r: Int < Any = ContextEffect.handle(Tag[Count])(
+                derive = (_: Maybe[Int]) => 7,
+                fork = (p: Int) => p,
+                join = (p: Int, _: Int, _: Int) => p,
+                done = (_: Int) => throw boom,
+                release = (s: Int, ex: Throwable) => discard(log += s"release $s ${ex eq boom}")
+            )(count)
+            assert(intercept[RuntimeException](r.eval) eq boom)
+            assert(log.toList == List("release 7 true"))
+        }
+    }
+
     sealed trait MapCtx extends ContextEffect[Map[String, Int]]
 
 end ContextEffectTest

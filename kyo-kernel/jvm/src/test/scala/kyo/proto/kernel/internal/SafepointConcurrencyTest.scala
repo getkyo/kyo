@@ -3,6 +3,8 @@ package kyo.proto.kernel.internal
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import kyo.Const
+import kyo.Tag
 import kyo.discard
 import kyo.proto.Loop
 import kyo.proto.kernel.<
@@ -21,8 +23,8 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
         condition
     end spinUntil
 
-    sealed trait Ask extends ArrowEffect[kyo.Const[Unit], kyo.Const[Int]]
-    def ask: Int < Ask = ArrowEffect.suspend[Any](kyo.Tag[Ask], ())
+    sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
+    def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
     "a stop request from another thread is visible once and consumed" in {
         @volatile var ready         = false
@@ -116,7 +118,7 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
             @volatile var pending = false
             val target = new Thread(() =>
                 val region: Int < Any =
-                    ArrowEffect.handleLoop(kyo.Tag[Ask], countdown(5_000_000))(
+                    ArrowEffect.handleLoop(Tag[Ask], countdown(5_000_000))(
                         [C] =>
                             _ =>
                                 started = true

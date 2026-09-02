@@ -740,6 +740,32 @@ class EvalTest extends AnyFreeSpec:
             assert(derives == 1)
         }
 
+        "a double abandonment reaches a raw hook twice and a bracket once" in {
+            val log     = ListBuffer[String]()
+            var bracket = 0
+            sealed trait Cfg extends ContextEffect[Int]
+            def hooked[A, S](value: Int)(v: A < (Cfg & S)): A < S =
+                ContextEffect.handle(Tag[Cfg])(
+                    derive = (_: Maybe[Int]) => value,
+                    fork = (s: Int) => s,
+                    join = (p: Int, _: Int, _: Int) => p,
+                    release = (s: Int, _: Throwable) => discard(log += s"release cfg $s")
+                )(v)
+            val v: Int < Any =
+                Effect.bracket(Effect.defer(1))((_, _) => bracket += 1) { a =>
+                    hooked(a)(Effect.defer {
+                        requestStop()
+                        Effect.defer(a)
+                    })
+                }
+            val p = Eval.partial(v)
+            assert(p.evalNow.isEmpty)
+            Eval.release(p, Boom)
+            Eval.release(p, Boom)
+            assert(bracket == 1)
+            assert(log.toList == List("release cfg 1", "release cfg 1"))
+        }
+
         "release of a settled value or an obligation-free computation owes nothing" in {
             Eval.release(42: Int < Any, Boom)
             var ran = false

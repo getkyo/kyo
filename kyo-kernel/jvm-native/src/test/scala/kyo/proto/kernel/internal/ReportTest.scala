@@ -1,5 +1,6 @@
 package kyo.proto.kernel.internal
 
+import kyo.Const
 import kyo.Maybe
 import kyo.Tag
 import kyo.discard
@@ -13,7 +14,7 @@ class ReportTest extends AnyFreeSpec:
 
     private object Bad extends RuntimeException("bad", null, true, false)
 
-    sealed trait Ask extends ArrowEffect[kyo.Const[Unit], kyo.Const[Int]]
+    sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
     "delivers to the thread's uncaught-exception handler" in {

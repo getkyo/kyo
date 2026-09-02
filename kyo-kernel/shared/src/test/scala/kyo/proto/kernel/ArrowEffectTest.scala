@@ -13,6 +13,7 @@ import kyo.proto.kernel.internal.Safepoint
 import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
 import scala.collection.mutable.ListBuffer
+import scala.compiletime.testing.typeCheckErrors
 
 class ArrowEffectTest extends AnyFreeSpec:
 
@@ -2236,6 +2237,60 @@ class ArrowEffectTest extends AnyFreeSpec:
             catch case _: Boom => -2) == -2)
         }
 
+    }
+
+    "reading audit pins" - {
+        "an Any-typed Continue2 does not conform to the clause's outcome without Loop.done" in {
+            assert(typeCheckErrors(
+                """
+                val hostile: Any = Loop.continue((), 0: Int < Any).eval
+                ArrowEffect.handleLoop(Tag[Ask], ask: Any < Ask)([C] => _ => hostile, (a: Any) => a)
+                """
+            ).nonEmpty)
+        }
+
+        "dispatchFirst reports nothing under an isolate capture" in {
+            var seen = 0
+            ArrowEffect.dispatchFirst(Tag[Ask], Isolate.internal.Contextual.run(ask))([C] => _ => seen += 1)
+            assert(seen == 0)
+        }
+
+        "the fused loop leaves a subtype operation to the general path" in {
+            val askAtSub: Int < AskSub = ArrowEffect.suspend[Any](Tag[AskSub], ())
+            val body: Int < AskSub     = ask.map(a => askAtSub.map(b => a * 10 + b))
+            val r                      = ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.continue((), 1: Int < Any), a => a)
+            val out: Int < Any         = ArrowEffect.handleLoop(Tag[AskSub], r)([C] => _ => Loop.continue((), 2: Int < Any), a => a)
+            assert(out.eval == 12)
+        }
+
+        "a boxed answer parked mid loop is still data after the resume" in {
+            sealed trait Give extends ArrowEffect[Const[Unit], Const[Int < Say]]
+            val give: (Int < Say) < Give = ArrowEffect.suspend[Any](Tag[Give], ())
+            val payload: Int < Say       = say("p").map(_ => 7)
+            val region: (Int < Say) < Any =
+                ArrowEffect.handleLoop(Tag[Give], give.map(v => Kyo.lift[Int < Say, Any](v)))(
+                    [C] =>
+                        _ =>
+                            requestStop()
+                            Loop.continue((), Kyo.lift[Int < Say, Any](payload))
+                    ,
+                    a => Kyo.lift[Int < Say, Any](a)
+                )
+            val parked         = Eval.partial(region)
+            val got: Int < Say = parked.eval
+            assert(got.asInstanceOf[AnyRef] eq payload.asInstanceOf[AnyRef])
+        }
+
+        "a recovery after a foreign in-place answer sees the advanced state" in {
+            val body: Int < (Ask & Say) = say("x").map(_ => ask.map(_ => (throw Boom): Int))
+            val inner: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], 0, body)(
+                [C] => (s, _) => Loop.continue(s + 1, 1: Int < Any),
+                (_, a) => a,
+                (s, _) => Maybe(-100 - s)
+            )
+            val r: Int < Any = ArrowEffect.handleCont(Tag[Say], inner)([C] => (_, cont) => cont(()), a => a)
+            assert(r.eval == -101)
+        }
     }
 
 end ArrowEffectTest
