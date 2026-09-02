@@ -15,6 +15,7 @@ final class EffectTrace extends Exception(null, null, false, false):
     private[kyo] var elements: Array[StackTraceElement]        = EffectTrace.noElements
     private[kyo] var dropped: Int                              = 0
     private[kyo] var physical: Maybe[Array[StackTraceElement]] = Maybe.Absent
+    private[kyo] var seen: Maybe[Stack]                        = Maybe.Absent
 
     override def getMessage: String =
         val body = elements.iterator.map(e => s"at $e").mkString("\n")
@@ -30,18 +31,46 @@ private[kernel] object EffectTrace:
 
     private val noElements = new Array[StackTraceElement](0)
 
+    def attach(ex: Throwable, cont: Arrow[?, ?, ?]): Unit =
+        reconstruct(ex, Maybe.Absent) { builder =>
+            builder.arrow(cont)
+        }
+
     def attach(ex: Throwable, stack: Stack): Unit =
-        reconstruct(ex) { builder =>
+        reconstruct(ex, Maybe(stack)) { builder =>
             builder.entries(stack)
         }
 
-    private inline def reconstruct(ex: Throwable)(inline fill: Builder => Unit): Unit =
+    def attach(ex: Throwable, a: Arrow[?, ?, ?], b: Arrow[?, ?, ?], stack: Stack): Unit =
+        reconstruct(ex, Maybe(stack)) { builder =>
+            builder.arrows(a, b)
+            builder.entries(stack)
+        }
+
+    def attach(ex: Throwable, node: Pending[?, ?], stack: Stack): Unit =
+        reconstruct(ex, Maybe(stack)) { builder =>
+            builder.node(node)
+            builder.entries(stack)
+        }
+
+    def attach(ex: Throwable, node: Pending[?, ?], cont: Arrow[?, ?, ?], stack: Stack): Unit =
+        reconstruct(ex, Maybe(stack)) { builder =>
+            builder.arrow(cont)
+            builder.node(node)
+            builder.entries(stack)
+        }
+
+    private inline def reconstruct(ex: Throwable, stack: Maybe[Stack])(inline fill: Builder => Unit): Unit =
         if NonFatal(ex) then
             try
                 val carrier = carrierOf(ex)
-                val builder = new Builder(MaxFrames - carrier.elements.length)
-                fill(builder)
-                builder.installInto(carrier)
+                val walked  = stack.exists(s => carrier.seen.exists(_ eq s))
+                if !walked then
+                    if stack.nonEmpty then carrier.seen = stack
+                    val builder = new Builder(MaxFrames - carrier.elements.length)
+                    fill(builder)
+                    builder.installInto(carrier)
+                end if
             catch case failure if NonFatal(failure) => ()
         end if
     end reconstruct
@@ -143,6 +172,20 @@ private[kernel] object EffectTrace:
                 discard(work.prepend(item))
             end if
         end push
+
+        def arrow(a: Arrow[?, ?, ?]): Unit =
+            push(a)
+            drain()
+
+        def arrows(a: Arrow[?, ?, ?], b: Arrow[?, ?, ?]): Unit =
+            push(b)
+            push(a)
+            drain()
+        end arrows
+
+        def node(p: Pending[?, ?]): Unit =
+            push(new Node(p))
+            drain()
 
         def entries(stack: Stack): Unit =
             val n = stack.depth

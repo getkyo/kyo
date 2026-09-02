@@ -142,12 +142,12 @@ class EffectTraceTest extends AnyFreeSpec:
         assert(c.get.getMessage.contains("more not walked"))
     }
 
-    "a throw with no region standing synthesizes nothing and travels on the physical trace" in {
-
+    "a throw with no region standing still carries the frames of the steps it was in" in {
         val v: Int < Any = runAsk(ask)(1).map(_ => (throw Boom()): Int).map(_ + 1)
         val ex           = intercept[Boom](eval(v))
-        assert(carrier(ex).isEmpty || carrier(ex).get.elements.isEmpty)
-
+        assert(carrier(ex).nonEmpty)
+        assert(carrier(ex).get.elements.forall(_.getFileName == "EffectTraceTest.scala"))
+        assert(carrier(ex).get.elements.forall(_.getClassName.startsWith("map @ ")))
         assert(!kyo.internal.Platform.isJVM || ex.getStackTrace.exists(_.getFileName == "EffectTraceTest.scala"))
     }
 

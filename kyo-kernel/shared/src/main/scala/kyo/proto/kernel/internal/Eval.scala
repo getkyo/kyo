@@ -96,7 +96,12 @@ import scala.util.control.NonFatal
         releaseCollected(collected, ex)
     end drainOwed
 
-    private def unhandled(kyo: Any): Nothing = bug(s"unhandled suspension: $kyo")
+    private def unhandled(kyo: Pending[?, ?], stack: Stack): Nothing =
+        try bug(s"unhandled suspension: $kyo")
+        catch
+            case ex =>
+                EffectTrace.attach(ex, kyo, stack)
+                throw ex
 
     private def unanswerable(handler: Handler[?, ?, ?]): Nothing = bug(s"unhandled: $handler")
 
@@ -244,13 +249,13 @@ import scala.util.control.NonFatal
                 case kyo: Kyo.Suspend[?, ?, T, S2] @unchecked =>
                     kyo match
                         case kyo: Kyo.SuspendContext[VX, CX, T, S2] @unchecked =>
-                            val state = ctx.get(kyo.tag).orElse(kyo.default).getOrElse(unhandled(kyo))
+                            val state = ctx.get(kyo.tag).orElse(kyo.default).getOrElse(unhandled(kyo, stack))
                             Debugger.onContext(kyo, ctx)
                             loop(kyo.cont(state, contA.chain(contB)), Arrow.id, Arrow.id, ctx)
 
                         case kyo: Kyo.SuspendArrow[IX, OX, EX, VX, T, EX & S2] @unchecked =>
                             val idx = stack.find(kyo.tag)
-                            if idx < 0 then unhandled(kyo)
+                            if idx < 0 then unhandled(kyo, stack)
                             else
                                 Debugger.onHandle(kyo, stack.handler(idx), stack.state(idx))
                                 val atTop = idx == stack.depth - 1
@@ -262,7 +267,7 @@ import scala.util.control.NonFatal
                                     else kyo.crossing(entries, contA.chain(contB))
                                 stack.handler(idx) match
                                     case handler: Handler.ContHandler[IX, OX, EX, C, Y, S2] @unchecked =>
-                                        val result = handler.run(kyo.input, continuation)
+                                        val result = handler.answering(kyo.input, continuation, kyo, stack)
                                         Debugger.onResult(result)
                                         loop(result, Arrow.id, Arrow.id, ctx2)
                                     case handler: Handler.ContOpHandler[EX, C, Y, S2] @unchecked =>
@@ -271,12 +276,12 @@ import scala.util.control.NonFatal
                                                 def tag   = kyo.tag
                                                 def input = kyo.input
                                                 def cont  = Arrow.id
-                                        val result = handler.run(operation, continuation)
+                                        val result = handler.answering(operation, continuation, kyo, stack)
                                         Debugger.onResult(result)
                                         loop(result, Arrow.id, Arrow.id, ctx2)
                                     case handler: Handler.LoopHandler[VX, IX, OX, EX, C, Y, S2] @unchecked if atTop =>
                                         val k    = kyo.cont.chain(contA.chain(contB)).asInstanceOf[Arrow[Any, Any, Any]]
-                                        val exit = handler.answers(stack.state(idx).asInstanceOf[VX], kyo.input, k, armed, slot)
+                                        val exit = handler.answers(stack.state(idx).asInstanceOf[VX], kyo.input, k, armed, slot, kyo.frame)
                                         Debugger.onResult(exit)
                                         exit match
                                             case e: Loop.Continue2[VX, Any] @unchecked =>
@@ -300,7 +305,7 @@ import scala.util.control.NonFatal
                                                 loop(result, next, Arrow.id, ctx)
                                         end match
                                     case handler: Handler.LoopHandler[VX, IX, OX, EX, C, Y, S2] @unchecked =>
-                                        val outcome0 = handler.run(stack.state(idx).asInstanceOf[VX], kyo.input)
+                                        val outcome0 = handler.running(stack.state(idx).asInstanceOf[VX], kyo.input, kyo, stack)
                                         stack.scratch = outcome0
                                         Debugger.onResult(outcome0)
                                         outcome0 match
@@ -380,7 +385,13 @@ import scala.util.control.NonFatal
                             case contA: Arrow.Chain[T, Any, B, S2] @unchecked =>
                                 loop(res, contA.a, contA.b.chain(contB), ctx)
                             case _ =>
-                                loop(contA(res, contB), Arrow.id, Arrow.id, ctx)
+                                val next =
+                                    try contA(res, contB)
+                                    catch
+                                        case ex =>
+                                            EffectTrace.attach(ex, contA, contB, stack)
+                                            throw ex
+                                loop(next, Arrow.id, Arrow.id, ctx)
             end match
         end loop
 

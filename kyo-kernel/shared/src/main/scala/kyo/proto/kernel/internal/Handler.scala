@@ -31,11 +31,39 @@ end Handler
     abstract class ContHandler[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
         def run[X](input: I[X], cont: Arrow[O[X], A, E & S]): A < (E & S)
 
+        private[kyo] def answering[X](input: I[X], cont: Arrow[O[X], A, E & S], kyo: Pending[?, ?], stack: Stack): A < (E & S) =
+            try run(input, cont)
+            catch
+                case ex =>
+                    EffectTrace.attach(ex, kyo, cont, stack)
+                    throw ex
+    end ContHandler
+
     abstract class ContOpHandler[E <: Effect, A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
         def run[X](operation: X < E, next: Arrow[X, A, E & S]): A < (E & S)
 
+        private[kyo] def answering[X](operation: X < E, next: Arrow[X, A, E & S], kyo: Pending[?, ?], stack: Stack): A < (E & S) =
+            try run(operation, next)
+            catch
+                case ex =>
+                    EffectTrace.attach(ex, kyo, next, stack)
+                    throw ex
+    end ContOpHandler
+
     abstract class LoopHandler[State, I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[State, E, A, B, S]:
         def run[X](state: State, input: I[X]): Outcome2[State, O[X] < (E & S), B < S] < S
+
+        private[kyo] def running[X](
+            state: State,
+            input: I[X],
+            kyo: Pending[?, ?],
+            stack: Stack
+        ): Outcome2[State, O[X] < (E & S), B < S] < S =
+            try run(state, input)
+            catch
+                case ex =>
+                    EffectTrace.attach(ex, kyo, stack)
+                    throw ex
 
         private[kyo] def clauseDispatch[X0](
             reentry: Arrow[O[X0], A, E & S]
@@ -63,7 +91,8 @@ end Handler
             input: I[X],
             k: Arrow[Any, Any, Any],
             armed: Boolean,
-            slot: Safepoint.Slot
+            slot: Safepoint.Slot,
+            frame: Frame
         ): Outcome2[State, Any, B < S] < S =
             var st = state
             try
@@ -83,7 +112,8 @@ end Handler
             catch
                 case ex: Throwable =>
                     val at = st
-                    Loop.continue(at, Effect.deferInline(throw ex)(using Frame.internal))
+                    EffectTrace.attach(ex, k)
+                    Loop.continue(at, Effect.deferInline(throw ex)(using frame))
             end try
         end answers
     end LoopHandler
@@ -171,6 +201,7 @@ end Handler
             catch
                 case ex: Throwable =>
                     val at = st
+                    EffectTrace.attach(ex, k)
                     result = Loop.continue(at, Effect.deferInline(throw ex)(using _frame))
                     running = false
         end while

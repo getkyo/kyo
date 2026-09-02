@@ -274,12 +274,13 @@ object ArrowEffect:
                             input0: I[X],
                             k0: Arrow[Any, Any, Any],
                             armed: Boolean,
-                            slot: Safepoint.Slot
+                            slot: Safepoint.Slot,
+                            frame: Frame
                         ): Loop.Outcome2[State, Any, B < (S & S2)] < (S & S2) =
                             Handler.answersLoopState[State, I, O, E, A, B, S & S2, X](
                                 effectTag,
                                 [C] => (st: State, in: I[C]) => handle[C](st, in),
-                                _frame,
+                                frame,
                                 state0,
                                 input0,
                                 k0,
@@ -324,12 +325,13 @@ object ArrowEffect:
                             input0: I[X],
                             k0: Arrow[Any, Any, Any],
                             armed: Boolean,
-                            slot: Safepoint.Slot
+                            slot: Safepoint.Slot,
+                            frame: Frame
                         ): Loop.Outcome2[State, Any, B < (S & S2)] < (S & S2) =
                             Handler.answersLoopState[State, I, O, E, A, B, S & S2, X](
                                 effectTag,
                                 [C] => (st: State, in: I[C]) => handle[C](st, in),
-                                _frame,
+                                frame,
                                 state0,
                                 input0,
                                 k0,
@@ -445,12 +447,13 @@ object ArrowEffect:
                             input0: I[X],
                             k0: Arrow[Any, Any, Any],
                             armed: Boolean,
-                            slot: Safepoint.Slot
+                            slot: Safepoint.Slot,
+                            frame: Frame
                         ): Loop.Outcome2[State, Any, B < (S & S2)] < (S & S2) =
                             Handler.answersLoopState[State, I, O, E, A, B, S & S2, X](
                                 effectTag,
                                 [C] => (st: State, in: I[C]) => handle[C](st, in),
-                                _frame,
+                                frame,
                                 state0,
                                 input0,
                                 k0,
