@@ -299,15 +299,16 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      # Amazon ships no Corretto for Windows on ARM (its platform list carries Windows x64 only, and
-      # coursier's JVM index has no corretto under windows/arm64); Temurin is indexed there but tops
-      # out well below 25. Microsoft owns the platform and is current on it. This is load-bearing:
-      # hostOsArch reads the RUNNING JVM's os.arch, so an emulated x64 JDK here would name every
-      # artifact windows-x86_64 and this producer would upload nothing under its own name.
-      - uses: coursier/setup-action@v3.0.2
+      # setup-java, not coursier: coursier publishes no aarch64-pc-win32 launcher, so setup-action 404s
+      # trying to install itself here. sbt is preinstalled on this image; only the JDK needs replacing,
+      # since the one it ships is 21. Microsoft's build because Amazon ships no Corretto for Windows on
+      # ARM. This is load-bearing rather than cosmetic: hostOsArch reads the RUNNING JVM's os.arch, so an
+      # emulated x64 JDK would name every artifact windows-x86_64 and this producer would upload nothing
+      # under its own name.
+      - uses: actions/setup-java@v5
         with:
-          jvm: microsoft-openjdk:25
-          apps: sbt
+          distribution: microsoft
+          java-version: '25'
       - uses: ./.github/actions/windows-native-setup
         with:
           os-arch: windows-aarch64

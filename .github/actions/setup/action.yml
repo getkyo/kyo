@@ -266,12 +266,24 @@ runs:
     #
     # This is load-bearing, not cosmetic: hostOsArch comes from the RUNNING JVM's os.arch, so an
     # emulated x64 JDK on an arm64 runner would name every artifact windows-x86_64.
+    # Windows on ARM takes setup-java, not coursier: coursier publishes no aarch64-pc-win32 launcher, so
+    # setup-action 404s trying to install itself there. sbt is preinstalled on that image, and the JDK it
+    # ships is 21, so only the JDK needs replacing. Microsoft's build is used for the same reason it is
+    # elsewhere: Amazon ships no Corretto for Windows on ARM.
+    - name: Set up JDK (Windows arm64)
+      if: ${{ inputs.os == 'windows-arm64' }}
+      uses: actions/setup-java@v5
+      with:
+        distribution: microsoft
+        java-version: '25'
+
     - name: Set up JDK + sbt (coursier)
+      if: ${{ inputs.os != 'windows-arm64' }}
       uses: Wandalen/wretry.action@v3.8.0
       with:
         action: coursier/setup-action@v3.0.0
         with: |
-          jvm: ${{ inputs.os == 'windows-arm64' && 'microsoft-openjdk:25' || 'corretto:25' }}
+          jvm: corretto:25
           apps: sbt
         attempt_limit: 4
         attempt_delay: 30000
