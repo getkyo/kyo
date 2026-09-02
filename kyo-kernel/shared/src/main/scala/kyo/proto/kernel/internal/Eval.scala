@@ -24,6 +24,7 @@ import scala.util.control.NonFatal
 @publicInBinary private[kyo] object Eval:
 
     def release[A, S](v: A < S, ex: Throwable): Unit =
+        // TODO how about we use kyo.Dict?
         val collected = ArrayBuffer.empty[AnyRef]
         @tailrec def collect(v: Any): Unit =
             v match
