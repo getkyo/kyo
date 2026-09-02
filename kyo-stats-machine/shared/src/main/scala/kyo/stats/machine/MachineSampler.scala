@@ -3,8 +3,7 @@ package kyo.stats.machine
 import kyo.*
 
 /** The single detached fiber that samples the host on a fixed cadence straight into retained `kyo.Stat`
-  * handles. The cadence is one second unless `KYO_MACHINE_INTERVAL_MS` (or `kyo.machine.intervalMs`)
-  * overrides it; see `MachineSampler.intervalFrom`.
+  * handles, at the `kyo.machine.interval` cadence.
   *
   * The READ, DECODE and OBSERVE path of a steady-state tick allocates ZERO heap bytes on every supported
   * OS, and that claim is MEASURED, on the real per-OS decode callbacks, at a per-op bound of zero bytes. It
@@ -130,10 +129,9 @@ private[kyo] object MachineSampler:
       */
     def run(using Frame): Unit < (Async & Scope) =
         for
-            os       <- System.operatingSystem
-            handles  <- MachineHandles.init
-            interval <- Sync.Unsafe.defer(intervalFrom(System.live.unsafe))
-            _        <- runWith(handles, sampler => Sync.Unsafe.defer(Machine.forOs(os, handles, sampler)), interval)
+            os      <- System.operatingSystem
+            handles <- MachineHandles.init
+            _       <- runWith(handles, sampler => Sync.Unsafe.defer(Machine.forOs(os, handles, sampler)))
         yield ()
 
     /** Drives the loop over a caller-supplied handle set and a reader built from the sampler. Production
@@ -145,7 +143,7 @@ private[kyo] object MachineSampler:
     private[machine] def runWith(
         handles: MachineHandles,
         buildMachine: MachineSampler => Machine < Sync,
-        interval: Duration = defaultInterval
+        interval: Duration = kyo.machine.interval()
     )(using Frame): Unit < (Async & Scope) =
         for
             sampler  <- Sync.Unsafe.defer(new MachineSampler(handles))
@@ -164,51 +162,12 @@ private[kyo] object MachineSampler:
         yield ()
     end runWith
 
-    /** The tick cadence when nothing overrides it. One sample a second is the right default: one shared
-      * sampler at 1 Hz costs the host far less than N consumers polling `/proc` themselves.
-      */
-    private[machine] val defaultInterval: Duration = 1.second
-
-    /** Names of the sample-interval override, in milliseconds. */
-    private val intervalEnv  = "KYO_MACHINE_INTERVAL_MS"
-    private val intervalProp = "kyo.machine.intervalMs"
-
-    /** Reads the sample interval from the given environment reader, defaulting to `defaultInterval`.
-      *
-      * Everything downstream of the sampler inherits this cadence: a consumer polling faster sees the same
+    /** Everything downstream of the sampler inherits its cadence: a consumer polling faster sees the same
       * value repeated, because the signal only changes when the sampler ticks. A dashboard that wants
-      * sub-second host behaviour therefore cannot get it by polling harder, which is why the producer's rate
-      * has to be settable at all.
-      *
-      * Read through a `System.Unsafe` for the same reasons `MachineStatFactory`'s opt-out is: it resolves at
-      * sampler start with no effect context to hand, it must work on JVM, Node and Native alike (Node reaches
-      * `process.env`, where `java.lang.System.getenv` returns null), and a test can stage a reader because a
-      * real env var cannot be set inside a running process. The environment variable takes precedence over
-      * the system property, matching the opt-out lever exactly: the env var is the per-host deployment
-      * setting and the property is the local development override.
-      *
-      * A missing, unparseable or non-positive value yields the default rather than failing: the same
-      * fail-open behaviour the opt-out has, since a mistyped cadence must not stop host metrics altogether.
+      * sub-second host behaviour cannot get it by polling harder, which is why the producer's rate is
+      * settable at all. One sample a second is the default: one shared sampler at 1 Hz costs the host far
+      * less than N consumers polling `/proc` themselves.
       */
-    private[machine] def intervalFrom(env: System.Unsafe)(using AllowUnsafe): Duration =
-        val raw = env.env(intervalEnv).orElse(env.property(intervalProp))
-        val ms = raw match
-            case Present(v) => v.trim.toLongOption
-            case Absent     => None
-        ms match
-            case Some(v) if v > 0L => v.millis
-            case _                 => defaultInterval
-        end match
-    end intervalFrom
-
-    /** The disk read runs on its own fiber at the sampler's cadence. A cycle waits at most `diskReadTimeout`
-      * before it yields to the next cycle CHECK; the in-flight guard then keeps that next cycle from
-      * launching a second read while a timed-out one is still parked in its syscall. The timeout is fixed
-      * rather than derived from the cadence, and it only bounds the DISK fiber: the fast fiber never waits on
-      * it, so its value is decoupled from the read cadence in both directions.
-      */
-    private val diskReadTimeout = 4.seconds
-
     /** The fast tick: reads every non-disk family straight into the retained cells. It never touches the disk
       * read, so nothing on this path can block on a mount.
       */
@@ -237,7 +196,7 @@ private[kyo] object MachineSampler:
             if !began then ()
             else
                 Abort.run[Timeout](
-                    Async.timeout(diskReadTimeout)(
+                    Async.timeout(kyo.machine.diskReadTimeout())(
                         diskExec.run {
                             try machine.readDisks()
                             finally sampler.diskReadDone()

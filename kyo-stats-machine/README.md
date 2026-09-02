@@ -17,7 +17,7 @@ A host that is not a `KyoApp` (a kyo library embedded in an application that is 
 
 > **Note:** the sampler is a one-shot, process-lifetime singleton. Once it starts, it runs for the life of the process; there is no stop call, and adding the dependency a second time or touching `Stat` again does not start a second sampler.
 
-The sampler ticks on a drift-corrected schedule (`Clock.repeatAtInterval(Schedule.anchored(interval))`, anchored so a slow tick does not push the next one late) for as long as the process runs. The cadence is one second unless `KYO_MACHINE_INTERVAL_MS` overrides it (see below). It is unrelated to how often your metrics backend ships those readings off the process: an exporter like kyo-stats-otlp scrapes the `kyo.Stat` registry on its own schedule (`OTEL_METRIC_EXPORT_INTERVAL`, 60 seconds by default), so a 1-second sampling resolution can still be exported once a minute. If you want finer-grained visibility into the emitted histograms, lower the exporter's interval.
+The sampler ticks on a drift-corrected schedule (`Clock.repeatAtInterval(Schedule.anchored(interval))`, anchored so a slow tick does not push the next one late) for as long as the process runs. The cadence is one second unless `KYO_MACHINE_INTERVAL` overrides it (see below). It is unrelated to how often your metrics backend ships those readings off the process: an exporter like kyo-stats-otlp scrapes the `kyo.Stat` registry on its own schedule (`OTEL_METRIC_EXPORT_INTERVAL`, 60 seconds by default), so a 1-second sampling resolution can still be exported once a minute. If you want finer-grained visibility into the emitted histograms, lower the exporter's interval.
 
 One sampler serves every consumer in the process, which is why the cadence is the producer's to set and not a consumer's: polling the registry faster than the sampler ticks reads the same values again. A dashboard that needs sub-second host behaviour raises the producer's rate.
 
@@ -62,19 +62,23 @@ Either suppresses the sampler start. Both are read exactly once, at registration
 
 > **Note:** an unset or unparseable value enables the sampler. This is a fail-open default, not a fail-safe one: if you meant to disable monitoring and misspelled the variable name or the value, the sampler starts anyway. Only the literal string `"true"` (case-insensitive) disables it.
 
-The second is the sample interval, in milliseconds, read when the sampler starts.
+The second is the sample interval, read when the sampler starts. It takes a duration, so `100ms`, `2s` and `1 minute` all work.
 
 ```bash
-export KYO_MACHINE_INTERVAL_MS=100
+export KYO_MACHINE_INTERVAL=100ms
 ```
 
 or the equivalent system property:
 
 ```scala
-// -Dkyo.machine.intervalMs=100
+// -Dkyo.machine.interval=100ms
 ```
 
-Unset, the cadence is one second, which is the right default: one shared sampler at 1 Hz costs the host far less than every consumer reading `/proc` for itself. A missing, unparseable or non-positive value falls back to that default rather than stopping the sampler, the same fail-open behaviour the opt-out has. As with the opt-out, the environment variable takes precedence over the system property: the variable is the per-host deployment setting, the property is the local development override.
+Unset, the cadence is one second, which is the right default: one shared sampler at 1 Hz costs the host far less than every consumer reading `/proc` for itself.
+
+A third lever, `KYO_MACHINE_DISKREADTIMEOUT` (`kyo.machine.diskReadTimeout`, four seconds by default), bounds how long a single disk read may take before its cycle is abandoned. It applies only to the disk fiber; the other families never wait on it. Keep it above the sample interval, since a bound at or below the cadence abandons every slow mount before it can answer.
+
+All three are `kyo.config` static flags: they resolve once at class load, so a change needs a restart, and an unparseable value fails fast at startup rather than being silently ignored.
 
 ## Reading the metrics
 

@@ -6,16 +6,6 @@ class MachineStatFactoryJvmTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    private val emptyReader: System.Unsafe =
-        new System.Unsafe:
-            def env(name: String)(using AllowUnsafe): Maybe[String]      = Absent
-            def property(name: String)(using AllowUnsafe): Maybe[String] = Absent
-            def lineSeparator()(using AllowUnsafe): String               = "\n"
-            def userName()(using AllowUnsafe): String                    = "test"
-            def operatingSystem()(using AllowUnsafe): System.OS          = System.OS.Unknown
-            def architecture()(using AllowUnsafe): System.Arch           = System.Arch.Unknown
-            def availableProcessors()(using AllowUnsafe): Int            = 1
-
     /** Locates the `kyo-stats-machine` module root by walking up from the JVM working directory, mirroring
       * `NativeCallbackCatalogLockstepTest`'s established repo-relative lookup.
       */
@@ -45,11 +35,11 @@ class MachineStatFactoryJvmTest extends kyo.test.Test[Any]:
 
         "interrupts the last-started sampler fiber and clears the CAS, and no production code calls it".onlyJvm in {
             MachineStatFactory.resetForTest()
-            val started = MachineStatFactory.triggerStart(emptyReader)
+            val started = MachineStatFactory.triggerStart(disabled = false)
             assert(started)
             MachineStatFactory.stopForTest()
             assert(!MachineStatFactory.hasStarted)
-            val startedAgain = MachineStatFactory.triggerStart(emptyReader)
+            val startedAgain = MachineStatFactory.triggerStart(disabled = false)
             assert(startedAgain) // the CAS cleared, so a later triggerStart can win again
             MachineStatFactory.stopForTest()
 

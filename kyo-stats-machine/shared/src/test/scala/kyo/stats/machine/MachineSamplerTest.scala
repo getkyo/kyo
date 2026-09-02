@@ -12,45 +12,17 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    /** A `System.Unsafe` whose env and property maps are staged, so the sample-interval lever is read the way
-      * the sampler reads it at start: a real environment variable cannot be set inside a running process.
-      */
-    private def staged(envs: Map[String, String], props: Map[String, String] = Map.empty): System.Unsafe =
-        new System.Unsafe:
-            def env(name: String)(using AllowUnsafe): Maybe[String]      = Maybe.fromOption(envs.get(name))
-            def property(name: String)(using AllowUnsafe): Maybe[String] = Maybe.fromOption(props.get(name))
-            def lineSeparator()(using AllowUnsafe): String               = "\n"
-            def userName()(using AllowUnsafe): String                    = "test"
-            def operatingSystem()(using AllowUnsafe): System.OS          = System.OS.Unknown
-            def architecture()(using AllowUnsafe): System.Arch           = System.Arch.Unknown
-            def availableProcessors()(using AllowUnsafe): Int            = 1
+    "configuration" - {
 
-    "sample interval" - {
-
-        "defaults to one second when nothing overrides it" in {
-            assert(MachineSampler.intervalFrom(staged(Map.empty)) == 1.second)
-            assert(MachineSampler.defaultInterval == 1.second)
+        // Parsing and env/property resolution belong to kyo-config and Duration's Flag.Reader, which test
+        // them; what this module owns is the defaults it publishes and the fact that the sampler reads them.
+        "the published defaults are one second and a four second disk bound" in {
+            assert(kyo.machine.interval() == 1.second)
+            assert(kyo.machine.diskReadTimeout() == 4.seconds)
         }
 
-        "the environment variable sets the cadence in milliseconds" in {
-            assert(MachineSampler.intervalFrom(staged(Map("KYO_MACHINE_INTERVAL_MS" -> "100"))) == 100.millis)
-            assert(MachineSampler.intervalFrom(staged(Map("KYO_MACHINE_INTERVAL_MS" -> " 5000 "))) == 5.seconds)
-        }
-
-        "the system property sets the cadence when the environment variable is unset" in {
-            assert(MachineSampler.intervalFrom(staged(Map.empty, Map("kyo.machine.intervalMs" -> "250"))) == 250.millis)
-        }
-
-        "the environment variable wins over the system property" in {
-            val both = staged(Map("KYO_MACHINE_INTERVAL_MS" -> "100"), Map("kyo.machine.intervalMs" -> "250"))
-            assert(MachineSampler.intervalFrom(both) == 100.millis)
-        }
-
-        "an unparseable or non-positive value falls back to the default rather than stopping the sampler" in {
-            assert(MachineSampler.intervalFrom(staged(Map("KYO_MACHINE_INTERVAL_MS" -> "fast"))) == 1.second)
-            assert(MachineSampler.intervalFrom(staged(Map("KYO_MACHINE_INTERVAL_MS" -> "0"))) == 1.second)
-            assert(MachineSampler.intervalFrom(staged(Map("KYO_MACHINE_INTERVAL_MS" -> "-100"))) == 1.second)
-            assert(MachineSampler.intervalFrom(staged(Map("KYO_MACHINE_INTERVAL_MS" -> ""))) == 1.second)
+        "the disk bound sits above the cadence, so a slow mount is not abandoned every cycle" in {
+            assert(kyo.machine.diskReadTimeout() > kyo.machine.interval())
         }
     }
 
@@ -267,7 +239,7 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
                         def read()(using AllowUnsafe): Unit      = discard(recorded.updateAndGet(_.append(clock.unsafe.nowMonotonic())))
                         def readDisks()(using AllowUnsafe): Unit = ()
                         def close()(using AllowUnsafe): Unit     = ()
-                    interval = MachineSampler.intervalFrom(staged(Map("KYO_MACHINE_INTERVAL_MS" -> "100")))
+                    interval = 100.millis
                     fiber <- Fiber.initUnscoped(Clock.let(clock)(Scope.run(MachineSampler.runWith(handles, _ => machine, interval))))
                     _     <- tc.advance(Duration.Zero, 100.millis) // let the fiber reach the fast-fiber schedule registration first
                     _     <- tc.advance(100.millis)
