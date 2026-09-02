@@ -125,9 +125,11 @@ object Cli:
     )
 
     val kernelPaths = Seq(
-        "kyo-kernel/shared/src/main/scala/kyo",
-        "kyo-kernel/shared/src/test/scala/kyo",
-        "kyo-kernel/jvm/src/jmh/scala/kyo/kernel/bench"
+        "kyo-kernel/shared/src",
+        "kyo-kernel/jvm/src",
+        "kyo-kernel/jvm-native/src",
+        "kyo-kernel/js-wasm/src",
+        "kyo-data/shared/src"
     )
 
     def parseEvidence(s: String)(using Frame): Evidence < Abort[Bench.BracketFailed] =
