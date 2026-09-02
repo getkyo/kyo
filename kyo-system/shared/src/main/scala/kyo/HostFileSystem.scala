@@ -337,7 +337,17 @@ private[kyo] object HostFileSystem:
             end new
         end lockFrom
 
-        def tryLock(path: Path, mode: Path.LockMode)(using
+        def tryLock(path: Path, mode: Path.LockMode, sentinelSuffix: String)(using
+            Frame
+        ): Maybe[Path.Lock] < (Sync & Async & Scope & Abort[FileLockException]) =
+            // The suffix names the sentinel sibling and escapes nothing: empty would put the claim
+            // on the data file itself, resurrecting the POSIX unlock-on-close hazard, and a
+            // separator would move it into another directory.
+            if sentinelSuffix.isEmpty || sentinelSuffix.exists(c => c == '/' || c == '\\') then
+                Abort.fail(FileInvalidPathException(sentinelSuffix, FileSystemOperation.Lock))
+            else tryLockValidated(path, mode, sentinelSuffix)
+
+        private def tryLockValidated(path: Path, mode: Path.LockMode, sentinelSuffix: String)(using
             Frame
         ): Maybe[Path.Lock] < (Sync & Async & Scope & Abort[FileLockException]) =
             // Deliberately not Scope.acquireRelease. That runs acquire, then registers the finalizer
@@ -383,7 +393,7 @@ private[kyo] object HostFileSystem:
                             // Unsafe: the raw claim and the record of it are plain statements in one
                             // node, so no interrupt can observe a claim the finalizer cannot see.
                             Sync.Unsafe.defer {
-                                path.unsafe.lockAttempt(mode) match
+                                path.unsafe.lockAttempt(mode, sentinelSuffix) match
                                     case Path.LockAttempt.Acquired(raw) =>
                                         val lock = lockFrom(path, raw, mode, AtomicInt.Unsafe.init(0).safe)
                                         if holder.compareAndSet(LockHolder.Empty, LockHolder.Claimed(lock)) then
@@ -414,11 +424,11 @@ private[kyo] object HostFileSystem:
                     }
                 }.map(Maybe(_))
             Abort.recover[FileLockUnavailableException](_ => Absent)(acquire)
-        end tryLock
+        end tryLockValidated
 
-        def lock(path: Path, mode: Path.LockMode, wait: Path.LockWait)(using
+        def lock(path: Path, mode: Path.LockMode, wait: Path.LockWait, sentinelSuffix: String)(using
             Frame
         ): Path.Lock < (Sync & Async & Scope & Abort[FileReadException | FileLockException]) =
-            FileSystem.awaitLock(path, wait)(tryLock(path, mode))
+            FileSystem.awaitLock(path, wait)(tryLock(path, mode, sentinelSuffix))
     end HostFileSystem
 end HostFileSystem

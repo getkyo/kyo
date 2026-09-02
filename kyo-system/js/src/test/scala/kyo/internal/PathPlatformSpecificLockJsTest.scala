@@ -17,7 +17,7 @@ class PathPlatformSpecificLockJsTest extends kyo.test.Test[Any]:
             Sync.Unsafe.defer {
                 val stale = target + ".kyo-lock.exclusive"
                 NodeFs.writeFileSync(stale, s"${NodeOs.hostname()}\n2147483647\ndead-owner")
-                val acquired = new NodePathUnsafe(target).lock(Path.LockMode.Shared)
+                val acquired = new NodePathUnsafe(target).lock(Path.LockMode.Shared, Path.defaultLockSuffix)
                 acquired match
                     case Result.Success(lock) =>
                         assert(!lock.isExclusive)
@@ -33,7 +33,7 @@ class PathPlatformSpecificLockJsTest extends kyo.test.Test[Any]:
             Sync.Unsafe.defer {
                 val claim = target + ".kyo-lock.exclusive"
                 NodeFs.writeFileSync(claim, "different-host\n2147483647\nforeign-owner")
-                new NodePathUnsafe(target).lock(Path.LockMode.Shared) match
+                new NodePathUnsafe(target).lock(Path.LockMode.Shared, Path.defaultLockSuffix) match
                     case Result.Failure(_: FileLockUnavailableException) => assert(NodeFs.existsSync(claim))
                     case other                                           => assert(false, s"expected unavailable foreign claim, got $other")
             }
@@ -45,7 +45,7 @@ class PathPlatformSpecificLockJsTest extends kyo.test.Test[Any]:
             Sync.Unsafe.defer {
                 val claim = target + ".kyo-lock.exclusive"
                 NodeFs.writeFileSync(claim, "invalid-owner-record")
-                new NodePathUnsafe(target).lock(Path.LockMode.Exclusive) match
+                new NodePathUnsafe(target).lock(Path.LockMode.Exclusive, Path.defaultLockSuffix) match
                     case Result.Failure(_: FileLockUnavailableException) => assert(NodeFs.existsSync(claim))
                     case other => assert(false, s"expected unavailable unreadable claim, got $other")
             }
@@ -66,7 +66,7 @@ class PathPlatformSpecificLockJsTest extends kyo.test.Test[Any]:
                 assert(!reclaimed)
                 val prefix = NodePath.basename(gate) + ".reclaim."
                 assert(NodeFs.readdirSync(NodePath.dirname(gate)).toSeq.exists(_.startsWith(prefix)))
-                new NodePathUnsafe(target).lock(Path.LockMode.Exclusive) match
+                new NodePathUnsafe(target).lock(Path.LockMode.Exclusive, Path.defaultLockSuffix) match
                     case Result.Failure(_: FileLockUnavailableException) => assert(true)
                     case other => assert(false, s"expected replacement gate to remain authoritative, got $other")
             }
@@ -77,7 +77,7 @@ class PathPlatformSpecificLockJsTest extends kyo.test.Test[Any]:
         withTarget { target =>
             Sync.Unsafe.defer {
                 val missing = NodePath.join(target + "-missing", "target.bin")
-                new NodePathUnsafe(missing).lock(Path.LockMode.Exclusive) match
+                new NodePathUnsafe(missing).lock(Path.LockMode.Exclusive, Path.defaultLockSuffix) match
                     case Result.Failure(_: FileLockException) => assert(true)
                     case other                                => assert(false, s"expected typed lock failure, got $other")
             }
@@ -87,7 +87,7 @@ class PathPlatformSpecificLockJsTest extends kyo.test.Test[Any]:
     "removing an owned claim surfaces ownership loss on release" in {
         withTarget { target =>
             Sync.Unsafe.defer {
-                new NodePathUnsafe(target).lock(Path.LockMode.Exclusive) match
+                new NodePathUnsafe(target).lock(Path.LockMode.Exclusive, Path.defaultLockSuffix) match
                     case Result.Success(lock) =>
                         NodeFs.unlinkSync(target + ".kyo-lock.exclusive")
                         assert(lock.check().isFailure)
@@ -111,7 +111,7 @@ class PathPlatformSpecificLockJsTest extends kyo.test.Test[Any]:
                 )
                 NodeFs.writeFileSync(publication, "partial")
                 (0 until 64).foreach { _ =>
-                    new NodePathUnsafe(target).lock(Path.LockMode.Exclusive) match
+                    new NodePathUnsafe(target).lock(Path.LockMode.Exclusive, Path.defaultLockSuffix) match
                         case Result.Failure(_: FileLockUnavailableException) => assert(true)
                         case other => assert(false, s"expected live worker publication to block, got $other")
                 }
@@ -128,19 +128,19 @@ class PathPlatformSpecificLockJsTest extends kyo.test.Test[Any]:
                 val gate      = target + ".kyo-lock.gate"
                 val malformed = target + ".kyo-lock.shared.partial.publish.malformed"
                 NodeFs.writeFileSync(malformed, "partial-owner")
-                new NodePathUnsafe(target).lock(Path.LockMode.Shared) match
+                new NodePathUnsafe(target).lock(Path.LockMode.Shared, Path.defaultLockSuffix) match
                     case Result.Failure(_: FileLockUnavailableException) => assert(NodeFs.existsSync(malformed))
                     case other => assert(false, s"expected malformed publication to block, got $other")
                 NodeFs.unlinkSync(malformed)
                 val invalidPid = NodePathLock.publicationPath(gate, NodeOs.hostname(), -2147483647, "invalid-pid")
                 NodeFs.writeFileSync(invalidPid, "partial-owner")
-                new NodePathUnsafe(target).lock(Path.LockMode.Exclusive) match
+                new NodePathUnsafe(target).lock(Path.LockMode.Exclusive, Path.defaultLockSuffix) match
                     case Result.Failure(_: FileLockUnavailableException) => assert(NodeFs.existsSync(invalidPid))
                     case other => assert(false, s"expected invalid publication pid to block, got $other")
                 NodeFs.unlinkSync(invalidPid)
                 val foreign = NodePathLock.publicationPath(gate, "different-host", 1, "foreign-worker")
                 NodeFs.writeFileSync(foreign, "partial-owner")
-                new NodePathUnsafe(target).lock(Path.LockMode.Exclusive) match
+                new NodePathUnsafe(target).lock(Path.LockMode.Exclusive, Path.defaultLockSuffix) match
                     case Result.Failure(_: FileLockUnavailableException) => assert(NodeFs.existsSync(foreign))
                     case other => assert(false, s"expected foreign publication to block, got $other")
             }
@@ -158,7 +158,7 @@ class PathPlatformSpecificLockJsTest extends kyo.test.Test[Any]:
                     "dead-worker"
                 )
                 NodeFs.writeFileSync(publication, "partial-owner")
-                new NodePathUnsafe(target).lock(Path.LockMode.Exclusive) match
+                new NodePathUnsafe(target).lock(Path.LockMode.Exclusive, Path.defaultLockSuffix) match
                     case Result.Success(lock) =>
                         assert(!NodeFs.existsSync(publication))
                         assert(lock.release().isSuccess)
@@ -196,7 +196,7 @@ class PathPlatformSpecificLockJsTest extends kyo.test.Test[Any]:
                     Path(target),
                     target,
                     Path.LockMode.Exclusive,
-                    (gate, _) =>
+                    beforeGateRelease = (gate, _) =>
                         NodeFs.unlinkSync(gate)
                         NodeFs.writeFileSync(gate, "different-host\n1\nreplacement-gate")
                 )
@@ -216,7 +216,7 @@ class PathPlatformSpecificLockJsTest extends kyo.test.Test[Any]:
                     Path(target),
                     target,
                     Path.LockMode.Exclusive,
-                    (gate, claim) =>
+                    beforeGateRelease = (gate, claim) =>
                         NodeFs.unlinkSync(gate)
                         NodeFs.writeFileSync(gate, "different-host\n1\nreplacement-gate")
                         NodeFs.unlinkSync(claim)

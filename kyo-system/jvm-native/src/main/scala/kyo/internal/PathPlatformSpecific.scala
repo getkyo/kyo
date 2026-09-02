@@ -377,19 +377,21 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
     // hangs off the resolved registry key so two names for one data file still claim one sentinel.
     // The sentinel may outlive the process as an empty artifact; the lock on it dies with the
     // process, so a leftover file is inert.
-    private def sentinel(key: String): String = key + ".kyo-lock"
+    private def sentinel(key: String, suffix: String): String = key + suffix
 
     // Collapses the pending answer onto a failure, which is all a caller that cannot wait can do
     // with it. Callers that can wait take lockAttempt instead.
-    def lock(mode: Path.LockMode)(using AllowUnsafe, Frame): Result[FileLockException, Path.RawLock] =
-        lockAttempt(mode) match
+    def lock(mode: Path.LockMode, sentinelSuffix: String)(using AllowUnsafe, Frame): Result[FileLockException, Path.RawLock] =
+        lockAttempt(mode, sentinelSuffix) match
             case Path.LockAttempt.Acquired(raw) => Result.succeed(raw)
             case Path.LockAttempt.Pending       => Result.fail(FileLockUnavailableException(safe))
             case Path.LockAttempt.Failed(error) => error
 
-    override private[kyo] def lockAttempt(mode: Path.LockMode)(using AllowUnsafe, Frame): Path.LockAttempt =
+    override private[kyo] def lockAttempt(mode: Path.LockMode, sentinelSuffix: String)(using AllowUnsafe, Frame): Path.LockAttempt =
         val isExclusive = mode == Path.LockMode.Exclusive
-        val key         = registryKey
+        // The suffix is part of the lock's identity: claims under different suffixes contend on
+        // different sentinel files, so the registry keys on the sentinel, not on the data path.
+        val key = sentinel(registryKey, sentinelSuffix)
         def settled(result: Result[FileLockException, Path.RawLock]): Path.LockAttempt =
             result match
                 case Result.Success(raw)   => Path.LockAttempt.Acquired(raw)
@@ -403,7 +405,7 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
             case NioPathLockRegistry.Reservation.First =>
                 settled {
                     try
-                        val sentinelPath = java.nio.file.Path.of(sentinel(key))
+                        val sentinelPath = java.nio.file.Path.of(key)
                         ensureParent(sentinelPath)
                         val ch =
                             FileChannel.open(sentinelPath, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE)

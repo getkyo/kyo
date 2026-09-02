@@ -124,12 +124,17 @@ object FileSystem:
           * it would deny a lock the contract grants. Waiting out that span is bounded and does not
           * depend on any holder releasing, unlike [[lock]], which waits for exactly that.
           */
-        def tryLock(path: Path, mode: Path.LockMode)(using
+        def tryLock(path: Path, mode: Path.LockMode, sentinelSuffix: String = Path.defaultLockSuffix)(using
             Frame
         ): Maybe[Path.Lock] < (S & Sync & Async & Scope & Abort[FileReadException | FileLockException])
 
         /** Acquires a scoped advisory lock according to `wait`. Waiting modes suspend the fiber. */
-        def lock(path: Path, mode: Path.LockMode, wait: Path.LockWait = Path.LockWait.UntilAvailable)(using
+        def lock(
+            path: Path,
+            mode: Path.LockMode,
+            wait: Path.LockWait = Path.LockWait.UntilAvailable,
+            sentinelSuffix: String = Path.defaultLockSuffix
+        )(using
             Frame
         ): Path.Lock < (S & Async & Scope & Abort[FileReadException | FileLockException])
 

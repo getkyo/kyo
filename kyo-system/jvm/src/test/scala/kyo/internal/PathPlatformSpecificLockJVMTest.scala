@@ -155,9 +155,9 @@ class PathPlatformSpecificLockInstallWindowJVMTest extends kyo.test.Test[Any]:
     "a pending reservation is waited out rather than reported as a conflict" in {
         Sync.Unsafe.defer {
             val file = Files.createTempFile("kyo-lock-pending-", ".bin")
-            // Matches the key tryLock derives, which resolves the path. The file exists, so the
-            // resolved form is its real path.
-            (file, file.toRealPath().toString, Path.of(file))
+            // Matches the key tryLock derives: the resolved path plus the sentinel suffix. The file
+            // exists, so the resolved form is its real path.
+            (file, file.toRealPath().toString + Path.defaultLockSuffix, Path.of(file))
         }.map { (file, key, path) =>
             // Stands in for an acquisition that has reserved its entry and is still opening its
             // channel. Driving it from the registry rather than from a second fiber keeps the window

@@ -452,15 +452,19 @@ object Path extends PathPlatformSpecific:
         }
     end restoreRead
 
-    private[kyo] def suspendTryLock(path: Path, mode: LockMode)(using Frame): Maybe[Lock] < (PathRead & Sync & Async & Scope) =
+    private[kyo] def suspendTryLock(path: Path, mode: LockMode, sentinelSuffix: String)(using
+        Frame
+    ): Maybe[Lock] < (PathRead & Sync & Async & Scope) =
         ArrowEffect.suspend(Tag[PathRead], Op.CurrentReadService()).map { service =>
-            restoreRead(Abort.run[FileSystemException](service.tryLock(path, mode)))
+            restoreRead(Abort.run[FileSystemException](service.tryLock(path, mode, sentinelSuffix)))
         }
     end suspendTryLock
 
-    private[kyo] def suspendLock(path: Path, mode: LockMode, wait: LockWait)(using Frame): Lock < (PathRead & Async & Scope) =
+    private[kyo] def suspendLock(path: Path, mode: LockMode, wait: LockWait, sentinelSuffix: String)(using
+        Frame
+    ): Lock < (PathRead & Async & Scope) =
         ArrowEffect.suspend(Tag[PathRead], Op.CurrentReadService()).map { service =>
-            restoreRead(Abort.run[FileSystemException](service.lock(path, mode, wait)))
+            restoreRead(Abort.run[FileSystemException](service.lock(path, mode, wait, sentinelSuffix)))
         }
     end suspendLock
 
@@ -575,6 +579,12 @@ object Path extends PathPlatformSpecific:
         case Shared
         case Exclusive
 
+    /** Suffix of the sentinel sibling an advisory lock claims. The claim is never taken on the
+      * data file itself, so I/O on the locked path cannot disturb it; the suffix names the sibling
+      * and is part of the lock's identity, so claims under different suffixes are independent.
+      */
+    val defaultLockSuffix: String = ".kyo-lock"
+
     /** Selects whether lock acquisition returns immediately or suspends until it can complete. */
     enum LockWait derives CanEqual:
         case Immediate
@@ -602,9 +612,11 @@ object Path extends PathPlatformSpecific:
       *
       * The claim is taken on a sentinel sibling of the path, never on the path itself, so holding
       * a lock and reading or writing the locked path from the same process is safe on every
-      * platform. The sentinel may remain on disk after the process exits; it is an empty artifact
-      * whose claim died with the process. The lock coordinates processes that use this API; it
-      * does not exclude a foreign process that locks the data file directly through the OS.
+      * platform. The sibling's suffix defaults to [[Path.defaultLockSuffix]] and is part of the
+      * lock's identity: claims under different suffixes are independent. The sentinel may remain
+      * on disk after the process exits; it is an empty artifact whose claim died with the process.
+      * The lock coordinates processes that use this API; it does not exclude a foreign process
+      * that locks the data file directly through the OS.
       */
     trait Lock:
         /** The compatibility mode granted to this handle. */
@@ -718,12 +730,18 @@ object Path extends PathPlatformSpecific:
           * shareable, and answering during it would report a conflict that does not exist. Waiting
           * out that span is bounded and needs no holder to release anything.
           */
-        def tryLock(mode: LockMode)(using Frame): Maybe[Lock] < (PathRead & Sync & Async & Scope) =
-            suspendTryLock(self, mode)
+        def tryLock(mode: LockMode, sentinelSuffix: String = Path.defaultLockSuffix)(using
+            Frame
+        ): Maybe[Lock] < (PathRead & Sync & Async & Scope) =
+            suspendTryLock(self, mode, sentinelSuffix)
 
         /** Acquires a scoped advisory lock according to `wait`. */
-        def lock(mode: LockMode, wait: LockWait = LockWait.UntilAvailable)(using Frame): Lock < (PathRead & Async & Scope) =
-            suspendLock(self, mode, wait)
+        def lock(
+            mode: LockMode,
+            wait: LockWait = LockWait.UntilAvailable,
+            sentinelSuffix: String = Path.defaultLockSuffix
+        )(using Frame): Lock < (PathRead & Async & Scope) =
+            suspendLock(self, mode, wait, sentinelSuffix)
 
         /** Returns this path resolved to its canonical real path, but only if that real path is contained
           * within `root` (after resolving `root`'s own symlinks).
@@ -1503,7 +1521,7 @@ object Path extends PathPlatformSpecific:
           * taken on a sentinel sibling of the path, never on the path itself. Platform
           * implementations provide the concrete lock.
           */
-        def lock(mode: LockMode)(using AllowUnsafe, Frame): Result[FileLockException, Path.RawLock]
+        def lock(mode: LockMode, sentinelSuffix: String)(using AllowUnsafe, Frame): Result[FileLockException, Path.RawLock]
 
         /** Attempts the lock, distinguishing a conflict from an answer that is not settled yet.
           *
@@ -1512,8 +1530,8 @@ object Path extends PathPlatformSpecific:
           * which a compatible claim is being taken but is not yet shareable, and refusing there
           * denies a lock the contract grants. Backends with no such span keep the default.
           */
-        private[kyo] def lockAttempt(mode: LockMode)(using AllowUnsafe, Frame): Path.LockAttempt =
-            lock(mode) match
+        private[kyo] def lockAttempt(mode: LockMode, sentinelSuffix: String)(using AllowUnsafe, Frame): Path.LockAttempt =
+            lock(mode, sentinelSuffix) match
                 case Result.Success(raw)   => Path.LockAttempt.Acquired(raw)
                 case Result.Failure(error) => Path.LockAttempt.Failed(Result.Failure(error))
                 case panic: Result.Panic   => Path.LockAttempt.Failed(panic)

@@ -422,10 +422,11 @@ private[kyo] object NodePathLock:
         target: Path,
         pathStr: String,
         mode: Path.LockMode,
+        sentinelSuffix: String = Path.defaultLockSuffix,
         beforeGateRelease: (String, String) => Unit = (_, _) => (),
         beforePublishCleanup: String => Unit = _ => ()
     )(using AllowUnsafe, Frame): Result[FileLockException, Path.RawLock] =
-        val base                                 = pathStr + ".kyo-lock"
+        val base                                 = pathStr + sentinelSuffix
         val gate                                 = base + ".gate"
         val gateOwner                            = currentOwner()
         var gateAcquired                         = false
@@ -899,8 +900,8 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
     // Node has no OS advisory lock primitive. NodePathLock uses owner-tagged O_EXCL control files
     // for portable shared and exclusive claims, and only reclaims claims proven to belong to a dead
     // process on the local host.
-    def lock(mode: Path.LockMode)(using AllowUnsafe, Frame): Result[FileLockException, Path.RawLock] =
-        NodePathLock.acquire(safe, pathStr, mode)
+    def lock(mode: Path.LockMode, sentinelSuffix: String)(using AllowUnsafe, Frame): Result[FileLockException, Path.RawLock] =
+        NodePathLock.acquire(safe, pathStr, mode, sentinelSuffix)
 
     // --- Private helpers ---
 

@@ -123,6 +123,43 @@ class HostPathLockTest extends FileSystemLockTest:
         }
     }
 
+    "claims under different sentinel suffixes are independent" in {
+        // The suffix names the sentinel sibling and is part of the lock's identity: two exclusive
+        // claims on one data path under different suffixes contend on different files, so both are
+        // granted, while a second claim under the same suffix still conflicts.
+        Scope.acquireRelease(FileSystem.host.tempDir("kyo-lock-suffix"))(h => Sync.Unsafe.defer(h.remove())).map { handle =>
+            val target = handle.path / "state.bin"
+            Scope.run {
+                FileSystem.host.lock(target, Path.LockMode.Exclusive, Path.LockWait.Immediate).map { _ =>
+                    FileSystem.host.tryLock(target, Path.LockMode.Exclusive).map { sameSuffix =>
+                        assert(sameSuffix.isEmpty, "a same-suffix claim did not conflict")
+                        FileSystem.host.tryLock(target, Path.LockMode.Exclusive, sentinelSuffix = ".other-lock").map { otherSuffix =>
+                            assert(otherSuffix.isDefined, "a claim under a different suffix was refused")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "an invalid sentinel suffix is refused with a typed failure" in {
+        // Empty would put the claim on the data file itself, resurrecting the POSIX
+        // unlock-on-close hazard; a separator would move the sentinel into another directory.
+        Scope.acquireRelease(FileSystem.host.tempDir("kyo-lock-suffix-invalid"))(h => Sync.Unsafe.defer(h.remove())).map { handle =>
+            val target = handle.path / "state.bin"
+            Abort.run[FileReadException | FileLockException](
+                Scope.run(FileSystem.host.tryLock(target, Path.LockMode.Exclusive, sentinelSuffix = "").unit)
+            ).map { empty =>
+                assert(empty.failure.exists(_.isInstanceOf[FileInvalidPathException]))
+                Abort.run[FileReadException | FileLockException](
+                    Scope.run(FileSystem.host.lock(target, Path.LockMode.Exclusive, Path.LockWait.Immediate, "bad/suffix").unit)
+                ).map { separator =>
+                    assert(separator.failure.exists(_.isInstanceOf[FileInvalidPathException]))
+                }
+            }
+        }
+    }
+
     "failed raw release remains retryable" in {
         AtomicInt.init(0).map { releases =>
             val raw = new Path.RawLock:

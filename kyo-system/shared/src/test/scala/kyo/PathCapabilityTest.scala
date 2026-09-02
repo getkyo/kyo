@@ -56,7 +56,7 @@ class PathCapabilityTest extends kyo.test.Test[Any]:
             """
             given kyo.Frame = kyo.Frame.internal
             val bad: kyo.Maybe[kyo.Path.Lock] < (kyo.PathRead & kyo.Scope) =
-                kyo.Path.suspendTryLock(kyo.Path("x"), kyo.Path.LockMode.Shared)
+                kyo.Path.suspendTryLock(kyo.Path("x"), kyo.Path.LockMode.Shared, kyo.Path.defaultLockSuffix)
             """
         )
         val lockErrors = typeCheckErrors(
@@ -66,7 +66,8 @@ class PathCapabilityTest extends kyo.test.Test[Any]:
                 kyo.Path.suspendLock(
                     kyo.Path("x"),
                     kyo.Path.LockMode.Exclusive,
-                    kyo.Path.LockWait.UntilAvailable
+                    kyo.Path.LockWait.UntilAvailable,
+                    kyo.Path.defaultLockSuffix
                 )
             """
         )

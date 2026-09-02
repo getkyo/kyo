@@ -121,7 +121,8 @@ Locks are advisory, scope-managed values. `Path.LockMode` selects shared or excl
 `Path.LockWait` selects immediate, unbounded, or deadline-bounded acquisition. Fiber waiting must use
 `Async`; never block an OS thread. Ownership checks and cleanup failures remain typed.
 
-Every backend claims a sentinel sibling (`<resolved path>.kyo-lock`), never the data file. POSIX
+Every backend claims a sentinel sibling (`<resolved path>.kyo-lock` by default; the suffix is an
+optional parameter and part of the lock's identity), never the data file. POSIX
 `fcntl` record locks are process-wide and the OS releases every lock the process holds on a file
 when the process closes any handle to that file, silently and undetectably; locking a file the
 caller also reads or writes would therefore drop the claim on the first touch. The sentinel is a
