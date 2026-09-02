@@ -2492,6 +2492,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                 ,
                 a => a
             )
+        end runCC
 
         "a forwarding listen keeps a tell that precedes an escape and re-establishes its frame at the captured state" in {
             val body: (Unit, List[Int]) < (Tell & CC) =
