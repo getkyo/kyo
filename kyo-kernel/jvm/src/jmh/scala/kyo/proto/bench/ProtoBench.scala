@@ -225,19 +225,220 @@ class ProtoBench:
         run(ArrowEffect.handleCont(Tag[Ask], loop(0))([C] => (_, cont) => cont(1), a => a))
     end continuationBodiesFuse
 
+    @Benchmark
+    def userTypesSkipKernelWrapping: Int =
+        def loop(b: Box): Box < Any =
+            if b.value > NarrowDepth then b
+            else
+                (Box(b.value + 11): Box < Any)
+                    .map(b => Box(b.value - 1)).map(b => Box(b.value - 1)).map(b => Box(b.value - 1))
+                    .map(b => Box(b.value - 1)).map(b => Box(b.value - 1)).map(b => Box(b.value - 1))
+                    .map(b => Box(b.value - 1)).map(b => Box(b.value - 1)).map(b => Box(b.value - 1))
+                    .map(b => Box(b.value - 1))
+                    .map(loop)
+        loop(Box(seed - 1)).eval.value
+    end userTypesSkipKernelWrapping
+
+    @Benchmark
+    def inlineLimitCostsTimeNotAllocation: Int =
+        def loop(i: Int): Int < Any =
+            if i > NarrowDepth then i
+            else
+                ((i + 51): Int < Any)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(loop)
+        run(loop(seed - 1))
+    end inlineLimitCostsTimeNotAllocation
+
+    @Benchmark
+    def inlineLimitKeepsZeroAllocation: Int =
+        def loop(i: Int): Int < Any =
+            if i > FusedWideDepth then 0
+            else
+                ((i & 63): Int < Any)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(_ => loop(i + 1))
+        run(loop(seed - 1))
+    end inlineLimitKeepsZeroAllocation
+
+    private val accumulatedChain: Int < Ask =
+        ask.map(a => a & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+
+    @Benchmark
+    def fusionAfterSuspensionRunOnly: Int =
+        run(ArrowEffect.handleCont(Tag[Ask], accumulatedChain)([C] => (_, cont) => cont(1), a => a))
+
+    @Benchmark
+    def fusionAfterSuspension: Int =
+        def loop(i: Int): Int < Ask =
+            if i > NarrowDepth then i
+            else
+                ask
+                    .map(a => (i + a) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(_ => loop(i + 1))
+        run(ArrowEffect.handleCont(Tag[Ask], loop(seed - 1))([C] => (_, cont) => cont(1), a => a))
+    end fusionAfterSuspension
+
+    @Benchmark
+    def partialSuspensionBaseline: Int =
+        def loop(i: Int): Int < Ask =
+            if i > Depth then i
+            else ask.map(a => loop(i + a))
+        val handled: Int < Any = ArrowEffect.handleCont(Tag[Ask], loop(seed - 1))([C] => (_, cont) => cont(1), a => a)
+        run(Eval.partial(handled))
+    end partialSuspensionBaseline
+
+    @Benchmark
+    def sharedHandlerPaysDispatch: Int =
+        def s0(i: Int): Int < Ask  = if i > Depth then i else askWith(a => s1(i + a))
+        def s1(i: Int): Int < Ask  = askWith(a => s2(i + a))
+        def s2(i: Int): Int < Ask  = askWith(a => s3(i + a))
+        def s3(i: Int): Int < Ask  = askWith(a => s4(i + a))
+        def s4(i: Int): Int < Ask  = askWith(a => s5(i + a))
+        def s5(i: Int): Int < Ask  = askWith(a => s6(i + a))
+        def s6(i: Int): Int < Ask  = askWith(a => s7(i + a))
+        def s7(i: Int): Int < Ask  = askWith(a => s8(i + a))
+        def s8(i: Int): Int < Ask  = askWith(a => s9(i + a))
+        def s9(i: Int): Int < Ask  = askWith(a => s10(i + a))
+        def s10(i: Int): Int < Ask = askWith(a => s11(i + a))
+        def s11(i: Int): Int < Ask = askWith(a => s12(i + a))
+        def s12(i: Int): Int < Ask = askWith(a => s13(i + a))
+        def s13(i: Int): Int < Ask = askWith(a => s14(i + a))
+        def s14(i: Int): Int < Ask = askWith(a => s15(i + a))
+        def s15(i: Int): Int < Ask = askWith(a => s0(i + a))
+        run(ArrowEffect.handleCont(Tag[Ask], s0(seed - 1))([C] => (_, cont) => cont(1), a => a))
+    end sharedHandlerPaysDispatch
+
+    @Benchmark
+    def foreignCrossingsPayRotation: Int =
+        def loop(i: Int): Int < (Ask & Ask2) =
+            if i > Depth then i
+            else ask.map(a => ask2.map(t => loop(i + a + t)))
+        val inner: Int < Ask2 = ArrowEffect.handleCont(Tag[Ask], loop(seed - 1))([C] => (_, cont) => cont(1), a => a)
+        run(ArrowEffect.handleCont(Tag[Ask2], inner)([C] => (_, cont) => cont(0), a => a))
+    end foreignCrossingsPayRotation
+
+    @Benchmark
+    def dynamicChainOfMapsStaysLinear: Int =
+        var fa: Int < Any = seed
+        var i             = 0
+        while i < NarrowDepth do
+            fa = fa.map(_ + 1)
+            i += 1
+        run(fa)
+    end dynamicChainOfMapsStaysLinear
+
+    @Benchmark
+    def dynamicChainOfBindsStaysLinear: Int =
+        var fa: Int < Any = seed
+        var i             = 0
+        while i < NarrowDepth do
+            fa = fa.flatMap(v => (v + 1): Int < Any)
+            i += 1
+        run(fa)
+    end dynamicChainOfBindsStaysLinear
+
+    @Benchmark
+    def pureIterationViaLoop: Int =
+        run(Loop(seed - 1)(i => if i > Depth then Loop.done(i) else Loop.continue(i + 1)))
+
+    @Benchmark
+    def pureIterationViaMethod: Int =
+        def loop(i: Int): Int < Any =
+            if i > Depth then i
+            else ((i + 1): Int < Any).map(loop)
+        run(loop(seed - 1))
+    end pureIterationViaMethod
+
+    @Benchmark
+    def pureIterationViaArrow: Int =
+        val step = Arrow.recursive[Int, Int, Any]((self, i) =>
+            if i > Depth then i
+            else ((i + 1): Int < Any).map(v => self(v))
+        )
+        run(step(seed - 1))
+    end pureIterationViaArrow
+
+    @Benchmark
+    def effectfulIterationViaLoop: Int =
+        val v = Loop(seed - 1)(i => if i > Depth then Loop.done(i) else ask.map(a => Loop.continue(i + a)))
+        run(ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, cont) => cont(1), a => a))
+    end effectfulIterationViaLoop
+
+    @Benchmark
+    def effectfulIterationViaArrow: Int =
+        val step = Arrow.recursive[Int, Int, Ask]((self, i) =>
+            if i > Depth then i
+            else ask.map(a => self(i + a))
+        )
+        run(ArrowEffect.handleCont(Tag[Ask], step(seed - 1))([C] => (_, cont) => cont(1), a => a))
+    end effectfulIterationViaArrow
+
 end ProtoBench
 
 object ProtoBench:
 
-    inline def Depth       = 10000
-    inline def NarrowDepth = 1000
-    inline def FusedDepth  = 32
+    inline def Depth          = 10000
+    inline def NarrowDepth    = 1000
+    inline def FusedDepth     = 32
+    inline def FusedWideDepth = 8
 
     def run(v: Int < Any): Int = v.eval
+
+    final case class Box(value: Int)
 
     sealed trait Ask extends ArrowEffect[[B] =>> Unit, [B] =>> Int]
 
     def ask(using Frame): Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
+
+    sealed trait Ask2 extends ArrowEffect[[B] =>> Unit, [B] =>> Int]
+
+    def ask2(using Frame): Int < Ask2 = ArrowEffect.suspend[Any](Tag[Ask2], ())
 
     sealed trait Tick extends ArrowEffect[[B] =>> Unit, [B] =>> Int]
 

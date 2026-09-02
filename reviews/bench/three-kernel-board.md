@@ -9,7 +9,10 @@ Sources:
 - **Arrow**: `ProtoKernelBench` today (2026-09-01), 3 forks, gc profiler, same session as the proto run; cells marked † are
   the 2026-08-18 `-f 1` screen (`reviews/bench/screen-0818-f1-head-kernel.json`, time only) where today's run had not
   reached the row yet, and allocation marked † is the 2026-08-11 board's kernel2 column.
-- **proto**: `ProtoBench` today, commit b32f3b1318, 3 forks, gc profiler.
+- **proto**: `ProtoBench` today, commit b32f3b1318, 3 forks, gc profiler; the fifteen rows ported from
+  `KernelBench` on 2026-09-01 (userTypes, inlineLimit, fusionAfterSuspension, partial, sharedHandler,
+  foreignCrossings, dynamicChain, pureIteration, effectfulIteration) are a single fork with gc, no Arrow
+  column yet, and main and the 2026-08-11 kernel2 column where that board had the row.
 
 Status: 🟢 proto within 5% of that kernel or better, 🟡 5% to 25% behind, 🔴 more than 25% behind, ⚪ no data for that kernel.
 
@@ -37,6 +40,21 @@ Status: 🟢 proto within 5% of that kernel or better, 🟡 5% to 25% behind, �
 | handleLoopFusesContinuation | - | 80.0 ± 1.6 | 42.8 ± 0.2 | - | 0.54 | ⚪ | 🟢 |
 | statefulAnswersPaySuccessor | 153.7 ± 2.5 | 87.0 ± 0.5 | 40.7 ± 0.3 | 0.26 | 0.47 | 🟢 | 🟢 |
 | emittingClausesPayRegionRebuild | - | 144.3 ± 1.1 | 77.1 ± 2.2 | - | 0.53 | ⚪ | 🟢 |
+| dynamicChainOfBindsStaysLinear | - | - | 3.495 ± 0.130 | - | - | ⚪ | ⚪ |
+| dynamicChainOfMapsStaysLinear | - | - | 4.107 ± 0.021 | - | - | ⚪ | ⚪ |
+| effectfulIterationViaArrow | - | - | 76.3 ± 3.3 | - | - | ⚪ | ⚪ |
+| effectfulIterationViaLoop | - | - | 224.7 ± 7.0 | - | - | ⚪ | ⚪ |
+| foreignCrossingsPayRotation | 325.0 ± 2.5 | 377.2 ± 3.9† | 1,430.4 ± 90.2 | 4.40 | 3.79 | 🔴 | 🔴 |
+| fusionAfterSuspension | 88.0 ± 5.4 | 271.5 ± 4.3† | 127.9 ± 2.2 | 1.45 | 0.47 | 🔴 | 🟢 |
+| fusionAfterSuspensionRunOnly | 0.283 ± 0.001 | 0.829 ± 0.016† | 0.526 ± 0.012 | 1.86 | 0.63 | 🔴 | 🟢 |
+| inlineLimitCostsTimeNotAllocation | 347.0 ± 7.7 | 248.3 ± 2.8† | 283.8 ± 4.7 | 0.82 | 1.14 | 🟢 | 🟡 |
+| inlineLimitKeepsZeroAllocation | 2.167 ± 0.008 | 1.385 ± 0.010† | 1.132 ± 0.032 | 0.52 | 0.82 | 🟢 | 🟢 |
+| partialSuspensionBaseline | - | 82.3 ± 1.0† | 108.9 ± 1.6 | - | 1.32 | ⚪ | 🔴 |
+| pureIterationViaArrow | - | - | 73.6 ± 47.6 | - | - | ⚪ | ⚪ |
+| pureIterationViaLoop | - | - | 16.0 ± 0.5 | - | - | ⚪ | ⚪ |
+| pureIterationViaMethod | - | - | 64.0 ± 1.2 | - | - | ⚪ | ⚪ |
+| sharedHandlerPaysDispatch | 140.8 ± 6.0 | 169.7 ± 2.2† | 166.1 ± 6.0 | 1.18 | 0.98 | 🟡 | 🟢 |
+| userTypesSkipKernelWrapping | 43.9 ± 1.1 | 34.4 ± 1.0† | 50.5 ± 0.9 | 1.15 | 1.47 | 🟡 | 🔴 |
 
 ## Allocation (B/op)
 
@@ -62,3 +80,18 @@ Status: 🟢 proto within 5% of that kernel or better, 🟡 5% to 25% behind, �
 | handleLoopFusesContinuation | - | 642,025 | 480,152 | - | 0.75 | ⚪ | 🟢 |
 | statefulAnswersPaySuccessor | 1,040,139 | 643,273 | 480,160 | 0.46 | 0.75 | 🟢 | 🟢 |
 | emittingClausesPayRegionRebuild | - | 176,305 | 176,281 | - | 1.00 | ⚪ | 🟢 |
+| dynamicChainOfBindsStaysLinear | - | - | 13,984 | - | - | ⚪ | ⚪ |
+| dynamicChainOfMapsStaysLinear | - | - | 13,984 | - | - | ⚪ | ⚪ |
+| effectfulIterationViaArrow | - | - | 480,137 | - | - | ⚪ | ⚪ |
+| effectfulIterationViaLoop | - | - | 1,120,226 | - | - | ⚪ | ⚪ |
+| foreignCrossingsPayRotation | 1,680,202 | 1,840,331† | 2,280,554 | 1.36 | 1.24 | 🔴 | 🟡 |
+| fusionAfterSuspension | 408,437 | 1,073,154† | 536,609 | 1.31 | 0.50 | 🔴 | 🟢 |
+| fusionAfterSuspensionRunOnly | 0 | 1,288† | 1,240 | - | 0.96 | ⚪ | 🟢 |
+| inlineLimitCostsTimeNotAllocation | 724,418 | 743,346† | 738,402 | 1.02 | 0.99 | 🟢 | 🟢 |
+| inlineLimitKeepsZeroAllocation | 0 | 0† | 0 | - | - | ⚪ | ⚪ |
+| partialSuspensionBaseline | 0 | 640,145† | 480,121 | - | 0.75 | ⚪ | 🟢 |
+| pureIterationViaArrow | - | - | 158,625 | - | - | ⚪ | ⚪ |
+| pureIterationViaLoop | - | - | 160,048 | - | - | ⚪ | ⚪ |
+| pureIterationViaMethod | - | - | 158,456 | - | - | ⚪ | ⚪ |
+| sharedHandlerPaysDispatch | 240,405 | 240,465† | 240,457 | 1.00 | 1.00 | 🟢 | 🟢 |
+| userTypesSkipKernelWrapping | 177,040 | 177,224† | 176,672 | 1.00 | 1.00 | 🟢 | 🟢 |

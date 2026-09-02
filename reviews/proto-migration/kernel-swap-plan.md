@@ -7,7 +7,7 @@ benches, and docs.
 
 ## Is it just moving sources?
 
-No. Moving is the smallest part. Five other things have to happen for the result to be
+No. Moving is the smallest part. Four other things have to happen for the result to be
 the kernel rather than a renamed prototype:
 
 1. **The old kernel goes away in the same step**, not later: `kyo.kernel.<` and
@@ -18,9 +18,10 @@ the kernel rather than a renamed prototype:
    and `handleCatching` have no proto counterpart, `Mask` moved into `ArrowEffect`, and
    `Loop` grew `Done`. Each is a decision the kernel has to settle before the module is
    the kernel, because downstream migrates against whatever this step ships.
-3. **The old kernel's tests, benches, and docs are the kernel's.** The proto suites cover
-   most of the old suites but not all; the 30-row `KernelBench` has 15 rows the proto
-   never got a twin for; the README and CONTRIBUTING describe the old node ADT and stack.
+3. **The old kernel's docs are the kernel's.** The README and CONTRIBUTING describe the old
+   node ADT and stack, and the README is doctested against the old API. The tests and
+   benches are already the proto's: every old suite has its proto twin, and the 30-row
+   `KernelBench` set is in `ProtoBench` under the same row names.
 4. **Scaffolding that exists only because the proto was a prototype** goes: the
    `protodemo` runner and its JOL dependency, `kyo/mini/mini.scala`, `ProtoKernelBench`,
    the `outsidekyo/ProtoKernelTest` twin.
@@ -37,13 +38,13 @@ the kernel rather than a renamed prototype:
 | js-wasm main | same three | `Safepoint`, `Report` |
 | jvm main | none | `kyo/proto/debug/{ConsoleDebugger,DebugSession}.scala`, `protodemo/{Main,SuspensionDebug}.scala` |
 | internal files only on one side | `Finalizer.scala`, the two `*PlatformSpecific` | `Context.scala`, `Report.scala` |
-| shared tests | 15 under `kyo/kernel`, 5 under `kyo/` (Arrow, Kyo, KyoForeach, KyoForeachColl, Mask), `outsidekyo/KernelTest`, `kyo/Test.scala`, `kyo/TestVariant.scala` | 18 under `kyo/proto/kernel`, 5 under `kyo/proto/` (Arrow, Kyo, KyoForeach, KyoForeachColl, Loop), `outsidekyo/ProtoKernelTest` |
-| jvm-native tests | 10 | 10 |
+| shared tests | 15 under `kyo/kernel`, 5 under `kyo/` (Arrow, Kyo, KyoForeach, KyoForeachColl, Mask), `outsidekyo/KernelTest`, `kyo/Test.scala`, `kyo/TestVariant.scala` | 21 under `kyo/proto/kernel` (StackTest, HandlerTest, DebuggerTest included), 5 under `kyo/proto/` (Arrow, Kyo, KyoForeach, KyoForeachColl, Loop), `outsidekyo/ProtoKernelTest` |
+| jvm-native tests | 10, plus the `SafepointStop` helper | 10, the stop request inlined where a suite needs it |
 | js-wasm tests | 1 | 1 |
 | jvm tests | 3 | 4 |
-| old test files with no proto twin | `DebuggerTest`, `HandlerTest`, `StackTest`, `SafepointStop` (helper), `MaskTest` (proto has `ArrowEffectMaskTest`) | |
+| old test files with no proto twin | none: MaskTest's cases live in `ArrowEffectMaskTest` | |
 | proto test files with no old twin | | `EffectBracketTest`, `EvalConcurrencyTest`, `ReportTest`, `LoopTest`, `ArrowEffectMaskTest` |
-| benches (`jvm/src/jmh`) | `KernelBench` (30 rows), `ProtoKernelBench` (20-row twin of the proto rows, measures `kyo.kernel`), `cross/{CatsEffect,Turbolift,Zio,ZioBlocks}Bench` joined to KernelBench by row name | `ProtoBench` (20 rows) |
+| benches (`jvm/src/jmh`) | `KernelBench` (30 rows), `ProtoKernelBench` (20-row twin, measures `kyo.kernel`), `cross/{CatsEffect,Turbolift,Zio,ZioBlocks}Bench` joined to KernelBench by row name | `ProtoBench` (35 rows: the 20 proto rows plus the 15 KernelBench rows, same names) |
 | docs | `README.md` (695 lines, doctested), `CONTRIBUTING.md` (432 lines) describe the old kernel | none |
 | build | `kyo-kernel` block: scalatest, javassist for bytecode pins, JOL plus fork settings for the proto demo, Jmh settings | |
 | skills | `kyo-kernel/.claude/skills/kernel`: `package-check.sh` examples name `kyo/proto/kernel`; the bench harness has proto run files | |
@@ -78,13 +79,9 @@ and `Kyo.lift` 43 are unchanged in shape.
 - **D5. `Mask`.** Stays inside `ArrowEffect` as ruled ("Mask is in ArrowEffect");
   `kyo/Mask.scala` is deleted and the one downstream import changes when it migrates.
 - **D6. The debug package.** `kyo.proto.debug` (jvm: `ConsoleDebugger`, `DebugSession`)
-  becomes `kyo.kernel.debug`; the `protodemo` runner and the JOL dependency go. The
-  DebuggerTest port question (backlog Q1) stays open and is not blocked by this.
-- **D7. Unported old suites.** `HandlerTest`, `StackTest`, `DebuggerTest` test the old
-  representation and are recorded as divergent by design; they are deleted with the old
-  kernel rather than carried as dead files. Anything in them that is a law of the kernel
-  and not of the representation gets a pin in the proto suite it belongs to, enumerated in
-  phase 3 before deletion.
+  becomes `kyo.kernel.debug`; the `protodemo` runner and the JOL dependency go. Whether
+  `Debugger.enabled` stays a compile-time constant (backlog Q1) is independent of the move;
+  DebuggerTest pins the law under either value.
 
 ## Phases
 
@@ -126,42 +123,23 @@ scalatest; the comment about the demo goes. `package-check.sh`'s example paths u
 Gate: `sbt --batch kyo-kernelJVM/clean kyo-kernelJVM/compile` (the clean batch build is
 the one that catches the lift macro's suspension cascade), then the full suites on JVM,
 JS, and Native, then `Jmh/run -f 1 kyo.kernel.bench.KernelBench` against today's
-20-row board with no row outside its error band.
+35-row board with no row outside its error band.
 
 ### Phase 2. Surface parity, per the rulings
 
 - Apply D2, D3, D5 as deletions or ports; each port arrives with its pins.
-- The 15 `KernelBench` rows with no proto twin are ported to the proto's API and appended
-  to the new `KernelBench`, so the cross benches and the recorded boards keep their full
-  join: `userTypesSkipKernelWrapping`, `inlineLimitCostsTimeNotAllocation`,
-  `inlineLimitKeepsZeroAllocation`, `fusionAfterSuspension`, `fusionAfterSuspensionRunOnly`,
-  `partialSuspensionBaseline`, `sharedHandlerPaysDispatch`, `foreignCrossingsPayRotation`,
-  `dynamicChainOfMapsStaysLinear`, `dynamicChainOfBindsStaysLinear`, `pureIterationViaLoop`,
-  `pureIterationViaMethod`, `pureIterationViaArrow`, `effectfulIterationViaLoop`,
-  `effectfulIterationViaArrow`. Each is measured once at 3 forks and recorded next to the
-  old kernel's numbers in `kernel-comparison-board.md`'s row set.
 - The test base: the proto suites extend `AnyFreeSpec` directly; the old suites extend
   `kyo.Test`, which exists for a documented reason (the kernel cannot test on kyo-test).
   The moved suites switch to `kyo.Test`; `TestVariant` stays for `KyoForeachCollTest`.
 
-Gate: suites on three platforms; the 35-row board at 1 fork against phase 1's board for
-the 20 shared rows.
+Gate: suites on three platforms; the 35-row board at 1 fork against phase 1's board.
 
-### Phase 3. The unported suites (D7)
-
-Read `HandlerTest`, `StackTest`, `DebuggerTest` and `SafepointStop` before phase 1
-deletes them; list every case that is a kernel law rather than an old-representation
-detail; pin each in the proto suite it belongs to (`ArrowEffectTest`, `EvalTest`,
-`StackThreadingTest`, or a new `DebuggerTest` once Q1 is ruled). This phase produces the
-list first and the pins second, and is the reason phase 1 keeps a copy of those four files
-under `reviews/proto-migration/old-suites/` until it closes.
-
-### Phase 4. Scaladoc (D1)
+### Phase 3. Scaladoc (D1)
 
 Public files only, written for the proto's semantics, checked by `sbt kyo-kernelJVM/doc`
 and the doctest driver. Internals stay comment-free.
 
-### Phase 5. Docs and skills
+### Phase 4. Docs and skills
 
 - `README.md`: rewrite through `/readme kyo-kernel`; every fenced block is doctested, and
   the current README's blocks use the old API, so the rewrite is not optional.
@@ -174,7 +152,7 @@ and the doctest driver. Internals stay comment-free.
 - `reviews/proto-migration/backlog.md` gains a closing entry pointing at this plan and the
   commits.
 
-### Phase 6. Downstream, out of scope here
+### Phase 5. Downstream, out of scope here
 
 Recorded so the branch state is explicit: 71 files in 12 modules import `kyo.kernel`;
 their migration is its own plan, starting with `kyo-prelude` (14 files) and `kyo-core`
@@ -182,7 +160,6 @@ their migration is its own plan, starting with `kyo-prelude` (14 files) and `kyo
 
 ## Order and dependencies
 
-Phase 3's reading must happen before phase 1 deletes the files; phase 1 keeps the copies
-so the order of commits can stay 1, 2, 3. Phases 2 and 4 are independent of each other;
-phase 5 depends on 2 and 4 because the README's blocks and the CONTRIBUTING's surface
-table describe the final API. Nothing here touches other modules.
+Phases 2 and 3 are independent of each other; phase 4 depends on 2 and 3 because the
+README's blocks and the CONTRIBUTING's surface table describe the final API. Nothing here
+touches other modules.

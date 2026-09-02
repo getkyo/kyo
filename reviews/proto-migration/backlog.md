@@ -170,11 +170,30 @@ Each holds a known-red pin set in the proto suite until ruled; the pins are the 
   internal node base `trait Kyo` moved into KyoInternal.scala beside the internal object,
   so `kyo.proto.Kyo` is only the user-facing companion. KyoTest, KyoForeachTest, and
   KyoForeachCollTest port with the toString pin adapted to the proto's rendering.
+- **Q7. The rows the KernelBench port surfaced** (2026-09-01, first measurement, one fork
+  with gc, `reviews/bench/three-kernel-board.md`). Three rows are red against both older
+  kernels and are open performance items, each needing its mechanism named before any
+  fix: `foreignCrossingsPayRotation` at 1,430 us against main's 325 and kernel2's 377
+  (2.28 MB/op against 1.68 and 1.84), the per-level crossing of the inner region's
+  suspension through the outer region; `fusionAfterSuspension` at 128 us against main's 88
+  (kernel2 was 272), and its run-only twin at 0.53 us against 0.28, the ten maps stored on
+  an unanswered suspension; `partialSuspensionBaseline` at 109 us against kernel2's 82 and
+  the proto's own unarmed 77, the armed safepoint poll's price per answered operation.
+  `sharedHandlerPaysDispatch` (1.18x main, at kernel2's level) and
+  `userTypesSkipKernelWrapping` (1.15x main, allocation identical) sit with the boxing row.
 
-Divergent by design, not ported: HandlerTest (handler-as-arrow, `Handler.Out`),
-DebuggerTest (the session protocol, see Q1), StackTest (the flattened arrow stack), the
-`Effect.catching` node cases, the by-name `handleCatching` case, and the refusable
-effectful `fork` cases.
+Ported as the laws of the proto's own representation (2026-09-01, "I had asked you to do
+that"): StackTest pins the pooled stack's four lanes, `find`'s tag subtyping, `truncate`,
+`dump` and the owed lanes, `snapshot`, `contextual`, growth, and the pool; HandlerTest pins
+`done`, `recover`, regions built on a handler, `answers` on settled, pending, and throwing
+clauses, the trace attaches of `answering` and `running`, and the three arms of
+`clauseDispatch`; DebuggerTest pins the hook defaults, install and uninstall, and that a
+session observes an eval exactly when `Debugger.enabled` compiles the hooks in (it is an
+`inline val`, false today, the Q1 decision). MaskTest's cases all live in
+ArrowEffectMaskTest, one renamed for the recover arm. The fifteen KernelBench rows without
+a proto twin are in ProtoBench under their own names, `partialSuspensionBaseline` included.
+Still divergent by design: the `Effect.catching` node cases, the by-name `handleCatching`
+case, and the refusable effectful `fork` cases, each of a construct the proto does not have.
 
 ### Q2. Nesting in `Loop.Outcome*` (added 2026-09-01)
 
