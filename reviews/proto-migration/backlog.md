@@ -322,6 +322,8 @@ exact tag; when none is found the exact key is removed and the subtype-aware rea
 outer region's own key. Recomputing from the stack (rather than saving the prior binding at
 entry) is the right shape because the stack is the source of truth once S3 updates a region's
 state in place. Status: fixed in `ccafba44c9` (`Stack.findExact` at exit and in `rebound`), verified on JVM, JS and Native.
+Superseded by S10's fix (`6b1ca5cc98`): under the region-ordered `Context` an exit adds nothing,
+it unbinds the head, so the law holds by construction and `Stack.findExact` is gone.
 
 ### S3. The Contextual isolate's join lands on copies of the regions
 
@@ -426,12 +428,24 @@ answers 1, the outer exact binding, where the innermost related region holds 2; 
 exact key the oldest related binding wins, the outermost. Dispatch (`Stack.find`) walks from the
 top, innermost first, so reads and dispatch disagree on which related region is in scope. Test:
 ContextEffectTest "a read takes the innermost binding whether its tag is exact or a subtype"
-(red on the subtype-inside case). Fix direction, ruling pending: a read resolves innermost first
-among related keys, the same walk `find` does; `TypeMap` nodes are newest first, so `Context.get`
-walks from the head and takes the first `<:<` match. Status: open.
+(red on the subtype-inside case). The walk-from-the-head candidate over the map was correct by
+inspection only: `contextExit` re-added an outer exact key at the head, so regions `Cfg = 1`,
+`CfgSub = 2`, `Cfg = 3` read `1` after the inner exit under any head-first rule. Status: fixed in
+`6b1ca5cc98` and `ece42c6b33`, verified on JVM (kyo-kernel 2479 green, TypeMapTest 32 green).
+`Context` is rewritten from scratch as a cons list of the live context regions, innermost first,
+one binding per region: `bind` conses, `get` takes the first binding whose tag is a subtype of
+the tag asked for (the rule dispatch uses on the stack), `unbind` drops the head. Region entry
+binds, `contextExit` unbinds, `rebound` unbinds one head per dumped context region, `installed`
+and `rebuilt` bind in region order; `Stack.findExact` is deleted and `rebound` loses its `stack`
+parameter. The kernel no longer uses `TypeMap`, and the branch's `TypeMap` rewrite
+(`2a87069879`) is reverted to main's `TreeSeqMap` version. Pins: the S10 pin green; ContextTest
+rewritten on `bind`, `get`, `unbind`; ContextEffectTest "an outer exact binding uncovered by an
+inner exit does not shadow a subtype binding between them" (`(3, 2)`) and "a region derives from
+the innermost related binding" (`12`). Perf: unmeasured by instruction, swept later; the number
+this design depends on is the `Tag.<:<` miss cost against an unrelated tag deeper in the list.
 
-Standing instruction (2026-09-02): "don't make fixes please, tests only for now". S9, S10 and
-the entry 9 question stay as red or as-is pins until lifted.
+The standing instruction "don't make fixes please, tests only for now" (2026-09-02) was lifted
+the same day, fix by fix: S9 ruled not an issue, entry 9 ruled keep, S10 fixed.
 
 ### T. The fifteen TODO notes in the proto sources: analysed, decisions pending
 
@@ -452,11 +466,14 @@ stays); a common supertype for `ContHandler` and `ContOpHandler` carrying `answe
 
 Everything open, in one place, so nothing above has to be re-derived. Numbered for reference.
 
-1. **Rulings pending.** S9's fix shape (recommended: the consumed mark on the snapshot); entry 9
-   of the eff audit, whether a raw region revived after its release is refused with `Closed` as a
-   bracket is (recommended: refuse, on the same mark); S10's law, a read resolving innermost first
-   among related tags (recommended: yes, the walk `find` does); entries 7 and 13 of the eff audit
-   stand as pinned (recommended). None can be acted on under "tests only".
+1. **Rulings made (2026-09-02).** S9: not an issue; the triggering shape (a crossing's park
+   evaluated with `.eval` inside the evaluation that owes it) is out of contract, at-least-once
+   for raw hooks, the pin records it. Entry 9: keep; a raw region revived after its owner's exit
+   drained it fires `release` then `done`, the raw-hook face of Q4 and finding 15; refusal stays
+   state-level (the bracket's cell) because refusing would refuse every escaped continuation whose
+   owner exited. S10: fixed, the region-ordered `Context`. Entries 7 and 13 of the eff audit stand
+   as pinned. Also ruled: nothing captured in a computation value may be mutable (the reverted
+   mark, `9de69b42c3` and `b6b1334eab`); `done` and `release` stay separate hooks.
 2. **The eff issue 12 campaign.** `eff-issue-12-audit.md`, 17 entries and six closing experiments,
    citations anchored to `32021c06b9`. All of it is pinned: ArrowEffectTest "eff issue 12 pins"
    (entries 2, 3, 4a, 4b, 6, 7a, 7b, closing item 5) and "eff issue 12 pins, writer" (entry 15,
@@ -514,8 +531,8 @@ Everything open, in one place, so nothing above has to be re-derived. Numbered f
    interposition proposal repairs eff's own encoding of `catch` as a hidden nested handler that
    shadows the one `handle` installed and leaks into the effect list; the kernel has no hidden
    encoding, a nested handler is one the program wrote, so there is nothing to interpose on.
-3. **Fixes blocked by "tests only".** S9, S10, and the entry 9 flip if ruled; the S9 fix also
-   revisits S4's lane scan, which the mark subsumes.
+3. **Fixes blocked by "tests only".** None left: S9 ruled out, entry 9 ruled keep, S10 fixed
+   (item 1). S4's lane scan stays as is.
 4. **The fifteen TODO notes.** Section T above: the DO items (two renames, the `KyoInternal` split
    and `object Kyo` to `object Pending`, deleting each note), the DO WITH MEASUREMENT items (the
    `atTop` chain, `onAlloc` into `Kyo`), and the three NEEDS RULING items. None started.
@@ -523,7 +540,12 @@ Everything open, in one place, so nothing above has to be re-derived. Numbered f
    discipline is the whole `ProtoBench` class on both tips, `-f 1` then `-f 3` on any row outside
    the drift band, with `-prof gc`. S5 reaches every context-handler row (a region node where the
    settled arm returned in place), S3 rebuilds the context on every `Snapshot` node, S4 scans lanes
-   on settle, S6 bumps an epoch per eval, S8 forks the live cell.
+   on settle, S6 bumps an epoch per eval, S8 forks the live cell. S10 (`6b1ca5cc98`) reaches every
+   context read, region entry, exit, dump, install, and rebuild; no existing `ProtoBench` row reads
+   a context effect, so the sweep adds two rows before measuring (reads under nested bindings with
+   an idle arrow handler between the read and the innermost binding; entries and exits of one tag
+   in a loop) and reads `gc.alloc.rate.norm` on them. The `TypeMap` revert (`ece42c6b33`) reaches
+   nothing in the kernel.
 6. **Q7 performance rows**, open as measured: `foreignCrossingsPayRotation` (copy-on-escape, a
    representation ruling), `fusionAfterSuspension`, `partialSuspensionBaseline`,
    `sharedHandlerPaysDispatch`, `userTypesSkipKernelWrapping`.
