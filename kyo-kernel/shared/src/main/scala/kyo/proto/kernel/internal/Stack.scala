@@ -58,6 +58,12 @@ final private[kernel] class Stack:
             if i == 0 then evalOwed = evalOwed.concat(snapshots)
             else owed(i - 1) = owed(i - 1).concat(snapshots)
 
+    def settle(i: Int, snapshot: Stack.Snapshot): Unit =
+        val lane = owed(i)
+        if !lane.isEmpty && (lane.last.asInstanceOf[AnyRef] eq snapshot.asInstanceOf[AnyRef]) then
+            owed(i) = if lane.length == 1 then Chunk.empty else lane.dropRight(1)
+    end settle
+
     def takeEvalOwed(): Chunk[Stack.Snapshot] =
         val owedHere = evalOwed
         if !owedHere.isEmpty then evalOwed = Chunk.empty

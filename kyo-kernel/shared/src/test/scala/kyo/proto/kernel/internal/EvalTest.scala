@@ -1021,7 +1021,7 @@ class EvalTest extends AnyFreeSpec:
             assert(log.toList == List("b", "a"))
         }
 
-        "a raw release hook fires on both the unwind and the owed drain" in {
+        "a raw release hook fires once for a region resumed from a dump and then unwound" in {
             val log = collection.mutable.ListBuffer[Int]()
             sealed trait Cfg extends kyo.proto.kernel.ContextEffect[Int]
             val body: Int < Ask =
@@ -1034,7 +1034,7 @@ class EvalTest extends AnyFreeSpec:
             val outer: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, cont) => cont(1), b => b)
             val ex               = intercept[RuntimeException](eval(outer))
             assert(ex eq Boom)
-            assert(log.toList == List(7, 7))
+            assert(log.toList == List(7))
         }
 
         "a pooled stack reused by a later eval carries no stale obligations" in {

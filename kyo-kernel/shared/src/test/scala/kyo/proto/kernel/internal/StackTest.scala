@@ -298,6 +298,40 @@ class StackTest extends AnyFreeSpec:
             assert(as[Int](atZero(0).state(0)) == 2)
         }
 
+        "settle removes the debt a resumed dump left, when it is the lane's last" in {
+            val stack = new Stack
+            stack.push(askHandler, (), Arrow.id[Int])
+            stack.push(sayHandler, (), Arrow.id[Int])
+            val snapshot = stack.dump(1)
+            stack.settle(0, snapshot)
+            assert(stack.takeOwed(0).isEmpty)
+        }
+
+        "settle leaves a debt that is not the lane's last, and the others" in {
+            val stack = new Stack
+            stack.push(askHandler, (), Arrow.id[Int])
+            stack.push(sayHandler, (), Arrow.id[Int])
+            val first = stack.dump(1)
+            stack.push(statefulHandler, 1, Arrow.id[Int])
+            val second = stack.dump(1)
+            stack.settle(0, first)
+            assert(stack.takeOwed(0).toIndexed.length == 2)
+            stack.owe(0, Chunk(first, second))
+            stack.settle(0, second)
+            val left = stack.takeOwed(0).toIndexed
+            assert(left.length == 1)
+            assert(left(0).handler(0) eq first.handler(0))
+        }
+
+        "settle of an unrelated snapshot is a no-op" in {
+            val stack = new Stack
+            stack.push(askHandler, (), Arrow.id[Int])
+            stack.push(sayHandler, (), Arrow.id[Int])
+            discard(stack.dump(1))
+            stack.settle(0, Stack.Snapshot.empty)
+            assert(stack.takeOwed(0).toIndexed.length == 1)
+        }
+
         "oweBelow at the bottom lands on the eval's own lane" in {
             val stack = new Stack
             stack.push(askHandler, (), Arrow.id[Int])

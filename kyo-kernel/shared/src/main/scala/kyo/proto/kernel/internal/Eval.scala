@@ -199,6 +199,7 @@ import scala.util.control.NonFatal
                 end match
                 ri += 1
             end while
+            if !stack.isEmpty then stack.settle(stack.depth - 1, entries)
             stack.oweBelow(stack.depth, kyo.owed)
             @tailrec def install(i: Int, c: Context): Context =
                 if i == entries.regions then c
