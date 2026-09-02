@@ -31,17 +31,35 @@ final private[machine] class MachineMacos(
 
     def read()(using AllowUnsafe): Unit =
         bindings match
-            case Present(b) =>
-                readCpu(b)
-                readMemory(b)
-                readSwap(b)
-                readLoad(b)
-            case Absent => ()
+            case Present(b) => readAll(b)
+            case Absent     => ()
 
     def readDisks()(using AllowUnsafe): Unit =
         bindings match
-            case Present(b) => disk.read(b)
-            case Absent     => ()
+            case Present(b) =>
+                try disk.read(b)
+                catch
+                    case ex: Throwable if Machine.degradable(ex) =>
+                        discard(Machine.reportDegraded("the macOS disk reader", ex))
+            case Absent => ()
+
+    /** One tick's non-disk read over a supplied binding, guarded.
+      *
+      * A library that loaded can still fail a later call: a lazily-initialized generated impl raises its
+      * class-init failure from the first real symbol lookup, and a class already poisoned by such a failure
+      * raises `NoClassDefFoundError` from every call after it. This is the reader's degradation boundary, so
+      * the tick that fails is dropped and the sampler keeps running.
+      */
+    private[machine] def readAll(b: MacosBindings)(using AllowUnsafe): Unit =
+        try
+            readCpu(b)
+            readMemory(b)
+            readSwap(b)
+            readLoad(b)
+        catch
+            case ex: Throwable if Machine.degradable(ex) =>
+                discard(Machine.reportDegraded("the macOS host reader", ex))
+    end readAll
 
     def close()(using AllowUnsafe): Unit =
         cpuOut.close()
@@ -64,7 +82,10 @@ final private[machine] class MachineMacos(
             val b = Ffi.load[MacosBindings]
             loadProbe(b, cpuOut)
             Present(b)
-        catch case ex: Throwable if scala.util.control.NonFatal(ex) => Absent
+        catch
+            case ex: Throwable if Machine.degradable(ex) =>
+                discard(Machine.reportDegraded("the macOS host reader's native library (machine_macos)", ex))
+                Absent
 
     private[machine] def readCpu(b: MacosBindings)(using AllowUnsafe): Unit =
         if b.hostCpuLoad(cpuOut) == 0 then

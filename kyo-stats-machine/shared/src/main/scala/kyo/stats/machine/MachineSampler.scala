@@ -2,8 +2,9 @@ package kyo.stats.machine
 
 import kyo.*
 
-/** The single detached fiber that samples the host once per second straight into retained `kyo.Stat`
-  * handles.
+/** The single detached fiber that samples the host on a fixed cadence straight into retained `kyo.Stat`
+  * handles. The cadence is one second unless `KYO_MACHINE_INTERVAL_MS` (or `kyo.machine.intervalMs`)
+  * overrides it; see `MachineSampler.intervalFrom`.
   *
   * The READ, DECODE and OBSERVE path of a steady-state tick allocates ZERO heap bytes on every supported
   * OS, and that claim is MEASURED, on the real per-OS decode callbacks, at a per-op bound of zero bytes. It
@@ -119,9 +120,9 @@ private[kyo] object MachineSampler:
       * drift-corrected tick loop under this Scope, so the loop and the retained handles share one lifetime.
       *
       * Two fibers run under this Scope. The FAST fiber reads the in-kernel and proc families on a
-      * drift-corrected 1 Hz anchored schedule. The DISK fiber reads the one genuinely blockable family on its
-      * OWN cadence, and the fast fiber never awaits it, so a slow or dead mount can never delay a fast read of
-      * the same or the next tick. Both fibers are registered with the Scope for interrupt BEFORE the effect
+      * drift-corrected anchored schedule at the configured interval. The DISK fiber reads the one genuinely
+      * blockable family on its OWN fiber at the same interval, and the fast fiber never awaits it, so a slow
+      * or dead mount can never delay a fast read of the same or the next tick. Both fibers are registered with the Scope for interrupt BEFORE the effect
       * parks, and the buffer-closing finalizer is registered FIRST so it runs LAST (Scope finalizers are
       * LIFO): closing the Scope interrupts both fibers, then closes the reader's buffers and file handles, so
       * no fiber can read a closed handle. Awaiting the fast fiber's `get` (it never returns) keeps the Scope
@@ -129,9 +130,10 @@ private[kyo] object MachineSampler:
       */
     def run(using Frame): Unit < (Async & Scope) =
         for
-            os      <- System.operatingSystem
-            handles <- MachineHandles.init
-            _       <- runWith(handles, sampler => Sync.Unsafe.defer(Machine.forOs(os, handles, sampler)))
+            os       <- System.operatingSystem
+            handles  <- MachineHandles.init
+            interval <- Sync.Unsafe.defer(intervalFrom(System.live.unsafe))
+            _        <- runWith(handles, sampler => Sync.Unsafe.defer(Machine.forOs(os, handles, sampler)), interval)
         yield ()
 
     /** Drives the loop over a caller-supplied handle set and a reader built from the sampler. Production
@@ -142,7 +144,8 @@ private[kyo] object MachineSampler:
       */
     private[machine] def runWith(
         handles: MachineHandles,
-        buildMachine: MachineSampler => Machine < Sync
+        buildMachine: MachineSampler => Machine < Sync,
+        interval: Duration = defaultInterval
     )(using Frame): Unit < (Async & Scope) =
         for
             sampler  <- Sync.Unsafe.defer(new MachineSampler(handles))
@@ -153,27 +156,72 @@ private[kyo] object MachineSampler:
                 sampler.closeHandles()
                 diskExec.close()
             })
-            disk <- Clock.repeatAtInterval(diskInterval)(readDisksBounded(sampler, machine, diskExec))
+            disk <- Clock.repeatAtInterval(interval)(readDisksBounded(sampler, machine, diskExec))
             _    <- Scope.ensure(disk.interrupt.unit)
-            fast <- Clock.repeatAtInterval(Schedule.anchored(1.second))(readFast(machine))
+            fast <- Clock.repeatAtInterval(Schedule.anchored(interval))(readFast(machine))
             _    <- Scope.ensure(fast.interrupt.unit)
             _    <- fast.get
         yield ()
     end runWith
 
-    /** The disk read runs at this cadence on its own fiber. A cycle waits at most `diskReadTimeout` before it
-      * yields to the next cycle CHECK; the in-flight guard then keeps that next cycle from launching a second
-      * read while a timed-out one is still parked in its syscall. The timeout only bounds the DISK fiber; the
-      * fast fiber never waits on it, so its value is decoupled from the fast-read cadence.
+    /** The tick cadence when nothing overrides it. One sample a second is the right default: one shared
+      * sampler at 1 Hz costs the host far less than N consumers polling `/proc` themselves.
       */
-    private val diskInterval    = 1.second
+    private[machine] val defaultInterval: Duration = 1.second
+
+    /** Names of the sample-interval override, in milliseconds. */
+    private val intervalEnv  = "KYO_MACHINE_INTERVAL_MS"
+    private val intervalProp = "kyo.machine.intervalMs"
+
+    /** Reads the sample interval from the given environment reader, defaulting to `defaultInterval`.
+      *
+      * Everything downstream of the sampler inherits this cadence: a consumer polling faster sees the same
+      * value repeated, because the signal only changes when the sampler ticks. A dashboard that wants
+      * sub-second host behaviour therefore cannot get it by polling harder, which is why the producer's rate
+      * has to be settable at all.
+      *
+      * Read through a `System.Unsafe` for the same reasons `MachineStatFactory`'s opt-out is: it resolves at
+      * sampler start with no effect context to hand, it must work on JVM, Node and Native alike (Node reaches
+      * `process.env`, where `java.lang.System.getenv` returns null), and a test can stage a reader because a
+      * real env var cannot be set inside a running process. The environment variable takes precedence over
+      * the system property, matching the opt-out lever exactly: the env var is the per-host deployment
+      * setting and the property is the local development override.
+      *
+      * A missing, unparseable or non-positive value yields the default rather than failing: the same
+      * fail-open behaviour the opt-out has, since a mistyped cadence must not stop host metrics altogether.
+      */
+    private[machine] def intervalFrom(env: System.Unsafe)(using AllowUnsafe): Duration =
+        val raw = env.env(intervalEnv).orElse(env.property(intervalProp))
+        val ms = raw match
+            case Present(v) => v.trim.toLongOption
+            case Absent     => None
+        ms match
+            case Some(v) if v > 0L => v.millis
+            case _                 => defaultInterval
+        end match
+    end intervalFrom
+
+    /** The disk read runs on its own fiber at the sampler's cadence. A cycle waits at most `diskReadTimeout`
+      * before it yields to the next cycle CHECK; the in-flight guard then keeps that next cycle from
+      * launching a second read while a timed-out one is still parked in its syscall. The timeout is fixed
+      * rather than derived from the cadence, and it only bounds the DISK fiber: the fast fiber never waits on
+      * it, so its value is decoupled from the read cadence in both directions.
+      */
     private val diskReadTimeout = 4.seconds
 
     /** The fast tick: reads every non-disk family straight into the retained cells. It never touches the disk
       * read, so nothing on this path can block on a mount.
       */
     private def readFast(machine: Machine)(using Frame): Unit < Async =
-        Sync.Unsafe.defer(machine.read())
+        Sync.Unsafe.defer {
+            // The reader degrades each family it cannot read, so a throw reaching here is an unexpected one.
+            // The loop still survives it: a sampler that dies takes every metric with it and says nothing,
+            // which is the failure mode this module can least afford. The cause is reported once.
+            try machine.read()
+            catch
+                case ex: Throwable if Machine.degradable(ex) =>
+                    discard(Machine.reportDegraded("the host reader's periodic tick", ex))
+        }
 
     /** One disk cycle on the detached disk fiber. It skips itself when a prior read is still outstanding
       * (parked in a blocking syscall), so a dead mount is read exactly once and never overlapped. Otherwise it
