@@ -457,7 +457,14 @@ Everything open, in one place, so nothing above has to be re-derived. Numbered f
    issue 12 pins" (entries 11, 12, 13); entries 16 and 17 are covered by the existing cases the
    report cites. Red today: entry 1 (S9) and closing item 6 (S10). The agent is exploring further
    aspects at the user's request; every new entry gets a pin in the same groups, red or green, and
-   the four suites run after each batch.
+   the four suites run after each batch. From the follow-up discussion (scoped state under
+   `Choice`, heftia's elaboration): ArrowEffectTest "eff issue 12 pins, choice" pins the placement
+   conflict as two laws, state in a nested region is per branch under a multi-shot choice and
+   state in the answering handler is shared across the branches (`a18c61e4f9`, green). The
+   agent's "clause dispatch through the crossing snapshot" proposal is on record as not
+   recommended: it would give an interpreter's clause the callee's local scope, the reading the
+   kernel deliberately does not take; the Choice case is solved by the region placement or by
+   answering with a computation (entry 3).
 3. **Fixes blocked by "tests only".** S9, S10, and the entry 9 flip if ruled; the S9 fix also
    revisits S4's lane scan, which the mark subsumes.
 4. **The fifteen TODO notes.** Section T above: the DO items (two renames, the `KyoInternal` split
