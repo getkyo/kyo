@@ -6,7 +6,7 @@ import kyo.Frame
 import kyo.Maybe
 import kyo.Result
 import kyo.Tag
-import kyo.proto.Arrow
+import kyo.proto.kernel.Arrow
 import kyo.proto.kernel.internal.*
 import kyo.proto.kernel.internal.Kyo.*
 import language.implicitConversions

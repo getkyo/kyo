@@ -3,8 +3,8 @@ package kyo.proto.bench
 import java.util.concurrent.TimeUnit
 import kyo.Frame
 import kyo.Tag
-import kyo.proto.Arrow
-import kyo.proto.Loop
+import kyo.proto.kernel.Arrow
+import kyo.proto.kernel.Loop
 import kyo.proto.kernel.*
 import kyo.proto.kernel.internal.Eval
 import kyo.proto.kernel.internal.Nested

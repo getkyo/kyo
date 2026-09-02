@@ -2,7 +2,7 @@ package kyo.proto.kernel
 
 import kyo.Ansi.*
 import kyo.Frame
-import kyo.proto.Arrow
+import kyo.proto.kernel.Arrow
 import kyo.proto.kernel.internal.Handler
 import kyo.proto.kernel.internal.Kyo
 import kyo.proto.kernel.internal.Nested

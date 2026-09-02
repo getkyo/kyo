@@ -4,8 +4,8 @@ import kyo.Chunk
 import kyo.Frame
 import kyo.Maybe
 import kyo.Tag
-import kyo.proto.Arrow
 import kyo.proto.kernel.<
+import kyo.proto.kernel.Arrow
 import kyo.proto.kernel.ArrowEffect
 import kyo.proto.kernel.ContextEffect
 import kyo.proto.kernel.Effect

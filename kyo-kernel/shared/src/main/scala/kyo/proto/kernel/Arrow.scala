@@ -1,7 +1,6 @@
-package kyo.proto
+package kyo.proto.kernel
 
 import kyo.Frame
-import kyo.proto.kernel.Effect
 import kyo.proto.kernel.internal.Debugger
 import kyo.proto.kernel.internal.Kyo
 import kyo.proto.kernel.internal.Nested

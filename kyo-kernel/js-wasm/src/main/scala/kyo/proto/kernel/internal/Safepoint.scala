@@ -16,7 +16,7 @@ object Safepoint:
     private inline def DepthGuard = 1 << 15
     private inline def Armed      = 1 << 30
 
-    private[kyo] object period extends StaticFlag[Int](512, periodBounds)
+    private[kyo] object period extends StaticFlag[Int](maxStackDepth, periodBounds)
 
     private[kyo] object State:
 

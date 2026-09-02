@@ -1,9 +1,8 @@
-package kyo.proto
+package kyo.proto.kernel
 
 import kyo.Frame
 import kyo.Maybe
-import kyo.proto.Arrow.Step
-import kyo.proto.kernel.Effect
+import kyo.proto.kernel.Arrow.Step
 import kyo.proto.kernel.internal.Debugger
 import kyo.proto.kernel.internal.Nested
 import kyo.proto.kernel.internal.Pending

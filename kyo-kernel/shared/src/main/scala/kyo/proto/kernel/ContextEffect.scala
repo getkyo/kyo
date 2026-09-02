@@ -3,7 +3,7 @@ package kyo.proto.kernel
 import kyo.Frame
 import kyo.Maybe
 import kyo.Tag
-import kyo.proto.Arrow
+import kyo.proto.kernel.Arrow
 import kyo.proto.kernel.internal.Handler.ContextHandler
 import kyo.proto.kernel.internal.Kyo
 import kyo.proto.kernel.internal.Nested

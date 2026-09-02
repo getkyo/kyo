@@ -1,7 +1,7 @@
 package kyo.proto.debug
 
-import kyo.proto.Arrow
-import kyo.proto.Loop
+import kyo.proto.kernel.Arrow
+import kyo.proto.kernel.Loop
 import kyo.proto.kernel.internal.Debugger
 import kyo.proto.kernel.internal.Kyo
 import kyo.proto.kernel.internal.Pending

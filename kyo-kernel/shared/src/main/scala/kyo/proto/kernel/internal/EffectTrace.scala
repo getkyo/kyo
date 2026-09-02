@@ -4,7 +4,7 @@ import kyo.Frame
 import kyo.Maybe
 import kyo.Tag
 import kyo.discard
-import kyo.proto.Arrow
+import kyo.proto.kernel.Arrow
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayDeque
 import scala.util.control.NonFatal
@@ -26,8 +26,6 @@ final class EffectTrace extends Exception(null, null, false, false):
 end EffectTrace
 
 private[kernel] object EffectTrace:
-
-    private inline def MaxFrames = 64
 
     private val noElements = new Array[StackTraceElement](0)
 
@@ -62,7 +60,7 @@ private[kernel] object EffectTrace:
                 val walked  = stack.exists(s => carrier.seen.exists(_ eq s))
                 if !walked then
                     if stack.nonEmpty then carrier.seen = stack
-                    val builder = new Builder(MaxFrames - carrier.elements.length)
+                    val builder = new Builder(maxTraceFrames - carrier.elements.length)
                     fill(builder)
                     builder.installInto(carrier)
                 end if
@@ -121,7 +119,7 @@ private[kernel] object EffectTrace:
 
     final private class Builder(budget: Int):
 
-        private val out  = new Array[StackTraceElement](Math.max(0, Math.min(budget, MaxFrames)))
+        private val out  = new Array[StackTraceElement](Math.max(0, Math.min(budget, maxTraceFrames)))
         private val work = new ArrayDeque[Item]
 
         private var size    = 0
@@ -159,7 +157,7 @@ private[kernel] object EffectTrace:
 
         private def push(item: Item): Unit =
             if !(item.isInstanceOf[Arrow.Id[?]]) then
-                if work.size == MaxFrames then
+                if work.size == maxTraceFrames then
 
                     discard(work.removeLast())
                     dropped += 1

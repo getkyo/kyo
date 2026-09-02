@@ -2,7 +2,7 @@ package kyo.proto.kernel.internal
 
 import kyo.Chunk
 import kyo.Span
-import kyo.proto.Arrow
+import kyo.proto.kernel.Arrow
 import kyo.proto.kernel.Effect
 import scala.annotation.tailrec
 

@@ -1,7 +1,7 @@
 package kyo.proto.kernel.internal
 
-import kyo.proto.Arrow
 import kyo.proto.kernel.<
+import kyo.proto.kernel.Arrow
 import scala.annotation.publicInBinary
 
 private[kyo] class Nested[+A](val value: A)

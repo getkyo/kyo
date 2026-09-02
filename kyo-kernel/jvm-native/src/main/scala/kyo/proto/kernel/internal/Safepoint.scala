@@ -33,7 +33,7 @@ object Safepoint:
 
     @static private val slices = new Array[AnyRef](Slots + 1)
 
-    private[kyo] object period extends StaticFlag[Int](512, n => Right(Math.min(Math.max(1, n), 0x7fff)))
+    private[kyo] object period extends StaticFlag[Int](maxStackDepth, n => Right(Math.min(Math.max(1, n), 0x7fff)))
 
     private[kyo] object slotCount extends StaticFlag[Int](
             65536,

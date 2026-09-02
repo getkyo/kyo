@@ -4,14 +4,14 @@ import kyo.Frame
 import kyo.Maybe
 import kyo.Maybe.Absent
 import kyo.Tag
-import kyo.proto.Arrow
-import kyo.proto.Loop
-import kyo.proto.Loop.Continue2
-import kyo.proto.Loop.Outcome2
 import kyo.proto.kernel.<
+import kyo.proto.kernel.Arrow
 import kyo.proto.kernel.ArrowEffect
 import kyo.proto.kernel.ContextEffect
 import kyo.proto.kernel.Effect
+import kyo.proto.kernel.Loop
+import kyo.proto.kernel.Loop.Continue2
+import kyo.proto.kernel.Loop.Outcome2
 import scala.annotation.publicInBinary
 
 sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:

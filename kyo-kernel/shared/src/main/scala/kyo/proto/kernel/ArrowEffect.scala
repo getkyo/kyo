@@ -4,9 +4,9 @@ import kyo.Frame
 import kyo.Id
 import kyo.Maybe
 import kyo.Tag
-import kyo.proto.Arrow
-import kyo.proto.Arrow.Transform
-import kyo.proto.Loop
+import kyo.proto.kernel.Arrow
+import kyo.proto.kernel.Arrow.Transform
+import kyo.proto.kernel.Loop
 import kyo.proto.kernel.internal.Eval
 import kyo.proto.kernel.internal.Handler
 import kyo.proto.kernel.internal.Handler.ContHandler

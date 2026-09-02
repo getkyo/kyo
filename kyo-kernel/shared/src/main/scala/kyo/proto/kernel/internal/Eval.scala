@@ -8,13 +8,13 @@ import kyo.Maybe.Absent
 import kyo.Maybe.Present
 import kyo.bug
 import kyo.discard
-import kyo.proto.Arrow
-import kyo.proto.Loop
-import kyo.proto.Loop.Outcome2
 import kyo.proto.kernel.<
+import kyo.proto.kernel.Arrow
 import kyo.proto.kernel.ArrowEffect
 import kyo.proto.kernel.ContextEffect
 import kyo.proto.kernel.Effect
+import kyo.proto.kernel.Loop
+import kyo.proto.kernel.Loop.Outcome2
 import language.implicitConversions
 import scala.annotation.publicInBinary
 import scala.annotation.tailrec
@@ -490,13 +490,13 @@ import scala.util.control.NonFatal
         end try
     end apply
 
-    type AX
-    type Y
     type IX[_]
     type OX[_]
     type EX <: ArrowEffect[IX, OX]
     type VX
     type CX <: ContextEffect[VX]
+    type AX
+    type Y
     type IY[_]
     type OY[_]
     type EY <: ArrowEffect[IY, OY]

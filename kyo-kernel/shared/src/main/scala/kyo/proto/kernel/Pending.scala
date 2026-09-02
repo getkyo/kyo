@@ -3,9 +3,9 @@ package kyo.proto.kernel
 import kyo.Frame
 import kyo.Maybe
 import kyo.Render
-import kyo.proto.Arrow
-import kyo.proto.Arrow.Step
-import kyo.proto.Arrow.Transform
+import kyo.proto.kernel.Arrow
+import kyo.proto.kernel.Arrow.Step
+import kyo.proto.kernel.Arrow.Transform
 import kyo.proto.kernel.internal.*
 import language.implicitConversions
 import scala.annotation.nowarn
