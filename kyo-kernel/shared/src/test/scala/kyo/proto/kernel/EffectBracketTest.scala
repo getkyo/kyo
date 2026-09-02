@@ -132,6 +132,24 @@ class EffectBracketTest extends AnyFreeSpec:
             assert(count == 1)
         }
 
+        "a foreign loop handler answering in place keeps the bracket live until the use completes" in {
+            var seen = Maybe.empty[Maybe[Throwable]]
+            val log  = collection.mutable.ListBuffer[String]()
+            val body: Int < (Ask & Str) =
+                Effect.bracket(Effect.defer(7))((_, outcome) => seen = Maybe(outcome)) { a =>
+                    str(1).map { s =>
+                        discard(log += s"use $s ${seen.isEmpty}")
+                        ask.map(x => a + x)
+                    }
+                }
+            val inner: Int < Str = ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.continue((), 1: Int < Any), b => b)
+            val r: Int < Any =
+                ArrowEffect.handleLoop(Tag[Str], inner)([C] => n => Loop.continue((), s"s$n": String < Any), b => b)
+            assert(eval(r) == 8)
+            assert(log.toList == List("use s1 true"))
+            assert(seen == Maybe(Maybe.empty))
+        }
+
         "a loop clause answering done releases a bracket opened inside" in {
             var seen = Maybe.empty[Maybe[Throwable]]
             val body: Int < Ask =

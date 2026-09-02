@@ -170,15 +170,35 @@ Each holds a known-red pin set in the proto suite until ruled; the pins are the 
   internal node base `trait Kyo` moved into KyoInternal.scala beside the internal object,
   so `kyo.proto.Kyo` is only the user-facing companion. KyoTest, KyoForeachTest, and
   KyoForeachCollTest port with the toString pin adapted to the proto's rendering.
-- **Q7. The rows the KernelBench port surfaced** (2026-09-01, first measurement, one fork
-  with gc, `reviews/bench/three-kernel-board.md`). Three rows are red against both older
-  kernels and are open performance items, each needing its mechanism named before any
-  fix: `foreignCrossingsPayRotation` at 1,430 us against main's 325 and kernel2's 377
-  (2.28 MB/op against 1.68 and 1.84), the per-level crossing of the inner region's
-  suspension through the outer region; `fusionAfterSuspension` at 128 us against main's 88
-  (kernel2 was 272), and its run-only twin at 0.53 us against 0.28, the ten maps stored on
-  an unanswered suspension; `partialSuspensionBaseline` at 109 us against kernel2's 82 and
-  the proto's own unarmed 77, the armed safepoint poll's price per answered operation.
+- **Q7. The rows the KernelBench port surfaced** (2026-09-01, `reviews/bench/three-kernel-board.md`).
+  Three rows were red against both older kernels. `foreignCrossingsPayRotation` was 1,430 us
+  against main's 325 and kernel2's 377 ("the proto kernel should have the best performance
+  for crossing handlers since it doesn't use rotation"). Diagnosed and partly closed the
+  same night, one variable per measurement, 3 forks:
+  - A resumed crossing never settled the debt its dump left, so the answering region's lane
+    kept one snapshot per resumed crossing until the exit drained them all, and a raw
+    release hook fired twice for a region resumed and then unwound. `installed` now settles
+    the lane's last debt in O(1): 1,399 to 1,097 us, the double release gone (its pin
+    flipped to one release).
+  - A foreign loop handler answering with a settled value dumped the inner regions, built a
+    crossing step, a Defer and a Park, and re-installed the same regions, although nothing
+    ran with them absent. Each arm now dumps only when something has to run outside the
+    inner regions: the settled answer continues in place. The proto-only twin
+    `foreignCrossingsAnsweredInPlace` measures 603 us and 1.52 MB/op; a bracket pin holds
+    the resource live across the in-place answer.
+  - What remains on `foreignCrossingsPayRotation` (1,092 us, 2.24 MB/op) is the eager
+    capture a cont handler's crossing materializes per operation: the snapshot array, its
+    lane node, the crossing step, the Defer and the Park, about 150 B and the sampled
+    majority of the time, where rotation swaps two entries in place. JFR on the row
+    attributes a third of the samples to the stack's dump, append, settle, and push, and
+    the allocation samples name exactly those five classes. The direction on record since
+    kernel-bench-comparison.md applies: borrow the segment in place and copy only on escape
+    or on a second resume, so a crossing resumed inside its own clause captures nothing. That
+    is a representation change for the ruling, not a fast path.
+  Still open as measured: `fusionAfterSuspension` at 131 us against main's 88 (kernel2 was
+  272), and its run-only twin at 0.53 us against 0.28, the ten maps stored on an unanswered
+  suspension; `partialSuspensionBaseline` at 109 us against kernel2's 82 and the proto's own
+  unarmed 77, the armed safepoint poll's price per answered operation.
   `sharedHandlerPaysDispatch` (1.18x main, at kernel2's level) and
   `userTypesSkipKernelWrapping` (1.15x main, allocation identical) sit with the boxing row.
 

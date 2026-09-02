@@ -12,7 +12,10 @@ Sources:
 - **proto**: `ProtoBench` today, commit b32f3b1318, 3 forks, gc profiler; the fifteen rows ported from
   `KernelBench` on 2026-09-01 (userTypes, inlineLimit, fusionAfterSuspension, partial, sharedHandler,
   foreignCrossings, dynamicChain, pureIteration, effectfulIteration) are a single fork with gc, no Arrow
-  column yet, and main and the 2026-08-11 kernel2 column where that board had the row.
+  column yet, and main and the 2026-08-11 kernel2 column where that board had the row;
+  foreignCrossingsPayRotation and fusionAfterSuspension are 3 forks after the resumed crossing settles
+  its debt; foreignCrossingsAnsweredInPlace is the proto-only twin of the crossing row with loop handlers,
+  3 forks, after a foreign loop handler answering with a settled value stopped dumping the inner regions.
 
 Status: 🟢 proto within 5% of that kernel or better, 🟡 5% to 25% behind, 🔴 more than 25% behind, ⚪ no data for that kernel.
 
@@ -40,13 +43,14 @@ Status: 🟢 proto within 5% of that kernel or better, 🟡 5% to 25% behind, �
 | handleLoopFusesContinuation | - | 80.0 ± 1.6 | 42.8 ± 0.2 | - | 0.54 | ⚪ | 🟢 |
 | statefulAnswersPaySuccessor | 153.7 ± 2.5 | 87.0 ± 0.5 | 40.7 ± 0.3 | 0.26 | 0.47 | 🟢 | 🟢 |
 | emittingClausesPayRegionRebuild | - | 144.3 ± 1.1 | 77.1 ± 2.2 | - | 0.53 | ⚪ | 🟢 |
+| foreignCrossingsAnsweredInPlace | - | - | 602.7 ± 26.1 | - | - | ⚪ | ⚪ |
+| foreignCrossingsPayRotation | 325.0 ± 2.5 | 377.2 ± 3.9† | 1,091.6 ± 12.8 | 3.36 | 2.89 | 🔴 | 🔴 |
+| fusionAfterSuspension | 88.0 ± 5.4 | 271.5 ± 4.3† | 131.2 ± 1.6 | 1.49 | 0.48 | 🔴 | 🟢 |
+| fusionAfterSuspensionRunOnly | 0.283 ± 0.001 | 0.829 ± 0.016† | 0.542 ± 0.003 | 1.92 | 0.65 | 🔴 | 🟢 |
 | dynamicChainOfBindsStaysLinear | - | - | 3.495 ± 0.130 | - | - | ⚪ | ⚪ |
 | dynamicChainOfMapsStaysLinear | - | - | 4.107 ± 0.021 | - | - | ⚪ | ⚪ |
 | effectfulIterationViaArrow | - | - | 76.3 ± 3.3 | - | - | ⚪ | ⚪ |
 | effectfulIterationViaLoop | - | - | 224.7 ± 7.0 | - | - | ⚪ | ⚪ |
-| foreignCrossingsPayRotation | 325.0 ± 2.5 | 377.2 ± 3.9† | 1,430.4 ± 90.2 | 4.40 | 3.79 | 🔴 | 🔴 |
-| fusionAfterSuspension | 88.0 ± 5.4 | 271.5 ± 4.3† | 127.9 ± 2.2 | 1.45 | 0.47 | 🔴 | 🟢 |
-| fusionAfterSuspensionRunOnly | 0.283 ± 0.001 | 0.829 ± 0.016† | 0.526 ± 0.012 | 1.86 | 0.63 | 🔴 | 🟢 |
 | inlineLimitCostsTimeNotAllocation | 347.0 ± 7.7 | 248.3 ± 2.8† | 283.8 ± 4.7 | 0.82 | 1.14 | 🟢 | 🟡 |
 | inlineLimitKeepsZeroAllocation | 2.167 ± 0.008 | 1.385 ± 0.010† | 1.132 ± 0.032 | 0.52 | 0.82 | 🟢 | 🟢 |
 | partialSuspensionBaseline | - | 82.3 ± 1.0† | 108.9 ± 1.6 | - | 1.32 | ⚪ | 🔴 |
@@ -80,13 +84,14 @@ Status: 🟢 proto within 5% of that kernel or better, 🟡 5% to 25% behind, �
 | handleLoopFusesContinuation | - | 642,025 | 480,152 | - | 0.75 | ⚪ | 🟢 |
 | statefulAnswersPaySuccessor | 1,040,139 | 643,273 | 480,160 | 0.46 | 0.75 | 🟢 | 🟢 |
 | emittingClausesPayRegionRebuild | - | 176,305 | 176,281 | - | 1.00 | ⚪ | 🟢 |
+| foreignCrossingsAnsweredInPlace | - | - | 1,520,284 | - | - | ⚪ | ⚪ |
+| foreignCrossingsPayRotation | 1,680,202 | 1,840,331† | 2,240,360 | 1.33 | 1.22 | 🔴 | 🟡 |
+| fusionAfterSuspension | 408,437 | 1,073,154† | 536,609 | 1.31 | 0.50 | 🔴 | 🟢 |
+| fusionAfterSuspensionRunOnly | 0 | 1,288† | 1,240 | - | 0.96 | ⚪ | 🟢 |
 | dynamicChainOfBindsStaysLinear | - | - | 13,984 | - | - | ⚪ | ⚪ |
 | dynamicChainOfMapsStaysLinear | - | - | 13,984 | - | - | ⚪ | ⚪ |
 | effectfulIterationViaArrow | - | - | 480,137 | - | - | ⚪ | ⚪ |
 | effectfulIterationViaLoop | - | - | 1,120,226 | - | - | ⚪ | ⚪ |
-| foreignCrossingsPayRotation | 1,680,202 | 1,840,331† | 2,280,554 | 1.36 | 1.24 | 🔴 | 🟡 |
-| fusionAfterSuspension | 408,437 | 1,073,154† | 536,609 | 1.31 | 0.50 | 🔴 | 🟢 |
-| fusionAfterSuspensionRunOnly | 0 | 1,288† | 1,240 | - | 0.96 | ⚪ | 🟢 |
 | inlineLimitCostsTimeNotAllocation | 724,418 | 743,346† | 738,402 | 1.02 | 0.99 | 🟢 | 🟢 |
 | inlineLimitKeepsZeroAllocation | 0 | 0† | 0 | - | - | ⚪ | ⚪ |
 | partialSuspensionBaseline | 0 | 640,145† | 480,121 | - | 0.75 | ⚪ | 🟢 |

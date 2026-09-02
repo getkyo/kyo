@@ -364,6 +364,15 @@ class ProtoBench:
     end foreignCrossingsPayRotation
 
     @Benchmark
+    def foreignCrossingsAnsweredInPlace: Int =
+        def loop(i: Int): Int < (Ask & Ask2) =
+            if i > Depth then i
+            else ask.map(a => ask2.map(t => loop(i + a + t)))
+        val inner: Int < Ask2 = ArrowEffect.handleLoop(Tag[Ask], loop(seed - 1))([C] => _ => Loop.continue((), 1: Int < Any), a => a)
+        run(ArrowEffect.handleLoop(Tag[Ask2], inner)([C] => _ => Loop.continue((), 0: Int < Any), a => a))
+    end foreignCrossingsAnsweredInPlace
+
+    @Benchmark
     def dynamicChainOfMapsStaysLinear: Int =
         var fa: Int < Any = seed
         var i             = 0

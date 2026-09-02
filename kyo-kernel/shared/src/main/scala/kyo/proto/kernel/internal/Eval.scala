@@ -261,17 +261,22 @@ import scala.util.control.NonFatal
                                 Debugger.onHandle(kyo, stack.handler(idx), stack.state(idx))
                                 val atTop = idx == stack.depth - 1
                                 if !atTop then Debugger.onForeign(kyo, stack.handler(stack.depth - 1))
-                                val entries = if atTop then Stack.Snapshot.empty else dumped(stack, idx, kyo)
-                                val ctx2    = if atTop then ctx else rebound(stack, entries, ctx)
-                                def continuation =
-                                    if atTop then kyo.cont.chain(contA.chain(contB))
-                                    else kyo.crossing(entries, contA.chain(contB))
                                 stack.handler(idx) match
                                     case handler: Handler.ContHandler[IX, OX, EX, C, Y, S2] @unchecked =>
+                                        val entries = if atTop then Stack.Snapshot.empty else dumped(stack, idx, kyo)
+                                        val ctx2    = if atTop then ctx else rebound(stack, entries, ctx)
+                                        val continuation =
+                                            if atTop then kyo.cont.chain(contA.chain(contB))
+                                            else kyo.crossing(entries, contA.chain(contB))
                                         val result = handler.answering(kyo.input, continuation, kyo, stack)
                                         Debugger.onResult(result)
                                         loop(result, Arrow.id, Arrow.id, ctx2)
                                     case handler: Handler.ContOpHandler[EX, C, Y, S2] @unchecked =>
+                                        val entries = if atTop then Stack.Snapshot.empty else dumped(stack, idx, kyo)
+                                        val ctx2    = if atTop then ctx else rebound(stack, entries, ctx)
+                                        val continuation =
+                                            if atTop then kyo.cont.chain(contA.chain(contB))
+                                            else kyo.crossing(entries, contA.chain(contB))
                                         val operation: OX[VX] < EX =
                                             new Kyo.SuspendArrow[IX, OX, EX, VX, OX[VX], EX]:
                                                 def tag   = kyo.tag
@@ -310,18 +315,29 @@ import scala.util.control.NonFatal
                                         stack.scratch = outcome0
                                         Debugger.onResult(outcome0)
                                         outcome0 match
-                                            case outcome: Loop.Continue2[VX, OX[VX] < (EX & S2)] @unchecked =>
+                                            case outcome: Loop.Continue2[VX, OX[VX] < (EX & S2)] @unchecked
+                                                if !outcome._2.isInstanceOf[Pending[?, ?]] =>
                                                 stack.setState(idx, outcome._1)
-                                                loop(outcome._2, continuation, Arrow.id, ctx2)
+                                                loop(outcome._2, kyo.cont, contA.chain(contB), ctx)
+                                            case outcome: Loop.Continue2[VX, OX[VX] < (EX & S2)] @unchecked =>
+                                                val entries = dumped(stack, idx, kyo)
+                                                val ctx2    = rebound(stack, entries, ctx)
+                                                stack.setState(idx, outcome._1)
+                                                loop(outcome._2, kyo.crossing(entries, contA.chain(contB)), Arrow.id, ctx2)
                                             case pending: Pending[Outcome2[VX, OX[VX] < (EX & S2), Y < S2], S2] @unchecked =>
-                                                val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, S2]]
+                                                val entries = dumped(stack, idx, kyo)
+                                                val ctx2    = rebound(stack, entries, ctx)
+                                                val next    = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, S2]]
                                                 Debugger.onRegionExit(handler, pending)
                                                 stack.pop()
                                                 if stack.owesAny then stack.oweBelow(idx, stack.takePopped())
                                                 type OutT = Outcome2[VX, OX[VX] < (EX & S2), Y < S2]
-                                                val reentry2 = continuation.asInstanceOf[Arrow[OX[VX], C, EX & S2]]
+                                                val reentry2 =
+                                                    kyo.crossing(entries, contA.chain(contB)).asInstanceOf[Arrow[OX[VX], C, EX & S2]]
                                                 loop[OutT, Y, Any, S2](pending, handler.clauseDispatch(reentry2), next, ctx2)
                                             case outcome =>
+                                                val entries = dumped(stack, idx, kyo)
+                                                val ctx2    = rebound(stack, entries, ctx)
                                                 val result =
                                                     Nested.unnest[Y < S2](Loop.unnest(outcome.asInstanceOf[Outcome2[
                                                         VX,
