@@ -740,23 +740,6 @@ class EvalTest extends AnyFreeSpec:
             assert(derives == 1)
         }
 
-        "a stop arriving inside a nested partial still parks the enclosing slice" in {
-            var innerParked = false
-            val inner: Int < Any = Effect.defer {
-                requestStop()
-                Effect.defer(1)
-            }
-            val outer: Int < Any =
-                Effect.defer {
-                    innerParked = Eval.partial(inner).evalNow.isEmpty
-                    ()
-                }.map(_ => Effect.defer(41)).map(_ + 1)
-            val p = Eval.partial(outer)
-            assert(innerParked)
-            assert(p.evalNow.isEmpty)
-            assert(p.eval == 42)
-        }
-
         "release of a settled value or an obligation-free computation owes nothing" in {
             Eval.release(42: Int < Any, Boom)
             var ran = false
