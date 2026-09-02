@@ -130,9 +130,19 @@ abstract class FileSystemLockTestSuite extends kyo.test.Test[Any]:
                                             )
                                         )
                                     ).map { waiter =>
-                                        started.await.andThen(Loop.repeat(11)(control.advance(1.milli))).andThen(waiter.get).map {
-                                            case Result.Failure(_: FileLockTimeoutException) => assert(true)
-                                            case other => assert(false, s"expected FileLockTimeoutException, got $other")
+                                        // A background advancer, not a bounded advance count: the waiter's poll loop
+                                        // checks the deadline and then registers its sleep, and a bounded batch of
+                                        // advances can complete inside that gap, leaving a sleep no advance ever
+                                        // reaches (the FiberTest gather pattern).
+                                        started.await.andThen(Fiber.initUnscoped(Loop.forever(control.advance(1.milli)))).map {
+                                            advancer =>
+                                                waiter.get.map { result =>
+                                                    advancer.interrupt.andThen {
+                                                        result match
+                                                            case Result.Failure(_: FileLockTimeoutException) => assert(true)
+                                                            case other => assert(false, s"expected FileLockTimeoutException, got $other")
+                                                    }
+                                                }
                                         }
                                     }
                                 }
@@ -183,12 +193,19 @@ abstract class FileSystemLockTestSuite extends kyo.test.Test[Any]:
                                         Path.LockWait.Until(deadline)
                                     )(attempt)))
                                 ).map { waiter =>
+                                    // Background advancer for the same reason as the deadline test above: the retry
+                                    // sleep registers after the expiry check, and a bounded advance batch can finish
+                                    // inside that gap.
                                     firstAttempt.await.andThen(control.advance(2.millis)).andThen(finishFirstAttempt.release)
-                                        .andThen(Loop.repeat(5)(control.advance(2.millis))).andThen(waiter.get).map { result =>
-                                            result match
-                                                case Result.Failure(_: FileLockTimeoutException) => ()
-                                                case other => assert(false, s"expected expiry before retry, got $other")
-                                            attempts.get.map(count => assert(count == 1))
+                                        .andThen(Fiber.initUnscoped(Loop.forever(control.advance(2.millis)))).map { advancer =>
+                                            waiter.get.map { result =>
+                                                advancer.interrupt.andThen {
+                                                    result match
+                                                        case Result.Failure(_: FileLockTimeoutException) => ()
+                                                        case other => assert(false, s"expected expiry before retry, got $other")
+                                                    attempts.get.map(count => assert(count == 1))
+                                                }
+                                            }
                                         }
                                 }
                             }
