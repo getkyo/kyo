@@ -2282,7 +2282,8 @@ class ArrowEffectTest extends AnyFreeSpec:
         }
 
         "a recovery after a foreign in-place answer sees the advanced state" in {
-            val body: Int < (Ask & Say) = say("x").map(_ => ask.map(_ => (throw Boom): Int))
+            val boom                    = new RuntimeException("boom")
+            val body: Int < (Ask & Say) = say("x").map(_ => ask.map(_ => (throw boom): Int))
             val inner: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], 0, body)(
                 [C] => (s, _) => Loop.continue(s + 1, 1: Int < Any),
                 (_, a) => a,
