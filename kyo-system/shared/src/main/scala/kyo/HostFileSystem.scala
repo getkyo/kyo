@@ -381,6 +381,11 @@ private[kyo] object HostFileSystem:
                                 Sync.Unsafe.defer(diagRecord(path, "finalizer-claimed")).andThen(lock.release(lock.ownership))
                             case _ => Sync.Unsafe.defer(diagRecord(path, "finalizer-empty"))
                         }
+                    }.andThen {
+                        // TEMPORARY DIAGNOSTIC (not for merge): a second trivial finalizer in the
+                        // same queue. At a strand: marker fired without the release means close ran
+                        // and dropped a task; neither fired means close never ran.
+                        Scope.ensure(Sync.Unsafe.defer(diagRecord(path, "marker-ran")))
                     }.andThen(Sync.Unsafe.defer(diagRecord(path, "ensured"))).andThen {
                         // A shared claim can arrive while another shared claim is between reserving
                         // its registry entry and installing the platform lock behind it. The two are
