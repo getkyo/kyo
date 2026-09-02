@@ -638,6 +638,10 @@ object Bench:
         for
             _        <- requireThrowaway(worktree)
             _        <- restore(worktree, sha, paths)
+            // a design flip renames classes that inline into bench and test code; an incremental
+            // build can keep a stale expansion of the other design, so every leg compiles clean.
+            // this also settles the sources: the build formats on compile.
+            _        <- exec(worktree, "sbt", "--client", "kyo-dataJVM/clean", "kyo-kernelJVM/clean", "kyo-kernelJVM/Jmh/compile").unit
             declared <- declaredRows(worktree)
             // a faster variant whose suite is red is not a result; gate before spending the runs.
             // this also settles the sources: the build formats on compile, so the baseline below

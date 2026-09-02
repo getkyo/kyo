@@ -11,6 +11,8 @@ lazy val root = (project in file("."))
             "io.getkyo" %% "kyo-core"        % kyoVersion,
             "io.getkyo" %% "kyo-schema-json" % kyoVersion,
             "io.getkyo" %% "kyo-case-app"    % kyoVersion,
+            // BenchExpansion compiles an expansion fixture in-process against the kernel's classes
+            "org.scala-lang" %% "scala3-compiler" % scalaVersion.value,
             "io.getkyo" %% "kyo-test-api"    % kyoVersion % Test,
             "io.getkyo" %% "kyo-test-runner" % kyoVersion % Test
         ),

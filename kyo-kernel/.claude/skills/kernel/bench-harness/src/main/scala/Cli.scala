@@ -115,6 +115,12 @@ case class JitOpts(
     store: String = "bench-runs"
 )
 case class ListOpts(store: String = "bench-runs")
+case class ExpansionOpts(
+    @HelpMessage("a file in bench-harness/fixtures-expansion, without .scala")
+    fixture: String,
+    @HelpMessage("compiler phase to print after")
+    phase: String = "inlining"
+)
 
 object Cli:
 
@@ -498,3 +504,9 @@ object BenchList extends KyoCaseApp[ListOpts]:
         )
     }
 end BenchList
+
+object BenchExpansion extends KyoCaseApp[ExpansionOpts]:
+    run { (opts: ExpansionOpts) =>
+        Cli.guard(Expansion.dump(opts.fixture, opts.phase))
+    }
+end BenchExpansion

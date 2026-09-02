@@ -22,6 +22,7 @@ sbt "runMain BenchIngest --json <f> --label <l> --sha <sha>"
 sbt "runMain BenchJit --run <id> --log <compilation.log>"     # attach inlining/metrics from a compilation log (a json carries none)
 sbt "runMain BenchList"
 sbt "runMain BenchShow --id <id>"
+sbt "runMain BenchExpansion --fixture BareValue --phase inlining"   # print an expansion fixture after a phase, against Roots.classes
 ```
 
 `sbt --client "..."` keeps a server warm between commands (2 to 5 s per command instead of a
