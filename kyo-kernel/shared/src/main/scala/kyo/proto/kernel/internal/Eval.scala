@@ -250,8 +250,7 @@ import scala.util.control.NonFatal
                 ri += 1
             end while
 
-            if !stack.isEmpty then
-                stack.settle(stack.depth - 1, entries)
+            stack.settle(entries)
             stack.oweBelow(stack.depth, kyo.owed)
 
             @tailrec def install(i: Int, c: Context): Context =
@@ -411,7 +410,7 @@ import scala.util.control.NonFatal
         while i < entries.regions do
             entries.handler(i) match
                 case hc: Handler.ContextHandler[VX, CX, ?, ?] @unchecked =>
-                    val j = stack.find(hc.tag)
+                    val j = stack.findExact(hc.tag)
                     c = if j < 0 then c.remove(hc.tag) else c.update(hc.tag, stack.state(j).asInstanceOf[VX])
                 case _ => ()
             end match

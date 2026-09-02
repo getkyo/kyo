@@ -16,6 +16,7 @@ final class EffectTrace extends Exception(null, null, false, false):
     private[kyo] var dropped: Int                              = 0
     private[kyo] var physical: Maybe[Array[StackTraceElement]] = Maybe.Absent
     private[kyo] var seen: Maybe[Stack]                        = Maybe.Absent
+    private[kyo] var seenEpoch: Int                            = 0
 
     override def getMessage: String =
         val body = elements.iterator.map(e => s"at $e").mkString("\n")
@@ -58,9 +59,12 @@ private[kernel] object EffectTrace:
         if NonFatal(ex) then
             try
                 val carrier = carrierOf(ex)
-                val walked  = stack.exists(s => carrier.seen.exists(_ eq s))
+                val walked  = stack.exists(s => carrier.seen.exists(_ eq s) && carrier.seenEpoch == s.epoch)
                 if !walked then
-                    if stack.nonEmpty then carrier.seen = stack
+                    stack.foreach { s =>
+                        carrier.seen = stack
+                        carrier.seenEpoch = s.epoch
+                    }
                     val builder = new Builder(maxTraceFrames - carrier.elements.length)
                     fill(builder)
                     builder.installInto(carrier)

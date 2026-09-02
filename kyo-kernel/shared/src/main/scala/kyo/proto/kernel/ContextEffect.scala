@@ -117,33 +117,27 @@ object ContextEffect:
         inline done: A => Unit = (_: A) => (),
         inline release: (A, Throwable) => Unit = (_: A, _: Throwable) => ()
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
-        v match
-            case _: Pending[?, ?] =>
-                def derived(outer: Maybe[A]): A             = derive(outer)
-                def forked(parent: A): A                    = fork(parent)
-                def joined(parent: A, fk: A, child: A): A   = join(parent, fk, child)
-                def completed(state: A): Unit               = done(state)
-                def released(state: A, ex: Throwable): Unit = release(state, ex)
-                val h =
-                    new ContextHandler[A, E, B, S]:
-                        def tag                                                    = effectTag
-                        def derive(outer: Maybe[A])                                = derived(outer)
-                        def fork(parent: A)                                        = forked(parent)
-                        def join(parent: A, forked: A, child: A)                   = joined(parent, forked, child)
-                        override private[kyo] def done(state: A)                   = completed(state)
-                        override private[kyo] def release(state: A, ex: Throwable) = released(state, ex)
+        def derived(outer: Maybe[A]): A             = derive(outer)
+        def forked(parent: A): A                    = fork(parent)
+        def joined(parent: A, fk: A, child: A): A   = join(parent, fk, child)
+        def completed(state: A): Unit               = done(state)
+        def released(state: A, ex: Throwable): Unit = release(state, ex)
+        val h =
+            new ContextHandler[A, E, B, S]:
+                def tag                                                    = effectTag
+                def derive(outer: Maybe[A])                                = derived(outer)
+                def fork(parent: A)                                        = forked(parent)
+                def join(parent: A, forked: A, child: A)                   = joined(parent, forked, child)
+                override private[kyo] def done(state: A)                   = completed(state)
+                override private[kyo] def release(state: A, ex: Throwable) = released(state, ex)
 
-                new Kyo.Handle[A, E, B, B, B, S]:
-                    override def frame = _frame
-                    def value          = v
-                    def handler        = h
-                    def state          = h.derive(Maybe.empty)
-                    def cont           = Arrow.id
-                end new
-            case _ =>
-                done(derive(Maybe.empty))
-                Nested.unnest[B](v)
-        end match
+        new Kyo.Handle[A, E, B, B, B, S]:
+            override def frame = _frame
+            def value          = v
+            def handler        = h
+            lazy val state     = h.derive(Maybe.empty)
+            def cont           = Arrow.id
+        end new
     end handle
 
 end ContextEffect

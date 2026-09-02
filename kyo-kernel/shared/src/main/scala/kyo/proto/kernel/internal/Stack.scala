@@ -20,6 +20,10 @@ final private[kernel] class Stack:
 
     var scratch: Any = null
 
+    private var epochCount = 0
+
+    def epoch: Int = epochCount
+
     def isEmpty: Boolean = size == 0
 
     def push[E <: Effect, B, S](
@@ -59,11 +63,30 @@ final private[kernel] class Stack:
             if i == 0 then evalOwed = evalOwed.concat(snapshots)
             else owed(i - 1) = owed(i - 1).concat(snapshots)
 
-    def settle(i: Int, snapshot: Stack.Snapshot): Unit =
-        val lane = owed(i)
-        if !lane.isEmpty && (lane.last.asInstanceOf[AnyRef] eq snapshot.asInstanceOf[AnyRef]) then
-            owed(i) = if lane.length == 1 then Chunk.empty else lane.dropRight(1)
+    def settle(snapshot: Stack.Snapshot): Unit =
+        if owes then
+            @tailrec def loop(i: Int): Unit =
+                if i < 0 then evalOwed = settleIn(evalOwed, snapshot)
+                else
+                    val lane    = owed(i)
+                    val settled = settleIn(lane, snapshot)
+                    if settled ne lane then owed(i) = settled
+                    else loop(i - 1)
+            loop(size - 1)
     end settle
+
+    private def settleIn(lane: Chunk[Stack.Snapshot], snapshot: Stack.Snapshot): Chunk[Stack.Snapshot] =
+        if lane.isEmpty then lane
+        else
+            val indexed = lane.toIndexed
+            @tailrec def loop(j: Int): Chunk[Stack.Snapshot] =
+                if j < 0 then lane
+                else if indexed(j).asInstanceOf[AnyRef] eq snapshot.asInstanceOf[AnyRef] then
+                    if indexed.length == 1 then Chunk.empty
+                    else indexed.take(j).concat(indexed.drop(j + 1))
+                else loop(j - 1)
+            loop(indexed.length - 1)
+    end settleIn
 
     def takeEvalOwed(): Chunk[Stack.Snapshot] =
         val owedHere = evalOwed
@@ -85,6 +108,7 @@ final private[kernel] class Stack:
         scratch = null
         evalOwed = Chunk.empty
         owes = false
+        epochCount += 1
     end clear
 
     def snapshot(): Stack.Snapshot =
