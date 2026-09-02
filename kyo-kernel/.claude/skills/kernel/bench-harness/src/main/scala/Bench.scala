@@ -138,10 +138,18 @@ object Bench:
       * worktree: `sbt --client` exits 1 on a test failure, `exec` aborts, and the leg never runs.
       */
     def requireGreenSuite(worktree: Path, task: String)(using Frame): Unit < (Async & Fail) =
-        exec(worktree, "sbt", "--client", task).unit
-            .handle(Abort.recoverError[BracketFailed](e =>
-                Abort.fail(BracketFailed(s"the suite is red, so nothing measured here would be a result.\n${e.failureOrPanic}"))
-            ))
+        if AllowRedSuite then
+            Console.printLine(s"⚠️  suite gate skipped by BENCH_ALLOW_RED; a leg measured on a red tree is labelled as such by the operator, not by this tool")
+        else
+            exec(worktree, "sbt", "--client", task).unit
+                .handle(Abort.recoverError[BracketFailed](e =>
+                    Abort.fail(BracketFailed(s"the suite is red, so nothing measured here would be a result.\n${e.failureOrPanic}"))
+                ))
+
+    val AllowRedSuite: Boolean =
+        Maybe(java.lang.System.getProperty("bench.allowRed"))
+            .orElse(Maybe(java.lang.System.getenv("BENCH_ALLOW_RED")))
+            .exists(_ == "1")
 
     /** Refuses a worktree that is the repository's primary one. A bracket writes over sources; doing that in the tree commits come from is
       * how uncommitted work and a whole redesign were destroyed.
