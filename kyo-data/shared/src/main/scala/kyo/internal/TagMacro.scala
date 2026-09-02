@@ -247,11 +247,8 @@ private[kyo] object TagMacro:
             // opened through its definition. A shape that cannot be opened is not walkable.
             def aliasBody(tycon: TypeRepr): Option[TypeRepr] =
                 if !tycon.typeSymbol.isAliasType then Some(tycon)
-                else
-                    tycon.typeSymbol.tree match
-                        case TypeDef(_, LambdaTypeTree(_, body: TypeTree)) => Some(body.tpe)
-                        case TypeDef(_, rhs: TypeTree)                     => Some(rhs.tpe)
-                        case _                                             => None
+                // An alias declares its body as both bounds, so either one is the definition.
+                else DeclaredBounds(tycon).map(_.hi)
 
             def walkable(tpe: TypeRepr): Boolean =
                 tpe.dealias match
@@ -449,7 +446,12 @@ private[kyo] object TagMacro:
                             // same tree for every application, so reading anything positional off them
                             // describes the declaration rather than this type.
                             val args = applied.typeArgs
-                            applied.typeSymbol.tree.asInstanceOf[TypeDef].rhs.asInstanceOf[TypeTree].tpe match
+                            DeclaredBounds(applied).getOrElse(
+                                report.errorAndAbort(
+                                    s"Cannot derive Tag[${root.show}]: opaque type ${applied.typeSymbol.fullName} " +
+                                        s"reached the macro as ${applied.show}, a shape whose declared bounds cannot be read."
+                                )
+                            ) match
                                 case TypeBounds(lower, upper) =>
                                     // A parameterized opaque type's bounds are type lambdas carrying the
                                     // declared variances. An undeclared lower bound stays a bare Nothing,

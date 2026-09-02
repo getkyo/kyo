@@ -26,6 +26,7 @@ Thank you for considering contributing to this project! We welcome all contribut
     - [Markdown Formatting](#markdown-formatting)
     - [Inline Comments](#inline-comments)
   - [File Organization](#file-organization)
+  - [Macros](#macros)
 - [Module READMEs](#module-readmes)
   - [Structure](#structure)
   - [Writing Style](#writing-style)
@@ -754,6 +755,24 @@ export Fiber.Promise   // makes kyo.Promise available without Fiber. prefix
 ```
 
 Use sparingly — only for types that users reference frequently enough that qualification would be noisy.
+
+### Macros
+
+**Never read a type's declaration through `Symbol.tree`.** What that call returns depends on `-Yretain-trees`, a flag the user's build sets and the library does not control. Without it the compiler fabricates a declaration from the symbol info; with it the retained source declaration comes back instead. For a type member the two carry different things: the fabricated one carries the bounds, the real one carries the right-hand side as written, which for an opaque type is its alias and never mentions the bounds. A macro that matches on one shape crashes or answers differently under the other, and the tag or schema it derives stops agreeing with the one every other build derives.
+
+Ask the symbol instead. `kyo.internal.DeclaredBounds` reads a type member's declared bounds through the node's own prefix, which answers the same in both modes, and substitutes the node's own type arguments into a parameterized bound.
+
+Whether that call is stable is a per-symbol question, not a global one, because `Symbols.retainsDefTree` decides it as a disjunction: the flag is one disjunct, `denot.owner.isTerm` is another. For a type local to a term (a method's type parameter) the second holds unconditionally, since such a symbol dies with its term and cannot leak across runs, so both modes read the same declaration and reading it is sound. That case also has no prefix to be a member of, so it is the one place `DeclaredBounds` reads a tree, and it already handles it. For every other symbol the flag is the deciding disjunct, which is exactly what makes the general read unstable.
+
+Reading a *term* definition's body (`ValDef.rhs`, a `given`'s right-hand side) is different: those trees exist only under the flag, so such a macro must degrade gracefully rather than depend on them.
+
+To check a macro answers the same in both modes:
+
+```sh
+KYO_RETAIN_TREES=true sbt 'kyo-dataJVM/test'
+```
+
+The flag is never set in CI. Retaining the trees of every dependency costs a few hundred MB per module (measured at +18% peak live heap on kyo-data's test compile), which the runners do not have to spare, so this is a local check to run when touching a macro that inspects types.
 
 ---
 
