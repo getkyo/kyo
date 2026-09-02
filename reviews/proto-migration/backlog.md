@@ -408,6 +408,24 @@ ContextEffectTest "a read takes the innermost binding whether its tag is exact o
 among related keys, the same walk `find` does; `TypeMap` nodes are newest first, so `Context.get`
 walks from the head and takes the first `<:<` match. Status: open.
 
+Standing instruction (2026-09-02): "don't make fixes please, tests only for now". S9, S10 and
+the entry 9 question stay as red or as-is pins until lifted.
+
+### T. The fifteen TODO notes in the proto sources: analysed, decisions pending
+
+`todo-analysis.md` (984 lines) answers every note with the introducing commit, a proposal or a
+reasoned leave-as-is, the risks, and the rows to measure. Its decisions, none taken yet:
+DO: rename `Stack.snapshot()` to `takeAll()` and `EffectTrace.Builder.entries` to `regions`;
+leave the five `Handler` methods and the three `release` helpers in place (the try/catch cost,
+the `answers` inline burst, the `StaleSymbolException` cascade if `Eval` became inlined-from);
+split `KyoInternal.scala` into `Kyo.scala` and `Pending.scala`, rename the internal `object Kyo`
+to `object Pending`, move `short` and `site` to the package object; delete each note as it is
+resolved. DO WITH MEASUREMENT: the `atTop` chain (operation reification onto `SuspendArrow`,
+the redundant `ctx2` ternary, the loop-arm merge only if `javap` shows a duplicated type test)
+and `onAlloc` moving into `Kyo`. NEEDS RULING: removing the six function liftings (two
+experiments named against the old kernel); a name for `scratch` that says what it does (it
+stays); a common supertype for `ContHandler` and `ContOpHandler` carrying `answering`.
+
 The audit's other fifteen entries are predicted green or already ruled: thirteen laws with no
 pin today (local handlers not in scope for a clause, computations as answers, a suspending
 clause travelling with its continuation, bindings above and below the answering handler,
