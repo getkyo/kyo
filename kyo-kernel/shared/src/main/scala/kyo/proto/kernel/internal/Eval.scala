@@ -250,7 +250,7 @@ import scala.util.control.NonFatal
                 ri += 1
             end while
 
-            stack.settle(entries)
+            entries.settle()
             stack.oweBelow(stack.depth, kyo.owed)
 
             @tailrec def install(i: Int, c: Context): Context =
@@ -452,17 +452,19 @@ import scala.util.control.NonFatal
                         case kyo: Kyo.Park[?, ?] =>
                             expandOwed(collected, kyo.owed)
                             val entries = kyo.entries
-                            var i       = 0
-                            while i < entries.regions do
-                                entries.handler(i) match
-                                    case hc: Handler.ContextHandler[?, ?, ?, ?] =>
-                                        collected += hc
-                                        collected += entries.state(i).asInstanceOf[AnyRef]
-                                    case _ => ()
-                                end match
-                                expandOwed(collected, entries.owed(i))
-                                i += 1
-                            end while
+                            if !entries.settled then
+                                var i = 0
+                                while i < entries.regions do
+                                    entries.handler(i) match
+                                        case hc: Handler.ContextHandler[?, ?, ?, ?] =>
+                                            collected += hc
+                                            collected += entries.state(i).asInstanceOf[AnyRef]
+                                        case _ => ()
+                                    end match
+                                    expandOwed(collected, entries.owed(i))
+                                    i += 1
+                                end while
+                            end if
                             collect(kyo.value)
                         case _: Kyo.Suspend[?, ?, ?, ?] => ()
                         case _: Kyo.Snapshot[?, ?]      => ()
@@ -479,17 +481,19 @@ import scala.util.control.NonFatal
             var j         = 0
             while j < snapshots.length do
                 val snapshot = snapshots(j)
-                var i        = 0
-                while i < snapshot.regions do
-                    snapshot.handler(i) match
-                        case hc: Handler.ContextHandler[?, ?, ?, ?] =>
-                            collected += hc
-                            collected += snapshot.state(i).asInstanceOf[AnyRef]
-                        case _ => ()
-                    end match
-                    expandOwed(collected, snapshot.owed(i))
-                    i += 1
-                end while
+                if !snapshot.settled then
+                    var i = 0
+                    while i < snapshot.regions do
+                        snapshot.handler(i) match
+                            case hc: Handler.ContextHandler[?, ?, ?, ?] =>
+                                collected += hc
+                                collected += snapshot.state(i).asInstanceOf[AnyRef]
+                            case _ => ()
+                        end match
+                        expandOwed(collected, snapshot.owed(i))
+                        i += 1
+                    end while
+                end if
                 j += 1
             end while
     end expandOwed

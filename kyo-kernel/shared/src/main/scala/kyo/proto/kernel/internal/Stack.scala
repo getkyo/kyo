@@ -1,7 +1,8 @@
 package kyo.proto.kernel.internal
 
+import java.lang.Boolean.FALSE
+import java.lang.Boolean.TRUE
 import kyo.Chunk
-import kyo.Span
 import kyo.proto.kernel.Arrow
 import kyo.proto.kernel.Effect
 import scala.annotation.tailrec
@@ -63,31 +64,6 @@ final private[kernel] class Stack:
             if i == 0 then evalOwed = evalOwed.concat(snapshots)
             else owed(i - 1) = owed(i - 1).concat(snapshots)
 
-    def settle(snapshot: Stack.Snapshot): Unit =
-        if owes then
-            @tailrec def loop(i: Int): Unit =
-                if i < 0 then evalOwed = settleIn(evalOwed, snapshot)
-                else
-                    val lane    = owed(i)
-                    val settled = settleIn(lane, snapshot)
-                    if settled ne lane then owed(i) = settled
-                    else loop(i - 1)
-            loop(size - 1)
-    end settle
-
-    private def settleIn(lane: Chunk[Stack.Snapshot], snapshot: Stack.Snapshot): Chunk[Stack.Snapshot] =
-        if lane.isEmpty then lane
-        else
-            val indexed = lane.toIndexed
-            @tailrec def loop(j: Int): Chunk[Stack.Snapshot] =
-                if j < 0 then lane
-                else if indexed(j).asInstanceOf[AnyRef] eq snapshot.asInstanceOf[AnyRef] then
-                    if indexed.length == 1 then Chunk.empty
-                    else indexed.take(j).concat(indexed.drop(j + 1))
-                else loop(j - 1)
-            loop(indexed.length - 1)
-    end settleIn
-
     def takeEvalOwed(): Chunk[Stack.Snapshot] =
         val owedHere = evalOwed
         if !owedHere.isEmpty then evalOwed = Chunk.empty
@@ -112,7 +88,7 @@ final private[kernel] class Stack:
     end clear
 
     def snapshot(): Stack.Snapshot =
-        val out = new Array[AnyRef](size * 4)
+        val out = new Array[AnyRef](size * 4 + 1)
         @tailrec def loop(i: Int): Unit =
             if i < size then
                 out(i * 4) = handlers(i)
@@ -124,6 +100,7 @@ final private[kernel] class Stack:
                 continuations(i) = null
                 loop(i + 1)
         loop(0)
+        out(size * 4) = FALSE
         size = 0
         Stack.wrap(out)
     end snapshot
@@ -134,7 +111,7 @@ final private[kernel] class Stack:
         while i < size do
             if handlers(i).isInstanceOf[Handler.ContextHandler[?, ?, ?, ?]] then count += 1
             i += 1
-        val out = new Array[AnyRef](count * 4)
+        val out = new Array[AnyRef](count * 4 + 1)
         var j   = 0
         i = 0
         while i < size do
@@ -147,6 +124,7 @@ final private[kernel] class Stack:
             end if
             i += 1
         end while
+        out(j) = FALSE
         Stack.wrap(out)
     end contextual
 
@@ -186,7 +164,7 @@ final private[kernel] class Stack:
 
     def dump(from: Int): Stack.Snapshot =
         val count = size - from
-        val out   = new Array[AnyRef](count * 4)
+        val out   = new Array[AnyRef](count * 4 + 1)
         @tailrec def loop(i: Int): Unit =
             if i < count then
                 val j = from + i
@@ -199,12 +177,17 @@ final private[kernel] class Stack:
                 continuations(j) = null
                 loop(i + 1)
         loop(0)
+        out(count * 4) = FALSE
         size = from
         val snapshot = Stack.wrap(out)
         owes = true
-        owed(from - 1) = owed(from - 1).append(snapshot)
+        owed(from - 1) = pruned(owed(from - 1)).append(snapshot)
         snapshot
     end dump
+
+    @tailrec private def pruned(lane: Chunk[Stack.Snapshot]): Chunk[Stack.Snapshot] =
+        if lane.isEmpty || !lane.last.settled then lane
+        else pruned(lane.dropRight(1))
 
     private def grow(): Unit =
         val capacity           = if size == 0 then 8 else size * 2
@@ -230,15 +213,15 @@ end Stack
 
 private[kernel] object Stack:
 
-    opaque type Snapshot = Span[AnyRef]
+    opaque type Snapshot = Array[AnyRef]
 
-    private def wrap(entries: Array[AnyRef]): Snapshot = Span.fromUnsafe(entries)
+    private def wrap(entries: Array[AnyRef]): Snapshot = entries
 
     object Snapshot:
-        private[kernel] val empty: Snapshot = Span.fromUnsafe(new Array[AnyRef](0))
+        private[kernel] val empty: Snapshot = wrap(Array[AnyRef](FALSE))
 
         final private[kernel] class Builder(regions: Int):
-            private val entries = new Array[AnyRef](regions * 4)
+            private val entries = new Array[AnyRef](regions * 4 + 1)
             private var count   = 0
 
             def add(handler: Handler[?, ?, ?], state: Any): Unit =
@@ -250,14 +233,17 @@ private[kernel] object Stack:
             end add
 
             def result(): Snapshot =
-                if count == entries.length then Span.fromUnsafe(entries)
-                else Span.fromUnsafe(java.util.Arrays.copyOf(entries, count))
+                val out = if count == entries.length - 1 then entries else java.util.Arrays.copyOf(entries, count + 1)
+                out(count) = FALSE
+                wrap(out)
         end Builder
     end Snapshot
 
     extension (self: Snapshot)
-        def regions: Int                         = self.size / 4
-        def isEmpty: Boolean                     = self.size == 0
+        def regions: Int                         = (self.length - 1) / 4
+        def isEmpty: Boolean                     = self.length == 1
+        def settled: Boolean                     = self(self.length - 1) eq TRUE
+        def settle(): Unit                       = self(self.length - 1) = TRUE
         def handler(i: Int): Handler[?, ?, ?]    = self(i * 4).asInstanceOf[Handler[?, ?, ?]]
         def state(i: Int): Any                   = self(i * 4 + 1)
         def continuation(i: Int): Arrow[?, ?, ?] = self(i * 4 + 2).asInstanceOf[Arrow[?, ?, ?]]
