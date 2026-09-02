@@ -391,7 +391,22 @@ The same path with a race is a resume handed to another thread. Fix shapes, ruli
 drain skips a consumed snapshot, which subsumes S4's lane scan and covers nested evals and
 other threads (recommended); (2) a stack remembers the stack active on its thread when
 borrowed and `settle` walks that chain, nested evals only; (3) rule raw hooks at-least-once
-across evals and pin the release. Status: open, no test yet.
+across evals and pin the release. Status: open; the reproduction is red as predicted
+(ContextEffectTest "a crossing resumed in a nested eval inside the clause completes its region
+without a release at the owner's exit", `List("done cfg 1", "release cfg 1")`).
+
+### S10. A context read at a supertype tag ignores an inner subtype binding
+
+From the eff issue 12 audit's closing item 6. `Context.get` is `TypeMap.get`, which resolves an
+exact key anywhere in the map first and otherwise searches by subtyping oldest entry first, so
+under `handleInheritable(Tag[Cfg], 1)(handleInheritable(Tag[CfgSub], 2)(read at Cfg))` the read
+answers 1, the outer exact binding, where the innermost related region holds 2; and with no
+exact key the oldest related binding wins, the outermost. Dispatch (`Stack.find`) walks from the
+top, innermost first, so reads and dispatch disagree on which related region is in scope. Test:
+ContextEffectTest "a read takes the innermost binding whether its tag is exact or a subtype"
+(red on the subtype-inside case). Fix direction, ruling pending: a read resolves innermost first
+among related keys, the same walk `find` does; `TypeMap` nodes are newest first, so `Context.get`
+walks from the head and takes the first `<:<` match. Status: open.
 
 The audit's other fifteen entries are predicted green or already ruled: thirteen laws with no
 pin today (local handlers not in scope for a clause, computations as answers, a suspending
