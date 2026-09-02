@@ -603,10 +603,13 @@ class EffectBracketTest extends AnyFreeSpec:
             var usedAfter = false
             val body: Int < Any =
                 Effect.bracket(Effect.defer(7))((_, _) => released = true) { a =>
-                    ArrowEffect.handleCont(Tag[Ask], Isolate.internal.Contextual.run(ask.map { n =>
-                        usedAfter = released
-                        n + a
-                    }))(
+                    ArrowEffect.handleCont(
+                        Tag[Ask],
+                        Isolate.internal.Contextual.run(ask.map { n =>
+                            usedAfter = released
+                            n + a
+                        })
+                    )(
                         [C] =>
                             (_, cont) =>
                                 leaked = Maybe(cont)

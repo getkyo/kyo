@@ -24,14 +24,6 @@ object Effect:
         private[kyo] def drain(ex: Throwable): Unit = if compareAndSet(false, true) then fin(Maybe(ex))
     end Cell
 
-    private[kyo] object Cell:
-        private[kyo] val inert: Cell =
-            val cell = new Cell(_ => ())
-            cell.set(true)
-            cell
-        end inert
-    end Cell
-
     def bracket[A, S1](acquire: A < S1)(
         release: (A, Maybe[Throwable]) => Unit
     )[B, S2](use: A => B < S2)(using _frame: Frame): B < (S1 & S2) =
@@ -49,12 +41,12 @@ object Effect:
                 val h = new Handler.ContextHandler[Cell, Finalize, B, S1 & S2]:
                     def tag                                                             = Tag[Finalize]
                     def derive(outer: Maybe[Cell])                                      = cell
-                    def fork(parent: Cell)                                              = Cell.inert
+                    def fork(parent: Cell)                                              = parent
                     def join(parent: Cell, fk: Cell, child: Cell)                       = parent
                     override private[kyo] def done(state: Cell): Unit                   = state.complete()
                     override private[kyo] def release(state: Cell, ex: Throwable): Unit = state.drain(ex)
                     override private[kyo] def reenter(state: Cell): Unit =
-                        if (state ne Cell.inert) && state.get() then
+                        if state.get() then
                             throw new Closed("Bracket resource", _frame)(using _frame)
                 new Kyo.Handle[Cell, Finalize, B, B, B, S1 & S2]:
                     override def frame = _frame

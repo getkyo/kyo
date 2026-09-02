@@ -1,5 +1,7 @@
 package kyo.proto.kernel.internal
 
+import kyo.internal.CompileTimeFlag
+
 abstract private[kyo] class Debugger:
 
     def enter(): Boolean = true
@@ -29,7 +31,7 @@ end Debugger
 
 private[kyo] object Debugger:
 
-    inline val enabled = false
+    inline def enabled: Boolean = CompileTimeFlag.boolean("kyo.proto.kernel.internal.Debugger.enabled", false)
 
     private var current: Debugger = Noop
 
