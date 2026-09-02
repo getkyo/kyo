@@ -2398,6 +2398,38 @@ class ArrowEffectTest extends AnyFreeSpec:
             assert(localAnswered == 2)
         }
 
+        "a clause's code after the resume is not captured by a coroutine handler inside the region" in {
+            var stash                   = Maybe.empty[Arrow[Unit, Int, Ask & Say]]
+            val log                     = ListBuffer[String]()
+            val body: Int < (Ask & Say) = ask.map(a => say("yield").map(_ => a + 1))
+            val coroutine: Int < Ask = ArrowEffect.handleCont(Tag[Say], body)(
+                [C] =>
+                    (_, cont) =>
+                        stash = Maybe(cont)
+                        -1
+                ,
+                a => a
+            )
+            val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], coroutine)(
+                [C] =>
+                    (_, cont) =>
+                        cont(1).map { x =>
+                            log += s"post $x"
+                            x * 10
+                        }
+                ,
+                a => a
+            )
+            assert(r.eval == -10)
+            assert(log.toList == List("post -1"))
+            val resumed: Int < Any = ArrowEffect.handleCont(
+                Tag[Ask],
+                ArrowEffect.handleCont(Tag[Say], stash.get(()))([C] => (_, cont) => cont(()), a => a)
+            )([C] => (_, cont) => cont(100), a => a)
+            assert(resumed.eval == 2)
+            assert(log.toList == List("post -1"))
+        }
+
         "a handler whose clause suspends outward travels with the continuation and answers ahead of the handler at the resume site" in {
             var stash           = Maybe.empty[Arrow[Unit, Int, Say]]
             val yields          = ListBuffer[String]()
