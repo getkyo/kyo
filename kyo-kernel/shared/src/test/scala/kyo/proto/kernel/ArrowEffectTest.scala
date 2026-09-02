@@ -2338,6 +2338,66 @@ class ArrowEffectTest extends AnyFreeSpec:
             assert(localAnswered == 1)
         }
 
+        "a computation answered as a value that yields inward escapes the answering region, and the resume site's handler answers the remainder" in {
+            var stash                      = Maybe.empty[Arrow[Unit, Int, AskBoxed & Say]]
+            var oldAnswered                = 0
+            var newAnswered                = 0
+            val op: Int < (AskBoxed & Say) = askBoxed.map(v => v)
+            val body: Int < (AskBoxed & Say) =
+                op.map(a => op.map(b => a * 10 + b))
+            val coroutine: Int < AskBoxed = ArrowEffect.handleCont(Tag[Say], body)(
+                [C] =>
+                    (_, cont) =>
+                        stash = Maybe(cont)
+                        -1
+                ,
+                a => a
+            )
+            val first: Int < Any = ArrowEffect.handleCont(Tag[AskBoxed], coroutine)(
+                [C] =>
+                    (_, cont) =>
+                        oldAnswered += 1
+                        cont(say("yield").map(_ => 1))
+                ,
+                a => a
+            )
+            assert(first.eval == -1)
+            val resumed: Int < AskBoxed =
+                ArrowEffect.handleCont(Tag[Say], stash.get(()))([C] => (_, cont) => cont(()), a => a)
+            val second: Int < Any = ArrowEffect.handleCont(Tag[AskBoxed], resumed)(
+                [C] =>
+                    (_, cont) =>
+                        newAnswered += 1
+                        cont(5)
+                ,
+                a => a
+            )
+            assert(second.eval == 15)
+            assert(oldAnswered == 1)
+            assert(newAnswered == 1)
+        }
+
+        "each shot of a computation answered as a value runs under the re-established local handler" in {
+            var localAnswered = 0
+            val local: Int < AskBoxed =
+                ArrowEffect.handleCont(Tag[Say], askBoxed.map(v => v): Int < (AskBoxed & Say))(
+                    [C] =>
+                        (_, cont) =>
+                            localAnswered += 1
+                            cont(())
+                    ,
+                    a => a
+                )
+            val payload: Int < Say = say("m").map(_ => 1)
+            val interpreted: Int < Say = ArrowEffect.handleCont(Tag[AskBoxed], local)(
+                [C] => (_, cont) => cont(payload).map(a => cont(payload).map(b => a + b)),
+                a => a
+            )
+            val r: Int < Any = ArrowEffect.handleCont(Tag[Say], interpreted)([C] => (_, _) => -99, a => a)
+            assert(r.eval == 2)
+            assert(localAnswered == 2)
+        }
+
         "a handler whose clause suspends outward travels with the continuation and answers ahead of the handler at the resume site" in {
             var stash           = Maybe.empty[Arrow[Unit, Int, Say]]
             val yields          = ListBuffer[String]()
@@ -2475,6 +2535,12 @@ class ArrowEffectTest extends AnyFreeSpec:
                 (acc, af) => tell(af._2(acc)).map(_ => af._1)
             )
 
+        def censor[A, S](f: List[Int] => List[Int])(v: A < (Tell & S)): A < (Tell & S) =
+            ArrowEffect.handleLoop(Tag[Tell], v)(
+                [C] => w => tell(f(w)).map(_ => Loop.continue((), (): Unit < Any)),
+                a => a
+            )
+
         sealed trait CC extends ArrowEffect[Const[Maybe[Int]], Const[Int]]
         def capture: Int < CC      = ArrowEffect.suspend[Any](Tag[CC], Maybe.empty[Int])
         def jump(n: Int): Int < CC = ArrowEffect.suspend[Any](Tag[CC], Maybe(n))
@@ -2529,6 +2595,22 @@ class ArrowEffectTest extends AnyFreeSpec:
                     )([C] => (_, cont) => cont(2).map(_ => cont(3)), a => a)
                 )
             assert(viaListen.eval == ((((), List(1, 3)), List(1, 2, 3))))
+        }
+
+        "a listen around the operation does not see the tell its interpreter's clause raises" in {
+            val interpreted: (Int, List[Int]) < Tell =
+                ArrowEffect.handleCont(Tag[Ask], listen(ask: Int < (Tell & Ask)))(
+                    [C] => (_, cont) => tell(List(7)).map(_ => cont(1)),
+                    a => a
+                )
+            assert(runWriter(interpreted).eval == (((1, List.empty[Int]), List(7))))
+        }
+
+        "a censor around the operation does not censor the tell its interpreter's clause raises" in {
+            val body: Int < (Tell & Ask) = censor(_.map(_ * 100))(ask.map(a => tell(List(a)).map(_ => a)))
+            val interpreted: Int < Tell =
+                ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, cont) => tell(List(7)).map(_ => cont(1)), a => a)
+            assert(runWriter(interpreted).eval == ((1, List(7, 100))))
         }
     }
 
