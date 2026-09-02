@@ -2565,7 +2565,7 @@ class ArrowEffectTest extends AnyFreeSpec:
     }
 
     "higher-order operations" - {
-        enum ReaderOp[X] derives CanEqual:
+        enum ReaderOp[X]:
             case Ask                                            extends ReaderOp[Int]
             case Local[X](f: Int => Int, m: X < (Reader & Say)) extends ReaderOp[X]
         sealed trait Reader extends ArrowEffect[ReaderOp, [X] =>> X]
@@ -2579,7 +2579,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                 [C] =>
                     (op, cont) =>
                         op match
-                            case ReaderOp.Ask         => cont(env)
+                            case _: ReaderOp.Ask.type => cont(env)
                             case ReaderOp.Local(f, m) => runReader(f(env))(m).map(c => cont(c))
                 ,
                 a => a
