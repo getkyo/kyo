@@ -575,7 +575,7 @@ class IsolateTest extends Test:
             assert(log.toList == List("done 30"))
         }
 
-        "a restored crossing reads the binding it captured, not the scope it restores in" in {
+        "a read after a restored crossing sees the scope it restores in, and the join lands on the live region" in {
             val v =
                 ContextEffect.handle(Tag[TestEffect1])(1, (_: Int) => 1, (s: Int) => s, (p: Int, f: Int, _: Int) => p + f) {
                     ContextEffect.handle(Tag[TestEffect1])(2, (_: Int) => 2, (s: Int) => s, (p: Int, f: Int, _: Int) => p + f) {
@@ -583,10 +583,10 @@ class IsolateTest extends Test:
                     }.map { nested =>
                         ContextEffect.handle(Tag[TestEffect1])(10, (_: Int) => 10, (s: Int) => s, (p: Int, f: Int, _: Int) => p + f) {
                             nested.map(_ => ContextEffect.suspend(Tag[TestEffect1]))
-                        }
+                        }.map(inner => ContextEffect.suspend(Tag[TestEffect1]).map(outer => (inner, outer)))
                     }
                 }
-            assert(v.eval == 2)
+            assert(v.eval == ((10, 2)))
         }
 
         "every binding in scope is asked" in {
