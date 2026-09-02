@@ -2564,4 +2564,81 @@ class ArrowEffectTest extends AnyFreeSpec:
         }
     }
 
+    "higher-order operations" - {
+        enum ReaderOp[X]:
+            case Ask                                                extends ReaderOp[Int]
+            case Local[X](f: Int => Int, m: X < (Reader & Say)) extends ReaderOp[X]
+        sealed trait Reader extends ArrowEffect[ReaderOp, [X] =>> X]
+
+        def askR: Int < Reader = ArrowEffect.suspend[Int](Tag[Reader], ReaderOp.Ask)
+        def local[A](f: Int => Int)(m: A < (Reader & Say)): A < Reader =
+            ArrowEffect.suspend[A](Tag[Reader], ReaderOp.Local(f, m))
+
+        def runReader[A, S](env: Int)(v: A < (Reader & S)): A < S =
+            ArrowEffect.handleCont(Tag[Reader], v)(
+                [C] =>
+                    (op, cont) =>
+                        op match
+                            case ReaderOp.Ask         => cont(env)
+                            case ReaderOp.Local(f, m) => runReader(f(env))(m).map(c => cont(c))
+                ,
+                a => a
+            )
+
+        "a higher-order operation carries its body, and the handler elaborates it as a region that a crossing carries along" in {
+            val prog: (Int, Int, Int) < (Reader & Say) =
+                local(_ * 10)(askR.map(a => say("x").map(_ => askR.map(b => (a, b)))))
+                    .map((a, b) => askR.map(c => (a, b, c)))
+            val r: (Int, Int, Int) < Any =
+                ArrowEffect.handleCont(Tag[Say], runReader(4)(prog))([C] => (_, cont) => cont(()), a => a)
+            assert(r.eval == ((40, 40, 4)))
+        }
+
+        "an elaborated region is re-established per shot under a multi-shot resume" in {
+            val prog: List[(Int, Int)] < (Reader & Say) =
+                local(_ * 10)(askR.map(a => say("x").map(_ => askR.map(b => List((a, b))))))
+            val r: List[(Int, Int)] < Any =
+                ArrowEffect.handleCont(Tag[Say], runReader(4)(prog))(
+                    [C] => (_, cont) => cont(()).map(x => cont(()).map(y => x ++ y)),
+                    a => a
+                )
+            assert(r.eval == List((40, 40), (40, 40)))
+        }
+
+        enum ErrOp[X]:
+            case Fail(msg: String)                              extends ErrOp[Nothing]
+            case Catch[X](m: X < Err, h: String => X < Err) extends ErrOp[X]
+        sealed trait Err extends ArrowEffect[ErrOp, [X] =>> X]
+
+        def fail(msg: String): Nothing < Err = ArrowEffect.suspend[Nothing](Tag[Err], ErrOp.Fail(msg))
+        def catching[A](m: A < Err)(h: String => A < Err): A < Err =
+            ArrowEffect.suspend[A](Tag[Err], ErrOp.Catch(m, h))
+
+        def runErr[A, S](v: A < (Err & S)): Either[String, A] < S =
+            ArrowEffect.handleCont(Tag[Err], v.map(a => (Right(a): Either[String, A])))(
+                [C] =>
+                    (op, cont) =>
+                        op match
+                            case ErrOp.Fail(msg) => (Left(msg): Either[String, A])
+                            case ErrOp.Catch(m, h) =>
+                                runErr(m).map {
+                                    case Right(c) => cont(c)
+                                    case Left(e) =>
+                                        runErr(h(e)).map {
+                                            case Right(c) => cont(c)
+                                            case Left(e2) => (Left(e2): Either[String, A])
+                                        }
+                                }
+                ,
+                a => a
+            )
+
+        "a higher-order catch elaborates its body under a recovering region, and a failure after it escapes" in {
+            val caught: Int < Err = catching(fail("boom").map(_ => 1))(_ => 41)
+            val later: Int < Err  = caught.map(a => fail("later").map(_ => a + 1))
+            assert(runErr(caught.map(_ + 1)).eval == Right(42))
+            assert(runErr(later).eval == Left("later"))
+        }
+    }
+
 end ArrowEffectTest
