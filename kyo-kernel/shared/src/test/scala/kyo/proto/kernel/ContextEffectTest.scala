@@ -279,6 +279,27 @@ class ContextEffectTest extends AnyFreeSpec:
             assert(exactInner.eval == 2)
             assert(subInner.eval == 2)
         }
+
+        "an outer exact binding uncovered by an inner exit does not shadow a subtype binding between them" in {
+            val v: (Int, Int) < Any =
+                ContextEffect.handleInheritable(Tag[Cfg], 1)(
+                    ContextEffect.handleInheritable(Tag[CfgSub], 2)(
+                        ContextEffect.handleInheritable(Tag[Cfg], 3)(ContextEffect.suspend(Tag[Cfg]))
+                            .map(inner => ContextEffect.suspend(Tag[Cfg]).map(after => (inner, after)))
+                    )
+                )
+            assert(v.eval == ((3, 2)))
+        }
+
+        "a region derives from the innermost related binding" in {
+            val v: Int < Any =
+                ContextEffect.handleInheritable(Tag[Cfg], 1)(
+                    ContextEffect.handleInheritable(Tag[CfgSub], 2)(
+                        ContextEffect.handleInheritable(Tag[Cfg], 0, _ + 10)(ContextEffect.suspend(Tag[Cfg]))
+                    )
+                )
+            assert(v.eval == 12)
+        }
     }
 
     "reading audit pins" - {
