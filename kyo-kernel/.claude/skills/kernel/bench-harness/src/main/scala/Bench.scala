@@ -216,8 +216,12 @@ object Bench:
 
     /** Working-tree-only restore. Never `checkout`, which would also stage. */
     def restore(worktree: Path, sha: String, paths: Seq[String])(using Frame): Unit < (Async & Fail) =
-        exec(worktree, (Seq("git", "restore", s"--source=$sha", "--worktree", "--") ++ paths)*).unit
-            .andThen(exec(worktree, (Seq("git", "clean", "-fd", "--") ++ paths)*).unit)
+        exec(worktree, (Seq("git", "clean", "-fd", "--") ++ paths)*).unit
+            .andThen(exec(worktree, (Seq("git", "restore", s"--source=$sha", "--worktree", "--") ++ paths)*).unit)
+            .andThen(exec(worktree, (Seq("git", "diff", "--name-only", "--diff-filter=D", "HEAD", sha, "--") ++ paths)*))
+            .map(out => Chunk.from(out.linesIterator.map(_.trim).filter(_.nonEmpty).toSeq))
+            .map(files => Kyo.foreachDiscard(files)(f => (worktree / f).remove))
+            .unit
 
     def readMarkers(worktree: Path, markers: Seq[(String, String, String)])(using Frame): Chunk[Marker] < (Sync & Fail) =
         Kyo.foreach(Chunk.from(markers)) { (name, pattern, path) =>
