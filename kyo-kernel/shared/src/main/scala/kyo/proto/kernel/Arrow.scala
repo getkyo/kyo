@@ -2,8 +2,8 @@ package kyo.proto.kernel
 
 import kyo.Frame
 import kyo.proto.kernel.internal.Debugger
-import kyo.proto.kernel.internal.Kyo
 import kyo.proto.kernel.internal.Nested
+import kyo.proto.kernel.internal.Node
 import kyo.proto.kernel.internal.Pending
 import kyo.proto.kernel.internal.Safepoint
 import kyo.proto.kernel.internal.short
@@ -11,7 +11,7 @@ import kyo.proto.kernel.internal.site
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 
-sealed trait Arrow[-A, +B, -S] extends Kyo[B, S]:
+sealed trait Arrow[-A, +B, -S] extends Node[B, S]:
 
     def apply(v: A): B < S =
         Debugger.onUnfused(this)

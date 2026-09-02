@@ -8,7 +8,7 @@ import kyo.Result
 import kyo.Tag
 import kyo.proto.kernel.Arrow
 import kyo.proto.kernel.internal.*
-import kyo.proto.kernel.internal.Kyo.*
+import kyo.proto.kernel.internal.Pending.*
 import language.implicitConversions
 import scala.annotation.nowarn
 import scala.util.control.NonFatal
@@ -48,7 +48,7 @@ object Effect:
                     override private[kyo] def reenter(state: Cell): Unit =
                         if state.get() then
                             throw new Closed("Bracket resource", _frame)(using _frame)
-                new Kyo.Handle[Cell, Finalize, B, B, B, S1 & S2]:
+                new Pending.Handle[Cell, Finalize, B, B, B, S1 & S2]:
                     override def frame = _frame
                     def value          = body
                     def handler        = h
@@ -102,7 +102,7 @@ object Effect:
 
     @nowarn("msg=anonymous")
     private[kyo] inline def deferInline[A, S](inline f: => A < S)(using inline _frame: Frame): A < S =
-        new Kyo.DeferWith[Unit, A, S]:
+        new Pending.DeferWith[Unit, A, S]:
             override def frame          = _frame
             def value                   = unitValue
             override def apply(v: Unit) = f

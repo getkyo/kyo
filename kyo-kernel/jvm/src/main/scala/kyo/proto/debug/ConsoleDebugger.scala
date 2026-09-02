@@ -3,7 +3,6 @@ package kyo.proto.debug
 import kyo.proto.kernel.Arrow
 import kyo.proto.kernel.Loop
 import kyo.proto.kernel.internal.Debugger
-import kyo.proto.kernel.internal.Kyo
 import kyo.proto.kernel.internal.Pending
 import org.openjdk.jol.datamodel.Model64
 import org.openjdk.jol.datamodel.Model64_Lilliput
@@ -80,10 +79,10 @@ final class ConsoleDebugger extends Debugger:
     override def onAlloc(value: Any): Unit =
         reported.add(value)
         val name = value match
-            case _: Kyo.Defer[?, ?, ?, ?]              => "Defer"
-            case _: Kyo.SuspendArrow[?, ?, ?, ?, ?, ?] => "SuspendArrow"
-            case _: Kyo.SuspendContext[?, ?, ?, ?]     => "SuspendContext"
-            case _: Kyo.Handle[?, ?, ?, ?, ?, ?]       => "Handle"
+            case _: Pending.Defer[?, ?, ?, ?]              => "Defer"
+            case _: Pending.SuspendArrow[?, ?, ?, ?, ?, ?] => "SuspendArrow"
+            case _: Pending.SuspendContext[?, ?, ?, ?]     => "SuspendContext"
+            case _: Pending.Handle[?, ?, ?, ?, ?, ?]       => "Handle"
             case _: Arrow.Id[?]                        => "Id"
             case _: Arrow.Chain[?, ?, ?, ?]            => "Chain"
             case _: Loop.Continue[?]                   => "Continue"

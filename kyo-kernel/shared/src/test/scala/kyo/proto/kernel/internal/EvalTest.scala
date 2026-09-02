@@ -11,7 +11,7 @@ import kyo.proto.kernel.<
 import kyo.proto.kernel.ArrowEffect
 import kyo.proto.kernel.ContextEffect
 import kyo.proto.kernel.Effect
-import kyo.proto.kernel.internal.Kyo.Park
+import kyo.proto.kernel.internal.Pending.Park
 import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
 import scala.collection.mutable.ListBuffer

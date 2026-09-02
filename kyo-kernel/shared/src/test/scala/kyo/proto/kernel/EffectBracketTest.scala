@@ -10,7 +10,6 @@ import kyo.discard
 import kyo.proto.Arrow
 import kyo.proto.Loop
 import kyo.proto.kernel.internal.Eval
-import kyo.proto.kernel.internal.Kyo
 import kyo.proto.kernel.internal.Pending
 import kyo.proto.kernel.internal.Safepoint
 import org.scalatest.freespec.AnyFreeSpec
@@ -85,7 +84,7 @@ class EffectBracketTest extends AnyFreeSpec:
                 }
             }
             val parked = Eval.partial(v)
-            assert(parked.isInstanceOf[Kyo.Park[?, ?]])
+            assert(parked.isInstanceOf[Pending.Park[?, ?]])
             assert(seen.isEmpty)
             Eval.release(parked, Boom)
             assert(seen.exists(_.exists(_ eq Boom)))
@@ -100,7 +99,7 @@ class EffectBracketTest extends AnyFreeSpec:
                 }
             }
             val parked = Eval.partial(v)
-            assert(parked.isInstanceOf[Kyo.Park[?, ?]])
+            assert(parked.isInstanceOf[Pending.Park[?, ?]])
             assert(parked.eval == 8)
             assert(seen == Maybe(Maybe.empty))
         }
@@ -124,7 +123,7 @@ class EffectBracketTest extends AnyFreeSpec:
                 7
             })((_, _) => count += 1)(a => Effect.defer(a + 1))
             val parked = Eval.partial(v)
-            assert(parked.isInstanceOf[Kyo.Park[?, ?]])
+            assert(parked.isInstanceOf[Pending.Park[?, ?]])
             Eval.release(parked, Boom)
             assert(count == 1)
             discard(intercept[kyo.Closed](parked.eval))
@@ -213,7 +212,7 @@ class EffectBracketTest extends AnyFreeSpec:
             val resumed: Int < Any =
                 ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, cont) => cont(1), b => b)
             val parked = Eval.partial(resumed)
-            assert(parked.isInstanceOf[Kyo.Park[?, ?]])
+            assert(parked.isInstanceOf[Pending.Park[?, ?]])
             Eval.release(parked, Boom)
             assert(seen.exists(_.exists(_ eq Boom)))
         }
@@ -333,7 +332,7 @@ class EffectBracketTest extends AnyFreeSpec:
                 }
             }
             val parked = Eval.partial(v)
-            assert(parked.isInstanceOf[Kyo.Park[?, ?]])
+            assert(parked.isInstanceOf[Pending.Park[?, ?]])
             Eval.release(parked, signal)
             assert(signal.getSuppressed.exists(_ eq Bad))
         }
@@ -387,9 +386,9 @@ class EffectBracketTest extends AnyFreeSpec:
                 }
             }
             val p1 = Eval.partial(v)
-            assert(p1.isInstanceOf[Kyo.Park[?, ?]])
+            assert(p1.isInstanceOf[Pending.Park[?, ?]])
             val p2 = Eval.partial(p1)
-            assert(p2.isInstanceOf[Kyo.Park[?, ?]])
+            assert(p2.isInstanceOf[Pending.Park[?, ?]])
             assert(p2.eval == 8)
             assert(count == 1)
             assert(seen == Maybe(Maybe.empty))
@@ -475,7 +474,7 @@ class EffectBracketTest extends AnyFreeSpec:
                 }
             }
             val parked = Eval.partial(v)
-            assert(parked.isInstanceOf[Kyo.Park[?, ?]])
+            assert(parked.isInstanceOf[Pending.Park[?, ?]])
             Eval.release(parked, Boom)
             assert(log.toList == List("inner", "outer"))
         }
@@ -555,7 +554,7 @@ class EffectBracketTest extends AnyFreeSpec:
                 }
             )
             val parked = Eval.partial(v)
-            assert(parked.isInstanceOf[Kyo.Park[?, ?]])
+            assert(parked.isInstanceOf[Pending.Park[?, ?]])
             assert(seen.isEmpty)
             Eval.release(parked, Boom)
             assert(seen.exists(_.exists(_ eq Boom)))

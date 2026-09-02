@@ -60,7 +60,7 @@ end Handler
         private[kyo] def running[X](
             state: State,
             input: I[X],
-            kyo: Kyo.Suspend[?, ?, ?, ?],
+            kyo: Pending.Suspend[?, ?, ?, ?],
             stack: Stack,
             idx: Int
         ): Outcome2[State, O[X] < (E & S), B < S] < S =
@@ -82,7 +82,7 @@ end Handler
                         case p: Pending[OutT, S3] @unchecked =>
                             Effect.defer(p, this, cont2)
                         case out: Continue2[State, O[X0] < (E & S)] @unchecked =>
-                            Kyo.handle[State, E, A, B, S](
+                            Pending.handle[State, E, A, B, S](
                                 out._2.chain(reentry),
                                 LoopHandler.this,
                                 out._1
@@ -169,15 +169,15 @@ end Handler
                                     running = false
                                 else
                                     next match
-                                        case sN: Kyo.SuspendArrow[?, ?, ?, ?, ?, ?] @unchecked
+                                        case sN: Pending.SuspendArrow[?, ?, ?, ?, ?, ?] @unchecked
                                             if sN.tag.erased =:= effectTag.erased =>
                                             in = sN.input
                                             k = sN.cont.asInstanceOf[Arrow[Any, Any, Any]]
-                                        case dN: Kyo.Defer[Any, Any, Any, Any] @unchecked =>
+                                        case dN: Pending.Defer[Any, Any, Any, Any] @unchecked =>
                                             val v0      = dN.value
                                             var matched = false
                                             v0 match
-                                                case sN: Kyo.SuspendArrow[?, ?, ?, ?, ?, ?] @unchecked
+                                                case sN: Pending.SuspendArrow[?, ?, ?, ?, ?, ?] @unchecked
                                                     if sN.tag.erased =:= effectTag.erased && dN.contB.isInstanceOf[Arrow.Id[?]] =>
                                                     val sc = sN.cont.asInstanceOf[Arrow[Any, Any, Any]]
                                                     val ca = dN.contA.asInstanceOf[Arrow[Any, Any, Any]]

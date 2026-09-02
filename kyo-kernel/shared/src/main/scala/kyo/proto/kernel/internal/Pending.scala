@@ -11,33 +11,12 @@ import kyo.proto.kernel.ContextEffect
 import kyo.proto.kernel.Effect
 import language.implicitConversions
 import scala.annotation.publicInBinary
-import scala.annotation.tailrec
 
-// TODO we can not have methods thrown at files like this. A source file is a type + its companion
-private[proto] def short(v: Any): String =
-    v match
-        case v: Pending[?, ?]            => v.toString
-        case v: Arrow.Chain[?, ?, ?, ?]  => v.toString
-        case _: Arrow.Id[?]              => "Id"
-        case _: Arrow.Transform[?, ?, ?] => "Transform"
-        case v                           => v.toString
-
-private[proto] def site(frame: Frame): String =
-    val callee = frame.calleeName
-    if callee.isEmpty then s"${frame.callerName}(${frame.position.show})"
-    else s"${frame.callerName}.$callee(${frame.position.show})"
-end site
-
-// TODO can't this be sealed abstract class and Debugger.onAlloc is in it? I imaigne putting in Kyo, which is a trait, would generate overhead? Or could we put it there so we can ensure all allocations are captured?
-trait Kyo[+A, -S]:
-    def frame: Frame
-
-sealed trait Pending[+A, -S] extends Kyo[A, S]:
+sealed trait Pending[+A, -S] extends Node[A, S]:
     def frame: Frame = Frame.internal
 end Pending
 
-// TODO this should be Pending no?
-object Kyo:
+object Pending:
 
     abstract class Defer[A, B, C, -S] @publicInBinary private[kyo] () extends Pending[C, S]:
         Debugger.onAlloc(this)
@@ -73,7 +52,7 @@ object Kyo:
                         case p: Pending[O[A], S3] @unchecked => Effect.defer(p, this, cont2)
                         case _ =>
                             cont2(
-                                Kyo.Park(
+                                Park(
                                     Effect.defer(v, kc, resume).asInstanceOf[Any < Any],
                                     entries
                                 ),
@@ -145,4 +124,4 @@ object Kyo:
     abstract class HandleWith[State, E <: Effect, A, B, C, -S]
         extends Handle[State, E, A, B, C, S] with Arrow.Transform[B, C, S]
 
-end Kyo
+end Pending

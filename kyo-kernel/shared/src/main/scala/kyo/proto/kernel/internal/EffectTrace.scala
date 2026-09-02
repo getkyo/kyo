@@ -115,11 +115,11 @@ private[kernel] object EffectTrace:
                     carrier
         }
 
-    final private class Node(val kyo: Pending[?, ?])
+    final private class Traced(val kyo: Pending[?, ?])
 
     final private class Region[E](val tag: Tag[E])
 
-    private type Item = Arrow[?, ?, ?] | Node | Region[?]
+    private type Item = Arrow[?, ?, ?] | Traced | Region[?]
 
     final private class Builder(budget: Int):
 
@@ -156,7 +156,7 @@ private[kernel] object EffectTrace:
         @tailrec private def pushValue(v: Any): Unit =
             v match
                 case n: Nested[?]     => pushValue(n.value)
-                case p: Pending[?, ?] => push(new Node(p))
+                case p: Pending[?, ?] => push(new Traced(p))
                 case _                => ()
 
         private def push(item: Item): Unit =
@@ -175,7 +175,7 @@ private[kernel] object EffectTrace:
             drain()
 
         def node(p: Pending[?, ?]): Unit =
-            push(new Node(p))
+            push(new Traced(p))
             drain()
 
         def regions(stack: Stack): Unit =
@@ -199,25 +199,25 @@ private[kernel] object EffectTrace:
             else
                 work.removeHead() match
                     case r: Region[?] => region(r.tag)
-                    case n: Node =>
+                    case n: Traced =>
                         n.kyo match
-                            case s: Kyo.Suspend[?, ?, ?, ?] =>
+                            case s: Pending.Suspend[?, ?, ?, ?] =>
 
                                 frame(s.frame)
                                 push(s.cont)
-                            case s: Kyo.Snapshot[?, ?] =>
+                            case s: Pending.Snapshot[?, ?] =>
                                 frame(s.frame)
                                 push(s.cont)
-                            case h: Kyo.Handle[?, ?, ?, ?, ?, ?] =>
+                            case h: Pending.Handle[?, ?, ?, ?, ?, ?] =>
 
                                 push(h.cont)
                                 push(new Region(h.handler.tag))
                                 pushValue(h.value)
-                            case d: Kyo.Defer[?, ?, ?, ?] =>
+                            case d: Pending.Defer[?, ?, ?, ?] =>
                                 push(d.contB)
                                 push(d.contA)
                                 pushValue(d.value)
-                            case p: Kyo.Park[?, ?] =>
+                            case p: Pending.Park[?, ?] =>
 
                                 val entries = p.entries
                                 @tailrec def parked(i: Int): Unit =

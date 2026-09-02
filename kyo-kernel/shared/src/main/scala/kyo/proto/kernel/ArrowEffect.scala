@@ -12,7 +12,6 @@ import kyo.proto.kernel.internal.Handler
 import kyo.proto.kernel.internal.Handler.ContHandler
 import kyo.proto.kernel.internal.Handler.ContOpHandler
 import kyo.proto.kernel.internal.Handler.LoopHandler
-import kyo.proto.kernel.internal.Kyo
 import kyo.proto.kernel.internal.Nested
 import kyo.proto.kernel.internal.Pending
 import kyo.proto.kernel.internal.Safepoint
@@ -32,7 +31,7 @@ object ArrowEffect:
         inline effectInput: I[C]
     ): O[C] < E =
 
-        new Kyo.SuspendArrow[I, O, E, C, O[C], E]:
+        new Pending.SuspendArrow[I, O, E, C, O[C], E]:
             override def frame = _frame
             def tag            = effectTag
             def input          = effectInput
@@ -48,7 +47,7 @@ object ArrowEffect:
         inline f: O[C] => B < S
     ): B < (E & S) =
 
-        new Kyo.SuspendArrowWith[I, O, E, C, B, E & S]:
+        new Pending.SuspendArrowWith[I, O, E, C, B, E & S]:
             override def frame = _frame
             def tag            = effectTag
             def input          = effectInput
@@ -76,7 +75,7 @@ object ArrowEffect:
                             handle[X](input, next)
                         def done(state: Unit, v0: A) = onDone(v0)
 
-                new Kyo.Handle[Unit, E, A, B, B, S & S2]:
+                new Pending.Handle[Unit, E, A, B, B, S & S2]:
                     override def frame = _frame
                     def value          = v
                     def handler        = h
@@ -108,7 +107,7 @@ object ArrowEffect:
                         def done(state: Unit, v0: A)                     = onDone(v0)
                         override def recover(state: Unit, ex: Throwable) = onRecover(ex)
 
-                new Kyo.Handle[Unit, E, A, B, B, S & S2]:
+                new Pending.Handle[Unit, E, A, B, B, S & S2]:
                     override def frame = _frame
                     def value          = v
                     def handler        = h
@@ -149,7 +148,7 @@ object ArrowEffect:
                             handle[X](operation, next)
                         def done(state: Unit, v0: A) = onDone(v0)
 
-                new Kyo.Handle[Unit, E, A, B, B, S & S2]:
+                new Pending.Handle[Unit, E, A, B, B, S & S2]:
                     override def frame = _frame
                     def value          = v
                     def handler        = h
@@ -208,12 +207,12 @@ object ArrowEffect:
     ): Unit =
         @tailrec def loop(x: Any): Unit =
             x match
-                case kyo: Kyo.SuspendArrow[I, O, E, c, ?, ?] @unchecked =>
+                case kyo: Pending.SuspendArrow[I, O, E, c, ?, ?] @unchecked =>
 
                     if effectTag.erased <:< kyo.tag.erased then f[c](kyo.input)
-                case kyo: Kyo.Handle[?, ?, ?, ?, ?, ?] => loop(kyo.value)
-                case kyo: Kyo.Park[?, ?]               => loop(kyo.value)
-                case kyo: Kyo.Defer[?, ?, ?, ?]        => loop(kyo.value)
+                case kyo: Pending.Handle[?, ?, ?, ?, ?, ?] => loop(kyo.value)
+                case kyo: Pending.Park[?, ?]               => loop(kyo.value)
+                case kyo: Pending.Defer[?, ?, ?, ?]        => loop(kyo.value)
                 case _                                 => ()
         loop(v)
     end dispatchFirst
@@ -290,7 +289,7 @@ object ArrowEffect:
                         def done(st: State, v0: A) = onDone(st, v0)
                 val state0 = state
 
-                new Kyo.Handle[State, E, A, B, B, S & S2]:
+                new Pending.Handle[State, E, A, B, B, S & S2]:
                     override def frame = _frame
                     def value          = v
                     def handler        = h
@@ -342,7 +341,7 @@ object ArrowEffect:
                         override def recover(st: State, ex: Throwable) = onRecover(st, ex)
                 val state0 = state
 
-                new Kyo.Handle[State, E, A, B, B, S & S2]:
+                new Pending.Handle[State, E, A, B, B, S & S2]:
                     override def frame = _frame
                     def value          = v
                     def handler        = h
@@ -389,7 +388,7 @@ object ArrowEffect:
                             handle[X](input, next)
                         def done(state: Unit, v0: A) = onDone(v0)
 
-                new Kyo.HandleWith[Unit, E, A, B, C, S & S2 & S3]:
+                new Pending.HandleWith[Unit, E, A, B, C, S & S2 & S3]:
                     override def frame = _frame
                     def value          = v
                     def handler        = h
@@ -462,7 +461,7 @@ object ArrowEffect:
                             )
                         def done(st: State, v0: A) = onDone(st, v0)
 
-                new Kyo.HandleWith[State, E, A, B, C, S & S2 & S3]:
+                new Pending.HandleWith[State, E, A, B, C, S & S2 & S3]:
                     override def frame = _frame
                     def value          = v
                     def handler        = h

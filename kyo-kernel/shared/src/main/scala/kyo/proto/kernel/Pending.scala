@@ -23,7 +23,7 @@ object `<` extends Implicits:
                 var slot: Safepoint.Slot = -1
                 val shouldDefer          = v.isInstanceOf[Pending[?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
                 if shouldDefer then
-                    new Kyo.DeferWith[A, C, S2 & S3]:
+                    new Pending.DeferWith[A, C, S2 & S3]:
                         override def frame = _frame
                         def value          = v
                         override def apply[C2, S4](v2: A < S4, cont2: Arrow[C, C2, S4]) =
@@ -43,7 +43,7 @@ object `<` extends Implicits:
                 var slot: Safepoint.Slot = -1
                 val shouldDefer          = v.isInstanceOf[Pending[?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
                 if shouldDefer then
-                    new Kyo.DeferWith[A, C, S2 & S3]:
+                    new Pending.DeferWith[A, C, S2 & S3]:
                         override def frame = _frame
                         def value          = v
                         override def apply[C2, S4](v2: A < S4, cont2: Arrow[C, C2, S4]) =
@@ -63,7 +63,7 @@ object `<` extends Implicits:
                 var slot: Safepoint.Slot = -1
                 val shouldDefer          = v.isInstanceOf[Pending[?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
                 if shouldDefer then
-                    new Kyo.DeferWith[A, C, S2 & S3]:
+                    new Pending.DeferWith[A, C, S2 & S3]:
                         override def frame = _frame
                         def value          = v
                         override def apply[C2, S4](v2: A < S4, cont2: Arrow[C, C2, S4]) =
@@ -83,7 +83,7 @@ object `<` extends Implicits:
                 var slot: Safepoint.Slot = -1
                 val shouldDefer          = v.isInstanceOf[Pending[?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
                 if shouldDefer then
-                    new Kyo.DeferWith[A, C, S3]:
+                    new Pending.DeferWith[A, C, S3]:
                         override def frame = _frame
                         def value          = v
                         override def apply[C2, S4](v2: A < S4, cont2: Arrow[C, C2, S4]) =

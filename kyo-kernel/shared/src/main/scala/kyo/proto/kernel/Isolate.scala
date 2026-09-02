@@ -5,7 +5,6 @@ import kyo.Frame
 import kyo.Maybe
 import kyo.proto.kernel.Arrow
 import kyo.proto.kernel.internal.Handler
-import kyo.proto.kernel.internal.Kyo
 import kyo.proto.kernel.internal.Nested
 import kyo.proto.kernel.internal.Pending
 import kyo.proto.kernel.internal.Stack
@@ -70,7 +69,7 @@ object Isolate:
             type Transform[A] = (Stack.Snapshot, Stack.Snapshot, A)
 
             def capture[A, S](f: Stack.Snapshot => A < S)(using _frame: Frame): A < S =
-                new Kyo.SnapshotWith[A, S]:
+                new Pending.SnapshotWith[A, S]:
                     override def frame = _frame
                     def cont           = this
                     override def apply[C, S2](v: Stack < S2, cont2: Arrow[A, C, S2]) =
@@ -81,13 +80,13 @@ object Isolate:
             def isolate[A, S](state: Stack.Snapshot, v: A < S)(using Frame): (Stack.Snapshot, Stack.Snapshot, A) < S =
                 val forked                          = fork(state)
                 val inner: (Stack.Snapshot, A) < S  = v.map(a => capture(finals => (finals, a)))
-                val parked: (Stack.Snapshot, A) < S = Kyo.Park[(Stack.Snapshot, A), S](inner.asInstanceOf[Any < Any], forked)
+                val parked: (Stack.Snapshot, A) < S = Pending.Park[(Stack.Snapshot, A), S](inner.asInstanceOf[Any < Any], forked)
                 parked.map((finals, a) => (forked, finals, a))
             end isolate
 
             def restore[A, S](v: (Stack.Snapshot, Stack.Snapshot, A) < S)(using _frame: Frame): A < S =
                 v.map { (forked, finals, a) =>
-                    new Kyo.SnapshotWith[A, S]:
+                    new Pending.SnapshotWith[A, S]:
                         override def frame = _frame
                         def cont           = this
                         override def apply[C, S2](cur: Stack < S2, cont2: Arrow[A, C, S2]) =

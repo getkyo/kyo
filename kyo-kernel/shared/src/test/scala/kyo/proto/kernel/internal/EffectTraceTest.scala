@@ -368,7 +368,7 @@ class EffectTraceTest extends AnyFreeSpec:
 
     "a failure of the walk itself leaves the original failure travelling" in {
         val unreadable =
-            new Kyo.SuspendArrow[Const[Unit], Const[Int], Ask, Any, Int, Any]:
+            new Pending.SuspendArrow[Const[Unit], Const[Int], Ask, Any, Int, Any]:
                 def tag            = Tag[Ask]
                 def input          = ()
                 override def frame = throw new IllegalStateException("frame read failed")

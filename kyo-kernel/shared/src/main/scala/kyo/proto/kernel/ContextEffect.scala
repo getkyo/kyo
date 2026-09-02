@@ -5,7 +5,6 @@ import kyo.Maybe
 import kyo.Tag
 import kyo.proto.kernel.Arrow
 import kyo.proto.kernel.internal.Handler.ContextHandler
-import kyo.proto.kernel.internal.Kyo
 import kyo.proto.kernel.internal.Nested
 import kyo.proto.kernel.internal.Pending
 import scala.annotation.nowarn
@@ -16,7 +15,7 @@ object ContextEffect:
 
     @nowarn("msg=anonymous")
     inline def suspend[A, E <: ContextEffect[A]](inline effectTag: Tag[E])(using inline _frame: Frame): A < E =
-        new Kyo.SuspendContext[A, E, A, E]:
+        new Pending.SuspendContext[A, E, A, E]:
             override def frame = _frame
             def tag            = effectTag
             def default        = Maybe.empty
@@ -28,7 +27,7 @@ object ContextEffect:
     )(
         inline f: A => B < S
     )(using inline _frame: Frame): B < (E & S) =
-        new Kyo.SuspendContextWith[A, E, B, E & S]:
+        new Pending.SuspendContextWith[A, E, B, E & S]:
             override def frame = _frame
             def tag            = effectTag
             def default        = Maybe.empty
@@ -43,7 +42,7 @@ object ContextEffect:
         inline effectTag: Tag[E],
         inline defaultValue: => A
     )(using inline _frame: Frame): A < Any =
-        new Kyo.SuspendContext[A, E, A, Any]:
+        new Pending.SuspendContext[A, E, A, Any]:
             override def frame = _frame
             def tag            = effectTag
             def default        = Maybe(defaultValue)
@@ -56,7 +55,7 @@ object ContextEffect:
     )(
         inline f: A => B < S
     )(using inline _frame: Frame): B < S =
-        new Kyo.SuspendContextWith[A, E, B, S]:
+        new Pending.SuspendContextWith[A, E, B, S]:
             override def frame = _frame
             def tag            = effectTag
             def default        = Maybe(defaultValue)
@@ -131,7 +130,7 @@ object ContextEffect:
                 override private[kyo] def done(state: A)                   = completed(state)
                 override private[kyo] def release(state: A, ex: Throwable) = released(state, ex)
 
-        new Kyo.Handle[A, E, B, B, B, S]:
+        new Pending.Handle[A, E, B, B, B, S]:
             override def frame = _frame
             def value          = v
             def handler        = h

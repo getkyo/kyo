@@ -46,20 +46,20 @@ import scala.util.control.NonFatal
         @tailrec def loop[T, B, C, S2](v: T < S2, contA: Arrow[T, B, S2], contB: Arrow[B, C, S2], ctx: Context): A < S =
             Debugger.onLoop(v, contA, contB)
             v match
-                case kyo: Kyo.Defer[?, ?, T, S2] @unchecked =>
+                case kyo: Pending.Defer[?, ?, T, S2] @unchecked =>
                     if armed && Safepoint.stopped(slot) then
                         park(v, contA, contB)
                     else
                         loop(kyo.value, kyo.contA, kyo.contB.chain(contA.chain(contB)), ctx)
 
-                case kyo: Kyo.Suspend[?, ?, T, S2] @unchecked =>
+                case kyo: Pending.Suspend[?, ?, T, S2] @unchecked =>
                     kyo match
-                        case kyo: Kyo.SuspendContext[VX, CX, T, S2] @unchecked =>
+                        case kyo: Pending.SuspendContext[VX, CX, T, S2] @unchecked =>
                             val state = ctx.get(kyo.tag).orElse(kyo.default).getOrElse(unhandled(kyo, stack))
                             Debugger.onContext(kyo, ctx)
                             loop(kyo.cont(state, contA.chain(contB)), Arrow.id, Arrow.id, ctx)
 
-                        case kyo: Kyo.SuspendArrow[IX, OX, EX, VX, T, EX & S2] @unchecked =>
+                        case kyo: Pending.SuspendArrow[IX, OX, EX, VX, T, EX & S2] @unchecked =>
                             val idx = stack.find(kyo.tag)
                             if idx < 0 then
                                 unhandled(kyo, stack)
@@ -85,7 +85,7 @@ import scala.util.control.NonFatal
                                             if atTop then kyo.cont.chain(contA.chain(contB))
                                             else kyo.crossing(entries, contA.chain(contB))
                                         val operation: OX[VX] < EX =
-                                            new Kyo.SuspendArrow[IX, OX, EX, VX, OX[VX], EX]:
+                                            new Pending.SuspendArrow[IX, OX, EX, VX, OX[VX], EX]:
                                                 def tag   = kyo.tag
                                                 def input = kyo.input
                                                 def cont  = Arrow.id
@@ -163,7 +163,7 @@ import scala.util.control.NonFatal
                                 end match
                             end if
 
-                case kyo: Kyo.Handle[?, CX, ?, ?, T, S2] @unchecked =>
+                case kyo: Pending.Handle[?, CX, ?, ?, T, S2] @unchecked =>
                     kyo.handler match
                         case handler: Handler.ContextHandler[VX, CX, ?, ?] @unchecked =>
                             val newState   = handler.derive(ctx.get(handler.tag))
@@ -178,14 +178,14 @@ import scala.util.control.NonFatal
                             loop(kyo.value, Arrow.id, Arrow.id, ctx)
                     end match
 
-                case kyo: Kyo.Park[?, ?] if kyo.entries.isEmpty =>
+                case kyo: Pending.Park[?, ?] if kyo.entries.isEmpty =>
                     stack.oweBelow(stack.depth, kyo.owed)
                     loop(kyo.value.asInstanceOf[T < S2], contA, contB, ctx)
 
-                case kyo: Kyo.Park[?, ?] =>
+                case kyo: Pending.Park[?, ?] =>
                     loop(kyo.value, Arrow.id, Arrow.id, installed(kyo, contA.chain(contB).asInstanceOf[Arrow[Any, Any, Any]], ctx))
 
-                case kyo: Kyo.Snapshot[T, S2] @unchecked =>
+                case kyo: Pending.Snapshot[T, S2] @unchecked =>
                     loop(kyo.cont(stack, contA.chain(contB)), Arrow.id, Arrow.id, rebuilt())
 
                 case res =>
@@ -222,7 +222,7 @@ import scala.util.control.NonFatal
             val owedNow = stack.takeEvalOwed()
             if stack.isEmpty then
                 if owedNow.isEmpty then parked.asInstanceOf[A < S]
-                else Kyo.Park[A, S](parked, Stack.Snapshot.empty, owedNow)
+                else Pending.Park[A, S](parked, Stack.Snapshot.empty, owedNow)
             else
                 Debugger.whenEnabled {
                     var j = stack.depth - 1
@@ -230,11 +230,11 @@ import scala.util.control.NonFatal
                         Debugger.onRegionExit(stack.handler(j), parked)
                         j -= 1
                 }
-                Kyo.Park[A, S](parked, stack.takeAll(), owedNow)
+                Pending.Park[A, S](parked, stack.takeAll(), owedNow)
             end if
         end park
 
-        def installed(kyo: Kyo.Park[?, ?], resume: Arrow[Any, Any, Any], ctx: Context): Context =
+        def installed(kyo: Pending.Park[?, ?], resume: Arrow[Any, Any, Any], ctx: Context): Context =
             val entries = kyo.entries
             var ri      = 0
             while ri < entries.regions do
@@ -363,7 +363,7 @@ import scala.util.control.NonFatal
                         if !owedHere.isEmpty then drainOwed(owedHere, failure)
                         return guarded(resumed, rebuilt())
             res match
-                case susp: Kyo.Suspend[?, ?, ?, ?] =>
+                case susp: Pending.Suspend[?, ?, ?, ?] =>
 
                     bug(s"unhandled suspension: $susp")
                 case res => res
@@ -389,7 +389,7 @@ import scala.util.control.NonFatal
 
     private def unanswerable(handler: Handler[?, ?, ?]): Nothing = bug(s"unhandled: $handler")
 
-    private[kernel] def dumped(stack: Stack, idx: Int, kyo: Kyo.Suspend[?, ?, ?, ?]): Stack.Snapshot =
+    private[kernel] def dumped(stack: Stack, idx: Int, kyo: Pending.Suspend[?, ?, ?, ?]): Stack.Snapshot =
         val entries = stack.dump(idx + 1)
         Debugger.whenEnabled {
             var i = entries.regions - 1
@@ -431,9 +431,9 @@ import scala.util.control.NonFatal
             v match
                 case p: Pending[?, ?] =>
                     p match
-                        case kyo: Kyo.Defer[?, ?, ?, ?] =>
+                        case kyo: Pending.Defer[?, ?, ?, ?] =>
                             collect(kyo.value)
-                        case kyo: Kyo.Handle[?, ?, ?, ?, ?, ?] =>
+                        case kyo: Pending.Handle[?, ?, ?, ?, ?, ?] =>
                             kyo.handler match
                                 case hc: Handler.ContextHandler[?, ?, ?, ?] =>
                                     collected += hc
@@ -441,7 +441,7 @@ import scala.util.control.NonFatal
                                 case _ => ()
                             end match
                             collect(kyo.value)
-                        case kyo: Kyo.Park[?, ?] =>
+                        case kyo: Pending.Park[?, ?] =>
                             expandOwed(collected, kyo.owed)
                             val entries = kyo.entries
                             var i       = 0
@@ -456,8 +456,8 @@ import scala.util.control.NonFatal
                                 i += 1
                             end while
                             collect(kyo.value)
-                        case _: Kyo.Suspend[?, ?, ?, ?] => ()
-                        case _: Kyo.Snapshot[?, ?]      => ()
+                        case _: Pending.Suspend[?, ?, ?, ?] => ()
+                        case _: Pending.Snapshot[?, ?]      => ()
                 case _ => ()
         collect(v)
         releaseCollected(collected, ex)
