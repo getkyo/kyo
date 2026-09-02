@@ -487,14 +487,17 @@ distinct states (and a deduplicating carrier would mask the S4 regression class)
 release is order (innermost first needs the reverse walk) plus stack safety (the buffer is the
 explicit stack over a user-shaped spine); the helpers stay siblings because `drainOwed` needs both
 and has six callers. Correction recorded: the "ChunkBuilder was tried" claim has no commit, it is
-reasoning. TODO 6 (the three `KyoInternal.scala` notes, `8cae800aa6`): the shared supertype of
-arrows and pending computations is renamed `Node` (the kernel's own word for both sides; it
-cannot be a class or sealed because `Arrow` and `Pending` both extend it from different files and
-the five `*With` fusion bases inherit from both), in `internal/Node.scala`; `object Kyo` is
-`object Pending`, the companion of the sealed trait, in `internal/Pending.scala`, which removes
-the collision with the user-facing `kyo.proto.Kyo` before the swap's `git mv`; `short` and `site`
-move to `internal/package.scala` as `private[kernel]`; `EffectTrace`'s inner `Node` is `Traced`;
-`KyoInternal.scala` is deleted. Note 14's hook goal, `Debugger.onAlloc` in `Node` replacing the
+reasoning. TODO 6 (the three `KyoInternal.scala` notes, `8cae800aa6` then the ruling that
+followed): the shared supertype of arrows and pending computations stays `trait Kyo` (a `Node`
+rename was applied and reverted the same day, on the ruling that the `Internal` suffix marks the
+pair well enough), alone in `internal/KyoInternal.scala`; it cannot be a class or sealed because
+`Arrow` and `Pending` both extend it from different files and the five `*With` fusion bases
+inherit from both. `object Kyo` is `object Pending`, the companion of the sealed trait, in
+`internal/PendingInternal.scala` (the file cannot be `Pending.scala` beside `kernel/Pending.scala`,
+which holds `<` since `<` is not a legal file name on Windows; the internal `Pending` type keeps
+its name, an `Unsettled` rename was considered and declined); this removes the collision with the
+user-facing `kyo.proto.Kyo` before the swap's `git mv`. `short` and `site` move to
+`internal/package.scala` as `private[kernel]`. Note 14's hook goal, `Debugger.onAlloc` in `Node` replacing the
 seven per-class sites, is sound (a trait initializer fires once per instance, so a `*With` value
 reports once) and gated on a sweep: it adds a `Node.$init$` call to every arrow and node
 constructor, inlined into `map`'s expansion and into `loop`. Decisions still pending on the

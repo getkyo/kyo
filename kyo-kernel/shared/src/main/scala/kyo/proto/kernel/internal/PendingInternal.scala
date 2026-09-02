@@ -12,7 +12,7 @@ import kyo.proto.kernel.Effect
 import language.implicitConversions
 import scala.annotation.publicInBinary
 
-sealed trait Pending[+A, -S] extends Node[A, S]:
+sealed trait Pending[+A, -S] extends Kyo[A, S]:
     def frame: Frame = Frame.internal
 end Pending
 

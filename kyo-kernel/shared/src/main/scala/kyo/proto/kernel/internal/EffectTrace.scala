@@ -115,11 +115,11 @@ private[kernel] object EffectTrace:
                     carrier
         }
 
-    final private class Traced(val kyo: Pending[?, ?])
+    final private class Node(val kyo: Pending[?, ?])
 
     final private class Region[E](val tag: Tag[E])
 
-    private type Item = Arrow[?, ?, ?] | Traced | Region[?]
+    private type Item = Arrow[?, ?, ?] | Node | Region[?]
 
     final private class Builder(budget: Int):
 
@@ -156,7 +156,7 @@ private[kernel] object EffectTrace:
         @tailrec private def pushValue(v: Any): Unit =
             v match
                 case n: Nested[?]     => pushValue(n.value)
-                case p: Pending[?, ?] => push(new Traced(p))
+                case p: Pending[?, ?] => push(new Node(p))
                 case _                => ()
 
         private def push(item: Item): Unit =
@@ -175,7 +175,7 @@ private[kernel] object EffectTrace:
             drain()
 
         def node(p: Pending[?, ?]): Unit =
-            push(new Traced(p))
+            push(new Node(p))
             drain()
 
         def regions(stack: Stack): Unit =
@@ -199,7 +199,7 @@ private[kernel] object EffectTrace:
             else
                 work.removeHead() match
                     case r: Region[?] => region(r.tag)
-                    case n: Traced =>
+                    case n: Node =>
                         n.kyo match
                             case s: Pending.Suspend[?, ?, ?, ?] =>
 
