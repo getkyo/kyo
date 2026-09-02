@@ -487,7 +487,18 @@ distinct states (and a deduplicating carrier would mask the S4 regression class)
 release is order (innermost first needs the reverse walk) plus stack safety (the buffer is the
 explicit stack over a user-shaped spine); the helpers stay siblings because `drainOwed` needs both
 and has six callers. Correction recorded: the "ChunkBuilder was tried" claim has no commit, it is
-reasoning. Decisions still pending on the remaining notes:
+reasoning. TODO 6 (the three `KyoInternal.scala` notes, `8cae800aa6`): the shared supertype of
+arrows and pending computations is renamed `Node` (the kernel's own word for both sides; it
+cannot be a class or sealed because `Arrow` and `Pending` both extend it from different files and
+the five `*With` fusion bases inherit from both), in `internal/Node.scala`; `object Kyo` is
+`object Pending`, the companion of the sealed trait, in `internal/Pending.scala`, which removes
+the collision with the user-facing `kyo.proto.Kyo` before the swap's `git mv`; `short` and `site`
+move to `internal/package.scala` as `private[kernel]`; `EffectTrace`'s inner `Node` is `Traced`;
+`KyoInternal.scala` is deleted. Note 14's hook goal, `Debugger.onAlloc` in `Node` replacing the
+seven per-class sites, is sound (a trait initializer fires once per instance, so a `*With` value
+reports once) and gated on a sweep: it adds a `Node.$init$` call to every arrow and node
+constructor, inlined into `map`'s expansion and into `loop`. Decisions still pending on the
+remaining notes:
 DO: rename `Stack.snapshot()` to `takeAll()` and `EffectTrace.Builder.entries` to `regions`;
 leave the five `Handler` methods and the three `release` helpers in place (the try/catch cost,
 the `answers` inline burst, the `StaleSymbolException` cascade if `Eval` became inlined-from);
