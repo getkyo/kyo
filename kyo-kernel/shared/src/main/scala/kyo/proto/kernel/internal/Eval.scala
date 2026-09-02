@@ -426,7 +426,6 @@ import scala.util.control.NonFatal
     end released
 
     def release[A, S](v: A < S, ex: Throwable): Unit =
-        // TODO how about we use kyo.Dict?
         val collected = ArrayBuffer.empty[AnyRef]
         @tailrec def collect(v: Any): Unit =
             v match
@@ -461,11 +460,9 @@ import scala.util.control.NonFatal
                         case _: Kyo.Snapshot[?, ?]      => ()
                 case _ => ()
         collect(v)
-        // TODO why do we need to collect then release? can't we release while iterating?
         releaseCollected(collected, ex)
     end release
 
-    // TODO if we still need these auxiliary methods for release, let's move them to nested methods in the release method
     private def expandOwed(collected: ArrayBuffer[AnyRef], owed: Chunk[Stack.Snapshot]): Unit =
         if !owed.isEmpty then
             val snapshots = owed.toIndexed

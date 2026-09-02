@@ -471,7 +471,23 @@ so no new same-module summon in a core file) plus `Arrow.isPure`, `Arrow.unlift`
 `Arrow.Pure` step for consumers holding arrows; `Loop` is already adaptive at runtime (its
 `@tailrec` loop runs while `run` returns a settled `Continue`), so purity would only shrink its
 expansion. `pure-arrow-derivation.md` carries the derivation; its section 4 (a `map` fast path)
-is retracted, the rest stands. Decisions still pending on the remaining notes:
+is retracted, the rest stands. TODO 4 (the four "why isn't this in Eval" notes in `Handler`):
+reframed by the user as a placement question with the current signatures and calls kept.
+`answering` (both), `running`, and `clauseDispatch` are defined once and never overridden, so the
+call from `loop` is a monomorphic method CHA devirtualizes, not the megamorphic dispatch the
+analysis claimed; the megamorphic call is `run` inside them and stays either way. They can move to
+`Eval` as private object-level methods taking the handler (and `running`'s `Eval.dumped`
+back-reference disappears); `answers` stays, it is the per-site override behind the 3.6x to 18x
+rows; `answersLoopState` is tried last because it would make `Eval.scala` an inlined-from file for
+`ArrowEffect.scala`, which only the clean batch build can judge. Gated on a benchmark sweep first,
+by ruling, since the call sites are the handler arms of `loop`: the 13 suspension rows named in
+`todo-analysis.md` entry 3 on both tips. TODO 5 (the three `release` notes, `Eval.scala`), no code,
+markers deleted: `kyo.Dict` is keyed and `collected` is an ordered multiset whose duplicates carry
+distinct states (and a deduplicating carrier would mask the S4 regression class); collect then
+release is order (innermost first needs the reverse walk) plus stack safety (the buffer is the
+explicit stack over a user-shaped spine); the helpers stay siblings because `drainOwed` needs both
+and has six callers. Correction recorded: the "ChunkBuilder was tried" claim has no commit, it is
+reasoning. Decisions still pending on the remaining notes:
 DO: rename `Stack.snapshot()` to `takeAll()` and `EffectTrace.Builder.entries` to `regions`;
 leave the five `Handler` methods and the three `release` helpers in place (the try/catch cost,
 the `answers` inline burst, the `StaleSymbolException` cascade if `Eval` became inlined-from);
