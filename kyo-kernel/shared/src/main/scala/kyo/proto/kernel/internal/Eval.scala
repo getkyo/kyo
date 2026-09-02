@@ -23,132 +23,8 @@ import scala.util.control.NonFatal
 
 @publicInBinary private[kyo] object Eval:
 
-    def release[A, S](v: A < S, ex: Throwable): Unit =
-        // TODO how about we use kyo.Dict?
-        val collected = ArrayBuffer.empty[AnyRef]
-        @tailrec def collect(v: Any): Unit =
-            v match
-                case p: Pending[?, ?] =>
-                    p match
-                        case kyo: Kyo.Defer[?, ?, ?, ?] =>
-                            collect(kyo.value)
-                        case kyo: Kyo.Handle[?, ?, ?, ?, ?, ?] =>
-                            kyo.handler match
-                                case hc: Handler.ContextHandler[?, ?, ?, ?] =>
-                                    collected += hc
-                                    collected += kyo.state.asInstanceOf[AnyRef]
-                                case _ => ()
-                            end match
-                            collect(kyo.value)
-                        case kyo: Kyo.Park[?, ?] =>
-                            expandOwed(collected, kyo.owed)
-                            val entries = kyo.entries
-                            var i       = 0
-                            while i < entries.regions do
-                                entries.handler(i) match
-                                    case hc: Handler.ContextHandler[?, ?, ?, ?] =>
-                                        collected += hc
-                                        collected += entries.state(i).asInstanceOf[AnyRef]
-                                    case _ => ()
-                                end match
-                                expandOwed(collected, entries.owed(i))
-                                i += 1
-                            end while
-                            collect(kyo.value)
-                        case _: Kyo.Suspend[?, ?, ?, ?] => ()
-                        case _: Kyo.Snapshot[?, ?]      => ()
-                case _ => ()
-        collect(v)
-        // TODO why do we need to collect then release? can't we release while iterating?
-        releaseCollected(collected, ex)
-    end release
-
-    private def expandOwed(collected: ArrayBuffer[AnyRef], owed: Chunk[Stack.Snapshot]): Unit =
-        if !owed.isEmpty then
-            val snapshots = owed.toIndexed
-            var j         = 0
-            while j < snapshots.length do
-                val snapshot = snapshots(j)
-                var i        = 0
-                while i < snapshot.regions do
-                    snapshot.handler(i) match
-                        case hc: Handler.ContextHandler[?, ?, ?, ?] =>
-                            collected += hc
-                            collected += snapshot.state(i).asInstanceOf[AnyRef]
-                        case _ => ()
-                    end match
-                    expandOwed(collected, snapshot.owed(i))
-                    i += 1
-                end while
-                j += 1
-            end while
-    end expandOwed
-
-    private def releaseCollected(collected: ArrayBuffer[AnyRef], ex: Throwable): Unit =
-        var i = collected.length - 2
-        while i >= 0 do
-            released(collected(i).asInstanceOf[Handler.ContextHandler[?, ?, ?, ?]], collected(i + 1), ex)
-            i -= 2
-        end while
-    end releaseCollected
-
-    private def drainOwed(owed: Chunk[Stack.Snapshot], ex: Throwable): Unit =
-        val collected = ArrayBuffer.empty[AnyRef]
-        expandOwed(collected, owed)
-        releaseCollected(collected, ex)
-    end drainOwed
-
-    private def unhandled(kyo: Pending[?, ?], stack: Stack): Nothing =
-        try bug(s"unhandled suspension: $kyo")
-        catch
-            case ex =>
-                EffectTrace.attach(ex, kyo, stack)
-                throw ex
-
-    private def unanswerable(handler: Handler[?, ?, ?]): Nothing = bug(s"unhandled: $handler")
-
-    private[kernel] def dumped(stack: Stack, idx: Int, kyo: Kyo.Suspend[?, ?, ?, ?]): Stack.Snapshot =
-        val entries = stack.dump(idx + 1)
-        Debugger.whenEnabled {
-            var i = entries.regions - 1
-            while i >= 0 do
-                Debugger.onRegionExit(entries.handler(i), kyo)
-                i -= 1
-        }
-        entries
-    end dumped
-
-    private def drainDiscarded(owed: Chunk[Stack.Snapshot]): Unit =
-        if !owed.isEmpty then
-            val signal = new KyoException("remainder discarded")(using Frame.internal)
-            drainOwed(owed, signal)
-            if signal.getSuppressed.length != 0 then Report.unhandled(signal)
-
-    private def rebound(stack: Stack, entries: Stack.Snapshot, ctx: Context): Context =
-        var c = ctx
-        var i = 0
-        while i < entries.regions do
-            entries.handler(i) match
-                case hc: Handler.ContextHandler[VX, CX, ?, ?] @unchecked =>
-                    val j = stack.find(hc.tag)
-                    c = if j < 0 then c.remove(hc.tag) else c.update(hc.tag, stack.state(j).asInstanceOf[VX])
-                case _ => ()
-            end match
-            i += 1
-        end while
-        c
-    end rebound
-
-    private def released(handler: Handler.ContextHandler[?, ?, ?, ?], state: Any, ex: Throwable): Unit =
-        Debugger.onRelease(handler, ex)
-        try handler.asInstanceOf[Handler.ContextHandler[Any, ContextEffect[Any], Any, Any]].release(state, ex)
-        catch
-            case t if NonFatal(t) && (t ne ex) => ex.addSuppressed(t)
-            case t if NonFatal(t)              => ()
-        end try
-    end released
-
-    def apply[A, S](v: A < S): A < S = apply(v, armed = false)
+    def apply[A, S](v: A < S): A < S =
+        apply(v, armed = false)
 
     def partial[A](v: A < Any): A < Any =
         val slot = Safepoint.get()
@@ -491,6 +367,132 @@ import scala.util.control.NonFatal
             Stack.release(stack)
         end try
     end apply
+
+    private def unhandled(kyo: Pending[?, ?], stack: Stack): Nothing =
+        try bug(s"unhandled suspension: $kyo")
+        catch
+            case ex =>
+                EffectTrace.attach(ex, kyo, stack)
+                throw ex
+
+    private def unanswerable(handler: Handler[?, ?, ?]): Nothing = bug(s"unhandled: $handler")
+
+    private[kernel] def dumped(stack: Stack, idx: Int, kyo: Kyo.Suspend[?, ?, ?, ?]): Stack.Snapshot =
+        val entries = stack.dump(idx + 1)
+        Debugger.whenEnabled {
+            var i = entries.regions - 1
+            while i >= 0 do
+                Debugger.onRegionExit(entries.handler(i), kyo)
+                i -= 1
+        }
+        entries
+    end dumped
+
+    private def drainDiscarded(owed: Chunk[Stack.Snapshot]): Unit =
+        if !owed.isEmpty then
+            val signal = new KyoException("remainder discarded")(using Frame.internal)
+            drainOwed(owed, signal)
+            if signal.getSuppressed.length != 0 then Report.unhandled(signal)
+
+    private def rebound(stack: Stack, entries: Stack.Snapshot, ctx: Context): Context =
+        var c = ctx
+        var i = 0
+        while i < entries.regions do
+            entries.handler(i) match
+                case hc: Handler.ContextHandler[VX, CX, ?, ?] @unchecked =>
+                    val j = stack.find(hc.tag)
+                    c = if j < 0 then c.remove(hc.tag) else c.update(hc.tag, stack.state(j).asInstanceOf[VX])
+                case _ => ()
+            end match
+            i += 1
+        end while
+        c
+    end rebound
+
+    private def released(handler: Handler.ContextHandler[?, ?, ?, ?], state: Any, ex: Throwable): Unit =
+        Debugger.onRelease(handler, ex)
+        try handler.asInstanceOf[Handler.ContextHandler[Any, ContextEffect[Any], Any, Any]].release(state, ex)
+        catch
+            case t if NonFatal(t) && (t ne ex) => ex.addSuppressed(t)
+            case t if NonFatal(t)              => ()
+        end try
+    end released
+
+    def release[A, S](v: A < S, ex: Throwable): Unit =
+        // TODO how about we use kyo.Dict?
+        val collected = ArrayBuffer.empty[AnyRef]
+        @tailrec def collect(v: Any): Unit =
+            v match
+                case p: Pending[?, ?] =>
+                    p match
+                        case kyo: Kyo.Defer[?, ?, ?, ?] =>
+                            collect(kyo.value)
+                        case kyo: Kyo.Handle[?, ?, ?, ?, ?, ?] =>
+                            kyo.handler match
+                                case hc: Handler.ContextHandler[?, ?, ?, ?] =>
+                                    collected += hc
+                                    collected += kyo.state.asInstanceOf[AnyRef]
+                                case _ => ()
+                            end match
+                            collect(kyo.value)
+                        case kyo: Kyo.Park[?, ?] =>
+                            expandOwed(collected, kyo.owed)
+                            val entries = kyo.entries
+                            var i       = 0
+                            while i < entries.regions do
+                                entries.handler(i) match
+                                    case hc: Handler.ContextHandler[?, ?, ?, ?] =>
+                                        collected += hc
+                                        collected += entries.state(i).asInstanceOf[AnyRef]
+                                    case _ => ()
+                                end match
+                                expandOwed(collected, entries.owed(i))
+                                i += 1
+                            end while
+                            collect(kyo.value)
+                        case _: Kyo.Suspend[?, ?, ?, ?] => ()
+                        case _: Kyo.Snapshot[?, ?]      => ()
+                case _ => ()
+        collect(v)
+        // TODO why do we need to collect then release? can't we release while iterating?
+        releaseCollected(collected, ex)
+    end release
+
+    // TODO if we still need these auxiliary methods for release, let's move them to nested methods in the release method
+    private def expandOwed(collected: ArrayBuffer[AnyRef], owed: Chunk[Stack.Snapshot]): Unit =
+        if !owed.isEmpty then
+            val snapshots = owed.toIndexed
+            var j         = 0
+            while j < snapshots.length do
+                val snapshot = snapshots(j)
+                var i        = 0
+                while i < snapshot.regions do
+                    snapshot.handler(i) match
+                        case hc: Handler.ContextHandler[?, ?, ?, ?] =>
+                            collected += hc
+                            collected += snapshot.state(i).asInstanceOf[AnyRef]
+                        case _ => ()
+                    end match
+                    expandOwed(collected, snapshot.owed(i))
+                    i += 1
+                end while
+                j += 1
+            end while
+    end expandOwed
+
+    private def releaseCollected(collected: ArrayBuffer[AnyRef], ex: Throwable): Unit =
+        var i = collected.length - 2
+        while i >= 0 do
+            released(collected(i).asInstanceOf[Handler.ContextHandler[?, ?, ?, ?]], collected(i + 1), ex)
+            i -= 2
+        end while
+    end releaseCollected
+
+    private def drainOwed(owed: Chunk[Stack.Snapshot], ex: Throwable): Unit =
+        val collected = ArrayBuffer.empty[AnyRef]
+        expandOwed(collected, owed)
+        releaseCollected(collected, ex)
+    end drainOwed
 
     type IX[_]
     type OX[_]
