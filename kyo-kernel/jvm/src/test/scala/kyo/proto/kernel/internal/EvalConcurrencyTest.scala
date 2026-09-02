@@ -9,8 +9,7 @@ import kyo.proto.kernel.ArrowEffect
 import org.scalatest.freespec.AnyFreeSpec
 
 class EvalConcurrencyTest extends AnyFreeSpec:
-    private def eval[A, S](v: A < S): A =
-        Nested.unnest[A](Eval(v))
+    private def eval[A](v: A < Any): A = v.eval
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())

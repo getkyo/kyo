@@ -11,7 +11,7 @@ import scala.collection.mutable.ListBuffer
 
 class DebuggerTest extends AnyFreeSpec:
 
-    private def eval[A](v: A < Any): A = Nested.unnest[A](Eval(v))
+    private def eval[A](v: A < Any): A = v.eval
 
     private def requestStop(): Unit =
         discard(Safepoint.get())

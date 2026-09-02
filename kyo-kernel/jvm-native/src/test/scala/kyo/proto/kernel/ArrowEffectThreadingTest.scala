@@ -4,7 +4,6 @@ import kyo.Const
 import kyo.Tag
 import kyo.proto.Arrow
 import kyo.proto.Loop
-import kyo.proto.kernel.internal.Eval
 import org.scalatest.freespec.AnyFreeSpec
 
 class ArrowEffectThreadingTest extends AnyFreeSpec:

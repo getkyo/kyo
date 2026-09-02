@@ -191,6 +191,19 @@ class EffectTraceTest extends AnyFreeSpec:
 
     inline def askWith[B, S](inline f: Int => B < S): B < (Ask & S) = ArrowEffect.suspendWith[Any](Tag[Ask], ())(f)
 
+    "a throw in a cont handler's clause carries the continuation it was handed" in {
+        val boom = new RuntimeException("boom")
+        val ex = intercept[RuntimeException] {
+            eval(ArrowEffect.handleCont(Tag[Ask], outerStep(ask))([C] => (_, _) => throw boom))
+        }
+        assert(ex eq boom)
+        val ms = methods(ex)
+        assert(ms.contains("innerStep"))
+        assert(ms.contains("outerStep"))
+        assert(ms.contains("ask"))
+        assert(ms.contains("handle"))
+    }
+
     "a throw in a handler clause carries the suspension and its region" in {
         val boom = new RuntimeException("boom")
         val ex = intercept[RuntimeException] {

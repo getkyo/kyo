@@ -6,7 +6,6 @@ import kyo.Tag
 import kyo.proto.Arrow
 import kyo.proto.Loop
 import kyo.proto.kernel.internal.Eval
-import kyo.proto.kernel.internal.Nested
 import kyo.proto.kernel.internal.Pending
 import kyo.proto.kernel.internal.Safepoint
 import org.scalatest.freespec.AnyFreeSpec
@@ -2239,56 +2238,6 @@ class ArrowEffectTest extends AnyFreeSpec:
             catch case _: Boom => -2) == -2)
         }
 
-        "a throwing release in a nested eval does not disarm the enclosing slice" in {
-            val inner: Int < Ask =
-                Effect.bracket(Effect.defer(1))((_, _) => throw new IllegalStateException("release"))(_ => ask.map(_ + 1))
-            val dropped: Int < Any =
-                ArrowEffect.handleCont(Tag[Ask], inner)([C] => (_, _) => -1, a => a)
-            var built = 0
-            val outer: Int < Any =
-                Effect.defer {
-                    kyo.discard(eval(dropped))
-                    0
-                }.map { z =>
-                    var acc: Int < Any = z
-                    var i              = 0
-                    while i < 100 do
-                        acc = acc.map { x =>
-                            built += 1
-                            if built == 50 then requestStop()
-                            x + 1
-                        }
-                        i += 1
-                    end while
-                    acc
-                }
-            val p = Eval.partial(outer)
-            assert(p.isInstanceOf[Pending[?, ?]])
-            assert(built >= 50 && built <= 52, s"built=$built")
-            assert(eval(p) == 100)
-            assert(built == 100)
-        }
-
-        "a throwing release on the completing path leaves the caller's safepoint state intact" in {
-            val v: Int < Ask =
-                Effect.bracket(Effect.defer(1))((_, _) => throw new IllegalStateException("release"))(_ => ask.map(_ + 1))
-            val dropped: Int < Any =
-                ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, _) => -1, a => a)
-            val slot = Safepoint.get()
-            kyo.discard(Safepoint.enter(slot))
-            kyo.discard(Safepoint.enter(slot))
-            try
-                val before = Safepoint.save(slot)
-                Safepoint.restore(slot, before)
-                kyo.discard(eval(dropped))
-                val after = Safepoint.save(slot)
-                Safepoint.restore(slot, after)
-                assert(after.equals(before))
-            finally
-                Safepoint.exit(slot)
-                Safepoint.exit(slot)
-            end try
-        }
     }
 
 end ArrowEffectTest

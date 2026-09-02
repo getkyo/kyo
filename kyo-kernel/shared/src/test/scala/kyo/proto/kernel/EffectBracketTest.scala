@@ -17,8 +17,7 @@ import scala.annotation.tailrec
 
 class EffectBracketTest extends AnyFreeSpec:
 
-    private def eval[A, S](v: A < S): A =
-        Nested.unnest[A](Eval(v))
+    private def eval[A](v: A < Any): A = v.eval
 
     private def requestStop(): Unit =
         discard(Safepoint.get())
@@ -278,7 +277,7 @@ class EffectBracketTest extends AnyFreeSpec:
             assert(eval(r) == -1)
             assert(outcomes.size == 1)
             assert(outcomes.head.isDefined)
-            discard(intercept[kyo.Closed](eval(leaked.get(1))))
+            discard(intercept[kyo.Closed](eval(answerAsk(0)(leaked.get(1)))))
             assert(outcomes.size == 1)
         }
 

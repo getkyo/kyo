@@ -10,8 +10,7 @@ import org.scalatest.freespec.AnyFreeSpec
 
 class ReportTest extends AnyFreeSpec:
 
-    private def eval[A, S](v: A < S): A =
-        Nested.unnest[A](Eval(v))
+    private def eval[A](v: A < Any): A = v.eval
 
     private object Bad extends RuntimeException("bad", null, true, false)
 

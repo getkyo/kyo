@@ -6,9 +6,6 @@ import kyo.Tag
 import kyo.proto.Arrow
 import kyo.proto.Kyo
 import kyo.proto.Loop
-import kyo.proto.kernel.internal.Eval
-import kyo.proto.kernel.internal.Nested
-import kyo.proto.kernel.internal.Pending
 import kyo.proto.kernel.internal.Safepoint
 import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
