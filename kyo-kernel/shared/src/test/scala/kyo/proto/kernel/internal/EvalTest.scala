@@ -719,30 +719,25 @@ class EvalTest extends AnyFreeSpec:
             assert(p.eval == 42)
         }
 
-        "abandoning a park does not derive or release a region it never entered" in {
-            var derives  = 0
-            var releases = 0
+        "an abandoned region value derives its state once and releases that state" in {
+            var derives = 0
+            val log     = ListBuffer[String]()
             sealed trait Cfg extends ContextEffect[Int]
             val region: Int < Any =
                 ContextEffect.handle(Tag[Cfg])(
                     derive = (_: Maybe[Int]) =>
                         derives += 1
-                        1
+                        derives
                     ,
                     fork = (s: Int) => s,
                     join = (p: Int, _: Int, _: Int) => p,
-                    release = (_: Int, _: Throwable) => releases += 1
+                    release = (s: Int, _: Throwable) => discard(log += s"release $s")
                 )(ContextEffect.suspend(Tag[Cfg]))
-            val v: Int < Any = Effect.defer {
-                requestStop()
-                region.map(_ + 1)
-            }
-            val p = Eval.partial(v)
-            assert(p.evalNow.isEmpty)
-            assert(derives == 0)
-            Eval.release(p, Boom)
-            assert(derives == 0)
-            assert(releases == 0)
+            Eval.release(region, Boom)
+            assert(derives == 1)
+            assert(log.toList == List("release 1"))
+            discard(region.toString)
+            assert(derives == 1)
         }
 
         "release of a settled value or an obligation-free computation owes nothing" in {

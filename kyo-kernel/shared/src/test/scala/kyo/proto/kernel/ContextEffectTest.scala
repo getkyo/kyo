@@ -3,6 +3,7 @@ package kyo.proto.kernel
 import kyo.Const
 import kyo.Maybe
 import kyo.Tag
+import kyo.discard
 import kyo.proto.Loop
 import org.scalatest.freespec.AnyFreeSpec
 import scala.collection.mutable.ListBuffer
@@ -218,8 +219,8 @@ class ContextEffectTest extends AnyFreeSpec:
                 derive = (_: Maybe[Int]) => 1,
                 fork = (s: Int) => s,
                 join = (parent: Int, _: Int, _: Int) => parent,
-                done = (_: Int) => log += "done",
-                release = (_: Int, _: Throwable) => log += "release"
+                done = (_: Int) => discard(log += "done"),
+                release = (_: Int, _: Throwable) => discard(log += "release")
             )(v)
 
         "a region crossed to a foreign loop answered with a pending outcome completes without a release" in {
