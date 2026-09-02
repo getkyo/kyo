@@ -10,6 +10,8 @@ import kyo.discard
 import kyo.proto.Arrow
 import kyo.proto.Kyo
 import kyo.proto.Loop
+import kyo.proto.kernel.internal.Eval
+import kyo.proto.kernel.internal.Safepoint
 import kyo.proto.kernel.internal.Stack
 import scala.collection.mutable.ListBuffer
 
@@ -623,6 +625,87 @@ class IsolateTest extends Test:
                 crossing(crossing(read1))
             )
             assert(v.eval.eval.eval == 4)
+        }
+    }
+
+    "eff issue 12 pins" - {
+        sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
+        def ask: Int < Ask          = ArrowEffect.suspend[Any](Tag[Ask], ())
+        def read: Int < TestEffect1 = ContextEffect.suspend(Tag[TestEffect1])
+
+        def answerAsk[A, S](value: Int)(v: A < (Ask & S)): A < S =
+            ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue((), value: Int < Any), a => a)
+
+        def requestStop(): Unit =
+            discard(Safepoint.get())
+            discard(Safepoint.stop(Thread.currentThread()))
+            Safepoint.deadline(java.lang.System.currentTimeMillis() - 1)
+
+        "a crossing inside an isolated child resumed twice joins each shot into the live parent" in {
+            val log                              = ListBuffer[String]()
+            val child: Int < (TestEffect1 & Ask) = Isolate.internal.Contextual.run(read.map(c => ask.map(a => c + a)))
+            val handled: Int < TestEffect1 = ArrowEffect.handleCont(Tag[Ask], child)(
+                [C] => (_, cont) => cont(1).map(x => cont(2).map(y => x * 100 + y)),
+                a => a
+            )
+            val r: (Int, Int) < Any = ContextEffect.handle(Tag[TestEffect1])(
+                (o: Maybe[Int]) => o.getOrElse(10),
+                fork = (p: Int) => p * 2,
+                join = (p: Int, _: Int, c: Int) => p + c,
+                done = (s: Int) => discard(log += s"done $s")
+            )(handled.map(v => read.map(after => (v, after))))
+            assert(r.eval == ((2122, 50)))
+            assert(log.toList == List("done 50"))
+        }
+
+        "an isolate parked inside its child joins into the origin re-established by the park" in {
+            val log = ListBuffer[String]()
+            val child: Int < TestEffect1 = Isolate.internal.Contextual.run(read.map { c =>
+                requestStop()
+                Effect.defer(c + 1)
+            })
+            val prog: (Int, Int) < Any = ContextEffect.handle(Tag[TestEffect1])(
+                (o: Maybe[Int]) => o.getOrElse(10),
+                fork = (p: Int) => p * 2,
+                join = (p: Int, _: Int, c: Int) => p + c,
+                done = (s: Int) => discard(log += s"done $s")
+            )(child.map(v => read.map(after => (v, after))))
+            val parked = Eval.partial(prog)
+            assert(parked.evalNow.isEmpty)
+            assert(log.isEmpty)
+            assert(parked.eval == ((21, 30)))
+            assert(log.toList == List("done 30"))
+        }
+
+        "an isolate resumed under a different region of its tag joins nothing" in {
+            var stash = Maybe.empty[Arrow[Int, Int, Ask & TestEffect1]]
+            val log   = ListBuffer[String]()
+            def region[A](label: String)(v: A < TestEffect1): A < Any =
+                ContextEffect.handle(Tag[TestEffect1])(
+                    (o: Maybe[Int]) => o.getOrElse(10),
+                    fork = (p: Int) => p * 2,
+                    join = (p: Int, _: Int, c: Int) =>
+                        log += s"join $label"
+                        p + c
+                    ,
+                    done = (s: Int) => discard(log += s"done $label $s")
+                )(v)
+            val child: Int < (TestEffect1 & Ask) = Isolate.internal.Contextual.run(read.map(c => ask.map(a => c + a)))
+            val first: Int < Any = region("first")(
+                ArrowEffect.handleCont(Tag[Ask], child)(
+                    [C] =>
+                        (_, cont) =>
+                            stash = Maybe(cont)
+                            -1
+                    ,
+                    a => a
+                )
+            )
+            assert(first.eval == -1)
+            assert(log.toList == List("done first 10"))
+            val second: Int < Any = region("second")(answerAsk(0)(stash.get(1)))
+            assert(second.eval == 21)
+            assert(log.toList == List("done first 10", "done second 10"))
         }
     }
 

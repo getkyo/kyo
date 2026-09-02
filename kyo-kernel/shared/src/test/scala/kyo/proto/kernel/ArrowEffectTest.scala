@@ -2294,4 +2294,154 @@ class ArrowEffectTest extends AnyFreeSpec:
         }
     }
 
+    "eff issue 12 pins" - {
+        sealed trait Cfg extends ContextEffect[Int]
+        def read: Int < Cfg = ContextEffect.suspend(Tag[Cfg])
+
+        def answerAsk[A, S](value: Int)(v: A < (Ask & S)): A < S =
+            ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue((), value: Int < Any), a => a)
+
+        "a local handler around the operation does not see the effect its interpreter's clause raises" in {
+            var localAnswered = 0
+            val local: Int < Ask =
+                ArrowEffect.handleCont(Tag[Say], ask: Int < (Ask & Say))(
+                    [C] =>
+                        (_, _) =>
+                            localAnswered += 1
+                            -1
+                    ,
+                    a => a
+                )
+            val interpreted: Int < Say =
+                ArrowEffect.handleCont(Tag[Ask], local)([C] => (_, cont) => say("not caught").map(_ => cont(0)), a => a)
+            val r: Int < Any = ArrowEffect.handleCont(Tag[Say], interpreted)([C] => (_, _) => -99, a => a)
+            assert(r.eval == -99)
+            assert(localAnswered == 0)
+        }
+
+        "a computation answered as a value runs under the local handler the clause could not see" in {
+            var localAnswered = 0
+            val local: Int < AskBoxed =
+                ArrowEffect.handleCont(Tag[Say], askBoxed.map(v => v): Int < (AskBoxed & Say))(
+                    [C] =>
+                        (_, _) =>
+                            localAnswered += 1
+                            -1
+                    ,
+                    a => a
+                )
+            val payload: Int < Say = say("not caught").map(_ => 7)
+            val interpreted: Int < Say =
+                ArrowEffect.handleCont(Tag[AskBoxed], local)([C] => (_, cont) => cont(payload), a => a)
+            val r: Int < Any = ArrowEffect.handleCont(Tag[Say], interpreted)([C] => (_, _) => -99, a => a)
+            assert(r.eval == -1)
+            assert(localAnswered == 1)
+        }
+
+        "a handler whose clause suspends outward travels with the continuation and answers ahead of the handler at the resume site" in {
+            var stash           = Maybe.empty[Arrow[Unit, Int, Say]]
+            val yields          = ListBuffer[String]()
+            var atResumeSite    = 0
+            val body: Int < Ask = ask.map(a => ask.map(b => a * 10 + b))
+            val captured: Int < Say =
+                ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, cont) => say("yield").map(_ => cont(1)), a => a)
+            val first: Int < Any = ArrowEffect.handleCont(Tag[Say], captured)(
+                [C] =>
+                    (_, cont) =>
+                        stash = Maybe(cont)
+                        -1
+                ,
+                a => a
+            )
+            assert(first.eval == -1)
+            val swapped: Int < Say =
+                ArrowEffect.handleCont(Tag[Ask], stash.get(()): Int < (Ask & Say))(
+                    [C] =>
+                        (_, cont) =>
+                            atResumeSite += 1
+                            cont(5)
+                    ,
+                    a => a
+                )
+            val second: Int < Any = ArrowEffect.handleCont(Tag[Say], swapped)(
+                [C] =>
+                    (s, cont) =>
+                        yields += s
+                        cont(())
+                ,
+                a => a
+            )
+            assert(second.eval == 11)
+            assert(atResumeSite == 0)
+            assert(yields.toList == List("yield"))
+        }
+
+        "a clause's code after the resume runs where the continuation is resumed, under the bindings there" in {
+            var stash = Maybe.empty[Arrow[Unit, Int, Say & Cfg]]
+            val captured: Int < (Say & Cfg) =
+                ArrowEffect.handleCont(Tag[Ask], ask.map(a => a))(
+                    [C] => (_, cont) => say("yield").map(_ => cont(1)).map(x => read.map(c => x + c)),
+                    a => a
+                )
+            val first: Int < Any =
+                ContextEffect.handleInheritable(Tag[Cfg], 10)(
+                    ArrowEffect.handleCont(Tag[Say], captured)(
+                        [C] =>
+                            (_, cont) =>
+                                stash = Maybe(cont)
+                                -1
+                        ,
+                        a => a
+                    )
+                )
+            assert(first.eval == -1)
+            val second: Int < Any =
+                ContextEffect.handleInheritable(Tag[Cfg], 100)(
+                    ArrowEffect.handleCont(Tag[Say], stash.get(()))([C] => (_, cont) => cont(()), a => a)
+                )
+            assert(second.eval == 101)
+        }
+
+        "a recovery captured with the continuation answers a throw in the remainder before the resume site's recovery" in {
+            val boom                     = new RuntimeException("boom")
+            var stash                    = Maybe.empty[Arrow[Int, Int, Ask & Wrap]]
+            val body: Int < (Ask & Wrap) = recovering(ask.map(a => if a < 0 then (throw boom): Int else a))(_ => -1)
+            val first: Int < Any = recovering(
+                ArrowEffect.handleCont(Tag[Ask], body)(
+                    [C] =>
+                        (_, cont) =>
+                            stash = Maybe(cont)
+                            0
+                    ,
+                    a => a
+                )
+            )(_ => -3)
+            assert(first.eval == 0)
+            val resumed: Int < Any = recovering(answerAsk(0)(stash.get(-5)))(_ => -2)
+            assert(resumed.eval == -1)
+        }
+
+        "a loop region's recovery does not guard its clause after the clause suspends" in {
+            val boom = new RuntimeException("boom")
+            val viaLoop: Int < Say = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))(
+                [C] => _ => say("c").map(_ => (throw boom): Loop.Outcome2[Unit, Int < (Ask & Say), Int < Say]),
+                a => a,
+                _ => Maybe(-1)
+            )
+            val r = ArrowEffect.handleCont(Tag[Say], viaLoop)([C] => (_, cont) => cont(()), a => a)
+            assert(intercept[RuntimeException](r.eval) eq boom)
+        }
+
+        "a cont region's recovery guards its clause after the clause suspends" in {
+            val boom = new RuntimeException("boom")
+            val viaCont: Int < Say = ArrowEffect.handleCont(Tag[Ask], ask.map(_ + 1))(
+                [C] => (_, _) => say("c").map(_ => (throw boom): Int),
+                a => a,
+                _ => Maybe(-1)
+            )
+            val r = ArrowEffect.handleCont(Tag[Say], viaCont)([C] => (_, cont) => cont(()), a => a)
+            assert(r.eval == -1)
+        }
+    }
+
 end ArrowEffectTest

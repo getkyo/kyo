@@ -305,6 +305,78 @@ class ContextEffectTest extends AnyFreeSpec:
             assert(intercept[RuntimeException](r.eval) eq boom)
             assert(log.toList == List("release 7 true"))
         }
+
+        def answerAsk[A, S](value: Int)(v: A < (Ask & S)): A < S =
+            ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue((), value: Int < Any), a => a)
+
+        "a crossing resumed in a nested eval inside the clause completes its region without a release at the owner's exit" in {
+            val log             = ListBuffer[String]()
+            val body: Int < Ask = hooked(log, "cfg", 1)(ask.map(_ + 1))
+            val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
+                [C] => (_, cont) => answerAsk(0)(cont(41)).eval + 1,
+                a => a
+            )
+            assert(r.eval == 43)
+            assert(log.toList == List("done cfg 1"))
+        }
+
+        "a binding below the answering handler is the resume site's, one above it is the captured one" in {
+            var stash = Maybe.empty[Arrow[Int, (Int, Int), Ask & Count]]
+            val body: (Int, Int) < (Ask & Count & Cfg) =
+                ask.map(a => count.map(c => ContextEffect.suspend(Tag[Cfg]).map(c2 => (c + a, c2))))
+            val inside: (Int, Int) < (Ask & Count) = ContextEffect.handleInheritable(Tag[Cfg], 2)(body)
+            val handled: (Int, Int) < Count = ArrowEffect.handleCont(Tag[Ask], inside)(
+                [C] =>
+                    (_, cont) =>
+                        stash = Maybe(cont)
+                        (-1, -1)
+                ,
+                a => a
+            )
+            assert(ContextEffect.handleInheritable(Tag[Count], 1)(handled).eval == ((-1, -1)))
+            val resumed: (Int, Int) < Any =
+                ContextEffect.handleInheritable(Tag[Count], 100)(
+                    ContextEffect.handleInheritable(Tag[Cfg], 200)(answerAsk(0)(stash.get(0)))
+                )
+            assert(resumed.eval == ((100, 2)))
+        }
+
+        "each shot re-establishes a hooked region and completes it before the clause continues" in {
+            val log             = ListBuffer[String]()
+            val body: Int < Ask = hooked(log, "cfg", 1)(ask.map(_ + 1))
+            val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
+                [C] =>
+                    (_, cont) =>
+                        cont(1).map { a =>
+                            log += s"shot $a"
+                            cont(2).map { b =>
+                                log += s"shot $b"
+                                a + b
+                            }
+                        }
+                ,
+                a =>
+                    log += "handler done"
+                    a
+            )
+            assert(r.eval == 5)
+            assert(log.toList == List("done cfg 1", "shot 2", "done cfg 1", "shot 3", "handler done"))
+        }
+
+        "a handleFirst remainder re-enters a raw region the region's end already released" in {
+            val log             = ListBuffer[String]()
+            val body: Int < Ask = hooked(log, "cfg", 1)(ask.map(_ + 1))
+            val first: Int < Ask = ArrowEffect.handleFirst[Const[Unit], Const[Int], Ask, Int, Int, Any, Ask](Tag[Ask], body)(
+                handle = [C] =>
+                    (_, cont) =>
+                        log += "clause"
+                        cont(41)
+                ,
+                done = a => a
+            )
+            assert(answerAsk(0)(first).eval == 42)
+            assert(log.toList == List("clause", "release cfg 1", "done cfg 1"))
+        }
     }
 
     sealed trait MapCtx extends ContextEffect[Map[String, Int]]

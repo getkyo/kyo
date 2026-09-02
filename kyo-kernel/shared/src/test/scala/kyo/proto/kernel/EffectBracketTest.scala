@@ -629,6 +629,58 @@ class EffectBracketTest extends AnyFreeSpec:
             assert(again.eval == -2)
             assert(!usedAfter)
         }
+
+        "a bracket outside the answering handler is not carried by an escaped continuation, so the remainder runs after the release" in {
+            var stash = Maybe.empty[Arrow[Int, Int, Ask]]
+            val log   = ListBuffer[String]()
+            val v: Int < Any =
+                Effect.bracket(Effect.defer(1))((_, _) => discard(log += "release")) { r =>
+                    ArrowEffect.handleCont(
+                        Tag[Ask],
+                        ask.map { a =>
+                            log += s"use $r"
+                            a + r
+                        }
+                    )(
+                        [C] =>
+                            (_, cont) =>
+                                stash = Maybe(cont)
+                                -1
+                        ,
+                        a => a
+                    )
+                }
+            assert(v.eval == -1)
+            assert(log.toList == List("release"))
+            assert(answerAsk(0)(stash.get(41)).eval == 42)
+            assert(log.toList == List("release", "use 1"))
+        }
+
+        "a park taken in a clause before it resumes a crossing carries the crossed bracket" in {
+            def program(seen: ListBuffer[Maybe[Throwable]]): Int < Any =
+                val body: Int < Ask =
+                    Effect.bracket(Effect.defer(7))((_, outcome) => discard(seen += outcome))(a => ask.map(_ + a))
+                ArrowEffect.handleCont(Tag[Ask], body)(
+                    [C] =>
+                        (_, cont) =>
+                            Effect.defer {
+                                requestStop()
+                                ()
+                            }.map(_ => Effect.defer(cont(1)))
+                    ,
+                    a => a
+                )
+            val abandoned = ListBuffer[Maybe[Throwable]]()
+            val p1        = Eval.partial(program(abandoned))
+            assert(p1.evalNow.isEmpty)
+            Eval.release(p1, Boom)
+            assert(abandoned.toList == List(Maybe(Boom)))
+            val resumed = ListBuffer[Maybe[Throwable]]()
+            val p2      = Eval.partial(program(resumed))
+            assert(p2.evalNow.isEmpty)
+            assert(p2.eval == 8)
+            assert(resumed.toList == List(Maybe.empty))
+        }
     }
 
     "unit acquire" - {
