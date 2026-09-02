@@ -11,6 +11,7 @@ import kyo.proto.Arrow
 import kyo.proto.Kyo
 import kyo.proto.Loop
 import kyo.proto.kernel.internal.Stack
+import scala.collection.mutable.ListBuffer
 
 class IsolateTest extends Test:
 
@@ -560,6 +561,18 @@ class IsolateTest extends Test:
                         .map(_ => ContextEffect.suspend(Tag[TestEffect1]))
                 }
             assert(v.eval == 10)
+        }
+
+        "an isolate cycle fires done once, for the region the user installed" in {
+            val log = ListBuffer[String]()
+            val r: Int < Any = ContextEffect.handle(Tag[TestEffect1])(
+                (o: Maybe[Int]) => o.getOrElse(10),
+                fork = (p: Int) => p * 2,
+                join = (p: Int, _: Int, c: Int) => p + c,
+                done = (s: Int) => discard(log += s"done $s")
+            )(Isolate.internal.Contextual.run(ContextEffect.suspend(Tag[TestEffect1])))
+            assert(r.eval == 20)
+            assert(log.toList == List("done 10"))
         }
 
         "a restored crossing reads the binding it captured, not the scope it restores in" in {
