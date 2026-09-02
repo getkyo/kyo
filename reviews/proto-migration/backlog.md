@@ -500,9 +500,12 @@ Everything open, in one place, so nothing above has to be re-derived. Numbered f
    and the elaborating handler; and a clause's post-resume code sits below the re-installed
    regions. The last is pinned at `0f74c1dfce`, ArrowEffectTest "a clause's code after the
    resume is not captured by a coroutine handler inside the region", green (208 in the class).
-   The remaining ticket content is semantics, labelled so by both authors, and open for a ruling:
-   a captured `catch` region answers ahead of the resume site's handler (pinned as law), where
-   lexi-lambda proposes interposition instead.
+   The remaining ticket content is semantics, labelled so by both authors, and none of it is a
+   fork here: a captured region answers ahead of the resume site's handler because the
+   continuation carries its frames, which is lexical scoping, pinned as law. lexi-lambda's
+   interposition proposal repairs eff's own encoding of `catch` as a hidden nested handler that
+   shadows the one `handle` installed and leaks into the effect list; the kernel has no hidden
+   encoding, a nested handler is one the program wrote, so there is nothing to interpose on.
 3. **Fixes blocked by "tests only".** S9, S10, and the entry 9 flip if ruled; the S9 fix also
    revisits S4's lane scan, which the mark subsumes.
 4. **The fifteen TODO notes.** Section T above: the DO items (two renames, the `KyoInternal` split
