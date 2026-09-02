@@ -2,34 +2,36 @@ package kyo.proto.kernel.internal
 
 import kyo.Maybe
 import kyo.Tag
-import kyo.TypeMap
-import kyo.internal.NotIntersection
+import kyo.bug
 import kyo.proto.kernel.ContextEffect
+import scala.annotation.tailrec
 
-opaque type Context = TypeMap[Any]
+sealed abstract private[kernel] class Context:
 
-object Context:
+    final def bind[A, E <: ContextEffect[A]](tag: Tag[E], value: A): Context =
+        Context.Bound(tag.erased, value, this)
 
-    private[kernel] val empty: Context = TypeMap.empty
+    final def get[A, E <: ContextEffect[A]](tag: Tag[E]): Maybe[A] =
+        val te = tag.erased
+        @tailrec def loop(c: Context): Maybe[A] =
+            c match
+                case b: Context.Bound => if b.tag <:< te then Maybe(b.value.asInstanceOf[A]) else loop(b.next)
+                case _                => Maybe.empty
+        loop(this)
+    end get
 
-    extension (self: Context)
+    def unbind: Context
 
-        private[kernel] inline def get[A, E <: ContextEffect[A]](tag: Tag[E]): Maybe[A] =
-            Maybe.when(self <:< tag)(self(tag))
+end Context
 
-        private[kernel] inline def contains[E](tag: Tag[E]): Boolean =
-            self <:< tag
+private[kernel] object Context:
 
-        private[kernel] inline def apply[A, E <: ContextEffect[A]](tag: Tag[E]): A =
-            self.get[Any](using tag.erased, NotIntersection.singleton).asInstanceOf[A]
+    val empty: Context = Empty
 
-        private[kernel] inline def update[A, E <: ContextEffect[A]](tag: Tag[E], value: A): Context =
-            self.add[Any](value)(using tag.erased)
+    private object Empty extends Context:
+        def unbind: Context = bug("unbind on an empty context")
 
-        private[kernel] inline def updateErased[E](tag: Tag[E], value: Any): Context =
-            self.add[Any](value)(using tag.erased)
+    final private class Bound(val tag: Tag[Any], val value: Any, val next: Context) extends Context:
+        def unbind: Context = next
 
-        private[kernel] inline def remove[E](tag: Tag[E]): Context =
-            TypeMap.removeExact(self, tag.erased)
-    end extension
 end Context

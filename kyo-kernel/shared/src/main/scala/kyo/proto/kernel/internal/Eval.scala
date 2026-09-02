@@ -71,7 +71,7 @@ import scala.util.control.NonFatal
                                     case handler: Handler.ContHandler[IX, OX, EX, C, Y, S2] @unchecked =>
                                         // TODO how about we move the atTop branching to the called methods?
                                         val entries = if atTop then Stack.Snapshot.empty else dumped(stack, idx, kyo)
-                                        val ctx2    = if atTop then ctx else rebound(stack, entries, ctx)
+                                        val ctx2    = if atTop then ctx else rebound(entries, ctx)
                                         val continuation =
                                             if atTop then kyo.cont.chain(contA.chain(contB))
                                             else kyo.crossing(entries, contA.chain(contB))
@@ -80,7 +80,7 @@ import scala.util.control.NonFatal
                                         loop(result, Arrow.id, Arrow.id, ctx2)
                                     case handler: Handler.ContOpHandler[EX, C, Y, S2] @unchecked =>
                                         val entries = if atTop then Stack.Snapshot.empty else dumped(stack, idx, kyo)
-                                        val ctx2    = if atTop then ctx else rebound(stack, entries, ctx)
+                                        val ctx2    = if atTop then ctx else rebound(entries, ctx)
                                         val continuation =
                                             if atTop then kyo.cont.chain(contA.chain(contB))
                                             else kyo.crossing(entries, contA.chain(contB))
@@ -129,12 +129,12 @@ import scala.util.control.NonFatal
                                                 loop(outcome._2, kyo.cont, contA.chain(contB), ctx)
                                             case outcome: Loop.Continue2[VX, OX[VX] < (EX & S2)] @unchecked =>
                                                 val entries = dumped(stack, idx, kyo)
-                                                val ctx2    = rebound(stack, entries, ctx)
+                                                val ctx2    = rebound(entries, ctx)
                                                 stack.setState(idx, outcome._1)
                                                 loop(outcome._2, kyo.crossing(entries, contA.chain(contB)), Arrow.id, ctx2)
                                             case pending: Pending[Outcome2[VX, OX[VX] < (EX & S2), Y < S2], S2] @unchecked =>
                                                 val entries = dumped(stack, idx, kyo)
-                                                val ctx2    = rebound(stack, entries, ctx)
+                                                val ctx2    = rebound(entries, ctx)
                                                 val next    = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, S2]]
                                                 Debugger.onRegionExit(handler, pending)
                                                 stack.pop()
@@ -145,7 +145,7 @@ import scala.util.control.NonFatal
                                                 loop[OutT, Y, Any, S2](pending, handler.clauseDispatch(reentry2), next, ctx2)
                                             case outcome =>
                                                 val entries = dumped(stack, idx, kyo)
-                                                val ctx2    = rebound(stack, entries, ctx)
+                                                val ctx2    = rebound(entries, ctx)
                                                 val result =
                                                     Nested.unnest[Y < S2](Loop.unnest(outcome.asInstanceOf[Outcome2[
                                                         VX,
@@ -167,7 +167,7 @@ import scala.util.control.NonFatal
                     kyo.handler match
                         case handler: Handler.ContextHandler[VX, CX, ?, ?] @unchecked =>
                             val newState   = handler.derive(ctx.get(handler.tag))
-                            val newContext = ctx.update(handler.tag, newState)
+                            val newContext = ctx.bind(handler.tag, newState)
                             Debugger.onContext(kyo, newContext)
                             Debugger.onRegionEnter(kyo.handler, newState)
                             stack.push(kyo.handler, newState, kyo.cont.chain(contA.chain(contB)))
@@ -266,7 +266,7 @@ import scala.util.control.NonFatal
                             Debugger.onRegionEnter(hc, st)
                             stack.push(hc, st, cont)
                             stack.owe(stack.depth - 1, entries.owed(i))
-                            install(i + 1, c.update(hc.tag, st))
+                            install(i + 1, c.bind(hc.tag, st))
                         case handler0 =>
                             val handler = handler0.asInstanceOf[Handler[EX, Y, Any]]
                             val st      = entries.state(i).asInstanceOf[VX]
@@ -283,9 +283,7 @@ import scala.util.control.NonFatal
             stack.pop()
             if stack.owesAny then
                 drainDiscarded(stack.takePopped())
-            val j = stack.findExact(hc.tag)
-            if j < 0 then ctx.remove(hc.tag)
-            else ctx.update(hc.tag, stack.state(j).asInstanceOf[VX])
+            ctx.unbind
         end contextExit
 
         def arrowExit(): Unit =
@@ -300,7 +298,7 @@ import scala.util.control.NonFatal
                 else
                     stack.handler(i) match
                         case handler: Handler.ContextHandler[VX, CX, ?, ?] @unchecked =>
-                            rebuild(i + 1, c.update(handler.tag, stack.state(i).asInstanceOf[VX]))
+                            rebuild(i + 1, c.bind(handler.tag, stack.state(i).asInstanceOf[VX]))
                         case _ => rebuild(i + 1, c)
             rebuild(0, Context.empty)
         end rebuilt
@@ -408,16 +406,11 @@ import scala.util.control.NonFatal
             drainOwed(owed, signal)
             if signal.getSuppressed.length != 0 then Report.unhandled(signal)
 
-    private def rebound(stack: Stack, entries: Stack.Snapshot, ctx: Context): Context =
+    private def rebound(entries: Stack.Snapshot, ctx: Context): Context =
         var c = ctx
         var i = 0
         while i < entries.regions do
-            entries.handler(i) match
-                case hc: Handler.ContextHandler[VX, CX, ?, ?] @unchecked =>
-                    val j = stack.findExact(hc.tag)
-                    c = if j < 0 then c.remove(hc.tag) else c.update(hc.tag, stack.state(j).asInstanceOf[VX])
-                case _ => ()
-            end match
+            if entries.handler(i).isInstanceOf[Handler.ContextHandler[?, ?, ?, ?]] then c = c.unbind
             i += 1
         end while
         c

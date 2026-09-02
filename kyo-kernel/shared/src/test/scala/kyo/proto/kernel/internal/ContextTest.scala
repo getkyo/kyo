@@ -9,92 +9,70 @@ class ContextTest extends AnyFreeSpec:
 
     sealed trait TestEffect1 extends ContextEffect[Int]
     sealed trait TestEffect2 extends ContextEffect[String]
+    sealed trait Base        extends ContextEffect[Int]
+    sealed trait Sub         extends Base
 
-    "empty" - {
-        "contains no tag" in {
-            assert(!Context.empty.contains(Tag[TestEffect1]))
-            assert(!Context.empty.contains(Tag[TestEffect2]))
-        }
-
-        "gets nothing" in {
-            assert(Context.empty.get(Tag[TestEffect1]).isEmpty)
-        }
+    "empty reads nothing" in {
+        assert(Context.empty.get(Tag[TestEffect1]).isEmpty)
+        assert(Context.empty.get(Tag[TestEffect2]).isEmpty)
     }
 
-    "contains" - {
-        "is true for a bound tag" in {
-            val context = Context.empty.update(Tag[TestEffect1], 42)
-            assert(context.contains(Tag[TestEffect1]))
-        }
-
-        "is false for an unbound tag" in {
-            val context = Context.empty.update(Tag[TestEffect1], 42)
-            assert(!context.contains(Tag[TestEffect2]))
-        }
-    }
-
-    "get" - {
-        "returns the bound value" in {
-            val context = Context.empty.update(Tag[TestEffect1], 42)
+    "bind" - {
+        "reads back the bound value" in {
+            val context = Context.empty.bind(Tag[TestEffect1], 42)
             assert(context.get(Tag[TestEffect1]) == Maybe(42))
         }
 
-        "is empty for an unbound tag" in {
-            val context = Context.empty.update(Tag[TestEffect1], 42)
+        "reads nothing for an unbound tag" in {
+            val context = Context.empty.bind(Tag[TestEffect1], 42)
             assert(context.get(Tag[TestEffect2]).isEmpty)
         }
-    }
 
-    "apply returns the bound value" in {
-        val context = Context.empty.update(Tag[TestEffect1], 42)
-        assert(context(Tag[TestEffect1]) == 42)
-    }
-
-    "update" - {
-        "adds a new binding" in {
-            val context = Context.empty.update(Tag[TestEffect1], 42)
-            assert(context.get(Tag[TestEffect1]) == Maybe(42))
-        }
-
-        "replaces an existing binding" in {
-            val context = Context.empty.update(Tag[TestEffect1], 42).update(Tag[TestEffect1], 24)
+        "a second binding of the same tag shadows the first" in {
+            val context = Context.empty.bind(Tag[TestEffect1], 42).bind(Tag[TestEffect1], 24)
             assert(context.get(Tag[TestEffect1]) == Maybe(24))
         }
 
-        "through the erased tag binds the same slot" in {
-            val context = Context.empty.updateErased(Tag[TestEffect1], 7)
-            assert(context.get(Tag[TestEffect1]) == Maybe(7))
-        }
-    }
-
-    "remove" - {
-        "drops the binding" in {
-            val context = Context.empty.update(Tag[TestEffect1], 42).remove(Tag[TestEffect1])
-            assert(!context.contains(Tag[TestEffect1]))
-            assert(context.get(Tag[TestEffect1]).isEmpty)
-        }
-
-        "leaves the other bindings" in {
-            val context = Context.empty
-                .update(Tag[TestEffect1], 42)
-                .update(Tag[TestEffect2], "test")
-                .remove(Tag[TestEffect1])
+        "bindings of different tags do not interfere" in {
+            val context = Context.empty.bind(Tag[TestEffect1], 42).bind(Tag[TestEffect2], "test")
+            assert(context.get(Tag[TestEffect1]) == Maybe(42))
             assert(context.get(Tag[TestEffect2]) == Maybe("test"))
         }
+    }
 
-        "of an unbound tag changes nothing" in {
-            val context = Context.empty.update(Tag[TestEffect1], 42).remove(Tag[TestEffect2])
-            assert(context.get(Tag[TestEffect1]) == Maybe(42))
-            assert(!context.contains(Tag[TestEffect2]))
+    "a read at a supertype" - {
+        "takes an inner subtype binding over an outer exact one" in {
+            val context = Context.empty.bind(Tag[Base], 1).bind(Tag[Sub], 2)
+            assert(context.get(Tag[Base]) == Maybe(2))
+        }
+
+        "takes an inner exact binding over an outer subtype one" in {
+            val context = Context.empty.bind(Tag[Sub], 1).bind(Tag[Base], 2)
+            assert(context.get(Tag[Base]) == Maybe(2))
+        }
+
+        "at the subtype ignores a supertype binding" in {
+            val context = Context.empty.bind(Tag[Base], 1)
+            assert(context.get(Tag[Sub]).isEmpty)
         }
     }
 
-    "multiple effects" in {
-        val context = Context.empty
-            .update(Tag[TestEffect1], 42)
-            .update(Tag[TestEffect2], "test")
-        assert(context.get(Tag[TestEffect1]) == Maybe(42))
-        assert(context.get(Tag[TestEffect2]) == Maybe("test"))
+    "unbind" - {
+        "drops the innermost binding and uncovers the one below" in {
+            val context = Context.empty.bind(Tag[TestEffect1], 42).bind(Tag[TestEffect1], 24).unbind
+            assert(context.get(Tag[TestEffect1]) == Maybe(42))
+            assert(context.unbind.get(Tag[TestEffect1]).isEmpty)
+        }
+
+        "drops bindings in entry order" in {
+            val context = Context.empty.bind(Tag[TestEffect1], 42).bind(Tag[TestEffect2], "test")
+            assert(context.unbind.get(Tag[TestEffect2]).isEmpty)
+            assert(context.unbind.get(Tag[TestEffect1]) == Maybe(42))
+        }
+
+        "of the empty context fails" in {
+            assert(intercept[Throwable](Context.empty.unbind).getMessage.contains("empty context"))
+        }
     }
 
 end ContextTest
