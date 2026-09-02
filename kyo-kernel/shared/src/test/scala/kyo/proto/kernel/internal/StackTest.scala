@@ -334,7 +334,9 @@ class StackTest extends AnyFreeSpec:
         "settle finds a debt owed on the eval's own lane" in {
             val stack = new Stack
             stack.push(askHandler, (), Arrow.id[Int])
-            val snapshot = stack.dump(0)
+            stack.push(sayHandler, (), Arrow.id[Int])
+            val snapshot = stack.dump(1)
+            stack.oweBelow(0, stack.takeOwed(0))
             stack.settle(snapshot)
             assert(stack.takeEvalOwed().isEmpty)
         }
