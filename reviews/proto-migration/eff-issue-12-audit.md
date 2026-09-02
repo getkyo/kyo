@@ -2,11 +2,16 @@
 
 A reading audit of `kyo-kernel/shared/src/main/scala/kyo/proto` (packages `kyo.proto`,
 `kyo.proto.kernel`, `kyo.proto.kernel.internal`, plus the jvm-native and js-wasm halves) at
-commit `66294c5fca`, against the semantics argued over in
+commit `32021c06b9`, against the semantics argued over in
 https://github.com/hasura/eff/issues/12 and the discussion it links. Nothing was run,
 compiled, or edited; every prediction below is derived from the source as it stands, with
-file and line references into that tree. The confirmed findings of `soundness-audit.md`
-(S1 to S6) are fixed on this tip and are not re-reported; the rulings recorded in the brief
+file and line references into that tree. The reading was done at `66294c5fca`; the S8
+fix (`164eb68f47`, the bracket forks its live cell and a `Forked` copy forwards `reenter`)
+and the commits that turned entries 1 to 15 into tests landed while this was written, so
+every source and test citation was recomputed against `32021c06b9`. Test citations carry
+the test's name, which is the stable reference if the suites move again. No prediction
+changes: no sketch here puts a bracket inside an isolate. The confirmed findings of `soundness-audit.md` (S1 to S6, and S8) are
+fixed on this tip and are not re-reported; the rulings recorded in the brief
 and in `backlog.md` (fork and join copies silent to `done` and `release`, a read after a
 restored crossing sees the scope it restores in, `Eval.partial` never nested, a bracket
 inside a `handleFirst` region released at that region's end with the remainder refused,
@@ -26,9 +31,20 @@ bad = run $ runError @String $ interpret (\SomeAction -> throwError "not caught"
 ```
 
 The first comment extends it to `local` (a `Reader` modification around `someAction` is not
-seen by an interpreter clause that does `ask`) and to `listen` and `censor`. The reddit
-thread it links for `censor` (a MonadWriter-under-ContT discussion) could not be fetched
-from this environment and is not used.
+seen by an interpreter clause that does `ask`) and to `listen` and `censor`, linking a
+r/haskell thread ("Why is there no MonadWriter for ContT?", supplied by hand for this
+audit). There, lexi-lambda gives `listen` a delimited-control semantics by reduction rules:
+a `tell` inside a `listen` is forwarded to the enclosing writer immediately and accumulated
+locally (`E1[listen E2[tell v]] -> E1[tell v; fmap (v <>) (listen E2[()])]`), so under
+`callCC` it stays predictable; she works
+`runWriter (runCont (listen (tell [callCC (\k -> tell [1]; k 2)])))` through to
+`(((), [2]), [1, 2])`: the `tell [1]` that preceded the escape is kept by the outer writer,
+the listen frame the escape discarded loses its accumulation, and the re-established frame
+starts fresh. `pass` is the problem: it must defer forwarding until the enclosed action
+completes, so it is either transactional (tells dropped on an early exit, duplicated on
+multiple exits) or not supported; eff takes the second option and offers a per-tell
+`censor`, which King_of_the_Homeless notes has the same accumulation problem once the
+censoring function is not a homomorphism. Entry 15 maps this onto the kernel.
 
 lexi-lambda's reply (2020-08-11) frames it as delimited control, after Sitaram's "Handling
 Control": a handler clause runs at the point of the `interpret` call; during the dynamic
@@ -86,6 +102,8 @@ The semantic questions this leaves, in the order the entries below take them:
     interposition.
 13. Release ordering when a continuation is never resumed, and when a bracket meets a
     multi-shot clause.
+14. `listen`, `censor` and `pass` encoded as nested writer handlers, under an escaping
+    jump and under multi-shot (the linked thread).
 
 Entries are numbered, red first. Each states the law, a public-surface sketch in the suite
 style, the value the current code is predicted to produce, the path through the source that
@@ -120,7 +138,11 @@ with no pin today), or RULED (decided by a ruling above or an existing pin, cite
   `ArrowEffectMaskTest`.
 - Interposition (a handler getting several chances): absent. A handler answers once; a
   clause that raises its own effect re-enters itself (`handleCont`) or reaches the successor
-  (`handleLoop` before its outcome), entry 15.
+  (`handleLoop` before its outcome), entry 16.
+- `listen` / `censor` / `pass`: nested handlers of one `Tell` effect. A forwarding `listen`
+  is a `handleLoopState` whose clause raises `tell` before its outcome, which the successor
+  law sends to the enclosing writer; a transactional `pass` accumulates and forwards from
+  its `done`, which runs after the region is popped (entry 15).
 
 ## Test prelude
 
@@ -217,7 +239,7 @@ settled arm calls `done` and then `arrowExit` (Eval.scala:202-207, 291-295), whi
 lane 0 through `drainDiscarded` with the "remainder discarded" signal (Eval.scala:405-409):
 `SC` is still there, so `expandOwed` reaches `Cfg`'s handler and `released` fires
 `release cfg 1` after the region already completed. The bracket twin is masked: `Cell.drain`
-after `Cell.complete` is a failed CAS (Effect.scala:22-25), which is why `EvalTest` "a shot
+after `Cell.complete` is a failed CAS (Effect.scala:22-24), which is why `EvalTest` "a shot
 evaluated inside the clause leaves the region intact for the next" (:525) sees nothing with a
 hook-free region.
 
@@ -271,10 +293,10 @@ discards, its region completes through `done` and `arrowExit` drains lane 0, who
 holds `Ask` with `Say_local` nested inside it; neither is a context handler so nothing
 fires (Eval.scala:476-495). The `local` variant with a context binding (the first comment's
 `local (\_ -> "localed")`) is already pinned: `EvalTest` "a clause reads the outer binding,
-not a dumped one" (:1099) asserts 100, because `rebound` recomputes each dumped context key
+not a dumped one" (:1125) asserts 100, because `rebound` recomputes each dumped context key
 from the exact-tag region still on the stack (Eval.scala:411-424). The arrow-effect shape
 above has no pin with a same-effect local handler *and* an outer handler that answers; the
-nearest, `EvalTest` "a clause does not see handlers inside its own scope" (:1314), has no
+nearest, `EvalTest` "a clause does not see handlers inside its own scope" (:1340), has no
 outer handler and asserts an unhandled bug.
 
 ### 3. Answering with a computation held as a value runs it inside the local scope, so a local handler catches it (PREDICTED-GREEN-WORTH-PINNING)
@@ -283,7 +305,7 @@ Question 2. There is no `locally`, but the kernel has the one thing lexi-lambda 
 correct `locally` needs and eff cannot afford: the continuation is captured eagerly with its
 local regions, and a value fed into it is evaluated after those regions are re-installed.
 Law: an answer that is a computation held as a value is delivered unopened
-(`ArrowEffectTest` "a boxed answer crosses the answers loop unopened", :2051, `EvalTest` "an
+(`ArrowEffectTest` "a boxed answer crosses the answers loop unopened", :2052, `EvalTest` "an
 answer that is a computation held as a value stays a value", :400); when the body runs it,
 its effects are answered by the handlers in scope at the use site, the local one included.
 
@@ -446,7 +468,7 @@ crossing or a park.
 
 Law. (a) A binding installed between the answering handler and the operation is dumped into
 the crossing and re-installed on resume with its captured state, wherever the continuation
-is resumed: pinned by `IsolateTest` "a crossed binding resumes at its captured value" (:256,
+is resumed: pinned by `IsolateTest` "a crossed binding resumes at its captured value" (:258,
 the enclosing `handleInheritable(..., 5)` at the resume site does not win) and
 `ContextEffectTest` "a captured binding resolves against the scope it resumes in" (:156,
 whose binding is in fact inside the handler and resolves to its captured 11). (b) A binding
@@ -499,7 +521,7 @@ recovered by it, before any recovery at the resume site and without the capture 
 regions being consulted at all. `ArrowEffectMaskTest` "a recovering region inside the mask
 catches a failure raised after the tunneled answer returns" (:122) pins this for a resume
 inside the clause; `ArrowEffectTest` "a throw after a stateful region reached through a
-resumed continuation reaches the recovery" (:2142) pins a recovery *outside*. The
+resumed continuation reaches the recovery" (:2143) pins a recovery *outside*. The
 fresh-eval, escaped-continuation shape with both is not pinned.
 
 ```scala
@@ -543,8 +565,8 @@ Question 6. The two handler flavours scope a clause's own post-suspension code d
 and their `recover` clauses follow. Law as the code has it: for `handleLoop` and
 `handleLoopState`, a clause that suspends before producing its outcome runs outside its
 region (pinned: `EvalTest` "a clause's suspension before done is answered outside its
-scope", :1290, "a clause's own-tag suspension before its outcome is answered by the
-successor", :1300), so a throw after that suspension is not seen by the region's own
+scope", :1316, "a clause's own-tag suspension before its outcome is answered by the
+successor", :1326), so a throw after that suspension is not seen by the region's own
 `recover`; for `handleCont`, the clause's result runs inside the region, an outward
 suspension dumps the region into the crossing and the resume re-installs it, so the same
 throw is recovered by the region itself.
@@ -602,7 +624,7 @@ captured state, fires `done` per shot, and the region's exit precedes the clause
 for that shot; the answering handler's `done` runs once after the last shot; `release` never
 fires. For a bracket the second shot is refused with `kyo.Closed` before its body runs:
 RULED (`EffectBracketTest` "a multi-shot capture over a bracket refuses the second shot",
-:358, "no branch of a multi-shot clause reads a resource that was already released", :1074).
+:360, "no branch of a multi-shot clause reads a resource that was already released", :1184).
 
 ```scala
 "each shot re-establishes a hooked region and completes it before the clause continues" in {
@@ -648,7 +670,7 @@ remainder and the single handler completion are what this pin adds.
 Question 8. RULED for brackets: the region a `handleFirst` installs ends with its token,
 its exit drains what it owes, and the remainder finds its brackets released and is refused
 (`EffectBracketTest` "a handleFirst clause runs before the release its remainder runs
-after", :1155). For a raw `ContextEffect.handle` region there is no state to refuse on, so
+after", :1265). For a raw `ContextEffect.handle` region there is no state to refuse on, so
 the same sequence *revives* the region: `release` at the region's end, then `done` at the
 remainder's end, in that order, with the clause running between them.
 
@@ -681,7 +703,7 @@ firing `release cfg 1` with the "remainder discarded" signal. The park is then e
 `installed` calls `reenter`, a no-op for a `ContextEffect.handle` region (Handler.scala:134,
 ContextEffect.scala:125-132 overrides `done` and `release` only), pushes `Cfg(1)`, and the
 remainder completes it: `done cfg 1`. The bracket's `reenter` is what turns the same path
-into `Closed` (Effect.scala:56-58). Worth pinning because it is the raw-hook face of Q4 and
+into `Closed` (Effect.scala:48-50). Worth pinning because it is the raw-hook face of Q4 and
 because a fix for entry 1 that marks consumed snapshots would also be the place to decide
 whether a raw region may be revived after its release fired; see the closing section.
 
@@ -690,11 +712,11 @@ whether a raw region may be revived after its release fired; see the closing sec
 Question 9, a scoped construct *below* the handler. Law: a bracket, binding, or isolate
 installed around the handler is not part of any continuation the handler captures; it ends
 at its own extent (pinned for the in-eval case by `EffectBracketTest` "a bracket outside two
-regions releases at its own extent, not when an inner region discards", :1017). An escaped
+regions releases at its own extent, not when an inner region discards", :1127). An escaped
 continuation resumed later runs its remainder with no region to refuse it, even though the
 remainder closed over the released resource. The contrast, a bracket *inside* the handler,
 is captured and refused: pinned (`EffectBracketTest` "a leaked capture resumed after its
-region completed is refused as closed", :260).
+region completed is refused as closed", :262).
 
 ```scala
 "a bracket outside the answering handler is not carried by an escaped continuation, so the remainder runs after the release" in {
@@ -728,9 +750,9 @@ Predicted: `-1`, `List("release")`, then `42` and `List("release", "use 1")`.
 
 Reasoning. Stack `[Finalize(cell), Ask]`; the `ask` is at the top of `Ask`, so the
 continuation handed to the clause is `kyo.cont.chain(contA.chain(contB))` (Eval.scala:76),
-plain arrows with no snapshot: the `Ensure`-built `Finalize` region (Effect.scala:38-66)
+plain arrows with no snapshot: the `Ensure`-built `Finalize` region (Effect.scala:30-57)
 is below and untouched. The clause returns `-1`, `Ask` completes, the bracket's use value
-settles, `contextExit` completes the cell (Effect.scala:54). `stash.get(41)` later is a
+settles, `contextExit` completes the cell (Effect.scala:46). `stash.get(41)` later is a
 `Defer` chain with no `Park`, so no `reenter` is ever called (Eval.scala:240-251 is reached
 only through `installed`); the remainder runs with `r = 1` and returns 42. That is the
 correct reading of a delimited continuation and the thing the issue's `unsafeCoerce`
@@ -746,7 +768,7 @@ re-installed per shot with the forked state; each shot's trailing capture and re
 into the origin found by identity on the live stack, against the parent's *current* state;
 the origin's `done` fires once with the last joined state (RULED for the single-shot cycle:
 copies are silent, `IsolateTest` "an isolate cycle fires done once, for the region the user
-installed, with the joined state", :566).
+installed, with the joined state", :568).
 
 ```scala
 "a crossing inside an isolated child resumed twice joins each shot into the live parent" in {
@@ -771,14 +793,15 @@ Predicted: `(2122, 50)` and `List("done 50")`.
 
 Reasoning. `capture` reads the stack's context regions (`Stack.contextual`,
 Stack.scala:131-151) under the `Snapshot` arm (Eval.scala:188-189) and `isolate` installs one
-`Forked` copy per region through a `Kyo.Park` (Isolate.scala:81-86, 110-121); stack
+`Forked` copy per region through a `Kyo.Park` (Isolate.scala:81-86, 111-122); stack
 `[Cfg(10), Ask, Forked(20)]`. The child's `ask` is a crossing: `Forked(20)` is dumped
 (Eval.scala:73) and `rebound` puts the origin's 10 back in the context (Eval.scala:411-424).
 Shot 1 re-installs the copy (state 20), the body yields 21, the trailing capture reads
-`[Cfg(10), Forked(20)]`, the copy exits silently (Handler.scala:132, the `Forked` class at
-Isolate.scala:102-108 overrides nothing), and `restore`'s join finds the origin by identity at
-index 0, computes `10 + 20`, and writes 30 into the origin's slot (Isolate.scala:123-148,
-the `setState` at :142); the `Snapshot` arm rebuilds the context from the stack afterwards
+`[Cfg(10), Forked(20)]`, the copy exits silently (Handler.scala:132; the `Forked` class at
+Isolate.scala:102-109 overrides only `reenter`, forwarding it to the origin since S8, and
+keeps the default `done` and `release`), and `restore`'s join finds the origin by identity at
+index 0, computes `10 + 20`, and writes 30 into the origin's slot (Isolate.scala:124-149,
+the `setState` at :143); the `Snapshot` arm rebuilds the context from the stack afterwards
 (Eval.scala:189, 297-306). The clause remainder then applies `cont(2)`: the *same* snapshot
 re-installs the copy at its captured 20, the body yields 22, and the second join sees the
 parent at 30, giving 50. The read after the `Ask` region takes 50 and the origin's `done`
@@ -821,9 +844,9 @@ Reasoning. The `Defer` arm's poll parks (Eval.scala:49-51) with `stack.snapshot(
 `parked.eval` re-installs both through `installed` with their captured states and the same
 handler objects (Eval.scala:256-278). The child's remainder completes, the trailing capture
 reads the re-installed pair, the copy exits silently, and `restore`'s identity search
-(Isolate.scala:130) finds the re-installed origin; `setState` writes 30, the read after takes
+(Isolate.scala:131) finds the re-installed origin; `setState` writes 30, the read after takes
 it, and the origin's exit in the new eval fires `done 30`. `EffectBracketTest` "abandoning an
-isolated child releases its bracket" (:545) pins the abandonment side; this pins the resume
+isolated child releases its bracket" (:547) pins the abandonment side; this pins the resume
 side and that a park does not detach a child from its origin.
 
 ### 13. An isolate resumed under a different region of its tag joins nothing (PREDICTED-GREEN-WORTH-PINNING, ruling question)
@@ -832,7 +855,7 @@ Question 10, the swap applied to a context effect's join. Law as the code has it
 join looks for the origin *handler object* on the live stack; a continuation carrying the
 forked copies, escaped and resumed under a different region of the same tag, reads its
 captured forked state and joins into nothing, silently. RULED for "no region at all at
-restore" (`IsolateTest` "a region exited before the merge is not joined", :481); the
+restore" (`IsolateTest` "a region exited before the merge is not joined", :483); the
 same-tag-different-region case is the one the issue asks about and is not pinned.
 
 ```scala
@@ -875,8 +898,8 @@ Reasoning. In the first eval the copy is dumped, the clause stashes, `Ask` compl
 drains the copy silently, the origin exits unjoined. In the second eval the park
 re-installs the copy at 20 (`installed`, Eval.scala:264-269), the remainder yields 21, and
 `restore`'s search compares `stack.handler(j) eq origin` against the first region's handler
-object (Isolate.scala:130); `region("second")` built a different one, so `j < 0` and the
-loop skips (:131-143). The "read after a restored crossing sees the scope it restores in"
+object (Isolate.scala:131); `region("second")` built a different one, so `j < 0` and the
+loop skips (:132-144). The "read after a restored crossing sees the scope it restores in"
 ruling makes the *reads* resolve at the resume site; the join, by identity, does not follow
 them. Whether a join should fall back to the innermost live region of the same tag when
 its origin is gone is a ruling; the sketch pins the identity law until then.
@@ -887,7 +910,7 @@ Question 11. Law: a debt sitting in a handler's lane when a slice parks travels 
 park's snapshot; `Eval.release` on the park reaches it and releases with the abandonment
 signal; a resume re-owes it and the later crossing resume settles it, so the bracket
 completes with `Absent`. `EffectBracketTest` "a park after a crossing resume still owes the
-bracket" (:202) pins the park *after* the resume; the park *before* it, with the debt still
+bracket" (:204) pins the park *after* the resume; the park *before* it, with the debt still
 in the lane, exercises `Stack.snapshot`'s lane packing and `expandOwed` through the public
 surface and is not pinned.
 
@@ -932,29 +955,180 @@ and drains it with `Boom` (Eval.scala:452-465, 476-495). On resume, `installed` 
 park, and `settle(SB)` removes it before the cell is pushed (Eval.scala:253, Stack.scala:66-
 76); `reenter` passes, the use completes, `Cell.complete` reports `Absent`.
 
-### 15. Nested handlers of the same effect: delegation from a clause, and no interposition (RULED by existing pins)
+### 15. A forwarding `listen` and a transactional `pass` behave under an escape and under multi-shot exactly as the linked thread predicts (PREDICTED-GREEN-WORTH-PINNING)
+
+Question 14. The thread's two claims map onto two encodings of a nested `Tell` handler,
+and each lands on a law this kernel already pins. Fixtures for the three sketches:
+
+```scala
+sealed trait Tell extends ArrowEffect[Const[List[Int]], Const[Unit]]
+def tell(w: List[Int]): Unit < Tell = ArrowEffect.suspend[Any](Tag[Tell], w)
+
+def runWriter[A, S](v: A < (Tell & S)): (A, List[Int]) < S =
+    ArrowEffect.handleLoopState(Tag[Tell], List.empty[Int], v)(
+        [C] => (acc, w) => Loop.continue(acc ++ w, (): Unit < Any),
+        (acc, a) => (a, acc)
+    )
+
+def listen[A, S](v: A < (Tell & S)): (A, List[Int]) < (Tell & S) =
+    ArrowEffect.handleLoopState(Tag[Tell], List.empty[Int], v)(
+        [C] => (acc, w) => tell(w).map(_ => Loop.continue(acc ++ w, (): Unit < Any)),
+        (acc, a) => (a, acc)
+    )
+
+def pass[A, S](v: (A, List[Int] => List[Int]) < (Tell & S)): A < (Tell & S) =
+    ArrowEffect.handleLoopState(Tag[Tell], List.empty[Int], v)(
+        [C] => (acc, w) => Loop.continue(acc ++ w, (): Unit < Any),
+        (acc, af) => tell(af._2(acc)).map(_ => af._1)
+    )
+
+sealed trait CC extends ArrowEffect[Const[Maybe[Int]], Const[Int]]
+def capture: Int < CC      = ArrowEffect.suspend[Any](Tag[CC], Maybe.empty[Int])
+def jump(n: Int): Int < CC = ArrowEffect.suspend[Any](Tag[CC], Maybe(n))
+
+def runCC[A, S](v: A < (CC & S)): A < S =
+    var captured = Maybe.empty[Arrow[Int, A, CC & S]]
+    ArrowEffect.handleCont(Tag[CC], v)(
+        [C] =>
+            (input, cont) =>
+                input match
+                    case Maybe.Absent =>
+                        captured = Maybe(cont)
+                        cont(0)
+                    case Maybe.Present(n) => captured.get(n)
+        ,
+        a => a
+    )
+```
+
+`listen` forwards each `tell` to the enclosing writer before recording it; `pass`
+accumulates and forwards once from its completion; `runCC` is `callCC` with `k n` as an
+operation that drops the current continuation and resumes the captured one.
+
+Law 1 (the thread's derivation). A tell that precedes an escape is kept by the outer
+writer; the listen frame the escape abandons loses its accumulation; the frame the captured
+continuation re-establishes starts from its captured state.
+
+```scala
+"a forwarding listen keeps a tell that precedes an escape and re-establishes its frame at the captured state" in {
+    val body: ((Unit, List[Int])) < (Tell & CC) =
+        listen(capture.map { x =>
+            if x == 0 then tell(List(1)).map(_ => jump(2)).unit
+            else tell(List(x))
+        })
+    assert(runWriter(runCC(body)).eval == ((((), List(2)), List(1, 2))))
+}
+```
+
+Predicted: `(((), List(2)), List(1, 2))`, the thread's `(((), [2]), [1, 2])`.
+
+Reasoning. Stack `[Writer(Nil), CC, Listen(Nil)]`. `capture` is answered by `CC` below
+`Listen`, so `Listen` is dumped into the crossing (Eval.scala:73) and the clause keeps the
+crossing step; `cont(0)` re-installs `Listen(Nil)`. `tell(List(1))` reaches `Listen` at the
+top; its clause's outcome is the pending `tell(w).map(...)`, so the region is popped before
+the outcome is dispatched (Eval.scala:104-111) and the forwarded `tell` finds `Writer`,
+foreign under `CC`, answered in place with state `[1]` (Eval.scala:126-129); the outcome
+`Continue2([1], ())` re-installs `Listen([1])` through `clauseDispatch` (Handler.scala:84-
+89). `jump(2)` is answered by `CC` below the re-installed `Listen([1])`, which is dumped
+again and never resumed; the clause applies the *first* crossing to 2, re-installing
+`Listen` at its captured `Nil` (Eval.scala:264-269, the snapshot's state), `tell(List(2))`
+forwards to the writer (`[1, 2]`) and accumulates (`[2]`), and the value flows out through
+the `CC` region's settled arm. The abandoned `Listen([1])` is drained at `CC`'s exit with no
+hook to fire. The forwarding step is the successor law (`EvalTest` "a clause's own-tag
+suspension before its outcome is answered by the successor", :1326) doing exactly what the
+thread's reduction rule says.
+
+Law 2. A transactional `pass` drops the tells of a body that escapes before completing,
+because its forwarding lives in `done`, which the escape never reaches.
+
+```scala
+"a transactional pass drops its tells when the body escapes before completing" in {
+    val body: Unit < (Tell & CC) =
+        capture.map { x =>
+            if x == 0 then pass(tell(List(1)).map(_ => jump(2)).map(_ => ((), (l: List[Int]) => l)))
+            else tell(List(x))
+        }
+    assert(runWriter(runCC(body)).eval == (((), List(2))))
+}
+```
+
+Predicted: `((), List(2))`.
+
+Reasoning. `capture` is at the top of `CC` here, so the captured continuation is plain.
+`tell(List(1))` is answered by `Pass` in place (state `[1]`); `jump(2)` is a crossing that
+dumps `Pass([1])` into `CC`'s lane and the clause discards that continuation by resuming the
+captured one instead; `Pass` never completes, its `done` never runs, and the drain at `CC`'s
+exit finds an arrow handler with nothing to release (Eval.scala:291-295, 476-495). The same
+loss happens when a failure unwinds through the region: `recovered` pops it without `done`
+(Eval.scala:343-348).
+
+Law 3. Under a multi-shot resume of a continuation captured inside the region, `pass`
+forwards the tells that preceded the capture once per shot, while `listen` forwards each
+tell exactly once.
+
+```scala
+"a transactional pass duplicates the tells before a multi-shot resume; a forwarding listen does not" in {
+    val viaPass: (Unit, List[Int]) < Any =
+        runWriter(
+            ArrowEffect.handleCont(
+                Tag[Ask],
+                pass(tell(List(1)).map(_ => ask).map(a => tell(List(a)).map(_ => ((), (l: List[Int]) => l))))
+            )([C] => (_, cont) => cont(2).map(_ => cont(3)), a => a)
+        )
+    assert(viaPass.eval == (((), List(1, 2, 1, 3))))
+    val viaListen: ((Unit, List[Int]), List[Int]) < Any =
+        runWriter(
+            ArrowEffect.handleCont(
+                Tag[Ask],
+                listen(tell(List(1)).map(_ => ask).map(a => tell(List(a))))
+            )([C] => (_, cont) => cont(2).map(_ => cont(3)), a => a)
+        )
+    assert(viaListen.eval == ((((), List(1, 3)), List(1, 2, 3))))
+}
+```
+
+Predicted: `((), List(1, 2, 1, 3))` and `(((), List(1, 3)), List(1, 2, 3))`.
+
+Reasoning, `pass`. Stack `[Writer, Ask, Pass(Nil)]`; `tell(List(1))` advances `Pass` to `[1]`
+in place; `ask` crosses and dumps `Pass([1])`. Shot one re-installs `Pass([1])`, records
+`[2]`, and the region's settled arm calls `done`, whose `tell(List(1, 2))` is evaluated only
+after `arrowExit` popped the region (Eval.scala:204-207), so it reaches `Writer`. Shot two
+re-installs `Pass` at the same captured `[1]` (the snapshot is immutable, Eval.scala:264-
+269), records `[3]`, and forwards `[1, 3]`: the tell before the fork is forwarded twice,
+the thread's "duplicated if it exits multiple times". `listen`: the first `tell` is
+forwarded before the `ask`, so `Writer` holds `[1]` once; each shot re-installs
+`Listen([1])`, forwards its own tell and completes at `[1, a]`; the last shot's result is
+`((), [1, 3])` and the writer ends at `[1, 2, 3]`. A per-tell `censor` is the `listen`
+shape with `tell(f(w))` in the clause and shares its behaviour; an accumulating `censor` is
+the `pass` shape and shares its losses, which is the objection the thread ends on.
+
+Worth pinning as one case: it is the kernel's answer to the last item on the issue's list,
+and it shows the loop clause scoping of entry 7 is load-bearing, since a `listen` whose
+clause re-entered its own region would forward its `tell` to itself.
+
+### 16. Nested handlers of the same effect: delegation from a clause, and no interposition (RULED by existing pins)
 
 Question 12. The issue's interposition proposal gives one handler several chances at one
 operation. This kernel has none of that; what it has is fully pinned, and recorded here so
 the map is complete:
 
 - The innermost region of a tag answers, for every flavour: `ArrowEffectTest` "the
-  innermost done wins under nested same-tag handlers" (:406), "the innermost handle wins
-  under nested same-tag handlers" (:1222), "the innermost handleFirst wins under nested
-  same-tag handlers" (:1584); `Stack.find` walks from the top (Stack.scala:171-177).
+  innermost done wins under nested same-tag handlers" (:407), "the innermost handle wins
+  under nested same-tag handlers" (:1223), "the innermost handleFirst wins under nested
+  same-tag handlers" (:1585); `Stack.find` walks from the top (Stack.scala:171-177).
 - A `handleCont` clause that raises its own effect re-enters its own region, since the
   clause result runs with the region on the stack (Eval.scala:78-80): `ArrowEffectTest` "an
-  operation the clause raises re-enters the same region" (:1380). There is no way for such a
+  operation the clause raises re-enters the same region" (:1381). There is no way for such a
   clause to delegate to the outer handler of the same effect short of the mask.
 - A `handleLoop` clause that raises its own effect before its outcome reaches the
   successor, because the region is popped first (Eval.scala:104-111, 135-145): `EvalTest`
-  "a clause's own-tag suspension before its outcome is answered by the successor" (:1300).
+  "a clause's own-tag suspension before its outcome is answered by the successor" (:1326).
   The same effect raised inside a pending *answer* is answered by the region itself, which
   is still standing (Eval.scala:130-134): `EvalTest` "an effectful answer's own-tag re-raise
   is answered by this handler" (:276).
 - A handler's own `recover` sees its own clause's throw on every dispatch path where the
-  region stands (`ArrowEffectTest` "recovers a throw in the handler", :1656), and a recovery
-  standing *inside* the region is passed over by a clause throw (:2226).
+  region stands (`ArrowEffectTest` "recovers a throw in the handler", :1657), and a recovery
+  standing *inside* the region is passed over by a clause throw (:2227).
 - The one operation that lets a body skip an inner handler is `ArrowEffect.Mask`
   (ArrowEffect.scala:480-500), covered by `ArrowEffectMaskTest`; it is the issue's
   "effect encapsulation" as a value and works in the direction the OP does not need.
@@ -963,25 +1137,25 @@ No new pin; the consequence for the issue is that "the current handler gets a se
 chance at the `catch`" is not expressible, and the use-site semantics is obtained by
 answering with a computation (entry 3).
 
-### 16. Release ordering when a continuation is never resumed, and when a bracket meets a multi-shot clause (RULED by existing pins and rulings)
+### 17. Release ordering when a continuation is never resumed, and when a bracket meets a multi-shot clause (RULED by existing pins and rulings)
 
 Question 13. All decided:
 
 - A dropped continuation's regions release when the answering region exits, before that
   region's own continuation runs: `EvalTest` "a dropped capture's regions release when the
-  answering region exits" (:1008), `EffectBracketTest` "a discarded continuation releases
-  when its region completes, before the handler's continuation" (:981); the drain is
+  answering region exits" (:1034), `EffectBracketTest` "a discarded continuation releases
+  when its region completes, before the handler's continuation" (:1091); the drain is
   `arrowExit` (Eval.scala:291-295).
-- Sibling dumps drain newest first at the owner's exit: `EvalTest` :1027; a `Loop.done`
-  releases every outstanding bracket innermost first: `EffectBracketTest` :623, :150.
+- Sibling dumps drain newest first at the owner's exit: `EvalTest` :1053; a `Loop.done`
+  releases every outstanding bracket innermost first: `EffectBracketTest` :733, :152.
 - A multi-shot clause over a bracket: the second shot is refused with `kyo.Closed` and the
-  first shot's release is the only one (:358, :1051, :1094, :1114); a bracket acquired *per
-  branch* releases where each branch ends (:1035); a bracket that encloses the multi-shot
-  region releases after every branch (:1232); a bracket the clause opens around the
-  continuation releases when the body result settles (:998).
-- A continuation held past the end of the eval refuses every time it is applied (:1135),
-  and a branch built inside a clause and evaluated later is refused (:1206).
-- A discarded capture's bracket is told the discard signal, a `KyoException` (:562).
+  first shot's release is the only one (:360, :1161, :1204, :1224); a bracket acquired *per
+  branch* releases where each branch ends (:1145); a bracket that encloses the multi-shot
+  region releases after every branch (:1342); a bracket the clause opens around the
+  continuation releases when the body result settles (:1108).
+- A continuation held past the end of the eval refuses every time it is applied (:1245),
+  and a branch built inside a clause and evaluated later is refused (:1316).
+- A discarded capture's bracket is told the discard signal, a `KyoException` (:564).
 
 Entry 8 adds the raw-hook order these pins do not state; entry 10 adds the bracket that
 stands outside the handler.
@@ -998,14 +1172,18 @@ stands outside the handler.
    Making the loop side match the cont side means re-installing the region around the
    pending outcome instead of popping it (Eval.scala:104-111, 135-145), which also flips
    `EvalTest` "a clause's own-tag suspension before its outcome is answered by the
-   successor" (:1300) to "answered by itself"; the ruling has to pick one of the two laws.
+   successor" (:1326) to "answered by itself"; the ruling has to pick one of the two laws.
+   Entry 15 shows what the successor law buys: the forwarding `listen` relies on a loop
+   clause's `tell` reaching the outer writer rather than itself, so flipping the law would
+   turn that encoding into a self-loop. The recommendation from reading is to keep the loop
+   scoping and pin entry 7 as it stands.
 3. Whether a raw `ContextEffect.handle` region may be revived after its `release` fired
    (entry 9), or should carry a released mark and refuse on `reenter` the way the bracket's
    cell does. Experiment: run entry 9's sketch next to its bracket twin
-   (`EffectBracketTest` :1155); the same mark answers item 1 if it lives on the snapshot.
+   (`EffectBracketTest` :1265); the same mark answers item 1 if it lives on the snapshot.
 4. Whether a join whose origin is gone should fall back to the innermost live region of
    its tag (entry 13). Experiment: run entry 13's sketch; a ruling for tag fallback turns
-   the `eq origin` search at Isolate.scala:130 into a `findExact` and the pin's expected log
+   the `eq origin` search at Isolate.scala:131 into a `findExact` and the pin's expected log
    into `List("done first 10", "join second", "done second 30")`.
 5. Whether the row carried by a stashed continuation is the intended guard against issue
    13's swap (entry 4b), so that a resume site missing one of the clause's effects is a
