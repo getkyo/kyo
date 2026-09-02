@@ -1,9 +1,10 @@
 package kyo.internal
 
 import kyo.Maybe
+import scala.annotation.publicInBinary
 import scala.quoted.*
 
-private[kyo] object CompileTimeFlag:
+@publicInBinary private[kyo] object CompileTimeFlag:
 
     inline def boolean(inline name: String, inline default: Boolean): Boolean = ${ booleanImpl('name, 'default) }
 
