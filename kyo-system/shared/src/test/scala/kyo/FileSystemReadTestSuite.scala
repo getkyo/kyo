@@ -160,4 +160,12 @@ abstract class FileSystemReadTestSuite extends kyo.test.Test[Any]:
         }
     }
 
+    "read suite releases scoped channels" in {
+        createFileSystem.map { (fileSystem, file, _) =>
+            Scope.run(fileSystem.openReadChannel(file)).map { channel =>
+                Abort.run[FileReadException](channel.readAt(0L, 1)).map(result => assert(result.isFailure))
+            }
+        }
+    }
+
 end FileSystemReadTestSuite

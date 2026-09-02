@@ -3,9 +3,9 @@ package kyo
 import java.nio.charset.Charset
 
 /** Filesystem backend capabilities, effect-polymorphic in the backend effect `S`. [[Read]] exposes
-  * inspection and content reads. [[Write]] extends it with mutation and structure operations.
-  * Each public operation records the applicable typed failure category in its effect row and
-  * accepts a call-site [[Frame]].
+  * inspection, content reads, and channels. [[Write]] extends it with mutation and structure
+  * operations. Each public operation records the applicable typed failure category in its effect
+  * row and accepts a call-site [[Frame]].
   *
   * @see [[Path.runReadOnlyWith]] for installing a read capability
   * @see [[Path.runWith]] for installing a write capability
@@ -74,6 +74,13 @@ object FileSystem:
         def list(path: Path, glob: Glob, caseSensitivity: Glob.CaseSensitivity)(using
             Frame
         ): Chunk[Path] < (S & Abort[FileReadException | FileStructureException])
+
+        /** Opens `path` for positioned reads. The channel is closed when the current [[Scope]] exits. */
+        def openReadChannel(path: Path)(using Frame): Path.ReadChannel[S] < (S & Scope & Abort[FileReadException])
+
+        private[kyo] def openReadChannelUnscoped(path: Path)(using
+            Frame
+        ): (Path.ReadChannel[S], () => Unit < (Sync & S)) < (S & Abort[FileReadException])
     end Read
 
     abstract class Write[S] extends Read[S]:
@@ -122,6 +129,28 @@ object FileSystem:
         def tempDir(prefix: String)(using Frame): Path.TempDirHandle < (S & Abort[FileStructureException])
         def temp(prefix: String, suffix: String)(using Frame): Path.TempFileHandle < (S & Abort[FileStructureException])
 
+        /** Opens `path` for positioned writes according to `open`. The channel is closed when the
+          * current [[Scope]] exits.
+          */
+        def openWriteChannel(path: Path, open: FileSystem.WriteOpen)(using
+            Frame
+        ): Path.WriteChannel[S] < (S & Scope & Abort[FileWriteException | FileStructureException])
+
+        /** Opens `path` for positioned reads and writes according to `open`. The channel is closed
+          * when the current [[Scope]] exits.
+          */
+        def openReadWriteChannel(path: Path, open: FileSystem.WriteOpen)(using
+            Frame
+        ): Path.ReadWriteChannel[S] < (S & Scope & Abort[FileReadException | FileWriteException | FileStructureException])
+
+        private[kyo] def openReadWriteChannelUnscoped(path: Path, open: FileSystem.WriteOpen)(using
+            Frame
+        )
+            : (
+                Path.ReadWriteChannel[S],
+                () => Unit < (Sync & S)
+            ) < (S & Abort[FileReadException | FileWriteException | FileStructureException])
+
     end Write
 
     private val local = Local.init[FileSystem.Write[Any]](
@@ -156,6 +185,22 @@ object FileSystem:
 
     private[kyo] def letReadErased[A, S, FS](fileSystem: FileSystem.Read[FS])(value: A < S)(using Frame): A < S =
         readLocal.let(fileSystem.asInstanceOf[FileSystem.Read[Any]])(value)
+
+    /** File existence policy for positioned write-channel acquisition.
+      *
+      * `Existing` requires an existing regular file. `Create` opens an existing file or creates
+      * an absent one. `CreateNew` creates a new file and fails when the path already exists.
+      * None of these policies truncates an existing file.
+      *
+      * The policy is separate from the channel capability: callers choose write-only or
+      * read-write acquisition through distinct methods, and then choose how absence or prior
+      * existence should be handled with this value.
+      */
+    enum WriteOpen derives CanEqual:
+        case Existing
+        case Create
+        case CreateNew
+    end WriteOpen
 
     /** Default host backend: delegates every op to [[Path.Unsafe]], translating the concrete
       * `Result[File*Exception, A]` into `Abort[FileSystemException]`, so it preserves current
