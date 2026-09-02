@@ -72,6 +72,15 @@ class EffectTraceTest extends AnyFreeSpec:
         assert(ex.getSuppressed.count(_.isInstanceOf[EffectTrace]) == 1)
     }
 
+    "a failure rethrown through a later eval on the same thread names the later eval's region" in {
+        val shared = Boom()
+        discard(intercept[Boom](runAsk(ask.map(_ => (throw shared): Int))(1).eval))
+        val ex    = intercept[Boom](runSay(say("x").map(_ => (throw shared): Int)).eval)
+        val trace = ex.getStackTrace
+        assert(trace.exists(_.getClassName == Tag[Ask].show))
+        assert(trace.exists(_.getClassName == Tag[Say].show))
+    }
+
     "a fused region names the body, then the region" in {
         val fused: Int < Any =
             ArrowEffect.handleLoopWith[Const[Unit], Const[Int], Ask, Int, Int, Any, Any](Tag[Ask], innerStep(ask))(
