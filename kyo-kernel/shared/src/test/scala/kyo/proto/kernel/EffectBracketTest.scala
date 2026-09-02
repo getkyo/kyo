@@ -596,6 +596,36 @@ class EffectBracketTest extends AnyFreeSpec:
                 )
             assert(again.eval == -2)
         }
+
+        "a capture inside an isolated child, resumed after the bracket ended, is refused" in {
+            var leaked    = Maybe.empty[Arrow[Int, Int, Ask]]
+            var released  = false
+            var usedAfter = false
+            val body: Int < Any =
+                Effect.bracket(Effect.defer(7))((_, _) => released = true) { a =>
+                    ArrowEffect.handleCont(Tag[Ask], Isolate.internal.Contextual.run(ask.map { n =>
+                        usedAfter = released
+                        n + a
+                    }))(
+                        [C] =>
+                            (_, cont) =>
+                                leaked = Maybe(cont)
+                                -1
+                        ,
+                        b => b
+                    )
+                }
+            assert(body.eval == -1)
+            assert(released)
+            val again: Int < Any =
+                ArrowEffect.handleCont[Const[Unit], Const[Int], Ask, Int, Int, Any, Any](Tag[Ask], leaked.get(1))(
+                    [C] => (_, cont) => cont(0),
+                    b => b,
+                    ex => Maybe(if ex.isInstanceOf[Closed] then -2 else -3)
+                )
+            assert(again.eval == -2)
+            assert(!usedAfter)
+        }
     }
 
     "unit acquire" - {
