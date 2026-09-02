@@ -84,8 +84,14 @@ object Bench:
       */
     val CompilingShareLimit = 0.5
 
-    val BenchClass  = "kyo.kernel.bench.KernelBench"
-    val BenchSource = "kyo-kernel/jvm/src/jmh/scala/kyo/kernel/bench/KernelBench.scala"
+    val BenchClass: String =
+        Maybe(java.lang.System.getProperty("bench.class"))
+            .orElse(Maybe(java.lang.System.getenv("BENCH_CLASS")))
+            .getOrElse("kyo.kernel.bench.KernelBench")
+    val BenchSource: String =
+        Maybe(java.lang.System.getProperty("bench.source"))
+            .orElse(Maybe(java.lang.System.getenv("BENCH_SOURCE")))
+            .getOrElse("kyo-kernel/jvm/src/jmh/scala/kyo/kernel/bench/KernelBench.scala")
     val AsyncProf   = "/opt/homebrew/opt/async-profiler/lib/libasyncProfiler.dylib"
 
     case class BracketFailed(reason: String) extends Exception(reason) with NoStackTrace
