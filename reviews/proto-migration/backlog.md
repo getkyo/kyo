@@ -450,7 +450,28 @@ the same day, fix by fix: S9 ruled not an issue, entry 9 ruled keep, S10 fixed.
 ### T. The fifteen TODO notes in the proto sources: analysed, decisions pending
 
 `todo-analysis.md` (984 lines) answers every note with the introducing commit, a proposal or a
-reasoned leave-as-is, the risks, and the rows to measure. Its decisions, none taken yet:
+reasoned leave-as-is, the risks, and the rows to measure. Taken one by one from 2026-09-02:
+TODO 1 (`Stack` review, `1fb39de225`): nothing dead, no merge, `snapshot()` is `takeAll()` and
+`scratch` is `sink`, note deleted. TODO 2 (`EffectTrace` review, `e6a1dc9449`): nothing dead, the
+four `attach` overloads stay as fill scripts over one inline `reconstruct`, `Builder.entries` is
+`regions`, note deleted. TODO 3 (the six function liftings), note deleted, two items carried here:
+(a) the liftings are not a blocker for purity detection and never were; the value lift is what
+erases purity from a lambda's type, and a function value passed through `liftPureFunctionN`
+arrives as a lambda whose body is `lift(f(a))`, the detectable shape. Keep them until swap phase 1,
+where the aggregate compile names every dependent site for free; delete there if the list is empty
+or small, on the one-lift rule, keep with the number recorded otherwise. (b) Pure-arrow detection,
+not implemented here by ruling: the kernel does not branch on purity (the safepoint may still
+require suspension); the use is library dispatch, so `Stream`, `Sink`, and `Pipe` can fold their
+22 `*Pure` twins (`mapPure`, `mapChunkPure`, `filterPure`, `takeWhilePure`, `dropWhilePure`,
+`collectPure`, `collectWhilePure`, `contramapPure`, `contramapChunkPure`, `foldPure`, `findPure`,
+born in PR #1268 because overload resolution cannot pick for a lambda under `VV >: V`) into one
+inline dispatcher each: `inline if Arrow.isPure(f) then mapPure(Arrow.unlift(f)) else ...`. The
+primitives are a kyo-data macro over the inline body (`InlineBody.isCallTo(f, Lift)`, cross-module
+so no new same-module summon in a core file) plus `Arrow.isPure`, `Arrow.unlift`, and an
+`Arrow.Pure` step for consumers holding arrows; `Loop` is already adaptive at runtime (its
+`@tailrec` loop runs while `run` returns a settled `Continue`), so purity would only shrink its
+expansion. `pure-arrow-derivation.md` carries the derivation; its section 4 (a `map` fast path)
+is retracted, the rest stands. Decisions still pending on the remaining notes:
 DO: rename `Stack.snapshot()` to `takeAll()` and `EffectTrace.Builder.entries` to `regions`;
 leave the five `Handler` methods and the three `release` helpers in place (the try/catch cost,
 the `answers` inline burst, the `StaleSymbolException` cascade if `Eval` became inlined-from);

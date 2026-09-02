@@ -4,6 +4,16 @@ Tip: `e6a1dc9449`. Part of TODO 3 (`Implicits.scala:17`), by ruling. Companion t
 decision, which stays open until swap phase 1 with the rule "delete if the compiler's list of
 dependent sites is empty or small".
 
+Ruling (2026-09-02), after review: the kernel does not branch on purity, since the safepoint may
+still require a suspension, so section 4 (a fast path in `map`) is retracted and section 6 is not
+pursued. The capability is for library dispatch: `Stream`, `Sink`, and `Pipe` fold their `*Pure`
+twins into one inline dispatcher each, `inline if Arrow.isPure(f) then mapPure(Arrow.unlift(f))
+else ...`, with `Arrow.isPure(inline f)` a compile-time literal from the kyo-data macro of
+section 3, `Arrow.unlift(inline f) = a => Nested.unnest[B](f(a))`, and an `Arrow.Pure` step built
+by `Arrow.apply` for consumers that hold arrows. Not implemented in this pass; the liftings stay
+and are not a blocker, since a function value passed through them arrives as the detectable
+lambda shape. Sections 1 to 3 and 5's macro pins stand as written.
+
 ## 1. What "pure" means here
 
 A function passed to `map`, `flatMap`, or `andThen` whose body is an application of the one lift,
