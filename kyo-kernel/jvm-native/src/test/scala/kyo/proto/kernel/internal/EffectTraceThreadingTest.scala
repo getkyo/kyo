@@ -66,7 +66,8 @@ class EffectTraceThreadingTest extends AnyFreeSpec:
         val t = new Thread(
             () =>
                 spliceHere()
-                afterSecond = physical()
+                afterSecond =
+                    physical()
             ,
             "second-splicer"
         )
