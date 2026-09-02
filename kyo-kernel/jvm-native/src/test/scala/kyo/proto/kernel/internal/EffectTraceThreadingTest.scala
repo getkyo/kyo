@@ -54,17 +54,19 @@ class EffectTraceThreadingTest extends AnyFreeSpec:
         def spliceHere(): Unit =
             try discard(answerAsk(1)(ask.map(_ => (throw shared): Int)).eval)
             catch case _: Boom => ()
+        def carrier(): EffectTrace =
+            shared.getSuppressed.collectFirst { case c: EffectTrace => c }.get
         def physical(): List[String] =
-            shared.getStackTrace.toList.filterNot(_.getClassName.startsWith("kyo.proto.")).map(_.toString)
+            shared.getStackTrace.toList.drop(carrier().elements.length).map(_.toString)
         spliceHere()
         val afterFirst = physical()
+        val walkedOnce = carrier().elements.length
         assert(afterFirst.nonEmpty)
         @volatile var afterSecond = List.empty[String]
         val t = new Thread(
             () =>
                 spliceHere()
-                afterSecond =
-                    physical()
+                afterSecond = physical()
             ,
             "second-splicer"
         )
@@ -72,6 +74,7 @@ class EffectTraceThreadingTest extends AnyFreeSpec:
         t.join(10000)
         assert(!t.isAlive)
         assert(afterSecond == afterFirst)
+        assert(carrier().elements.length == walkedOnce * 2)
         assert(shared.getSuppressed.count(_.isInstanceOf[EffectTrace]) == 1)
     }
 
