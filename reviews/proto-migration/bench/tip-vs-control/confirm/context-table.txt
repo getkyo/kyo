@@ -1,0 +1,6 @@
+# forks: control 6 per row, tip 3 per row
+row                                       ctrl       tip   delta ctrl fork band tip fork band  ctrl B/op   tip B/op
+contextReadsUnderBindings               41.524    39.133   -5.8%           1.7%          0.6%    48336.3    48312.3
+                                     ctrl forks 41.6 41.3 42.0 41.3 41.5 41.4 | tip forks 39.0 39.3 39.1
+contextRegionsPayEntryExit              31.297    73.161 +133.8%           1.7%          1.6%   120136.2   112128.5
+                                     ctrl forks 31.2 31.4 31.2 31.7 31.2 31.2 | tip forks 73.1 73.8 72.6
