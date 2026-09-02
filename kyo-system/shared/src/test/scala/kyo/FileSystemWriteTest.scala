@@ -1,9 +1,7 @@
 package kyo
 
 /** Reusable behavioral contract for mutable filesystem backends. */
-abstract class FileSystemWriteTestSuite extends kyo.test.Test[Any]:
-
-    private given Frame = Frame.internal
+abstract class FileSystemWriteTest extends kyo.test.Test[Any]:
 
     protected def createFileSystem(using
         Frame
@@ -88,4 +86,4 @@ abstract class FileSystemWriteTestSuite extends kyo.test.Test[Any]:
         }
     }
 
-end FileSystemWriteTestSuite
+end FileSystemWriteTest

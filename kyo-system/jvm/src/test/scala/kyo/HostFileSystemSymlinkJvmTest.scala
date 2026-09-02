@@ -9,7 +9,7 @@ import java.nio.file.Paths as JPaths
   * from a platform source set. Without a fixture that can create one, the suite's link assertions are
   * one-sided and a backend that stopped resolving links entirely would still pass.
   */
-class HostFileSystemSymlinkJvmTest extends FileSystemReadTestSuite:
+class HostFileSystemSymlinkJvmTest extends FileSystemReadTest:
 
     override protected def realPathRequiresExistence: Boolean = true
     override protected def supportsSymbolicLinks: Boolean     = true

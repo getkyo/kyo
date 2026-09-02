@@ -161,9 +161,9 @@ source. Platform tests are reserved for genuine host integration differences.
 
 Use the reusable suites for backend laws:
 
-- `FileSystemReadTestSuite`
-- `FileSystemWriteTestSuite`
-- `FileSystemChannelTestSuite`
+- `FileSystemReadTest`
+- `FileSystemWriteTest`
+- `FileSystemChannelTest`
 - `FileSystemLockTest`
 
 Test capability rows with `typeCheck` and `typeCheckErrors`. Use deterministic `Async` coordination
