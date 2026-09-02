@@ -36,6 +36,16 @@ private[kyo] object HostFileSystem:
     private[kyo] def diagTrail(path: Path)(using AllowUnsafe): String =
         diagEvents.get().getOrElse(path.toString, Chunk.empty[String]).mkString("trail=[", ",", "]")
 
+    // The claim/finalizer handshake for tryLock. Empty means nothing claimed yet; Claimed carries
+    // the lock the finalizer must release; Drained means the finalizer has already run and no claim
+    // can ever be recorded again. The tombstone is what makes a claim arriving after the drain
+    // observable inside the claim node itself, where it can still release what it just took.
+    private enum LockHolder derives CanEqual:
+        case Empty
+        case Claimed(lock: Path.Lock)
+        case Drained
+    end LockHolder
+
     // The window a pending reservation waits on is one channel open plus one platform lock call, so
     // it clears in well under a millisecond. The budget is generous against that rather than tuned:
     // its job is to terminate at all when an entry is never going to resolve, not to time the window.
@@ -361,12 +371,15 @@ private[kyo] object HostFileSystem:
             // every caller in kyo. Widening that signature to carry Async.mask is a kyo-core change
             // with a far wider blast radius than this defect, so it is left for its own work.
             val acquire =
-                Sync.defer(new java.util.concurrent.atomic.AtomicReference[Maybe[Path.Lock]](Absent)).map { holder =>
+                Sync.defer(new java.util.concurrent.atomic.AtomicReference[LockHolder](LockHolder.Empty)).map { holder =>
                     Scope.ensure {
-                        Sync.Unsafe.defer(holder.getAndSet(Absent)).map {
-                            case Present(lock) =>
-                                Sync.Unsafe.defer(diagRecord(path, "finalizer-present")).andThen(lock.release(lock.ownership))
-                            case Absent => Sync.Unsafe.defer(diagRecord(path, "finalizer-absent"))
+                        // Drained is permanent: after this getAndSet no claim can be recorded, so a
+                        // slice that outruns the interrupt and still reaches the claim node observes
+                        // the tombstone and releases in place rather than stranding the lock.
+                        Sync.Unsafe.defer(holder.getAndSet(LockHolder.Drained)).map {
+                            case LockHolder.Claimed(lock) =>
+                                Sync.Unsafe.defer(diagRecord(path, "finalizer-claimed")).andThen(lock.release(lock.ownership))
+                            case _ => Sync.Unsafe.defer(diagRecord(path, "finalizer-empty"))
                         }
                     }.andThen {
                         // A shared claim can arrive while another shared claim is between reserving
@@ -390,10 +403,23 @@ private[kyo] object HostFileSystem:
                                 path.unsafe.lockAttempt(mode) match
                                     case Path.LockAttempt.Acquired(raw) =>
                                         val lock = lockFrom(path, raw, mode, AtomicInt.Unsafe.init(0).safe)
-                                        holder.set(Present(lock))
-                                        diagRecord(path, "claim")
-                                        afterClaimHook()
-                                        Result.succeed(Present(lock))
+                                        if holder.compareAndSet(LockHolder.Empty, LockHolder.Claimed(lock)) then
+                                            diagRecord(path, "claim")
+                                            afterClaimHook()
+                                            Result.succeed(Present(lock))
+                                        else
+                                            // The finalizer has already drained: this slice outran the
+                                            // interrupt, and nothing downstream of this node will run
+                                            // again. Release here, in the same node as the claim, and
+                                            // report the attempt unavailable; the recover below folds
+                                            // that to Absent, which is true, since no lock was granted.
+                                            diagRecord(path, "claim-after-drain")
+                                            raw.release() match
+                                                case Result.Success(_)     => Result.fail(FileLockUnavailableException(path))
+                                                case Result.Failure(error) => Result.fail(error)
+                                                case panic: Result.Panic   => panic
+                                            end match
+                                        end if
                                     case Path.LockAttempt.Pending       => Result.succeed(Absent)
                                     case Path.LockAttempt.Failed(error) => error
                             }.map {
