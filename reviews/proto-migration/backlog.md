@@ -349,7 +349,11 @@ only by the task loop. The test was removed; no change.
 
 Report finding 21, the `scratch` store on the pooled stack, is not a defect: it is the measured
 escape that defeats a C2 scalar-replacement pathology on the settled loop rows (`a8cff0a3f8`,
-363 to 155 us on `handleLoopAnswersInPlace`), and it stays. Report finding 10, the physical
-frames cached from the first splicing thread, and the nine coverage pins (findings 12 to 20)
+363 to 155 us on `handleLoopAnswersInPlace`), and it stays. The nine coverage pins (findings 12 to 20)
 are added as tests in the "reading audit pins" groups of ArrowEffectTest, ContextEffectTest,
-EvalTest, EffectBracketTest and EffectTraceThreadingTest; finding 10 is predicted red.
+EvalTest and EffectBracketTest, all green. Report finding 10, the physical frames cached from
+the first splicing thread, is not a defect: a `Throwable` captures its stack trace at
+construction, so a shared instance thrown on another thread never carries that thread's frames
+with or without the cache; the cached tail is the construction site's, consistent with the JVM.
+EffectTraceThreadingTest pins that law: the physical tail is identical after a splice on a
+second thread and the carrier count stays one.
