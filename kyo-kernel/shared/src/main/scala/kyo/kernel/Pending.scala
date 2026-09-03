@@ -190,6 +190,10 @@ object `<` extends Implicits:
             f(handle1)
         end handle
 
+        // Diverges from main: every stage takes its computation by name, as the one-argument overload
+        // does on main. Main's strict f1 on the multi-argument overloads evaluates the receiver before
+        // the first stage runs, so a stage that takes its computation by name, such as Abort.run,
+        // never sees an exception thrown while the receiver is built.
         /** Applies two transformations to this computation in sequence.
           *
           * Enables chaining multiple effect handlers or transformations in a readable sequential style.
@@ -198,7 +202,7 @@ object `<` extends Implicits:
           *   The result after applying both transformations
           */
         inline def handle[B, C](
-            inline f1: A < S => B,
+            inline f1: (=> A < S) => B,
             inline f2: (=> B) => C
         ): C =
             def handle2 = v.handle(f1)
@@ -213,7 +217,7 @@ object `<` extends Implicits:
           *   The result after applying all transformations in sequence
           */
         inline def handle[B, C, D](
-            inline f1: A < S => B,
+            inline f1: (=> A < S) => B,
             inline f2: (=> B) => C,
             inline f3: (=> C) => D
         ): D =
@@ -229,7 +233,7 @@ object `<` extends Implicits:
           *   The result after applying all transformations in sequence
           */
         inline def handle[B, C, D, E](
-            inline f1: A < S => B,
+            inline f1: (=> A < S) => B,
             inline f2: (=> B) => C,
             inline f3: (=> C) => D,
             inline f4: (=> D) => E
@@ -246,7 +250,7 @@ object `<` extends Implicits:
           *   The result after applying all transformations in sequence
           */
         inline def handle[B, C, D, E, F](
-            inline f1: A < S => B,
+            inline f1: (=> A < S) => B,
             inline f2: (=> B) => C,
             inline f3: (=> C) => D,
             inline f4: (=> D) => E,
@@ -264,7 +268,7 @@ object `<` extends Implicits:
           *   The result after applying all transformations in sequence
           */
         inline def handle[B, C, D, E, F, G](
-            inline f1: A < S => B,
+            inline f1: (=> A < S) => B,
             inline f2: (=> B) => C,
             inline f3: (=> C) => D,
             inline f4: (=> D) => E,
@@ -278,7 +282,7 @@ object `<` extends Implicits:
         /** Applies a sequence of transformations to this computation.
           */
         inline def handle[B, C, D, E, F, G, H](
-            inline f1: A < S => B,
+            inline f1: (=> A < S) => B,
             inline f2: (=> B) => C,
             inline f3: (=> C) => D,
             inline f4: (=> D) => E,
@@ -293,7 +297,7 @@ object `<` extends Implicits:
         /** Applies a sequence of transformations to this computation.
           */
         inline def handle[B, C, D, E, F, G, H, I](
-            inline f1: A < S => B,
+            inline f1: (=> A < S) => B,
             inline f2: (=> B) => C,
             inline f3: (=> C) => D,
             inline f4: (=> D) => E,
@@ -309,7 +313,7 @@ object `<` extends Implicits:
         /** Applies a sequence of transformations to this computation.
           */
         inline def handle[B, C, D, E, F, G, H, I, J](
-            inline f1: A < S => B,
+            inline f1: (=> A < S) => B,
             inline f2: (=> B) => C,
             inline f3: (=> C) => D,
             inline f4: (=> D) => E,
@@ -326,7 +330,7 @@ object `<` extends Implicits:
         /** Applies a sequence of transformations to this computation.
           */
         inline def handle[B, C, D, E, F, G, H, I, J, K](
-            inline f1: A < S => B,
+            inline f1: (=> A < S) => B,
             inline f2: (=> B) => C,
             inline f3: (=> C) => D,
             inline f4: (=> D) => E,
