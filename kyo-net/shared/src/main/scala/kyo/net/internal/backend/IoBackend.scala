@@ -52,11 +52,13 @@ private[net] object IoBackend:
     /** The single selection function for BOTH registries (generic on the descriptor type and the failure leaf). Selection logic never
       * changes; adding an entry is a list edit, never a `select` edit.
       *
-      * Resolution order: `forced` (a name the caller resolved, typically from a `-D` property) is honored if its candidate is available, and
-      * fails with `onUnavailable` if not (never a silent fall-through). With no forced name, the highest-priority available candidate wins,
-      * walking the priority gradient; if nothing is available, the result fails with `onUnavailable(Absent, ...)`. Both failure paths log a
-      * warning via `log` before failing, and every path logs the [[SelectionReport]], which `onUnavailable` renders into the terminal
-      * failure's cause.
+      * Resolution order: `forced` (a name the caller resolved, typically from a `-D` property) is honored when it names a REGISTERED
+      * candidate that is available, and fails with `onUnavailable` when that candidate is unavailable. A forced name matching no registered
+      * candidate is a third case and does NOT fail: it resolves as if unforced, so a misspelled name selects the gradient's winner silently.
+      * That is deliberate (`IoBackendRegistryTest` pins it) and it differs from the pinned-provider path in `TlsProvider.selectFor`, which
+      * reports an unregistered id as unavailable. With no forced name, the highest-priority available candidate wins, walking the priority
+      * gradient; if nothing is available, the result fails with `onUnavailable(Absent, ...)`. Both failure paths log a warning via `log`
+      * before failing, and every path logs the [[SelectionReport]], which `onUnavailable` renders into the terminal failure's cause.
       */
     def select[D <: CapabilityDescriptor, E](
         registered: Chunk[D],

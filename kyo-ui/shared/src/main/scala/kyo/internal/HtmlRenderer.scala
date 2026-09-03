@@ -1166,13 +1166,77 @@ private[kyo] object HtmlRenderer:
            |function kyoSetCaret(t,s,e){if(typeof t.setSelectionRange!=="function")return;
            |  try{t.setSelectionRange(s,e);}catch(er){if(er.name!=="InvalidStateError")throw er;}}
            |$reactiveRangesJs
-           |var ws=new WebSocket((location.protocol===\"https:\"?\"wss:\":\"ws:\")+"//"+location.host+base+"/_kyo/ws");
-           |ws.onopen=function(){__q.forEach(function(m){ws.send(m);});__q=[];};
            |${DragClientJs.script(basePath)}
-           |var __dragRt=installDragRuntime(function(m){post(m);},{onClose:function(c){__dragCleanup=c;}});
-           |var __dragCleanup=__dragRt.cleanup;
-           |ws.onclose=function(){if(__dragCleanup){__dragCleanup();__dragCleanup=null;}};
-           |ws.onmessage=function(e){
+           |var ws=null,__wsRetries=0,__wsGone=false,__live=false;
+           |var __dragRt=null,__dragCleanup=null;
+           |// One call site on purpose. The runtime wires document-level capture listeners and one pagehide listener it never removes, so
+           |// it must be installed once per session and never over a live one; the guard at the open handler is what keeps that true
+           |// across reconnects, and its own cleanup is idempotent.
+           |function kyoInstallDrag(){
+           |  __dragRt=installDragRuntime(function(m){post(m);},{onClose:function(c){__dragCleanup=c;}});
+           |  __dragCleanup=__dragRt.cleanup;
+           |}
+           |kyoInstallDrag();
+           |// A session is one socket, and reconnecting is not optional bookkeeping. post() buffers into __q whenever the session is not
+           |// live, and __q has exactly one drain point, so a page that never reconnects silently stops delivering every later
+           |// interaction while still looking healthy: the click reaches the document, nothing reaches the server, and the failure only
+           |// surfaces much later as an assertion against state that never arrived. The refusal that forced this is a connect denied for
+           |// want of buffer space (Windows WSAENOBUFS), which is transient, so backing off and retrying is what rides it out.
+           |//
+           |// LIVE means a frame has ARRIVED, not that the socket opened. Completing the upgrade proves the transport is up and nothing
+           |// more: a server can accept and then end the session at once, during a restart window, and draining on open would empty the
+           |// buffer into a connection nobody reads, losing exactly the events this exists to preserve. Every session announces itself
+           |// with SessionReady before it renders, so this resolves even for a tree that is entirely const and never renders. It is also
+           |// what makes the backoff real: resetting the counter on open would let an accept-then-close loop redial forever at the
+           |// shortest interval, which is the opposite of backing off.
+           |function kyoConnect(){
+           |  if(__wsGone)return;
+           |  // Never dial while one is already dialing or open. Two paths can call in at once: a page becomes eligible for the
+           |  // back/forward cache precisely when its socket is down, which is precisely when a retry is pending, so a restore
+           |  // races the resumed timer. The loser of that race would be superseded immediately and never closed, leaving a live
+           |  // connection with a session attached whose frames are all dropped.
+           |  if(ws&&ws.readyState<2)return;
+           |  __live=false;
+           |  var sock=new WebSocket((location.protocol===\"https:\"?\"wss:\":\"ws:\")+"//"+location.host+base+"/_kyo/ws");
+           |  ws=sock;
+           |  // Each handler serves ONE socket and stands down once a newer one has replaced it, closing itself on the way out so
+           |  // a superseded connection is torn down instead of lingering with a server session attached.
+           |  sock.onopen=function(){
+           |    if(sock!==ws){sock.close();return;}
+           |    if(!__dragCleanup)kyoInstallDrag();
+           |  };
+           |  sock.onmessage=function(e){
+           |    if(sock!==ws){sock.close();return;}
+           |    if(!__live){__live=true;__wsRetries=0;var pending=__q;__q=[];for(var i=0;i<pending.length;i++)sock.send(pending[i]);}
+           |    kyoOnMessage(e);
+           |  };
+           |  // A connect that never completes reports here and then closes, so recovery is driven from onclose alone;
+           |  // this handler exists so the failure does not surface as an unhandled error.
+           |  sock.onerror=function(){};
+           |  sock.onclose=function(){
+           |    if(sock!==ws)return;
+           |    __live=false;
+           |    if(__dragCleanup){__dragCleanup();__dragCleanup=null;}
+           |    if(__wsGone)return;
+           |    // Capped exponential backoff: quick enough that a transient refusal recovers within a page's useful
+           |    // lifetime, slow enough not to hammer a server that is genuinely down.
+           |    var wait=Math.min(250*Math.pow(2,__wsRetries),5000);
+           |    __wsRetries++;
+           |    setTimeout(kyoConnect,wait);
+           |  };
+           |}
+           |// A page being torn down is not a lost connection: stop redialing so an unloading page does not keep calling the server it is
+           |// leaving. A page becomes eligible for the back/forward cache precisely when its socket is DOWN, since an open one usually
+           |// blocks it, so a restored page has to redial and rebuild the range map the hide path cleared, or it returns permanently
+           |// inert, which is the exact failure this reconnect exists to prevent.
+           |window.addEventListener("pagehide",function(){__wsGone=true;});
+           |window.addEventListener("pageshow",function(e){
+           |  if(!e.persisted)return;
+           |  if(!__kyoRanges)__kyoRanges=kyoRangeScan(document.body);
+           |  __wsGone=false;__wsRetries=0;kyoConnect();
+           |});
+           |kyoConnect();
+           |function kyoOnMessage(e){
            |  var op=JSON.parse(e.data);
            |  if(op.ResolveDrag){
            |    try{__dragRt.resolve(op.ResolveDrag.sessionId,op.ResolveDrag.decision);}catch(error){kyoClientError(error);}
@@ -1238,12 +1302,14 @@ private[kyo] object HtmlRenderer:
            |  }
            |  return false;
            |}
-           |// Send each event over the single WebSocket. ws.send preserves send order on one socket, so the
-           |// explicit fetch-queue serialization is no longer needed. Events fired before the socket opens are
-           |// buffered in __q and flushed on ws.onopen.
+           |// Send each event over the session's WebSocket. ws.send preserves send order on one socket, so the
+           |// explicit fetch-queue serialization is no longer needed. Events raised before the session is live are
+           |// buffered in __q and flushed when its first frame arrives, which every reconnect reaches. Both an absent
+           |// socket and an open-but-unanswered one take the buffer, so nothing is handed to a connection that has
+           |// not proven a session is reading it.
            |function post(b){
            |  var m=JSON.stringify(b);
-           |  if(ws.readyState===1)ws.send(m);
+           |  if(ws&&__live&&ws.readyState===1)ws.send(m);
            |  else __q.push(m);
            |}
            |function pa(el){

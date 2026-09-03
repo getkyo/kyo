@@ -6,6 +6,7 @@ import kyo.internal.AeronBindings
 import kyo.internal.AeronClientHandle
 import kyo.internal.AeronPlatform
 import kyo.internal.AeronPublication
+import kyo.internal.AeronRuntime
 import kyo.internal.AeronSentinels
 import kyo.internal.AeronSubscription
 import kyo.internal.AeronTransport
@@ -34,6 +35,8 @@ class AeronTransportTest extends Test:
 
     val oversizeJvmStreamId   = 104
     val oversizeCrossStreamId = 105
+
+    val tokenOwnershipStreamId = 117
 
     val closedClientPubStreamId = 115
     val closedClientSubStreamId = 116
@@ -194,6 +197,60 @@ class AeronTransportTest extends Test:
       * calls exit(EXIT_FAILURE) and kills the test process. The real FFI add path (Done) is covered by
       * the round-trip and normal-add leaves.
       */
+    /** Transport whose registration poll reports Done and, inside that same synchronous call, interrupts the
+      * fiber that is observing it.
+      *
+      * On a Done poll the C layer frees the async token and hands the client reference to the publication
+      * bundle, so the Scala flag recording that handoff is the only thing standing between the scope
+      * finalizer and a second free of memory the C layer has already released. The question this fake exists
+      * to answer is whether an interrupt can be observed BETWEEN the poll and that flag, which is only
+      * possible if a suspension point separates them. Issuing the interrupt from inside the poll puts a
+      * pending interrupt in place before the caller has decided anything, which is the earliest the window
+      * can open.
+      *
+      * The counter is deliberately gated on `doneObserved`: a free BEFORE any Done is the ordinary
+      * still-owned path and is correct, and counting it would make the leaf pass or fail for the wrong
+      * reason. `interruptTook` and `doneObserved` are asserted by the leaf so a fixture that never armed the
+      * window cannot be read as evidence that the window is closed.
+      */
+    final private class InterruptOnDoneTransport extends AeronTransport:
+        type Publication  = Int
+        type Subscription = Int
+        type AsyncPub     = Int
+        type AsyncSub     = Int
+
+        /** Set by the leaf once it holds the fiber handle; a thunk rather than the fiber itself so the fake
+          * carries no type parameters of the computation it interrupts.
+          */
+        @volatile var interrupter: () => Boolean = () => false
+        @volatile var interruptTook: Boolean     = false
+        @volatile var doneObserved: Boolean      = false
+
+        val freesAfterDone = new java.util.concurrent.atomic.AtomicInteger(0)
+
+        def asyncAddPublication(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncPub] = Present(streamId)
+        def pollAddPublication(async: AsyncPub)(using AllowUnsafe): AeronTransport.AddPoll[Publication] =
+            interruptTook = interrupter()
+            doneObserved = true
+            AeronTransport.AddPoll.Done(async)
+        end pollAddPublication
+        def freeAsyncPub(async: AsyncPub)(using AllowUnsafe): Unit =
+            if doneObserved then discard(freesAfterDone.incrementAndGet())
+        def publicationIsConnected(pub: Publication)(using AllowUnsafe): Boolean                 = false
+        def offer(pub: Publication, message: Array[Byte])(using AllowUnsafe): Long               = 0L
+        def maxMessageLength(pub: Publication)(using AllowUnsafe): Int                           = 0
+        def closePublication(pub: Publication)(using AllowUnsafe): Unit                          = ()
+        def asyncAddSubscription(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncSub] = Present(streamId)
+        def pollAddSubscription(async: AsyncSub)(using AllowUnsafe): AeronTransport.AddPoll[Subscription] =
+            AeronTransport.AddPoll.Awaiting
+        def freeAsyncSub(async: AsyncSub)(using AllowUnsafe): Unit                 = ()
+        def subscriptionIsConnected(sub: Subscription)(using AllowUnsafe): Boolean = false
+        def pollOne(sub: Subscription)(using AllowUnsafe): Maybe[Array[Byte]]      = Absent
+        def closeSubscription(sub: Subscription)(using AllowUnsafe): Unit          = ()
+
+        def fatalError(using AllowUnsafe): Maybe[String] = Absent
+    end InterruptOnDoneTransport
+
     final private class NeverConfirmTransport extends AeronTransport:
         type Publication  = Int
         type Subscription = Int
@@ -257,174 +314,169 @@ class AeronTransportTest extends Test:
 
     "round-trip a known byte payload through AeronPlatform.embedded" in {
         val payload = Array[Byte](1, 2, 3, 4)
-        for
-            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
-            rt  <- AeronPlatform.embedded(dir.unsafe.show)
-            transport = rt.transport
-            pubTokMaybe <- Sync.Unsafe.defer(transport.asyncAddPublication(ipcUri, roundTripStreamId))
-            subTokMaybe <- Sync.Unsafe.defer(transport.asyncAddSubscription(ipcUri, roundTripStreamId))
-            _ = assert(pubTokMaybe.isDefined, "asyncAddPublication returned Absent on a live client")
-            _ = assert(subTokMaybe.isDefined, "asyncAddSubscription returned Absent on a live client")
-            pubMaybe <- pollAddPubUntilDone(transport, pubTokMaybe.get, 5000)
-            subMaybe <- pollAddSubUntilDone(transport, subTokMaybe.get, 5000)
-            _   = assert(pubMaybe.isDefined, "pollAddPublication never returned Done within 5000 attempts")
-            _   = assert(subMaybe.isDefined, "pollAddSubscription never returned Done within 5000 attempts")
-            pub = pubMaybe.get
-            sub = subMaybe.get
-            pubConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pub)))
-            _ = assert(pubConnected, "publication did not connect within 5s")
-            subConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.subscriptionIsConnected(sub)))
-            _ = assert(subConnected, "subscription did not connect within 5s")
-            pos <- offerUntil(5000)(Sync.Unsafe.defer(transport.offer(pub, payload)))
-            _ = assert(pos > 0, s"offer did not succeed within 5000 attempts; last pos=$pos")
-            received <- pollUntil(5000)(Sync.Unsafe.defer(transport.pollOne(sub)))
-            _     = assert(received.isDefined, "no message received within 5000 poll attempts")
-            bytes = received.get
-            _ <- Sync.Unsafe.defer {
-                transport.closePublication(pub)
-                transport.closeSubscription(sub)
-                rt.close()
-            }
-            _ <- Path.run(dir.removeAll)
-        yield assert(
-            java.util.Arrays.equals(bytes, payload),
-            s"payload mismatch: ${bytes.toList} != ${payload.toList}"
-        )
-        end for
+        withEmbeddedRuntime() { rt =>
+            val transport = rt.transport
+            for
+                pubTokMaybe <- Sync.Unsafe.defer(transport.asyncAddPublication(ipcUri, roundTripStreamId))
+                subTokMaybe <- Sync.Unsafe.defer(transport.asyncAddSubscription(ipcUri, roundTripStreamId))
+                _ = assert(pubTokMaybe.isDefined, "asyncAddPublication returned Absent on a live client")
+                _ = assert(subTokMaybe.isDefined, "asyncAddSubscription returned Absent on a live client")
+                pubMaybe <- pollAddPubUntilDone(transport, pubTokMaybe.get, 5000)
+                subMaybe <- pollAddSubUntilDone(transport, subTokMaybe.get, 5000)
+                _   = assert(pubMaybe.isDefined, "pollAddPublication never returned Done within 5000 attempts")
+                _   = assert(subMaybe.isDefined, "pollAddSubscription never returned Done within 5000 attempts")
+                pub = pubMaybe.get
+                sub = subMaybe.get
+                pubConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pub)))
+                _ = assert(pubConnected, "publication did not connect within 5s")
+                subConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.subscriptionIsConnected(sub)))
+                _ = assert(subConnected, "subscription did not connect within 5s")
+                pos <- offerUntil(5000)(Sync.Unsafe.defer(transport.offer(pub, payload)))
+                _ = assert(pos > 0, s"offer did not succeed within 5000 attempts; last pos=$pos")
+                received <- pollUntil(5000)(Sync.Unsafe.defer(transport.pollOne(sub)))
+                _     = assert(received.isDefined, "no message received within 5000 poll attempts")
+                bytes = received.get
+                _ <- Sync.Unsafe.defer {
+                    transport.closePublication(pub)
+                    transport.closeSubscription(sub)
+                }
+            yield assert(
+                java.util.Arrays.equals(bytes, payload),
+                s"payload mismatch: ${bytes.toList} != ${payload.toList}"
+            )
+            end for
+        }
     }
 
     "offer to not-connected publication takes the not-connected path" in {
-        for
-            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
-            rt  <- AeronPlatform.embedded(dir.unsafe.show)
-            transport = rt.transport
-            pubTokMaybe <- Sync.Unsafe.defer(transport.asyncAddPublication(ipcUri, notConnectedStreamId))
-            _ = assert(pubTokMaybe.isDefined, "asyncAddPublication returned Absent on a live client")
-            pubMaybe <- pollAddPubUntilDone(transport, pubTokMaybe.get, 5000)
-            _   = assert(pubMaybe.isDefined, "pollAddPublication never returned Done within 5000 attempts")
-            pub = pubMaybe.get
-            notConnectedInitially <- Sync.Unsafe.defer(!transport.publicationIsConnected(pub))
-            subTokMaybe           <- Sync.Unsafe.defer(transport.asyncAddSubscription(ipcUri, notConnectedStreamId))
-            _ = assert(subTokMaybe.isDefined, "asyncAddSubscription returned Absent on a live client")
-            subMaybe <- pollAddSubUntilDone(transport, subTokMaybe.get, 5000)
-            _       = assert(subMaybe.isDefined, "pollAddSubscription never returned Done within 5000 attempts")
-            sub     = subMaybe.get
-            payload = Array[Byte](0)
-            connected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pub)))
-            _ = assert(connected, "publication did not connect after subscriber was added within 5s")
-            connectedPosition <- offerUntil(5000)(Sync.Unsafe.defer(transport.offer(pub, payload)))
-            _ <- Sync.Unsafe.defer {
-                transport.closePublication(pub)
-                transport.closeSubscription(sub)
-                rt.close()
-            }
-            _ <- Path.run(dir.removeAll)
-        yield
-            assert(notConnectedInitially, "Expected publication to be not-connected with no subscriber")
-            assert(connectedPosition > 0, s"Expected a positive position after connection; got $connectedPosition")
+        withEmbeddedRuntime() { rt =>
+            val transport = rt.transport
+            for
+                pubTokMaybe <- Sync.Unsafe.defer(transport.asyncAddPublication(ipcUri, notConnectedStreamId))
+                _ = assert(pubTokMaybe.isDefined, "asyncAddPublication returned Absent on a live client")
+                pubMaybe <- pollAddPubUntilDone(transport, pubTokMaybe.get, 5000)
+                _   = assert(pubMaybe.isDefined, "pollAddPublication never returned Done within 5000 attempts")
+                pub = pubMaybe.get
+                notConnectedInitially <- Sync.Unsafe.defer(!transport.publicationIsConnected(pub))
+                subTokMaybe           <- Sync.Unsafe.defer(transport.asyncAddSubscription(ipcUri, notConnectedStreamId))
+                _ = assert(subTokMaybe.isDefined, "asyncAddSubscription returned Absent on a live client")
+                subMaybe <- pollAddSubUntilDone(transport, subTokMaybe.get, 5000)
+                _       = assert(subMaybe.isDefined, "pollAddSubscription never returned Done within 5000 attempts")
+                sub     = subMaybe.get
+                payload = Array[Byte](0)
+                connected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pub)))
+                _ = assert(connected, "publication did not connect after subscriber was added within 5s")
+                connectedPosition <- offerUntil(5000)(Sync.Unsafe.defer(transport.offer(pub, payload)))
+                _ <- Sync.Unsafe.defer {
+                    transport.closePublication(pub)
+                    transport.closeSubscription(sub)
+                }
+            yield
+                assert(notConnectedInitially, "Expected publication to be not-connected with no subscriber")
+                assert(connectedPosition > 0, s"Expected a positive position after connection; got $connectedPosition")
+            end for
+        }
     }
 
     "pollOne with zero fragments returns Absent" in {
-        for
-            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
-            rt  <- AeronPlatform.embedded(dir.unsafe.show)
-            transport = rt.transport
-            pubTokMaybe <- Sync.Unsafe.defer(transport.asyncAddPublication(ipcUri, absentStreamId))
-            subTokMaybe <- Sync.Unsafe.defer(transport.asyncAddSubscription(ipcUri, absentStreamId))
-            _ = assert(pubTokMaybe.isDefined, "asyncAddPublication returned Absent on a live client")
-            _ = assert(subTokMaybe.isDefined, "asyncAddSubscription returned Absent on a live client")
-            pubMaybe <- pollAddPubUntilDone(transport, pubTokMaybe.get, 5000)
-            subMaybe <- pollAddSubUntilDone(transport, subTokMaybe.get, 5000)
-            _   = assert(pubMaybe.isDefined, "pollAddPublication never returned Done within 5000 attempts")
-            _   = assert(subMaybe.isDefined, "pollAddSubscription never returned Done within 5000 attempts")
-            pub = pubMaybe.get
-            sub = subMaybe.get
-            pubConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pub)))
-            _ = assert(pubConnected, "publication did not connect within 5s")
-            subConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.subscriptionIsConnected(sub)))
-            _ = assert(subConnected, "subscription did not connect within 5s")
-            result <- Sync.Unsafe.defer(transport.pollOne(sub))
-            _ <- Sync.Unsafe.defer {
-                transport.closePublication(pub)
-                transport.closeSubscription(sub)
-                rt.close()
-            }
-            _ <- Path.run(dir.removeAll)
-        yield assert(result.isEmpty, s"Expected Absent when no message published; got $result")
+        withEmbeddedRuntime() { rt =>
+            val transport = rt.transport
+            for
+                pubTokMaybe <- Sync.Unsafe.defer(transport.asyncAddPublication(ipcUri, absentStreamId))
+                subTokMaybe <- Sync.Unsafe.defer(transport.asyncAddSubscription(ipcUri, absentStreamId))
+                _ = assert(pubTokMaybe.isDefined, "asyncAddPublication returned Absent on a live client")
+                _ = assert(subTokMaybe.isDefined, "asyncAddSubscription returned Absent on a live client")
+                pubMaybe <- pollAddPubUntilDone(transport, pubTokMaybe.get, 5000)
+                subMaybe <- pollAddSubUntilDone(transport, subTokMaybe.get, 5000)
+                _   = assert(pubMaybe.isDefined, "pollAddPublication never returned Done within 5000 attempts")
+                _   = assert(subMaybe.isDefined, "pollAddSubscription never returned Done within 5000 attempts")
+                pub = pubMaybe.get
+                sub = subMaybe.get
+                pubConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pub)))
+                _ = assert(pubConnected, "publication did not connect within 5s")
+                subConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.subscriptionIsConnected(sub)))
+                _ = assert(subConnected, "subscription did not connect within 5s")
+                result <- Sync.Unsafe.defer(transport.pollOne(sub))
+                _ <- Sync.Unsafe.defer {
+                    transport.closePublication(pub)
+                    transport.closeSubscription(sub)
+                }
+            yield assert(result.isEmpty, s"Expected Absent when no message published; got $result")
+            end for
+        }
     }
 
     "close releases resources without leak" in {
-        for
-            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
-            rt  <- AeronPlatform.embedded(dir.unsafe.show)
-            transport = rt.transport
-            pubTokMaybe <- Sync.Unsafe.defer(transport.asyncAddPublication(ipcUri, closeStreamId))
-            subTokMaybe <- Sync.Unsafe.defer(transport.asyncAddSubscription(ipcUri, closeStreamId))
-            _ = assert(pubTokMaybe.isDefined, "asyncAddPublication returned Absent on a live client")
-            _ = assert(subTokMaybe.isDefined, "asyncAddSubscription returned Absent on a live client")
-            // The poll helper yields to the event loop between polls (Async.sleep), which the
-            // single-threaded JS runtime needs to converge; a synchronous spin would never advance.
-            pubMaybe <- pollAddPubUntilDone(transport, pubTokMaybe.get, 5000)
-            subMaybe <- pollAddSubUntilDone(transport, subTokMaybe.get, 5000)
-            _ = assert(pubMaybe.isDefined, "pollAddPublication never returned Done within 5000 attempts")
-            _ = assert(subMaybe.isDefined, "pollAddSubscription never returned Done within 5000 attempts")
-            _ <- Sync.Unsafe.defer {
-                transport.closePublication(pubMaybe.get)
-                transport.closeSubscription(subMaybe.get)
-                rt.close()
-            }
-            _ <- Path.run(dir.removeAll)
-            // A second embedded() confirms the close was clean.
-            dir2 <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
-            rt2  <- AeronPlatform.embedded(dir2.unsafe.show)
-            transport2 = rt2.transport
-            pub2TokMaybe <- Sync.Unsafe.defer(transport2.asyncAddPublication(ipcUri, closeStreamId))
-            _ = assert(pub2TokMaybe.isDefined, "asyncAddPublication returned Absent on a freshly-started client")
-            // Free the pending token without waiting for registration to complete, then tear down.
-            _ <- Sync.Unsafe.defer {
-                transport2.freeAsyncPub(pub2TokMaybe.get)
-                rt2.close()
-            }
-            _ <- Path.run(dir2.removeAll)
-        // Reaching here without a crash proves the close-and-reopen cycle succeeded.
-        yield succeed
+        // The explicit close in the middle is the behaviour under test, and the scope closes again on the
+        // way out; the driver close is one-shot, so the repeat is a no-op rather than a fault.
+        withEmbeddedRuntime() { rt =>
+            val transport = rt.transport
+            for
+                pubTokMaybe <- Sync.Unsafe.defer(transport.asyncAddPublication(ipcUri, closeStreamId))
+                subTokMaybe <- Sync.Unsafe.defer(transport.asyncAddSubscription(ipcUri, closeStreamId))
+                _ = assert(pubTokMaybe.isDefined, "asyncAddPublication returned Absent on a live client")
+                _ = assert(subTokMaybe.isDefined, "asyncAddSubscription returned Absent on a live client")
+                // The poll helper yields to the event loop between polls (Async.sleep), which the
+                // single-threaded JS runtime needs to converge; a synchronous spin would never advance.
+                pubMaybe <- pollAddPubUntilDone(transport, pubTokMaybe.get, 5000)
+                subMaybe <- pollAddSubUntilDone(transport, subTokMaybe.get, 5000)
+                _ = assert(pubMaybe.isDefined, "pollAddPublication never returned Done within 5000 attempts")
+                _ = assert(subMaybe.isDefined, "pollAddSubscription never returned Done within 5000 attempts")
+                _ <- Sync.Unsafe.defer {
+                    transport.closePublication(pubMaybe.get)
+                    transport.closeSubscription(subMaybe.get)
+                    rt.close()
+                }
+                // A second embedded() confirms the close was clean.
+                out <- withEmbeddedRuntime() { rt2 =>
+                    val transport2 = rt2.transport
+                    for
+                        pub2TokMaybe <- Sync.Unsafe.defer(transport2.asyncAddPublication(ipcUri, closeStreamId))
+                        _ = assert(pub2TokMaybe.isDefined, "asyncAddPublication returned Absent on a freshly-started client")
+                        // Free the pending token without waiting for registration to complete.
+                        _ <- Sync.Unsafe.defer(transport2.freeAsyncPub(pub2TokMaybe.get))
+                    // Reaching here without a crash proves the close-and-reopen cycle succeeded.
+                    yield succeed
+                    end for
+                }
+            yield out
+            end for
+        }
     }
 
     "offer result maps through AeronSentinels identically on every platform" in {
         // AeronPlatform.embedded() reaches FfiAeronTransport on every platform, so one leaf covers the
         // single impl. TopicInvariantsTest defers its offer-sentinel coverage here, keeping only a
         // `.onlyJs` leaf for the koffi BigInt->Long sign-marshalling guard.
-        for
-            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
-            rt  <- AeronPlatform.embedded(dir.unsafe.show)
-            transport = rt.transport
-            pubMaybeResult <- Abort.run[TopicTransportException] {
-                Topic.addPublicationDeadline(transport, ipcUri, 11, 10.seconds)
-            }
-            _ = assert(
-                pubMaybeResult.isSuccess,
-                s"addPublicationDeadline failed on a healthy driver: ${describeAddFailure(pubMaybeResult)}"
-            )
-            pubMaybe = pubMaybeResult.getOrThrow
-            _        = assert(pubMaybe.isDefined, "addPublicationDeadline returned Absent on a healthy driver")
-            pub      = pubMaybe.get
-            payload  = Array[Byte](0)
-            result <- Sync.Unsafe.defer(transport.offer(pub, payload))
-            _ <- Sync.Unsafe.defer {
-                transport.closePublication(pub)
-                rt.close()
-            }
-            _ <- Path.run(dir.removeAll)
-        yield
-            assert(
-                result < 0,
-                s"Expected a negative sentinel from offer to a not-connected publication; got $result"
-            )
-            assert(
-                result == AeronSentinels.NotConnected || result == AeronSentinels.BackPressured,
-                s"Expected NotConnected (-1L) or BackPressured (-2L) but got $result"
-            )
-        end for
+        withEmbeddedRuntime() { rt =>
+            val transport = rt.transport
+            for
+                pubMaybeResult <- Abort.run[TopicTransportException] {
+                    Topic.addPublicationDeadline(transport, ipcUri, 11, 10.seconds)
+                }
+                _ = assert(
+                    pubMaybeResult.isSuccess,
+                    s"addPublicationDeadline failed on a healthy driver: ${describeAddFailure(pubMaybeResult)}"
+                )
+                pubMaybe = pubMaybeResult.getOrThrow
+                _        = assert(pubMaybe.isDefined, "addPublicationDeadline returned Absent on a healthy driver")
+                pub      = pubMaybe.get
+                payload  = Array[Byte](0)
+                result <- Sync.Unsafe.defer(transport.offer(pub, payload))
+                _ <- Sync.Unsafe.defer {
+                    transport.closePublication(pub)
+                }
+            yield
+                assert(
+                    result < 0,
+                    s"Expected a negative sentinel from offer to a not-connected publication; got $result"
+                )
+                assert(
+                    result == AeronSentinels.NotConnected || result == AeronSentinels.BackPressured,
+                    s"Expected NotConnected (-1L) or BackPressured (-2L) but got $result"
+                )
+            end for
+        }
     }
 
     "two exact types isolate by stream-id" in {
@@ -433,47 +485,45 @@ class AeronTransportTest extends Test:
         val intId    = Tag[Int].hash.abs
         val stringId = Tag[String].hash.abs
         val payload  = Array[Byte](99)
-        for
-            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
-            rt  <- AeronPlatform.embedded(dir.unsafe.show)
-            transport = rt.transport
-            pubIntTokMaybe    <- Sync.Unsafe.defer(transport.asyncAddPublication(ipcUri, intId))
-            subIntTokMaybe    <- Sync.Unsafe.defer(transport.asyncAddSubscription(ipcUri, intId))
-            subStringTokMaybe <- Sync.Unsafe.defer(transport.asyncAddSubscription(ipcUri, stringId))
-            _ = assert(pubIntTokMaybe.isDefined, "asyncAddPublication returned Absent on a live client")
-            _ = assert(subIntTokMaybe.isDefined, "asyncAddSubscription (Int) returned Absent on a live client")
-            _ = assert(subStringTokMaybe.isDefined, "asyncAddSubscription (String) returned Absent on a live client")
-            pubIntMaybe    <- pollAddPubUntilDone(transport, pubIntTokMaybe.get, 5000)
-            subIntMaybe    <- pollAddSubUntilDone(transport, subIntTokMaybe.get, 5000)
-            subStringMaybe <- pollAddSubUntilDone(transport, subStringTokMaybe.get, 5000)
-            _         = assert(pubIntMaybe.isDefined, "pollAddPublication (Int) never returned Done")
-            _         = assert(subIntMaybe.isDefined, "pollAddSubscription (Int) never returned Done")
-            _         = assert(subStringMaybe.isDefined, "pollAddSubscription (String) never returned Done")
-            pubInt    = pubIntMaybe.get
-            subInt    = subIntMaybe.get
-            subString = subStringMaybe.get
-            connected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pubInt)))
-            _ = assert(connected, "Int publication did not connect to Int subscriber within 5s")
-            pos <- offerUntil(5000)(Sync.Unsafe.defer(transport.offer(pubInt, payload)))
-            _ = assert(pos > 0, s"offer to Int stream did not succeed; last pos=$pos")
-            intReceived <- pollUntil(5000)(Sync.Unsafe.defer(transport.pollOne(subInt)))
-            _ = assert(
-                intReceived.isDefined,
-                "Int subscription did not receive its own message within 5000 poll attempts"
+        withEmbeddedRuntime() { rt =>
+            val transport = rt.transport
+            for
+                pubIntTokMaybe    <- Sync.Unsafe.defer(transport.asyncAddPublication(ipcUri, intId))
+                subIntTokMaybe    <- Sync.Unsafe.defer(transport.asyncAddSubscription(ipcUri, intId))
+                subStringTokMaybe <- Sync.Unsafe.defer(transport.asyncAddSubscription(ipcUri, stringId))
+                _ = assert(pubIntTokMaybe.isDefined, "asyncAddPublication returned Absent on a live client")
+                _ = assert(subIntTokMaybe.isDefined, "asyncAddSubscription (Int) returned Absent on a live client")
+                _ = assert(subStringTokMaybe.isDefined, "asyncAddSubscription (String) returned Absent on a live client")
+                pubIntMaybe    <- pollAddPubUntilDone(transport, pubIntTokMaybe.get, 5000)
+                subIntMaybe    <- pollAddSubUntilDone(transport, subIntTokMaybe.get, 5000)
+                subStringMaybe <- pollAddSubUntilDone(transport, subStringTokMaybe.get, 5000)
+                _         = assert(pubIntMaybe.isDefined, "pollAddPublication (Int) never returned Done")
+                _         = assert(subIntMaybe.isDefined, "pollAddSubscription (Int) never returned Done")
+                _         = assert(subStringMaybe.isDefined, "pollAddSubscription (String) never returned Done")
+                pubInt    = pubIntMaybe.get
+                subInt    = subIntMaybe.get
+                subString = subStringMaybe.get
+                connected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pubInt)))
+                _ = assert(connected, "Int publication did not connect to Int subscriber within 5s")
+                pos <- offerUntil(5000)(Sync.Unsafe.defer(transport.offer(pubInt, payload)))
+                _ = assert(pos > 0, s"offer to Int stream did not succeed; last pos=$pos")
+                intReceived <- pollUntil(5000)(Sync.Unsafe.defer(transport.pollOne(subInt)))
+                _ = assert(
+                    intReceived.isDefined,
+                    "Int subscription did not receive its own message within 5000 poll attempts"
+                )
+                stringResult <- Sync.Unsafe.defer(transport.pollOne(subString))
+                _ <- Sync.Unsafe.defer {
+                    transport.closePublication(pubInt)
+                    transport.closeSubscription(subInt)
+                    transport.closeSubscription(subString)
+                }
+            yield assert(
+                stringResult.isEmpty,
+                s"Expected Absent on String subscription after publishing to Int stream; got $stringResult"
             )
-            stringResult <- Sync.Unsafe.defer(transport.pollOne(subString))
-            _ <- Sync.Unsafe.defer {
-                transport.closePublication(pubInt)
-                transport.closeSubscription(subInt)
-                transport.closeSubscription(subString)
-                rt.close()
-            }
-            _ <- Path.run(dir.removeAll)
-        yield assert(
-            stringResult.isEmpty,
-            s"Expected Absent on String subscription after publishing to Int stream; got $stringResult"
-        )
-        end for
+            end for
+        }
     }
 
     "pollOne reassembles a multi-fragment message (>MTU) correctly" in {
@@ -481,78 +531,74 @@ class AeronTransportTest extends Test:
         // the JVM FragmentAssembler and the C shim's aeron_fragment_assembler.
         val multiFragId = 98 // distinct stream-id; no cross-test bleed
         val payload     = Array.tabulate[Byte](4096)(i => (i & 0xff).toByte)
-        for
-            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
-            rt  <- AeronPlatform.embedded(dir.unsafe.show)
-            transport = rt.transport
-            pubTokMaybe <- Sync.Unsafe.defer(transport.asyncAddPublication(ipcUri, multiFragId))
-            subTokMaybe <- Sync.Unsafe.defer(transport.asyncAddSubscription(ipcUri, multiFragId))
-            _ = assert(pubTokMaybe.isDefined, "asyncAddPublication returned Absent on a live client")
-            _ = assert(subTokMaybe.isDefined, "asyncAddSubscription returned Absent on a live client")
-            pubMaybe <- pollAddPubUntilDone(transport, pubTokMaybe.get, 5000)
-            subMaybe <- pollAddSubUntilDone(transport, subTokMaybe.get, 5000)
-            _   = assert(pubMaybe.isDefined, "pollAddPublication never returned Done")
-            _   = assert(subMaybe.isDefined, "pollAddSubscription never returned Done")
-            pub = pubMaybe.get
-            sub = subMaybe.get
-            pubConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pub)))
-            _ = assert(pubConnected, "publication did not connect within 5s")
-            subConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.subscriptionIsConnected(sub)))
-            _ = assert(subConnected, "subscription did not connect within 5s")
-            pos <- offerUntil(5000)(Sync.Unsafe.defer(transport.offer(pub, payload)))
-            _ = assert(pos > 0, s"multi-fragment offer did not succeed; last pos=$pos")
-            received <- pollUntil(5000)(Sync.Unsafe.defer(transport.pollOne(sub)))
-            _ = assert(received.isDefined, "no reassembled message received within 5000 poll attempts")
-            _ <- Sync.Unsafe.defer {
-                transport.closePublication(pub)
-                transport.closeSubscription(sub)
-                rt.close()
-            }
-            _ <- Path.run(dir.removeAll)
-        yield assert(
-            java.util.Arrays.equals(received.get, payload),
-            s"multi-fragment payload mismatch: expected 4096 bytes, got ${received.get.length}"
-        )
-        end for
+        withEmbeddedRuntime() { rt =>
+            val transport = rt.transport
+            for
+                pubTokMaybe <- Sync.Unsafe.defer(transport.asyncAddPublication(ipcUri, multiFragId))
+                subTokMaybe <- Sync.Unsafe.defer(transport.asyncAddSubscription(ipcUri, multiFragId))
+                _ = assert(pubTokMaybe.isDefined, "asyncAddPublication returned Absent on a live client")
+                _ = assert(subTokMaybe.isDefined, "asyncAddSubscription returned Absent on a live client")
+                pubMaybe <- pollAddPubUntilDone(transport, pubTokMaybe.get, 5000)
+                subMaybe <- pollAddSubUntilDone(transport, subTokMaybe.get, 5000)
+                _   = assert(pubMaybe.isDefined, "pollAddPublication never returned Done")
+                _   = assert(subMaybe.isDefined, "pollAddSubscription never returned Done")
+                pub = pubMaybe.get
+                sub = subMaybe.get
+                pubConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pub)))
+                _ = assert(pubConnected, "publication did not connect within 5s")
+                subConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.subscriptionIsConnected(sub)))
+                _ = assert(subConnected, "subscription did not connect within 5s")
+                pos <- offerUntil(5000)(Sync.Unsafe.defer(transport.offer(pub, payload)))
+                _ = assert(pos > 0, s"multi-fragment offer did not succeed; last pos=$pos")
+                received <- pollUntil(5000)(Sync.Unsafe.defer(transport.pollOne(sub)))
+                _ = assert(received.isDefined, "no reassembled message received within 5000 poll attempts")
+                _ <- Sync.Unsafe.defer {
+                    transport.closePublication(pub)
+                    transport.closeSubscription(sub)
+                }
+            yield assert(
+                java.util.Arrays.equals(received.get, payload),
+                s"multi-fragment payload mismatch: expected 4096 bytes, got ${received.get.length}"
+            )
+            end for
+        }
     }
 
     // Messages between 1 MiB and Aeron's protocol ceiling must round-trip on all platforms.
     "pollOne reassembles a 2 MiB multi-fragment message identically on all platforms" in {
         val largeFragId = 99 // distinct stream-id; no cross-test bleed
         val large       = Array.tabulate[Byte](2 * 1024 * 1024)(i => (i & 0xff).toByte)
-        for
-            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
-            rt  <- AeronPlatform.embedded(dir.unsafe.show)
-            transport = rt.transport
-            pubTokMaybe <- Sync.Unsafe.defer(transport.asyncAddPublication(ipcUri, largeFragId))
-            subTokMaybe <- Sync.Unsafe.defer(transport.asyncAddSubscription(ipcUri, largeFragId))
-            _ = assert(pubTokMaybe.isDefined, "asyncAddPublication returned Absent on a live client")
-            _ = assert(subTokMaybe.isDefined, "asyncAddSubscription returned Absent on a live client")
-            pubMaybe <- pollAddPubUntilDone(transport, pubTokMaybe.get, 5000)
-            subMaybe <- pollAddSubUntilDone(transport, subTokMaybe.get, 5000)
-            _   = assert(pubMaybe.isDefined, "pollAddPublication never returned Done")
-            _   = assert(subMaybe.isDefined, "pollAddSubscription never returned Done")
-            pub = pubMaybe.get
-            sub = subMaybe.get
-            pubConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pub)))
-            _ = assert(pubConnected, "publication did not connect within 5s")
-            subConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.subscriptionIsConnected(sub)))
-            _ = assert(subConnected, "subscription did not connect within 5s")
-            pos <- offerUntil(5000)(Sync.Unsafe.defer(transport.offer(pub, large)))
-            _ = assert(pos > 0, s"2 MiB offer did not succeed; last pos=$pos")
-            received <- pollUntil(5000)(Sync.Unsafe.defer(transport.pollOne(sub)))
-            _ = assert(received.isDefined, "no reassembled 2 MiB message received within 5000 poll attempts")
-            _ <- Sync.Unsafe.defer {
-                transport.closePublication(pub)
-                transport.closeSubscription(sub)
-                rt.close()
-            }
-            _ <- Path.run(dir.removeAll)
-        yield assert(
-            java.util.Arrays.equals(received.get, large),
-            s"2 MiB payload mismatch: expected ${large.length} bytes, got ${received.get.length}"
-        )
-        end for
+        withEmbeddedRuntime() { rt =>
+            val transport = rt.transport
+            for
+                pubTokMaybe <- Sync.Unsafe.defer(transport.asyncAddPublication(ipcUri, largeFragId))
+                subTokMaybe <- Sync.Unsafe.defer(transport.asyncAddSubscription(ipcUri, largeFragId))
+                _ = assert(pubTokMaybe.isDefined, "asyncAddPublication returned Absent on a live client")
+                _ = assert(subTokMaybe.isDefined, "asyncAddSubscription returned Absent on a live client")
+                pubMaybe <- pollAddPubUntilDone(transport, pubTokMaybe.get, 5000)
+                subMaybe <- pollAddSubUntilDone(transport, subTokMaybe.get, 5000)
+                _   = assert(pubMaybe.isDefined, "pollAddPublication never returned Done")
+                _   = assert(subMaybe.isDefined, "pollAddSubscription never returned Done")
+                pub = pubMaybe.get
+                sub = subMaybe.get
+                pubConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pub)))
+                _ = assert(pubConnected, "publication did not connect within 5s")
+                subConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.subscriptionIsConnected(sub)))
+                _ = assert(subConnected, "subscription did not connect within 5s")
+                pos <- offerUntil(5000)(Sync.Unsafe.defer(transport.offer(pub, large)))
+                _ = assert(pos > 0, s"2 MiB offer did not succeed; last pos=$pos")
+                received <- pollUntil(5000)(Sync.Unsafe.defer(transport.pollOne(sub)))
+                _ = assert(received.isDefined, "no reassembled 2 MiB message received within 5000 poll attempts")
+                _ <- Sync.Unsafe.defer {
+                    transport.closePublication(pub)
+                    transport.closeSubscription(sub)
+                }
+            yield assert(
+                java.util.Arrays.equals(received.get, large),
+                s"2 MiB payload mismatch: expected ${large.length} bytes, got ${received.get.length}"
+            )
+            end for
+        }
     }
 
     // Slot reuse / regrow correctness: large then small on the same subscription.
@@ -560,47 +606,45 @@ class AeronTransportTest extends Test:
         val reuseStreamId = 100 // distinct stream-id; no cross-test bleed
         val large         = Array.tabulate[Byte](256 * 1024)(i => ((i * 31) & 0xff).toByte)
         val small         = Array[Byte](9, 8, 7, 6, 5)
-        for
-            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
-            rt  <- AeronPlatform.embedded(dir.unsafe.show)
-            transport = rt.transport
-            pubTokMaybe <- Sync.Unsafe.defer(transport.asyncAddPublication(ipcUri, reuseStreamId))
-            subTokMaybe <- Sync.Unsafe.defer(transport.asyncAddSubscription(ipcUri, reuseStreamId))
-            _ = assert(pubTokMaybe.isDefined, "asyncAddPublication returned Absent on a live client")
-            _ = assert(subTokMaybe.isDefined, "asyncAddSubscription returned Absent on a live client")
-            pubMaybe <- pollAddPubUntilDone(transport, pubTokMaybe.get, 5000)
-            subMaybe <- pollAddSubUntilDone(transport, subTokMaybe.get, 5000)
-            _   = assert(pubMaybe.isDefined, "pollAddPublication never returned Done")
-            _   = assert(subMaybe.isDefined, "pollAddSubscription never returned Done")
-            pub = pubMaybe.get
-            sub = subMaybe.get
-            pubConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pub)))
-            _ = assert(pubConnected, "publication did not connect within 5s")
-            subConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.subscriptionIsConnected(sub)))
-            _ = assert(subConnected, "subscription did not connect within 5s")
-            posLarge <- offerUntil(5000)(Sync.Unsafe.defer(transport.offer(pub, large)))
-            _ = assert(posLarge > 0, s"large offer did not succeed; last pos=$posLarge")
-            receivedLarge <- pollUntil(5000)(Sync.Unsafe.defer(transport.pollOne(sub)))
-            _ = assert(receivedLarge.isDefined, "no reassembled large message received within 5000 poll attempts")
-            _ = assert(
-                java.util.Arrays.equals(receivedLarge.get, large),
-                s"large payload mismatch: expected ${large.length} bytes, got ${receivedLarge.get.length}"
+        withEmbeddedRuntime() { rt =>
+            val transport = rt.transport
+            for
+                pubTokMaybe <- Sync.Unsafe.defer(transport.asyncAddPublication(ipcUri, reuseStreamId))
+                subTokMaybe <- Sync.Unsafe.defer(transport.asyncAddSubscription(ipcUri, reuseStreamId))
+                _ = assert(pubTokMaybe.isDefined, "asyncAddPublication returned Absent on a live client")
+                _ = assert(subTokMaybe.isDefined, "asyncAddSubscription returned Absent on a live client")
+                pubMaybe <- pollAddPubUntilDone(transport, pubTokMaybe.get, 5000)
+                subMaybe <- pollAddSubUntilDone(transport, subTokMaybe.get, 5000)
+                _   = assert(pubMaybe.isDefined, "pollAddPublication never returned Done")
+                _   = assert(subMaybe.isDefined, "pollAddSubscription never returned Done")
+                pub = pubMaybe.get
+                sub = subMaybe.get
+                pubConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pub)))
+                _ = assert(pubConnected, "publication did not connect within 5s")
+                subConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.subscriptionIsConnected(sub)))
+                _ = assert(subConnected, "subscription did not connect within 5s")
+                posLarge <- offerUntil(5000)(Sync.Unsafe.defer(transport.offer(pub, large)))
+                _ = assert(posLarge > 0, s"large offer did not succeed; last pos=$posLarge")
+                receivedLarge <- pollUntil(5000)(Sync.Unsafe.defer(transport.pollOne(sub)))
+                _ = assert(receivedLarge.isDefined, "no reassembled large message received within 5000 poll attempts")
+                _ = assert(
+                    java.util.Arrays.equals(receivedLarge.get, large),
+                    s"large payload mismatch: expected ${large.length} bytes, got ${receivedLarge.get.length}"
+                )
+                posSmall <- offerUntil(5000)(Sync.Unsafe.defer(transport.offer(pub, small)))
+                _ = assert(posSmall > 0, s"small offer did not succeed; last pos=$posSmall")
+                receivedSmall <- pollUntil(5000)(Sync.Unsafe.defer(transport.pollOne(sub)))
+                _ = assert(receivedSmall.isDefined, "no small message received within 5000 poll attempts")
+                _ <- Sync.Unsafe.defer {
+                    transport.closePublication(pub)
+                    transport.closeSubscription(sub)
+                }
+            yield assert(
+                java.util.Arrays.equals(receivedSmall.get, small),
+                s"small payload mismatch after large: expected ${small.toList}, got ${receivedSmall.get.toList}"
             )
-            posSmall <- offerUntil(5000)(Sync.Unsafe.defer(transport.offer(pub, small)))
-            _ = assert(posSmall > 0, s"small offer did not succeed; last pos=$posSmall")
-            receivedSmall <- pollUntil(5000)(Sync.Unsafe.defer(transport.pollOne(sub)))
-            _ = assert(receivedSmall.isDefined, "no small message received within 5000 poll attempts")
-            _ <- Sync.Unsafe.defer {
-                transport.closePublication(pub)
-                transport.closeSubscription(sub)
-                rt.close()
-            }
-            _ <- Path.run(dir.removeAll)
-        yield assert(
-            java.util.Arrays.equals(receivedSmall.get, small),
-            s"small payload mismatch after large: expected ${small.toList}, got ${receivedSmall.get.toList}"
-        )
-        end for
+            end for
+        }
     }
 
     // Use-after-free regression guard: kyo_aeron_async_add_publication checks the registry (bundle still
@@ -636,6 +680,103 @@ class AeronTransportTest extends Test:
     // ---------------------------------------------------------------------------
     // Bounded Scala Async poll loop (add-deadline behavior)
     // ---------------------------------------------------------------------------
+
+    "an interrupt on a completed add does not free a token the transport has already taken" in {
+        val transport = new InterruptOnDoneTransport
+        Latch.initWith(1) { gate =>
+            Fiber.initUnscoped(
+                gate.await.andThen(
+                    Abort.run[TopicTransportException](
+                        Topic.addPublicationDeadline(transport, ipcUri, tokenOwnershipStreamId, 10.seconds)
+                    )
+                )
+            ).flatMap { fiber =>
+                Sync.Unsafe.defer {
+                    // Unsafe: the fake has to interrupt from inside a synchronous transport call, which is the
+                    // only vantage point where the window under test is open.
+                    transport.interrupter = () => fiber.unsafe.interrupt()
+                }
+                    .andThen(gate.release)
+                    .andThen(fiber.getResult)
+                    .map { result =>
+                        assert(transport.doneObserved, "the poll never reported Done, so the fixture never armed the window")
+                        assert(
+                            transport.interruptTook,
+                            "the fixture's interrupt did not take, so a zero free count says nothing about the window"
+                        )
+                        // The outcome is what separates the two readings of a zero free count: an interrupted add proves the
+                        // interrupt was OBSERVED and the flag still won, while a completed add proves only that the add
+                        // outran the interrupt and the window was never entered at all.
+                        assert(
+                            result.isPanic,
+                            s"the add was not interrupted, so this leaf did not exercise the ownership window: $result"
+                        )
+                        assert(
+                            transport.freesAfterDone.get() == 0,
+                            s"the async token was freed ${transport.freesAfterDone.get()} time(s) after the transport had " +
+                                "already taken ownership of it on a Done poll"
+                        )
+                    }
+            }
+        }
+    }
+
+    /** Closing an embedded runtime twice must not take the process down.
+      *
+      * The client half already treats this as a real caller shape: its close wins a CAS before touching the
+      * handle, because the shim's client close calls `aeron_close` unconditionally and a second one tears
+      * down freed memory. The driver half has the same shim contract, `kyo_aeron_driver_close` frees its
+      * bundle outright, and had no such guard, so the second close read a freed pointer and faulted inside
+      * the conductor-agent stop. A resource released on both an error path and its scope exit is exactly the
+      * caller this protects, and it is not exotic: this leaf closes explicitly and lets the scope close again.
+      */
+    "closing an embedded runtime twice does not tear down freed driver state" in {
+        withEmbeddedRuntime() { rt =>
+            Sync.Unsafe.defer(rt.close()).andThen(succeed)
+        }
+    }
+
+    /** A body that throws must still release its driver.
+      *
+      * This is the property the scoped helper exists for, and it is the one that cannot be read off the
+      * source: whether the finalizer actually runs is a fact about execution. Every leaf in this module
+      * depends on it, because the alternative is a live C media driver and its conductor thread surviving a
+      * failed assertion for the rest of the process.
+      */
+    "a driver is released even when the body that uses it throws" in {
+        val before = embeddedRuntimeReleases.get()
+        Abort.run[Throwable](
+            withEmbeddedRuntime() { _ =>
+                Sync.defer[Unit, Any](throw new RuntimeException("the body fails after the driver is up"))
+            }
+        ).map { result =>
+            assert(result.isPanic, s"the fixture must fail inside the scope for this to prove anything, got $result")
+            assert(
+                embeddedRuntimeReleases.get() == before + 1,
+                s"the driver was not released: releases went from $before to ${embeddedRuntimeReleases.get()}"
+            )
+        }
+    }
+
+    /** A live driver must name itself where a descriptor leak is reported.
+      *
+      * The leak check attaches the diagnostics dump to every surviving descriptor so the survivor says who
+      * owns it. A media driver holds descriptors and, until it registered, contributed nothing to that dump,
+      * so an abandoned one was reported as a bare inode with no owner. Asserting on this leaf's own unique
+      * directory rather than on the entry name keeps it specific while other suites run in parallel.
+      */
+    "a live driver names itself in the diagnostics dump" in {
+        val probeDir = "kyo-aeron-diagnostics-probe"
+        withEmbeddedRuntime(probeDir) { rt =>
+            Sync.Unsafe.defer {
+                val whileLive = kyo.internal.Diagnostics.dumpAll()
+                rt.close()
+                val afterClose = kyo.internal.Diagnostics.dumpAll()
+                assert(whileLive.contains(probeDir), "a live driver is not named in the diagnostics dump")
+                assert(!afterClose.contains(probeDir), "a closed driver is still named in the diagnostics dump")
+            }
+        }
+    }
 
     "a never-confirming add aborts with TopicAddTimeoutException at the deadline" in {
         val deadline  = 200.millis
@@ -747,65 +888,58 @@ class AeronTransportTest extends Test:
     // Failure(Timeout) if not); what matters is that it never hangs past 100ms, proving the poll loop is
     // interruptible.
     "an interrupt during a pending add is honored and does not hang" in {
-        for
-            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
-            rt  <- AeronPlatform.embedded(dir.unsafe.show)
-            transport = rt.transport
-            result <- Abort.run[Timeout | TopicTransportException] {
+        // The runtime close cleans up any publication the add produced; the Sync.ensure inside
+        // addPublicationDeadline frees the async token if interrupted mid-poll.
+        withEmbeddedRuntime() { rt =>
+            Abort.run[Timeout | TopicTransportException] {
                 Async.timeout(100.millis) {
-                    Topic.addPublicationDeadline(transport, ipcUri, interruptStreamId, 10.seconds)
+                    Topic.addPublicationDeadline(rt.transport, ipcUri, interruptStreamId, 10.seconds)
                 }
-            }
-            // The runtime close cleans up any publication the add produced; the Sync.ensure inside
-            // addPublicationDeadline frees the async token if interrupted mid-poll.
-            _ <- Sync.Unsafe.defer(rt.close())
-            _ <- Path.run(dir.removeAll)
-        yield succeed
+            }.andThen(succeed)
+        }
     }
 
     "a normal add via addPublicationDeadline completes and round-trips bytes" in {
         val payload = Array[Byte](42, 43, 44)
-        for
-            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
-            rt  <- AeronPlatform.embedded(dir.unsafe.show)
-            transport = rt.transport
-            pubMaybeResult <- Abort.run[TopicTransportException] {
-                Topic.addPublicationDeadline(transport, ipcUri, regressionAddStreamId, 10.seconds)
-            }
-            _ = assert(
-                pubMaybeResult.isSuccess,
-                s"addPublicationDeadline failed on a healthy driver: ${describeAddFailure(pubMaybeResult)}"
+        withEmbeddedRuntime() { rt =>
+            val transport = rt.transport
+            for
+                pubMaybeResult <- Abort.run[TopicTransportException] {
+                    Topic.addPublicationDeadline(transport, ipcUri, regressionAddStreamId, 10.seconds)
+                }
+                _ = assert(
+                    pubMaybeResult.isSuccess,
+                    s"addPublicationDeadline failed on a healthy driver: ${describeAddFailure(pubMaybeResult)}"
+                )
+                pubMaybe = pubMaybeResult.getOrThrow
+                _        = assert(pubMaybe.isDefined, "addPublicationDeadline returned Absent on a healthy driver")
+                pub      = pubMaybe.get
+                subMaybeResult <- Abort.run[TopicTransportException] {
+                    Topic.addSubscriptionDeadline(transport, ipcUri, regressionAddStreamId, 10.seconds)
+                }
+                _ = assert(
+                    subMaybeResult.isSuccess,
+                    s"addSubscriptionDeadline failed on a healthy driver: ${describeAddFailure(subMaybeResult)}"
+                )
+                subMaybe = subMaybeResult.getOrThrow
+                _        = assert(subMaybe.isDefined, "addSubscriptionDeadline returned Absent on a healthy driver")
+                sub      = subMaybe.get
+                pubConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pub)))
+                _ = assert(pubConnected, "publication did not connect within 5s")
+                pos <- offerUntil(5000)(Sync.Unsafe.defer(transport.offer(pub, payload)))
+                _ = assert(pos > 0, s"offer did not succeed; pos=$pos")
+                received <- pollUntil(5000)(Sync.Unsafe.defer(transport.pollOne(sub)))
+                _ = assert(received.isDefined, "no message received within 5000 poll attempts")
+                _ <- Sync.Unsafe.defer {
+                    transport.closePublication(pub)
+                    transport.closeSubscription(sub)
+                }
+            yield assert(
+                java.util.Arrays.equals(received.get, payload),
+                s"round-trip payload mismatch: got ${received.get.toList}"
             )
-            pubMaybe = pubMaybeResult.getOrThrow
-            _        = assert(pubMaybe.isDefined, "addPublicationDeadline returned Absent on a healthy driver")
-            pub      = pubMaybe.get
-            subMaybeResult <- Abort.run[TopicTransportException] {
-                Topic.addSubscriptionDeadline(transport, ipcUri, regressionAddStreamId, 10.seconds)
-            }
-            _ = assert(
-                subMaybeResult.isSuccess,
-                s"addSubscriptionDeadline failed on a healthy driver: ${describeAddFailure(subMaybeResult)}"
-            )
-            subMaybe = subMaybeResult.getOrThrow
-            _        = assert(subMaybe.isDefined, "addSubscriptionDeadline returned Absent on a healthy driver")
-            sub      = subMaybe.get
-            pubConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pub)))
-            _ = assert(pubConnected, "publication did not connect within 5s")
-            pos <- offerUntil(5000)(Sync.Unsafe.defer(transport.offer(pub, payload)))
-            _ = assert(pos > 0, s"offer did not succeed; pos=$pos")
-            received <- pollUntil(5000)(Sync.Unsafe.defer(transport.pollOne(sub)))
-            _ = assert(received.isDefined, "no message received within 5000 poll attempts")
-            _ <- Sync.Unsafe.defer {
-                transport.closePublication(pub)
-                transport.closeSubscription(sub)
-                rt.close()
-            }
-            _ <- Path.run(dir.removeAll)
-        yield assert(
-            java.util.Arrays.equals(received.get, payload),
-            s"round-trip payload mismatch: got ${received.get.toList}"
-        )
-        end for
+            end for
+        }
     }
 
     // ---------------------------------------------------------------------------
@@ -929,32 +1063,31 @@ class AeronTransportTest extends Test:
     // faulting. Raw transport.offer avoids Topic.publish, which would re-add a publication first.
     "UAF-sentinel: an offer on a publication after a concurrent client close returns the safe sentinel" in {
         val payload = Array[Byte](1, 2, 3, 4)
-        for
-            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
-            rt  <- AeronPlatform.embedded(dir.unsafe.show)
-            transport = rt.transport
-            pubMaybeResult <- Abort.run[TopicTransportException] {
-                Topic.addPublicationDeadline(transport, "aeron:ipc", uafSentinelStreamId, 10.seconds)
-            }
-            _ = assert(
-                pubMaybeResult.isSuccess,
-                s"addPublicationDeadline failed on a healthy driver: ${describeAddFailure(pubMaybeResult)}"
+        withEmbeddedRuntime() { rt =>
+            val transport = rt.transport
+            for
+                pubMaybeResult <- Abort.run[TopicTransportException] {
+                    Topic.addPublicationDeadline(transport, "aeron:ipc", uafSentinelStreamId, 10.seconds)
+                }
+                _ = assert(
+                    pubMaybeResult.isSuccess,
+                    s"addPublicationDeadline failed on a healthy driver: ${describeAddFailure(pubMaybeResult)}"
+                )
+                pubMaybe = pubMaybeResult.getOrThrow
+                _        = assert(pubMaybe.isDefined, "addPublicationDeadline returned Absent on a healthy driver")
+                pub      = pubMaybe.get
+                _ <- Sync.Unsafe.defer(rt.close())
+                // Offer on the freed-inner-handle publication.
+                offerResult <- Sync.Unsafe.defer(transport.offer(pub, payload))
+                // Release the publication bundle's client-bundle ref (closing=1, so it skips the freed
+                // handle and frees the bundle).
+                _ <- Sync.Unsafe.defer(transport.closePublication(pub))
+            yield assert(
+                offerResult == AeronSentinels.Closed,
+                s"expected offer on a closed-client publication to return AeronSentinels.Closed (-4); got $offerResult"
             )
-            pubMaybe = pubMaybeResult.getOrThrow
-            _        = assert(pubMaybe.isDefined, "addPublicationDeadline returned Absent on a healthy driver")
-            pub      = pubMaybe.get
-            _ <- Sync.Unsafe.defer(rt.close())
-            // Offer on the freed-inner-handle publication.
-            offerResult <- Sync.Unsafe.defer(transport.offer(pub, payload))
-            // Release the publication bundle's client-bundle ref (closing=1, so it skips the freed
-            // handle and frees the bundle).
-            _ <- Sync.Unsafe.defer(transport.closePublication(pub))
-            _ <- Path.run(dir.removeAll)
-        yield assert(
-            offerResult == AeronSentinels.Closed,
-            s"expected offer on a closed-client publication to return AeronSentinels.Closed (-4); got $offerResult"
-        )
-        end for
+            end for
+        }
     }
 
     // ---------------------------------------------------------------------------
@@ -969,80 +1102,76 @@ class AeronTransportTest extends Test:
     "oversize offer on term-length=65536 returns -6, does not throw" in {
         val oversizeUri = "aeron:ipc?term-length=65536"
         val oversize    = Array.fill[Byte](8193)(0)
-        for
-            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
-            rt  <- AeronPlatform.embedded(dir.unsafe.show)
-            transport = rt.transport
-            pubTokMaybe <- Sync.Unsafe.defer(transport.asyncAddPublication(oversizeUri, oversizeJvmStreamId))
-            subTokMaybe <- Sync.Unsafe.defer(transport.asyncAddSubscription(oversizeUri, oversizeJvmStreamId))
-            _ = assert(pubTokMaybe.isDefined, "asyncAddPublication returned Absent on a live client")
-            _ = assert(subTokMaybe.isDefined, "asyncAddSubscription returned Absent on a live client")
-            pubMaybe <- pollAddPubUntilDone(transport, pubTokMaybe.get, 5000)
-            subMaybe <- pollAddSubUntilDone(transport, subTokMaybe.get, 5000)
-            _   = assert(pubMaybe.isDefined, "pollAddPublication never returned Done within 5000 attempts")
-            _   = assert(subMaybe.isDefined, "pollAddSubscription never returned Done within 5000 attempts")
-            pub = pubMaybe.get
-            sub = subMaybe.get
-            pubConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pub)))
-            _ = assert(pubConnected, "publication did not connect within 5s")
-            result <- Abort.run[Throwable](Sync.Unsafe.defer(transport.offer(pub, oversize)))
-            _ <- Sync.Unsafe.defer {
-                transport.closePublication(pub)
-                transport.closeSubscription(sub)
-                rt.close()
-            }
-            _ <- Path.run(dir.removeAll)
-        yield result match
-            case Result.Success(r) =>
-                assert(
-                    r == AeronSentinels.Error,
-                    s"Expected AeronSentinels.Error (-6) for oversize offer; got $r"
-                )
-            case Result.Panic(t) =>
-                fail(s"oversize offer threw ${t.getClass.getSimpleName} instead of returning -6: ${t.getMessage}")
-            case Result.Failure(t) =>
-                fail(s"oversize offer aborted with ${t.getClass.getSimpleName}: ${t.getMessage}")
-        end for
+        withEmbeddedRuntime() { rt =>
+            val transport = rt.transport
+            for
+                pubTokMaybe <- Sync.Unsafe.defer(transport.asyncAddPublication(oversizeUri, oversizeJvmStreamId))
+                subTokMaybe <- Sync.Unsafe.defer(transport.asyncAddSubscription(oversizeUri, oversizeJvmStreamId))
+                _ = assert(pubTokMaybe.isDefined, "asyncAddPublication returned Absent on a live client")
+                _ = assert(subTokMaybe.isDefined, "asyncAddSubscription returned Absent on a live client")
+                pubMaybe <- pollAddPubUntilDone(transport, pubTokMaybe.get, 5000)
+                subMaybe <- pollAddSubUntilDone(transport, subTokMaybe.get, 5000)
+                _   = assert(pubMaybe.isDefined, "pollAddPublication never returned Done within 5000 attempts")
+                _   = assert(subMaybe.isDefined, "pollAddSubscription never returned Done within 5000 attempts")
+                pub = pubMaybe.get
+                sub = subMaybe.get
+                pubConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pub)))
+                _ = assert(pubConnected, "publication did not connect within 5s")
+                result <- Abort.run[Throwable](Sync.Unsafe.defer(transport.offer(pub, oversize)))
+                _ <- Sync.Unsafe.defer {
+                    transport.closePublication(pub)
+                    transport.closeSubscription(sub)
+                }
+            yield result match
+                case Result.Success(r) =>
+                    assert(
+                        r == AeronSentinels.Error,
+                        s"Expected AeronSentinels.Error (-6) for oversize offer; got $r"
+                    )
+                case Result.Panic(t) =>
+                    fail(s"oversize offer threw ${t.getClass.getSimpleName} instead of returning -6: ${t.getMessage}")
+                case Result.Failure(t) =>
+                    fail(s"oversize offer aborted with ${t.getClass.getSimpleName}: ${t.getMessage}")
+            end for
+        }
     }
 
     // Same subscriber+awaitConnected anti-flakiness pattern as the JVM oversize-offer leaf.
     "oversize offer on term-length=65536 returns -6 on every platform" in {
         val oversizeUri = "aeron:ipc?term-length=65536"
         val oversize    = Array.fill[Byte](8193)(0)
-        for
-            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
-            rt  <- AeronPlatform.embedded(dir.unsafe.show)
-            transport = rt.transport
-            pubTokMaybe <- Sync.Unsafe.defer(transport.asyncAddPublication(oversizeUri, oversizeCrossStreamId))
-            subTokMaybe <- Sync.Unsafe.defer(transport.asyncAddSubscription(oversizeUri, oversizeCrossStreamId))
-            _ = assert(pubTokMaybe.isDefined, "asyncAddPublication returned Absent on a live client")
-            _ = assert(subTokMaybe.isDefined, "asyncAddSubscription returned Absent on a live client")
-            pubMaybe <- pollAddPubUntilDone(transport, pubTokMaybe.get, 5000)
-            subMaybe <- pollAddSubUntilDone(transport, subTokMaybe.get, 5000)
-            _   = assert(pubMaybe.isDefined, "pollAddPublication never returned Done within 5000 attempts")
-            _   = assert(subMaybe.isDefined, "pollAddSubscription never returned Done within 5000 attempts")
-            pub = pubMaybe.get
-            sub = subMaybe.get
-            pubConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pub)))
-            _ = assert(pubConnected, "publication did not connect within 5s")
-            result <- Abort.run[Throwable](Sync.Unsafe.defer(transport.offer(pub, oversize)))
-            _ <- Sync.Unsafe.defer {
-                transport.closePublication(pub)
-                transport.closeSubscription(sub)
-                rt.close()
-            }
-            _ <- Path.run(dir.removeAll)
-        yield result match
-            case Result.Success(r) =>
-                assert(
-                    r == AeronSentinels.Error,
-                    s"Expected AeronSentinels.Error (-6) for oversize offer on all platforms; got $r"
-                )
-            case Result.Panic(t) =>
-                fail(s"oversize offer threw ${t.getClass.getSimpleName} on a non-JVM platform: ${t.getMessage}")
-            case Result.Failure(t) =>
-                fail(s"oversize offer aborted with ${t.getClass.getSimpleName}: ${t.getMessage}")
-        end for
+        withEmbeddedRuntime() { rt =>
+            val transport = rt.transport
+            for
+                pubTokMaybe <- Sync.Unsafe.defer(transport.asyncAddPublication(oversizeUri, oversizeCrossStreamId))
+                subTokMaybe <- Sync.Unsafe.defer(transport.asyncAddSubscription(oversizeUri, oversizeCrossStreamId))
+                _ = assert(pubTokMaybe.isDefined, "asyncAddPublication returned Absent on a live client")
+                _ = assert(subTokMaybe.isDefined, "asyncAddSubscription returned Absent on a live client")
+                pubMaybe <- pollAddPubUntilDone(transport, pubTokMaybe.get, 5000)
+                subMaybe <- pollAddSubUntilDone(transport, subTokMaybe.get, 5000)
+                _   = assert(pubMaybe.isDefined, "pollAddPublication never returned Done within 5000 attempts")
+                _   = assert(subMaybe.isDefined, "pollAddSubscription never returned Done within 5000 attempts")
+                pub = pubMaybe.get
+                sub = subMaybe.get
+                pubConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pub)))
+                _ = assert(pubConnected, "publication did not connect within 5s")
+                result <- Abort.run[Throwable](Sync.Unsafe.defer(transport.offer(pub, oversize)))
+                _ <- Sync.Unsafe.defer {
+                    transport.closePublication(pub)
+                    transport.closeSubscription(sub)
+                }
+            yield result match
+                case Result.Success(r) =>
+                    assert(
+                        r == AeronSentinels.Error,
+                        s"Expected AeronSentinels.Error (-6) for oversize offer on all platforms; got $r"
+                    )
+                case Result.Panic(t) =>
+                    fail(s"oversize offer threw ${t.getClass.getSimpleName} on a non-JVM platform: ${t.getMessage}")
+                case Result.Failure(t) =>
+                    fail(s"oversize offer aborted with ${t.getClass.getSimpleName}: ${t.getMessage}")
+            end for
+        }
     }
 
     // ---------------------------------------------------------------------------
@@ -1053,118 +1182,110 @@ class AeronTransportTest extends Test:
     // kyo_aeron_test_inject_error. Reaching the yield proves the recording error handler did not
     // exit() the process.
     "an injected fatal error is recorded in the slot and the process survives" in {
-        for
-            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
-            rt  <- AeronPlatform.embedded(dir.unsafe.show)
-            transport = rt.transport
-            _        <- Sync.Unsafe.defer(transport.injectError(-1000, "driver timeout"))
-            recorded <- Sync.Unsafe.defer(transport.fatalError)
-            _ = assert(
-                recorded == Present("driver timeout"),
-                s"fatalError expected Present('driver timeout') after inject; got $recorded"
-            )
-            _ <- Sync.Unsafe.defer(rt.close())
-            _ <- Path.run(dir.removeAll)
-        yield succeed
-        end for
+        withEmbeddedRuntime() { rt =>
+            val transport = rt.transport
+            for
+                _        <- Sync.Unsafe.defer(transport.injectError(-1000, "driver timeout"))
+                recorded <- Sync.Unsafe.defer(transport.fatalError)
+                _ = assert(
+                    recorded == Present("driver timeout"),
+                    s"fatalError expected Present('driver timeout') after inject; got $recorded"
+                )
+            yield succeed
+            end for
+        }
     }
 
     // The next offer boundary checks fatalError and aborts, never exits the process.
     "a publish after a recorded fatal error aborts TopicTransportFailedException" in {
-        for
-            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
-            rt  <- AeronPlatform.embedded(dir.unsafe.show)
-            transport = rt.transport
-            _ <- Sync.Unsafe.defer(transport.injectError(-1000, "driver timeout"))
-            result <- Abort.run[TopicException] {
-                Topic.runWith(transport) {
-                    Topic.publish[Int](ipcUri, Schedule.never)(Stream.init(Seq(42)))
+        withEmbeddedRuntime() { rt =>
+            val transport = rt.transport
+            for
+                _ <- Sync.Unsafe.defer(transport.injectError(-1000, "driver timeout"))
+                result <- Abort.run[TopicException] {
+                    Topic.runWith(transport) {
+                        Topic.publish[Int](ipcUri, Schedule.never)(Stream.init(Seq(42)))
+                    }
                 }
-            }
-            _ <- Sync.Unsafe.defer(rt.close())
-            _ <- Path.run(dir.removeAll)
-        yield result match
-            case Result.Failure(f: TopicTransportFailedException) =>
-                assert(
-                    f.detail == "driver timeout",
-                    s"TopicTransportFailedException carried wrong detail: '${f.detail}'"
-                )
-            case Result.Success(_) =>
-                fail("publish should have aborted with TopicTransportFailedException after fatal error inject")
-            case Result.Panic(t) =>
-                fail(s"unexpected panic: ${t.getClass.getSimpleName}: ${t.getMessage}")
-            case Result.Failure(other) =>
-                fail(s"expected TopicTransportFailedException, got ${other.getClass.getSimpleName}")
-        end for
+            yield result match
+                case Result.Failure(f: TopicTransportFailedException) =>
+                    assert(
+                        f.detail == "driver timeout",
+                        s"TopicTransportFailedException carried wrong detail: '${f.detail}'"
+                    )
+                case Result.Success(_) =>
+                    fail("publish should have aborted with TopicTransportFailedException after fatal error inject")
+                case Result.Panic(t) =>
+                    fail(s"unexpected panic: ${t.getClass.getSimpleName}: ${t.getMessage}")
+                case Result.Failure(other) =>
+                    fail(s"expected TopicTransportFailedException, got ${other.getClass.getSimpleName}")
+            end for
+        }
     }
 
     // Symmetric to the publish path, at the stream's poll boundary.
     "a stream after a recorded fatal error aborts TopicTransportFailedException" in {
-        for
-            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
-            rt  <- AeronPlatform.embedded(dir.unsafe.show)
-            transport = rt.transport
-            _ <- Sync.Unsafe.defer(transport.injectError(-1000, "driver timeout"))
-            result <- Abort.run[TopicException] {
-                Topic.runWith(transport) {
-                    Topic.stream[Int](ipcUri, Schedule.never).take(1).run
+        withEmbeddedRuntime() { rt =>
+            val transport = rt.transport
+            for
+                _ <- Sync.Unsafe.defer(transport.injectError(-1000, "driver timeout"))
+                result <- Abort.run[TopicException] {
+                    Topic.runWith(transport) {
+                        Topic.stream[Int](ipcUri, Schedule.never).take(1).run
+                    }
                 }
-            }
-            _ <- Sync.Unsafe.defer(rt.close())
-            _ <- Path.run(dir.removeAll)
-        yield result match
-            case Result.Failure(f: TopicTransportFailedException) =>
-                assert(
-                    f.detail == "driver timeout",
-                    s"TopicTransportFailedException carried wrong detail: '${f.detail}'"
-                )
-            case Result.Success(_) =>
-                fail("stream should have aborted with TopicTransportFailedException after fatal error inject")
-            case Result.Panic(t) =>
-                fail(s"unexpected panic: ${t.getClass.getSimpleName}: ${t.getMessage}")
-            case Result.Failure(other) =>
-                fail(s"expected TopicTransportFailedException, got ${other.getClass.getSimpleName}")
-        end for
+            yield result match
+                case Result.Failure(f: TopicTransportFailedException) =>
+                    assert(
+                        f.detail == "driver timeout",
+                        s"TopicTransportFailedException carried wrong detail: '${f.detail}'"
+                    )
+                case Result.Success(_) =>
+                    fail("stream should have aborted with TopicTransportFailedException after fatal error inject")
+                case Result.Panic(t) =>
+                    fail(s"unexpected panic: ${t.getClass.getSimpleName}: ${t.getMessage}")
+                case Result.Failure(other) =>
+                    fail(s"expected TopicTransportFailedException, got ${other.getClass.getSimpleName}")
+            end for
+        }
     }
 
     // Regression guard: installing the error handler must not perturb the happy path.
     "no recorded error means normal operation, fatalError stays Absent" in {
         val payload = Array[Byte](10, 20, 30)
-        for
-            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
-            rt  <- AeronPlatform.embedded(dir.unsafe.show)
-            transport = rt.transport
-            beforeOp <- Sync.Unsafe.defer(transport.fatalError)
-            _ = assert(beforeOp.isEmpty, s"fatalError must be Absent on fresh transport; got $beforeOp")
-            pubTokMaybe <- Sync.Unsafe.defer(transport.asyncAddPublication(ipcUri, errorHandlerRegressionStreamId))
-            subTokMaybe <- Sync.Unsafe.defer(transport.asyncAddSubscription(ipcUri, errorHandlerRegressionStreamId))
-            _ = assert(pubTokMaybe.isDefined, "asyncAddPublication returned Absent on a live client")
-            _ = assert(subTokMaybe.isDefined, "asyncAddSubscription returned Absent on a live client")
-            pubMaybe <- pollAddPubUntilDone(transport, pubTokMaybe.get, 5000)
-            subMaybe <- pollAddSubUntilDone(transport, subTokMaybe.get, 5000)
-            _   = assert(pubMaybe.isDefined, "pollAddPublication never returned Done")
-            _   = assert(subMaybe.isDefined, "pollAddSubscription never returned Done")
-            pub = pubMaybe.get
-            sub = subMaybe.get
-            pubConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pub)))
-            _ = assert(pubConnected, "publication did not connect within 5s")
-            afterOp <- Sync.Unsafe.defer(transport.fatalError)
-            _ = assert(afterOp.isEmpty, s"fatalError must remain Absent after successful ops; got $afterOp")
-            pos <- offerUntil(5000)(Sync.Unsafe.defer(transport.offer(pub, payload)))
-            _ = assert(pos > 0, s"offer did not succeed; pos=$pos")
-            received <- pollUntil(5000)(Sync.Unsafe.defer(transport.pollOne(sub)))
-            _ = assert(received.isDefined, "no message received")
-            _ <- Sync.Unsafe.defer {
-                transport.closePublication(pub)
-                transport.closeSubscription(sub)
-                rt.close()
-            }
-            _ <- Path.run(dir.removeAll)
-        yield assert(
-            java.util.Arrays.equals(received.get, payload),
-            s"round-trip payload mismatch: got ${received.get.toList}"
-        )
-        end for
+        withEmbeddedRuntime() { rt =>
+            val transport = rt.transport
+            for
+                beforeOp <- Sync.Unsafe.defer(transport.fatalError)
+                _ = assert(beforeOp.isEmpty, s"fatalError must be Absent on fresh transport; got $beforeOp")
+                pubTokMaybe <- Sync.Unsafe.defer(transport.asyncAddPublication(ipcUri, errorHandlerRegressionStreamId))
+                subTokMaybe <- Sync.Unsafe.defer(transport.asyncAddSubscription(ipcUri, errorHandlerRegressionStreamId))
+                _ = assert(pubTokMaybe.isDefined, "asyncAddPublication returned Absent on a live client")
+                _ = assert(subTokMaybe.isDefined, "asyncAddSubscription returned Absent on a live client")
+                pubMaybe <- pollAddPubUntilDone(transport, pubTokMaybe.get, 5000)
+                subMaybe <- pollAddSubUntilDone(transport, subTokMaybe.get, 5000)
+                _   = assert(pubMaybe.isDefined, "pollAddPublication never returned Done")
+                _   = assert(subMaybe.isDefined, "pollAddSubscription never returned Done")
+                pub = pubMaybe.get
+                sub = subMaybe.get
+                pubConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pub)))
+                _ = assert(pubConnected, "publication did not connect within 5s")
+                afterOp <- Sync.Unsafe.defer(transport.fatalError)
+                _ = assert(afterOp.isEmpty, s"fatalError must remain Absent after successful ops; got $afterOp")
+                pos <- offerUntil(5000)(Sync.Unsafe.defer(transport.offer(pub, payload)))
+                _ = assert(pos > 0, s"offer did not succeed; pos=$pos")
+                received <- pollUntil(5000)(Sync.Unsafe.defer(transport.pollOne(sub)))
+                _ = assert(received.isDefined, "no message received")
+                _ <- Sync.Unsafe.defer {
+                    transport.closePublication(pub)
+                    transport.closeSubscription(sub)
+                }
+            yield assert(
+                java.util.Arrays.equals(received.get, payload),
+                s"round-trip payload mismatch: got ${received.get.toList}"
+            )
+            end for
+        }
     }
 
     // fatalError keys off the slot's presence flag, not msg.nonEmpty, so an empty message still surfaces
@@ -1172,42 +1293,40 @@ class AeronTransportTest extends Test:
     // 42)" on FFI; the throwable's toString on JVM, since getMessage is null for messageless throwables).
     // Were presence not the key, an empty-message fatal error would map to Absent and retry forever.
     "empty-message fatal error inject surfaces TopicTransportFailedException with non-empty detail" in {
-        for
-            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
-            rt  <- AeronPlatform.embedded(dir.unsafe.show)
-            transport = rt.transport
-            _        <- Sync.Unsafe.defer(transport.injectError(42, ""))
-            recorded <- Sync.Unsafe.defer(transport.fatalError)
-            _ = assert(
-                recorded.isDefined,
-                "fatalError must be Present after inject with empty message; the empty-message fatal error must surface as a typed failure"
-            )
-            _ = assert(
-                recorded.get.nonEmpty,
-                s"fatalError detail must be non-empty after inject with empty message; got '${recorded.get}'"
-            )
-            result <- Abort.run[TopicException] {
-                Topic.runWith(transport) {
-                    Topic.publish[Int](ipcUri, Schedule.never)(Stream.init(Seq(42)))
+        withEmbeddedRuntime() { rt =>
+            val transport = rt.transport
+            for
+                _        <- Sync.Unsafe.defer(transport.injectError(42, ""))
+                recorded <- Sync.Unsafe.defer(transport.fatalError)
+                _ = assert(
+                    recorded.isDefined,
+                    "fatalError must be Present after inject with empty message; the empty-message fatal error must surface as a typed failure"
+                )
+                _ = assert(
+                    recorded.get.nonEmpty,
+                    s"fatalError detail must be non-empty after inject with empty message; got '${recorded.get}'"
+                )
+                result <- Abort.run[TopicException] {
+                    Topic.runWith(transport) {
+                        Topic.publish[Int](ipcUri, Schedule.never)(Stream.init(Seq(42)))
+                    }
                 }
-            }
-            _ <- Sync.Unsafe.defer(rt.close())
-            _ <- Path.run(dir.removeAll)
-        yield result match
-            case Result.Failure(f: TopicTransportFailedException) =>
-                assert(
-                    f.detail.nonEmpty,
-                    s"TopicTransportFailedException.detail must be non-empty for empty-message inject; got '${f.detail}'"
-                )
-            case Result.Success(_) =>
-                fail(
-                    "publish should have aborted with TopicTransportFailedException after empty-message fatal error inject; the empty-message fatal error must surface as a typed failure"
-                )
-            case Result.Panic(t) =>
-                fail(s"unexpected panic: ${t.getClass.getSimpleName}: ${t.getMessage}")
-            case Result.Failure(other) =>
-                fail(s"expected TopicTransportFailedException, got ${other.getClass.getSimpleName}")
-        end for
+            yield result match
+                case Result.Failure(f: TopicTransportFailedException) =>
+                    assert(
+                        f.detail.nonEmpty,
+                        s"TopicTransportFailedException.detail must be non-empty for empty-message inject; got '${f.detail}'"
+                    )
+                case Result.Success(_) =>
+                    fail(
+                        "publish should have aborted with TopicTransportFailedException after empty-message fatal error inject; the empty-message fatal error must surface as a typed failure"
+                    )
+                case Result.Panic(t) =>
+                    fail(s"unexpected panic: ${t.getClass.getSimpleName}: ${t.getMessage}")
+                case Result.Failure(other) =>
+                    fail(s"expected TopicTransportFailedException, got ${other.getClass.getSimpleName}")
+            end for
+        }
     }
 
 end AeronTransportTest

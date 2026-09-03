@@ -16,6 +16,7 @@ import kyo.net.NetNotUpgradableException
 import kyo.net.NetSocketOptionUnsupportedException
 import kyo.net.NetStdioAlreadyOpenException
 import kyo.net.NetTlsConfig
+import kyo.net.NetTlsConfigException
 import kyo.net.NetTlsHandshakeException
 import kyo.net.NetTlsHandshakeTimeoutException
 import kyo.net.NetUnixConnectException
@@ -24,6 +25,7 @@ import kyo.net.TransportCapabilities
 import kyo.net.internal.transport.*
 import kyo.scheduler.IOPromise
 import scala.scalajs.js
+import scala.util.control.NonFatal
 
 /** JS TCP transport delegating to Node.js `net` and `tls` modules.
   *
@@ -152,6 +154,12 @@ final private[kyo] class JsTransport private (
                     "hostnameVerification = false to opt out of name verification)"
             )))
         else
+            // Read every configured PEM before building the Node option object, so an unreadable path is reported on this method's declared
+            // failure channel like the two rejections above, instead of throwing out of the method as a Panic. See readConfiguredPems.
+            val pems = readConfiguredPems(tls, isServer = false) match
+                case Result.Success(p)  => p
+                case Result.Failure(ex) => return Fiber.Unsafe.fromResult(Result.fail(ex))
+                case Result.Panic(ex)   => return Fiber.Unsafe.fromResult(Result.panic(ex))
             val opts = js.Dynamic.literal(host = host, port = port)
             // rejectUnauthorized drives certificate-chain validation only; hostname check is a
             // separate concern routed through checkServerIdentity.
@@ -168,17 +176,12 @@ final private[kyo] class JsTransport private (
                 case Present(sni) => opts.servername = sni
                 case Absent       => opts.servername = host
             // Custom CA: Node's tls.connect loads this as the only trust anchor when present.
-            tls.caCertPath match
-                case Present(path) =>
-                    opts.ca = NodeFs.asInstanceOf[js.Dynamic].readFileSync(path, "utf8")
-                case Absent => ()
-            end match
+            pems.anchor.foreach(ca => opts.ca = ca)
             // Client certificate for mutual TLS: present it when the server requests one. A no-op for the common (no client cert) client.
-            (tls.certChainPath, tls.privateKeyPath) match
-                case (Present(certPath), Present(keyPath)) =>
-                    val fs = NodeFs.asInstanceOf[js.Dynamic]
-                    opts.cert = fs.readFileSync(certPath, "utf8")
-                    opts.key = fs.readFileSync(keyPath, "utf8")
+            (pems.cert, pems.key) match
+                case (Present(cert), Present(key)) =>
+                    opts.cert = cert
+                    opts.key = key
                 case _ => ()
             end match
             val socket = NodeTls.asInstanceOf[js.Dynamic].connect(opts)
@@ -203,16 +206,18 @@ final private[kyo] class JsTransport private (
         // closed rather than silently serving with Node under another provider's name (config truthfulness).
         if tls.tlsProvider.exists(_ != "node") then
             return Fiber.Unsafe.fromResult(Result.fail(NetTlsHandshakeException(host, port, rejectNonNodeProvider(tls))))
+        // As in connectTls: read the configured material first so an unreadable path is reported on the declared failure channel rather than
+        // thrown out of the method.
+        val pems = readConfiguredPems(tls, isServer = true) match
+            case Result.Success(p)  => p
+            case Result.Failure(ex) => return Fiber.Unsafe.fromResult(Result.fail(ex))
+            case Result.Panic(ex)   => return Fiber.Unsafe.fromResult(Result.panic(ex))
         val serverOpts = js.Dynamic.literal()
         // Constrain the negotiated TLS version on the server side too: a server pinned to TLS1.3 must reject a TLS1.2 client (CWE-326).
         applyVersionBounds(serverOpts, tls)
-        tls.certChainPath match
-            case Present(p) => serverOpts.cert = NodeFs.asInstanceOf[js.Dynamic].readFileSync(p, "utf8")
-            case Absent     => ()
-        tls.privateKeyPath match
-            case Present(p) => serverOpts.key = NodeFs.asInstanceOf[js.Dynamic].readFileSync(p, "utf8")
-            case Absent     => ()
-        applyServerClientAuth(serverOpts, tls)
+        pems.cert.foreach(cert => serverOpts.cert = cert)
+        pems.key.foreach(key => serverOpts.key = key)
+        applyServerClientAuth(serverOpts, tls, pems)
         val server = NodeTls.asInstanceOf[js.Dynamic].createServer(serverOpts)
         // One deadline per accepted connection: a client that completed the TCP accept but stalls the TLS handshake (sends nothing / a partial
         // ClientHello and never finishes) never fires "secureConnection", so the accepted Node socket would linger indefinitely, pinning the fd
@@ -239,6 +244,55 @@ final private[kyo] class JsTransport private (
 
     // -- shared helpers --
 
+    // Read a configured PEM file, reporting a read failure as NetTlsConfigException instead of letting Node's raw error escape.
+    //
+    // Every TLS tier owes the caller the same type for the same misconfiguration, because which tier runs is a property of the HOST rather
+    // than of the caller: the native providers raise NetTlsConfigException, the JVM Nio floor converts the JDK's exceptions to it, and Node
+    // here would otherwise surface a raw JavaScriptException ("ENOENT: no such file or directory"). Left unconverted, one NetTlsConfig and one
+    // operator typo are catchable on one platform and escape the same catch on another.
+    //
+    // `material` and `path` are named because the message is the only place the failure stays attributable to the setting that caused it. Only
+    // NonFatal failures convert: a fatal error is not a configuration problem and must keep propagating as itself.
+    private def readConfiguredPem(material: String, path: String)(using Frame): String =
+        try NodeFs.asInstanceOf[js.Dynamic].readFileSync(path, "utf8").asInstanceOf[String]
+        catch
+            case ex: Throwable if NonFatal(ex) =>
+                throw NetTlsConfigException(s"configured $material at $path could not be read: ${ex.getMessage}")
+    end readConfiguredPem
+
+    // Every configured PEM a TLS role needs, read up front as a Result.
+    //
+    // Reading here rather than at each option assignment is what puts a misconfigured path on the method's declared failure channel. These
+    // methods return a Fiber whose failure channel is Abort[NetException], and their sibling config rejections (a non-node provider pin, a
+    // verifying client with no reference identity) both report through it. A read that throws from inside the option-building instead escapes
+    // the method synchronously and reaches the caller as a Panic, which Abort.run[NetException] does not catch, so the caller who correctly
+    // folds the declared channel would see nothing. Uniform typing across the tiers is only worth anything if the failure arrives on the same
+    // channel too.
+    /** Reads exactly the material the given ROLE consumes, and no more. A client verifies the server chain against `caCertPath`; a server
+      * verifies a presented client certificate against `trustStorePath`, falling back to `caCertPath`. Reading the union instead would fail
+      * a client on an unreadable `trustStorePath` it never opens, and fail a server on an unreadable `caCertPath` that a present
+      * `trustStorePath` shadows, so Node would reject configurations the other tiers accept. The whole point of the typed failure is that
+      * one config behaves the same everywhere, and over-reading here would break that in the opposite direction.
+      */
+    private def readConfiguredPems(tls: NetTlsConfig, isServer: Boolean)(using Frame): Result[NetTlsConfigException, TlsPems] =
+        val anchorPath = if isServer then tls.trustStorePath.orElse(tls.caCertPath) else tls.caCertPath
+        val anchorName = if isServer then "trust store" else "CA certificate"
+        try
+            Result.succeed(TlsPems(
+                anchor = anchorPath.map(readConfiguredPem(anchorName, _)),
+                cert = tls.certChainPath.map(readConfiguredPem("certificate chain", _)),
+                key = tls.privateKeyPath.map(readConfiguredPem("private key", _))
+            ))
+        catch case ex: NetTlsConfigException => Result.fail(ex)
+        end try
+    end readConfiguredPems
+
+    /** The PEM contents for one TLS role, already read off disk. `anchor` is the resolved verification anchor for that role, so the
+      * trust-store-over-CA precedence is applied once at read time rather than at each use. `Absent` means the path was never configured,
+      * which is distinct from a configured path that could not be read (that fails in [[readConfiguredPems]] and never reaches here).
+      */
+    private case class TlsPems(anchor: Maybe[String], cert: Maybe[String], key: Maybe[String])
+
     // Map NetTlsConfig.minVersion/maxVersion onto Node's tls minVersion/maxVersion option keys. Node accepts the protocol strings
     // "TLSv1.2"/"TLSv1.3"; setting both bounds means the negotiated version is constrained to the configured range, so a TLS1.3-only config
     // cannot fall back to TLS1.2 (CWE-326). Applied to every Node tls option object the transport builds (connect, listen, both upgrade arms).
@@ -254,7 +308,7 @@ final private[kyo] class JsTransport private (
     // asks the client for a certificate; rejectUnauthorized rejects a client that presents none or one the trust store + ca does not validate.
     // Required rejects; Optional requests but does not reject; None leaves the defaults (no client cert requested). The presented client
     // certificate is validated against trustStorePath, falling back to caCertPath.
-    private def applyServerClientAuth(opts: js.Dynamic, tls: NetTlsConfig): Unit =
+    private def applyServerClientAuth(opts: js.Dynamic, tls: NetTlsConfig, pems: TlsPems): Unit =
         tls.clientAuth match
             case NetTlsConfig.ClientAuth.Required =>
                 opts.requestCert = true
@@ -264,9 +318,7 @@ final private[kyo] class JsTransport private (
                 opts.rejectUnauthorized = false
             case NetTlsConfig.ClientAuth.None => ()
         end match
-        tls.trustStorePath.orElse(tls.caCertPath).foreach { p =>
-            opts.ca = NodeFs.asInstanceOf[js.Dynamic].readFileSync(p, "utf8")
-        }
+        pems.anchor.foreach(ca => opts.ca = ca)
     end applyServerClientAuth
 
     // Property name under which each accepted raw socket carries a one-shot "handshake settled" guard, so the deadline timer and the
@@ -871,6 +923,13 @@ final private[kyo] class JsTransport private (
         // verify peer identity, so this guard is client-side only.
         // Safe: the guard above already confirmed conn.isInstanceOf[Connection[?]] && ....handle.isInstanceOf[JsHandle] before this point
         // (the guard's return is the only path past it), so this narrowing to Connection[JsHandle] cannot fail.
+        // As in connectTls / listenTls, read the configured material so an unreadable path is reported on the declared failure channel. It
+        // sits after the upgradability guard because the ROLE is only knowable here, and the role decides which material is even consumed:
+        // an upgrade inherits its direction from the connection's TCP origin.
+        val pems = readConfiguredPems(tls, isServer = conn.asInstanceOf[Connection[JsHandle]].isServerOrigin) match
+            case Result.Success(p)  => p
+            case Result.Failure(ex) => return Fiber.Unsafe.fromResult(Result.fail(ex))
+            case Result.Panic(ex)   => return Fiber.Unsafe.fromResult(Result.panic(ex))
         val clientUpgradeNoIdentity =
             !conn.asInstanceOf[Connection[JsHandle]].isServerOrigin && !tls.trustAll && tls.hostnameVerification &&
                 tls.sniHostname.getOrElse("").isEmpty
@@ -989,7 +1048,6 @@ final private[kyo] class JsTransport private (
             discard(socket.resume())
 
             val tlsModule = NodeTls.asInstanceOf[js.Dynamic]
-            val fsModule  = NodeFs.asInstanceOf[js.Dynamic]
 
             // The TLS role follows the connection's TCP origin: an accepted connection (isServerOrigin) upgrades as the TLS server, a connected one
             // as the client (STARTTLS initiate). The origin is authoritative: a config heuristic ("has a cert+key therefore server") would
@@ -1004,14 +1062,10 @@ final private[kyo] class JsTransport private (
                     opts.isServer = true
                     // Constrain the negotiated TLS version on the upgraded server socket (CWE-326).
                     applyVersionBounds(opts, tls)
-                    tls.certChainPath match
-                        case Present(p) => opts.cert = fsModule.readFileSync(p, "utf8")
-                        case Absent     => ()
-                    tls.privateKeyPath match
-                        case Present(p) => opts.key = fsModule.readFileSync(p, "utf8")
-                        case Absent     => ()
+                    pems.cert.foreach(cert => opts.cert = cert)
+                    pems.key.foreach(key => opts.key = key)
                     // Mutual TLS: honor clientAuth on the upgraded server socket, matching listen(tls) and the posix/NIO server STARTTLS path.
-                    applyServerClientAuth(opts, tls)
+                    applyServerClientAuth(opts, tls, pems)
                     // Construct TLSSocket directly with the existing socket and server opts
                     js.Dynamic.newInstance(tlsModule.selectDynamic("TLSSocket"))(socket, opts)
                 else
@@ -1031,16 +1085,12 @@ final private[kyo] class JsTransport private (
                         // but SAN/CN vs servername mismatch is ignored (verify-ca semantics).
                         opts.checkServerIdentity = ({ (_: js.Any, _: js.Any) => js.undefined }: js.Function2[js.Any, js.Any, js.Any])
                     end if
-                    tls.caCertPath match
-                        case Present(path) =>
-                            opts.ca = fsModule.readFileSync(path, "utf8")
-                        case Absent => ()
-                    end match
+                    pems.anchor.foreach(ca => opts.ca = ca)
                     // Client certificate for mutual TLS: present it when the server requests one. A no-op for the common (no client cert) client.
-                    (tls.certChainPath, tls.privateKeyPath) match
-                        case (Present(certPath), Present(keyPath)) =>
-                            opts.cert = fsModule.readFileSync(certPath, "utf8")
-                            opts.key = fsModule.readFileSync(keyPath, "utf8")
+                    (pems.cert, pems.key) match
+                        case (Present(cert), Present(key)) =>
+                            opts.cert = cert
+                            opts.key = key
                         case _ => ()
                     end match
                     tlsModule.connect(opts)

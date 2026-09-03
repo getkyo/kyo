@@ -36,9 +36,12 @@ abstract private[net] class SslLibProvider extends TlsEngineProvider:
         val l   = lib
         val ctx = l.ctxNew(if isServer then 1 else 0)
         if ctx == 0L then throw NetTlsConfigException("SSL_CTX_new failed")
+        // Held outside the try so the failure path can tell "no SSL yet" from "an SSL that now owns two memory BIOs and a
+        // malloc'd state struct", which are reclaimed only by sslFree.
+        var ssl = 0L
         try
             applyConfig(l, ctx, config, isServer)
-            val ssl = l.sslNew(ctx, hostname)
+            ssl = l.sslNew(ctx, hostname)
             if ssl == 0L then throw NetTlsConfigException("SSL_new failed")
             bindClientIdentity(l, ssl, config, hostname, isServer)
             if isServer then l.sslSetAcceptState(ssl)
@@ -46,9 +49,17 @@ abstract private[net] class SslLibProvider extends TlsEngineProvider:
             new NativeSslEngine(l, ssl)
         catch
             case t: Throwable =>
-                // SSL_new failed (or config threw) before the SSL took a reference on the context: free it so the context does not leak.
-                l.ctxFree(ctx)
+                // Config application and the identity binding both throw, and the second of those runs with the SSL already
+                // built, so the SSL is freed here whenever one exists. The context is not freed here: the finally below owns
+                // that on every path.
+                if ssl != 0L then l.sslFree(ssl)
                 throw t
+        finally
+            // SSL_CTX is refcounted and SSL_new took its own reference, so this drops only the reference this method created.
+            // On success the engine's SSL keeps the context alive until NativeSslEngine.free runs SSL_free; on failure the
+            // reference taken by SSL_new was already released above, so this is the one that reclaims it. Dropping it here
+            // rather than only on the failure path is what stops a context, with its chains and keys, leaking per engine.
+            l.ctxFree(ctx)
         end try
     end createEngine
 
@@ -57,22 +68,40 @@ abstract private[net] class SslLibProvider extends TlsEngineProvider:
         // caCertPath.
         val serverCa = if isServer then config.trustStorePath.orElse(config.caCertPath) else config.caCertPath
         readPem(serverCa) match
-            case Present(ca) => discard(lib.ctxLoadCa(ctx, ca))
-            case Absent      =>
+            case Present(ca) =>
+                // Returns the number of CAs added, or -1. A configured trust anchor that did not load is not a degraded mode: the store is
+                // empty or short, and every verification decision from here on is made against trust the caller never chose. Failing the
+                // engine build is the only place that failure is still attributable to the setting that caused it.
+                if lib.ctxLoadCa(ctx, ca) < 1 then
+                    throw NetTlsConfigException(s"the configured CA at ${serverCa.getOrElse("<unset>")} loaded no certificates")
+            case Absent =>
                 // A verifying CLIENT with no configured caCertPath validates the server chain against the platform default trust store,
                 // converging with the JDK floor (NioTransport: `Absent => JDK default trust store`). Without this a bundled BoringSSL client has
                 // an EMPTY X509 store, so every public-internet handshake fails with EngineError. NOT applied to a server: a server verifies the
                 // peer's CLIENT certificate and must anchor on an explicit trust store, never the public CA set.
-                if !isServer && !config.trustAll then discard(lib.ctxLoadSystemCa(ctx))
+                if !isServer && !config.trustAll then
+                    // Returns 1 when any trust source loaded, 0 otherwise. A verifying client that loaded none has no anchors at all, so it
+                    // would reject every peer; that is safe but indistinguishable from a certificate problem at the handshake, which is where
+                    // this used to surface.
+                    if lib.ctxLoadSystemCa(ctx) != 1 then
+                        throw NetTlsConfigException("no platform trust store could be loaded for a verifying client with no configured CA")
         end match
         lib.ctxSetVerifyMode(ctx, verifyMode(config, isServer))
-        discard(lib.ctxSetMinMaxVersion(ctx, versionCode(config.minVersion), versionCode(config.maxVersion)))
+        // Returns 0, or -1 when a bound is rejected. Discarding it leaves the version window UNSET while the config says otherwise, so a
+        // caller who pinned a floor of TLS 1.3 could negotiate 1.2 and never learn the pin did not take.
+        if lib.ctxSetMinMaxVersion(ctx, versionCode(config.minVersion), versionCode(config.maxVersion)) != 0 then
+            throw NetTlsConfigException(s"the TLS version window ${config.minVersion} to ${config.maxVersion} was rejected")
         // Load the certificate + key whenever both are configured, for the client too: a mutual-TLS client presents its own client certificate
         // when the server sends a CertificateRequest. A plaintext client leaves both Absent, so this is a no-op for the common (no client cert)
         // client, and a server still always loads its termination cert.
         (readPem(config.certChainPath), readPem(config.privateKeyPath)) match
-            case (Present(cert), Present(key)) => discard(lib.ctxSetCert(ctx, cert, key))
-            case _                             => ()
+            case (Present(cert), Present(key)) =>
+                // Returns 0, or -1 on bad PEM or a key that does not match the certificate. A server whose termination cert did not load has
+                // no identity to present and fails every handshake opaquely; naming it here points at the config instead.
+                if lib.ctxSetCert(ctx, cert, key) != 0 then
+                    throw NetTlsConfigException("the configured certificate and private key could not be loaded, or do not match")
+            case _ => ()
+        end match
     end applyConfig
 
     /** Bind the client reference identity so chain validation is accompanied by RFC 9525 name checking, and fail closed when a verifying
@@ -90,12 +119,23 @@ abstract private[net] class SslLibProvider extends TlsEngineProvider:
       *     accepting any chain-valid cert.
       */
     private def bindClientIdentity(lib: SslLibBindings, ssl: Long, config: NetTlsConfig, hostname: String, isServer: Boolean)(using
-        AllowUnsafe
+        AllowUnsafe,
+        Frame
     ): Unit =
+        // Returns 1 when the unmatchable identity was set, 0 on error. This is the one return code on this path whose failure
+        // ACCEPTS rather than rejects: it is reached only when the client is verifying and has no usable reference identity, so an
+        // unbound name means the handshake runs with no name check at all and takes any chain-valid certificate. Discarding it turns
+        // the fail-closed rule (RFC 9525 6.1) into fail-open, silently, which is the outcome the whole path exists to prevent.
+        def requireUnmatchable(): Unit =
+            if lib.sslRequireUnmatchableIdentity(ssl) != 1 then
+                throw NetTlsConfigException(
+                    "a verifying client could not be given an unmatchable reference identity, so the handshake would accept any " +
+                        "chain-valid certificate"
+                )
+
         if isServer || config.trustAll || !config.hostnameVerification then ()
-        else if hostname.isEmpty then discard(lib.sslRequireUnmatchableIdentity(ssl))
-        else if lib.sslSetVerifyName(ssl, hostname) != 1 then
-            discard(lib.sslRequireUnmatchableIdentity(ssl))
+        else if hostname.isEmpty then requireUnmatchable()
+        else if lib.sslSetVerifyName(ssl, hostname) != 1 then requireUnmatchable()
     end bindClientIdentity
 
     /** Map the config to the shim's verify mode (0 none, 1 optional, 2 required): a `trustAll` client skips verification; a server uses its
@@ -118,8 +158,8 @@ abstract private[net] class SslLibProvider extends TlsEngineProvider:
     /** Read a configured PEM file. A `path` that was never set stays `Absent` so the caller keeps the system-trust default; a `Present` path that
       * cannot be read or decoded FAILS CLOSED with [[NetTlsConfigException]] rather than degrading to `Absent`. Swallowing the read error would silently drop an
       * operator's pinned private CA (or a server's configured cert/key) and fall back to the system trust store, the CWE-295 silent-weakening
-      * the JDK floor avoids (`NioTransport.loadCaCertTrustManagers` lets the file-open exception propagate). Distinguishing not-configured from
-      * configured-but-unreadable is the whole fix.
+      * the JDK floor also refuses (`NioTransport` reports the same [[NetTlsConfigException]] for an unreadable configured path). Distinguishing
+      * not-configured from configured-but-unreadable is the whole fix.
       */
     private def readPem(path: Maybe[String])(using AllowUnsafe, Frame): Maybe[String] =
         path.map { p =>
