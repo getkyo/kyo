@@ -277,9 +277,12 @@ runs:
           echo "cl is not on PATH after the vcvars step." >&2
           exit 1
         fi
+        # The toolset spells the target directory ARM64 or arm64 depending on the VS version, so
+        # compare case-insensitively rather than pinning one spelling.
         target=$(basename "$(dirname "$cl")")
+        lower=$(printf '%s' "$target" | tr '[:upper:]' '[:lower:]')
         echo "cl target: $target ($cl)"
-        case "${{ inputs.os }}:$target" in
+        case "${{ inputs.os }}:$lower" in
           windows-x64:x64|windows-arm64:arm64) ;;
           *) echo "cl targets '$target' on a ${{ inputs.os }} runner." >&2; exit 1 ;;
         esac
