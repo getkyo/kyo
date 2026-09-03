@@ -14,9 +14,9 @@ permissions:
 # a v1.* tag) or a `/release` comment on a PR. Producers build ONE os-arch's classifier natives each
 # and upload only those; the publish job downloads all of them into ffiPrebuiltDir so the single JVM
 # ci-release slices every os-arch's classifier jars (DECISION-P2b) and the completeness guard runs as
-# the pre-sonaRelease belt. Windows carries exactly one publishable native, kyo-aeron's shim:
-# kyo-net is NIO + JDK TLS there by ruling and declares itself out through osTargets, while
-# kyo-aeron has no fallback tier and would otherwise ship unusable on Windows.
+# the pre-sonaRelease belt. Windows publishes kyo-aeron's shim and kyo-net's posix/uring shim, whose C
+# defines every entry point on every target so the binding resolves there; only kyo-net's BoringSSL
+# shim declares itself out through osTargets, Windows being NIO + JDK TLS by ruling.
 jobs:
   # macos-14 is arm64, and covers BOTH Mac targets: darwin-aarch64 is the host build; darwin-x86_64 is
   # a real cross-build on the same runner. build-boringssl.sh cross-builds the vendored BoringSSL with
@@ -236,10 +236,11 @@ jobs:
           path: natives-out
           if-no-files-found: error
 
-  # The two Windows producers. Windows carries exactly one publishable native, kyo-aeron's shim:
-  # kyo-net's libraries declare themselves out of Windows (their C is #ifdef-guarded to an empty
-  # translation unit there, and Windows is NIO + the JDK's TLS by ruling), while kyo-aeron has no
-  # fallback tier at all, so without these jobs it publishes a module that cannot work on Windows.
+  # The two Windows producers. Windows publishes kyo-aeron's shim and kyo-net's posix/uring shim:
+  # kyo_epoll.c and kyo_uring.c define every entry point on every target, so the binding resolves
+  # there and epoll's absence is an errno rather than a missing symbol. Only kyo-net's BoringSSL shim
+  # declares itself out (NIO + the JDK's TLS by ruling). kyo-aeron has no fallback tier at all, so
+  # without these jobs it publishes a module that cannot work on Windows.
   #
   # Host-native, one runner per architecture, rather than one runner cross-building both. MSVC could
   # cross-compile, but `cl` has no per-invocation target flag in the kyo-ffi plugin's model: it emits

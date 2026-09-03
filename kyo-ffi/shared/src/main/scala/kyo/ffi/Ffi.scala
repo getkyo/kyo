@@ -329,10 +329,15 @@ object Ffi:
 
     /** Load and instantiate the generated impl for a binding trait `T`. Cached after the first call.
       *
-      * This constructs the impl only. The generated impl defers both its ABI check and its native library load to the FIRST binding method
-      * CALL, not to this `load`: the checks run when the impl's companion initializes, which a bare `Ffi.load` does not touch. A
-      * `LibraryNotFound` or `AbiMismatch` therefore surfaces from the first invocation on `T`, not from here, so a caller that must contain a
-      * load failure cannot wrap `load` alone: it guards the first binding call, or forces a probe read inside the same guard.
+      * This resolves the native or throws. For a binding whose library the native manifest knows, `load` verifies the ABI floor and that the
+      * native is resolvable on this platform (bundled here, supplied by a `-Dkyo.ffi.<id>.path` override, or installed on the system) before
+      * instantiating anything, so `LibraryNotFound` and `AbiMismatch` surface HERE and a caller containing a load failure can wrap `load`
+      * alone. A library declared for other platforms only, which is what `FfiLibrary.osTargets` produces, fails here rather than in the impl
+      * companion's initializer at the first call, where a throw poisons the class.
+      *
+      * What still defers to the first call is symbol binding: the generated impl resolves its method handles when its companion initializes,
+      * so a library that loads but lacks an expected symbol surfaces then, not here. An id whose symbols live only in the native linker's
+      * default lookup is not treated as resolvable; declare it in `ffiSystemLibraries`, which carries no manifest entry and skips the check.
       *
       * @throws kyo.ffi.FfiLoadError
       *   on a documented load failure: `LibraryNotFound` (native library not resolvable), `AbiMismatch`, `Unsupported` (32-bit host,

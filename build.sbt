@@ -1552,12 +1552,12 @@ lazy val `kyo-stats-machine` =
                 FfiLibrary(
                     id = "machine_macos",
                     cSources = Seq((baseDirectory.value / ".." / "shared" / "src" / "main" / "c" / "machine_macos.c").getAbsoluteFile),
-                    // Mach calls only: the shim is loaded on macOS and nowhere else. Its C is #ifdef-guarded
-                    // to same-signature stubs off __APPLE__, so it compiles on a Linux or Windows host too,
-                    // and without this the release built on Linux shipped a Linux artifact for a binding no
-                    // Linux process ever loads, while shipping no darwin artifact at all. Scala Native still
-                    // compiles the C into the binary on every OS (that is what keeps the stub symbols
-                    // resolvable there); this governs the JVM/JS shared library only.
+                    // Mach calls only, so the JVM/JS shared library is built and bundled for darwin alone.
+                    // Without this the release built on Linux shipped a Linux artifact for a binding no Linux
+                    // process ever loads, while shipping no darwin artifact at all. Off darwin, Ffi.load raises
+                    // a catchable LibraryNotFound that MachineMacos degrades to Absent. Scala Native still
+                    // compiles the C into the binary on every OS, which is what the file's #ifdef stubs keep
+                    // resolvable; osTargets governs the JVM/JS shared library only.
                     osTargets = Seq("darwin")
                 )
             )
@@ -1722,12 +1722,15 @@ def npmCommand: String =
 // runtime-correct name was not found here and the build silently fell back to the TLS stub.
 def hostOsArch: String = ffiHostOsArch
 
-// The OS targets kyo-net's two shared libraries are built and bundled for. Excluding Windows is a
-// statement about the data plane, not the compiler: the posix/uring sources are wrapped in
-// `#if !defined(_WIN32)` and compile there into an empty translation unit, and Windows ships no
-// BoringSSL native by ruling (NIO + the JDK's TLS), leaving that shim on its stub sources. Both
-// would package a DLL no Windows process can load.
-def kyoNetOsTargets: Seq[String] = Seq("linux", "linux-musl", "darwin")
+// The OS targets kyo-net's BoringSSL shim is built and bundled for. Windows ships no BoringSSL native
+// by ruling (NIO + the JDK's TLS), so bundling it there packages a DLL that can only ever report
+// unavailable. Every consumer reaches it through a capability probe or a staged-bundle gate, so a
+// platform it is not declared for degrades to the JDK floor rather than failing.
+//
+// kyonet_posix_uring declares no osTargets. kyo_epoll.c and kyo_uring.c define every entry point on
+// every target, Windows included, so the binding resolves wherever the library loads and epoll's
+// absence is an errno rather than a missing symbol.
+def kyoNetBoringSslOsTargets: Seq[String] = Seq("linux", "linux-musl", "darwin")
 
 // The staged BoringSSL tree for the host os-arch, present only after build-boringssl.sh ran.
 def boringSslStagedDir(baseDir: File): File =
@@ -1917,13 +1920,13 @@ lazy val `kyo-net` =
                             linkLibs = Seq("ssl", "crypto"),
                             linkFlags = boringSslCxxRuntimeFlags,
                             staticLink = true,
-                            osTargets = kyoNetOsTargets
+                            osTargets = kyoNetBoringSslOsTargets
                         )
                     else
                         FfiLibrary(
                             id = "kyonet_boringssl",
                             cSources = (sharedBase / "src" / "main" / "c-boringssl-stub" ** "*.c").get,
-                            osTargets = kyoNetOsTargets
+                            osTargets = kyoNetBoringSslOsTargets
                         )
                 // System OpenSSL (kyonet_openssl): the kyo_net_openssl.c shim, registered only in the Native TLS registry
                 // (SystemOpenSslProvider). On Native its C sources are declared UNCONDITIONALLY, because whether the system
@@ -1953,8 +1956,7 @@ lazy val `kyo-net` =
                         id = "kyonet_posix_uring",
                         cSources = (sharedBase / "src" / "main" / "c" ** "*.c").get,
                         linkLibsByOs = Map("linux" -> Seq("uring")),
-                        staticLink = true,
-                        osTargets = kyoNetOsTargets
+                        staticLink = true
                     ),
                     boringSsl,
                     openSsl

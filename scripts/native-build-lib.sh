@@ -39,10 +39,20 @@ native_host_os() {
 
 # The CPU architecture this script is running on. Shared with CCompiler.detectArch.
 native_host_arch() {
-    case "$(uname -m)" in
-        x86_64|amd64)  echo x86_64 ;;
-        aarch64|arm64) echo aarch64 ;;
-        *) echo "unsupported build host architecture: $(uname -m)" >&2; return 1 ;;
+    # On Windows the machine is asked of the OS, not of the shell. Git Bash on an ARM64 host is an
+    # emulated x86_64 build of MSYS, so `uname -m` answers x86_64 there and the host looks like an x64
+    # machine, which turns a native aarch64 build into a rejected cross-arch request.
+    # PROCESSOR_ARCHITEW6432 is set when a 32-bit shell runs under WOW64; PROCESSOR_ARCHITECTURE is the
+    # plain case. Both name the real machine.
+    local raw
+    case "$(uname -s)" in
+        MINGW*|MSYS*|CYGWIN*) raw="${PROCESSOR_ARCHITEW6432:-${PROCESSOR_ARCHITECTURE:-$(uname -m)}}" ;;
+        *)                    raw="$(uname -m)" ;;
+    esac
+    case "$raw" in
+        x86_64|amd64|AMD64)    echo x86_64 ;;
+        aarch64|arm64|ARM64)   echo aarch64 ;;
+        *) echo "unsupported build host architecture: $raw" >&2; return 1 ;;
     esac
 }
 
