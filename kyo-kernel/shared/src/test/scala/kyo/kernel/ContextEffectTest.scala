@@ -414,4 +414,36 @@ class ContextEffectTest extends AnyFreeSpec:
 
     sealed trait MapCtx extends ContextEffect[Map[String, Int]]
 
+    "three bindings, ported" - {
+        sealed trait Label extends ContextEffect[String]
+        sealed trait Flag  extends ContextEffect[Boolean]
+
+        val read: String < (Count & Label & Flag) =
+            for
+                i <- ContextEffect.suspend(Tag[Count])
+                s <- ContextEffect.suspend(Tag[Label])
+                b <- ContextEffect.suspend(Tag[Flag])
+            yield s"$i-$s-$b"
+
+        "each read takes its own binding" in {
+            val result =
+                ContextEffect.handleInheritable(Tag[Count], 42, _ + 1) {
+                    ContextEffect.handleInheritable(Tag[Label], "default", _.toUpperCase) {
+                        ContextEffect.handleInheritable(Tag[Flag], false, !_)(read): String < (Count & Label)
+                    }
+                }
+            assert(result.eval == "42-default-false")
+        }
+
+        "the binding order does not change what a read takes" in {
+            val result =
+                ContextEffect.handleInheritable(Tag[Flag], true, !_) {
+                    ContextEffect.handleInheritable(Tag[Label], "middle", _.toUpperCase) {
+                        ContextEffect.handleInheritable(Tag[Count], 10, _ * 2)(read): String < (Label & Flag)
+                    }
+                }
+            assert(result.eval == "10-middle-true")
+        }
+    }
+
 end ContextEffectTest

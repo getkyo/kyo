@@ -1,10 +1,14 @@
 package kyo.kernel
 
 import kyo.Arrow
+import kyo.Chunk
 import kyo.Const
+import kyo.Id
 import kyo.Kyo
 import kyo.Loop
 import kyo.Maybe
+import kyo.Maybe.Absent
+import kyo.Maybe.Present
 import kyo.Tag
 import kyo.discard
 import kyo.kernel.internal.Eval
@@ -37,6 +41,10 @@ class ArrowEffectTest extends AnyFreeSpec:
     sealed trait TestEffect1 extends ArrowEffect[Const[Int], Const[String]]
 
     def testEffect1(i: Int): String < TestEffect1 = ArrowEffect.suspend[Any](Tag[TestEffect1], i)
+
+    sealed trait TestEffect2 extends ArrowEffect[Const[String], Const[Int]]
+
+    def testEffect2(s: String): Int < TestEffect2 = ArrowEffect.suspend[Any](Tag[TestEffect2], s)
 
     def burn(n: Int): Int < Any =
         if n == 0 then 0 else (0: Int < Any).map(_ => burn(n - 1))
@@ -2759,6 +2767,162 @@ class ArrowEffectTest extends AnyFreeSpec:
             val later: Int < Err  = caught.map(a => fail("later").map(_ => a + 1))
             assert(runErr(caught.map(_ + 1)).eval == Right(42))
             assert(runErr(later).eval == Left("later"))
+        }
+    }
+
+    "delimited continuation, ported" - {
+        sealed trait Delim[R, +S] extends ArrowEffect[[A] =>> Delim.Op[A, R, S], Id]
+
+        object Delim:
+
+            enum Op[A, R, -S]:
+                case Shift[A, R, S](f: (A => R < (Delim[R, S] & S)) => R < (Delim[R, S] & S)) extends Op[A, R, S]
+
+            def shift[A, R: Tag, S](f: (A => R < (Delim[R, S] & S)) => R < (Delim[R, S] & S))(using
+                tag: Tag[Delim[R, S]]
+            ): A < (Delim[R, S] & S) =
+                ArrowEffect.suspend[A](tag, Op.Shift(f))
+
+            def run[R: Tag, S](v: R < (Delim[R, S] & S))(using tag: Tag[Delim[R, S]]): R < S =
+                ArrowEffect.handleCont(tag, v)(
+                    [A] =>
+                        (input, cont) =>
+                            input match
+                                case Op.Shift(f) =>
+                                    f(cont(_).asInstanceOf)
+                )
+        end Delim
+
+        "multi shot with other effect" in {
+            val v =
+                Delim.shift[Int, Int, TestEffect2] { k =>
+                    k(42).map(a => testEffect2("a").map(k).map(b => a + b))
+                }.map(_ * 10)
+                    .handle(
+                        Delim.run,
+                        v => ArrowEffect.handleCont(Tag[TestEffect2], v)([C] => (input, cont) => cont(input.size))
+                    )
+            assert(v.eval == (42 * 10) + ("a".size * 10))
+        }
+
+        "multiple shift with different effect sets" in {
+            val v =
+                Delim.shift[Int, Int, TestEffect2] { k =>
+                    k(42).map { r =>
+                        testEffect2("a").map(v => r + v)
+                    }
+                }.map(_ * 10).map { v1 =>
+                    Delim.shift[Int, Int, TestEffect1] { k =>
+                        k(42).map { r =>
+                            testEffect1(v1).map(s => r + s.length)
+                        }
+                    }
+                }
+                    .handle(
+                        Delim.run,
+                        v => ArrowEffect.handleCont(Tag[TestEffect1], v)([C] => (input, cont) => cont(input.toString)),
+                        v => ArrowEffect.handleCont(Tag[TestEffect2], v)([C] => (input, cont) => cont(input.size))
+                    )
+            assert(v.eval == 46)
+        }
+
+        "short circuiting" in {
+            def test(numbers: List[Int], expected: Int) =
+                val r =
+                    Kyo.foldLeft(numbers)(0) { (acc, n) =>
+                        if n < 0 || n == 42 then
+                            Delim.shift[Int, Int, Any] { _ => -1 }
+                        else
+                            acc + n
+                    }.handle(Delim.run)
+                assert(r.eval == expected)
+            end test
+            test(List(1, 2), 3)
+            test(List(1, 2, -1), -1)
+            test(List(1, 2, 42, 3), -1)
+        }
+    }
+
+    "flow effect with dynamic tags, ported" - {
+        sealed trait Flow[+In, -Out] extends ArrowEffect[Flow.Op[In, Out, *], Id]
+
+        object Flow:
+            enum Op[-In, +Out, R]:
+                case Poll[V]()     extends Op[V, Nothing, Maybe[V]]
+                case Emit[V](v: V) extends Op[Any, V, Unit]
+
+            def emit[V: Tag](value: V): Unit < Flow[Any, V] =
+                ArrowEffect.suspend(Tag[Flow[Any, V]], Op.Emit(value))
+
+            def poll[V: Tag]: Maybe[V] < Flow[V, Nothing] =
+                ArrowEffect.suspend(Tag[Flow[V, Nothing]], Op.Poll())
+
+            def run[A, S, In: Tag, Out: Tag](in: Chunk[In])(v: A < (Flow[In, Out] & S)): (Chunk[In], Chunk[Out], A) < S =
+                ArrowEffect.handleLoopState(Tag[Flow[In, Out]], (in, Chunk.empty[Out]), v)(
+                    [C] =>
+                        (state, input) =>
+                            val (in, out) = state
+                            (input: @unchecked) match
+                                case Op.Emit(v) =>
+                                    Loop.continue((in, out.append(v)), ((): Unit < Any).asInstanceOf[C < Any])
+                                case Op.Poll() =>
+                                    Loop.continue((in.tail, out), (in.headMaybe: Maybe[In] < Any).asInstanceOf[C < Any])
+                            end match
+                    ,
+                    (state, r) => (state._1, state._2, r)
+                )
+        end Flow
+
+        "single poll" in {
+            def test(source: Chunk[Int], in: Chunk[Int], out: Chunk[Int], result: Maybe[Int]) =
+                val (i, o, r) = Flow.run(source)(Flow.poll[Int]).eval
+                assert(i == in)
+                assert(o == out)
+                assert(r == result)
+            end test
+            test(Chunk.empty, Chunk.empty, Chunk.empty, Absent)
+            test(Chunk(1), Chunk.empty, Chunk.empty, Present(1))
+            test(Chunk(1, 2), Chunk(2), Chunk.empty, Present(1))
+        }
+
+        "poll and emit" in {
+            def test(source: Chunk[Int], out: Chunk[Int], result: Int) =
+                val v =
+                    Loop(0) { acc =>
+                        Flow.poll[Int].map {
+                            case Absent     => Loop.done(acc)
+                            case Present(v) => Flow.emit(v + 1).andThen(Loop.continue(acc + v))
+                        }
+                    }
+                val (i, o, r) = Flow.run(source)(v).eval
+                assert(i.isEmpty)
+                assert(o == out)
+                assert(r == result)
+            end test
+            test(Chunk.empty, Chunk.empty, 0)
+            test(Chunk(1), Chunk(2), 1)
+            test(Chunk(1, 2), Chunk(2, 3), 3)
+        }
+
+        "multiple flows in the same computation" in {
+            def test(iSource: Chunk[Int], sSource: Chunk[String], iOut: Chunk[Int], sOut: Chunk[String]) =
+                val a =
+                    Loop(0) { acc =>
+                        Kyo.zip(Flow.poll[Int], Flow.poll[String]).map(_.zip(_)).map {
+                            case Absent => Loop.done(acc)
+                            case Present((i, s)) =>
+                                Flow.emit(i + 1).andThen(Flow.emit(s + "a")).andThen(Loop.continue(acc + i + s.size))
+                        }
+                    }
+                val b: (Chunk[Int], Chunk[Int], Int) < Flow[String, String] = Flow.run(iSource)(a)
+                val (_, so, (_, io, _))                                     = Flow.run(sSource)(b).eval
+                assert(so == sOut)
+                assert(io == iOut)
+            end test
+            test(Chunk(1), Chunk.empty, Chunk.empty, Chunk.empty)
+            test(Chunk.empty, Chunk("a"), Chunk.empty, Chunk.empty)
+            test(Chunk(1), Chunk("a"), Chunk(2), Chunk("aa"))
+            test(Chunk(1, 2), Chunk("a", "b"), Chunk(2, 3), Chunk("aa", "ba"))
         }
     }
 
