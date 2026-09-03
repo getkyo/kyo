@@ -219,9 +219,19 @@ class CompileLoadRoundTripTest extends kyo.test.Test[Any]:
             // `kyo.AllowUnsafe` parameter. Pass the process-wide `AllowUnsafe.embrace.danger` evidence for the call.
             val allowUnsafeClass = cl.loadClass("kyo.AllowUnsafe")
             val method           = implClass.getMethod("roundTripAdd", classOf[Int], classOf[Int], allowUnsafeClass)
+            // Reflection wraps whatever the binding throws in InvocationTargetException, and the runner
+            // prints the wrapper alone. A native that loads but resolves no symbol is indistinguishable
+            // from any other failure unless the cause is unwrapped here.
             val result =
-                method.invoke(instance, Integer.valueOf(2), Integer.valueOf(3), kyo.AllowUnsafe.embrace.danger)
-                    .asInstanceOf[java.lang.Integer]
+                try
+                    method.invoke(instance, Integer.valueOf(2), Integer.valueOf(3), kyo.AllowUnsafe.embrace.danger)
+                        .asInstanceOf[java.lang.Integer]
+                catch
+                    case e: java.lang.reflect.InvocationTargetException =>
+                        val cause = if e.getCause ne null then e.getCause else e
+                        throw new RuntimeException(s"binding call failed: ${cause.getClass.getName}: ${cause.getMessage}", cause)
+                end try
+            end result
             assert(result.intValue() == 5)
         finally cl.close()
         end try
@@ -286,9 +296,19 @@ class CompileLoadRoundTripTest extends kyo.test.Test[Any]:
             val instance         = implClass.getDeclaredConstructor().newInstance()
             val allowUnsafeClass = cl.loadClass("kyo.AllowUnsafe")
             val method           = implClass.getMethod("roundTripAdd", classOf[Int], classOf[Int], allowUnsafeClass)
+            // Reflection wraps whatever the binding throws in InvocationTargetException, and the runner
+            // prints the wrapper alone. A native that loads but resolves no symbol is indistinguishable
+            // from any other failure unless the cause is unwrapped here.
             val result =
-                method.invoke(instance, Integer.valueOf(2), Integer.valueOf(3), kyo.AllowUnsafe.embrace.danger)
-                    .asInstanceOf[java.lang.Integer]
+                try
+                    method.invoke(instance, Integer.valueOf(2), Integer.valueOf(3), kyo.AllowUnsafe.embrace.danger)
+                        .asInstanceOf[java.lang.Integer]
+                catch
+                    case e: java.lang.reflect.InvocationTargetException =>
+                        val cause = if e.getCause ne null then e.getCause else e
+                        throw new RuntimeException(s"binding call failed: ${cause.getClass.getName}: ${cause.getMessage}", cause)
+                end try
+            end result
             assert(result.intValue() == 5)
         finally cl.close()
         end try
