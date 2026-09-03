@@ -1328,7 +1328,7 @@ class BracketTest extends AnyFreeSpec:
                     handle = [C] =>
                         (_, _) =>
                             closedAtClause = outcome.nonEmpty
-                            0
+                        0
                     ,
                     done = a => a
                 )
@@ -1352,8 +1352,7 @@ class BracketTest extends AnyFreeSpec:
                             Effect.defer {
                                 requestStop()
                                 Effect.defer(cont(10))
-                            }
-                    ,
+                        },
                     done = a => a
                 )
             val parked = Eval.partial(answerAsk(0)(first))
@@ -1373,8 +1372,7 @@ class BracketTest extends AnyFreeSpec:
                             Effect.defer {
                                 requestStop()
                                 Effect.defer(cont(10))
-                            }
-                    ,
+                        },
                     done = a => a
                 )
             val parked = Eval.partial(answerAsk(0)(first))

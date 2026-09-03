@@ -96,14 +96,18 @@ clause built is a `Park` over the same snapshot, evaluated afterwards: `installe
 is refused with `kyo.Closed` because its `reenter` checks the cell (Effect.scala:48-50), the Q4
 ruling. So raw regions and brackets disagree on whether a released region can be revived.
 
-Rulings in force: Q4 (a bracket inside a `handleFirst` region is released when the region
-ends and the remainder is refused); S3 (fork copies are silent to hooks; `Forked` forwards
-`reenter` to its origin since S8, Isolate.scala:108).
+Rulings in force: Q4 as revised on 2026-09-03 (a `handleFirst` region passes what it owes to
+the scope below at its exit, so the remainder re-installs its regions unreleased; the pin above
+now expects `("clause", "done cfg 1")`, one of `done` or `release`, and the release-then-revive
+this entry described no longer happens in the same-eval case); S3 (fork copies are silent to
+hooks; `Forked` forwards `reenter` to its origin since S8, Isolate.scala:108).
 
-Candidate: the same mark as S9 carries a released state, and `installed` refuses a released
-snapshot the way the bracket's cell refuses, so raw regions and brackets agree: one of `done`
-or `release`, never both. The pin then flips to expect `Closed`. The alternative is to keep
-today's revive and record it as the raw-hook face of Q4.
+What remains of this entry is the cross-eval face: a raw region stashed out of a `handleFirst`
+and resumed in a later eval is released at the first eval's end and revived by each resume
+(IsolateTest `continuationOf`), where a bracket is refused. Candidate: the same mark as S9
+carries a released state, and `installed` refuses a released snapshot the way the bracket's
+cell refuses, so raw regions and brackets agree there too. The alternative is to keep the
+revive across evals and record it as the raw-hook face of the cross-eval lane.
 
 ## 3. S10. A context read at a supertype tag ignores an inner subtype binding
 
@@ -138,9 +142,10 @@ region derives from.
   restores in.
 - S7: `Eval.partial` is never nested; only the scheduler's task loop calls it. Nested `.eval`
   inside a clause (S9's shape) is ordinary and allowed.
-- Q3: a park resumes with its captured bindings wherever it resumes. Q4: a bracket inside a
-  `handleFirst` region is released when the region ends; the remainder is refused with
-  `Closed`.
+- Q3: a park resumes with its captured bindings wherever it resumes. Q4 (revised 2026-09-03):
+  a `handleFirst` region hands its debt to the scope below; the remainder carries its brackets,
+  releases them once when it completes, is refused on a second resumption, and a dropped
+  remainder releases at the enclosing exit.
 - Entry 7 of the eff audit stands: a `handleLoop` clause's post-suspension throw escapes its
   region's own `recover`; a `handleCont` clause's is caught. Entry 13 stands: an isolate
   resumed under a different region of its tag joins nothing.
