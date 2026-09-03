@@ -171,5 +171,41 @@ Evidence, in the order it was gathered:
 - Constant pool check: the two `Tag[Cfg]` sites share one string constant, so the tag comparison in
   `get` takes the `eq` fast path; the compare is not the cost.
 
+- Handle node state: `lazy val state` (S5) to `def` measures 70.9 clean-compiled (`E1c`), to `val` 73.3
+  (`E33`); neither is the mechanism. The lazy form is gone anyway (`2897efc642`), by ruling.
+- One-variable experiments on the tip worktree, each clean-compiled, none recovers the row: tag compare by
+  reference only 70.2 (`E11`), exit returning the empty context 68.4 (`E5`), `get` as a plain loop 70.5
+  (`E4`), `next` not loop-carried 72.9 (`E26`); no entry-time read and exit returning the empty context
+  63.0 (`E27`, about 10 of the 42 ns); a cached node in place of the per-entry allocation 36.5 with 24 B
+  less per iteration (`E28`). ParallelGC in place of G1: 33.7 against 69.9, the collector is not involved.
+- Context operations alone (bind, read, unbind in a loop outside the evaluator, `ctxbench-*`): 0.30 us per
+  1,000 on both revisions with zero allocation, so the Context is not intrinsically slow.
+- JIT: the C2 inlining trees of `Eval.loop` are equivalent on both sides (everything on the path inlined,
+  no failures); the C2 nmethods are the same size and shape (about 1,300 instructions, same call and
+  barrier counts); both allocation sites are the TLAB fast path followed by the same release barrier.
+- The one instruction-level difference: on the tip C2 emits the initializing stores of `Bound.value` and
+  `Bound.next` as one paired 8-byte store (`stp`), while the control's `Node` fields are stored one by
+  one. The reads of those fields that follow (`get`, `unbind`) are 4-byte loads that cannot forward from
+  a wider in-flight store on this CPU and wait for it to drain behind the release barrier. This fits
+  `E28` (no fresh node, no stall) and `E27` (fewer such loads, part of the cost), and it is a hypothesis:
+  `-XX:-MergeStores` leaves the tip at 72.3 because the pairing comes from the aarch64 peephole, which
+  this JDK exposes no switch for, and `xctrace` is not installed, so no per-instruction sample confirms it.
 
-EXPERIMENTS_PENDING
+**Decision (2026-09-02, "ok, accept"):** accepted as measured. One operation, context-region entry and
+exit, 42 ns per pair; every other row flat or better. The row stays in `ProtoBench` as the guard, and the
+fix belongs with the region-entry work gated on this sweep (`atTop`, TODO 4): either no node per entry,
+reading bindings through the region entries the stack already holds, or a node layout chosen against the
+stall. No optimization applied, by instruction.
+
+### Improvement, not investigated
+
+`continuationBodiesFuse` -46% on every fork with identical allocation. Its compilation and inlining logs
+are stored under `evidence/` for a later look.
+
+## Files
+
+- `control-{1,2,3}.json`, `tip-{1,2}.json`, `*.log`: the bracket legs; `table.txt`, `table.md`, `tables.md`.
+- `confirm/`: the `-f 3` runs (`suspects-*`, `context-*`) and their tables; `context-prep*.log`.
+- `evidence/`: allocation-site and CPU profiles (`alloc-*`, `cpu-*`, `lines-*`), inlining and compilation
+  logs (`inline-*`, `inl2-*`, `inl3-*`, `comp-*`, `asm-*`), the experiments (`E*.json`, `experiments.log`),
+  the bisect (`bisect/`), the Context micro-row (`ctxbench-*`), the ParallelGC and store-merging runs.
