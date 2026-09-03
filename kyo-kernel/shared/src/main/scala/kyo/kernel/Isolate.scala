@@ -259,6 +259,10 @@ abstract class Isolate[Remove, -Keep, -Restore]:
 
 end Isolate
 
+// Diverges from main: main's Identity isolate is gone. The stack-snapshot isolate (Contextual)
+// and the Forked handler wrapper under `internal` are new: an isolated computation runs over
+// a snapshot of the context regions, each region's fork and join strategy deciding what
+// crosses and what comes back.
 object Isolate:
 
     /** Gets the Isolate instance for given effect types. */
@@ -302,7 +306,6 @@ object Isolate:
                     override def frame = _frame
                     def cont           = this
 
-                    /** Gets the Isolate instance for given effect types. */
                     override def apply[C, S2](v: Stack < S2, cont2: Arrow[A, C, S2]) =
                         v match
                             case p: Pending[Stack, S2] @unchecked => Effect.defer(p, this, cont2)
@@ -343,7 +346,6 @@ object Isolate:
                         override def frame = _frame
                         def cont           = this
 
-                        /** Gets the Isolate instance for given effect types. */
                         override def apply[C, S2](cur: Stack < S2, cont2: Arrow[A, C, S2]) =
                             cur match
                                 case p: Pending[Stack, S2] @unchecked => Effect.defer(p, this, cont2)
@@ -357,16 +359,6 @@ object Isolate:
                 extends Handler.ContextHandler[State, E, A, S]:
                 def tag = origin.tag
 
-                /** Derives an Isolate instance based on available instances.
-                  *
-                  * The derivation automatically composes isolates for intersection types. For example, if isolates exist for `Var[Int]` and
-                  * `Emit[String]`, it will automatically derive an isolate for `Var[Int] & Emit[String]`.
-                  *
-                  * The derived instance will:
-                  *   - Remove all effects in the Remove type that aren't in Keep
-                  *   - Only derive if isolates exist for all non-Keep effects in Remove
-                  *   - Compose isolates using andThen in the order they appear
-                  */
                 def derive(outer: Maybe[State]): State                      = origin.derive(outer)
                 def fork(parent: State): State                              = origin.fork(parent)
                 def join(parent: State, forked: State, child: State): State = origin.join(parent, forked, child)

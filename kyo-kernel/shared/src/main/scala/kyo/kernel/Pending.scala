@@ -192,12 +192,26 @@ object `<` extends Implicits:
             f(h1)
         end handle
 
+        /** Applies two transformations to this computation in sequence.
+          *
+          * Enables chaining multiple effect handlers or transformations in a readable sequential style.
+          *
+          * @return
+          *   The result after applying both transformations
+          */
         inline def handle[B, C](inline f1: (=> A < S) => B, inline f2: (=> B) => C): C =
             def h1 = self
             def h2 = f1(h1)
             f2(h2)
         end handle
 
+        /** Applies three transformations to this computation in sequence.
+          *
+          * Enables chaining multiple effect handlers or transformations in a readable sequential style.
+          *
+          * @return
+          *   The result after applying all transformations in sequence
+          */
         inline def handle[B, C, D](inline f1: (=> A < S) => B, inline f2: (=> B) => C, inline f3: (=> C) => D): D =
             def h1 = self
             def h2 = f1(h1)
@@ -205,12 +219,12 @@ object `<` extends Implicits:
             f3(h3)
         end handle
 
-        /** Applies two transformations to this computation in sequence.
+        /** Applies four transformations to this computation in sequence.
           *
           * Enables chaining multiple effect handlers or transformations in a readable sequential style.
           *
           * @return
-          *   The result after applying both transformations
+          *   The result after applying all transformations in sequence
           */
         inline def handle[B, C, D, E](
             inline f1: (=> A < S) => B,
@@ -225,12 +239,12 @@ object `<` extends Implicits:
             f4(h4)
         end handle
 
-        /** Applies two transformations to this computation in sequence.
+        /** Applies five transformations to this computation in sequence.
           *
           * Enables chaining multiple effect handlers or transformations in a readable sequential style.
           *
           * @return
-          *   The result after applying both transformations
+          *   The result after applying all transformations in sequence
           */
         inline def handle[B, C, D, E, F](
             inline f1: (=> A < S) => B,
@@ -247,12 +261,12 @@ object `<` extends Implicits:
             f5(h5)
         end handle
 
-        /** Applies two transformations to this computation in sequence.
+        /** Applies six transformations to this computation in sequence.
           *
           * Enables chaining multiple effect handlers or transformations in a readable sequential style.
           *
           * @return
-          *   The result after applying both transformations
+          *   The result after applying all transformations in sequence
           */
         inline def handle[B, C, D, E, F, G](
             inline f1: (=> A < S) => B,
@@ -271,12 +285,7 @@ object `<` extends Implicits:
             f6(h6)
         end handle
 
-        /** Applies two transformations to this computation in sequence.
-          *
-          * Enables chaining multiple effect handlers or transformations in a readable sequential style.
-          *
-          * @return
-          *   The result after applying both transformations
+        /** Applies a sequence of transformations to this computation.
           */
         inline def handle[B, C, D, E, F, G, H](
             inline f1: (=> A < S) => B,
@@ -297,12 +306,7 @@ object `<` extends Implicits:
             f7(h7)
         end handle
 
-        /** Applies two transformations to this computation in sequence.
-          *
-          * Enables chaining multiple effect handlers or transformations in a readable sequential style.
-          *
-          * @return
-          *   The result after applying both transformations
+        /** Applies a sequence of transformations to this computation.
           */
         inline def handle[B, C, D, E, F, G, H, I](
             inline f1: (=> A < S) => B,
@@ -325,12 +329,7 @@ object `<` extends Implicits:
             f8(h8)
         end handle
 
-        /** Applies two transformations to this computation in sequence.
-          *
-          * Enables chaining multiple effect handlers or transformations in a readable sequential style.
-          *
-          * @return
-          *   The result after applying both transformations
+        /** Applies a sequence of transformations to this computation.
           */
         inline def handle[B, C, D, E, F, G, H, I, J](
             inline f1: (=> A < S) => B,
@@ -355,12 +354,7 @@ object `<` extends Implicits:
             f9(h9)
         end handle
 
-        /** Applies two transformations to this computation in sequence.
-          *
-          * Enables chaining multiple effect handlers or transformations in a readable sequential style.
-          *
-          * @return
-          *   The result after applying both transformations
+        /** Applies a sequence of transformations to this computation.
           */
         inline def handle[B, C, D, E, F, G, H, I, J, K](
             inline f1: (=> A < S) => B,
