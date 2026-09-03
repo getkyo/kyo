@@ -1196,6 +1196,53 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             }
         }
 
+        "a handleCont continuation resumed in another fiber is not released under it when the clause's region exits" in {
+            // the same window through the public handler: the clause hands its continuation out and
+            // stays alive, the consumer installs the bracket from the same snapshot, then the clause
+            // settles and the region's exit drains the lane under the consumer
+            AtomicInt.init(0).map { released =>
+                Latch.init(1).map { entered =>
+                    Latch.init(1).map { gate =>
+                        Promise.init[Arrow[Unit, Unit, Emit[Chunk[Int]] & Async], Any].map { handoff =>
+                            val stream: Stream[Int, Async] = Stream:
+                                Sync.ensure(released.incrementAndGet.unit):
+                                    Emit.valueWith(Chunk(1))(entered.release.andThen(gate.await).andThen(Emit.value(Chunk(2))))
+                            for
+                                clause <- Fiber.initUnscoped {
+                                    kyo.kernel.ArrowEffect.handleCont[
+                                        Const[Chunk[Int]],
+                                        Const[Unit],
+                                        Emit[Chunk[Int]],
+                                        Unit,
+                                        Unit,
+                                        Async,
+                                        Any
+                                    ](
+                                        Tag[Emit[Chunk[Int]]],
+                                        stream.emit
+                                    )(
+                                        [C] => (_, cont) => handoff.complete(Result.succeed(cont)).andThen(entered.await),
+                                        _ => ()
+                                    )
+                                }
+                                consumer <- Fiber.initUnscoped(handoff.get.map(cont => Emit.run(cont(())).map(_._1)))
+                                _        <- entered.await
+                                _        <- clause.get
+                                atExit   <- released.get
+                                _        <- gate.release
+                                res      <- consumer.getResult
+                                total    <- released.get
+                            yield
+                                assert(atExit == 0)
+                                assert(res.isSuccess)
+                                assert(total == 1)
+                            end for
+                        }
+                    }
+                }
+            }
+        }
+
         "a rest from splitAt run in another fiber is not released under it when the peeling scope exits" in {
             AtomicInt.init(0).map { released =>
                 Latch.init(1).map { entered =>
