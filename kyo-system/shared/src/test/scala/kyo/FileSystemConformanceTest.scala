@@ -4,7 +4,7 @@ private object FileSystemConformanceFixtures:
 
     def host(prefix: String)(using
         Frame
-    ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
+    ): (FileSystem.Write[Sync] & FileSystem.Watch[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
         Scope.acquireRelease(FileSystem.host.tempDir(prefix))(handle => Sync.Unsafe.defer(handle.remove())).map { handle =>
             (FileSystem.host, handle.path)
         }

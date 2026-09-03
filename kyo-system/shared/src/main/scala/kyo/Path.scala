@@ -269,6 +269,11 @@ object Path extends PathPlatformSpecific:
         case WriteString(handle: Path.WriteHandle, value: String, charset: Charset) extends Op[Unit]
     end Op
 
+    private[kyo] enum WatchOp[A]:
+        case Open(path: Path, options: WatchOptions)        extends WatchOp[Watcher]
+        case Raise(error: Result.Error[FileWatchException]) extends WatchOp[Nothing]
+    end WatchOp
+
     // --- Runners ---
 
     /** Runs `program`, discharging both write and read capabilities against the Local-selected
@@ -327,6 +332,37 @@ object Path extends PathPlatformSpecific:
             )
         }
 
+    /** Runs `program` against an explicit watch-capable filesystem, discharging [[PathWatch]]. */
+    def runWatchWith[A, S, FS](fileSystem: FileSystem.Watch[FS])(program: A < (PathWatch & S))(using
+        Frame
+    ): A < (FS & Async & Scope & Abort[FileWatchException] & S) =
+        ArrowEffect.handle[[A] =>> WatchOp[A], Id, PathWatch, A, S, FS & Async & Scope & Abort[FileWatchException]](
+            Tag[PathWatch],
+            program
+        )(
+            [C] =>
+                (op, cont) =>
+                    op match
+                        case WatchOp.Open(path, options) => fileSystem.openWatcher(path, options).map(cont)
+                        case WatchOp.Raise(error)        => Abort.error(error)
+        )
+
+    /** Runs `program`, discharging [[PathWatch]] against the Local-selected watch backend. */
+    def runWatch[A, S](program: A < (PathWatch & S))(using
+        Frame
+    ): A < (Async & Scope & Abort[FileWatchException] & S) =
+        ArrowEffect.handle[[A] =>> WatchOp[A], Id, PathWatch, A, S, Async & Scope & Abort[FileWatchException]](
+            Tag[PathWatch],
+            program
+        )(
+            [C] =>
+                (op, cont) =>
+                    op match
+                        case WatchOp.Open(path, options) =>
+                            FileSystem.useWatchErased(_.openWatcher(path, options)).map(cont)
+                        case WatchOp.Raise(error) => Abort.error(error)
+        )
+
     /** Stateless isolation for read operations. Each child captures the Local-selected backend and
       * installs an independent Path handler around its computation.
       */
@@ -370,6 +406,27 @@ object Path extends PathPlatformSpecific:
                     ArrowEffect.suspend(Tag[PathWrite], Op.Raise(panic))
             }
     end isolateWrite
+
+    /** Stateless isolation for watch operations. See [[isolateRead]]. */
+    given isolateWatch: Isolate[PathWatch, Async, PathWatch] with
+        type State        = FileSystem.Watch[Any]
+        type Transform[A] = Result[FileWatchException, A]
+
+        def capture[A, S](f: State => A < S)(using Frame): A < (PathWatch & Async & S) =
+            FileSystem.useWatchErased(f)
+
+        def isolate[A, S](state: State, value: A < (S & PathWatch))(using Frame): Result[FileWatchException, A] < (Async & S) =
+            Abort.run[FileWatchException](Scope.run(runWatchWith(state)(value)))
+
+        def restore[A, S](value: Result[FileWatchException, A] < S)(using Frame): A < (PathWatch & S) =
+            value.map {
+                case Result.Success(result) => result
+                case Result.Failure(error) =>
+                    ArrowEffect.suspend(Tag[PathWatch], WatchOp.Raise(Result.Failure(error)))
+                case panic: Result.Panic =>
+                    ArrowEffect.suspend(Tag[PathWatch], WatchOp.Raise(panic))
+            }
+    end isolateWatch
 
     private def dispatch[S, C](service: FileSystem.Write[S], op: Op[C])(using Frame): C < (S & Abort[FileSystemException]) =
         op match
@@ -1136,10 +1193,29 @@ object Path extends PathPlatformSpecific:
         inline def removeAll(using inline frame: Frame): Unit < PathWrite =
             ArrowEffect.suspend(Tag[PathWrite], Path.Op.RemoveAll(self))
 
+        /** Acquires a watcher after its backend registration is active. */
+        def openWatcher(options: WatchOptions = WatchOptions())(using Frame): Watcher < PathWatch =
+            ArrowEffect.suspend(Tag[PathWatch], Path.WatchOp.Open(self, options))
+
         /** Returns the underlying `Unsafe` implementation for direct use in unsafe code. */
         def unsafe: Path.Unsafe = self
 
     end extension
+
+    /** A scope-managed source of normalized filesystem changes.
+      *
+      * Watchers are acquired with [[Path.openWatcher]] only after their
+      * backend registration is active. Their event stream remains valid
+      * for the lifetime of the acquisition scope and suspends asynchronously
+      * while waiting for changes.
+      *
+      * Backend failures are reported through [[FileWatchException]]. Event
+      * loss and watched-root loss are values in the stream instead, represented
+      * by [[PathChange.Overflow]] and [[PathChange.Invalidated]].
+      */
+    trait Watcher:
+        def events: Stream[PathChange, Async & Scope & Abort[FileWatchException]]
+    end Watcher
 
     // --- System directories ---
 
@@ -1444,6 +1520,7 @@ object Path extends PathPlatformSpecific:
         def openReadLines(charset: Charset)(using AllowUnsafe, Frame): Result[FileReadException, Path.LineReadHandle]
         def size()(using AllowUnsafe, Frame): Result[FileReadException, Long]
         def stat()(using AllowUnsafe, Frame): Result[FileReadException, PathStat]
+        private[kyo] def stableIdentity()(using AllowUnsafe, Frame): Result[FileReadException, Maybe[String]]
 
         // --- Write ---
 
