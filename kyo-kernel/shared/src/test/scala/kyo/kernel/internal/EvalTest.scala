@@ -563,6 +563,28 @@ class EvalTest extends AnyFreeSpec:
             assert(parked.eval == 42)
         }
 
+        "a clause that requests a stop and re-raises its operation parks in front of the re-raise" in {
+            var clauseRuns = 0
+            val handled: Int < Any = ArrowEffect.handleCont(Tag[Ask], ask.map(_ + 1))(
+                [C] =>
+                    (input, cont) =>
+                        clauseRuns += 1
+                        if clauseRuns > 8 then throw new IllegalStateException("re-dispatched without parking")
+                        if clauseRuns == 1 then
+                            requestStop()
+                            ArrowEffect.suspendWith[C](Tag[Ask], input)(r => cont(r))
+                        else cont(41)
+                        end if
+                ,
+                a => a
+            )
+            val parked = Eval.partial(handled)
+            assert(clauseRuns == 1)
+            assert(parked.isInstanceOf[Park[?, ?]])
+            assert(parked.eval == 42)
+            assert(clauseRuns == 2)
+        }
+
         "a stop already pending returns the input before the slice starts" in {
             var ran = false
             val input: Int < Any = Effect.defer {

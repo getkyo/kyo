@@ -78,7 +78,11 @@ import scala.util.control.NonFatal
                                             else kyo.crossing(entries, contA.chain(contB))
                                         val result = handler.answering(kyo.input, continuation, kyo, stack)
                                         Debugger.onResult(result)
-                                        loop(result, Arrow.id, Arrow.id, ctx2)
+                                        // the stop is honored on the clause's answer, as the loop walks do on
+                                        // theirs: an answer that re-raises the operation would otherwise be
+                                        // dispatched straight back to this clause with no deferral to park at
+                                        if armed && Safepoint.stopped(slot) then park(result, Arrow.id, Arrow.id)
+                                        else loop(result, Arrow.id, Arrow.id, ctx2)
                                     case handler: Handler.ContOpHandler[EX, C, Y, S2] @unchecked =>
                                         val entries = if atTop then Stack.Snapshot.empty else dumped(stack, idx, kyo)
                                         val ctx2    = if atTop then ctx else rebound(entries, ctx)
@@ -92,7 +96,8 @@ import scala.util.control.NonFatal
                                                 def cont  = Arrow.id
                                         val result = handler.answering(operation, continuation, kyo, stack)
                                         Debugger.onResult(result)
-                                        loop(result, Arrow.id, Arrow.id, ctx2)
+                                        if armed && Safepoint.stopped(slot) then park(result, Arrow.id, Arrow.id)
+                                        else loop(result, Arrow.id, Arrow.id, ctx2)
                                     // TODO are you sure the repeated code for the special atTop case is worth it? size of the loop mehtod is critical for performance
                                     case handler: Handler.LoopHandler[IX, OX, EX, C, Y, S2] @unchecked if atTop =>
                                         val k    = kyo.cont.chain(contA.chain(contB))
