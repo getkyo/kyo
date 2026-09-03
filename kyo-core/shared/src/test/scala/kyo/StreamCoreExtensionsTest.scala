@@ -1077,6 +1077,158 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             }
         }
 
+        // The custody rule: a remainder handed out carries its brackets, and what it carries is owed to
+        // the scope enclosing the handler that handed it out. That scope drains the debt at its exit if
+        // the remainder was never resumed, so a rest is valid until the nearest enclosing region exits,
+        // and a dropped rest releases there rather than at the drop.
+        "a rest handed out through an enclosing handler's exit is refused afterwards" in {
+            AtomicInt.init(0).map { released =>
+                val stream = Stream:
+                    Sync.ensure(released.incrementAndGet.unit):
+                        Emit.valueWith(Chunk(1))(Emit.value(Chunk(2)))
+                Env.run(0)(stream.splitAt(1)).map { (head, rest) =>
+                    released.get.map { atExit =>
+                        Fiber.initUnscoped(rest.run).map(_.getResult).map { res =>
+                            assert(head == Chunk(1))
+                            assert(atExit == 1)
+                            assert(res.isPanic)
+                        }
+                    }
+                }
+            }
+        }
+
+        "rests dropped in a loop hold their resource until the enclosing scope exits, and Scope.run bounds that" in {
+            AtomicInt.init(0).map { released =>
+                def stream = Stream:
+                    Sync.ensure(released.incrementAndGet.unit):
+                        Emit.valueWith(Chunk(1))(Emit.value(Chunk(2)))
+                Env.run(0) {
+                    Kyo.foreach(1 to 3)(_ => stream.splitAt(1).map(_ => released.get.map(r => assert(r == 0))))
+                }.map { _ =>
+                    released.get.map { afterEnclosing =>
+                        assert(afterEnclosing == 3)
+                        Kyo.foreach(1 to 3)(i => Scope.run(stream.splitAt(1)).map(_ => released.get.map(r => assert(r == 3 + i)))).map {
+                            _ =>
+                                released.get.map(r => assert(r == 6))
+                        }
+                    }
+                }
+            }
+        }
+
+        "the finalizer of the side zip drops is told the remainder was discarded" in {
+            AtomicRef.init(Maybe.empty[Maybe[Result.Error[Any]]]).map { seen =>
+                val left = Stream:
+                    Sync.ensure(o => seen.set(Maybe(o))):
+                        Loop(0)(i => Emit.valueWith(Chunk(i))(Loop.continue(i + 1)))
+                Env.run(0)(left.zip(Stream.init(Seq("a", "b"))).run).map { pairs =>
+                    seen.get.map { outcome =>
+                        assert(pairs == Chunk((0, "a"), (1, "b")))
+                        assert(outcome.exists(_.exists(_.panic.exists(_.isInstanceOf[KyoException]))))
+                    }
+                }
+            }
+        }
+
+        // The two below assert prompt release at the library's own drop sites: zip drops the longer
+        // side's remainder when the other side ends, and a pipe that stops early drops its source's.
+        // The resource should not wait for the enclosing scope in either case.
+        "zip releases the side it drops when the other side ends" in {
+            AtomicInt.init(0).map { released =>
+                val left = Stream:
+                    Sync.ensure(released.incrementAndGet.unit):
+                        Loop(0)(i => Emit.valueWith(Chunk(i))(Loop.continue(i + 1)))
+                left.zip(Stream.init(Seq("a", "b"))).run.map { pairs =>
+                    released.get.map { r =>
+                        assert(pairs == Chunk((0, "a"), (1, "b")))
+                        assert(r == 1)
+                    }
+                }
+            }
+        }
+
+        "a pipe that stops early releases the source it drops" in {
+            AtomicInt.init(0).map { released =>
+                val source = Stream:
+                    Sync.ensure(released.incrementAndGet.unit):
+                        Loop(0)(i => Emit.valueWith(Chunk(i))(Loop.continue(i + 1)))
+                source.into(Pipe.take[Int](2)).run.map { taken =>
+                    released.get.map { r =>
+                        assert(taken == Chunk(0, 1))
+                        assert(r == 1)
+                    }
+                }
+            }
+        }
+
+        // Across fibers, custody is decided by whoever acts first on the remainder: a consumer that
+        // installed it must keep the resource until it completes, and the peeling scope's drain must
+        // then find nothing to do. The first test below pins the order that works today; the second
+        // asserts the order that must not release the resource under the consumer.
+        "a remainder completed in another fiber before the peeling scope exits releases once, with its value" in {
+            AtomicRef.init(Chunk.empty[Maybe[Result.Error[Any]]]).map { seen =>
+                Latch.init(1).map { finished =>
+                    Promise.init[(Maybe[Chunk[Int]], Arrow[Unit, Unit, Emit[Chunk[Int]] & Async]), Any].map { handoff =>
+                        val stream: Stream[Int, Async] = Stream:
+                            Sync.ensure(o => seen.updateAndGet(_.append(o))):
+                                Emit.valueWith(Chunk(1))(Emit.value(Chunk(2)))
+                        for
+                            peeler <- Fiber.initUnscoped {
+                                Env.run(0) {
+                                    Emit.runFirst(stream.emit).map { r =>
+                                        handoff.complete(Result.succeed(r)).andThen(finished.await)
+                                    }
+                                }
+                            }
+                            consumer <- Fiber.initUnscoped(handoff.get.map((_, cont) => Emit.run(cont(())).map(_._1)))
+                            rest     <- consumer.get
+                            _        <- finished.release
+                            _        <- peeler.get
+                            outcomes <- seen.get
+                        yield
+                            assert(rest == Chunk(Chunk(2)))
+                            assert(outcomes == Chunk(Maybe.empty))
+                        end for
+                    }
+                }
+            }
+        }
+
+        "a remainder resumed in another fiber is not released under it when the peeling scope exits" in {
+            AtomicInt.init(0).map { released =>
+                Latch.init(1).map { entered =>
+                    Latch.init(1).map { gate =>
+                        Promise.init[(Maybe[Chunk[Int]], Arrow[Unit, Unit, Emit[Chunk[Int]] & Async]), Any].map { handoff =>
+                            val stream: Stream[Int, Async] = Stream:
+                                Sync.ensure(released.incrementAndGet.unit):
+                                    Emit.valueWith(Chunk(1))(entered.release.andThen(gate.await).andThen(Emit.value(Chunk(2))))
+                            for
+                                peeler <- Fiber.initUnscoped {
+                                    Env.run(0) {
+                                        Emit.runFirst(stream.emit).map { r =>
+                                            handoff.complete(Result.succeed(r)).andThen(entered.await)
+                                        }
+                                    }
+                                }
+                                consumer <- Fiber.initUnscoped(handoff.get.map((_, cont) => Emit.run(cont(())).map(_._1)))
+                                _        <- entered.await
+                                _        <- peeler.get
+                                atExit   <- released.get
+                                _        <- gate.release
+                                res      <- consumer.getResult
+                                total    <- released.get
+                            yield
+                                assert(atExit == 0)
+                                assert(res.isSuccess)
+                                assert(total == 1)
+                            end for
+                        }
+                    }
+                }
+            }
+        }
+
         // The law: a stream that closes over its own Scope.run anchors the resource to whichever
         // evaluation runs it. A remainder handed across a fiber boundary loses the resource at the
         // peeling fiber's exit (the drain is the leak backstop), and consuming it afterwards panics
