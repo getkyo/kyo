@@ -94,6 +94,44 @@ class CCompilerTest extends AnyFunSuite with Matchers {
         cmd should contain("-pthread")
     }
 
+    test("buildCommand: a gcc-style Windows compile drops -fPIC, which clang-msvc rejects") {
+        // The windows-arm64 producer compiles with clang, not MinGW gcc, because the image's gcc emits
+        // x64 objects. clang targeting aarch64-pc-windows-msvc errors on -fPIC rather than ignoring it,
+        // so a Windows DLL built through the gcc-style path must not carry it. cl gets the same result
+        // through translateFlagMsvc.
+        val cmd = CCompiler.buildCommand(
+            cc = "clang",
+            family = CCompiler.Gcc,
+            cFlags = Seq("-O2", "-fPIC", "-Wall"),
+            linkFlags = Nil,
+            linkLibs = Nil,
+            sources = Seq(new File("/tmp/foo.c")),
+            includes = Nil,
+            outFile = new File("/tmp/kyonet_posix_uring-windows-aarch64.dll"),
+            staticLink = false,
+            os = "windows"
+        )
+        cmd should not contain "-fPIC"
+        cmd should contain("-O2")
+        cmd should contain("-Wall")
+    }
+
+    test("buildCommand: a gcc-style non-Windows compile keeps -fPIC") {
+        val cmd = CCompiler.buildCommand(
+            cc = "gcc",
+            family = CCompiler.Gcc,
+            cFlags = Seq("-O2", "-fPIC", "-Wall"),
+            linkFlags = Nil,
+            linkLibs = Nil,
+            sources = Seq(new File("/tmp/foo.c")),
+            includes = Nil,
+            outFile = new File("/tmp/libfoo-linux-x86_64.so"),
+            staticLink = false,
+            os = "linux"
+        )
+        cmd should contain("-fPIC")
+    }
+
     test("buildCommand: MSVC routes /LIBPATH and libs through /link so the linker finds a vendored .lib") {
         // Regression: `/LIBPATH:` is a linker option cl silently ignores on the compiler command line,
         // so a vendored library named by linkLibs + libDirs (e.g. aeron_driver_static.lib staged under a

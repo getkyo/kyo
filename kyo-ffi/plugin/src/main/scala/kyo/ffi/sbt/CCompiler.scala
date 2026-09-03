@@ -199,6 +199,12 @@ private[sbt] object CCompiler {
                 (if (linkerArgs.nonEmpty) Seq("/link") ++ linkerArgs else Nil)
         case _ =>
             val includeFlags = includes.flatMap(d => Seq("-I", d.getAbsolutePath))
+            // A Windows DLL has no PIC, and clang targeting *-windows-msvc REJECTS -fPIC rather than
+            // ignoring it, so a gcc-style compile for Windows has to drop it the way translateFlagMsvc
+            // already does for cl. This is reachable because the windows-arm64 producer compiles with
+            // clang: the image's MinGW gcc emits x64 objects and cannot serve that pole.
+            val targetCFlags =
+                if (os == "windows") cFlags.filterNot(_ == "-fPIC") else cFlags
             // staticLink folds the named libs into the .so via the GNU ld / lld static toggle,
             // leaving libc + implicit libraries dynamic. A bare `-static` is invalid here: it
             // pulls libc.a into a `-shared` link and ld fails on `__fini_array_*`. With no
@@ -217,7 +223,7 @@ private[sbt] object CCompiler {
             // The Native archive link (ffiNativeLinkingOptions) already appends linkFlags after the
             // archives; this matches that order. linkFlags is empty for every other library, so the order
             // is a no-op there.
-            splitCc(cc) ++ Seq("-shared") ++ cFlags ++ includeFlags ++
+            splitCc(cc) ++ Seq("-shared") ++ targetCFlags ++ includeFlags ++
                 sources.map(_.getAbsolutePath) ++
                 Seq("-o", outFile.getAbsolutePath) ++
                 linkLibFlags ++ linkFlags
