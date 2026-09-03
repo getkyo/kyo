@@ -95,7 +95,7 @@ object Env:
         reduce: Reducible[Env[VR]],
         frame: Frame
     ): A < (S & reduce.SReduced) =
-        reduce(ContextEffect.handle(erasedTag[R], env, _.union(env))(v): A < (Env[VR] & S))
+        reduce(ContextEffect.handleInheritable(erasedTag[R], env, _.union(env))(v): A < (Env[VR] & S))
 
     /** Runs a computation with an environment created from provided layers.
       *

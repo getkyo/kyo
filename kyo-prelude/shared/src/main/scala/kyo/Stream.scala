@@ -469,10 +469,10 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                         Kyo.foreach(input)(f)
                             .map(_.takeWhile(_.isDefined).collect({ case Present(v) => v }))
                             .map { c =>
-                                if c.isEmpty && c.size != input.size then Loop.done
+                                if c.isEmpty && c.size != input.size then Loop.done(())
                                 else
                                     Emit.valueWith(c) {
-                                        if c.size != input.size then Loop.done
+                                        if c.size != input.size then Loop.done(())
                                         else Loop.continue(())
                                     }
                         }
@@ -489,10 +489,10 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                 [C] =>
                     input =>
                         val c = input.map(f).takeWhile(_.isDefined).collect({ case Present(v) => v })
-                        if c.isEmpty && c.size != input.size then Loop.done
+                        if c.isEmpty && c.size != input.size then Loop.done(())
                         else
                             Emit.valueWith(c):
-                                if c.size != input.size then Loop.done
+                                if c.size != input.size then Loop.done(())
                                 else Loop.continue(())
                         end if
             )

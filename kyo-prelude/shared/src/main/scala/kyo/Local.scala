@@ -74,12 +74,9 @@ abstract class Local[A] extends Serializable:
       *   The result of running the effect with the modified value
       */
     def let[B, S](value: A)(v: B < S)(using Frame): B < S =
-        ContextEffect.handle(
-            Tag[State],
+        scoped(
             Map.empty[Local[?], AnyRef].updated(this, value.asInstanceOf[AnyRef]),
-            _.updated(this, value.asInstanceOf[AnyRef]),
-            fork = forkMap,
-            join = joinMap
+            _.updated(this, value.asInstanceOf[AnyRef])
         )(v)
 
     /** Runs an effect with an updated local value.
@@ -92,12 +89,33 @@ abstract class Local[A] extends Serializable:
       *   The result of running the effect with the updated value
       */
     def update[B, S](f: A => A)(v: B < S)(using Frame): B < S =
-        ContextEffect.handle(
-            Tag[State],
+        scoped(
             Map(this -> f(default).asInstanceOf[AnyRef]),
-            map => map.updated(this, f(map.getOrElse(this, default).asInstanceOf[A]).asInstanceOf[AnyRef]),
-            fork = forkMap,
-            join = joinMap
+            map => map.updated(this, f(map.getOrElse(this, default).asInstanceOf[A]).asInstanceOf[AnyRef])
+        )(v)
+
+    // every binding of the shared tag installs these strategies, so a fork through any local's scope
+    // asks each local for its own crossing, and a join asks each held local against what the fork
+    // ended with
+    private def scoped[B, S](
+        ifUndefined: Map[Local[?], AnyRef],
+        ifDefined: Map[Local[?], AnyRef] => Map[Local[?], AnyRef]
+    )(v: B < S)(using Frame): B < S =
+        ContextEffect.handle(Tag[State])(
+            ifUndefined,
+            ifDefined,
+            fork = map =>
+                map.foldLeft(Map.empty[Local[?], AnyRef]) { case (acc, (local, value)) =>
+                    local.asInstanceOf[Local[AnyRef]].fork(value) match
+                        case Maybe.Present(v) => acc.updated(local, v)
+                        case Maybe.Absent     => acc
+                },
+            join = (held, _, forked) =>
+                held.map { case (local, value) =>
+                    forked.get(local) match
+                        case Some(fv) => local -> local.asInstanceOf[Local[AnyRef]].join(value, fv)
+                        case None     => local -> value
+                }
         )(v)
 end Local
 
@@ -163,26 +181,6 @@ object Local:
     object internal:
 
         sealed private[kyo] trait State extends ContextEffect[Map[Local[?], AnyRef]]
-
-        // every binding of the shared tag installs these, so a fork through any local's scope asks each
-        // local for its own crossing, and a join asks each held local against what the fork ended with
-        private[kyo] val forkMap: Map[Local[?], AnyRef] => Maybe[Map[Local[?], AnyRef]] =
-            map =>
-                Maybe {
-                    map.foldLeft(Map.empty[Local[?], AnyRef]) { case (acc, (local, value)) =>
-                        local.asInstanceOf[Local[AnyRef]].fork(value) match
-                            case Maybe.Present(v) => acc.updated(local, v)
-                            case Maybe.Absent     => acc
-                    }
-                }
-
-        private[kyo] val joinMap: (Map[Local[?], AnyRef], Map[Local[?], AnyRef]) => Map[Local[?], AnyRef] =
-            (held, forked) =>
-                held.map { case (local, value) =>
-                    forked.get(local) match
-                        case Some(fv) => local -> local.asInstanceOf[Local[AnyRef]].join(value, fv)
-                        case None     => local -> value
-                }
     end internal
 
 end Local
