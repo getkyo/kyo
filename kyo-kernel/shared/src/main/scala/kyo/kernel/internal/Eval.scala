@@ -261,9 +261,9 @@ import scala.util.control.NonFatal
                             val top  = stack.depth - 1
                             val next = stack.continuation(top).asInstanceOf[Arrow[Y, Any, Any]]
                             stack.handler(top) match
-                                case hc: Handler.ContextHandler[VX, CX, ?, ?] @unchecked =>
+                                case hc: Handler.ContextHandler[VX, CX, AX, ?] @unchecked =>
                                     Debugger.onRegionExit(hc, res)
-                                    loop(res.asInstanceOf[Y < Any], next, Arrow.id, contextExit(hc, top, ctx))
+                                    loop(res.asInstanceOf[Y < Any], next, Arrow.id, contextExit(hc, top, Nested.unnest[AX](res), ctx))
                                 case handler0 =>
                                     val handler = handler0.asInstanceOf[Handler.ArrowHandler[VX, EX, AX, Y, Any]]
                                     val result  = handler.done(stack.state(top).asInstanceOf[VX], Nested.unnest[AX](res))
@@ -343,8 +343,8 @@ import scala.util.control.NonFatal
             install(0, ctx)
         end installed
 
-        def contextExit(hc: Handler.ContextHandler[VX, CX, ?, ?], top: Int, ctx: Context): Context =
-            hc.done(stack.state(top).asInstanceOf[VX])
+        def contextExit(hc: Handler.ContextHandler[VX, CX, AX, ?], top: Int, value: AX, ctx: Context): Context =
+            hc.done(stack.state(top).asInstanceOf[VX], value)
             stack.pop()
             if stack.owesAny then
                 drainDiscarded(stack.takePopped())

@@ -31,11 +31,11 @@ class ReportTest extends AnyFreeSpec:
     "a release failing on the discard drain reaches the handler on its signal" in {
         val log = ListBuffer[String]()
         val body: Int < Ask =
-            Bracket(Effect.defer(1))((_, _) => discard(log += "outer")) { _ =>
-                Bracket(Effect.defer(2))((_, _) => throw Bad) { _ =>
+            Bracket(Effect.defer(1)) { _ =>
+                Bracket(Effect.defer(2)) { _ =>
                     ask.map(x => x)
-                }
-            }
+                }((_, _) => throw Bad)
+            }((_, _) => discard(log += "outer"))
         val dropped: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, _) => -1, b => b)
         var reported           = Maybe.empty[Throwable]
         val thread             = Thread.currentThread()

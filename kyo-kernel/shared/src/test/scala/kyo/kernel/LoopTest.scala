@@ -762,7 +762,7 @@ class LoopTest extends AnyFreeSpec:
             Bracket(Effect.defer {
                 acquired += 1
                 acquired
-            })((_, _) => released += 1)(a => (a: Int < Any))
+            })(a => (a: Int < Any))((_, _) => released += 1)
         Loop.repeat(3)(body).eval
         assert(acquired == 3)
         assert(released == 3)

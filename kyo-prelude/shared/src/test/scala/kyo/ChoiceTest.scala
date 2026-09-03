@@ -341,14 +341,14 @@ class ChoiceTest extends kyo.test.Test[Any]:
         "a bracket outside the region releases once, after every branch" in {
             var log = Chunk.empty[String]
             val v =
-                Bracket("res")((_, _) => log = log.append("release")) { _ =>
+                Bracket("res") { _ =>
                     Choice.run {
                         Choice.eval(1, 2, 3).map { n =>
                             log = log.append(s"branch$n")
                             n
                         }
                     }
-                }
+                }((_, _) => log = log.append("release"))
             assert(v.eval == Chunk(1, 2, 3))
             // the release belongs to an extent the region sits inside, so it is not part of what the
             // handler replays: every branch runs against the same live resource, and the one value the
@@ -359,11 +359,11 @@ class ChoiceTest extends kyo.test.Test[Any]:
         "a bracket outside the region is live in every branch" in {
             var released = false
             val v =
-                Bracket(1)((_, _) => released = true) { res =>
+                Bracket(1) { res =>
                     Choice.run {
                         Choice.eval(1, 2, 3).map(n => (n, released))
                     }
-                }
+                }((_, _) => released = true)
             // seeing the release already run from inside a branch is the failure this pins: it would mean
             // the extent ended on the first branch and the later ones ran against a spent resource
             assert(v.eval == Chunk((1, false), (2, false), (3, false)))
@@ -376,7 +376,7 @@ class ChoiceTest extends kyo.test.Test[Any]:
             val v = Choice.run {
                 for
                     n <- Choice.eval(1, 2, 3)
-                    r <- Bracket({ opens += 1; n })((_, _) => closes += 1)(a => a * 10)
+                    r <- Bracket({ opens += 1; n })(a => a * 10)((_, _) => closes += 1)
                 yield r
             }
             assert(v.eval == Chunk(10, 20, 30))
@@ -391,7 +391,7 @@ class ChoiceTest extends kyo.test.Test[Any]:
             val v = Choice.run {
                 for
                     n <- Choice.eval(1, 2)
-                    r <- Bracket({ log = log.append(s"open$n"); n })((_, _) => log = log.append(s"close$n"))(a => a)
+                    r <- Bracket({ log = log.append(s"open$n"); n })(a => a)((_, _) => log = log.append(s"close$n"))
                 yield r
             }
             assert(v.eval == Chunk(1, 2))

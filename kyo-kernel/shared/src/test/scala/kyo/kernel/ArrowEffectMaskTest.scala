@@ -90,12 +90,12 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
                 Bracket(Effect.defer {
                     order ::= "acquire"
                     0
-                })((_, _) => order ::= "release") { _ =>
+                }) { _ =>
                     ask.map { a =>
                         order ::= s"use $a"
                         a
                     }
-                }
+                }((_, _) => order ::= "release")
             val out = Mask.run[Ask](runAsk(Mask[Ask](v))(1))
             assert(runAsk(out)(42).eval == 42)
             assert(order.reverse == List("acquire", "use 42", "release"))
@@ -107,9 +107,9 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
                 Bracket(Effect.defer {
                     order ::= "acquire"
                     0
-                })((_, _) => order ::= "release") { _ =>
+                }) { _ =>
                     ask
-                }
+                }((_, _) => order ::= "release")
             val unmasked: Int < Ask = Mask.run[Ask](Mask[Ask](v))
             val out: Int < Any = ArrowEffect.handleCont(Tag[Ask], unmasked)(
                 [C] => (_, _) => -1,

@@ -193,7 +193,7 @@ end Handler
         def fork(parent: State): State
         def join(parent: State, forked: State, child: State): State
 
-        private[kyo] def done(state: State): Unit = ()
+        private[kyo] def done(state: State, value: A): Unit = ()
 
         private[kyo] def reenter(state: State): Unit = ()
 

@@ -295,7 +295,7 @@ object ContextEffect:
                 def derive(outer: Maybe[A])                                = derived(outer)
                 def fork(parent: A)                                        = forked(parent)
                 def join(parent: A, forked: A, child: A)                   = joined(parent, forked, child)
-                override private[kyo] def done(state: A)                   = completed(state)
+                override private[kyo] def done(state: A, value: B)         = completed(state)
                 override private[kyo] def release(state: A, ex: Throwable) = released(state, ex)
 
         new Pending.HandleContext[A, E, B, S]:

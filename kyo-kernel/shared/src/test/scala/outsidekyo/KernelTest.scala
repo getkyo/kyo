@@ -256,7 +256,7 @@ class ProtoKernelTest extends AnyFreeSpec:
 
         "bracket" in {
             var released = false
-            val v        = Bracket(1)((_, _) => released = true)(r => ask.map(_ + r))
+            val v        = Bracket(1)(r => ask.map(_ + r))((_, _) => released = true)
             assert(answer(v).eval == 2)
             assert(released)
         }

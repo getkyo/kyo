@@ -119,12 +119,7 @@ class IOTaskTest extends kyo.test.Test[Any]:
         // scheduler gates on) classifies it as fatal. JVM-only: it relies on worker-thread semantics (one worker
         // taking the fatal while the timeout fires on another), which the single-worker Native and single-threaded
         // JS runtimes do not provide.
-        // Pending on the fatal classification: kyo gates on scala.util.control.NonFatal, so the release cannot
-        // build a Result.Panic for a LinkageError and the finalizer is skipped. Fixed once kyo decides for
-        // itself which errors are fatal.
-        "runs the ensure finalizer even though the fatal aborts the fiber".onlyJvm.pendingUntilFixed(
-            "the fatal classification is scala's NonFatal, which refuses a LinkageError inside Result.Panic"
-        ) in {
+        "runs the ensure finalizer even though the fatal aborts the fiber".onlyJvm in {
             for
                 probe <- Promise.init[Unit, Any]
                 _ <- Fiber.initUnscoped {

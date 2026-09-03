@@ -121,7 +121,7 @@ class SafepointTest extends AnyFreeSpec:
 
     "a throwing release in a nested eval does not disarm the enclosing slice" in silenced {
         val inner: Int < Ask =
-            Bracket(Effect.defer(1))((_, _) => throw new IllegalStateException("release"))(_ => ask.map(_ + 1))
+            Bracket(Effect.defer(1))(_ => ask.map(_ + 1))((_, _) => throw new IllegalStateException("release"))
         val dropped: Int < Any =
             ArrowEffect.handleCont(Tag[Ask], inner)([C] => (_, _) => -1, a => a)
         var built = 0
@@ -151,7 +151,7 @@ class SafepointTest extends AnyFreeSpec:
 
     "a throwing release on the completing path leaves the caller's safepoint state intact" in silenced {
         val v: Int < Ask =
-            Bracket(Effect.defer(1))((_, _) => throw new IllegalStateException("release"))(_ => ask.map(_ + 1))
+            Bracket(Effect.defer(1))(_ => ask.map(_ + 1))((_, _) => throw new IllegalStateException("release"))
         val dropped: Int < Any =
             ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, _) => -1, a => a)
         val slot = Safepoint.get()

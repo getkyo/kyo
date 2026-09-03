@@ -402,7 +402,7 @@ def noteOutcome(id: Int, outcome: Result[Any, Int]): String =
         case Result.Success(v) => s"handle $id committed at $v"
         case _                 => s"handle $id did not complete"
 
-val session: Int < Ask = Bracket(1)(noteOutcome)(id => ask.map(_ + id))
+val session: Int < Ask = Bracket(1)(id => ask.map(_ + id))(noteOutcome)
 
 assert(answering(41)(session).eval == 42)
 ```
@@ -415,7 +415,7 @@ Three outcomes reach a release: the value the extent completed with, the failure
 
 ```scala
 val dropped: Int < Any =
-    ArrowEffect.handleCont(Tag[Ask], Bracket(1)(noteOutcome)(id => ask.map(_ + id)))(
+    ArrowEffect.handleCont(Tag[Ask], Bracket(1)(id => ask.map(_ + id))(noteOutcome))(
         [C] => (_, _) => -1,
         a => a
     )

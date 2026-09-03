@@ -107,7 +107,7 @@ class DebuggerTest extends AnyFreeSpec:
         var released = 0
         val d        = new Recording
         session(d) {
-            val v = Bracket(Effect.defer(1))((_, _) => released += 1)(r => (r + 1: Int < Any).map(_ * 2))
+            val v = Bracket(Effect.defer(1))(r => (r + 1: Int < Any).map(_ * 2))((_, _) => released += 1)
             assert(v.eval == 4)
         }
         assert(released == 1)

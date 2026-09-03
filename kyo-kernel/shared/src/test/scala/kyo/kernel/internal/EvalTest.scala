@@ -800,12 +800,12 @@ class EvalTest extends AnyFreeSpec:
                     release = (s: Int, _: Throwable) => discard(log += s"release cfg $s")
                 )(v)
             val v: Int < Any =
-                Bracket(Effect.defer(1))((_, _) => bracket += 1) { a =>
+                Bracket(Effect.defer(1)) { a =>
                     hooked(a)(Effect.defer {
                         requestStop()
                         Effect.defer(a)
                     })
-                }
+                }((_, _) => bracket += 1)
             val p = Eval.partial(v)
             assert(p.evalNow.isEmpty)
             Eval.release(p, Boom)

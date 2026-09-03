@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.Result.Error
+import kyo.Result.flatten
 import kyo.kernel.*
 import kyo.kernel.internal.Safepoint
 
@@ -76,34 +77,29 @@ object Sync:
       */
     def acquireReleaseWith[A, S1](acquire: => A < (Sync & S1))(
         release: (A, Result[Any, Any]) => Any < (Sync & Abort[Throwable])
-    )[B, S2](use: A => B < S2)(using Frame): B < (Sync & S1 & S2) =
+    )[B, E, S2](use: A => B < (Abort[E] & S2))(using ConcreteTag[E], Frame): B < (Sync & S1 & Abort[E] & S2) =
+        // the one bracket in this file, which every other ensure and acquireReleaseWith lands on. The
+        // kernel bracket owns the exactly-once guarantee and tells the release how the extent ended:
+        // the value the use completed with, the failure an unwind carried through it, or the signal
+        // that the remainder holding it was discarded. An abort is none of those to the kernel, which
+        // does not know Abort, so the use runs under its own Abort region: the failure reaches the
+        // release inside the completed value, and is raised again past the bracket, typed as it came.
         // Unsafe: the kernel's release is synchronous, so the effectful release runs to completion here,
         // and only its own Abort surfaces, as a throw
-        Bracket(acquire)((resource, outcome) =>
-            discard(Sync.Unsafe.evalOrThrow(release(resource, outcome.fold(Result.succeed(()))(Result.panic)))(
-                using
-                summon[Frame],
-                AllowUnsafe.embrace.danger
-            ))
-        )(use)
+        Bracket(acquire)(resource => Abort.run[E](use(resource)))((resource, outcome) =>
+            discard(Sync.Unsafe.evalOrThrow(release(resource, outcome.flatten))(using summon[Frame], AllowUnsafe.embrace.danger))
+        ).map(result => Abort.get(result))
 
     def acquireReleaseWith[A, S1](acquire: => A < (Sync & S1))(
         release: A => Any < (Sync & Abort[Throwable])
-    )[B, S2](use: A => B < S2)(using Frame): B < (Sync & S1 & S2) =
-        // the kernel bracket is this operation: the scope installs the moment the acquire settles, with no
-        // slice able to end in between, and it owns the release from there whether the use completes,
-        // throws, or is abandoned.
-        // Unsafe: the kernel's release is synchronous, so the effectful release runs to completion here,
-        // and only its own Abort surfaces, as a throw
-        Bracket(acquire)((resource, _) =>
-            discard(Sync.Unsafe.evalOrThrow(release(resource))(using summon[Frame], AllowUnsafe.embrace.danger))
-        )(use)
+    )[B, E, S2](use: A => B < (Abort[E] & S2))(using ConcreteTag[E], Frame): B < (Sync & S1 & Abort[E] & S2) =
+        acquireReleaseWith(acquire)((resource, _) => release(resource))(use)
 
     /** Ensures that a finalizer is run after the computation, regardless of success or failure.
       *
-      * This version provides the finalizer with information about whether the computation completed successfully or failed with an
-      * exception. The finalizer receives a `Maybe[Error[Any]]` which will be `Absent` if the computation succeeded, or `Present` if it
-      * failed.
+      * This version provides the finalizer with information about how the computation ended. The finalizer receives a
+      * `Maybe[Error[Any]]`: `Absent` when the computation completed, the `Failure` when it aborted, and a `Panic` when it threw or when
+      * its extent was ended from outside, as a scheduler does when it abandons a parked remainder.
       *
       * @param f
       *   The finalizer function that receives information about potential errors and performs cleanup actions.
@@ -123,18 +119,11 @@ object Sync:
     // longer conforms to the opaque `Any < (Sync & Abort[Throwable])`. As a non-inline function value
     // the body adapts to the opaque type at the call site; the cost is one finalizer-closure
     // allocation. Restore inline once the upstream inference regression is resolved.
-    inline def ensure[A, S](f: Maybe[Error[Any]] => Any < (Sync & Abort[Throwable]))(v: => A < S)(using
+    inline def ensure[A, E, S](f: Maybe[Error[Any]] => Any < (Sync & Abort[Throwable]))(v: => A < (Abort[E] & S))(using
+        ct: ConcreteTag[E],
         inline frame: Frame
-    ): A < (Sync & S) =
-        // the kernel bracket owns the exactly-once guarantee and the outcome: Absent on success, the
-        // failure when the computation throws, and the discard signal when the region is ended from
-        // outside or a parked remainder is abandoned. The finalizer runs in the ambient context, so
-        // locals bound around the ensure reach it.
-        // Unsafe: the kernel's release is synchronous, so the finalizer runs to completion here, and
-        // only its own Abort surfaces as a throw, keeping the panic semantics
-        Bracket(())((_, outcome) =>
-            discard(Sync.Unsafe.evalOrThrow(f(outcome.map(Result.Panic(_))))(using summon[Frame], AllowUnsafe.embrace.danger))
-        )(_ => v)
+    ): A < (Sync & Abort[E] & S) =
+        acquireReleaseWith(())((_, outcome) => f(outcome.error))(_ => v)
 
     /** Retrieves a local value and applies a function that can perform side effects.
       *
