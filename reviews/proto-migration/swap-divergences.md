@@ -42,3 +42,25 @@ throws it), `kyo/Test.scala` (test base `IsolateTest` extends), `kyo/TestVariant
 red (the doctest driver jar is built from it); the javassist Test dependency for the bytecode pins; the
 jmh scope with the cross-bench dependencies and the compile-bench compiler. The JOL dependency and the
 demo fork settings are gone with `protodemo`.
+
+## Tests
+
+Main's suites with a counterpart, compared leaf by leaf (a case name main has that the moved suite
+does not, then matched by content). The proto suites renamed and regrouped nearly everything, so the
+name diff overstates; the content mapping is what matters.
+
+| suite (main leaves) | twin under the proto's names | ported in step 4 | divergent by ruling |
+|---|---|---|---|
+| `KyoTest` (108), `KyoForeachCollTest` (57), `LoopTest` (84) | all | | |
+| `PendingTest` (50) | all: map, flatMap, for-comprehension, flatten, unit, andThen, eval, the lift rejections (`ImplicitsTest`), `evalNow` (3), `handle` (4 plus the arities), the nested computations including the denied-budget cases, the Render case (`ImplicitsTest`) | | |
+| `CanLiftTest` (11) | all, as "resolves for" and "rejects" cases | | |
+| `ArrowEffectTest` (38) | single-effect handling, stack safety, `handleFirst` (5), the `catching` group as "recover, ported from catching", the `Nested` cases as "nested box", `handlePartial` as `Eval.partial` in `EvalTest`, the plain multi-shot case | delimited continuation: multi shot with another effect, multiple shifts over different effect sets, short circuiting; flow effect with dynamic tags: single poll, poll and emit, multiple flows | the two, three and four effect `handle` overloads (D2 family) |
+| `ContextEffectTest` (11) | reads, layering, ifUndefined and ifDefined, nesting | three bindings: each read takes its own; binding order | the `Noninheritable` marker (D4) |
+| `EffectTest` (8) | `defer` (simple, nested, order) | | `catching` (4 cases) and `defer with catching` (D2); "defer with a recovery inside" is the port over a recovering region |
+| `IsolateTest` (28) | `derive`, `run`, `andThen`, `use`, `apply`, the variance groups, `nest`, the contextual isolate | | the `Isolate.internal.runDetached`, `Trace` and `Safepoint.Interceptor` cases (the proto's `Contextual` isolate has no such internals; their properties live under "Contextual" and "ported crossings"); "should propagate only non-isolated effects" (D4) |
+| `ContextTest` (11) | empty, read, unbound, shadowing, different tags | | the `Map` API (`isEmpty`, `contains`, `getOrElse`, `set`) and `inherit` (D4) |
+
+Main-only test files: `internal/TraceTest`, `internal/TracePoolTest`, jvm `internal/TracePoolConcurrencyTest`
+(the trace pool is gone; `EffectTraceTest`, `EffectTracePhysicalTest` and `EffectTraceThreadingTest` cover the
+replacement), jvm `BytecodeTest` (split into `PendingBytecodeTest`, `ArrowEffectBytecodeTest` and
+`DebuggerBytecodeTest`).
