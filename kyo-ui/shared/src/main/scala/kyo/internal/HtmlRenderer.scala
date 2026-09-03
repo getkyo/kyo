@@ -1159,6 +1159,7 @@ private[kyo] object HtmlRenderer:
         s"""(function(){
            |var base="$basePath";
            |var __q=[];
+           |var __ws;
            |// Mirrors DomBackend.setSelection: the one place that knows the two ways a caret move can be a no-op.
            |// Elements outside input and textarea (select, contenteditable) have no setSelectionRange at all, and
            |// on input types without a text selection (email, number) it throws InvalidStateError; in both cases
@@ -1166,12 +1167,13 @@ private[kyo] object HtmlRenderer:
            |function kyoSetCaret(t,s,e){if(typeof t.setSelectionRange!=="function")return;
            |  try{t.setSelectionRange(s,e);}catch(er){if(er.name!=="InvalidStateError")throw er;}}
            |$reactiveRangesJs
+           |(function connect(retries){
            |var ws=new WebSocket((location.protocol===\"https:\"?\"wss:\":\"ws:\")+"//"+location.host+base+"/_kyo/ws");
+           |__ws=ws;Object.defineProperty(window,"__kyoWs",{get:function(){return ws;},configurable:true});
            |ws.onopen=function(){__q.forEach(function(m){ws.send(m);});__q=[];};
            |${DragClientJs.script(basePath)}
            |var __dragRt=installDragRuntime(function(m){post(m);},{onClose:function(c){__dragCleanup=c;}});
            |var __dragCleanup=__dragRt.cleanup;
-           |ws.onclose=function(){if(__dragCleanup){__dragCleanup();__dragCleanup=null;}};
            |ws.onmessage=function(e){
            |  var op=JSON.parse(e.data);
            |  if(op.ResolveDrag){
@@ -1220,6 +1222,12 @@ private[kyo] object HtmlRenderer:
            |    });
            |  }
            |};
+           |ws.onclose=function(){
+           |  if(__dragCleanup){__dragCleanup();__dragCleanup=null;}
+           |  var d=Math.min(500*Math.pow(2,retries),30000);
+           |  setTimeout(function(){connect(retries+1);},d*(0.5+Math.random()*0.5));
+           |};
+           |})(0);
            |function fp(el){
            |  while(el&&el!==document.body){
            |    if(el.hasAttribute("data-kyo-path"))return el;
@@ -1243,7 +1251,7 @@ private[kyo] object HtmlRenderer:
            |// buffered in __q and flushed on ws.onopen.
            |function post(b){
            |  var m=JSON.stringify(b);
-           |  if(ws.readyState===1)ws.send(m);
+           |  if(__ws&&__ws.readyState===1)__ws.send(m);
            |  else __q.push(m);
            |}
            |function pa(el){
