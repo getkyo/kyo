@@ -1382,6 +1382,68 @@ class BracketTest extends AnyFreeSpec:
             assert(outcome.exists(_.panic.exists(_ eq Boom)))
         }
 
+        "nested hand-outs descend the debt through each region, and the remainder resumed through both completes the bracket" in {
+            // the inner region hands the bracket-carrying remainder out as a value; the outer region's
+            // body holds that value and then suspends, so the outer region hands its own remainder out
+            // with the inner one inside it. The debt moves from the inner lane to the outer lane to the
+            // enclosing region's lane, where the resume finds it
+            var outcome         = Maybe.empty[Result[Nothing, Int]]
+            val body: Int < Ask = Bracket(Effect.defer(1))(r => ask.map(_ + r))((_, o) => outcome = Maybe(o))
+            val inner: Maybe[Arrow[Int, Int, Ask]] < Any =
+                ArrowEffect.handleFirst[Const[Unit], Const[Int], Ask, Int, Maybe[Arrow[Int, Int, Ask]], Any, Any](Tag[Ask], body)(
+                    handle = [C] => (_, cont) => Maybe(cont),
+                    done = _ => Maybe.empty
+                )
+            val outerBody: Int < (Str & Ask) = inner.map(k => str(1).map(_ => k.get(10)))
+            val outer: Maybe[Arrow[String, Int, Str & Ask]] < Ask =
+                ArrowEffect.handleFirst[Const[Int], Const[String], Str, Int, Maybe[Arrow[String, Int, Str & Ask]], Ask, Any](
+                    Tag[Str],
+                    outerBody
+                )(
+                    handle = [C] => (_, cont) => Maybe(cont),
+                    done = _ => Maybe.empty
+                )
+            val r: Int < Any =
+                answerAsk(0) {
+                    outer.map { k =>
+                        assert(outcome.isEmpty)
+                        ArrowEffect.handleCont(Tag[Str], k.get("s"))([C] => (_, cont) => cont("x"), a => a)
+                    }
+                }
+            assert(r.eval == 11)
+            assert(outcome.exists(_.isSuccess))
+        }
+
+        "nested hand-outs: an outer remainder dropped with the inner one inside releases at the enclosing exit" in {
+            var outcome         = Maybe.empty[Result[Nothing, Int]]
+            val body: Int < Ask = Bracket(Effect.defer(1))(r => ask.map(_ + r))((_, o) => outcome = Maybe(o))
+            val inner: Maybe[Arrow[Int, Int, Ask]] < Any =
+                ArrowEffect.handleFirst[Const[Unit], Const[Int], Ask, Int, Maybe[Arrow[Int, Int, Ask]], Any, Any](Tag[Ask], body)(
+                    handle = [C] => (_, cont) => Maybe(cont),
+                    done = _ => Maybe.empty
+                )
+            val outerBody: Int < (Str & Ask) = inner.map(k => str(1).map(_ => k.get(10)))
+            val outer: Maybe[Arrow[String, Int, Str & Ask]] < Ask =
+                ArrowEffect.handleFirst[Const[Int], Const[String], Str, Int, Maybe[Arrow[String, Int, Str & Ask]], Ask, Any](
+                    Tag[Str],
+                    outerBody
+                )(
+                    handle = [C] => (_, cont) => Maybe(cont),
+                    done = _ => Maybe.empty
+                )
+            var openAfterDrop = false
+            val r: Int < Any =
+                answerAsk(0) {
+                    outer.map { _ =>
+                        openAfterDrop = outcome.isEmpty
+                        -1
+                    }
+                }
+            assert(r.eval == -1)
+            assert(openAfterDrop)
+            assert(outcome.exists(_.panic.exists(_.isInstanceOf[kyo.KyoException])))
+        }
+
         "branches of a multi-shot clause share the resource the use closed over" in {
             var acquired = 0
             var seen     = List.empty[Int]
