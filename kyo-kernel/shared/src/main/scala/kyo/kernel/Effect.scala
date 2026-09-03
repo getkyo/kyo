@@ -35,6 +35,12 @@ object Effect:
         private[kyo] def drain(ex: Throwable): Unit = if compareAndSet(false, true) then fin(Maybe(ex))
     end Cell
 
+    private[kyo] object Cell:
+        // the state a bracket hands to an isolated child: nothing completes or drains it, so a copy
+        // holding it never runs a release and never refuses a re-entry
+        val inert: Cell = new Cell(_ => ())
+    end Cell
+
     def bracket[A, S1](acquire: A < S1)(
         release: (A, Maybe[Throwable]) => Unit
     )[B, S2](use: A => B < S2)(using _frame: Frame): B < (S1 & S2) =
@@ -50,9 +56,11 @@ object Effect:
                             catch case t if NonFatal(t) && (t ne ex) => ex.addSuppressed(t)
                             throw ex
                 val h = new Handler.ContextHandler[Cell, Finalize, B, S1 & S2]:
-                    def tag                                                             = Tag[Finalize]
-                    def derive(outer: Maybe[Cell])                                      = cell
-                    def fork(parent: Cell)                                              = parent
+                    def tag                        = Tag[Finalize]
+                    def derive(outer: Maybe[Cell]) = cell
+                    // the bracket belongs to the computation that installed it and closes only with
+                    // its own scope: an isolated child, a spawned fiber included, gets an inert copy
+                    def fork(parent: Cell)                                              = Cell.inert
                     def join(parent: Cell, fk: Cell, child: Cell)                       = parent
                     override private[kyo] def done(state: Cell): Unit                   = state.complete()
                     override private[kyo] def release(state: Cell, ex: Throwable): Unit = state.drain(ex)

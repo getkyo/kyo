@@ -596,7 +596,11 @@ class EffectBracketTest extends AnyFreeSpec:
             assert(again.eval == -2)
         }
 
-        "a capture inside an isolated child, resumed after the bracket ended, is refused" in {
+        "a bracket does not cross into an isolated child: a capture inside the child, resumed after the bracket ended, runs" in {
+            // the bracket belongs to the computation that installed it and closes only with its own
+            // scope; the child copy it forks is inert, so a continuation escaping the child carries
+            // no obligation and no refusal, as a bracket outside the answering handler already does
+            // not (see the pin below)
             var leaked    = Maybe.empty[Arrow[Int, Int, Ask]]
             var released  = false
             var usedAfter = false
@@ -625,8 +629,25 @@ class EffectBracketTest extends AnyFreeSpec:
                     b => b,
                     ex => Maybe(if ex.isInstanceOf[Closed] then -2 else -3)
                 )
-            assert(again.eval == -2)
-            assert(!usedAfter)
+            assert(again.eval == 8)
+            assert(usedAfter)
+        }
+
+        "an isolated child built inside a bracket and evaluated after the bracket ended is not refused" in {
+            // the shape of a spawned fiber: the child computation is built in the parent's extent and
+            // evaluated by another eval once the parent's bracket has released
+            var released = false
+            var child    = Maybe.empty[Int < Any]
+            val body: Int < Any =
+                Effect.bracket(Effect.defer(7))((_, _) => released = true) { a =>
+                    Isolate.internal.Contextual.capture { st =>
+                        child = Maybe(Isolate.internal.Contextual.restore(Isolate.internal.Contextual.isolate(st, Effect.defer(a + 1))))
+                        -1
+                    }
+                }
+            assert(body.eval == -1)
+            assert(released)
+            assert(child.get.eval == 8)
         }
 
         "a bracket outside the answering handler is not carried by an escaped continuation, so the remainder runs after the release" in {
