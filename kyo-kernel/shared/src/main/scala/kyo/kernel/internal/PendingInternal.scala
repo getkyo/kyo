@@ -18,6 +18,7 @@ end Pending
 
 object Pending:
 
+    // TODO how about we rename Pending => Defer, Defer => Continue, Kyo => Pending
     abstract class Defer[A, B, C, -S] @publicInBinary private[kyo] () extends Pending[C, S]:
         Debugger.onAlloc(this)
 
