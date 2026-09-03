@@ -71,6 +71,17 @@ C. Fork the pool's workers outside any bracket in kyo-test (`LeafPool` at object
    Hides a kyo-core regression that reaches every user forking a background fiber inside a
    resource scope. Rejected.
 
+## A second, unrelated JS finding, fixed (`5ad7a269c7`)
+
+Every prelude suite on JS died in its constructor with "Maximum call stack size exceeded". The
+scheduler's join clause parks a fiber by re-raising the join with a stop requested, and the
+js-wasm `Safepoint.stop` was a no-op returning false, `stopped` reporting only an expired slice
+deadline: the re-raise was dispatched again and again until the stack ran out, the loop the JVM
+showed before its stop was honored. js-wasm now records the stop and honors it by itself, consumed
+at the slice boundary; EvalTest pins a clause that requests a stop and nothing else. The trace
+builder also skips a null frame, which on JS was an undefined-behavior error escaping the
+non-fatal catch. Kernel suites after the change: JVM 1459, JS 1403, Wasm 1403, all green.
+
 ## What runs meanwhile
 
 Prelude suites run one class per JVM, which sidesteps the pool: all 17 `kyo-preludeJVM` suites are
